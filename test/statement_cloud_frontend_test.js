@@ -264,6 +264,17 @@ describe('private statement cloud frontend transport', () => {
             expect(window.notify).toHaveBeenCalledWith('2 statement transactions read on your device and filed.', 'success');
             await authChanged(null);
         });
+        it('stops asking after three batches that move nothing, instead of hammering a source that cannot move', async () => {
+            window._teachStatementLayout = vi.fn();
+            window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-09-14' }] })) };
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) }))
+                .mockResolvedValueOnce(reply(true, { ok: true, mapped: true, filed: 0, review: 0, replayStatus: 'pending' }))
+                .mockResolvedValue(reply(true, { ok: true, filed: 0, review: 0, queued: true, replayStatus: 'pending' }));
+            await review(entry);
+            expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered', 'layout-continue', 'layout-continue', 'layout-continue']);
+            expect(window.notify).not.toHaveBeenCalledWith(expect.anything(), 'error');
+            await authChanged(null);
+        });
         it('continues a long statement in batches and says plainly when the owner still has to confirm it', async () => {
             window._teachStatementLayout = vi.fn();
             window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-09-14' }] })) };
@@ -291,9 +302,14 @@ describe('private statement cloud frontend transport', () => {
             expect(window._teachStatementLayout).toHaveBeenCalledTimes(1);
             expect(window._wfLayoutAttempts[0]).toMatchObject({ bank: 'AMEX', outcome: 'rendered-on-device', diag: { tables: 1 } });
             expect(JSON.stringify(window._wfLayoutAttempts)).not.toContain('KEELLS');
+            // A review marked by the OLDER reader (renderedRead: true) holds text that reader got wrong: render it again.
+            window.WFHtmlStatement.htmlToTransactionsAsync.mockClear(); fetch.mockClear();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) })).mockResolvedValueOnce(reply(true, { ok: true, mapped: true, filed: 1, review: 0, replayStatus: 'filed' }));
+            await review({ ...entry, renderedRead: true });
+            expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered']);
             window.WFHtmlStatement.htmlToTransactionsAsync.mockClear(); fetch.mockClear();
             fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'rendered rows text', bank: 'AMEX', filename: entry.filename }));
-            await review({ ...entry, renderedRead: true });
+            await review({ ...entry, renderedRead: 2 });
             expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['review-source']);
             expect(window.WFHtmlStatement.htmlToTransactionsAsync).not.toHaveBeenCalled();
             await authChanged(null);
@@ -314,7 +330,7 @@ describe('private statement cloud frontend transport', () => {
 
             it('reads every pending HTML statement itself and skips PDFs and already-read ones', async () => {
                 window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<table>x</table>', transactions: [{ date: '2026-07-13' }] })) };
-                await load([html('a'.repeat(64), 'amex-jul.html'), html('b'.repeat(64), 'ntb-aug.htm'), html('c'.repeat(64), 'hnb.pdf'), html('d'.repeat(64), 'amex-jun.html', { renderedRead: true })]);
+                await load([html('a'.repeat(64), 'amex-jul.html'), html('b'.repeat(64), 'ntb-aug.htm'), html('c'.repeat(64), 'hnb.pdf'), html('d'.repeat(64), 'amex-jun.html', { renderedRead: 2 })]);
                 fetch.mockImplementation(async (_, options) => {
                     const body = JSON.parse(options.body);
                     return body.action === 'render-source' ? reply(true, { ok: true, htmlGz: gz(shell) }) : filedReply();

@@ -66,7 +66,63 @@ export function pdfLinesFromItems(items, tolerance = 2) {
     visual.push(...loose.sort((a, b) => a.index - b.index).map(item => item.text.trim()).filter(Boolean));
     return visual;
 }
+// A consolidated statement carries one ledger per account. Reading them as one
+// long ledger can never reconcile (account two does not open where account one
+// closed), so each is read and reconciled against its OWN opening and closing
+// balance, and the statement is only "parsed" when every one of them is.
 async function parse(text, htmlForData = '') {
+    const lines = String(text).split('\n');
+    if (!lines.includes(SECTION_MARK)) return parseWhole(text, htmlForData);
+    // A statement with a ledger table is read from its ledger table(s) only: an
+    // Overview line that happens to carry a date and an amount ("...Int.Pd to
+    // 31-01-2026  0.69") is not a transaction.
+    const head = [], chunks = [];
+    let current = null, before = true;
+    const pre = [];
+    for (const line of lines) {
+        if (line === SECTION_MARK) { current = []; chunks.push(current); before = false; }
+        else if (line === SECTION_END) current = null;
+        else { (current || head).push(line); if (before) pre.push(line); }
+    }
+    const context = head.filter(line => /statement period|statement date|nations trust bank|consolidated|monthly statement|american express|card\s*(?:no|number)|account\s*(?:no|number)|credit limit|minimum (?:payment|amount)/i.test(line)).slice(0, 12);
+    // A summary printed above the table (a card statement's Opening / Closing
+    // Balance) still belongs to a ledger that states none of its own. Only what
+    // comes BEFORE the first ledger: a rewards block further down prints an
+    // "Opening Balance" of its own.
+    const summary = pre.filter(line => /^(?:opening|closing) balance\b/i.test(line));
+    const parts = [];
+    for (const chunk of chunks) {
+        const own = chunk.some(line => /^(?:opening|closing) balance\b/i.test(line));
+        parts.push(await parseWhole([...context, ...(own ? [] : summary), ...chunk].join('\n')));
+    }
+    const active = parts.filter(part => part.parsed.rows.length);
+    if (!active.length) return { ...parts[0], text };
+    if (active.length === 1) return { parsed: active[0].parsed, text };
+    const total = pick => active.reduce((sum, part) => sum + (Number(pick(part.parsed)) || 0), 0);
+    const round = value => Math.round(value * 100) / 100;
+    const recs = active.map(part => part.parsed.reconciliation || {});
+    const parsed = JSON.parse(JSON.stringify(active[0].parsed));
+    parsed.rows = active.flatMap(part => part.parsed.rows);
+    if (parsed.rows.length > STATEMENT_LIMITS.rows) fail('STATEMENT_ROW_LIMIT');
+    parsed.candidateRows = total(p => p.candidateRows);
+    parsed.invalidDates = total(p => p.invalidDates);
+    parsed.balanceMismatches = total(p => p.balanceMismatches);
+    parsed.reconciliation = {
+        opening: recs.every(r => r.opening != null) ? round(recs.reduce((a, r) => a + r.opening, 0)) : null,
+        closing: recs.every(r => r.closing != null) ? round(recs.reduce((a, r) => a + r.closing, 0)) : null,
+        credits: round(total(p => p.reconciliation?.credits)), debits: round(total(p => p.reconciliation?.debits)),
+        expected: null, difference: null,
+        ok: recs.every(r => r.ok === true) ? true : recs.some(r => r.ok === false) ? false : null,
+        accounts: active.length,
+    };
+    const allParsed = active.every(part => part.parsed.verdict === 'parsed');
+    parsed.verdict = allParsed ? 'parsed' : 'unverified';
+    parsed.understood = allParsed;
+    parsed.reason = allParsed ? '' : (active.find(part => part.parsed.verdict !== 'parsed')?.parsed.reason || '');
+    parsed.layout = { ...(parsed.layout || {}), accounts: active.length };
+    return { parsed, text };
+}
+async function parseWhole(text, htmlForData = '') {
     const { context } = await tools();
     context.inputText = text;
     context.inputHtml = htmlForData;
@@ -113,6 +169,12 @@ async function parse(text, htmlForData = '') {
         }
         if (parsed.rows.length > STATEMENT_LIMITS.rows || parsed.candidateRows > STATEMENT_LIMITS.rows) fail('STATEMENT_ROW_LIMIT');
         parsed = JSON.parse(JSON.stringify(parsed));
+        // "REF:S17616" appended by the column reader belongs in the row's own
+        // reference, not in the description the owner will read in their ledger.
+        for (const row of parsed.rows) {
+            const ref = /\s*\bREF:(\S+)\s*$/.exec(row.narration || '');
+            if (ref) { row.ref = ref[1]; row.narration = row.narration.slice(0, ref.index).trim(); }
+        }
         const card = text.match(/(?:card|account)\s*(?:number|no\.?|#)?\s*[:\s]*([\dXx* -]{8,30})/i);
         parsed.layout ||= {};
         if (card) { const digits = card[1].replace(/\D/g, ''); if (digits.length >= 4) parsed.layout.accountLast4 = digits.slice(-4); }
@@ -124,9 +186,13 @@ const MONTH_INDEX = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, au
 // "Statement Period: 11-Jul-2026 to 10-Aug-2026" — the only place a table that
 // prints "13 JUL" (no year) says which year it means.
 function statementPeriodEnd(text) {
-    const m = String(text || '').replace(/\s+/g, ' ').match(/statement period\s*:?\s*\d{1,2}[-/ ][A-Za-z]{3}[A-Za-z]*[-/ ]\d{4}\s*(?:to|-|–|—)\s*(\d{1,2})[-/ ]([A-Za-z]{3})[A-Za-z]*[-/ ](\d{4})/i);
-    const month = m && MONTH_INDEX[m[2].toLowerCase()];
-    return m && month !== undefined ? Date.UTC(Number(m[3]), month, Number(m[1])) : null;
+    const flat = String(text || '').replace(/\s+/g, ' ');
+    const named = flat.match(/statement period\s*:?\s*\d{1,2}[-/ ][A-Za-z]{3}[A-Za-z]*[-/ ]\d{4}\s*(?:to|-|–|—)\s*(\d{1,2})[-/ ]([A-Za-z]{3})[A-Za-z]*[-/ ](\d{4})/i);
+    const month = named && MONTH_INDEX[named[2].toLowerCase()];
+    if (named && month !== undefined) return Date.UTC(Number(named[3]), month, Number(named[1]));
+    // "Statement Period: 01-01-2026 to 31-01-2026", day first as printed locally.
+    const numeric = flat.match(/statement period\s*:?\s*\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\s*(?:to|-|–|—)\s*(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/i);
+    return numeric && Number(numeric[2]) >= 1 && Number(numeric[2]) <= 12 ? Date.UTC(Number(numeric[3]), Number(numeric[2]) - 1, Number(numeric[1])) : null;
 }
 // A yearless "13 JUL" becomes "13 Jul 2026": the latest such date that is not
 // after the period's end, so a December row on a Dec–Jan statement stays in
@@ -142,6 +208,10 @@ function withYear(cell, periodEnd) {
     }
     return cell;
 }
+// Separates one account's ledger from the next in a consolidated statement, so
+// each is reconciled against its OWN opening and closing balance.
+const SECTION_MARK = '@@ACCOUNT@@';
+const SECTION_END = '@@END@@';
 const SUMMARY_LABEL = /^(?:opening balance|closing balance|previous balance|balance b\/f|balance c\/f|brought forward|carried forward)$/i;
 const MONEY_ONLY = /^-?\(?\d[\d,]*(?:\.\d{1,2})?\)?(?:\s*(?:DR|CR))?$/i;
 async function htmlText(html) {
@@ -168,8 +238,14 @@ async function htmlText(html) {
             return -1;
         };
         let columns = null;
-        let previousBalance = null;
+        let previousBalance = null, sumDebit = 0, sumCredit = 0;
         const lines = [];
+        const money = raw => {
+            const s = String(raw || '').trim();
+            if (!s || /^[-–—]$/.test(s)) return 0;
+            if (!/^(?:(?:LKR|Rs\.?)\s*)?\d+(?:,\d{3})*(?:\.\d{1,2})?\s*(?:DR|CR)?$/i.test(s)) return NaN;
+            return Number(s.replace(/(?:LKR|Rs\.?|DR|CR)|[,\s]/gi, ''));
+        };
         for (const [rowIndex, row] of rows.entries()) {
             const cells = cellTexts(row);
             const names = cells.map(s => s.toLowerCase().replace(/[^a-z]/g, ''));
@@ -177,7 +253,7 @@ async function htmlText(html) {
             // The FIRST date column, so a "Post Date | Transaction Date" pair reads
             // the same date the device's upload reader does.
             const date = index(/^(?:transactiondate|txndate|postingdate|posteddate|postdate|date)$/);
-            const description = index(/^(?:description|transactiondescription|particulars|narration|merchant|details)$/);
+            const description = index(/^(?:description|transactiondescription|transactiondetails|particulars|narration|merchant|details)$/);
             // "Amount" is the local-currency figure; "Transaction Amount" beside a
             // currency column is the foreign one (USD 5.00 -> LKR 1,769.93).
             const exactAmount = index(/^amount(?:lkr|rs)?$/);
@@ -185,6 +261,7 @@ async function htmlText(html) {
             const debit = index(/^(?:debit|debits|withdrawal|withdrawals|debitamount)$/);
             const credit = index(/^(?:credit|credits|deposit|deposits|creditamount)$/);
             if (date >= 0 && description >= 0 && (amount >= 0 || (debit >= 0 && credit >= 0))) {
+                if (!columns) lines.push(SECTION_MARK);
                 columns = { date, description, amount, debit, credit,
                     marker: index(/^(?:drcr|crdr|direction|type)$/) >= 0 ? index(/^(?:drcr|crdr|direction|type)$/) : inferMarker(rowIndex + 1),
                     reference: index(/^(?:reference|referenceno|ref|refno|transactionreference)$/),
@@ -193,13 +270,25 @@ async function htmlText(html) {
             }
             if (!columns || !cells.length) { lines.push(cells.join(' ')); continue; }
             const c = columns;
-            if (!cells[c.date]) { lines.push(cells.join(' ')); continue; }
-            const money = raw => {
-                const s = String(raw || '').trim();
-                if (!s || /^[-–—]$/.test(s)) return 0;
-                if (!/^(?:(?:LKR|Rs\.?)\s*)?\d+(?:,\d{3})*(?:\.\d{1,2})?\s*(?:DR|CR)?$/i.test(s)) return NaN;
-                return Number(s.replace(/(?:LKR|Rs\.?|DR|CR)|[,\s]/gi, ''));
-            };
+            const dateCell = cells[c.date] || '';
+            // The ledger's own "Total  91,832.86  67,806.90  32.93" row is not a
+            // transaction — but it is the one place the bank states what the
+            // rows above must add up to, so it is checked, not merely skipped.
+            if (/^(?:total|sub\s*total|grand\s*total)\b/i.test(dateCell)) {
+                const figures = cells.slice(1).map(money).filter(Number.isFinite);
+                if (figures.length === 3 && c.debit >= 0 && c.credit > c.debit && c.balance > c.credit
+                    && (Math.abs(sumDebit - figures[0]) > 0.011 || Math.abs(sumCredit - figures[1]) > 0.011
+                        || (previousBalance !== null && Math.abs(previousBalance - figures[2]) > 0.011))) invalidRows++;
+                continue;
+            }
+            if (!dateCell) {
+                // "B/F  24,058.89": the balance brought forward is the opening balance.
+                if (c.balance >= 0 && /^(?:b\/?f|bal(?:ance)?\s*b\/?f|brought forward|opening balance)\.?$/i.test(cells[c.description] || '')) {
+                    const opening = money(cells[c.balance]);
+                    if (Number.isFinite(opening)) { lines.push(`Opening Balance ${opening.toFixed(2)}`); previousBalance = opening; continue; }
+                }
+                lines.push(cells.join(' ')); continue;
+            }
             let value, direction = '';
             if (c.amount >= 0) {
                 value = money(cells[c.amount]);
@@ -223,14 +312,20 @@ async function htmlText(html) {
                 const balance = money(cells[c.balance]);
                 if (!Number.isFinite(balance)) invalidRows++;
                 else {
-                    if (previousBalance !== null && Math.abs(balance - previousBalance - (direction === 'CR' ? value : -value)) > 0.011) invalidRows++;
+                    // No B/F row: what the first row's own balance implies the
+                    // opening was. Every later row is chained to the one before.
+                    if (previousBalance === null) lines.push(`Opening Balance ${(direction === 'CR' ? balance - value : balance + value).toFixed(2)}`);
+                    else if (Math.abs(balance - previousBalance - (direction === 'CR' ? value : -value)) > 0.011) invalidRows++;
                     previousBalance = balance;
                 }
             }
+            if (direction === 'DR') sumDebit += value; else sumCredit += value;
             const narration = cells[c.description].replace(/\b(?:DR|CR)\b/gi, '').trim();
             const ref = c.reference >= 0 && cells[c.reference] ? ` REF:${cells[c.reference]}` : '';
-            lines.push(`${withYear(cells[c.date], periodEnd)} ${narration}${ref} ${value.toFixed(2)} ${direction}`);
+            lines.push(`${withYear(dateCell, periodEnd)} ${narration}${ref} ${value.toFixed(2)} ${direction}`);
         }
+        if (columns && previousBalance !== null) lines.push(`Closing Balance ${previousBalance.toFixed(2)}`);
+        if (columns) lines.push(SECTION_END);
         if (columns) table.textContent = `\n${lines.join('\n')}\n`;
     }
     const blocks = new Set(['TR', 'DIV', 'P', 'BR', 'LI', 'H1', 'H2', 'H3', 'TABLE', 'SECTION']);
@@ -246,6 +341,13 @@ async function htmlText(html) {
     for (let i = 0; i < flat.length; i++) {
         if (SUMMARY_LABEL.test(flat[i]) && MONEY_ONLY.test(flat[i + 1] || '')) joined.push(`${flat[i]} ${flat[++i]}`);
         else joined.push(flat[i]);
+        if (flat[i] === SECTION_MARK) {
+            // The account this ledger belongs to is printed just above it.
+            for (let back = i - 1; back >= Math.max(0, i - 10); back--) {
+                const number = /^\d{9,16}$/.exec(flat[back]);
+                if (number) { joined.push(`Account No: ${number[0]}`); break; }
+            }
+        }
     }
     return { text: joined.join('\n'), invalidRows };
 }

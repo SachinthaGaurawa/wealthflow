@@ -1,32 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readRenderedHtml } from '../statement-reader.mjs';
+import { smart, rows, consolidated, savings, current } from './helpers/smart-statements.js';
 
-// The shape of a real emailed American Express (Nations Trust Bank) Smart
-// Statement once its own script has drawn it, with invented figures:
-//   * dates are printed WITHOUT a year ("13 JUL"); the year lives only in the
-//     "Statement Period" line
-//   * a "Post Date | Transaction Date" pair
-//   * "Transaction Amount" is the foreign-currency figure, "Amount" the LKR one
-//   * the Dr/Cr column has no header at all
-//   * the summary prints each label and its figure as two separate blocks
-//   * a marketing paragraph after the table contains "carried forward"
-const smart = ({ rows, opening = '1,000.00', closing = '4,700.00', period = '11-Jul-2026 to 10-Aug-2026' }) => `<html><body>
-<div>Nations Trust Bank American Express Magnet Card</div><div>Card No: 376657*****0276</div>
-<div>Statement Period:</div><div>${period}</div>
-<div>Credit Limit</div><div>350,000</div><div>Minimum Payment Due</div><div>8,433.98</div>
-<div>Opening Balance</div><div>${opening}</div><div>Closing Balance</div><div>${closing}</div>
-<table><tr><th>Post Date</th><th>Transaction Date</th><th>Description</th><th>Transaction Currency</th><th class="r">Transaction Amount</th><th class="r">Amount</th><th class="r"> </th></tr>
-${rows.map(([post, txn, desc, ccy, foreign, local, dir]) => `<tr><td>${post}</td><td>${txn}</td><td>${desc}</td><td>${ccy}</td><td class="r">${foreign}</td><td class="r">${local}</td><td>${dir}</td></tr>`).join('')}
-</table>
-<p>Please note the interest rate applicable on all transactions including carried forward outstanding balance is revised to 2.33% p.a.</p>
-</body></html>`;
-
-const rows = [
-    ['13 JUL', '13 JUL', 'Cash advance', 'LKR', '1,000.00', '1,000.00', 'Dr'],
-    ['16 JUL', '16 JUL', 'PAYMENT THANK YOU', 'LKR', '300.00', '300.00', 'Cr'],
-    ['21 JUL', '19 JUL', 'FOREIGN MERCHANT', 'USD', '5.00', '1,500.00', 'Dr'],
-    ['21 JUL', '19 JUL', 'FOREIGN MERCHANT', 'USD', '5.00', '1,500.00', 'Dr'],
-];
 const summary = r => r.parsed.rows.map(x => [x.date, x.amount, x.direction, x.directionSource]);
 
 describe('a script-drawn card Smart Statement, read from what the device rendered', () => {
@@ -70,5 +45,45 @@ describe('a script-drawn card Smart Statement, read from what the device rendere
         const result = await readRenderedHtml(account);
         expect(result.parsed.reconciliation).toMatchObject({ opening: 1000, closing: 1700, ok: false });
         expect(result.parsed.reconciliation.model).toBeUndefined();
+    });
+});
+
+describe('a consolidated bank statement, read from what the device rendered', () => {
+    it('reads the LEDGER — debit and credit as the amount, never the running balance', async () => {
+        const result = await readRenderedHtml(consolidated([savings]));
+        expect(summary(result)).toEqual([['2026-01-02', 300, 'debit', 'marker'], ['2026-01-06', 5000, 'credit', 'marker'], ['2026-02-01', 10, 'credit', 'marker']]);
+        expect(result.parsed.rows.map(r => r.ref)).toEqual(['S1', 'S2', 'S3']);
+        expect(result.parsed.rows[0].narration).toBe('POS Transaction - SHOP ONE');
+        expect(result.parsed.reconciliation).toMatchObject({ opening: 1000, closing: 5710, credits: 5010, debits: 300, ok: true });
+        expect(result.parsed).toMatchObject({ verdict: 'parsed', understood: true });
+        expect(result.parsed.layout.accountLast4).toBe('8057');
+    });
+    it('does not read the Overview\'s interest and tax summary as transactions', async () => {
+        const result = await readRenderedHtml(consolidated([savings]));
+        expect(result.parsed.rows.some(r => /WTax|to 31-01-2026 *$/i.test(r.narration) && r.amount === 0.69)).toBe(false);
+        expect(result.parsed.rows).toHaveLength(3);
+    });
+    it('reconciles each account against its OWN opening and closing balance', async () => {
+        const result = await readRenderedHtml(consolidated([savings, current]));
+        expect(result.parsed.rows).toHaveLength(4);
+        expect(result.parsed.reconciliation).toMatchObject({ accounts: 2, ok: true, opening: 3000, closing: 7210 });
+        expect(result.parsed).toMatchObject({ verdict: 'parsed', understood: true });
+        expect(summary(result).at(-1)).toEqual(['2026-01-03', 500, 'debit', 'marker']);
+    });
+    it('will not call a statement understood when one account does not add up', async () => {
+        const broken = { ...current, rows: [['03-Jan', 'CEFTS/6719', 'S4', '500.00', '', '1,499.00']] };
+        const result = await readRenderedHtml(consolidated([savings, broken]));
+        expect(result.parsed.verdict).not.toBe('parsed');
+        expect(result.parsed.understood).toBe(false);
+    });
+    it('notices a missing row from the ledger\'s own Total line', async () => {
+        const missing = { ...savings, rows: savings.rows.slice(0, 2), totals: ['300.00', '5,010.00', '5,710.00'] };
+        const result = await readRenderedHtml(consolidated([missing]));
+        expect(result.parsed.understood).toBe(false);
+    });
+    it('derives the opening balance from the first row when no B/F row is printed', async () => {
+        const noBf = consolidated([{ ...savings }]).replace(/<tr><td><\/td><td><\/td><td>B\/F<\/td>.*?<\/tr>/, '');
+        const result = await readRenderedHtml(noBf);
+        expect(result.parsed.reconciliation).toMatchObject({ opening: 1000, closing: 5710, ok: true });
     });
 });
