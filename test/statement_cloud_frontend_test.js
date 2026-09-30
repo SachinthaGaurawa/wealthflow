@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault, friendly, review, reviewSummary, retryAttemptsSummary, openReview } from '../wealthflow-statement-cloud.js';
 
 const active = { uid: 'owner', getIdToken: vi.fn(async () => 'verified-token') };
@@ -241,6 +242,67 @@ describe('private statement cloud frontend transport', () => {
         await sync();
         expect(retryAttemptsSummary()).toEqual([]);
         await authChanged(null);
+    });
+    describe('an emailed Smart Statement is rendered on the device, like an uploaded one', () => {
+        const entry = { id: 'a'.repeat(64), index: -1, filename: 'eStatement_376657XXXXX0276_2026AUG.html', bank: 'AMEX' };
+        const shell = '<html><script>draw()</script></html>';
+        const gz = text => gzipSync(Buffer.from(text)).toString('base64');
+        const bodyOf = n => JSON.parse(fetch.mock.calls[n][1].body);
+        beforeEach(() => { window._showCCReviewModal = vi.fn(); window.notify = vi.fn(); });
+
+        it('decrypts server-side, renders on the device and sends back only the rendered document', async () => {
+            window._teachStatementLayout = vi.fn();
+            window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<table>drawn rows</table>', transactions: [{ date: '2026-09-14' }] })) };
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) }))
+                .mockResolvedValueOnce(reply(true, { ok: true, mapped: true, queued: true }));
+            await review(entry);
+            expect(bodyOf(0)).toEqual({ action: 'render-source', id: entry.id });
+            expect(window.WFHtmlStatement.htmlToTransactionsAsync).toHaveBeenCalledWith(shell);
+            expect(bodyOf(1)).toMatchObject({ action: 'rendered', id: entry.id });
+            expect(gunzipSync(Buffer.from(bodyOf(1).htmlGz, 'base64')).toString()).toBe('<table>drawn rows</table>');
+            expect(window._teachStatementLayout).not.toHaveBeenCalled();
+            expect(window.notify).toHaveBeenCalledWith('Statement read on your device and queued for background filing.', 'success');
+            await authChanged(null);
+        });
+        it('falls back to the text layout teacher when the device draws no rows', async () => {
+            window._teachStatementLayout = vi.fn();
+            window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: false, renderedHtml: '', transactions: [] })) };
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) }))
+                .mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'AMEX', filename: entry.filename }));
+            await review(entry);
+            expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'review-source']);
+            expect(window._teachStatementLayout).toHaveBeenCalledTimes(1);
+            await authChanged(null);
+        });
+        it('falls back to the teacher when the server reads no rows from what the device rendered', async () => {
+            window._teachStatementLayout = vi.fn();
+            window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-09-14' }] })) };
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) }))
+                .mockResolvedValueOnce(reply(false, { ok: false, reason: 'rendered-statement-has-no-rows' }))
+                .mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'AMEX', filename: entry.filename }));
+            await review(entry);
+            expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered', 'review-source']);
+            expect(window._teachStatementLayout).toHaveBeenCalledTimes(1);
+            await authChanged(null);
+        });
+        it('reports a possibly-already-read statement instead of a false failure', async () => {
+            window._teachStatementLayout = vi.fn();
+            window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-09-14' }] })) };
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) }))
+                .mockResolvedValueOnce(reply(false, { ok: false, reason: 'whole-statement-review-required' }));
+            await review(entry);
+            expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('may already be read'), 'warn');
+            expect(window._teachStatementLayout).not.toHaveBeenCalled();
+            await authChanged(null);
+        });
+        it('never takes the render route for a PDF or when no renderer is loaded', async () => {
+            window._teachStatementLayout = vi.fn();
+            fetch.mockResolvedValue(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }));
+            await review({ id: entry.id, index: -1, filename: 'statement.pdf' });
+            await review(entry);
+            expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['review-source', 'review-source']);
+            await authChanged(null);
+        });
     });
     describe('layout confirmation survives a transient network blip', () => {
         // "Yes, read it this way" already did the real work: re-fetching the

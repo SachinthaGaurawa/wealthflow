@@ -199,7 +199,8 @@ async function htmlText(html) {
     };
     return { text: visit(doc.documentElement || doc).split('\n').map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n'), invalidRows };
 }
-export async function readHtmlStatement(bytes, passwords = []) {
+/** Decrypts (when needed) and returns the statement's HTML document itself. */
+export async function openHtmlStatement(bytes, passwords = []) {
     let html;
     try { html = new TextDecoder('utf-8', { fatal: true }).decode(inputBytes(bytes)); } catch (error) { if (error.code) throw error; fail('HTML_ENCODING_UNSUPPORTED'); }
     const { context } = await tools();
@@ -231,14 +232,33 @@ export async function readHtmlStatement(bytes, passwords = []) {
         if (!opened) fail('PASSWORD_FAILED');
         html = opened;
     }
+    return html;
+}
+async function parseHtmlDocument(html) {
     const extracted = await htmlText(html);
     const result = await parse(extracted.text, html);
-    if (extracted.invalidRows) {
-        result.parsed.verdict = 'unverified'; result.parsed.understood = false;
-        result.parsed.htmlIncompleteRows = extracted.invalidRows;
-        result.parsed.reason = 'HTML transaction columns contain conflicting or incomplete evidence.';
-    }
+    if (extracted.invalidRows) markIncompleteHtml(result, extracted.invalidRows);
     return result;
+}
+function markIncompleteHtml(result, invalidRows) {
+    result.parsed.verdict = 'unverified'; result.parsed.understood = false;
+    result.parsed.htmlIncompleteRows = invalidRows;
+    result.parsed.reason = 'HTML transaction columns contain conflicting or incomplete evidence.';
+}
+export async function readHtmlStatement(bytes, passwords = []) {
+    return parseHtmlDocument(await openHtmlStatement(bytes, passwords));
+}
+/**
+ * A Smart Statement draws its rows with its own JavaScript, which a serverless
+ * function cannot run. The owner's device can (wealthflow-html-statement.js's
+ * sandboxed renderer) and hands the rendered document back; this runs it through
+ * exactly the same column-aware reading and validation as any other HTML
+ * statement — nothing about the rendered rows is trusted more than a static
+ * table's would be.
+ */
+export async function readRenderedHtml(html) {
+    if (typeof html !== 'string' || !html.trim() || html.length > STATEMENT_LIMITS.bytes) fail('INVALID_ATTACHMENT');
+    return parseHtmlDocument(html);
 }
 export async function readPdfStatement(bytes, passwords = []) {
     const buffer = inputBytes(bytes);
@@ -277,11 +297,23 @@ export async function readPdfStatement(bytes, passwords = []) {
     }
     fail('PASSWORD_FAILED');
 }
-export async function readStatement({ bytes, filename = '', passwords = [], bank = '', layouts = [], confirmedTemplateId = '' }) {
+export async function readStatement({ bytes, filename = '', passwords = [], bank = '', layouts = [], confirmedTemplateId = '', rendered = null }) {
     const value = inputBytes(bytes);
     let result;
     if (value.subarray(0, 5).toString() === '%PDF-') result = await readPdfStatement(value, passwords);
-    else if (/\.html?$/i.test(filename) || /^\s*(?:<!doctype html|<html)/i.test(value.subarray(0, 1024).toString())) result = await readHtmlStatement(value, passwords);
+    else if (/\.html?$/i.test(filename) || /^\s*(?:<!doctype html|<html)/i.test(value.subarray(0, 1024).toString())) {
+        result = await readHtmlStatement(value, passwords);
+        // Only a document this server could not read at all: a statement it
+        // CAN read is never overridden by anything a client sent.
+        if (!result.parsed.rows.length && typeof rendered?.text === 'string' && rendered.text.trim()) {
+            result = await parse(rendered.text);
+            if (Number(rendered.incompleteRows) > 0) markIncompleteHtml(result, Number(rendered.incompleteRows));
+            // Rows the layer scan or line scan recovered (never a real table)
+            // were unverified when they were submitted; re-reading the
+            // stored text alone must not quietly promote them to "parsed".
+            else if (rendered.verified !== true) { result.parsed.verdict = 'unverified'; result.parsed.understood = false; result.parsed.reason = 'Rendered statement rows need owner verification.'; }
+        }
+    }
     else fail('ATTACHMENT_TYPE_UNSUPPORTED');
     if (result.parsed.verdict === 'parsed' || result.parsed.htmlIncompleteRows || result.parsed.reason === 'Embedded transaction data requires completeness verification.' || !bank || !Array.isArray(layouts)) return result;
     // A template is a bounded date translation, never a replacement for the
