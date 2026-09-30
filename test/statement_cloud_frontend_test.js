@@ -138,6 +138,25 @@ describe('the mailbox audit is shown, and nothing refused is hidden', () => {
     });
 });
 
+describe('an unclear empty month is one question with one answer', () => {
+    it('offers "Yes, nothing happened that month", sends the owner\'s word, and says in plain words why it asks', async () => {
+        const buttons = [], texts = [];
+        const element = () => ({ ...fakeElement(), _t: '', set textContent(v) { this._t = v; texts.push(v); }, get textContent() { return this._t; } });
+        vi.stubGlobal('document', { createElement: tag => { const e = element(); if (tag === 'button') buttons.push(e); return e; }, body: { appendChild: () => {} } });
+        await authChanged(null);
+        window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => ({ onSnapshot: ok => { ok({ docs: [{ id: 'rv1', data: () => ({ index: -1, reason: 'statement-empty-needs-confirmation', bank: 'HNB', filename: '074-02-XXXXX-88.pdf', status: 'pending' }) }] }); return () => {}; } }) }) }) }) }) };
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0 }));
+        await authChanged(active);
+        await openReview();
+        expect(texts.some(x => x.startsWith('This month looks like it had no transactions'))).toBe(true);
+        const yes = buttons.find(b => b._t === 'Yes, nothing happened that month');
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, closed: true })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0 }));
+        await yes.onclick();
+        expect(JSON.parse(fetch.mock.calls.at(-2)[1].body)).toEqual({ action: 'close-empty', id: 'rv1' });
+        await authChanged(null);
+    });
+});
+
 describe('private statement cloud frontend transport', () => {
     it('exposes a defensive state snapshot to the real browser integration', () => {
         const first = getState();

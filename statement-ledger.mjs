@@ -1,3 +1,4 @@
+import { isPhantomRow } from './statement-emptiness.mjs';
 import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow } from './wealthflow-statement-router.js';
@@ -112,6 +113,13 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
                 if (ledgerSnaps[offset].data()?.fingerprint !== fingerprint) throw new Error('statement-cursor-or-content-changed');
                 outcome.duplicates++; return;
+            }
+            // A row with no money AND no words (a month-end date and nothing else) is not on the statement at
+            // all. It keeps its place in the statement's row numbering, so a replay lines up, and raises nothing.
+            // Whether a statement made of nothing else is really empty is decided before it gets here.
+            if (isPhantomRow(row)) {
+                writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'skipped', module: '', reason: 'empty-line', fingerprint, settledAt: now }]);
+                outcome.skipped++; return;
             }
             // A line that moves no money ("Int.Pd 0.00") is not a transaction to file
             // or to ask the owner about: it is recorded as skipped and nothing else.
