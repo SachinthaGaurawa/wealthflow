@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { normalizeCloudLayout, validateCloudTemplate } from './statement-layout.mjs';
-import { readEmbeddedStatement } from './statement-embedded.mjs';
+import { readEmbeddedStatement, embeddedPdfBytes } from './statement-embedded.mjs';
 
 const derive = promisify(pbkdf2);
 export const STATEMENT_LIMITS = Object.freeze({ bytes: 16 * 1024 * 1024, pages: 100, rows: 5000, passwords: 1000 });
@@ -437,14 +437,27 @@ export async function openHtmlStatement(bytes, passwords = []) {
     }
     return html;
 }
-async function parseHtmlDocument(html) {
+async function parseHtmlDocument(html, passwords = []) {
     // The bank's own data first: exact dates, running balances and totals that must
     // agree to the cent, read without running the document. A statement it cannot
     // vouch for falls through to the drawn-table reader below, with the reason kept.
     const embedded = readEmbeddedStatement(html);
     if (embedded?.verified) {
         if (embedded.result.parsed.rows.length > STATEMENT_LIMITS.rows) fail('STATEMENT_ROW_LIMIT');
-        return embedded.result;
+        if (embedded.result.zeroActivity === true) {
+            // "Nothing moved" is the one conclusion that hides a whole month if it is wrong, so
+            // it is held to a second, independent witness: the PDF the bank packs into the same
+            // document. If that PDF lists transactions, the data and the PDF disagree — and a
+            // statement where the bank contradicts itself goes to the owner, not to "empty".
+            const evidence = { balances: 'agree', dataRows: 0, pdf: 'absent' };
+            const pdf = embeddedPdfBytes(html);
+            if (pdf) {
+                try { evidence.pdf = (await readPdfStatement(pdf, passwords)).parsed.rows.length ? 'lists-transactions' : 'agrees'; }
+                catch { evidence.pdf = 'unreadable'; }
+            }
+            if (evidence.pdf === 'lists-transactions') embedded.problems = [...(embedded.problems || []), 'pdf-lists-transactions'];
+            else { embedded.result.emptyEvidence = evidence; return embedded.result; }
+        } else return embedded.result;
     }
     const extracted = await htmlText(html);
     const result = await parse(extracted.text, html);
@@ -461,7 +474,7 @@ function markIncompleteHtml(result, invalidRows, kinds) {
     result.parsed.reason = 'HTML transaction columns contain conflicting or incomplete evidence.';
 }
 export async function readHtmlStatement(bytes, passwords = []) {
-    return parseHtmlDocument(await openHtmlStatement(bytes, passwords));
+    return parseHtmlDocument(await openHtmlStatement(bytes, passwords), passwords);
 }
 /**
  * A Smart Statement draws its rows with its own JavaScript, which a serverless

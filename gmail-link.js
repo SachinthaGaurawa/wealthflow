@@ -46,7 +46,7 @@ import { dedupeStored, BANKS, releasedBy } from './wealthflow-mail-ingest.mjs';
 import { nameVerdict, VERDICT as STATEMENT_ID } from './wealthflow-statement-identity.js';
 import {
     addSender, setStatus, removeSender, normalizeList, groupForDisplay, REASON_TEXT,
-    matchSender, policyFrom,
+    matchSender, policyFrom, relatedApproval,
 } from './wealthflow-mail-senders.mjs';
 
 /* How many stored documents this endpoint will look at, and how many
@@ -452,6 +452,13 @@ export default async function handler(req, res) {
              * is its own verdict, and the device neither holds nor sweeps it. */
             if (!from) return { verdict: 'unrecorded', id: '', name: '', address: '', domain: '' };
             const hit = matchSender(senderList, from);
+            /* Taken from the bank's other address because it is the same kind of statement as one already
+             * filed from the approved address (see planMessage): approved for as long as an address at
+             * that bank still is. */
+            if (hit.verdict !== 'approved' && manifest && manifest.via === 'series' && relatedApproval(senderList, from)) {
+                const rel = relatedApproval(senderList, from);
+                return { verdict: 'approved', id: rel.approvedAddress || '', name: rel.name || '', address: rel.address || '', domain: rel.domain || '' };
+            }
             return {
                 verdict: hit.verdict,
                 id: (hit.entry && hit.entry.id) || '',

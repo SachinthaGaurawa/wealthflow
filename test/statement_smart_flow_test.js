@@ -3,8 +3,8 @@ import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { createFirestore } from './helpers/fake-firestore.js';
 import { smart, rows, consolidated, savings, current } from './helpers/smart-statements.js';
-import { ntbDoc, amexDoc, savingsRows } from './helpers/embedded-statements.js';
-import { submitRenderedStatement, inspectRenderSource, continueMappedLayout, runStatementSync, dismissZeroAmountReviews } from '../statement-sync.js';
+import { ntbDoc, amexDoc, savingsRows, textPdf } from './helpers/embedded-statements.js';
+import { submitRenderedStatement, inspectRenderSource, continueMappedLayout, runStatementSync, dismissZeroAmountReviews, reopenEmptyStatement } from '../statement-sync.js';
 import { readStatement } from '../statement-reader.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
 
@@ -153,6 +153,15 @@ describe('an emailed Smart Statement reaches the ledger', () => {
             expect(user.incomeRecv.map(r => [r.date, r.amount])).toEqual([['2026-01-06', 50000], ['2026-02-01', 6.9]]);
             expect(s.data.get(s.sourcePath)).toMatchObject({ status: 'filed', filed: true, hasReview: false });
         });
+        it('keeps what the statement proved about itself beside it, for the audit log', async () => {
+            const html = ntbDoc({ accounts: [{ number: '200550088057', opening: 2405889, rows: savingsRows }] });
+            const s = await drain('NTB', 'Consolidated_eStatement_2026JAN.html', html);
+            const source = s.data.get(s.sourcePath);
+            expect(source.status).toBe('filed');
+            expect(source.proof).toMatchObject({ math: 'passed', rows: 4, last4: '8057' });
+            expect(Object.values(source.proof).includes(undefined)).toBe(false);
+            expect(typeof source.proof.opening === 'number' || source.proof.opening === undefined).toBe(true);
+        });
         it('files a card statement into the card tabs under the one canonical bank name', async () => {
             const html = amexDoc({ cards: [{ cardNo: '376657*****0276', txs: [
                 { post: '13 JUL', description: 'Cash advance from MB', amount: 10000000, dir: 'Dr' }, { post: '16 JUL', description: 'PAYMENT THANK YOU', amount: 30000, dir: 'Cr' }] }], opening: 100000 });
@@ -167,6 +176,30 @@ describe('an emailed Smart Statement reaches the ledger', () => {
             expect(s.last.status).toBe('filed');
             expect(s.data.get(s.sourcePath)).toMatchObject({ status: 'filed', filed: true, emptyStatement: true });
             expect(s.data.get('users/u').cconetime).toEqual([]);
+        });
+        it('keeps the evidence it closed a month on, and closes it only while the bank\'s own PDF agrees', async () => {
+            const clean = textPdf(['Nations Trust Bank American Express', 'Statement Period: 11-Jul-2026 to 10-Aug-2026', 'Opening Balance 4,700.00 Closing Balance 4,700.00']);
+            const ok = await drain('AMEX', 'eStatement_0276_2026MAY.html', amexDoc({ cards: [{ cardNo: '376657*****0276', txs: [] }], opening: 470000, pdf: clean }));
+            expect(ok.data.get(ok.sourcePath)).toMatchObject({ status: 'filed', emptyStatement: true, emptyEvidence: { balances: 'agree', dataRows: 0, pdf: 'agrees' } });
+            // the bank's PDF lists a purchase while its data says nothing moved: the bank contradicts itself, so the owner decides
+            const contradicted = textPdf(['Nations Trust Bank American Express', 'Statement Period: 11-Jul-2026 to 10-Aug-2026', '13/07/2026 SHOP ONE 1,000.00 DR']);
+            const bad = await drain('AMEX', 'eStatement_0276_2026MAY.html', amexDoc({ cards: [{ cardNo: '376657*****0276', txs: [] }], opening: 470000, pdf: contradicted }));
+            expect(bad.data.get(bad.sourcePath).emptyStatement).not.toBe(true);
+            expect(bad.data.get(bad.sourcePath).status).not.toBe('filed');
+        });
+        it('an owner who reopens a month closed as empty gets it in review, and it is never closed automatically again', async () => {
+            const s = await drain('AMEX', 'eStatement_0276_2026MAY.html', amexDoc({ cards: [{ cardNo: '376657*****0276', txs: [] }], opening: 470000 }));
+            expect(s.data.get(s.sourcePath).emptyStatement).toBe(true);
+            const id = s.sourcePath.split('/').at(-1);
+            await expect(reopenEmptyStatement({ db: s.db, owner, id })).resolves.toEqual({ ok: true, reopened: true });
+            expect(s.data.get(s.sourcePath)).toMatchObject({ status: 'pending', filed: false, emptyStatement: false, emptyOverride: 'owner' });
+            const loadAttachment = async () => ({ bytes: Buffer.from(amexDoc({ cards: [{ cardNo: '376657*****0276', txs: [] }], opening: 470000 })), filename: 'eStatement_0276_2026MAY.html', contentSha256: 'x' });
+            const last = await runStatementSync({ action: 'drain', db: s.db, owner, env: {}, f: s.f, read: readStatement, open: s.open, settle: settleStatement, board: async () => { throw new Error('ai-consensus-unavailable'); }, loadAttachment, maxSteps: 1, preferredSourcePath: s.sourcePath });
+            expect(last.status).toBe('needs_review');
+            expect(s.data.get(s.sourcePath).emptyStatement).not.toBe(true);
+            // …and only the owner's own statement can be reopened
+            await expect(reopenEmptyStatement({ db: s.db, owner: { uid: 'someone-else', email: owner.email }, id })).rejects.toThrow();
+            await expect(reopenEmptyStatement({ db: s.db, owner, id: '../x' })).rejects.toThrow();
         });
         it('files nothing from a statement whose own figures disagree — it goes to review instead', async () => {
             const html = ntbDoc({ accounts: [{ number: '200550088057', opening: 2405889, rows: savingsRows }] }).replace('transactionDebit: "5599"', 'transactionDebit: "5599.01"');

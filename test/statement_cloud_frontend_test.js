@@ -19,6 +19,125 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+describe('missing months are shown, and shared in diagnostics without an address', () => {
+    const coverage = { at: 1, missing: 2, staged: 0, series: [
+        { label: 'Consolidated eStatement', bank: 'NTB', first: '2026-01', last: '2026-08', months: {}, missing: ['2026-03'], gaps: [{ month: '2026-03', mail: [{ messageId: 'm1', from: 'estatements@nationstrust.com', subject: 'Your e-Statement', outcome: 'a-new-address-at-a-bank-you-approved' }] }] },
+        { label: 'eStatement', bank: 'AMEX', first: '2026-01', last: '2026-08', months: {}, missing: ['2026-05'], gaps: [{ month: '2026-05', mail: [] }] },
+    ] };
+    it('keeps the sync\'s coverage, and summarises it by outcome only', async () => {
+        await authChanged(null);
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0, coverage }));
+        await authChanged(active);
+        const summary = reviewSummary();
+        expect(summary.coverage).toMatchObject({ missing: 2, series: [
+            { label: 'Consolidated eStatement', first: '2026-01', last: '2026-08', missing: ['2026-03'], gaps: [{ month: '2026-03', outcomes: ['a-new-address-at-a-bank-you-approved'] }] },
+            { label: 'eStatement', missing: ['2026-05'], gaps: [{ month: '2026-05', outcomes: [] }] },
+        ] });
+        expect(JSON.stringify(summary.coverage)).not.toMatch(/@|nationstrust|Your e-Statement|m1/);
+        await authChanged(null);
+        expect(reviewSummary().coverage).toBeUndefined();
+    });
+    it('lists months closed automatically as empty, each with a Reopen that asks the server and forgets it', async () => {
+        const buttons = [], texts = [];
+        const element = () => { const e = { ...fakeElement(), _t: '', set textContent(v) { this._t = v; texts.push(v); }, get textContent() { return this._t; } }; return e; };
+        vi.stubGlobal('document', { createElement: tag => { const e = element(); if (tag === 'button') buttons.push(e); return e; }, body: { appendChild: () => {} } });
+        await authChanged(null);
+        window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => ({ onSnapshot: ok => { ok({ docs: [] }); return () => {}; } }) }) }) }) }) };
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 }))
+            .mockResolvedValueOnce(reply(true, { ok: true, processed: 0, coverage: { at: 1, missing: 0, series: [], empties: [{ id: 'msg5.file.html.2000', label: 'eStatement_0276_2026MAY.html', month: '2026-05' }] } }));
+        await authChanged(active);
+        await openReview();
+        expect(texts).toContain('Closed automatically — the bank\'s own figures show nothing moved');
+        expect(texts.some(x => x.startsWith('2026-05 · eStatement_0276_2026MAY.html'))).toBe(true);
+        expect(reviewSummary().coverage.closedEmpty).toBe(1);
+        const reopen = buttons.find(b => b._t === 'Reopen');
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, reopened: true })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0 }));
+        await reopen.onclick();
+        expect(JSON.parse(fetch.mock.calls.at(-2)[1].body)).toEqual({ action: 'reopen-empty', id: 'msg5.file.html.2000' });
+        await authChanged(null);
+    });
+    it('draws one line per missing month, saying what the search found', async () => {
+        const texts = [];
+        const element = () => ({ ...fakeElement(), set textContent(v) { texts.push(v); }, get textContent() { return ''; } });
+        vi.stubGlobal('document', { createElement: element, body: { appendChild: () => {} } });
+        await authChanged(null);
+        window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => ({ onSnapshot: ok => { ok({ docs: [] }); return () => {}; } }) }) }) }) }) };
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0, coverage }));
+        await authChanged(active);
+        await openReview();
+        expect(texts).toContain('2 statement months not in your mailbox yet');
+        expect(texts).toContain('Consolidated eStatement · 2026-03: a new sender address — approve it in Settings → Statement senders');
+        expect(texts).toContain('eStatement · 2026-05: no email from this bank arrived that month');
+        await authChanged(null);
+    });
+});
+
+describe('the mailbox audit is shown, and nothing refused is hidden', () => {
+    const coverage = { at: 1, missing: 0, series: [],
+        audit: { at: Date.parse('2026-09-30T10:00:00Z'), listed: 61, accounted: 57, examined: 4, taken: 3, refused: 1, held: 2, complete: true },
+        refused: [{ messageId: 'm9', reason: 'dkim-did-not-pass', text: 'it claims to be from your bank but carries no valid signature', from: 'statements@nationstrust.com', subject: 'Your e-Statement', filename: 'Consolidated_eStatement_2026MAR_458290.html', receivedMs: Date.parse('2026-04-02T05:00:00Z'), asked: false }],
+        log: [{ id: 'a', at: 5, bank: 'NTB', file: 'Consolidated_eStatement_2026MAR_458290.html', month: '2026-03', status: 'Missing-Added', math: 'PASSED', via: 'audit', sha: 'abcdef012345', last4: '8057', closing: 10 },
+            { id: 'b', at: 4, bank: 'AMEX', file: 'eStatement_0276_2026MAY.html', month: '2026-05', status: 'Needs-Review', math: 'FAILED', via: '', sha: '', last4: '', closing: null }] };
+    const open = async () => {
+        const buttons = [], texts = [];
+        const element = () => ({ ...fakeElement(), _t: '', set textContent(v) { this._t = v; texts.push(v); }, get textContent() { return this._t; } });
+        vi.stubGlobal('document', { createElement: tag => { const e = element(); if (tag === 'button') buttons.push(e); return e; }, body: { appendChild: () => {} } });
+        await authChanged(null);
+        window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => ({ onSnapshot: ok => { ok({ docs: [] }); return () => {}; } }) }) }) }) }) };
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0, coverage: JSON.parse(JSON.stringify(coverage)) }));
+        await authChanged(active);
+        await openReview();
+        return { buttons, texts };
+    };
+    it('says what the history check found, lists refused bank mail with its reason, and offers Take it', async () => {
+        const { buttons, texts } = await open();
+        expect(texts).toContain('Mailbox history check');
+        expect(texts.some(x => /61 bank emails with attachments found · 57 already accounted for · 3 added now · 1 refused · 2 waiting on a sender decision$/.test(x))).toBe(true);
+        expect(texts).toContain('1 email from your banks that were not taken');
+        expect(texts.some(x => x.includes('statements@nationstrust.com · Consolidated_eStatement_2026MAR_458290.html: it claims to be from your bank but carries no valid signature'))).toBe(true);
+        const take = buttons.find(b => b._t === 'Take it');
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, queued: true })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0 }));
+        await take.onclick();
+        expect(JSON.parse(fetch.mock.calls.at(-2)[1].body)).toEqual({ action: 'take-refused', messageId: 'm9' });
+        await authChanged(null);
+    });
+    it('keeps a per-statement audit log with what each proved, and a failed tap says so instead of pretending', async () => {
+        const { buttons, texts } = await open();
+        expect(texts).toContain('Statement audit log (2)');
+        expect(texts).toContain('2026-03 · NTB · Consolidated_eStatement_2026MAR_458290.html · Missing-Added · maths PASSED · …8057 · abcdef012345');
+        expect(texts).toContain('2026-05 · AMEX · eStatement_0276_2026MAY.html · Needs-Review · maths FAILED');
+        fetch.mockRejectedValueOnce(new Error('offline'));
+        const take = buttons.find(b => b._t === 'Take it');
+        await take.onclick();
+        expect(take.disabled).toBe(false);
+        await authChanged(null);
+    });
+    it('offers no Take it for a refusal a tap cannot fix', async () => {
+        const untakeable = { ...coverage, refused: [{ ...coverage.refused[0], reason: 'too-many-attachments', text: 'it carries more attachments than a statement should', takeable: false }] };
+        const buttons = [];
+        const element = () => ({ ...fakeElement(), _t: '', set textContent(v) { this._t = v; }, get textContent() { return this._t; } });
+        vi.stubGlobal('document', { createElement: tag => { const e = element(); if (tag === 'button') buttons.push(e); return e; }, body: { appendChild: () => {} } });
+        await authChanged(null);
+        window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => ({ onSnapshot: ok => { ok({ docs: [] }); return () => {}; } }) }) }) }) }) };
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0, coverage: untakeable }));
+        await authChanged(active);
+        await openReview();
+        expect(buttons.some(b => b._t === 'Take it')).toBe(false);
+        await authChanged(null);
+    });
+    it('shares the audit in diagnostics as counts and reason codes only', async () => {
+        await authChanged(null);
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0, coverage }));
+        await authChanged(active);
+        const shared = reviewSummary().coverage;
+        expect(shared.refused).toEqual(['dkim-did-not-pass']);
+        expect(shared.audit).toMatchObject({ listed: 61, accounted: 57, taken: 3, refused: 1, held: 2, complete: true });
+        expect(shared.log).toEqual({ status: { 'Missing-Added': 1, 'Needs-Review': 1 }, math: { PASSED: 1, FAILED: 1 } });
+        expect(JSON.stringify(shared)).not.toMatch(/@|nationstrust|abcdef|8057|Consolidated/);
+        await authChanged(null);
+    });
+});
+
 describe('private statement cloud frontend transport', () => {
     it('exposes a defensive state snapshot to the real browser integration', () => {
         const first = getState();

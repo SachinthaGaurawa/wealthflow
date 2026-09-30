@@ -435,4 +435,17 @@ export function readEmbeddedStatement(html) {
     catch (e) { return { recognized: true, verified: false, kind: 'unknown', problems: [e instanceof Refused ? `data-shape-unsupported:${e.message}` : 'data-unreadable'] }; }
 }
 
+/** The PDF the bank packs into the same document (base64, for its own "Download PDF" button), or null. */
+export function embeddedPdfBytes(html) {
+    try {
+        for (const s of scriptsOf(html)) {
+            const at = s.indexOf('pdfContent');
+            if (at < 0) continue;
+            const m = /pdfContent\s*=\s*["']\s*([A-Za-z0-9+/=\s]{64,})["']/.exec(s.slice(at, at + 12_000_000));
+            if (m) { const bytes = Buffer.from(m[1].replace(/\s/g, ''), 'base64'); if (bytes.subarray(0, 5).toString() === '%PDF-') return bytes; }
+        }
+    } catch { /* no usable pdf */ }
+    return null;
+}
+
 export const _internal = { parseLiteral, balancedEnd, cents };

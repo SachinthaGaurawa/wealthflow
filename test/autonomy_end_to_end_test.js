@@ -1,0 +1,166 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createFirestore } from './helpers/fake-firestore.js';
+import { ntbDoc } from './helpers/embedded-statements.js';
+import { runStatementSync, takeRefusedMessage } from '../statement-sync.js';
+import { readStatement } from '../statement-reader.mjs';
+import { settleStatement } from '../statement-ledger.mjs';
+import { approvedClauses } from '../wealthflow-mail-senders.mjs';
+
+// A year of a mailbox, with everything that used to make a statement vanish in one place:
+//   JAN, FEB  filed on an earlier day, from the address the owner approved
+//   MAR       the bank wrote from its OTHER address (same domain, same kind of file)
+//   APR       arrived without a signature Gmail could verify
+//   MAY       Gmail put it in Spam
+//   JUN       arrived today, by the normal path
+//   JUL       an invoice from another address at the bank's domain (must never be filed)
+// The whole unattended loop runs — intake, audit, reading, filing — and then the owner's one tap.
+const NOW = Date.parse('2026-07-20T12:00:00Z');
+// The clock is the mailbox's: July 20, so JAN–JUN are due and nothing after is.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(NOW); });
+afterEach(() => { vi.useRealTimers(); });
+const owner = { uid: 'u', email: 'owner@example.com' };
+const mailPath = 'wf-mail/owner_example_com';
+const senders = [{ id: 'statements@nationstrust.com', kind: 'address', status: 'approved', name: 'NTB', domain: 'nationstrust.com' }];
+const MONTHS = { '01': 'JAN', '02': 'FEB', '03': 'MAR', '04': 'APR', '05': 'MAY', '06': 'JUN' };
+const fileName = mm => `Consolidated_eStatement_2026${MONTHS[mm]}_458290.html`;
+const html = mm => ntbDoc({ period: `01-${mm}-2026 to 28-${mm}-2026`, accounts: [{ number: '200550088057', opening: 1000000, rows: [
+    { date: `2026-${mm}-05`, details: `POS Transaction - SHOP ${mm}`, ref: `R${mm}`, debit: 10000 * Number(mm) },
+    { date: `2026-${mm}-09`, details: `Cash Deposit - BRANCH ${mm}`, ref: `D${mm}`, credit: 500000 + Number(mm) }] }] });
+const message = (id, mm, { from = 'Statements <statements@nationstrust.com>', dkim = true, filename = fileName(mm), subject = 'Your e-Statement', mime } = {}) => ({
+    id, internalDate: String(Date.parse(`2026-${mm}-28T05:00:00Z`) + 5 * 86400000),
+    payload: { headers: [{ name: 'From', value: from }, { name: 'Subject', value: subject },
+        ...(dkim ? [{ name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@nationstrust.com' }] : [])], mimeType: 'multipart/mixed',
+    parts: [{ mimeType: 'text/plain', filename: '', body: { data: 'x' } }, { mimeType: mime || 'text/html', filename, body: { attachmentId: 'att-' + id, size: 2000 } }] },
+});
+const filed = mm => [`${mailPath}/items/j${mm}.${fileName(mm)}.2000`, { uid: 'u', bank: 'NTB', filename: fileName(mm), messageId: `j${mm}`, from: 'Statements <statements@nationstrust.com>',
+    status: 'filed', filed: true, hasReview: false, cursor: 4, totalRows: 4, receivedMs: Date.parse(`2026-${mm}-28T05:00:00Z`) + 5 * 86400000, storedMs: NOW - 40 * 86400000 }];
+
+function mailbox() {
+    const inbox = [
+        message('mMAR', '03', { from: 'NTB E-Statements <estatements@nationstrust.com>' }),
+        message('mAPR', '04', { dkim: false }),
+        message('mMAY', '05'),
+        message('mJUN', '06'),
+        message('mINV', '06', { from: 'NTB Billing <billing@nationstrust.com>', filename: 'Invoice-0042.pdf', subject: 'Invoice', mime: 'application/pdf' }),
+    ];
+    const spam = new Set(['mMAY']);
+    const { db, data } = createFirestore({
+        [mailPath]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders, historyId: '1000', collectedSenderClauses: approvedClauses(senders), lastReconcileMs: NOW, email_verified: true },
+        'wf-statement-vault/u': { uid: 'u' },
+        'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [] },
+        ...Object.fromEntries(['01', '02'].map(filed)),
+    });
+    const calls = [];
+    const bodies = { mMAR: html('03'), mAPR: html('04'), mMAY: html('05'), mJUN: html('06') };
+    const f = vi.fn(async url => {
+        const u = decodeURIComponent(String(url)); calls.push(u);
+        if (u.includes('oauth2.googleapis.com')) return { ok: true, status: 200, json: async () => ({ access_token: 'token' }) };
+        if (u.includes('/profile')) return { ok: true, status: 200, json: async () => ({ emailAddress: owner.email, historyId: '1000' }) };
+        if (u.includes('/history?')) return { ok: true, status: 200, json: async () => ({ historyId: '1000', history: [] }) };
+        if (u.includes('/attachments/')) {
+            // the attachment of one message: its own statement, the same bytes every time it is asked for
+            const owner = /\/messages\/([^/]+)\/attachments\//.exec(u)?.[1];
+            return { ok: true, status: 200, json: async () => ({ data: Buffer.from(bodies[owner] || '<html>not a statement</html>').toString('base64url') }) };
+        }
+        if (u.includes('/messages?')) {
+            // What Gmail lists for a query: Spam only when asked for, and the gap search ("after:2026/04/01") finds only April.
+            const wantsSpam = u.includes('includeSpamTrash=true');
+            // a search for one month ("after:2026/04/01 before:2026/05/22") sees only mail that arrived inside that window
+            const win = /after:(\d{4})\/(\d\d)\/(\d\d) before:(\d{4})\/(\d\d)\/(\d\d)/.exec(u);
+            const inWindow = m => !win || (Number(m.internalDate) >= Date.UTC(+win[1], +win[2] - 1, +win[3]) && Number(m.internalDate) < Date.UTC(+win[4], +win[5] - 1, +win[6]));
+            const ids = inbox.filter(m => (wantsSpam || !spam.has(m.id)) && inWindow(m)).map(m => m.id);
+            return { ok: true, status: 200, json: async () => ({ messages: ids.map(id => ({ id })) }) };
+        }
+        const id = u.split('/messages/')[1]?.split('?')[0];
+        const found = inbox.find(m => m.id === id);
+        return found ? { ok: true, status: 200, json: async () => found } : { ok: false, status: 404, json: async () => ({}) };
+    });
+    const open = async () => [{ password: 'fixture-password', bank: 'NTB' }];
+    const run = (action = 'collect') => runStatementSync({ db, owner, action, env: {}, f, read: readStatement, open, settle: settleStatement, board: async () => { throw new Error('ai-consensus-unavailable'); }, budgetMs: 30000 });
+    return { db, data, f, calls, run, mail: () => data.get(mailPath), items: () => Object.fromEntries([...data.entries()].filter(([k]) => /\/items\/[^/]+$/.test(k)).map(([k, v]) => [k.split('/').pop(), v])) };
+}
+const drainAll = async s => { let out; for (let i = 0; i < 12; i++) { out = await s.run(); if (!out.collectionMore && !out.attempted) break; } return out; };
+
+describe('a mailbox where every old way of losing a statement is present', () => {
+    it('files what it may without asking, names what it may not, and never files the invoice', async () => {
+        const s = mailbox();
+        const out = await drainAll(s);
+        const items = Object.values(s.items());
+        const by = Object.fromEntries(items.map(i => [i.messageId, i]));
+        // MAR (the bank's other address), MAY (Spam) and JUN (today) are found, stored and filed — with no tap
+        for (const id of ['mMAR', 'mMAY', 'mJUN']) expect(by[id], id).toMatchObject({ status: 'filed', filed: true });
+        expect(by.mMAR.via).toBe('series');
+        expect(by.mMAY.via).toBe('audit');
+        // APR arrived without a verifiable signature: on record with its reason, not stored, not lost
+        expect(by.mAPR).toBeUndefined();
+        expect(s.mail().refused).toMatchObject([{ messageId: 'mAPR', reason: 'dkim-did-not-pass' }]);
+        // the invoice from another address is never filed, and is held for the owner's decision about the sender
+        expect(by.mINV).toBeUndefined();
+        expect(s.mail().held.map(h => h.messageId)).toEqual(['mINV']);
+        // the books hold exactly the three months that were filed now
+        const user = s.data.get('users/u');
+        expect(user.expenses.map(r => r.date).sort()).toEqual(['2026-03-05', '2026-05-05', '2026-06-05']);
+        expect(user.incomeRecv.map(r => r.date).sort()).toEqual(['2026-03-09', '2026-05-09', '2026-06-09']);
+        // the report says what happened
+        expect(out.coverage.refused).toMatchObject([{ messageId: 'mAPR', takeable: true, asked: false }]);
+        expect(out.coverage.audit).toMatchObject({ complete: true, taken: 3 });
+        expect(out.coverage.series[0].missing).toEqual(['2026-04']);
+        expect(out.coverage.series[0].gaps[0].month).toBe('2026-04');
+        // March's statement (from the bank's other address) is in that window too, and is reported as what it is: already taken
+        const april = Object.fromEntries(out.coverage.series[0].gaps[0].mail.map(m => [m.messageId, m.outcome]));
+        expect(april).toEqual({ mMAR: 'stored', mAPR: 'dkim-did-not-pass' });
+        expect(out.coverage.log.filter(l => l.status === 'Missing-Added').map(l => l.month).sort()).toEqual(['2026-03', '2026-05', '2026-06']);
+        expect(out.coverage.log.every(l => l.math === 'PASSED' || l.status === 'Synced')).toBe(true);
+    });
+
+    it('takes April on the owner\'s one tap, reads it, reconciles it, and leaves nothing missing', async () => {
+        const s = mailbox();
+        await drainAll(s);
+        await takeRefusedMessage({ db: s.db, owner, messageId: 'mAPR' });
+        const out = await drainAll(s);
+        const apr = Object.values(s.items()).find(i => i.messageId === 'mAPR');
+        expect(apr).toMatchObject({ status: 'filed', filed: true, via: 'owner' });
+        expect(apr.proof).toMatchObject({ math: 'passed', rows: 2 });
+        expect(s.mail().refused).toEqual([]);
+        expect(s.data.get('users/u').expenses.map(r => r.date).sort()).toEqual(['2026-03-05', '2026-04-05', '2026-05-05', '2026-06-05']);
+        expect(out.coverage.missing).toBe(0);
+    });
+
+    it('running the whole loop again changes nothing: no duplicate statements, no duplicate rows, nothing re-fetched that was judged', async () => {
+        const s = mailbox();
+        await takeRefusedMessage({ db: s.db, owner, messageId: 'mAPR' }).catch(() => {});
+        await drainAll(s);
+        const before = { items: Object.keys(s.items()).sort(), user: structuredClone(s.data.get('users/u')), fetches: s.calls.filter(u => u.includes('/messages/m')).length };
+        await s.data.get(mailPath) && await s.db.doc(mailPath).set({ lastAuditMs: 0 }, { merge: true });
+        await drainAll(s);
+        expect(Object.keys(s.items()).sort()).toEqual(before.items);
+        expect(s.data.get('users/u').expenses).toEqual(before.user.expenses);
+        expect(s.data.get('users/u').incomeRecv).toEqual(before.user.incomeRecv);
+        // the invoice (held) is looked at again, because approving its sender could change the answer; nothing else is
+        const again = s.calls.filter(u => u.includes('/messages/m')).length - before.fetches;
+        expect(again).toBeLessThanOrEqual(2);
+    });
+});
+
+describe('a statement taken from the bank\'s other address', () => {
+    const pendingSibling = { uid: 'u', bank: 'NTB', filename: fileName('03'), messageId: 'mMAR', from: 'NTB E-Statements <estatements@nationstrust.com>', status: 'pending', filed: false, hasReview: false, cursor: 0, via: 'series', size: 2000, receivedMs: Date.parse('2026-04-02T05:00:00Z') };
+    const seed = (s, extra = {}) => { s.data.set(`${mailPath}/items/mMAR.${fileName('03')}.2000`, { ...pendingSibling, ...extra }); };
+    it('is read and filed while the owner still approves an address at that bank', async () => {
+        const s = mailbox(); seed(s);
+        await drainAll(s);
+        expect(s.data.get(`${mailPath}/items/mMAR.${fileName('03')}.2000`)).toMatchObject({ status: 'filed', filed: true });
+        expect(s.data.get('users/u').expenses.map(r => r.date)).toContain('2026-03-05');
+    });
+    it('is retired, not filed, once the owner has revoked every address at that bank', async () => {
+        const s = mailbox(); seed(s);
+        s.data.set(mailPath, { ...s.data.get(mailPath), senders: [] });
+        await drainAll(s);
+        expect(s.data.get(`${mailPath}/items/mMAR.${fileName('03')}.2000`).status).toBe('rejected_unapproved_sender');
+        expect(s.data.get('users/u').expenses).toEqual([]);
+    });
+    it('is never filed by the same route when it was not taken by series (an ordinary message from the sibling stays unapproved)', async () => {
+        const s = mailbox(); seed(s, { via: undefined });
+        await drainAll(s);
+        expect(s.data.get(`${mailPath}/items/mMAR.${fileName('03')}.2000`).status).toBe('rejected_unapproved_sender');
+    });
+});

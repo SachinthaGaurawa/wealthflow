@@ -42,7 +42,7 @@ export function ntbDoc({ accounts, period = '01-01-2026 to 31-01-2026', overview
 }
 
 /** card: { cardNo, txs: [{ post:'13 JUL', tx?, description, ccy?, amount (cents), converted? (cents), dir:'Dr'|'Cr' }] } */
-export function amexDoc({ cards, cycle = { year: 2026, monthValue: 8, dayOfMonth: 10 }, opening, closing, payment, credits, period = '11-Jul-2026 to 10-Aug-2026', extraSummary = {} }) {
+export function amexDoc({ cards, cycle = { year: 2026, monthValue: 8, dayOfMonth: 10 }, opening, closing, payment, credits, period = '11-Jul-2026 to 10-Aug-2026', extraSummary = {}, pdf = null }) {
     const all = cards.flatMap(c => c.txs);
     const cr = all.filter(t => t.dir === 'Cr').reduce((s, t) => s + (t.converted ?? t.amount), 0);
     const dr = all.filter(t => t.dir === 'Dr').reduce((s, t) => s + (t.converted ?? t.amount), 0);
@@ -52,7 +52,20 @@ export function amexDoc({ cards, cycle = { year: 2026, monthValue: 8, dayOfMonth
     const list = cards.map(c => ({ cardNo: c.cardNo, primaryCardStatus: 'true', consumerTransactions: c.txs.map((t, i) => ({ txId: 1000 + i, postDate: t.post, txDate: t.tx || t.post, description: t.description,
         txCurrency: t.ccy || 'LKR', txAmount: t.amount / 100, txConvertedAmount: (t.converted ?? t.amount) / 100, crDr: t.dir, generatedDate: null })) }));
     const script = `// <![CDATA[\nvar statementPeriod = "${period}";\nvar cardTransactionsSummaryData = ${JSON.stringify(summary)}; var cardTransactionsDataList = ${JSON.stringify(list)};\n// ]]>`;
-    return `<html><body><script>${script}</script><script>let pdfContent = "JVBERi0x";</script></body></html>`;
+    return `<html><body><script>${script}</script><script>let pdfContent = "${pdf ? pdf.toString('base64') : 'JVBERi0x'}";</script></body></html>`;
+}
+
+/** A one-page text PDF, for the PDF a bank packs into its statement. */
+export function textPdf(texts) {
+    const stream = `BT /F1 12 Tf 50 750 Td ${texts.map((t, i) => `${i ? '0 -20 Td ' : ''}(${t.replace(/[()\\]/g, '\\$&')}) Tj`).join('\n')} ET`;
+    const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>', `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`];
+    let out = '%PDF-1.4\n'; const offsets = [];
+    objects.forEach((o, i) => { offsets.push(Buffer.byteLength(out)); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+    const start = Buffer.byteLength(out);
+    out += `xref\n0 6\n0000000000 65535 f \n${offsets.map(n => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${start}\n%%EOF`;
+    return Buffer.from(out);
 }
 
 export const savingsRows = [

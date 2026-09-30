@@ -222,6 +222,39 @@ export function heldOf(state) {
     return mergeHeld(state && state[HELD_FIELD], []);
 }
 
+/* Mail from a sender the owner APPROVED that was nevertheless not taken: a
+ * signature that did not verify, an attachment the veto read as an invoice, too
+ * many or too large. Held mail (above) waits on a decision about the SENDER; this
+ * waits on a decision about the MESSAGE, and is kept for the same reason — a
+ * statement that is refused and forgotten is a statement that silently never
+ * appears. Each entry names the intake rules it was judged under (`v`), so a later
+ * improvement to those rules re-examines exactly these messages. */
+export const REFUSED_FIELD = 'refused';
+export const MAX_REFUSED = 100;
+
+/**
+ * Merge newly refused references into what is stored; drop the ones that have
+ * since been taken. Newest first, one per message id, bounded, earliest `at` kept.
+ */
+export function mergeRefused(existing, incoming, cleared = [], now = Date.now()) {
+    const gone = new Set((Array.isArray(cleared) ? cleared : []).map(String));
+    const out = [], at = new Map();
+    const push = (h) => {
+        if (!h || typeof h !== 'object') return;
+        const key = String(h.messageId || '').trim();
+        if (!key || gone.has(key)) return;
+        const stamp = Number(h.at) > 0 ? Number(h.at) : now;
+        if (at.has(key)) { const row = out[at.get(key)]; row.at = Math.min(row.at, stamp); return; }
+        at.set(key, out.length);
+        out.push({ ...h, messageId: key, at: stamp });
+    };
+    for (const h of (Array.isArray(incoming) ? incoming : [])) push(h);
+    for (const h of (Array.isArray(existing) ? existing : [])) push(h);
+    return out.slice(0, MAX_REFUSED);
+}
+
+export const refusedOf = (state) => mergeRefused(state && state[REFUSED_FIELD], []);
+
 /** The stored sender list, defaulted so a document written before it existed
  *  reads as "nothing decided yet" rather than as an error. */
 export function sendersOf(doc) {
