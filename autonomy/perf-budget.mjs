@@ -500,7 +500,15 @@ export const BUDGETS = {
     // and the per-statement audit log (what each statement proved, how it arrived). Every one is
     // a way a statement that would otherwise vanish in silence is now shown, so the bytes are the
     // feature. ~0.15% headroom.
-    totalJsBytes: 1_933_000,
+    // 2026-09-30 (merchant review): 1,933,000 -> 1,952,500 (measured 1,950,104, no new module). The merchant
+    // engine could settle nothing on its own — its question to the AI board asked for a sentence and a decimal
+    // that a dozen engines never repeat identically, so every merchant was held for the owner — and it only ever
+    // looked at manual imports, never at the rows a statement filed. It now asks two closed fields, settles a
+    // merchant on web evidence, on two witnesses that agree, or on the unanimous board; retries the web under
+    // three names; tries held merchants again on a back-off; recognises the same shop by its words; and sweeps the
+    // generic rows statements filed. The panel ranks the hard cases by how many transactions an answer changes.
+    // ~0.1% headroom.
+    totalJsBytes: 1_952_500,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
