@@ -19,20 +19,15 @@ function change(){window.dispatchEvent(new CustomEvent('wf-statement-cloud',{det
 function sdkUser(){try{return typeof window.firebase?.auth==='function'?window.firebase.auth().currentUser:null;}catch(_){return null;}}
 function currentUser(){return user||sdkUser();}
 
-// CRDT Override Execution Layer -> Purges IndexedDB tombstones and force applies the snapshot
+// Statements are filed by the server, into the same user document the app reads. Pulling that
+// document through the app's ONE cloud applier (per-record newest-wins, tombstoned deletes)
+// puts the filed rows on screen without a reload; nothing here touches local tombstones, because
+// clearing them would bring every record the owner deleted back.
 async function refreshFinancialData(){
     const active=currentUser(),db=window.db||window.firebase?.firestore?.();
     if(!active?.uid||!db||typeof window._wfApplyCloudData!=='function')return false;
     const snap=await db.collection('users').doc(active.uid).get({source:'server'});
     if(!snap.exists)return false;
-    
-    // Explicit Event driven invalidation for Local Storage (IndexedDB Cache wipe)
-    if(typeof window._wfInvalidateLocalStore === 'function') {
-        window._wfInvalidateLocalStore();
-    }
-    // Dispatches the Event to the active view to pull hydrated state
-    window.dispatchEvent(new CustomEvent('LEDGER_STATE_SYNCHRONIZED', { detail: { timestamp: Date.now() } }));
-    
     const applied=window._wfApplyCloudData(snap.data());
     if(applied?.nonSessionChanged){
         const page=document.querySelector('.page.active');

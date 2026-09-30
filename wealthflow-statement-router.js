@@ -1,3 +1,5 @@
+import { sameBank } from './wealthflow-institutions.js';
+
 // ── detection vocab (Sri Lanka–aware) ──────────────────────────────────────
 const RE = {
   installment: /\b(instal+ment|easy\s*payment|flexi[\s-]*pay|e[\s-]?z\s*cash|emi|monthly\s*plan|0%\s*plan|\d{1,2}\s*(?:\/|of)\s*\d{1,2})\b/i,
@@ -124,7 +126,7 @@ export function isCreditCardRow(row, ctx) {
   // digits. When both the registry entry and this statement's own detected
   // bank are known, require them to agree before trusting the match; a last-4
   // hit against the wrong bank is exactly the collision this guards against.
-  if (entry.bank && ctx.bank && norm(entry.bank) !== norm(ctx.bank)) return false;
+  if (entry.bank && ctx.bank && !sameBank(entry.bank, ctx.bank) && norm(entry.bank) !== norm(ctx.bank)) return false;
   return entry.type === 'credit_card';
 }
 

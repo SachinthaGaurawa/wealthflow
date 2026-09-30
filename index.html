@@ -9135,37 +9135,24 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         }
         window._wfApplyPendingDeletesLocally = _wfApplyPendingDeletesLocally;
 
-        // Migrate legacy bank names ("AMEX" → "American Express (AMEX)") on
-        // load. Runs once per page load and silently rewrites any record
-        // that still has the old short name. The new BANKS list uses the
-        // full name everywhere; the migration keeps existing data
-        // consistent without forcing the user to edit records by hand.
+        // One name per bank: American Express (long) and AMEX (short) are one card. Rule: canonicalBank() in wealthflow-institutions.js.
+        function _canonBank(n) { try { const f = window.WFInstitutions.canonicalBank; return f ? f(n) : n; } catch (_) { return n; } }
+        // Idempotent: writes only when a record changed, so it is free to run on every card-page draw.
         function _migrateBankNames() {
             try {
-                const map = { 'AMEX': 'American Express (AMEX)' };
                 let changed = false;
-                const fix = (arr) => {
+                ['loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques'].forEach(col => {
+                    const arr = DB.get(col);
                     if (!Array.isArray(arr)) return;
+                    let dirty = false;
                     arr.forEach(rec => {
-                        if (rec && rec.bank && map[rec.bank]) {
-                            rec.bank = map[rec.bank];
-                            changed = true;
-                        }
+                        const canon = rec && rec.bank ? _canonBank(rec.bank) : '';
+                        if (canon && canon !== rec.bank) { rec.bank = canon; dirty = true; }
                     });
-                };
-                fix(DB.get('loans'));
-                fix(DB.get('ccinstall'));
-                fix(DB.get('cconetime'));
-                fix(DB.get('cheques'));
-                if (changed) {
-                    DB.set('loans', DB.get('loans'));
-                    DB.set('ccinstall', DB.get('ccinstall'));
-                    DB.set('cconetime', DB.get('cconetime'));
-                    DB.set('cheques', DB.get('cheques'));
-                    if (typeof setDirty === 'function') setDirty(true);
-                    console.log('[Migrate] Bank names migrated: AMEX → American Express (AMEX)');
-                }
-            } catch (e) { console.warn('[Migrate] bank name migration failed:', e && e.message); }
+                    if (dirty) { DB.set(col, arr); changed = true; }
+                });
+                if (changed && typeof setDirty === 'function') setDirty(true);
+            } catch (e) { console.warn('[Migrate] bank names:', e && e.message); }
         }
 
         // v7.27.0 — one-time correction for the old `paid:past` CC-statement import bug.
@@ -21707,7 +21694,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         //  only when the running credit pool can FULLY cover it, and an uncovered older
         //  charge blocks newer ones. Manually-paid charges are settled independently and
         //  are never touched. The result is persisted onto each charge (paid + autoPaid).
-        function _ccKey(r) { return String(r && r.bank || '').toLowerCase().trim() + '|' + String(r && (r.card_last4 || r.last4) || '').trim(); }
+        function _ccKey(r) { return String(_canonBank(r && r.bank) || '').toLowerCase().trim() + '|' + String(r && (r.card_last4 || r.last4) || '').trim(); }
         function reconcileCC() {
             try {
                 if (!window.WFReconcile || typeof window.WFReconcile.reconcileCard !== 'function') return false;
@@ -21764,9 +21751,9 @@ table.amort tbody tr { page-break-inside: avoid; }
         function _pruneOrphanPayments() {
             try {
                 const charges = DB.get('cconetime') || [];
-                const banksWithCharges = new Set(charges.map(c => c.bank).filter(Boolean));
+                const banksWithCharges = new Set(charges.map(c => _canonBank(c.bank)).filter(Boolean));
                 const pays = DB.get('ccPayments') || [];
-                const kept = pays.filter(p => banksWithCharges.has(p.bank));
+                const kept = pays.filter(p => banksWithCharges.has(_canonBank(p.bank)));
                 const removed = pays.length - kept.length;
                 if (removed > 0) { DB.set('ccPayments', kept); try { setDirty(true); } catch (_) {} }
                 return removed;
@@ -21814,7 +21801,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         // Manual "Record a card payment" modal (same overlay pattern as the importer).
         function openCCPaymentModal(presetBank) {
-            const banks = [...new Set((DB.get('cconetime') || []).map(x => x.bank).filter(Boolean))];
+            const banks = [...new Set((DB.get('cconetime') || []).map(x => _canonBank(x.bank)).filter(Boolean))];
             const _escB = v => String(v == null ? '' : v).replace(/"/g, '&quot;');
             // v7.29.0 — lock Card/Bank to the card in context (active filter chip / preset /
             // the only card). The user shouldn't type or change it. If several cards exist
@@ -21872,8 +21859,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (!host) return;
             const charges = DB.get('cconetime') || [];
             let pays = DB.get('ccPayments') || [];
-            if (_ccotBankFilter !== 'all') pays = pays.filter(p => p.bank === _ccotBankFilter);
-            const scoped = _ccotBankFilter === 'all' ? charges : charges.filter(c => c.bank === _ccotBankFilter);
+            if (_ccotBankFilter !== 'all') pays = pays.filter(p => _canonBank(p.bank) === _ccotBankFilter);
+            const scoped = _ccotBankFilter === 'all' ? charges : charges.filter(c => _canonBank(c.bank) === _ccotBankFilter);
             const totalPaid = pays.reduce((s, p) => s + (p.amount || 0), 0);
             const totalCharged = scoped.reduce((s, c) => s + (c.combinedTotal != null ? c.combinedTotal : (c.amount || 0) + (c.serviceFee || 0)), 0);
             const settledCount = scoped.filter(c => c.autoPaid).length;
@@ -21908,6 +21895,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         function renderCCOT() {
+            _migrateBankNames();
             reconcileCC();
             let arr = DB.get('cconetime');
             _renderCCReconcilePanel();
@@ -21917,13 +21905,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             // one-time payments by bank so each card can be viewed on its own, with
             // a live count + outstanding balance per card.
             const fbar = $('ccotFilterBar');
-            const banks = [...new Set(arr.map(x => x.bank).filter(Boolean))].sort();
+            const banks = [...new Set(arr.map(x => _canonBank(x.bank)).filter(Boolean))].sort();
             if (fbar) {
                 if (banks.length > 1) {
                     const outstanding = (b) => arr
-                        .filter(x => !x.paid && (b === 'all' || x.bank === b))
+                        .filter(x => !x.paid && (b === 'all' || _canonBank(x.bank) === b))
                         .reduce((s, x) => s + (x.combinedTotal || x.amount || 0), 0);
-                    const count = (b) => arr.filter(x => b === 'all' || x.bank === b).length;
+                    const count = (b) => arr.filter(x => b === 'all' || _canonBank(x.bank) === b).length;
                     if (_ccotBankFilter !== 'all' && !banks.includes(_ccotBankFilter)) _ccotBankFilter = 'all';
                     const _bankHue = (str) => { let h = 0; const t = String(str || ''); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0; return h % 360; };
                     const chip = (key, label) => {
@@ -21952,7 +21940,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     fbar.innerHTML = '';
                 }
             }
-            if (_ccotBankFilter !== 'all') arr = arr.filter(x => x.bank === _ccotBankFilter);
+            if (_ccotBankFilter !== 'all') arr = arr.filter(x => _canonBank(x.bank) === _ccotBankFilter);
 
             const s = sortState['ccot'];
             // v7.29.0 — DEFAULT order = newest statement/charge date on top, so importing the
