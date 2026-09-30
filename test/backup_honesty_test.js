@@ -79,7 +79,7 @@ const DEPS = [
     'firebase', 'currentUser', '_getDeviceId', 'setDirty', 'console', 'notify', 'triggerHaptic',
     'DB', 'gapiToken', 'localStorage', 'tokenClient', 'window', 'executeDriveBackup',
     '_wfTotalRecordCount', '_writePendingBackupSnapshotToSW', '_wfDriveAuthPhase',
-    'document', 'renderSettings',
+    'document', 'renderSettings', '_wfCloudSafe',
 ];
 
 /* Both functions in ONE scope, exactly as they are in the page, so they share
@@ -93,6 +93,8 @@ function load(over = {}) {
         setSyncStatus: () => {},
         isDirty: over.isDirty !== undefined ? over.isDirty : true,
         _flushCloudDeletes: () => {},
+        // The real payload sanitiser, extracted from the page like the functions under test.
+        _wfCloudSafe: new Function(fnSource('_wfCloudSafe') + '\nreturn _wfCloudSafe;')(),
         appData: { expenses: [] },
         firebase: { firestore: { FieldValue: { serverTimestamp: () => 'ts' } } },
         currentUser: over.signedIn === false ? null : { uid: 'u1', email: 'a@b.c' },

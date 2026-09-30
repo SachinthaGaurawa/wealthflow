@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { normalizeCloudLayout, validateCloudTemplate } from './statement-layout.mjs';
+import { readEmbeddedStatement } from './statement-embedded.mjs';
 
 const derive = promisify(pbkdf2);
 export const STATEMENT_LIMITS = Object.freeze({ bytes: 16 * 1024 * 1024, pages: 100, rows: 5000, passwords: 1000 });
@@ -227,7 +228,8 @@ function withYear(cell, periodEnd) {
     const month = m && MONTH_INDEX[m[2].toLowerCase()];
     if (periodEnd === null || !m || month === undefined) return cell;
     const endYear = new Date(periodEnd).getUTCFullYear();
-    for (const year of [endYear, endYear - 1]) {
+    // The year AFTER the period's end too: a December statement carries the 1 Jan interest posting.
+    for (const year of [endYear + 1, endYear, endYear - 1]) {
         const at = Date.UTC(year, month, Number(m[1]));
         if (new Date(at).getUTCMonth() === month && at <= periodEnd + 7 * 86400000) return `${m[1]} ${m[2].slice(0, 3)} ${year}`;
     }
@@ -436,10 +438,19 @@ export async function openHtmlStatement(bytes, passwords = []) {
     return html;
 }
 async function parseHtmlDocument(html) {
+    // The bank's own data first: exact dates, running balances and totals that must
+    // agree to the cent, read without running the document. A statement it cannot
+    // vouch for falls through to the drawn-table reader below, with the reason kept.
+    const embedded = readEmbeddedStatement(html);
+    if (embedded?.verified) {
+        if (embedded.result.parsed.rows.length > STATEMENT_LIMITS.rows) fail('STATEMENT_ROW_LIMIT');
+        return embedded.result;
+    }
     const extracted = await htmlText(html);
     const result = await parse(extracted.text, html);
     if (extracted.invalidRows) markIncompleteHtml(result, extracted.invalidRows, extracted.kinds);
     else if (Object.keys(extracted.kinds).length) result.parsed.htmlReadNotes = extracted.kinds;
+    if (embedded && embedded.problems?.length) result.parsed.embeddedProblems = embedded.problems.slice(0, 12);
     return result;
 }
 function markIncompleteHtml(result, invalidRows, kinds) {

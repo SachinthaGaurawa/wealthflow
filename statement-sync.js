@@ -18,7 +18,7 @@ export const config = { maxDuration: 60 };
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const RETRY_MAX_MS = 180000;
 const PASSWORD_BATCH = 6;
-const WHOLE_REPLAY_VERSION = 2;
+const WHOLE_REPLAY_VERSION = 3;
 const SAFE_WHOLE_REPLAY = new Set([
     'statement-layout-identity-needs-review',
     'statement-layout-or-reconciliation-needs-review',
@@ -215,7 +215,9 @@ async function quarantineSource(db, uid, ref, leaseToken, reason, evidence = {})
         tx.set(reviewRef, { uid, sourcePath: ref.path, index: -1, status: 'pending', reason,
             bank: String(source.bank || ''), filename: String(source.filename || ''), subject: String(source.subject || ''),
             receivedMs: Number(source.receivedMs) || 0, from: String(source.from || ''), last4: String(evidence.last4 || ''),
-            ...(statementText ? { statementText } : {}), ...(evidence.rendered === true ? { renderedRead: RENDERED_VERSION } : {}), createdAt: Date.now() }, { merge: true });
+            ...(statementText ? { statementText } : {}), ...(evidence.rendered === true ? { renderedRead: RENDERED_VERSION } : {}),
+            // Why the bank's own data could not be vouched for — fixed codes only, never a figure.
+            ...(Array.isArray(evidence.embedded) && evidence.embedded.length ? { embeddedProblems: evidence.embedded.slice(0, 12).map(code => String(code).replace(/[^\w:.-]/g, '').slice(0, 60)) } : {}), createdAt: Date.now() }, { merge: true });
         tx.set(ref, { status: 'needs_review', hasReview: true, filed: false, leaseToken: '', leaseUntil: 0, reviewReason: reason, updatedAt: Date.now() }, { merge: true });
     });
 }
@@ -539,7 +541,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             throw error;
         }
         const { parsed, text } = result;
-        reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '', rendered: result.renderedOverride === true };
+        reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '', rendered: result.renderedOverride === true, embedded: parsed?.embeddedProblems };
         
         // --- Added Cryptographic Identity verification bound to the extracted raw source ---
         const identity = textVerdict(text || '');
@@ -550,9 +552,10 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         if (identity.verdict === VERDICT.NOT_STATEMENT) {
             await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, identity);
             outcome = { status: 'rejected_non_statement', rejected: 1 };
-        } else if (result.zeroActivity === true && result.renderedOverride === true && identity.verdict === VERDICT.STATEMENT && parsed?.rows?.length === 0) {
-            // Rendered on the owner's device, identified as a statement, and its
-            // own opening and closing balances agree: a month with no transactions.
+        } else if (result.zeroActivity === true && (result.renderedOverride === true || result.embedded === true) && identity.verdict === VERDICT.STATEMENT && parsed?.rows?.length === 0) {
+            // Read from the bank's own data (or rendered on the owner's device),
+            // identified as a statement, and its own opening and closing balances
+            // agree: a month with no transactions.
             outcome = await fileEmptyStatement(db, uid, sourceRef, claimed.leaseToken, mailRef);
         } else {
             if (identity.verdict !== VERDICT.STATEMENT && !parserProof) throw new Error('statement-layout-identity-needs-review');

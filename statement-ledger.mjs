@@ -105,7 +105,9 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         
         rows.forEach((row, offset) => {
             const index = cursor + offset, id = ledgerRefs[offset].id;
-            const context = { bank, last4, card_last4: last4, statementType, cardRegistry, sourcePath: sourceRef.path, index };
+            // A consolidated statement carries several accounts: a row knows which one it belongs to.
+            const rowLast4 = String(row?.card_last4 || last4 || '');
+            const context = { bank, last4: rowLast4, card_last4: rowLast4, statementType, cardRegistry, sourcePath: sourceRef.path, index };
             const fingerprint = hash(rowIdentity(row, context));
             if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
                 if (ledgerSnaps[offset].data()?.fingerprint !== fingerprint) throw new Error('statement-cursor-or-content-changed');

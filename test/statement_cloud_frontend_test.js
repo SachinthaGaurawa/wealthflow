@@ -199,7 +199,7 @@ describe('private statement cloud frontend transport', () => {
         const docs = [
             { id: 'r1', data: () => ({ reason: 'card-charge-context-required', index: 5, row: { amount: 4250, description: 'KEELLS' }, bank: 'DFCC' }) },
             { id: 'r2', data: () => ({ reason: 'card-charge-context-required', index: 7, row: { amount: 900, description: 'CARGILLS' }, bank: 'DFCC' }) },
-            { id: 'r3', data: () => ({ reason: 'statement-layout-or-reconciliation-needs-review', index: -1, bank: 'NTB', filename: 'ntb-aug.pdf' }) },
+            { id: 'r3', data: () => ({ reason: 'statement-layout-or-reconciliation-needs-review', index: -1, bank: 'NTB', filename: 'ntb-aug.pdf', embeddedProblems: ['balance-chain-broken'] }) },
         ];
         window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => term } ) }) }) }) };
         await openReview();
@@ -208,7 +208,7 @@ describe('private statement cloud frontend transport', () => {
         expect(summary.perRow).toBe(2);
         expect(summary.wholeStatement).toBe(1);
         expect(summary.byReason).toEqual({ 'card-charge-context-required': 2, 'statement-layout-or-reconciliation-needs-review': 1 });
-        expect(summary.wholeStatements).toEqual([{ bank: 'NTB', filename: 'ntb-aug.pdf', reason: 'statement-layout-or-reconciliation-needs-review' }]);
+        expect(summary.wholeStatements).toEqual([{ bank: 'NTB', filename: 'ntb-aug.pdf', reason: 'statement-layout-or-reconciliation-needs-review', embedded: ['balance-chain-broken'] }]);
         expect(JSON.stringify(summary)).not.toMatch(/4250|900|KEELLS|CARGILLS/);
         await authChanged(null);
     });
