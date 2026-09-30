@@ -255,7 +255,7 @@
     function _yearlessYear(mm, day) {
         if (_periodEnd === null) return String(new Date().getFullYear());
         var endYear = new Date(_periodEnd).getUTCFullYear();
-        for (var i = 0; i < 2; i++) {
+        for (var i = -1; i < 2; i++) {   // the year after the end too: a December statement carries the 1 Jan interest posting
             var y = endYear - i, at = Date.UTC(y, parseInt(mm, 10) - 1, +day);
             if (new Date(at).getUTCMonth() === parseInt(mm, 10) - 1 && at <= _periodEnd + 7 * 86400000) return String(y);
         }

@@ -28,6 +28,13 @@ describe('a script-drawn card Smart Statement, read from what the device rendere
             rows: [['28 DEC', '28 DEC', 'SHOP', 'LKR', '200.00', '200.00', 'Dr'], ['05 JAN', '05 JAN', 'SHOP TWO', 'LKR', '100.00', '100.00', 'Dr']] }));
         expect(summary(result).map(x => x[0])).toEqual(['2025-12-28', '2026-01-05']);
     });
+    it('puts the 1 January posting on a December statement in the NEXT year', async () => {
+        const result = await readRenderedHtml(smart({ period: '11-Nov-2026 to 10-Dec-2026', opening: '0.00', closing: '300.00',
+            rows: [['28 NOV', '28 NOV', 'SHOP', 'LKR', '200.00', '200.00', 'Dr'], ['09 DEC', '09 DEC', 'SHOP TWO', 'LKR', '100.00', '100.00', 'Dr']] }));
+        expect(summary(result).map(x => x[0])).toEqual(['2026-11-28', '2026-12-09']);
+        const ntb = await readRenderedHtml(consolidated([{ ...savings, rows: [['02-Dec', 'POS Transaction - SHOP ONE', 'S1', '300.00', '', '700.00'], ['01-Jan', 'Int.Pd', 'S2', '', '10.00', '710.00']], totals: ['300.00', '10.00', '710.00'] }]).replace('01-01-2026 to 31-01-2026', '01-12-2026 to 31-12-2026'));
+        expect(summary(ntb).map(x => x[0])).toEqual(['2026-12-02', '2027-01-01']);
+    });
     it('does not take a sentence containing "carried forward" for the closing balance', async () => {
         const result = await readRenderedHtml(smart({ rows }));
         expect(result.parsed.reconciliation.closing).toBe(4700);

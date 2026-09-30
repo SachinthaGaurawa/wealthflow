@@ -3,6 +3,7 @@ import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { createFirestore } from './helpers/fake-firestore.js';
 import { smart, rows, consolidated, savings, current } from './helpers/smart-statements.js';
+import { ntbDoc, amexDoc, savingsRows } from './helpers/embedded-statements.js';
 import { submitRenderedStatement, inspectRenderSource, continueMappedLayout, runStatementSync, dismissZeroAmountReviews } from '../statement-sync.js';
 import { readStatement } from '../statement-reader.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
@@ -128,6 +129,55 @@ describe('an emailed Smart Statement reaches the ledger', () => {
         expect(await dismissZeroAmountReviews({ db: s.db, uid: 'u' })).toBe(1);
         expect(s.data.get(`users/u/statementReview/${zero}`)).toMatchObject({ status: 'dismissed', dismissedBy: 'zero-amount-line' });
         expect(s.data.get(`users/u/statementReview/${misread}`).status).toBe('pending');
+    });
+    describe('with the app closed — the server reads the bank\'s own data by itself', () => {
+        // The attachment is the decrypted Smart Statement. No device renders anything: no render-source, no rendered call.
+        const drain = async (bank, filename, html) => {
+            const s = setup({ bank, filename, extraSource: { status: 'pending', hasReview: false }, extraReview: {} });
+            s.data.delete(`users/u/statementReview/${s.reviewId}`);
+            const loadAttachment = async () => ({ bytes: Buffer.from(html), filename, contentSha256: 'x' });
+            const enqueue = args => runStatementSync({ action: 'drain', ...args, db: s.db, owner, env: {}, f: s.f, read: readStatement, open: s.open, settle: settleStatement, board: async () => { throw new Error('ai-consensus-unavailable'); }, loadAttachment });
+            let last;
+            for (let i = 0; i < 6; i++) { last = await enqueue({ sourcePath: s.sourcePath, maxSteps: 1 }); if (last.status === 'filed' || last.status === 'needs_review') break; }
+            return { ...s, last };
+        };
+        it('files a consolidated NTB statement into expenses and income, every row on its own account', async () => {
+            const html = ntbDoc({ accounts: [
+                { number: '200550088057', opening: 2405889, rows: savingsRows },
+                { kind: 'current', number: '300123456789', opening: 250000, rows: [{ date: '2026-01-03', details: 'CEFTS/6719', ref: 'S9', debit: 500 }] },
+            ] });
+            const s = await drain('NTB', 'Consolidated_eStatement_2026JAN.html', html);
+            expect(s.last.status).toBe('filed');
+            const user = s.data.get('users/u');
+            expect(user.expenses.map(r => [r.date, r.amount, r.card_last4])).toEqual([['2026-01-02', 5599, '8057'], ['2026-01-03', 3000, '8057'], ['2026-01-03', 5, '6789']]);
+            expect(user.incomeRecv.map(r => [r.date, r.amount])).toEqual([['2026-01-06', 50000], ['2026-02-01', 6.9]]);
+            expect(s.data.get(s.sourcePath)).toMatchObject({ status: 'filed', filed: true, hasReview: false });
+        });
+        it('files a card statement into the card tabs under the one canonical bank name', async () => {
+            const html = amexDoc({ cards: [{ cardNo: '376657*****0276', txs: [
+                { post: '13 JUL', description: 'Cash advance from MB', amount: 10000000, dir: 'Dr' }, { post: '16 JUL', description: 'PAYMENT THANK YOU', amount: 30000, dir: 'Cr' }] }], opening: 100000 });
+            const s = await drain('AMEX', 'eStatement_0276.html', html);
+            expect(s.last.status).toBe('filed');
+            const user = s.data.get('users/u');
+            expect(user.cconetime.map(r => [r.date, r.amount, r.bank, r.card_last4])).toEqual([['2026-07-13', 100000, 'American Express (AMEX)', '0276']]);
+            expect(user.ccPayments.map(r => [r.date, r.amount])).toEqual([['2026-07-16', 300]]);
+        });
+        it('closes a month whose own balances prove nothing moved, with no phone involved', async () => {
+            const s = await drain('AMEX', 'eStatement_0276_2026MAY.html', amexDoc({ cards: [{ cardNo: '376657*****0276', txs: [] }], opening: 470000 }));
+            expect(s.last.status).toBe('filed');
+            expect(s.data.get(s.sourcePath)).toMatchObject({ status: 'filed', filed: true, emptyStatement: true });
+            expect(s.data.get('users/u').cconetime).toEqual([]);
+        });
+        it('files nothing from a statement whose own figures disagree — it goes to review instead', async () => {
+            const html = ntbDoc({ accounts: [{ number: '200550088057', opening: 2405889, rows: savingsRows }] }).replace('transactionDebit: "5599"', 'transactionDebit: "5599.01"');
+            const s = await drain('NTB', 'Consolidated_eStatement_2026JAN.html', html);
+            expect(s.data.get('users/u').expenses).toEqual([]);
+            expect(s.data.get(s.sourcePath).status).not.toBe('filed');
+            // …and the review says WHY, in fixed codes, so a statement that will not file can be explained without seeing a figure.
+            const review = [...s.data.entries()].find(([path, doc]) => path.includes('/statementReview/') && doc.sourcePath === s.sourcePath)?.[1];
+            expect(review?.embeddedProblems).toEqual(expect.arrayContaining(['balance-chain-broken']));
+            expect(JSON.stringify(review?.embeddedProblems)).not.toMatch(/\d{3,}/);
+        });
     });
     it('does not keep asking about a source that can make no more progress', async () => {
         const s = setup({ bank: 'AMEX', filename: 'eStatement_0276.html' });

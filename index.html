@@ -9204,6 +9204,14 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
          * FALSE otherwise, and never rejects, so the many fire-and-forget callers
          * are unaffected. */
         let _lastCloudPushError = '';
+        // Firestore rejects `undefined` ANYWHERE in a document: one stray field fails this push and every later one until reload.
+        function _wfCloudSafe(v, d = 0) {
+            if (v === undefined || typeof v === 'function' || d > 40) return undefined;
+            if (v === null || typeof v !== 'object') return v;
+            if (Array.isArray(v)) return v.map(x => { const c = _wfCloudSafe(x, d + 1); return c === undefined ? null : c; });
+            if (Object.getPrototypeOf(v) !== Object.prototype) return v;
+            const o = {}; for (const k in v) { const c = _wfCloudSafe(v[k], d + 1); if (c !== undefined) o[k] = c; } return o;
+        }
         function syncToCloud() {
             _lastCloudPushError = '';
             // Same contract, the other direction. The payload below is
@@ -9226,7 +9234,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             try { _flushCloudDeletes(); } catch (_) { }
 
             // Add sync metadata — include a device-level write stamp to identify our own echoes
-            const syncPayload = Object.assign({}, appData, {
+            const syncPayload = Object.assign({}, _wfCloudSafe(appData), {
                 _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
                 _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
                 _writeDeviceId: _getDeviceId(),
@@ -9234,7 +9242,9 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             });
 
             // Use merge:true so we never accidentally drop fields that exist in cloud but not in local appData
-            return userDocRef.set(syncPayload, { merge: true }).then(() => {
+            let _push;
+            try { _push = userDocRef.set(syncPayload, { merge: true }); } catch (err) { _push = Promise.reject(err); }
+            return _push.then(() => {
                 setDirty(false);
                 lastSyncTime = Date.now();
                 _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
@@ -21717,7 +21727,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         if (!!x.paid !== want || !!x.autoPaid !== want) {
                             x.paid = want; x.autoPaid = want;
                             if (want) { if (!x.paidAt) x.paidAt = Date.now(); }
-                            else { x.paidAt = undefined; }
+                            else { delete x.paidAt; }
                             changed = true;
                         }
                     });

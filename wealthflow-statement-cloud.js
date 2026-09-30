@@ -10,7 +10,7 @@ export function reviewSummary(){
         byReason[reason]=(byReason[reason]||0)+1;
         if(entry.index<0||!entry.row)wholeStatement++;else perRow++;
     }
-    const wholeStatements=pending.filter(e=>e.index<0||!e.row).slice(0,20).map(e=>({bank:e.bank||'',filename:e.filename||'',reason:e.reason||''}));
+    const wholeStatements=pending.filter(e=>e.index<0||!e.row).slice(0,20).map(e=>({bank:e.bank||'',filename:e.filename||'',reason:e.reason||'',...(Array.isArray(e.embeddedProblems)&&e.embeddedProblems.length?{embedded:e.embeddedProblems.slice(0,12)}:{})}));
     return {total:pending.length,wholeStatement,perRow,byReason,wholeStatements};
 }
 

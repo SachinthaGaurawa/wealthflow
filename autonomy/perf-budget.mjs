@@ -244,7 +244,15 @@ export const BUDGETS = {
     // — a statement can sit in the server's own exponential-backoff loop
     // indefinitely with the one fact that explains it invisible to everyone
     // (measured 2,078,121).
-    htmlBytes: 2_078_121,
+    // Raised 2026-09-30: syncToCloud() now builds its payload through
+    // _wfCloudSafe(). Firestore rejects `undefined` ANYWHERE in a document, and
+    // one such field (a charge's `paidAt = undefined` when the card page
+    // un-settles it) failed the whole push, and every later one, until reload —
+    // the owner's diagnostics showed exactly that error from syncToCloud. The
+    // sanitiser, a guard against a synchronous throw from set(), and dropping the
+    // undefined at its source are this figure (measured 2,078,632). No new
+    // script or request.
+    htmlBytes: 2_078_700,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
