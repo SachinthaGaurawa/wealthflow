@@ -461,6 +461,20 @@ export function approvedClauses(list) {
     return out;
 }
 
+/**
+ * The same approvals as whole bank DOMAINS — for the history audit only, which has to
+ * LIST a bank's second address in order to judge it. Listing is not accepting:
+ * matchSender still decides, per message, on the exact address.
+ */
+export function approvedDomainClauses(list) {
+    const out = new Set();
+    for (const e of normalizeList(list)) {
+        if (!isExactApproval(e) || matchSender(list, e.id).verdict !== STATUS.APPROVED || !e.domain) continue;
+        out.add(`from:${e.domain}`);
+    }
+    return [...out].sort();
+}
+
 /** Has the owner curated this list at all? */
 export function hasApproved(list) {
     return approvedClauses(list).length > 0;

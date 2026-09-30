@@ -4,8 +4,10 @@ import { getAdminDb } from './admin-db.mjs';
 import { identify, userKeyFor, sendersOf } from './gmail-link.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { syncMailbox } from './gmail-hook.js';
-import { policyFrom, matchSender } from './wealthflow-mail-senders.mjs';
-import { planMessage } from './wealthflow-mail-ingest.mjs';
+import { policyFrom, matchSender, normalizeList, approvedClauses, relatedApproval } from './wealthflow-mail-senders.mjs';
+import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf } from './statement-coverage.mjs';
+import { REJECT_TEXT, REJECT } from './wealthflow-mail-ingest.mjs';
+import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { settleStatement, resolveReview, transferEvidence, isZeroAmountLine } from './statement-ledger.mjs';
@@ -191,7 +193,7 @@ export async function checkpointRows(db, ref, uid, leaseToken, rows) {
 // leaving it in review for the owner to dismiss by hand is a chore the system can
 // do itself. Closed exactly as a filed statement is, with the mark that says why
 // there are no ledger rows, and any whole-statement review it had is resolved.
-async function fileEmptyStatement(db, uid, ref, leaseToken, mailRef, now = Date.now()) {
+async function fileEmptyStatement(db, uid, ref, leaseToken, mailRef, evidence = {}, now = Date.now()) {
     const userRef = db.collection('users').doc(uid);
     await db.runTransaction(async tx => {
         const snap = await tx.get(ref), source = snap.data();
@@ -202,7 +204,7 @@ async function fileEmptyStatement(db, uid, ref, leaseToken, mailRef, now = Date.
         }
         const reviews = await tx.get(userRef.collection('statementReview').where('sourcePath', '==', ref.path));
         for (const doc of reviews.docs) if (doc.data().uid === uid && doc.data().status === 'pending') tx.set(doc.ref, { status: 'resolved', resolvedAt: now, replayStatus: 'filed', emptyStatement: true }, { merge: true });
-        tx.set(ref, { status: 'filed', filed: true, emptyStatement: true, cursor: 0, totalRows: 0, hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
+        tx.set(ref, { status: 'filed', filed: true, emptyStatement: true, emptyEvidence: { balances: String(evidence.balances || '').slice(0, 20), dataRows: Number(evidence.dataRows) || 0, pdf: String(evidence.pdf || 'absent').slice(0, 24), at: now }, cursor: 0, totalRows: 0, hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
     });
     return { status: 'filed', filed: 0, review: 0, empty: 1 };
 }
@@ -234,6 +236,19 @@ async function rejectNonStatement(db, uid, ref, leaseToken, identity) {
     });
 }
 
+// Was this stored message taken on the owner's approval, and is that approval still in force? An
+// approved address always is. A statement taken from the bank's OTHER address (via: 'series') is only
+// while the owner still approves an address at that bank; revoke it and the statement is retired.
+function senderStillApproved(senders, source) {
+    if (matchSender(senders, source.from || '').verdict === 'approved') return true;
+    return source.via === 'series' && !!relatedApproval(senders, source.from || '');
+}
+
+// The rules a stored message was taken under, so reading it again judges it the same way.
+function intakeRules(senders, source) {
+    return { ...policyFrom(senders), ...(source.via === 'owner' ? { forced: true } : {}), ...(source.via === 'series' ? { siblingSeries: new Set([filenameStem(source.filename)]) } : {}) };
+}
+
 async function retireUnapprovedSource(db, uid, mailRef, ref, now = Date.now()) {
     return db.runTransaction(async tx => {
         const [mailSnap, sourceSnap] = await Promise.all([tx.get(mailRef), tx.get(ref)]);
@@ -241,7 +256,7 @@ async function retireUnapprovedSource(db, uid, mailRef, ref, now = Date.now()) {
         if (!mailSnap.exists || mail.uid !== uid || !sourceSnap.exists || (source.uid && source.uid !== uid)
             || !['pending', 'processing'].includes(source.status)
             || (source.status === 'processing' && (source.leaseUntil || 0) > now)
-            || matchSender(sendersOf(mail), source.from || '').verdict === 'approved') return false;
+            || senderStillApproved(sendersOf(mail), source)) return false;
         tx.set(ref, { uid, status: 'rejected_unapproved_sender', filed: false, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
         return true;
     });
@@ -253,7 +268,7 @@ export async function attachmentBytes(source, ref, token, senders, f = fetch) {
     if (response.status === 404) throw new Error('statement-message-deleted');
     if (!response.ok) throw new Error('gmail-fetch-unavailable');
     const message = await response.json();
-    const plan = planMessage(message, policyFrom(senders));
+    const plan = planMessage(message, intakeRules(senders, source));
     if (!plan.ok) throw new Error('statement-sender-no-longer-approved');
     let items = plan.items.filter(item => item.key === ref.id || item.legacyKey === ref.id);
     if (items.length === 0 && source.attachmentId) {
@@ -552,16 +567,17 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         if (identity.verdict === VERDICT.NOT_STATEMENT) {
             await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, identity);
             outcome = { status: 'rejected_non_statement', rejected: 1 };
-        } else if (result.zeroActivity === true && (result.renderedOverride === true || result.embedded === true) && identity.verdict === VERDICT.STATEMENT && parsed?.rows?.length === 0) {
+        } else if (result.zeroActivity === true && claimed.emptyOverride !== 'owner' && (result.renderedOverride === true || result.embedded === true) && identity.verdict === VERDICT.STATEMENT && parsed?.rows?.length === 0) {
             // Read from the bank's own data (or rendered on the owner's device),
             // identified as a statement, and its own opening and closing balances
             // agree: a month with no transactions.
-            outcome = await fileEmptyStatement(db, uid, sourceRef, claimed.leaseToken, mailRef);
+            outcome = await fileEmptyStatement(db, uid, sourceRef, claimed.leaseToken, mailRef, result.emptyEvidence || { balances: 'agree', dataRows: 0, pdf: result.renderedOverride ? 'device-render' : 'absent' });
         } else {
             if (identity.verdict !== VERDICT.STATEMENT && !parserProof) throw new Error('statement-layout-identity-needs-review');
             if (!parserProof) throw new Error('statement-layout-or-reconciliation-needs-review');
             await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
             const cursor = claimed.cursor || 0;
+            if (cursor === 0) await recordProof(sourceRef, parsed, confirmedBypass);
             if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor >= parsed.rows.length || (claimed.totalRows != null && claimed.totalRows !== parsed.rows.length)) throw new Error('statement-cursor-or-content-changed');
             const user = (await db.collection('users').doc(uid).get()).data() || {};
             const statementType = parsed.layout?.statementType || '';
@@ -598,8 +614,144 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
     return outcome;
 }
 
+// What the statement proved about itself, kept beside it: the audit log reads this
+// back, so "it reconciled" is a recorded fact and not an inference from "it was filed".
+// Advice only — failing to write it never stops a statement from being filed.
+const cents = v => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 100) / 100 : null);
+async function recordProof(sourceRef, parsed, bypassed) {
+    const r = parsed?.reconciliation || {};
+    const proof = { math: bypassed ? 'owner-confirmed' : r.ok === true ? 'passed' : 'unchecked', rows: Array.isArray(parsed?.rows) ? parsed.rows.length : 0, last4: String(parsed?.layout?.accountLast4 || '').slice(0, 4) };
+    for (const key of ['opening', 'closing', 'credits', 'debits']) { const v = cents(r[key]); if (v !== null) proof[key] = v; }
+    try { await sourceRef.set({ proof }, { merge: true }); } catch (_) { /* see above */ }
+}
+
 async function enqueueStatementSync({ db, owner, env = process.env, f = fetch, sourcePath = '', maxSteps = Infinity }) {
     return runStatementSync({ db, owner, action: 'drain', env, f, preferredSourcePath: sourcePath, maxSteps });
+}
+
+// A month closed as "nothing moved" is the one automatic decision that hides a whole
+// statement if it is wrong, so it is always reversible: the owner reopens it, and it
+// is then read again but NEVER closed automatically a second time — it goes to review.
+export async function reopenEmptyStatement({ db, owner, id }) {
+    if (!/^[A-Za-z0-9._-]{1,400}$/.test(String(id || '')) || !owner?.uid || !owner?.email) throw new Error('invalid-reopen-request');
+    const mailRef = db.collection('wf-mail').doc(userKeyFor(owner.email)), ref = mailRef.collection('items').doc(id);
+    await db.runTransaction(async tx => {
+        const snap = await tx.get(ref), source = snap.data();
+        if (!snap.exists || source.uid !== owner.uid || source.emptyStatement !== true) throw new Error('not-an-empty-statement');
+        const now = Date.now();
+        tx.set(ref, { status: 'pending', filed: false, hasReview: false, emptyStatement: false, emptyOverride: 'owner', cursor: 0, totalRows: 0, leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0, reopenedAt: now, updatedAt: now }, { merge: true });
+    });
+    return { ok: true, reopened: true };
+}
+
+// A message from an approved bank that the intake rules refused (a signature that did
+// not verify, an attachment read as an invoice…) is kept on record; this is the
+// owner's tap that says "that one is mine". It is queued, not fetched here — the next
+// collection judges it with only the sender rules left in force, and the statement
+// is still read and must still reconcile before anything is filed.
+export async function takeRefusedMessage({ db, owner, messageId }) {
+    const id = String(messageId || '');
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || !owner?.uid || !owner?.email) throw new Error('invalid-take-request');
+    const mailRef = db.collection('wf-mail').doc(userKeyFor(owner.email));
+    await db.runTransaction(async tx => {
+        const snap = await tx.get(mailRef), mail = snap.data();
+        if (!snap.exists || mail.uid !== owner.uid) throw new Error('not-your-mailbox');
+        if (!(Array.isArray(mail.refused) ? mail.refused : []).some(entry => entry?.messageId === id)) throw new Error('not-a-refused-message');
+        tx.set(mailRef, { takeQueue: [...new Set([...(Array.isArray(mail.takeQueue) ? mail.takeQueue : []).map(String), id])].slice(-50) }, { merge: true });
+    });
+    return { ok: true, queued: true };
+}
+
+// ── which statements did the mailbox never give us? ─────────────────────────
+// Each message is judged on its own, so a message that never arrived, or was
+// refused, leaves no trace. The SET of statements does: monthly statements with a
+// month missing between two that are present. This looks at what is stored,
+// names the missing months, and — at most every six hours — searches Gmail for
+// exactly those months, so a statement that arrived and was refused is named with
+// its reason, and one that arrived and was simply missed is queued for intake.
+// Only a refusal the owner's word can lift is offered as a tap: a signature that did not verify, or a
+// name that read as an invoice. Too many or too large attachments, or no readable attachment, cannot be
+// fixed by asking — the statement has to be downloaded from the bank.
+const TAKEABLE = new Set([REJECT.DKIM_FAILED, REJECT.DKIM_DOMAIN_MISMATCH, REJECT.NOT_A_STATEMENT_DOC]);
+const GAP_SEARCH_EVERY_MS = 6 * 3600 * 1000, GAP_MONTHS_PER_RUN = 3, GAP_MESSAGES_PER_MONTH = 12;
+const addressOnly = from => { const m = /<([^<>]+@[^<>]+)>|([^\s<>"]+@[^\s<>"]+)/.exec(String(from || '').replace(/"(?:[^"\\]|\\.)*"/g, ' ')); return String(m?.[1] || m?.[2] || '').toLowerCase().slice(0, 120); };
+
+async function storedItems(mailRef) {
+    let query = mailRef.collection('items');
+    if (typeof query.select === 'function') query = query.select('bank', 'filename', 'receivedMs', 'storedMs', 'status', 'filed', 'from', 'messageId', 'emptyStatement', 'via', 'proof', 'reviewReason', 'retryCount', 'contentSha256');
+    if (typeof query.limit === 'function') query = query.limit(1000);
+    return (await query.get()).docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.now(), search = true }) {
+    const items = await storedItems(mailRef);
+    const coverage = coverageOf(items, { now });
+    // What the mailbox document says NOW (the collection that just ran has written to it), and what the
+    // last search found: a month that is still missing keeps its answer until the search is due again.
+    let live = mail;
+    try { live = (await mailRef.get()).data() || mail; } catch (_) { /* advice only: a stale copy is acceptable */ }
+    const before = new Map((Array.isArray(live.coverage?.series) ? live.coverage.series : []).map(s => [`${s.bank}|${s.label}`, s]));
+    const list = normalizeList(sendersOf(mail));
+    // Judged exactly as intake will judge it: a message from the bank's other address that is named like a
+    // statement already filed is one the intake takes, so the report must not call it "a new address".
+    const stems = new Set(items.filter(i => i.filed === true && i.filename).map(i => filenameStem(i.filename)).filter(st => st.replace(/[^a-z]/g, '').length >= 6));
+    const policy = { ...policyFrom(list), siblingSeries: stems };
+    const stored = new Set(items.map(item => String(item.messageId || '')).filter(Boolean));
+    const missingKey = coverage.series.map(s => `${s.key}:${s.missing.join(',')}`).join('|');
+    const due = search && coverage.missing > 0 && (now - (Number(mail.lastGapSearchMs) || 0) >= GAP_SEARCH_EVERY_MS || mail.gapMissingKey !== missingKey);
+    const stage = new Set();
+    let searched = 0, failed = false;
+    if (due) {
+        const fallbackDomains = [...new Set(list.filter(e => e.status === 'approved').map(e => e.domain).filter(Boolean))];
+        for (const series of coverage.series) {
+            series.gaps = [];
+            for (const month of [...series.missing].reverse()) {
+                if (searched >= GAP_MONTHS_PER_RUN || failed) break;
+                const domains = domainsOf(series.froms).length ? domainsOf(series.froms) : fallbackDomains;
+                const query = gapQuery(month, domains);
+                if (!query) { series.gaps.push({ month, mail: [], note: 'no-sender-known' }); continue; }
+                searched++;
+                const found = [];
+                try {
+                    const listed = await f(`${GMAIL}/messages?maxResults=${GAP_MESSAGES_PER_MONTH}&includeSpamTrash=true&q=${encodeURIComponent(query)}`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
+                    if (!listed.ok) { failed = true; break; }
+                    for (const ref of ((await listed.json()).messages || []).slice(0, GAP_MESSAGES_PER_MONTH)) {
+                        const response = await f(`${GMAIL}/messages/${encodeURIComponent(ref.id)}?format=full`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
+                        if (response.status === 404) continue;
+                        if (!response.ok) { failed = true; break; }
+                        const message = await response.json(), plan = planMessage(message, policy);
+                        const headers = Object.fromEntries((message.payload?.headers || []).map(h => [String(h.name || '').toLowerCase(), h.value]));
+                        const outcome = plan.ok ? (stored.has(String(message.id || ref.id)) ? 'stored' : 'missed') : String(plan.reason || 'refused');
+                        if (outcome === 'missed') stage.add(String(message.id || ref.id));
+                        found.push({ messageId: String(message.id || ref.id).slice(0, 40), receivedMs: Number(message.internalDate) || 0, from: addressOnly(headers.from), subject: String(headers.subject || '').slice(0, 100), outcome });
+                    }
+                } catch (_) { failed = true; }
+                series.gaps.push({ month, mail: found });
+            }
+        }
+    }
+    let staged = 0;
+    if (stage.size) {
+        staged = await db.runTransaction(async tx => {
+            const current = await tx.get(mailRef), data = current.data() || {};
+            if (data.pendingCollection?.ids) return 0;
+            tx.set(mailRef, { pendingCollection: { id: randomUUID(), ids: [...stage], cursor: 0, senderClauses: approvedClauses(list).sort(), reconciled: false, target: '', via: 'gap', viaFrom: 0 } }, { merge: true });
+            return stage.size;
+        });
+    }
+    const empties = items.filter(i => i.emptyStatement === true && i.filename).slice(0, 24).map(i => ({ id: String(i.id), label: String(i.filename).slice(0, 80), month: monthOf(i) }));
+    if (!due) for (const series of coverage.series) {
+        const prior = before.get(`${series.bank}|${series.label}`);
+        if (prior?.gaps && JSON.stringify(prior.missing) === JSON.stringify(series.missing)) series.gaps = prior.gaps;
+    }
+    const refused = (Array.isArray(live.refused) ? live.refused : []).slice(0, 20).map(r => ({ messageId: String(r.messageId || ''), reason: String(r.reason || ''), text: String(REJECT_TEXT[r.reason] || r.reason || '').slice(0, 160), takeable: TAKEABLE.has(r.reason), from: addressOnly(r.from), subject: String(r.subject || '').slice(0, 100), filename: String(r.filename || '').slice(0, 100), receivedMs: Number(r.receivedMs) || 0,
+        asked: (Array.isArray(live.takeQueue) ? live.takeQueue : []).includes(r.messageId) }));
+    const h = live.historyAudit && typeof live.historyAudit === 'object' ? live.historyAudit : null;
+    const audit = h ? { at: Number(h.at) || 0, listed: Number(h.listed) || 0, accounted: Number(h.accounted) || 0, examined: Number(h.examined) || 0, taken: Number(h.taken) || 0, refused: Number(h.refused) || 0, held: Number(h.held) || 0, complete: h.complete === true } : null;
+    const summary = { at: now, missing: coverage.missing, staged, empties, refused, log: auditLogOf(items), ...(audit ? { audit } : {}), series: coverage.series.slice(0, 20).map(s => ({ label: s.label, bank: s.bank, first: s.first, last: s.last, months: s.months, missing: s.missing, ...(s.gaps ? { gaps: s.gaps } : {}) })) };
+    const patch = { coverage: summary, ...(due && !failed ? { lastGapSearchMs: now, gapMissingKey: missingKey } : {}) };
+    try { await mailRef.set(patch, { merge: true }); } catch (_) { /* the report is advice; failing to store it must not stop a sync */ }
+    return summary;
 }
 
 export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '', loadAttachment = attachmentBytes }) {
@@ -609,15 +761,29 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
     const token = await accessTokenFrom(mail.refresh_token, env, f);
-    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0;
+    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, coverage = null;
     if (action !== 'drain') {
         const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
         if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
         const profile = await profileResponse.json();
         if (String(profile.emailAddress || '').toLowerCase() !== email || !/^\d+$/.test(String(profile.historyId || ''))) throw new Error('gmail-profile-owner-mismatch');
-        const intakeResult = await intake(db, { emailAddress: email, historyId: String(profile.historyId) }, { env, f });
-        if (!intakeResult?.body?.ok) throw new Error('gmail-intake-unavailable');
-        collectionMore = intakeResult.body.collectionPending === true;
+        const collect = async () => {
+            const intakeResult = await intake(db, { emailAddress: email, historyId: String(profile.historyId) }, { env, f });
+            if (!intakeResult?.body?.ok) throw new Error('gmail-intake-unavailable');
+            collectionMore = intakeResult.body.collectionPending === true;
+            // An unattended run has no browser to follow `collectionPending`, and one pass takes
+            // ten messages: without this a backlog of statements clears ten per day.
+            for (let pass = 0; collectionMore && maxSteps === Infinity && pass < 40 && Date.now() - start < Math.min(budgetMs * 0.5, 25000); pass++) {
+                const next = await intake(db, { emailAddress: email, historyId: String(profile.historyId) }, { env, f });
+                if (!next?.body?.ok) break;
+                collectionMore = next.body.collectionPending === true;
+            }
+        };
+        await collect();
+        try {
+            coverage = await refreshCoverage({ db, mailRef, mail, token, f, search: Date.now() - start < 20000 });
+            if (coverage.staged > 0) await collect();
+        } catch (_) { coverage = null; }
         migrationMore = await migrateItems(db, mailRef, mail, uid);
         const vault = await db.collection(VAULT_ROOT).doc(uid).get();
         recovered = vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
@@ -663,7 +829,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         .filter(data => Number(data?.retryCount) > 0)
         .slice(0, 20)
         .map(data => ({ bank: data.bank || '', filename: data.filename || '', retryCount: data.retryCount || 0, lastRetryReason: data.lastRetryReason || '' }));
-    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed,
+    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, ...(coverage ? { coverage } : {}),
         pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending, retrying,
         ...(morePending ? { retryAfterMs } : {}) };
 }
@@ -867,7 +1033,7 @@ export default async function handler(req, res) {
     const scheduled = validScheduleSecret(req);
     let body;
     try { body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {}); } catch (_) { return json(res, 400, { ok: false, reason: 'invalid-body' }); }
-    if (scheduled && ['review', 'review-source', 'layout', 'layout-continue', 'render-source', 'rendered'].includes(body.action)) return json(res, 403, { ok: false, reason: 'interactive-owner-required' });
+    if (scheduled && ['review', 'review-source', 'layout', 'layout-continue', 'render-source', 'rendered', 'reopen-empty', 'take-refused'].includes(body.action)) return json(res, 403, { ok: false, reason: 'interactive-owner-required' });
     if (!scheduled) {
         const who = await identify(req, { verifyIdToken: token => admin.auth().verifyIdToken(token, true) });
         if (!who.ok) return json(res, who.status || 401, { ok: false, reason: who.reason });
@@ -888,6 +1054,16 @@ export default async function handler(req, res) {
                 console.warn('statement-review-source-failed', { action: body.action, reason });
                 return json(res, 422, { ok: false, reason });
             }
+        }
+        if (body.action === 'take-refused') {
+            if (req.method !== 'POST') return json(res, 405, { ok: false, reason: 'post-required' });
+            try { return json(res, 200, await takeRefusedMessage({ db, owner: await admin.auth().getUser(who.uid), messageId: body.messageId })); }
+            catch (_) { return json(res, 422, { ok: false, reason: 'take-rejected' }); }
+        }
+        if (body.action === 'reopen-empty') {
+            if (req.method !== 'POST') return json(res, 405, { ok: false, reason: 'post-required' });
+            try { return json(res, 200, await reopenEmptyStatement({ db, owner: await admin.auth().getUser(who.uid), id: body.id })); }
+            catch (_) { return json(res, 422, { ok: false, reason: 'reopen-rejected' }); }
         }
         if (body.action === 'review') {
             if (req.method !== 'POST') return json(res, 405, { ok: false, reason: 'post-required' });

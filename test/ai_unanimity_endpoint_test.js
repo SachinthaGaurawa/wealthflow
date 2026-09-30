@@ -135,4 +135,56 @@ describe('parallel unanimous endpoint', () => {
         expect(res.body.answered).toHaveLength(10);
         expect(res.body.corroboration).toMatchObject({ agreed: 10, of: 11 });
     });
+
+    describe('advice is not a financial decision', () => {
+        // The chat engine's system prompt describes a chart format "with JSON" and names categories.
+        const chatPrompt = 'You are WealthFlow AI. Charts: fenced ```chart blocks with JSON {"type":"bar"}. Spending category totals follow.\n\n--- CONVERSATION ---\nUser: how is my month?\n\n[REPLY NOW — in English only, as their warm caring best friend.]\nAI:';
+        const twoEngines = () => {
+            vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
+            vi.stubGlobal('fetch', vi.fn(async url => ({ ok: true, json: async () => url.includes('googleapis')
+                ? { candidates: [{ content: { parts: [{ text: 'You kept 40% of your income. Keep it up!' }] } }] }
+                : { choices: [{ message: { content: 'Your savings rate is healthy this month.' } }] } })));
+        };
+        it('answers an insight request that declares itself advice, although its wording mentions JSON and categories', async () => {
+            twoEngines();
+            const res = response();
+            await handler({ method: 'POST', body: { prompt: chatPrompt, task: 'advice' } }, res);
+            expect(res.code).toBe(200);
+            expect(res.body.financialDecision).toBe(false); expect(res.body.advisoryOnly).toBe(true);
+            expect(typeof res.body.reply).toBe('string'); expect(res.body.reply.length).toBeGreaterThan(10);
+            expect(res.body.answered).toEqual(['Gemini', 'Groq']);
+        });
+        it('does the same for a client that predates the flag, by recognising the chat engine\'s own envelope', async () => {
+            twoEngines();
+            const res = response();
+            await handler({ method: 'POST', body: { prompt: chatPrompt } }, res);
+            expect(res.code).toBe(200); expect(res.body.financialDecision).toBe(false);
+        });
+        it('still holds a financial decision to the board, whatever else the request says', async () => {
+            twoEngines();
+            for (const body of [
+                { prompt: chatPrompt, task: 'advice', financialDecision: true },
+                { prompt: 'Return JSON for this transaction: category?' },
+                { prompt: 'Categorize this merchant', task: 'categorization' },
+                { prompt: 'Extract this statement as JSON', image: 'aW1hZ2U=' },
+            ]) {
+                const res = response();
+                await handler({ method: 'POST', body }, res);
+                expect(res.code, JSON.stringify(body).slice(0, 60)).toBe(422);
+                expect(res.body.reply).toBeNull();
+            }
+        });
+        it('an image attached to a chat prompt is never mistaken for the chat envelope', async () => {
+            twoEngines();
+            const res = response();
+            await handler({ method: 'POST', body: { prompt: chatPrompt, image: 'aW1hZ2U=' } }, res);
+            expect(res.code).toBe(422);
+        });
+        it('the chat engine declares advice itself, and only when no financial document is attached', async () => {
+            const html = (await import('node:fs')).readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+            const call = html.slice(html.indexOf('async function callAI('), html.indexOf('function _wfSelectedLangName'));
+            expect(call).toContain("body.task = 'advice'");
+            expect(call).toContain("!image || window._wfLastIntent === 'image_analyze'");
+        });
+    });
 });

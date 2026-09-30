@@ -51,9 +51,11 @@
 
 import {
     planMessage, planWrite, planHold, repairManifest, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
+    refusalOf, INTAKE_VERSION, REJECT, HOLDABLE, filenameStem,
 } from './wealthflow-mail-ingest.mjs';
-import { normalizeList, policyFrom, recordSighting, approvedClauses } from './wealthflow-mail-senders.mjs';
-import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld } from './gmail-link.mjs';
+import { normalizeList, policyFrom, recordSighting, approvedClauses, approvedDomainClauses } from './wealthflow-mail-senders.mjs';
+export { approvedDomainClauses as auditClauses };
+import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld, REFUSED_FIELD, mergeRefused, refusedOf } from './gmail-link.mjs';
 import { getInboxDb } from './inbox-store.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { createHash } from 'node:crypto';
@@ -171,11 +173,16 @@ export async function messagesSince(token, startHistoryId, f) {
     return { ok: false, reason: 'history-pagination-incomplete' };
 }
 
+/* Gmail leaves the Spam folder out of a listing unless asked, and a bank's
+ * statement that Gmail mistook for spam is exactly the message nobody would
+ * ever look for. Spam is listed; Trash — mail the owner threw away — is not. */
+const NOT_TRASH = ' -in:trash';
+
 /** The fallback when history is too old: the most recent messages, bounded. */
 export async function recentMessages(token, f, max = 25, clauses = null) {
     if (Array.isArray(clauses) && !clauses.length) return { ok: true, ids: [] };
-    const query = 'has:attachment' + (clauses ? ' {' + clauses.join(' ') + '}' : '');
-    const base = `${GMAIL}/messages?maxResults=${Math.max(1, Math.min(50, max))}&q=${encodeURIComponent(query)}`;
+    const query = 'has:attachment' + (clauses ? ' {' + clauses.join(' ') + '}' : '') + NOT_TRASH;
+    const base = `${GMAIL}/messages?maxResults=${Math.max(1, Math.min(50, max))}&includeSpamTrash=true&q=${encodeURIComponent(query)}`;
     const ids = new Set(), seen = new Set();
     let pageToken = '';
     for (let page = 0; page < 100; page += 1) {
@@ -211,8 +218,8 @@ export async function reconcileRecentMessages(token, f, clauses, {
     if (!Array.isArray(clauses) || !clauses.length) return { ok: true, ids: [] };
     const safeDays = Math.max(1, Math.min(31, Math.floor(Number(days)) || RECONCILE_DAYS));
     const safePages = Math.max(1, Math.min(RECONCILE_MAX_PAGES, Math.floor(Number(maxPages)) || RECONCILE_MAX_PAGES));
-    const query = `newer_than:${safeDays}d has:attachment {${clauses.join(' ')}}`;
-    const base = `${GMAIL}/messages?maxResults=50&q=${encodeURIComponent(query)}`;
+    const query = `newer_than:${safeDays}d has:attachment {${clauses.join(' ')}}${NOT_TRASH}`;
+    const base = `${GMAIL}/messages?maxResults=50&includeSpamTrash=true&q=${encodeURIComponent(query)}`;
     const ids = new Set(), seen = new Set();
     let pageToken = '';
     for (let page = 0; page < safePages; page += 1) {
@@ -231,6 +238,65 @@ export async function reconcileRecentMessages(token, f, clauses, {
     // Do not pretend a capped inventory is complete. The collected ids are
     // still useful and the next minute repeats the overlap idempotently.
     return { ok: true, ids: [...ids], complete: false };
+}
+
+/**
+ * THE WHOLE HISTORY, AS A LIST OF IDS.
+ *
+ * The cursor (history) and the rolling overlap (reconcile) both look forward from
+ * a bookmark; neither can tell that something BEHIND the bookmark was never
+ * taken. This asks Gmail for every message with an attachment from the bank
+ * DOMAINS the owner approved — the whole domain, so a bank's second address is
+ * found and judged rather than never listed — and returns only ids, which are
+ * cheap, so the caller can compare them with what is already accounted for and
+ * fetch only the difference.
+ */
+export const AUDIT_EVERY_MS = 3 * 60 * 60 * 1000;
+export const AUDIT_RETRY_MS = 5 * 60 * 1000;
+export const AUDIT_MAX_IDS = 1500;
+export async function listAllMessages(token, f, clauses, { pageSize = 500, maxPages = 40, budgetMs = 20000 } = {}) {
+    if (!Array.isArray(clauses) || !clauses.length) return { ok: true, ids: [], complete: true };
+    const query = `has:attachment {${clauses.join(' ')}}${NOT_TRASH}`;
+    const base = `${GMAIL}/messages?maxResults=${pageSize}&includeSpamTrash=true&q=${encodeURIComponent(query)}`;
+    const ids = new Set(), seen = new Set(), deadline = Date.now() + budgetMs;
+    let pageToken = '';
+    for (let page = 0; page < maxPages; page += 1) {
+        // One serverless request has a minute; a slow Gmail must cost the audit its completeness, not the whole sync.
+        if (Date.now() > deadline) break;
+        let out;
+        try {
+            const r = await f(base + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), { headers: authed(token) });
+            if (!r.ok) return { ok: false, reason: 'audit-listing-unavailable', status: r.status };
+            out = await r.json();
+            for (const m of out.messages || []) if (m && m.id) ids.add(String(m.id));
+        } catch (_) { return { ok: false, reason: 'audit-listing-unavailable' }; }
+        pageToken = out.nextPageToken;
+        if (!pageToken) return { ok: true, ids: [...ids], complete: true };
+        if (typeof pageToken !== 'string' || seen.has(pageToken)) break;
+        seen.add(pageToken);
+    }
+    return { ok: true, ids: [...ids], complete: false };
+}
+
+async function storedMessageIds(stateRef) {
+    let q = stateRef.collection('items');
+    if (typeof q.select === 'function') q = q.select('messageId');
+    if (typeof q.limit === 'function') q = q.limit(2000);
+    return new Set((await q.get()).docs.map(d => String((d.data() || {}).messageId || '')).filter(Boolean));
+}
+
+/** The file-name shapes of statements already FILED — what "the same kind of mail" means. */
+async function filedSeriesStems(stateRef) {
+    let q = stateRef.collection('items');
+    if (typeof q.select === 'function') q = q.select('filename', 'filed');
+    if (typeof q.limit === 'function') q = q.limit(1000);
+    const out = new Set();
+    for (const d of (await q.get()).docs) {
+        const x = d.data() || {};
+        const stem = x.filed === true && x.filename ? filenameStem(x.filename) : '';
+        if (stem.replace(/[^a-z]/g, '').length >= 6) out.add(stem);
+    }
+    return out;
 }
 
 /* ── 4. the handler ───────────────────────────────────────────────────────── */
@@ -349,18 +415,56 @@ async function ingestMailbox(db, note, env, f, res) {
             if (!overlap.ok) return j(res, 503, { ok: false, error: overlap.reason });
             listed.ids = [...new Set([...(listed.ids || []), ...(overlap.ids || [])])];
         }
+        /* THE WHOLE-HISTORY AUDIT. Every few hours, and once after every change to the
+         * intake rules, the mailbox's entire history from the approved banks is
+         * listed and compared with what is already accounted for — stored, or
+         * refused under THESE rules. Whatever is left over is fetched and judged.
+         * It is added to the collection rather than replacing it, and a listing
+         * that fails only postpones the audit: it never stops the mail from
+         * arriving. */
+        const auditDue = senderClauses.length > 0
+            && (senderCatchup || Date.now() - (Number(state.lastAuditMs) || 0) >= (state.auditVersion === INTAKE_VERSION && state.historyAudit?.complete !== false ? AUDIT_EVERY_MS : AUDIT_RETRY_MS));
+        let audit = null, viaFrom = 0;
+        if (auditDue) {
+            const everything = await listAllMessages(token, f, approvedDomainClauses(senderList));
+            if (everything.ok) {
+                let known = new Set();
+                try { known = await storedMessageIds(stateRef); } catch (_) { known = null; }
+                if (known) {
+                    for (const r of refusedOf(state)) if (r.v === INTAKE_VERSION) known.add(String(r.messageId));
+                    // Judged under these rules and not a statement: never fetched again, so a mailbox with a
+                    // great deal of bank mail cannot keep the audit on the same newest messages for ever.
+                    if (state.auditSeen && state.auditSeen.v === INTAKE_VERSION && Array.isArray(state.auditSeen.ids)) for (const id of state.auditSeen.ids) known.add(String(id));
+                    const have = new Set(listed.ids || []);
+                    const fresh = everything.ids.filter(id => !known.has(id) && !have.has(id));
+                    const cap = Math.max(1, Number(env.WF_AUDIT_MAX_IDS) || AUDIT_MAX_IDS);
+                    const take = fresh.slice(0, cap);
+                    viaFrom = (listed.ids || []).length;
+                    listed.ids = [...(listed.ids || []), ...take];
+                    audit = { v: INTAKE_VERSION, listed: everything.ids.length, accounted: everything.ids.length - fresh.length, staged: take.length, taken: 0,
+                        complete: everything.complete && fresh.length <= cap };
+                }
+            }
+        }
         // Stage the complete collection before downloading. A slow historical
         // mailbox resumes in bounded batches without prematurely moving history.
         const candidate = { id: globalThis.crypto.randomUUID(), ids: listed.ids,
             cursor: 0, senderClauses, reconciled: Boolean(shouldReconcile),
-            target: String(listed.historyId || note.historyId || '') };
+            target: String(listed.historyId || note.historyId || ''),
+            ...(audit ? { audit, via: 'audit', viaFrom } : {}) };
         try {
             pending = await db.runTransaction(async tx => {
                 const current = await tx.get(stateRef);
                 const existing = current.data()?.pendingCollection;
                 if (existing && Array.isArray(existing.ids)) return existing;
-                tx.set(stateRef, { pendingCollection: candidate }, { merge: true });
-                return candidate;
+                /* The owner's taps on refused messages ("that one is mine") join the
+                 * next collection, read here so a tap that lands mid-staging is not lost. */
+                const asked = (Array.isArray(current.data()?.takeQueue) ? current.data().takeQueue : []).map(String).filter(Boolean);
+                const next = asked.length
+                    ? { ...candidate, ids: [...new Set([...candidate.ids, ...asked])], forced: asked }
+                    : candidate;
+                tx.set(stateRef, { pendingCollection: next, ...(asked.length ? { takeQueue: [] } : {}) }, { merge: true });
+                return next;
             });
         } catch (_) { return j(res, 503, { ok: false, error: 'collection staging failed' }); }
     }
@@ -368,16 +472,32 @@ async function ingestMailbox(db, note, env, f, res) {
 
     const stored = [];
     const notable = [];
-    for (const id of pending.ids.slice(pending.cursor, batchEnd)) {
+    const refusedNow = [], takenIds = [], seenNow = [];
+    const forcedIds = new Set(Array.isArray(pending.forced) ? pending.forced.map(String) : []);
+    let stems = null;
+    for (const [offset, id] of pending.ids.slice(pending.cursor, batchEnd).entries()) {
+        const via = forcedIds.has(String(id)) ? 'owner' : ((pending.cursor + offset) >= (Number(pending.viaFrom) || 0) ? String(pending.via || '') : '');
+        const rules = { ...policy, forced: forcedIds.has(String(id)) };
         let msg;
         try {
             const r = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?format=full`, { headers: authed(token) });
-            if (r.status === 404) continue; // Deleted mail no longer exists.
+            // Deleted mail no longer exists, so nothing about it is outstanding any more.
+            if (r.status === 404) { takenIds.push(String(id)); continue; }
             if (!r.ok) return j(res, 503, { ok: false, error: 'message fetch failed' });
             msg = await r.json();
         } catch (_) { return j(res, 503, { ok: false, error: 'message fetch failed' }); }
 
-        const plan = planMessage(msg, policy);
+        let plan = forcedIds.has(String(id)) ? planMessage(msg, rules) : planMessage(msg, policy);
+        /* The bank wrote from another address than the one approved: if what it
+         * attached is named like a statement that was already filed from the
+         * approved one, it is the same series and is taken. Looked up only when
+         * there is a sibling to decide about. */
+        if (!plan.ok && plan.reason === REJECT.SENDER_SIBLING) {
+            try {
+                if (!stems) stems = await filedSeriesStems(stateRef);
+                if (stems.size) { const again = planMessage(msg, { ...rules, siblingSeries: stems }); if (again.ok) plan = again; }
+            } catch (_) { /* the sibling stays held, which is the old behaviour */ }
+        }
 
         /* Recorded only when this message could ever become a statement —
          * see worthSighting() in wealthflow-mail-ingest.mjs for why: the
@@ -391,7 +511,11 @@ async function ingestMailbox(db, note, env, f, res) {
             seen = recordSighting(seen, sighting);
         }
 
+        const fromAudit = pending.via === 'audit' && (pending.cursor + offset) >= (Number(pending.viaFrom) || 0);
         if (!plan.ok) {
+            const refusal = refusalOf(plan, msg, policy);
+            if (refusal) refusedNow.push(refusal);
+            if (fromAudit && !HOLDABLE.has(plan.reason)) seenNow.push(String(id));
             if (isWorthTelling(plan)) {
                 notable.push({ bank: plan.bank || null, reason: plan.reason, text: REJECT_TEXT[plan.reason] });
             }
@@ -406,6 +530,7 @@ async function ingestMailbox(db, note, env, f, res) {
             continue;
         }
 
+        takenIds.push(String(id));
         for (const item of plan.items) {
             const ref = db.collection(MAIL_ROOT).doc(userKey).collection('items').doc(item.key);
             try {
@@ -455,6 +580,8 @@ async function ingestMailbox(db, note, env, f, res) {
                 });
                 if (!write.ok) {
                     notable.push({ bank: item.bank, reason: write.reason, text: REJECT_TEXT[write.reason] });
+                    const refusal = refusalOf({ ok: false, reason: write.reason, from: item.from, subject: item.subject, bank: item.bank }, msg, policy);
+                    if (refusal) { refusedNow.push(refusal); takenIds.pop(); }
                     continue;
                 }
 
@@ -472,8 +599,9 @@ async function ingestMailbox(db, note, env, f, res) {
                     if (existing.exists) return false;
                     // Settings revocation during a download must not publish a
                     // new manifest. A later approval triggers historical replay.
-                    if (!planMessage(msg, policyFrom(normalizeList(sendersOf(currentState.data() || {})))).ok) return false;
+                    if (!planMessage(msg, { ...policyFrom(normalizeList(sendersOf(currentState.data() || {}))), ...(forcedIds.has(String(id)) ? { forced: true } : {}), ...(item.via === 'series' && stems ? { siblingSeries: stems } : {}) }).ok) return false;
                     tx.set(ref, { ...write.manifest, status: 'pending', filed: false,
+                        ...((item.via || via) ? { via: item.via || via } : {}),
                         ...(currentState.data()?.uid ? { uid: currentState.data().uid } : {}) });
                     return true;
                 });
@@ -510,10 +638,35 @@ async function ingestMailbox(db, note, env, f, res) {
                 for (const sighting of sightings) latest = recordSighting(latest, sighting);
                 updates[SENDERS_FIELD] = latest;
             }
-            if (held.length) updates[HELD_FIELD] = mergeHeld(current.data()?.[HELD_FIELD], held);
+            // A held message that has now been taken (a sibling released by its series) is no longer held.
+            const heldBefore = Array.isArray(current.data()?.[HELD_FIELD]) ? current.data()[HELD_FIELD] : [];
+            const heldBase = takenIds.length ? heldBefore.filter(h => !takenIds.includes(String(h && h.messageId))) : heldBefore;
+            if (held.length || heldBase.length !== heldBefore.length) updates[HELD_FIELD] = mergeHeld(heldBase, held);
+            // What was refused stays on record until it is taken; what was taken leaves it.
+            if (refusedNow.length || takenIds.length) {
+                const before = current.data()?.[REFUSED_FIELD];
+                const after = mergeRefused(before, refusedNow, takenIds);
+                if (JSON.stringify(after) !== JSON.stringify(Array.isArray(before) ? before : [])) updates[REFUSED_FIELD] = after;
+            }
+            if (seenNow.length) {
+                const prior = current.data()?.auditSeen;
+                const base = prior && prior.v === INTAKE_VERSION && Array.isArray(prior.ids) ? prior.ids : [];
+                updates.auditSeen = { v: INTAKE_VERSION, ids: [...new Set([...base, ...seenNow])].slice(-2500) };
+            }
             const complete = batchEnd === pending.ids.length;
             const next = complete ? pending.target : '';
-            updates.pendingCollection = complete ? null : { ...pending, cursor: Math.max(active.cursor || 0, batchEnd) };
+            const newlyStored = stored.filter(item => !item.duplicate).length;
+            const audit = pending.audit ? { ...pending.audit, taken: (Number(pending.audit.taken) || 0) + newlyStored } : null;
+            updates.pendingCollection = complete ? null : { ...pending, cursor: Math.max(active.cursor || 0, batchEnd), ...(audit ? { audit } : {}) };
+            if (complete && audit) {
+                const finalRefused = updates[REFUSED_FIELD] || current.data()?.[REFUSED_FIELD] || [];
+                const finalHeld = updates[HELD_FIELD] || current.data()?.[HELD_FIELD] || [];
+                updates.historyAudit = { at: Date.now(), version: audit.v, listed: audit.listed, accounted: audit.accounted, examined: audit.staged, taken: audit.taken,
+                    refused: Array.isArray(finalRefused) ? finalRefused.length : 0, held: Array.isArray(finalHeld) ? finalHeld.length : 0, complete: audit.complete === true };
+                // An audit that could not finish is tried again soon, not daily, and is never recorded as done.
+                updates.lastAuditMs = Date.now();
+                if (audit.complete) updates.auditVersion = audit.v;
+            }
             if (complete && Array.isArray(pending.senderClauses)) updates.collectedSenderClauses = pending.senderClauses;
             if (complete && pending.reconciled === true) updates.lastReconcileMs = Date.now();
             // Concurrent redeliveries cannot move a durable cursor backwards.

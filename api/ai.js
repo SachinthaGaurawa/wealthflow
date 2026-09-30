@@ -90,8 +90,19 @@ export default async function handler(req, res) {
     // Financial consumers declare their intent explicitly. Conservative legacy
     // detection also prevents JSON/category callers from bypassing the board
     // through wording changes or a fastest-mode override.
-    const wantsJSON = /\bjson\b|\{[^}]*"vendor"[^}]*\}/i.test(prompt) || req.body?.responseFormat === 'json';
-    const financialDecision = req.body?.financialDecision === true || isFinancialTask(req.body?.task) || wantsJSON || !!image || /\bcategor(?:ize|ise|ization|isation|y|ies)\b|\broute\b[\s\S]*\btransaction/i.test(prompt);
+    /* A caller that is ASKING FOR ADVICE says so (task: 'advice'), and is then never put through the
+     * unanimous financial board. The wording of a prompt cannot say what it is for: the chat engine's
+     * own system prompt describes a chart format "with JSON" and names spending categories, so every
+     * chat reply and every AI Insight was read as a financial decision needing five engines to return
+     * the same words — which free text never does, and the answer was HTTP 422 for everybody.
+     * Whoever files money does not send this flag (they declare financialDecision or a financial
+     * task), so the board still guards every decision that can reach the books. */
+    // A client that predates the flag still sends the chat engine's own envelope — a conversation block
+    // closed by the reply-language gate — and that envelope is never built for a financial decision.
+    const chatEnvelope = /--- CONVERSATION ---[\s\S]*\[REPLY NOW — in /.test(prompt) && !image;
+    const advisory = (req.body?.task === 'advice' || chatEnvelope) && req.body?.financialDecision !== true;
+    const wantsJSON = !advisory && (/\bjson\b|\{[^}]*"vendor"[^}]*\}/i.test(prompt) || req.body?.responseFormat === 'json');
+    const financialDecision = req.body?.financialDecision === true || (!advisory && (isFinancialTask(req.body?.task) || wantsJSON || !!image || /\bcategor(?:ize|ise|ization|isation|y|ies)\b|\broute\b[\s\S]*\btransaction/i.test(prompt)));
     const requestedDeadline = req.body?.deadlineMs;
     const deadlineMs = Number.isInteger(requestedDeadline) ? Math.max(2000, Math.min(24000, requestedDeadline)) : 24000;
     const fetchWithTimeout = (url, options, timeoutMs = 22000) => transportWithTimeout(url, options, Math.min(timeoutMs, deadlineMs));
@@ -459,7 +470,7 @@ export default async function handler(req, res) {
     // a collective board; no endpoint path is allowed to discard late dissent.
     const mode = financialDecision ? 'unanimous' : 'collective';
     const requestedModeAlias = requestedMode || 'corroborated';
-    const task = isVision ? Matrix.TASK.VISION : wantsJSON ? Matrix.TASK.EXTRACTION : Matrix.TASK.PROSE;
+    const task = advisory ? Matrix.TASK.PROSE : isVision ? Matrix.TASK.VISION : wantsJSON ? Matrix.TASK.EXTRACTION : Matrix.TASK.PROSE;
 
     // Wrap each engine call so a rejection becomes a tagged result, never throws.
     function run(engine) {

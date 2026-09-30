@@ -131,8 +131,11 @@ export const CHUNK_SIZE = 700 * 1024;
 export const MAX_PARTS = 16;
 /** 16 x 700 KiB of base64 is about 8.4 MB of PDF. */
 export const MAX_BASE64 = CHUNK_SIZE * MAX_PARTS;
-/** A statement email carries one statement. Ten is not a statement. */
-export const MAX_ATTACHMENTS = 4;
+/** A statement email carries a statement — or one per card or account. Twelve is the
+ * most a real bank sends in one message; a message with more is not a statement, and
+ * refusing it is told to the owner. It used to be four, which refused a bank that
+ * sent one statement per card in a single email — a whole month lost in one refusal. */
+export const MAX_ATTACHMENTS = 12;
 
 const lower = (s) => String(s == null ? '' : s).toLowerCase().trim();
 
@@ -311,13 +314,19 @@ export function identifyBank(headers, policy = {}) {
     }
 
     const passed = dkimPassedFor(h['authentication-results']);
-    if (!passed.size) {
+    /* `policy.forced` is the OWNER's own tap on ONE refused message ("take this
+     * one") — never produced by the sender list, which still cannot wave a
+     * signature through. Honoured only for an address they approved, and only here:
+     * it lifts the signature check for that single message and nothing else. The
+     * statement is still read and must still reconcile to the cent before it is filed. */
+    const forced = policy.forced === true && said.verdict === 'approved';
+    if (!forced && !passed.size) {
         return { ok: false, reason: REJECT.DKIM_FAILED, detail: { from, claimed: hit ? hit.name : from } };
     }
     /* The signing domain must cover the domain the message claims to be from.
      * A valid signature by some other domain is the attack, not a pass. */
     const signedByClaimed = [...passed].some((d) => isUnder(from, d) || (hit && isUnder(d, hit.domain)));
-    if (!signedByClaimed) {
+    if (!forced && !signedByClaimed) {
         return {
             ok: false,
             reason: REJECT.DKIM_DOMAIN_MISMATCH,
@@ -339,6 +348,7 @@ export function identifyBank(headers, policy = {}) {
             known: true,
             approved: true,
             builtIn: !!hit,
+            ...(forced ? { forced: true } : {}),
         };
     }
 
@@ -369,6 +379,16 @@ export function identifyBank(headers, policy = {}) {
 }
 
 /* ── 1b. what to HOLD ─────────────────────────────────────────────────────── */
+
+/* The shape of a statement's file name with the month and every run of digits taken out, so
+ * "Consolidated_eStatement_2026JAN_458290.html" and "…2026MAR_458290.html" are one series.
+ * Lives HERE, in a built module, because the build copies only wealthflow-* files: a module
+ * that imported a server-only helper for this would fail to load in the browser. */
+const STEM_MONTHS = 'JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC';
+const STEM_MONTH_RE = new RegExp(`(20\\d{2})[-_ .]?(${STEM_MONTHS})|(${STEM_MONTHS})[-_ .]?(20\\d{2})`, 'i');
+export function filenameStem(filename) {
+    return String(filename || '').toLowerCase().replace(STEM_MONTH_RE, '#').replace(/\d{2,}/g, '#').replace(/[^a-z#.]+/g, '_').replace(/_+/g, '_').replace(/(#_?)+/g, '#');
+}
 
 /** Refusals that are about WHO SENT IT, and are therefore one tap from being wrong. */
 export const HOLDABLE = new Set([REJECT.NOT_ON_YOUR_LIST, REJECT.SENDER_SIBLING]);
@@ -723,9 +743,23 @@ export function planMessage(message, policy = {}) {
      * one-tap approval and the next scan brings its statements in. That is
      * the same discovery path a first sender always needed; it no longer
      * runs through downloading and filing content nobody approved first. */
-    const ownerApproved = who.approved === true;
+    /* A SIBLING ADDRESS THAT SENDS A STATEMENT THE OWNER ALREADY RECEIVES. The
+     * bank wrote from another desk (the owner approved statements@, this came from
+     * estatements@ — same domain, and it passed the signature check above), and
+     * what it attached is named exactly like a statement that was filed from the
+     * approved address. That is the same document series, not a new kind of mail,
+     * so it is taken. It is still read, still has to reconcile before anything is
+     * filed, and anything that is not a statement is rejected on its contents.
+     * Without this rule the owner's approval covered ONE address while the bank
+     * used two, and every statement from the second was held for ever. */
+    const rel0 = typeof policy.related === 'function' ? policy.related(seenFrom) : null;
+    const releasedBySeries = who.approved !== true && !!rel0 && policy.siblingSeries instanceof Set && policy.siblingSeries.size > 0
+        && what.take.length > 0 && what.take.every((a) => policy.siblingSeries.has(filenameStem(a && a.filename)));
+    const ownerApproved = who.approved === true || releasedBySeries;
+    // Filed under the name the owner gave the bank, not one guessed from the second address's domain.
+    const bankName = releasedBySeries && rel0.name ? rel0.name : who.bank;
     if (!ownerApproved) {
-        const rel = typeof policy.related === 'function' ? policy.related(seenFrom) : null;
+        const rel = rel0;
         return {
             ok: false,
             reason: rel ? REJECT.SENDER_SIBLING : REJECT.NOT_ON_YOUR_LIST,
@@ -772,7 +806,7 @@ export function planMessage(message, policy = {}) {
         subject: headers.subject || '',
         filenames: what.take.map((a) => a && a.filename).filter(Boolean),
     });
-    if (byName.verdict === ID_VERDICT.NOT_STATEMENT) {
+    if (byName.verdict === ID_VERDICT.NOT_STATEMENT && !(policy.forced === true && who.approved === true)) {
         return {
             ok: false,
             reason: REJECT.NOT_A_STATEMENT_DOC,
@@ -812,7 +846,7 @@ export function planMessage(message, policy = {}) {
             inlineData: a.inlineData,
             filename: a.filename,
             size: a.size,
-            bank: who.bank,
+            bank: bankName,
             /* False for a sender no one has confirmed.
              *
              * THIS FIELD WAS COMPUTED AND READ BY NOTHING. The comment that
@@ -822,8 +856,10 @@ export function planMessage(message, policy = {}) {
              * verified-but-unrecognised sender was filed exactly like a
              * confirmed bank. Both call sites now put it in the manifest, and
              * the mailbox card reads it back. */
-            known: who.known !== false,
-            approved: who.approved === true,
+            known: who.known !== false || releasedBySeries,
+            approved: who.approved === true || releasedBySeries,
+            ...(releasedBySeries ? { via: 'series' } : {}),
+            ...(who.forced ? { via: 'owner' } : {}),
             from: seenFrom,
             messageId: message.id,
             receivedMs: Number(message.internalDate) || null,
@@ -834,8 +870,9 @@ export function planMessage(message, policy = {}) {
         return { ok: false, reason: REJECT.NO_ATTACHMENT, bank: who.bank, detail: {}, from: seenFrom, subject: headers.subject || '' };
     }
     return {
-        ok: true, bank: who.bank, domain: who.domain, items, skipped: what.skipped,
-        from: seenFrom, subject: headers.subject || '', known: who.known !== false,
+        ok: true, bank: bankName, domain: who.domain, items, skipped: what.skipped,
+        from: seenFrom, subject: headers.subject || '', known: who.known !== false || releasedBySeries,
+        ...(releasedBySeries ? { via: 'series' } : {}),
     };
 }
 
@@ -881,6 +918,45 @@ export function worthSighting(plan) {
     return !!(plan && (plan.ok === true || HOLDABLE.has(plan.reason)));
 }
 
+/**
+ * The intake rules' version. Bumping it makes every mailbox look back over its
+ * whole history once, under the new rules — so an improvement to what is accepted
+ * is applied to the statements the old rules turned away, and not only to mail
+ * that arrives afterwards.
+ */
+export const INTAKE_VERSION = 2;
+
+/**
+ * Is this refusal one the owner would call a MISSED STATEMENT? Only mail from an
+ * address they approved counts — a stranger's invoice refused is the system
+ * working — and only the reasons that are about the message, not the sender
+ * (sender refusals are held instead, see planHold). A message with no readable
+ * attachment counts only when something says it was meant to be one.
+ *
+ * @returns a reference to keep, or null
+ */
+export function refusalOf(plan, message, policy = {}) {
+    if (!plan || plan.ok !== false) return null;
+    const id = String((message && message.id) || '').trim();
+    if (!id) return null;
+    const reasons = [REJECT.DKIM_FAILED, REJECT.DKIM_DOMAIN_MISMATCH, REJECT.NOT_A_STATEMENT_DOC, REJECT.TOO_LARGE, REJECT.TOO_MANY, REJECT.NO_ATTACHMENT];
+    if (!reasons.includes(plan.reason)) return null;
+    const verdict = typeof policy.decide === 'function' ? (policy.decide(plan.from) || {}).verdict : '';
+    if (verdict !== 'approved') return null;
+    if (plan.reason === REJECT.NO_ATTACHMENT && !((plan.detail && plan.detail.attachments > 0) || looksLikeStatement({ subject: plan.subject }))) return null;
+    const received = Number(message && message.internalDate);
+    return {
+        messageId: id,
+        reason: plan.reason,
+        from: String(plan.from || '').slice(0, 160),
+        subject: String(plan.subject || '').slice(0, 160),
+        bank: plan.bank || null,
+        filename: String(walk(message && message.payload, []).map((p) => p && p.filename).find(Boolean) || '').slice(0, 120),
+        receivedMs: Number.isFinite(received) && received > 0 ? received : null,
+        v: INTAKE_VERSION,
+    };
+}
+
 export function isWorthTelling(plan) {
     if (!plan || plan.ok) return false;
     return plan.reason === REJECT.TOO_LARGE
@@ -912,7 +988,7 @@ const API = {
     BANKS, REJECT, REJECT_TEXT,
     SINGLE_MAX, CHUNK_SIZE, MAX_PARTS, MAX_BASE64, MAX_ATTACHMENTS,
     addressOf, domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
-    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, worthSighting, looksLikeStatement, nameFromDomain,
+    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, worthSighting, looksLikeStatement, nameFromDomain, refusalOf, INTAKE_VERSION,
     dedupeStored, betterCopy,
 };
 

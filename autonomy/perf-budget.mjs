@@ -252,7 +252,12 @@ export const BUDGETS = {
     // sanitiser, a guard against a synchronous throw from set(), and dropping the
     // undefined at its source are this figure (measured 2,078,632). No new
     // script or request.
-    htmlBytes: 2_078_700,
+    // Raised 2026-09-30: callAI() now says it is asking for ADVICE (task: 'advice'). The chat engine's
+    // own system prompt mentions a chart format "with JSON" and spending categories, which api/ai.js
+    // read as a financial decision needing five engines to return identical words — so every chat
+    // reply and every AI Insight came back HTTP 422 ("All Intelligence Engines Offline"). Two lines
+    // and a comment (measured 2,078,822).
+    htmlBytes: 2_079_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -487,7 +492,15 @@ export const BUDGETS = {
     // the uploaded quarantine/runtime module landed, while this ratchet still
     // described the preceding 71-module tree.  The statement visibility fix
     // adds no module; this moves the stale baseline once with ~1.1% headroom.
-    totalJsBytes: 1_925_000,
+    // 2026-09-30: 1,925,000 -> 1,933,000 (measured 1,930,072, no new module). All of it is
+    // wealthflow-statement-cloud.js's review overlay and diagnostics: the months a mailbox has
+    // not given us and what the search for them found; statements closed as empty, each with a
+    // Reopen; and the mailbox history check — how many bank emails were found, accounted for,
+    // added, refused and why, with a one-tap "Take it" for a refusal the owner's word can lift —
+    // and the per-statement audit log (what each statement proved, how it arrived). Every one is
+    // a way a statement that would otherwise vanish in silence is now shown, so the bytes are the
+    // feature. ~0.15% headroom.
+    totalJsBytes: 1_933_000,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

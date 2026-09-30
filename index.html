@@ -9999,6 +9999,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
 
         async function callAI(prompt, image = null) {
             let errorLogs = [];
+            window._wfLastIntent = '';
 
             // ═══════════════════════════════════════════════════════════════
             // AI INTELLIGENCE ENGINE v6.2 (inlined — unbypassable)
@@ -10192,6 +10193,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
 
                 const body = { prompt };
                 if (image) body.image = image;
+                // advice, not a financial decision — see api/ai.js
+                if (!image || window._wfLastIntent === 'image_analyze') body.task = 'advice';
 
                 const r = await fetch(vercelUrl, {
                     method: 'POST',

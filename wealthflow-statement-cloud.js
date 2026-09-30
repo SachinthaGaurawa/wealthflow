@@ -1,4 +1,4 @@
-let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null,retrying=[],autoTimer=null,autoRunning=false;
+let coverage=null,user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null,retrying=[],autoTimer=null,autoRunning=false;
 const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,queued:0};
 
 export const getState=()=>({...state});
@@ -11,8 +11,16 @@ export function reviewSummary(){
         if(entry.index<0||!entry.row)wholeStatement++;else perRow++;
     }
     const wholeStatements=pending.filter(e=>e.index<0||!e.row).slice(0,20).map(e=>({bank:e.bank||'',filename:e.filename||'',reason:e.reason||'',...(Array.isArray(e.embeddedProblems)&&e.embeddedProblems.length?{embedded:e.embeddedProblems.slice(0,12)}:{})}));
-    return {total:pending.length,wholeStatement,perRow,byReason,wholeStatements};
+    return {total:pending.length,wholeStatement,perRow,byReason,wholeStatements,...(coverage?{coverage:coverageSummary()}:{})};
 }
+// Which months of which statement the mailbox has not given us, and what the search for them found —
+// outcomes only, so the owner can share it without an address or an amount in it.
+export function coverageSummary(){
+    if(!coverage)return null;
+    const tally=(list,key)=>(list||[]).reduce((o,e)=>{o[e[key]]=(o[e[key]]||0)+1;return o},{});
+    return {missing:coverage.missing||0,closedEmpty:(coverage.empties||[]).length,at:coverage.at||0,audit:coverage.audit||null,refused:(coverage.refused||[]).map(r=>r.reason),log:{status:tally(coverage.log,'status'),math:tally(coverage.log,'math')},series:(coverage.series||[]).map(s=>({label:s.label||s.bank||'',first:s.first,last:s.last,missing:s.missing||[],gaps:(s.gaps||[]).map(g=>({month:g.month,outcomes:(g.mail||[]).map(m=>m.outcome)}))}))};
+}
+const GAP_TEXT={missed:'found in Gmail — being filed now',stored:'already stored','a-new-address-at-a-bank-you-approved':'a new sender address — approve it in Settings → Statement senders','sender-not-on-your-list':'sender not on your list — approve it in Settings → Statement senders','dkim-did-not-pass':'the sender could not be verified','signed-by-a-different-domain':'the sender could not be verified','the-attachment-is-not-a-bank-statement':'the attachment looked like an invoice or receipt','no-pdf-attachment':'no statement attached','attachment-over-the-size-ceiling':'attachment too large'};
 
 const say=(message,type='info')=>{if(window.notify)window.notify(message,type)};
 function change(){window.dispatchEvent(new CustomEvent('wf-statement-cloud',{detail:{...state}}))}
@@ -107,6 +115,7 @@ export async function sync(){
     syncPromise=request('/api/statement-sync','POST',{action:'sync'}).then(result=>{
         state.queued=Math.max(0,Number(result.pendingRemaining)||0)+Math.max(0,Number(result.processingRemaining)||0);
         retrying=Array.isArray(result.retrying)?result.retrying:[];
+        if(result.coverage&&typeof result.coverage==='object')coverage=result.coverage;
         if(result.morePending)again(Math.max(750,Math.min(180250,Number(result.retryAfterMs)||750)))
         return result
     }).catch(e=>{state.error=e.message;if(e.message==='statement-request-timed-out')again(3000);throw e})
@@ -116,7 +125,7 @@ export async function sync(){
 
 export async function authChanged(next){
     if(user?.uid===next?.uid&&next)return;
-    unsubscribe?.();unsubscribe=user=null;pending=[];state.reviews=0;
+    unsubscribe?.();unsubscribe=user=null;pending=[];coverage=null;state.reviews=0;
     Object.assign(state,{configured:null,saved:false,count:0,savedAt:null,error:'',queued:0});change();
     if(!next){clearTimeout(continuationTimer);continuationTimer=null;clearTimeout(autoTimer);autoTimer=null;overlay?.remove();overlay=null;return}
     adoptUser(next);try{await status();await reconcileLogin();await sync()}catch(_){}
@@ -411,6 +420,47 @@ function drawReview() {
     const summary = document.createElement('p');
     summary.textContent = `${pending.length} review item${pending.length === 1 ? '' : 's'} shown${state.queued ? ` · ${state.queued} statement${state.queued === 1 ? '' : 's'} still processing automatically` : ' · processing queue is clear'}.`;
     summary.style.cssText = 'margin:12px 0;color:var(--text2);'; box.appendChild(summary);
+    const panel = head => { const d = document.createElement('div'); d.style.cssText = 'margin:0 0 12px;padding:12px;border:1px solid var(--border);border-radius:12px;'; const h = document.createElement('strong'); h.textContent = head; d.appendChild(h); box.appendChild(d); return d; };
+    const note = (parent, text) => { const p = document.createElement('p'); p.style.cssText = 'margin:6px 0 0;font-size:13px;'; p.textContent = text; parent.appendChild(p); return p; };
+    const a = coverage?.audit;
+    if (a?.at) note(panel('Mailbox history check'), `${new Date(a.at).toLocaleString()} · ${a.listed} bank email${a.listed === 1 ? '' : 's'} with attachments found · ${a.accounted} already accounted for · ${a.taken} added now · ${a.refused} refused · ${a.held} waiting on a sender decision${a.complete ? '' : ' · still checking'}`);
+    if (coverage?.refused?.length) {
+        const refusedBox = panel(`${coverage.refused.length} email${coverage.refused.length === 1 ? '' : 's'} from your banks that were not taken`);
+        for (const r of coverage.refused) {
+            const line = note(refusedBox, `${r.receivedMs ? new Date(r.receivedMs).toLocaleDateString() : ''} · ${r.from} · ${r.filename || r.subject}: ${r.text} `);
+            if (r.takeable === false) continue;
+            const take = document.createElement('button'); take.className = 'btn btn-ghost btn-sm'; take.textContent = r.asked ? 'Queued' : 'Take it'; take.disabled = !!r.asked;
+            take.onclick = async () => { take.disabled = true; try { await request('/api/statement-sync', 'POST', { action: 'take-refused', messageId: r.messageId }); r.asked = true; say('Queued — it will be read and must reconcile before it is filed.', 'info'); drawReview(); await sync(); } catch { take.disabled = false; say('That email could not be queued.', 'error'); } };
+            line.appendChild(take);
+        }
+    }
+    const holes = (coverage?.series || []).filter(s => s.missing?.length);
+    if (holes.length) {
+        const gap = panel(`${coverage.missing} statement month${coverage.missing === 1 ? '' : 's'} not in your mailbox yet`);
+        note(gap, 'If the bank never sent it, download that month from the bank and import it by hand.');
+        for (const s of holes) for (const m of s.missing) {
+            const line = document.createElement('p'); line.style.cssText = 'margin:6px 0 0;font-size:13px;';
+            const mail = (s.gaps || []).find(g => g.month === m)?.mail;
+            line.textContent = `${s.label || s.bank} · ${m}: ` + (!mail ? 'searching…' : mail.length ? mail.map(x => GAP_TEXT[x.outcome] || x.outcome).join('; ') : 'no email from this bank arrived that month');
+            gap.appendChild(line);
+        }
+    }
+    if (coverage?.empties?.length) {
+        const closed = document.createElement('div'); closed.style.cssText = 'margin:0 0 12px;padding:12px;border:1px solid var(--border);border-radius:12px;';
+        const head = document.createElement('strong'); head.textContent = 'Closed automatically — the bank\'s own figures show nothing moved'; closed.appendChild(head);
+        for (const e of coverage.empties) {
+            const line = document.createElement('p'); line.style.cssText = 'margin:6px 0 0;font-size:13px;'; line.textContent = `${e.month || ''} · ${e.label} `;
+            const reopen = document.createElement('button'); reopen.className = 'btn btn-ghost btn-sm'; reopen.textContent = 'Reopen';
+            reopen.onclick = async () => { reopen.disabled = true; try { await request('/api/statement-sync', 'POST', { action: 'reopen-empty', id: e.id }); coverage.empties = coverage.empties.filter(x => x.id !== e.id); say('Reopened — it will be read again and sent to review.', 'info'); drawReview(); await sync(); } catch { reopen.disabled = false; say('That statement could not be reopened.', 'error'); } };
+            line.appendChild(reopen); closed.appendChild(line);
+        }
+        box.appendChild(closed);
+    }
+    if (coverage?.log?.length) {
+        const d = document.createElement('details'); d.style.cssText = 'margin:0 0 12px;'; const sm = document.createElement('summary'); sm.textContent = `Statement audit log (${coverage.log.length})`; d.appendChild(sm);
+        for (const e of coverage.log) note(d, `${e.month || '?'} · ${e.bank} · ${e.file} · ${e.status} · maths ${e.math}${e.last4 ? ' · …' + e.last4 : ''}${e.sha ? ' · ' + e.sha : ''}`);
+        box.appendChild(d);
+    }
     if (!pending.length) { const p = document.createElement('p'); p.textContent = 'No transactions are awaiting review.'; box.appendChild(p); }
     for (const entry of pending) {
         const item = document.createElement('div'); item.style.cssText = 'padding:14px 0;border-bottom:1px solid var(--border);';
@@ -442,7 +492,7 @@ if (typeof window !== 'undefined') {
         const text = document.getElementById('_statement_cloud_status');
         if (text) text.textContent = state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
     });
-    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, retryAttemptsSummary };
+    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, coverageSummary, retryAttemptsSummary };
     const start=()=>{
         if (authBound) return;
         if (window.firebase?.apps?.length && typeof window.firebase.auth === 'function') {
