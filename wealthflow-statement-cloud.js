@@ -1,4 +1,4 @@
-let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null,retrying=[];
+let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null,retrying=[],autoTimer=null,autoRunning=false;
 const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,queued:0};
 
 export const getState=()=>({...state});
@@ -47,7 +47,7 @@ function adoptUser(next){
     if(!next||user?.uid===next.uid)return user;
     user=next;unsubscribe?.();unsubscribe=null;pending=[];state.reviews=0;
     const db=window.db||window.firebase?.firestore?.();
-    if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(500).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;change();if(overlay)drawReview()},()=>{state.error='statement-review-unavailable';change()});
+    if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(500).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;change();if(overlay)drawReview();scheduleAutoRender()},()=>{state.error='statement-review-unavailable';change()});
     return next
 }
 
@@ -123,7 +123,7 @@ export async function authChanged(next){
     if(user?.uid===next?.uid&&next)return;
     unsubscribe?.();unsubscribe=user=null;pending=[];state.reviews=0;
     Object.assign(state,{configured:null,saved:false,count:0,savedAt:null,error:'',queued:0});change();
-    if(!next){clearTimeout(continuationTimer);continuationTimer=null;overlay?.remove();overlay=null;return}
+    if(!next){clearTimeout(continuationTimer);continuationTimer=null;clearTimeout(autoTimer);autoTimer=null;overlay?.remove();overlay=null;return}
     adoptUser(next);try{await status();await reconcileLogin();await sync()}catch(_){}
 }
 
@@ -197,27 +197,30 @@ async function gunzipFromB64(encoded) {
 // Reasons that mean "this route cannot read that statement", so the ordinary
 // text-based layout teacher gets its turn instead of a dead end.
 const RENDER_FALLBACK_REASONS = new Set(['rendered-source-not-html', 'rendered-source-too-large', 'rendered-statement-invalid', 'rendered-statement-has-no-rows']);
+const RENDER_TRANSIENT_REASONS = new Set(['statement-request-timed-out', 'statement-service-unavailable']);
+const canRender = entry => entry.renderedRead !== true && /\.html?$/i.test(entry.filename || '')
+    && typeof window.WFHtmlStatement?.htmlToTransactionsAsync === 'function'
+    && typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
 // A Smart Statement (NTB / American Express e-statements) draws its rows with
 // its own JavaScript, which the server has no browser to run. The device does
 // exactly that for a file uploaded by hand (wealthflow-html-statement.js's
 // sandboxed renderer) — this gives an emailed statement the same reading: the
 // server decrypts it, this device renders it, and the rendered document goes
-// back to be read and validated like any other statement. Resolves true only
-// when it took the statement all the way to the server.
-async function mapRenderedStatement(entry) {
-    const reader = window.WFHtmlStatement;
+// back to be read and validated like any other statement. Never throws.
+// status: unavailable | fallback (this route cannot read it) | transient |
+//         submitted | needs-layout | failed
+async function renderAndSubmit(entry) {
     // renderedRead: this statement was already read on this route and only
-    // needs the owner to confirm its rows — the layout teacher below, which
-    // now receives the rendered rows. Rendering it again would loop forever.
-    if (entry.renderedRead === true || !/\.html?$/i.test(entry.filename || '') || typeof reader?.htmlToTransactionsAsync !== 'function'
-        || typeof CompressionStream !== 'function' || typeof DecompressionStream !== 'function') return false;
-    say('Reading this statement on your device…', 'info');
+    // needs the owner to confirm its rows — the layout teacher, which now
+    // receives the rendered rows. Rendering it again would loop forever.
+    if (!canRender(entry)) return { status: 'unavailable' };
+    const reader = window.WFHtmlStatement;
     let read;
     try {
         const source = await request('/api/statement-sync', 'POST', { action: 'render-source', id: entry.id });
-        if (typeof source.htmlGz !== 'string' || !source.htmlGz) return false;
+        if (typeof source.htmlGz !== 'string' || !source.htmlGz) return { status: 'fallback' };
         read = await reader.htmlToTransactionsAsync(await gunzipFromB64(source.htmlGz));
-    } catch (_) { return false; }
+    } catch (error) { return { status: RENDER_TRANSIENT_REASONS.has(error?.message) ? 'transient' : 'fallback' }; }
     // Shape only (counts, digits masked) — what "Copy diagnostics" needs when a
     // statement still cannot be read, never an amount or a merchant.
     try {
@@ -225,22 +228,33 @@ async function mapRenderedStatement(entry) {
             diag: read?.rendered && typeof reader.diagnose === 'function' ? reader.diagnose(read.renderedHtml, { rendered: true, renderedRows: read.transactions?.length || 0, report: read.report }) : null });
         window._wfLayoutAttempts.length = Math.min(window._wfLayoutAttempts.length, 15);
     } catch (_) {}
-    if (!read?.rendered || !read.renderedHtml || !read.transactions?.length) return false;
-    overlay?.remove(); overlay = null;
+    if (!read?.rendered || !read.renderedHtml || !read.transactions?.length) return { status: 'fallback' };
     try {
         const result = await confirmWithRetry({ action: 'rendered', id: entry.id, htmlGz: await gzipToB64(read.renderedHtml) });
-        // Read fine, but the statement-wide total does not reconcile. Show the
-        // owner the rows it found and let them confirm the reading — the same
-        // review an uploaded statement gets — instead of a dead-end message.
-        if (result.needsLayout === true) return false;
+        return { status: result.needsLayout === true ? 'needs-layout' : 'submitted', result };
+    } catch (error) {
+        if (RENDER_FALLBACK_REASONS.has(error?.message)) return { status: 'fallback' };
+        return { status: RENDER_TRANSIENT_REASONS.has(error?.message) ? 'transient' : 'failed', error };
+    }
+}
+// Resolves true only when it took the statement all the way to the server.
+async function mapRenderedStatement(entry) {
+    if (!canRender(entry)) return false;
+    say('Reading this statement on your device…', 'info');
+    const { status, result, error } = await renderAndSubmit(entry);
+    // needs-layout: read fine, but the statement-wide total does not reconcile.
+    // Show the owner the rows it found and let them confirm the reading — the
+    // same review an uploaded statement gets — instead of a dead-end message.
+    if (status === 'fallback' || status === 'needs-layout' || status === 'unavailable') return false;
+    if (status === 'submitted') {
         if (result.filed > 0 && result.review === 0) say(`${result.filed} statement transaction${result.filed === 1 ? '' : 's'} read on your device and filed.`, 'success');
         else if (result.filed > 0) say(`${result.filed} transaction${result.filed === 1 ? '' : 's'} filed; ${result.review} still need${result.review === 1 ? 's' : ''} review.`, 'warn');
         else if (result.replayStatus === 'needs_review') say('The statement was read on your device, but its transactions need your confirmation. Open the review and map its layout.', 'warn');
         else say('Statement read on your device. The remaining rows are continuing in the background.', 'info');
+        overlay?.remove(); overlay = null;
         await refreshFinancialData().catch(() => {});
         await sync().catch(() => say('The statement was read, but the immediate processing request failed. It remains queued for retry.', 'warn'));
-    } catch (error) {
-        if (RENDER_FALLBACK_REASONS.has(error?.message)) return false;
+    } else {
         say(error?.mightAlreadyBeMapped
             ? 'This may already be read from an earlier attempt — check Open reviews for its current status before mapping it again.'
             : 'Reading this statement on your device was not completed. The original statement remains pending.', error?.mightAlreadyBeMapped ? 'warn' : 'error');
@@ -248,6 +262,45 @@ async function mapRenderedStatement(entry) {
     openReview();
     return true;
 }
+// AUTONOMOUS: nobody should have to tap "Map statement layout" once per emailed
+// Smart Statement. Whenever this device holds pending HTML statements, it reads
+// them itself, one at a time — the server already has the passwords, this
+// device has the browser. A statement this route cannot read is not retried for
+// a day; one that only failed on the network is retried on the next snapshot.
+const AUTO_TRIED_KEY = 'wf_render_tried_v1', AUTO_RETRY_MS = 86400000, AUTO_BATCH = 25;
+const triedMap = () => { try { return JSON.parse(window.localStorage?.getItem?.(AUTO_TRIED_KEY) || '{}') || {}; } catch (_) { return {}; } };
+function markTried(id) {
+    try {
+        const tried = { ...triedMap(), [id]: Date.now() }, ids = Object.keys(tried);
+        if (ids.length > 200) ids.sort((a, b) => tried[a] - tried[b]).slice(0, ids.length - 200).forEach(key => delete tried[key]);
+        window.localStorage?.setItem?.(AUTO_TRIED_KEY, JSON.stringify(tried));
+    } catch (_) {}
+}
+const autoCandidates = () => { const tried = triedMap(), now = Date.now(); return pending.filter(entry => entry.index < 0 && canRender(entry) && !(tried[entry.id] && now - tried[entry.id] < AUTO_RETRY_MS)); };
+function scheduleAutoRender() {
+    if (autoTimer || autoRunning || !currentUser() || !autoCandidates().length) return;
+    autoTimer = setTimeout(() => { autoTimer = null; autoRenderPending().catch(() => {}); }, 4000);
+}
+export async function autoRenderPending() {
+    if (autoRunning) return { statements: 0, filed: 0, needLayout: 0 };
+    autoRunning = true;
+    const done = { statements: 0, filed: 0, needLayout: 0 };
+    try {
+        for (const entry of autoCandidates().slice(0, AUTO_BATCH)) {
+            if (!currentUser() || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) break;
+            const { status, result } = await renderAndSubmit(entry);
+            if (status === 'fallback' || status === 'failed') markTried(entry.id);
+            if (status === 'transient' || status === 'unavailable') break;
+            if (status === 'submitted') { done.statements += 1; done.filed += Math.max(0, Number(result.filed) || 0); }
+            if (status === 'needs-layout') done.needLayout += 1;
+        }
+        if (done.filed > 0) say(`${done.filed} statement transaction${done.filed === 1 ? '' : 's'} read on your device and filed automatically.`, 'success');
+        if (done.needLayout > 0) say(`${done.needLayout} statement${done.needLayout === 1 ? ' was' : 's were'} read on your device but need${done.needLayout === 1 ? 's' : ''} your confirmation. Open the review to confirm.`, 'warn');
+        if (done.statements + done.needLayout > 0) await refreshFinancialData().catch(() => {});
+    } finally { autoRunning = false; }
+    return done;
+}
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleAutoRender(); });
 async function mapLayout(entry) {
     if (await mapRenderedStatement(entry)) return;
     if (typeof window._teachStatementLayout !== 'function') return say('The statement layout mapper is not loaded yet.', 'warn');
