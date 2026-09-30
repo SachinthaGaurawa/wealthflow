@@ -307,11 +307,27 @@ export async function readStatement({ bytes, filename = '', passwords = [], bank
         // CAN read is never overridden by anything a client sent.
         if (!result.parsed.rows.length && typeof rendered?.text === 'string' && rendered.text.trim()) {
             result = await parse(rendered.text);
+            result.renderedOverride = true;
             if (Number(rendered.incompleteRows) > 0) markIncompleteHtml(result, Number(rendered.incompleteRows));
             // Rows the layer scan or line scan recovered (never a real table)
             // were unverified when they were submitted; re-reading the
             // stored text alone must not quietly promote them to "parsed".
-            else if (rendered.verified !== true) { result.parsed.verdict = 'unverified'; result.parsed.understood = false; result.parsed.reason = 'Rendered statement rows need owner verification.'; }
+            else if (rendered.verified !== true) {
+                // The owner was shown these exact rows and confirmed them
+                // ("Yes, read it this way") — the same review an uploaded
+                // statement gets. Every row's own date and running balance
+                // must still check out, and each row still passes its own
+                // settlement validation; only the statement-wide total is
+                // waived, exactly as for a confirmed PDF layout below.
+                if (rendered.confirmed === true && confirmedTemplateId && result.parsed.rows.length
+                    && !result.parsed.invalidDates && !result.parsed.balanceMismatches) {
+                    result.parsed.layout ||= {};
+                    result.parsed.layout.learnedTemplate = confirmedTemplateId;
+                    result.parsed.layout.reconciliationBypassed = true;
+                    return result;
+                }
+                result.parsed.verdict = 'unverified'; result.parsed.understood = false; result.parsed.reason = 'Rendered statement rows need owner verification.';
+            }
         }
     }
     else fail('ATTACHMENT_TYPE_UNSUPPORTED');

@@ -206,7 +206,10 @@ const RENDER_FALLBACK_REASONS = new Set(['rendered-source-not-html', 'rendered-s
 // when it took the statement all the way to the server.
 async function mapRenderedStatement(entry) {
     const reader = window.WFHtmlStatement;
-    if (!/\.html?$/i.test(entry.filename || '') || typeof reader?.htmlToTransactionsAsync !== 'function'
+    // renderedRead: this statement was already read on this route and only
+    // needs the owner to confirm its rows — the layout teacher below, which
+    // now receives the rendered rows. Rendering it again would loop forever.
+    if (entry.renderedRead === true || !/\.html?$/i.test(entry.filename || '') || typeof reader?.htmlToTransactionsAsync !== 'function'
         || typeof CompressionStream !== 'function' || typeof DecompressionStream !== 'function') return false;
     say('Reading this statement on your device…', 'info');
     let read;
@@ -215,10 +218,21 @@ async function mapRenderedStatement(entry) {
         if (typeof source.htmlGz !== 'string' || !source.htmlGz) return false;
         read = await reader.htmlToTransactionsAsync(await gunzipFromB64(source.htmlGz));
     } catch (_) { return false; }
+    // Shape only (counts, digits masked) — what "Copy diagnostics" needs when a
+    // statement still cannot be read, never an amount or a merchant.
+    try {
+        (window._wfLayoutAttempts = window._wfLayoutAttempts || []).unshift({ bank: String(entry.bank || ''), at: Date.now(), outcome: read?.rendered ? 'rendered-on-device' : 'render-produced-nothing',
+            diag: read?.rendered && typeof reader.diagnose === 'function' ? reader.diagnose(read.renderedHtml, { rendered: true, renderedRows: read.transactions?.length || 0, report: read.report }) : null });
+        window._wfLayoutAttempts.length = Math.min(window._wfLayoutAttempts.length, 15);
+    } catch (_) {}
     if (!read?.rendered || !read.renderedHtml || !read.transactions?.length) return false;
     overlay?.remove(); overlay = null;
     try {
         const result = await confirmWithRetry({ action: 'rendered', id: entry.id, htmlGz: await gzipToB64(read.renderedHtml) });
+        // Read fine, but the statement-wide total does not reconcile. Show the
+        // owner the rows it found and let them confirm the reading — the same
+        // review an uploaded statement gets — instead of a dead-end message.
+        if (result.needsLayout === true) return false;
         if (result.filed > 0 && result.review === 0) say(`${result.filed} statement transaction${result.filed === 1 ? '' : 's'} read on your device and filed.`, 'success');
         else if (result.filed > 0) say(`${result.filed} transaction${result.filed === 1 ? '' : 's'} filed; ${result.review} still need${result.review === 1 ? 's' : ''} review.`, 'warn');
         else if (result.replayStatus === 'needs_review') say('The statement was read on your device, but its transactions need your confirmation. Open the review and map its layout.', 'warn');

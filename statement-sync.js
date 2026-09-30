@@ -191,7 +191,7 @@ async function quarantineSource(db, uid, ref, leaseToken, reason, evidence = {})
         tx.set(reviewRef, { uid, sourcePath: ref.path, index: -1, status: 'pending', reason,
             bank: String(source.bank || ''), filename: String(source.filename || ''), subject: String(source.subject || ''),
             receivedMs: Number(source.receivedMs) || 0, from: String(source.from || ''), last4: String(evidence.last4 || ''),
-            ...(statementText ? { statementText } : {}), createdAt: Date.now() }, { merge: true });
+            ...(statementText ? { statementText } : {}), ...(evidence.rendered === true ? { renderedRead: true } : {}), createdAt: Date.now() }, { merge: true });
         tx.set(ref, { status: 'needs_review', hasReview: true, filed: false, leaseToken: '', leaseUntil: 0, reviewReason: reason, updatedAt: Date.now() }, { merge: true });
     });
 }
@@ -485,7 +485,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         const passwordBatch = passwords.slice(passwordOffset, passwordOffset + PASSWORD_BATCH);
         let result;
         const rendered = typeof claimed.renderedText === 'string' && claimed.renderedText
-            ? { text: claimed.renderedText, incompleteRows: Number(claimed.renderedIncompleteRows) || 0, verified: claimed.renderedVerified === true } : null;
+            ? { text: claimed.renderedText, incompleteRows: Number(claimed.renderedIncompleteRows) || 0, verified: claimed.renderedVerified === true, confirmed: claimed.renderedConfirmed === true } : null;
         try { result = await read({ ...attachment, passwords: passwordBatch, bank: claimed.bank || '', layouts, confirmedTemplateId: claimed.learnedTemplate || '', rendered }); }
         catch (error) {
             if (error?.message === 'PASSWORD_FAILED' && passwordOffset + PASSWORD_BATCH < passwords.length) {
@@ -496,7 +496,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             throw error;
         }
         const { parsed, text } = result;
-        reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '' };
+        reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '', rendered: result.renderedOverride === true };
         
         // --- Added Cryptographic Identity verification bound to the extracted raw source ---
         const identity = textVerdict(text || '');
@@ -713,7 +713,7 @@ export async function submitRenderedStatement({ db, owner, id, htmlGz, env = pro
         }
         tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0,
             renderedText: read.text, renderedIncompleteRows: Number(read.parsed?.htmlIncompleteRows) || 0,
-            renderedVerified: read.parsed?.verdict === 'parsed' && read.parsed?.understood === true && !read.parsed?.htmlIncompleteRows, renderedAt: now, updatedAt: now }, { merge: true });
+            renderedVerified: read.parsed?.verdict === 'parsed' && read.parsed?.understood === true && !read.parsed?.htmlIncompleteRows, renderedConfirmed: false, renderedAt: now, updatedAt: now }, { merge: true });
     });
     try {
         const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path, maxSteps: 1 });
@@ -723,7 +723,8 @@ export async function submitRenderedStatement({ db, owner, id, htmlGz, env = pro
         // (quarantineSource) with the rendered text attached, so the owner can
         // map its layout from real rows. Only a fully filed one is closed here.
         if (replayStatus === 'filed') await reviewRef.set({ status: 'resolved', resolvedAt: Date.now(), replayStatus }, { merge: true });
-        return { ok: true, mapped: true, queued: replay?.morePending === true, filed, review, replayStatus };
+        const needsLayout = replayStatus !== 'filed' && (await reviewRef.get()).data()?.status === 'pending';
+        return { ok: true, mapped: true, queued: replay?.morePending === true, filed, review, replayStatus, needsLayout };
     } catch (_) { return { ok: true, mapped: true, queued: false }; }
 }
 
@@ -754,7 +755,7 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         for (const doc of ledger.docs) {
             if (doc.data().status === 'review') tx.set(doc.ref, { status: 'superseded_by_layout', supersededAt: now, templateId }, { merge: true });
         }
-        tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, updatedAt: Date.now() }, { merge: true });
+        tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, ...(source.renderedText ? { renderedConfirmed: true } : {}), updatedAt: Date.now() }, { merge: true });
     });
     
     try {

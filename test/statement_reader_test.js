@@ -91,6 +91,19 @@ describe('server statement reader', () => {
             expect(incomplete.parsed.htmlIncompleteRows).toBe(1);
             expect(incomplete.parsed.verdict).toBe('unverified');
         });
+        it('files rows the owner confirmed, but only against the template they confirmed', async () => {
+            const { text } = await readRenderedHtml(renderedPage);
+            const base = { bytes: envelope(shell), filename: 'AMEX.html', passwords: [password], rendered: { text, verified: false, confirmed: true } };
+            const confirmed = await readStatement({ ...base, confirmedTemplateId: 'owner-confirmed-template' });
+            expect(confirmed.parsed.rows).toHaveLength(2);
+            expect(confirmed.parsed.layout).toMatchObject({ learnedTemplate: 'owner-confirmed-template', reconciliationBypassed: true });
+            expect(confirmed.renderedOverride).toBe(true);
+            const unconfirmed = await readStatement({ ...base, rendered: { text, verified: false, confirmed: false }, confirmedTemplateId: 'owner-confirmed-template' });
+            expect(unconfirmed.parsed.layout.reconciliationBypassed).toBeUndefined();
+            expect(unconfirmed.parsed.verdict).toBe('unverified');
+            const noTemplate = await readStatement(base);
+            expect(noTemplate.parsed.layout.reconciliationBypassed).toBeUndefined();
+        });
     });
     it('fails safely for absent and wrong keys and unbounded derivation', async () => {
         await expect(readStatement({ bytes: envelope(), filename: 'statement.html' })).rejects.toMatchObject({ code: 'NO_VAULT_KEYS' });
