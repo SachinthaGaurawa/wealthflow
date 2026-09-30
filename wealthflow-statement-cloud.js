@@ -160,16 +160,16 @@ async function download(entry) {
 
 const LAYOUT_CONFIRM_RETRYABLE_REASONS = new Set(['statement-request-timed-out', 'statement-service-unavailable']);
 const LAYOUT_CONFIRM_RETRIES = 2;
-
-async function confirmLayout(entry, rows) {
+const confirmLayout = (entry, rows) => confirmWithRetry({ action: 'layout', id: entry.id, rows });
+async function confirmWithRetry(body) {
     for (let attempt = 0; ; attempt += 1) {
         try {
-            const result = await request('/api/statement-sync', 'POST', { action: 'layout', id: entry.id, rows });
+            const result = await request('/api/statement-sync', 'POST', body);
             if (result.mapped !== true) throw new Error('layout-not-mapped');
             let filed=Math.max(0,Number(result.filed)||0),review=Math.max(0,Number(result.review)||0),current=result;
             
             for(let batch=0;current.replayStatus==='pending'&&batch<100;batch+=1){
-                current=await request('/api/statement-sync','POST',{action:'layout-continue',id:entry.id});
+                current=await request('/api/statement-sync','POST',{action:'layout-continue',id:body.id});
                 filed+=Math.max(0,Number(current.filed)||0);review+=Math.max(0,Number(current.review)||0);
             }
             if(current.replayStatus==='pending')throw new Error('statement-continuation-limit');
@@ -184,8 +184,58 @@ async function confirmLayout(entry, rows) {
         }
     }
 }
-
+async function gzipToB64(text) {
+    const packed = new Uint8Array(await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < packed.length; i += 0x8000) binary += String.fromCharCode.apply(null, packed.subarray(i, i + 0x8000));
+    return btoa(binary);
+}
+async function gunzipFromB64(encoded) {
+    const packed = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
+    return new Response(new Blob([packed]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+}
+// Reasons that mean "this route cannot read that statement", so the ordinary
+// text-based layout teacher gets its turn instead of a dead end.
+const RENDER_FALLBACK_REASONS = new Set(['rendered-source-not-html', 'rendered-source-too-large', 'rendered-statement-invalid', 'rendered-statement-has-no-rows']);
+// A Smart Statement (NTB / American Express e-statements) draws its rows with
+// its own JavaScript, which the server has no browser to run. The device does
+// exactly that for a file uploaded by hand (wealthflow-html-statement.js's
+// sandboxed renderer) — this gives an emailed statement the same reading: the
+// server decrypts it, this device renders it, and the rendered document goes
+// back to be read and validated like any other statement. Resolves true only
+// when it took the statement all the way to the server.
+async function mapRenderedStatement(entry) {
+    const reader = window.WFHtmlStatement;
+    if (!/\.html?$/i.test(entry.filename || '') || typeof reader?.htmlToTransactionsAsync !== 'function'
+        || typeof CompressionStream !== 'function' || typeof DecompressionStream !== 'function') return false;
+    say('Reading this statement on your device…', 'info');
+    let read;
+    try {
+        const source = await request('/api/statement-sync', 'POST', { action: 'render-source', id: entry.id });
+        if (typeof source.htmlGz !== 'string' || !source.htmlGz) return false;
+        read = await reader.htmlToTransactionsAsync(await gunzipFromB64(source.htmlGz));
+    } catch (_) { return false; }
+    if (!read?.rendered || !read.renderedHtml || !read.transactions?.length) return false;
+    overlay?.remove(); overlay = null;
+    try {
+        const result = await confirmWithRetry({ action: 'rendered', id: entry.id, htmlGz: await gzipToB64(read.renderedHtml) });
+        if (result.filed > 0 && result.review === 0) say(`${result.filed} statement transaction${result.filed === 1 ? '' : 's'} read on your device and filed.`, 'success');
+        else if (result.filed > 0) say(`${result.filed} transaction${result.filed === 1 ? '' : 's'} filed; ${result.review} still need${result.review === 1 ? 's' : ''} review.`, 'warn');
+        else if (result.replayStatus === 'needs_review') say('The statement was read on your device, but its transactions need your confirmation. Open the review and map its layout.', 'warn');
+        else say('Statement read on your device. The remaining rows are continuing in the background.', 'info');
+        await refreshFinancialData().catch(() => {});
+        await sync().catch(() => say('The statement was read, but the immediate processing request failed. It remains queued for retry.', 'warn'));
+    } catch (error) {
+        if (RENDER_FALLBACK_REASONS.has(error?.message)) return false;
+        say(error?.mightAlreadyBeMapped
+            ? 'This may already be read from an earlier attempt — check Open reviews for its current status before mapping it again.'
+            : 'Reading this statement on your device was not completed. The original statement remains pending.', error?.mightAlreadyBeMapped ? 'warn' : 'error');
+    }
+    openReview();
+    return true;
+}
 async function mapLayout(entry) {
+    if (await mapRenderedStatement(entry)) return;
     if (typeof window._teachStatementLayout !== 'function') return say('The statement layout mapper is not loaded yet.', 'warn');
     try {
         const source = await request('/api/statement-sync', 'POST', { action: 'review-source', id: entry.id });

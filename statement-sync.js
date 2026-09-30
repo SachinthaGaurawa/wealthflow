@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { getAdminDb } from './admin-db.mjs';
 import { identify, userKeyFor, sendersOf } from './gmail-link.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
@@ -6,7 +7,7 @@ import { syncMailbox } from './gmail-hook.js';
 import { policyFrom, matchSender } from './wealthflow-mail-senders.mjs';
 import { planMessage } from './wealthflow-mail-ingest.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
-import { readStatement, STATEMENT_LIMITS } from './statement-reader.mjs';
+import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { settleStatement, resolveReview, transferEvidence } from './statement-ledger.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
@@ -37,7 +38,12 @@ const PUBLIC_REVIEW_SOURCE_REASONS = new Set([
     'review-source-owner-mismatch', 'whole-statement-review-required',
     'layout-replay-would-overlap-settled-data',
     'layout-confirmation-does-not-reproduce-statement',
+    'rendered-source-not-html', 'rendered-source-too-large',
+    'rendered-statement-invalid', 'rendered-statement-has-no-rows',
 ]);
+const RENDERED_TEXT_MAX = 300000;
+const RENDERED_GZ_MAX = 3400000;
+const RENDERED_HTML_MAX = 12 * 1024 * 1024;
 
 export function publicReviewSourceReason(error) {
     const detail = String(error?.message || 'statement-layout-review-rejected');
@@ -478,7 +484,9 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         const passwordOffset = Math.max(0, Number(claimed.passwordOffset) || 0);
         const passwordBatch = passwords.slice(passwordOffset, passwordOffset + PASSWORD_BATCH);
         let result;
-        try { result = await read({ ...attachment, passwords: passwordBatch, bank: claimed.bank || '', layouts, confirmedTemplateId: claimed.learnedTemplate || '' }); }
+        const rendered = typeof claimed.renderedText === 'string' && claimed.renderedText
+            ? { text: claimed.renderedText, incompleteRows: Number(claimed.renderedIncompleteRows) || 0, verified: claimed.renderedVerified === true } : null;
+        try { result = await read({ ...attachment, passwords: passwordBatch, bank: claimed.bank || '', layouts, confirmedTemplateId: claimed.learnedTemplate || '', rendered }); }
         catch (error) {
             if (error?.message === 'PASSWORD_FAILED' && passwordOffset + PASSWORD_BATCH < passwords.length) {
                 const pending = new Error('statement-password-batch-pending');
@@ -617,6 +625,14 @@ export async function inspectReviewSource({ db, owner, id, env = process.env, f 
     if (typeof review.statementText === 'string' && review.statementText.trim() && review.statementText.length <= 500000) {
         return { ok: true, text: review.statementText, bank: review.bank || '', last4: review.last4 || '', filename: review.filename || 'Statement', sourcePath: review.sourcePath };
     }
+    return withReviewAttachment({ db, owner, review, env, f, open, attachment }, async ({ source, sourceRef, bytes, passwords }) => {
+        const result = await read({ ...bytes, passwords, bank: source.bank || '', layouts: [] });
+        if (typeof result.text !== 'string' || !result.text.trim() || result.text.length > 500000) throw new Error('review-source-text-unavailable');
+        return { ok: true, text: result.text, bank: source.bank || '', last4: result.parsed?.layout?.accountLast4 || '', filename: source.filename || bytes.filename || '', sourcePath: sourceRef.path };
+    });
+}
+
+async function withReviewAttachment({ db, owner, review, env, f, open, attachment }, use) {
     const mailRef = db.collection('wf-mail').doc(userKeyFor(owner.email));
     if (!String(review.sourcePath || '').startsWith(mailRef.path + '/items/') || String(review.sourcePath).split('/').length !== 4) throw new Error('review-source-owner-mismatch');
     const sourceRef = db.doc(review.sourcePath), sourceSnap = await sourceRef.get(), source = sourceSnap.data();
@@ -631,10 +647,84 @@ export async function inspectReviewSource({ db, owner, id, env = process.env, f 
         }
         const token = await accessTokenFrom(mail.refresh_token, env, f);
         const bytes = await attachment(source, sourceRef, token, sendersOf(mail), f);
-        const result = await read({ ...bytes, passwords, bank: source.bank || '', layouts: [] });
-        if (typeof result.text !== 'string' || !result.text.trim() || result.text.length > 500000) throw new Error('review-source-text-unavailable');
-        return { ok: true, text: result.text, bank: source.bank || '', last4: result.parsed?.layout?.accountLast4 || '', filename: source.filename || bytes.filename || '', sourcePath: sourceRef.path };
+        return await use({ source, sourceRef, bytes, passwords });
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }
+}
+
+/**
+ * A Smart Statement's rows are drawn by its own JavaScript, which this
+ * serverless function has no browser to run — but the owner's device does
+ * (wealthflow-html-statement.js), and reads the exact same file when it is
+ * uploaded by hand. This hands the decrypted document to that device, only
+ * ever to the verified owner, and only gzipped so a multi-megabyte
+ * application fits one response.
+ */
+export async function inspectRenderSource({ db, owner, id, env = process.env, f = fetch, open = openCloud, attachment = attachmentBytes, openHtml = openHtmlStatement }) {
+    if (!/^[a-f\d]{64}$/.test(id || '') || !owner.uid || !owner.email) throw new Error('invalid-review-request');
+    const reviewSnap = await db.collection('users').doc(owner.uid).collection('statementReview').doc(id).get(), review = reviewSnap.data();
+    if (!reviewSnap.exists || review.uid !== owner.uid || !Number.isSafeInteger(review.index) || review.index < -1 || review.status !== 'pending') throw new Error('whole-statement-review-required');
+    return withReviewAttachment({ db, owner, review, env, f, open, attachment }, async ({ source, sourceRef, bytes, passwords }) => {
+        const filename = source.filename || bytes.filename || '';
+        if (!/\.html?$/i.test(filename) && !/^\s*(?:<!doctype html|<html)/i.test(Buffer.from(bytes.bytes).subarray(0, 1024).toString())) throw new Error('rendered-source-not-html');
+        const html = await openHtml(bytes.bytes, passwords);
+        const htmlGz = gzipSync(Buffer.from(html, 'utf8')).toString('base64');
+        if (htmlGz.length > RENDERED_GZ_MAX) throw new Error('rendered-source-too-large');
+        return { ok: true, htmlGz, bank: source.bank || '', filename, sourcePath: sourceRef.path };
+    });
+}
+
+/**
+ * Takes the document the owner's device rendered and stores only the text
+ * this server itself extracts from it. That text is read by the same
+ * column-aware HTML reader and validated by the same per-row settlement
+ * checks as any other statement, so a rendered row is trusted no more than a
+ * static table's row would be.
+ */
+export async function submitRenderedStatement({ db, owner, id, htmlGz, env = process.env, f = fetch, enqueue = enqueueStatementSync, readRendered = readRenderedHtml }) {
+    if (!/^[a-f\d]{64}$/.test(id || '') || !owner.uid || !owner.email) throw new Error('invalid-review-request');
+    if (typeof htmlGz !== 'string' || !htmlGz || htmlGz.length > 6000000 || !/^[A-Za-z\d+/]+={0,2}$/.test(htmlGz)) throw new Error('rendered-statement-invalid');
+    let html;
+    try { html = gunzipSync(Buffer.from(htmlGz, 'base64'), { maxOutputLength: RENDERED_HTML_MAX }).toString('utf8'); }
+    catch (_) { throw new Error('rendered-statement-invalid'); }
+    let read;
+    try { read = await readRendered(html); } catch (_) { throw new Error('rendered-statement-invalid'); }
+    const rows = read?.parsed?.rows;
+    if (!Array.isArray(rows) || !rows.length) throw new Error('rendered-statement-has-no-rows');
+    if (typeof read.text !== 'string' || !read.text.trim() || read.text.length > RENDERED_TEXT_MAX) throw new Error('rendered-statement-invalid');
+    const userRef = db.collection('users').doc(owner.uid), reviewRef = userRef.collection('statementReview').doc(id);
+    const reviewSnap = await reviewRef.get(), reviewData = reviewSnap.data();
+    if (!reviewSnap.exists || reviewData.uid !== owner.uid || !Number.isSafeInteger(reviewData.index) || reviewData.index < -1 || reviewData.status !== 'pending') throw new Error('whole-statement-review-required');
+    const mailRef = db.collection('wf-mail').doc(userKeyFor(owner.email));
+    if (!String(reviewData.sourcePath || '').startsWith(mailRef.path + '/items/') || String(reviewData.sourcePath).split('/').length !== 4) throw new Error('review-source-owner-mismatch');
+    const sourceRef = db.doc(reviewData.sourcePath);
+    await db.runTransaction(async tx => {
+        const current = await tx.get(reviewRef), sourceSnap = await tx.get(sourceRef);
+        const review = current.data(), source = sourceSnap.data();
+        const ledger = await tx.get(userRef.collection('statementLedger').where('sourcePath', '==', sourceRef.path));
+        const siblings = await tx.get(userRef.collection('statementReview').where('sourcePath', '==', sourceRef.path));
+        if (!current.exists || review.uid !== owner.uid || review.status !== 'pending' || !sourceSnap.exists || source.uid !== owner.uid || source.filed === true || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(doc => doc.data().status === 'filed' || doc.data().status === 'duplicate')) throw new Error('layout-replay-would-overlap-settled-data');
+        const now = Date.now();
+        for (const doc of siblings.docs) {
+            const sibling = doc.data();
+            if (sibling.uid === owner.uid && sibling.status === 'pending') tx.set(doc.ref, { status: doc.id === id ? 'mapped' : 'superseded_by_layout', mappedAt: now }, { merge: true });
+        }
+        for (const doc of ledger.docs) {
+            if (doc.data().status === 'review') tx.set(doc.ref, { status: 'superseded_by_layout', supersededAt: now }, { merge: true });
+        }
+        tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0,
+            renderedText: read.text, renderedIncompleteRows: Number(read.parsed?.htmlIncompleteRows) || 0,
+            renderedVerified: read.parsed?.verdict === 'parsed' && read.parsed?.understood === true && !read.parsed?.htmlIncompleteRows, renderedAt: now, updatedAt: now }, { merge: true });
+    });
+    try {
+        const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path, maxSteps: 1 });
+        const filed = Math.max(0, Number(replay?.filed) || 0), review = Math.max(0, Number(replay?.review) || 0);
+        const replayStatus = String(replay?.status || (filed ? 'filed' : 'pending'));
+        // A statement that still cannot be proven re-opens ITS OWN review
+        // (quarantineSource) with the rendered text attached, so the owner can
+        // map its layout from real rows. Only a fully filed one is closed here.
+        if (replayStatus === 'filed') await reviewRef.set({ status: 'resolved', resolvedAt: Date.now(), replayStatus }, { merge: true });
+        return { ok: true, mapped: true, queued: replay?.morePending === true, filed, review, replayStatus };
+    } catch (_) { return { ok: true, mapped: true, queued: false }; }
 }
 
 export async function mapReviewLayout({ db, owner, id, rows, env = process.env, f = fetch, inspect = inspectReviewSource, learn, enqueue = enqueueStatementSync }) {
@@ -684,7 +774,7 @@ export async function continueMappedLayout({ db, owner, id, env = process.env, f
     const reviewSnap = await reviewRef.get(), review = reviewSnap.data();
     if (!reviewSnap.exists || review.uid !== owner.uid || review.status !== 'mapped' || !review.sourcePath) throw new Error('whole-statement-review-required');
     const sourceRef = db.doc(review.sourcePath), sourceSnap = await sourceRef.get(), source = sourceSnap.data();
-    if (!sourceSnap.exists || source.uid !== owner.uid || !source.learnedTemplate) throw new Error('review-source-owner-mismatch');
+    if (!sourceSnap.exists || source.uid !== owner.uid || (!source.learnedTemplate && !source.renderedText)) throw new Error('review-source-owner-mismatch');
     if (source.status === 'filed' || source.filed === true) {
         await reviewRef.set({ status: 'resolved', resolvedAt: Date.now(), replayStatus: 'filed' }, { merge: true });
         return { ok: true, filed: 0, review: 0, queued: false, replayStatus: 'filed' };
@@ -711,17 +801,19 @@ export default async function handler(req, res) {
     const scheduled = validScheduleSecret(req);
     let body;
     try { body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {}); } catch (_) { return json(res, 400, { ok: false, reason: 'invalid-body' }); }
-    if (scheduled && ['review', 'review-source', 'layout', 'layout-continue'].includes(body.action)) return json(res, 403, { ok: false, reason: 'interactive-owner-required' });
+    if (scheduled && ['review', 'review-source', 'layout', 'layout-continue', 'render-source', 'rendered'].includes(body.action)) return json(res, 403, { ok: false, reason: 'interactive-owner-required' });
     if (!scheduled) {
         const who = await identify(req, { verifyIdToken: token => admin.auth().verifyIdToken(token, true) });
         if (!who.ok) return json(res, who.status || 401, { ok: false, reason: who.reason });
         if (who.uid !== settings.ownerUid) return json(res, 403, { ok: false, reason: 'owner-required' });
-        if (['review-source', 'layout', 'layout-continue'].includes(body.action)) {
+        if (['review-source', 'layout', 'layout-continue', 'render-source', 'rendered'].includes(body.action)) {
             if (req.method !== 'POST') return json(res, 405, { ok: false, reason: 'post-required' });
             try {
                 const owner = await admin.auth().getUser(who.uid);
                 if (owner.disabled || !owner.emailVerified) return json(res, 403, { ok: false, reason: 'verified-owner-required' });
                 const result = body.action === 'review-source' ? await inspectReviewSource({ db, owner, id: body.id })
+                    : body.action === 'render-source' ? await inspectRenderSource({ db, owner, id: body.id })
+                    : body.action === 'rendered' ? await submitRenderedStatement({ db, owner, id: body.id, htmlGz: body.htmlGz })
                     : body.action === 'layout-continue' ? await continueMappedLayout({ db, owner, id: body.id })
                     : await mapReviewLayout({ db, owner, id: body.id, rows: body.rows });
                 return json(res, 200, result);

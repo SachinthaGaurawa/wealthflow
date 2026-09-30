@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createCipheriv, createHash, pbkdf2Sync } from 'node:crypto';
-import { readStatement, pdfLinesFromItems, STATEMENT_LIMITS } from '../statement-reader.mjs';
+import { readStatement, readRenderedHtml, openHtmlStatement, pdfLinesFromItems, STATEMENT_LIMITS } from '../statement-reader.mjs';
 import { learnCloudLayout } from '../statement-layout.mjs';
 
 const password = '01021990';
@@ -51,6 +51,46 @@ describe('server statement reader', () => {
     it('supports a base64 wrapped inner HTML payload', async () => {
         const result = await readStatement({ bytes: envelope(Buffer.from(plain).toString('base64')), filename: 'statement.html', passwords: [password] });
         expect(result.parsed.rows).toHaveLength(2);
+    });
+    describe('Smart Statement whose rows are drawn by its own script', () => {
+        // The static markup holds NO rows: a browser draws them when the page
+        // runs, which this server cannot do. What the owner's device renders is
+        // the same page with the table present and the scripts stripped.
+        const shell = '<html><body><h1>American Express Card Statement</h1><p>Card No: 376657XXXXX0276</p><div id="rows"></div><script>document.getElementById("rows").innerHTML="<table></table>"</script></body></html>';
+        const renderedPage = plain.replace(/<script>.*<\/script>/, '');
+        it('finds nothing on its own, which is why the device has to render it', async () => {
+            const result = await readStatement({ bytes: envelope(shell), filename: 'AMEX.html', passwords: [password] });
+            expect(result.parsed.rows).toHaveLength(0);
+        });
+        it('opens the decrypted document for the device without reading or running it', async () => {
+            const html = await openHtmlStatement(envelope(shell), [password]);
+            expect(html).toContain('<div id="rows">');
+            await expect(openHtmlStatement(envelope(shell), ['wrong'])).rejects.toMatchObject({ code: 'PASSWORD_FAILED' });
+        });
+        it('reads a device-rendered document exactly like any other HTML statement', async () => {
+            const result = await readRenderedHtml(renderedPage);
+            expect(result.parsed.rows.map(r => [r.date, r.amount, r.direction])).toEqual([['2026-09-14', 123.45, 'debit'], ['2026-09-15', 50, 'credit']]);
+            expect(result.parsed.layout.accountLast4).toBe('0276');
+            await expect(readRenderedHtml('')).rejects.toMatchObject({ code: 'INVALID_ATTACHMENT' });
+        });
+        it('uses the stored rendered text only when the server itself reads no rows', async () => {
+            const { text } = await readRenderedHtml(renderedPage);
+            const viaText = await readStatement({ bytes: envelope(shell), filename: 'AMEX.html', passwords: [password], rendered: { text, verified: true } });
+            expect(viaText.parsed.rows).toHaveLength(2);
+            expect(viaText.text).toBe(text);
+            const staticWins = await readStatement({ bytes: envelope(plain), filename: 'AMEX.html', passwords: [password], rendered: { text: '01/01/2026 FORGED 999999.00 CR', verified: true } });
+            expect(staticWins.parsed.rows.map(r => r.amount)).toEqual([123.45, 50]);
+        });
+        it('never promotes rows that were unverified when submitted', async () => {
+            const { text } = await readRenderedHtml(renderedPage);
+            const unverified = await readStatement({ bytes: envelope(shell), filename: 'AMEX.html', passwords: [password], rendered: { text, verified: false } });
+            expect(unverified.parsed.rows).toHaveLength(2);
+            expect(unverified.parsed.verdict).toBe('unverified');
+            expect(unverified.parsed.understood).toBe(false);
+            const incomplete = await readStatement({ bytes: envelope(shell), filename: 'AMEX.html', passwords: [password], rendered: { text, verified: true, incompleteRows: 1 } });
+            expect(incomplete.parsed.htmlIncompleteRows).toBe(1);
+            expect(incomplete.parsed.verdict).toBe('unverified');
+        });
     });
     it('fails safely for absent and wrong keys and unbounded derivation', async () => {
         await expect(readStatement({ bytes: envelope(), filename: 'statement.html' })).rejects.toMatchObject({ code: 'NO_VAULT_KEYS' });

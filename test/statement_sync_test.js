@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createHash } from 'node:crypto';
-import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, continueMappedLayout, recoverPasswordFailures, recoverWholeStatementFailures, repairReviewMetadata, repairCategoriesInUser, publicReviewSourceReason } from '../statement-sync.js';
+import { createHash, randomBytes } from 'node:crypto';
+import { gzipSync, gunzipSync } from 'node:zlib';
+import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, inspectRenderSource, submitRenderedStatement, mapReviewLayout, continueMappedLayout, recoverPasswordFailures, recoverWholeStatementFailures, repairReviewMetadata, repairCategoriesInUser, publicReviewSourceReason } from '../statement-sync.js';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
 import { textVerdict, VERDICT } from '../wealthflow-statement-identity.js';
@@ -300,6 +301,75 @@ describe('private source inspection and durable layout replay', () => {
         const result = await mapReviewLayout({ ...args, rows: [row], inspect: async () => ({ text, bank: 'HNB', sourcePath: args.sourcePath }), learn: async () => ({ ok: true, template: { id: 't1' }, rows: [row] }), enqueue: async () => { throw new Error('queue-down'); } });
         expect(result).toEqual({ ok: true, mapped: true, queued: false });
         expect(args.data.get(args.sourcePath).status).toBe('pending');
+    });
+    describe('script-drawn Smart Statements read on the owner device', () => {
+        const rows = [{ date: '2026-09-14', narration: 'KEELLS STORE', amount: 123.45, direction: 'debit' }];
+        const rendered = html => gzipSync(Buffer.from(html)).toString('base64');
+        const renderedDoc = '<html><body><h1>American Express Card Statement</h1><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr><tr><td>14/09/2026</td><td>KEELLS STORE</td><td>123.45 DR</td></tr></table></body></html>';
+        const readRendered = vi.fn(async () => ({ text: '14/09/2026 KEELLS STORE 123.45 DR', parsed: { rows, verdict: 'parsed', understood: true } }));
+        it('hands only the verified owner the decrypted document, gzipped, with no password', async () => {
+            const args = setup();
+            args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), filename: 'eStatement.html' });
+            args.attachment.mockResolvedValue({ bytes: Buffer.from('<html>encrypted</html>'), filename: 'eStatement.html' });
+            const openHtml = vi.fn(async () => '<html><script>draw()</script></html>');
+            const result = await inspectRenderSource({ ...args, openHtml });
+            expect(gunzipSync(Buffer.from(result.htmlGz, 'base64')).toString()).toBe('<html><script>draw()</script></html>');
+            expect(result).toMatchObject({ ok: true, bank: 'HNB', filename: 'eStatement.html', sourcePath: args.sourcePath });
+            expect(JSON.stringify(result)).not.toContain('01021990');
+            await expect(inspectRenderSource({ ...args, openHtml, owner: { uid: 'other', email: args.owner.email } })).rejects.toThrow('whole-statement-review-required');
+        });
+        it('refuses a PDF and an oversized document with fixed public reasons', async () => {
+            const args = setup(); const openHtml = vi.fn(async () => 'x');
+            await expect(inspectRenderSource({ ...args, openHtml })).rejects.toThrow('rendered-source-not-html');
+            expect(openHtml).not.toHaveBeenCalled();
+            args.attachment.mockResolvedValue({ bytes: Buffer.from('<html>'), filename: 'big.html' });
+            await expect(inspectRenderSource({ ...args, openHtml: async () => randomBytes(4_000_000).toString('base64') })).rejects.toThrow('rendered-source-too-large');
+            for (const reason of ['rendered-source-not-html', 'rendered-source-too-large', 'rendered-statement-invalid', 'rendered-statement-has-no-rows'])
+                expect(publicReviewSourceReason(new Error(reason))).toBe(reason);
+        });
+        it('stores the text the server itself extracted and re-queues the source, never the client-sent rows', async () => {
+            const args = setup(), enqueue = vi.fn(async () => ({ status: 'filed', filed: 1, review: 0 }));
+            const result = await submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue, readRendered });
+            expect(result).toEqual({ ok: true, mapped: true, queued: false, filed: 1, review: 0, replayStatus: 'filed' });
+            expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourcePath: args.sourcePath, maxSteps: 1 }));
+            expect(args.data.get('users/u/statementReview/' + args.id).status).toBe('resolved');
+            expect(readRendered.mock.calls.at(-1)[0]).toBe(renderedDoc);
+            expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', cursor: 0, totalRows: 1, hasReview: false, filed: false, renderedText: '14/09/2026 KEELLS STORE 123.45 DR', renderedVerified: true, renderedIncompleteRows: 0 });
+            expect(args.data.get(args.sourcePath).learnedTemplate).toBeUndefined();
+            expect(enqueue).toHaveBeenCalledTimes(1);
+        });
+        it('keeps a statement that still cannot be proven in the review list, and can be continued in batches', async () => {
+            const args = setup(), reviewPath = 'users/u/statementReview/' + args.id;
+            // quarantineSource() re-opens the SAME review document when the replay cannot prove the statement.
+            const enqueue = vi.fn(async () => { args.data.set(reviewPath, { ...args.data.get(reviewPath), status: 'pending', statementText: 'rendered rows' }); return { status: 'needs_review', review: 1 }; });
+            const result = await submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue, readRendered });
+            expect(result).toMatchObject({ mapped: true, filed: 0, replayStatus: 'needs_review' });
+            expect(args.data.get(reviewPath)).toMatchObject({ status: 'pending', statementText: 'rendered rows' });
+            // A long statement: filed in batches through the same continue action a taught layout uses.
+            const second = setup();
+            await submitRenderedStatement({ ...second, htmlGz: rendered(renderedDoc), enqueue: async () => ({ status: 'pending', filed: 10, review: 0, morePending: true }), readRendered });
+            expect(second.data.get('users/u/statementReview/' + second.id).status).toBe('mapped');
+            const more = vi.fn(async () => ({ status: 'filed', filed: 3, review: 0 }));
+            expect(await continueMappedLayout({ ...second, enqueue: more })).toMatchObject({ ok: true, filed: 3, replayStatus: 'filed' });
+        });
+        it('rejects garbage, an empty reading and settled-data overlap before changing anything', async () => {
+            const args = setup(), enqueue = vi.fn();
+            const before = structuredClone(args.data.get(args.sourcePath));
+            await expect(submitRenderedStatement({ ...args, htmlGz: '!!not base64!!', enqueue })).rejects.toThrow('rendered-statement-invalid');
+            await expect(submitRenderedStatement({ ...args, htmlGz: Buffer.from('not gzip').toString('base64'), enqueue })).rejects.toThrow('rendered-statement-invalid');
+            await expect(submitRenderedStatement({ ...args, htmlGz: rendered('<html><body>nothing</body></html>'), enqueue, readRendered: async () => ({ text: 'x', parsed: { rows: [] } }) })).rejects.toThrow('rendered-statement-has-no-rows');
+            await expect(submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue, readRendered, owner: { uid: 'other', email: args.owner.email } })).rejects.toThrow('whole-statement-review-required');
+            args.data.set('users/u/statementLedger/existing', { sourcePath: args.sourcePath, status: 'filed' });
+            await expect(submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue, readRendered })).rejects.toThrow('layout-replay-would-overlap-settled-data');
+            expect(args.data.get(args.sourcePath)).toEqual(before);
+            expect(enqueue).not.toHaveBeenCalled();
+        });
+        it('flags rows the layer scan recovered as unverified for the reprocessing pass', async () => {
+            const args = setup();
+            await submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue: async () => ({ queued: true }),
+                readRendered: async () => ({ text: 'T', parsed: { rows, verdict: 'unverified', understood: false } }) });
+            expect(args.data.get(args.sourcePath)).toMatchObject({ renderedVerified: false });
+        });
     });
 });
 
