@@ -330,7 +330,8 @@ describe('private source inspection and durable layout replay', () => {
         it('stores the text the server itself extracted and re-queues the source, never the client-sent rows', async () => {
             const args = setup(), enqueue = vi.fn(async () => ({ status: 'filed', filed: 1, review: 0 }));
             const result = await submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue, readRendered });
-            expect(result).toEqual({ ok: true, mapped: true, queued: false, filed: 1, review: 0, replayStatus: 'filed', needsLayout: false });
+            expect(result).toEqual({ ok: true, mapped: true, queued: false, filed: 1, review: 0, replayStatus: 'filed', needsLayout: false,
+                why: { verdict: 'parsed', rows: 1, incomplete: 0, kinds: {}, reconciled: null, accounts: 1, invalidDates: 0, balanceMismatches: 0, noMovement: false } });
             expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourcePath: args.sourcePath, maxSteps: 1 }));
             expect(args.data.get('users/u/statementReview/' + args.id).status).toBe('resolved');
             expect(readRendered.mock.calls.at(-1)[0]).toBe(renderedDoc);
@@ -354,7 +355,7 @@ describe('private source inspection and durable layout replay', () => {
         });
         it('records the owner confirming a rendered statement so its reprocessing can file it', async () => {
             const args = setup();
-            args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), renderedText: '14/09/2026 KEELLS STORE 123.45 DR', renderedVersion: 2, renderedConfirmed: false });
+            args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), renderedText: '14/09/2026 KEELLS STORE 123.45 DR', renderedVersion: 3, renderedConfirmed: false });
             const inspect = async () => ({ text: 'x', bank: 'HNB', sourcePath: args.sourcePath });
             await mapReviewLayout({ ...args, rows: [{ date: '2026-09-14', amount: 123.45, direction: 'debit' }], inspect, learn: async () => ({ ok: true, template: { id: 't1' }, rows }), enqueue: async () => ({ status: 'pending' }) });
             expect(args.data.get(args.sourcePath)).toMatchObject({ renderedConfirmed: true });

@@ -8,7 +8,7 @@ import { policyFrom, matchSender } from './wealthflow-mail-senders.mjs';
 import { planMessage } from './wealthflow-mail-ingest.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
-import { settleStatement, resolveReview, transferEvidence } from './statement-ledger.mjs';
+import { settleStatement, resolveReview, transferEvidence, isZeroAmountLine } from './statement-ledger.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, VERDICT } from './wealthflow-statement-identity.js';
@@ -45,7 +45,7 @@ const PUBLIC_REVIEW_SOURCE_REASONS = new Set([
 // changes what it produces. Text stored by an older reader (a "13 JUL" read as
 // the year 2013, a Balance column read as the amount) is never trusted again, and
 // a statement holding it is rendered afresh instead of being stuck behind it.
-const RENDERED_VERSION = 2;
+const RENDERED_VERSION = 3;
 const RENDERED_TEXT_MAX = 300000;
 const RENDERED_GZ_MAX = 3400000;
 const RENDERED_HTML_MAX = 12 * 1024 * 1024;
@@ -187,6 +187,25 @@ export async function checkpointRows(db, ref, uid, leaseToken, rows) {
     return rowSetHash;
 }
 
+// A statement whose own balances prove nothing moved has nothing to file, and
+// leaving it in review for the owner to dismiss by hand is a chore the system can
+// do itself. Closed exactly as a filed statement is, with the mark that says why
+// there are no ledger rows, and any whole-statement review it had is resolved.
+async function fileEmptyStatement(db, uid, ref, leaseToken, mailRef, now = Date.now()) {
+    const userRef = db.collection('users').doc(uid);
+    await db.runTransaction(async tx => {
+        const snap = await tx.get(ref), source = snap.data();
+        if (!snap.exists || source.uid !== uid || source.leaseToken !== leaseToken) throw new Error('statement-lease-lost');
+        if (mailRef) {
+            const mail = await tx.get(mailRef), data = mail.data() || {};
+            if (!mail.exists || data.uid !== uid || data.autonomous !== true) throw new Error('autonomous-mailbox-disabled-during-processing');
+        }
+        const reviews = await tx.get(userRef.collection('statementReview').where('sourcePath', '==', ref.path));
+        for (const doc of reviews.docs) if (doc.data().uid === uid && doc.data().status === 'pending') tx.set(doc.ref, { status: 'resolved', resolvedAt: now, replayStatus: 'filed', emptyStatement: true }, { merge: true });
+        tx.set(ref, { status: 'filed', filed: true, emptyStatement: true, cursor: 0, totalRows: 0, hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
+    });
+    return { status: 'filed', filed: 0, review: 0, empty: 1 };
+}
 async function quarantineSource(db, uid, ref, leaseToken, reason, evidence = {}) {
     const reviewRef = db.collection('users').doc(uid).collection('statementReview').doc(createHash('sha256').update(ref.path).digest('hex'));
     await db.runTransaction(async tx => {
@@ -390,6 +409,25 @@ export async function repairReviewMetadata({ db, uid, limit = 100 }) {
     return repaired;
 }
 
+// Reviews an earlier reader raised for lines that move no money ("Int.Pd 0.00").
+// There is nothing in them to file or to correct, so they are dismissed the way
+// the owner would dismiss them — through the same resolver — and marked as
+// automatic. Only a row whose amount is exactly the number 0 qualifies.
+export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {
+    const page = await db.collection('users').doc(uid).collection('statementReview').where('status', '==', 'pending').limit(Math.min(500, Math.max(1, limit))).get();
+    let dismissed = 0;
+    for (const doc of page.docs) {
+        const review = doc.data();
+        if (review.uid !== uid || review.reason !== 'invalid-transaction' || !Number.isSafeInteger(review.index) || review.index < 0 || !isZeroAmountLine(review.row)) continue;
+        try {
+            await resolveReview({ db, uid, id: doc.id, decision: { module: 'skip' } });
+            await doc.ref.set({ dismissedBy: 'zero-amount-line' }, { merge: true });
+            dismissed += 1;
+        } catch (_) { /* left for the owner: a review that cannot be closed is still a review */ }
+    }
+    return dismissed;
+}
+
 export function repairCategoriesInUser(user) {
     const next = structuredClone(user || {});
     let expenses = 0, income = 0;
@@ -512,6 +550,10 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         if (identity.verdict === VERDICT.NOT_STATEMENT) {
             await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, identity);
             outcome = { status: 'rejected_non_statement', rejected: 1 };
+        } else if (result.zeroActivity === true && result.renderedOverride === true && identity.verdict === VERDICT.STATEMENT && parsed?.rows?.length === 0) {
+            // Rendered on the owner's device, identified as a statement, and its
+            // own opening and closing balances agree: a month with no transactions.
+            outcome = await fileEmptyStatement(db, uid, sourceRef, claimed.leaseToken, mailRef);
         } else {
             if (identity.verdict !== VERDICT.STATEMENT && !parserProof) throw new Error('statement-layout-identity-needs-review');
             if (!parserProof) throw new Error('statement-layout-or-reconciliation-needs-review');
@@ -564,7 +606,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
     const token = await accessTokenFrom(mail.refresh_token, env, f);
-    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0;
+    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0;
     if (action !== 'drain') {
         const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
         if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
@@ -585,6 +627,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit });
         revokedRecovered = revoked.recovered; revokedMore = revoked.more;
         reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
+        zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
     }
     let processed = 0, attempted = 0, last = null;
     for (;;) {
@@ -617,7 +660,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         .filter(data => Number(data?.retryCount) > 0)
         .slice(0, 20)
         .map(data => ({ bank: data.bank || '', filename: data.filename || '', retryCount: data.retryCount || 0, lastRetryReason: data.lastRetryReason || '' }));
-    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired,
+    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed,
         pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending, retrying,
         ...(morePending ? { retryAfterMs } : {}) };
 }
@@ -694,8 +737,18 @@ export async function submitRenderedStatement({ db, owner, id, htmlGz, env = pro
     let read;
     try { read = await readRendered(html); } catch (_) { throw new Error('rendered-statement-invalid'); }
     const rows = read?.parsed?.rows;
-    if (!Array.isArray(rows) || !rows.length) throw new Error('rendered-statement-has-no-rows');
+    // No rows is a valid reading only when the statement's own balances prove that
+    // nothing moved; a document the device failed to draw carries no such proof.
+    const idle = read?.zeroActivity === true && Array.isArray(rows) && !rows.length;
+    if (!Array.isArray(rows) || (!rows.length && !idle)) throw new Error('rendered-statement-has-no-rows');
     if (typeof read.text !== 'string' || !read.text.trim() || read.text.length > RENDERED_TEXT_MAX) throw new Error('rendered-statement-invalid');
+    // What the server made of the reading — counts and labels only, never an
+    // amount, a merchant or an account number — so a statement that will not file
+    // can be explained from "Copy diagnostics" instead of guessed at.
+    const rec = read.parsed?.reconciliation;
+    const why = { verdict: String(read.parsed?.verdict || ''), rows: rows.length, incomplete: Number(read.parsed?.htmlIncompleteRows) || 0,
+        kinds: { ...(read.parsed?.htmlIncompleteKinds || read.parsed?.htmlReadNotes || {}) }, reconciled: rec?.ok ?? null, accounts: Number(rec?.accounts) || 1,
+        invalidDates: Number(read.parsed?.invalidDates) || 0, balanceMismatches: Number(read.parsed?.balanceMismatches) || 0, noMovement: idle };
     const userRef = db.collection('users').doc(owner.uid), reviewRef = userRef.collection('statementReview').doc(id);
     const reviewSnap = await reviewRef.get(), reviewData = reviewSnap.data();
     if (!reviewSnap.exists || reviewData.uid !== owner.uid || !Number.isSafeInteger(reviewData.index) || reviewData.index < -1 || reviewData.status !== 'pending') throw new Error('whole-statement-review-required');
@@ -718,7 +771,7 @@ export async function submitRenderedStatement({ db, owner, id, htmlGz, env = pro
         }
         tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0,
             renderedText: read.text, renderedIncompleteRows: Number(read.parsed?.htmlIncompleteRows) || 0,
-            renderedVerified: read.parsed?.verdict === 'parsed' && read.parsed?.understood === true && !read.parsed?.htmlIncompleteRows, renderedConfirmed: false, renderedVersion: RENDERED_VERSION, renderedAt: now, updatedAt: now }, { merge: true });
+            renderedVerified: idle || (read.parsed?.verdict === 'parsed' && read.parsed?.understood === true && !read.parsed?.htmlIncompleteRows), renderedConfirmed: false, renderedVersion: RENDERED_VERSION, renderedAt: now, updatedAt: now }, { merge: true });
     });
     try {
         const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path, maxSteps: 1 });
@@ -729,8 +782,8 @@ export async function submitRenderedStatement({ db, owner, id, htmlGz, env = pro
         // map its layout from real rows. Only a fully filed one is closed here.
         if (replayStatus === 'filed') await reviewRef.set({ status: 'resolved', resolvedAt: Date.now(), replayStatus }, { merge: true });
         const needsLayout = replayStatus !== 'filed' && (await reviewRef.get()).data()?.status === 'pending';
-        return { ok: true, mapped: true, queued: replay?.morePending === true, filed, review, replayStatus, needsLayout };
-    } catch (_) { return { ok: true, mapped: true, queued: false }; }
+        return { ok: true, mapped: true, queued: replay?.morePending === true, filed, review, replayStatus, needsLayout, why };
+    } catch (_) { return { ok: true, mapped: true, queued: false, why }; }
 }
 
 export async function mapReviewLayout({ db, owner, id, rows, env = process.env, f = fetch, inspect = inspectReviewSource, learn, enqueue = enqueueStatementSync }) {

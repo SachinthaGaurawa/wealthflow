@@ -203,7 +203,7 @@ const RENDER_FALLBACK_REASONS = new Set(['rendered-source-not-html', 'rendered-s
 const RENDER_TRANSIENT_REASONS = new Set(['statement-request-timed-out', 'statement-service-unavailable']);
 // Mirrors RENDERED_VERSION in statement-sync.js: a review marked by an OLDER
 // reader (renderedRead: true, i.e. 1) carries text that reader got wrong.
-const RENDERED_VERSION = 2;
+const RENDERED_VERSION = 3;
 const canRender = entry => !(Number(entry.renderedRead) >= RENDERED_VERSION) && /\.html?$/i.test(entry.filename || '')
     && typeof window.WFHtmlStatement?.htmlToTransactionsAsync === 'function'
     && typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
@@ -234,9 +234,13 @@ async function renderAndSubmit(entry) {
             diag: read?.rendered && typeof reader.diagnose === 'function' ? reader.diagnose(read.renderedHtml, { rendered: true, renderedRows: read.transactions?.length || 0, report: read.report }) : null });
         window._wfLayoutAttempts.length = Math.min(window._wfLayoutAttempts.length, 15);
     } catch (_) {}
-    if (!read?.rendered || !read.renderedHtml || !read.transactions?.length) return { status: 'fallback' };
+    // No transactions read is still worth sending: a month with none is a real
+    // statement, and only the server can tell that from a page that failed to
+    // draw (it does, from the statement's own balances).
+    if (!read?.rendered || !read.renderedHtml) return { status: 'fallback' };
     try {
         const result = await confirmWithRetry({ action: 'rendered', id: entry.id, htmlGz: await gzipToB64(read.renderedHtml) });
+        try { if (result.why && window._wfLayoutAttempts?.[0]) window._wfLayoutAttempts[0].server = result.why; } catch (_) {}
         return { status: result.needsLayout === true ? 'needs-layout' : 'submitted', result };
     } catch (error) {
         if (RENDER_FALLBACK_REASONS.has(error?.message)) return { status: 'fallback' };
@@ -255,6 +259,7 @@ async function mapRenderedStatement(entry) {
     if (status === 'submitted') {
         if (result.filed > 0 && result.review === 0) say(`${result.filed} statement transaction${result.filed === 1 ? '' : 's'} read on your device and filed.`, 'success');
         else if (result.filed > 0) say(`${result.filed} transaction${result.filed === 1 ? '' : 's'} filed; ${result.review} still need${result.review === 1 ? 's' : ''} review.`, 'warn');
+        else if (result.replayStatus === 'filed') say('This statement has no transactions — its balances did not change — so there was nothing to file.', 'info');
         else if (result.replayStatus === 'needs_review') say('The statement was read on your device, but its transactions need your confirmation. Open the review and map its layout.', 'warn');
         else say('Statement read on your device. The remaining rows are continuing in the background.', 'info');
         overlay?.remove(); overlay = null;
@@ -273,7 +278,7 @@ async function mapRenderedStatement(entry) {
 // them itself, one at a time — the server already has the passwords, this
 // device has the browser. A statement this route cannot read is not retried for
 // a day; one that only failed on the network is retried on the next snapshot.
-const AUTO_TRIED_KEY = 'wf_render_tried_v1', AUTO_RETRY_MS = 86400000, AUTO_BATCH = 25;
+const AUTO_TRIED_KEY = 'wf_render_tried_v2', AUTO_RETRY_MS = 86400000, AUTO_BATCH = 25;
 const triedMap = () => { try { return JSON.parse(window.localStorage?.getItem?.(AUTO_TRIED_KEY) || '{}') || {}; } catch (_) { return {}; } };
 function markTried(id) {
     try {
@@ -288,19 +293,20 @@ function scheduleAutoRender() {
     autoTimer = setTimeout(() => { autoTimer = null; autoRenderPending().catch(() => {}); }, 4000);
 }
 export async function autoRenderPending() {
-    if (autoRunning) return { statements: 0, filed: 0, needLayout: 0 };
+    if (autoRunning) return { statements: 0, filed: 0, needLayout: 0, empty: 0 };
     autoRunning = true;
-    const done = { statements: 0, filed: 0, needLayout: 0 };
+    const done = { statements: 0, filed: 0, needLayout: 0, empty: 0 };
     try {
         for (const entry of autoCandidates().slice(0, AUTO_BATCH)) {
             if (!currentUser() || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) break;
             const { status, result } = await renderAndSubmit(entry);
             if (status === 'fallback' || status === 'failed') markTried(entry.id);
             if (status === 'transient' || status === 'unavailable') break;
-            if (status === 'submitted') { done.statements += 1; done.filed += Math.max(0, Number(result.filed) || 0); }
+            if (status === 'submitted') { done.statements += 1; done.filed += Math.max(0, Number(result.filed) || 0); if (result.replayStatus === 'filed' && !result.filed) done.empty += 1; }
             if (status === 'needs-layout') done.needLayout += 1;
         }
         if (done.filed > 0) say(`${done.filed} statement transaction${done.filed === 1 ? '' : 's'} read on your device and filed automatically.`, 'success');
+        if (done.empty > 0) say(`${done.empty} statement${done.empty === 1 ? ' had' : 's had'} no transactions and ${done.empty === 1 ? 'was' : 'were'} closed.`, 'info');
         if (done.needLayout > 0) say(`${done.needLayout} statement${done.needLayout === 1 ? ' was' : 's were'} read on your device but need${done.needLayout === 1 ? 's' : ''} your confirmation. Open the review to confirm.`, 'warn');
         if (done.statements + done.needLayout > 0) await refreshFinancialData().catch(() => {});
     } finally { autoRunning = false; }

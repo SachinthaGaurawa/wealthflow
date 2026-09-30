@@ -309,7 +309,7 @@ describe('private statement cloud frontend transport', () => {
             expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered']);
             window.WFHtmlStatement.htmlToTransactionsAsync.mockClear(); fetch.mockClear();
             fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'rendered rows text', bank: 'AMEX', filename: entry.filename }));
-            await review({ ...entry, renderedRead: 2 });
+            await review({ ...entry, renderedRead: 3 });
             expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['review-source']);
             expect(window.WFHtmlStatement.htmlToTransactionsAsync).not.toHaveBeenCalled();
             await authChanged(null);
@@ -330,15 +330,28 @@ describe('private statement cloud frontend transport', () => {
 
             it('reads every pending HTML statement itself and skips PDFs and already-read ones', async () => {
                 window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<table>x</table>', transactions: [{ date: '2026-07-13' }] })) };
-                await load([html('a'.repeat(64), 'amex-jul.html'), html('b'.repeat(64), 'ntb-aug.htm'), html('c'.repeat(64), 'hnb.pdf'), html('d'.repeat(64), 'amex-jun.html', { renderedRead: 2 })]);
+                await load([html('a'.repeat(64), 'amex-jul.html'), html('b'.repeat(64), 'ntb-aug.htm'), html('c'.repeat(64), 'hnb.pdf'), html('d'.repeat(64), 'amex-jun.html', { renderedRead: 3 })]);
                 fetch.mockImplementation(async (_, options) => {
                     const body = JSON.parse(options.body);
                     return body.action === 'render-source' ? reply(true, { ok: true, htmlGz: gz(shell) }) : filedReply();
                 });
                 const done = await autoRenderPending();
-                expect(done).toEqual({ statements: 2, filed: 10, needLayout: 0 });
+                expect(done).toEqual({ statements: 2, filed: 10, needLayout: 0, empty: 0 });
                 expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered', 'render-source', 'rendered']);
                 expect(window.notify).toHaveBeenCalledWith('10 statement transactions read on your device and filed automatically.', 'success');
+                await authChanged(null);
+            });
+            it('sends a month with no transactions to the server, which alone can tell it from a page that failed to draw', async () => {
+                window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<table>balances only</table>', transactions: [] })) };
+                await load([html('e'.repeat(64), 'amex-may.html')]);
+                fetch.mockImplementation(async (_, options) => JSON.parse(options.body).action === 'render-source'
+                    ? reply(true, { ok: true, htmlGz: gz(shell) })
+                    : reply(true, { ok: true, mapped: true, filed: 0, review: 0, replayStatus: 'filed', needsLayout: false, why: { noMovement: true, rows: 0 } }));
+                const done = await autoRenderPending();
+                expect(done).toEqual({ statements: 1, filed: 0, needLayout: 0, empty: 1 });
+                expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered']);
+                expect(window.notify).toHaveBeenCalledWith('1 statement had no transactions and was closed.', 'info');
+                expect(window._wfLayoutAttempts[0].server).toEqual({ noMovement: true, rows: 0 });
                 await authChanged(null);
             });
             it('does not retry, for a day, a statement the device could not read — but does retry one that only hit the network', async () => {
@@ -373,7 +386,7 @@ describe('private statement cloud frontend transport', () => {
                 fetch.mockImplementation(async (_, options) => JSON.parse(options.body).action === 'render-source'
                     ? reply(true, { ok: true, htmlGz: gz(shell) }) : reply(true, { ok: true, mapped: true, filed: 0, review: 1, replayStatus: 'needs_review', needsLayout: true }));
                 const done = await autoRenderPending();
-                expect(done).toEqual({ statements: 0, filed: 0, needLayout: 2 });
+                expect(done).toEqual({ statements: 0, filed: 0, needLayout: 2, empty: 0 });
                 expect(window.notify).toHaveBeenCalledWith('2 statements were read on your device but need your confirmation. Open the review to confirm.', 'warn');
                 await authChanged(null);
             });
