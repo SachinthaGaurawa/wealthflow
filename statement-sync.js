@@ -41,6 +41,11 @@ const PUBLIC_REVIEW_SOURCE_REASONS = new Set([
     'rendered-source-not-html', 'rendered-source-too-large',
     'rendered-statement-invalid', 'rendered-statement-has-no-rows',
 ]);
+// Bumped whenever the reader that turns a device-rendered document into text
+// changes what it produces. Text stored by an older reader (a "13 JUL" read as
+// the year 2013, a Balance column read as the amount) is never trusted again, and
+// a statement holding it is rendered afresh instead of being stuck behind it.
+const RENDERED_VERSION = 2;
 const RENDERED_TEXT_MAX = 300000;
 const RENDERED_GZ_MAX = 3400000;
 const RENDERED_HTML_MAX = 12 * 1024 * 1024;
@@ -191,7 +196,7 @@ async function quarantineSource(db, uid, ref, leaseToken, reason, evidence = {})
         tx.set(reviewRef, { uid, sourcePath: ref.path, index: -1, status: 'pending', reason,
             bank: String(source.bank || ''), filename: String(source.filename || ''), subject: String(source.subject || ''),
             receivedMs: Number(source.receivedMs) || 0, from: String(source.from || ''), last4: String(evidence.last4 || ''),
-            ...(statementText ? { statementText } : {}), ...(evidence.rendered === true ? { renderedRead: true } : {}), createdAt: Date.now() }, { merge: true });
+            ...(statementText ? { statementText } : {}), ...(evidence.rendered === true ? { renderedRead: RENDERED_VERSION } : {}), createdAt: Date.now() }, { merge: true });
         tx.set(ref, { status: 'needs_review', hasReview: true, filed: false, leaseToken: '', leaseUntil: 0, reviewReason: reason, updatedAt: Date.now() }, { merge: true });
     });
 }
@@ -433,7 +438,7 @@ export async function recoverRevokedSenderReviews({ db, uid, limit = 25 }) {
     return { recovered, more: recovered >= cap || page.docs.length === 100 };
 }
 
-async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, preferredSourcePath = '' }) {
+async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, preferredSourcePath = '', loadAttachment = attachmentBytes }) {
     let claimed = null, sourceRef;
     if (preferredSourcePath) {
         const prefix = `${mailRef.path}/items/`;
@@ -478,13 +483,13 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
         const currentMail = (await mailRef.get()).data();
         if (!currentMail || currentMail.uid !== uid || currentMail.autonomous !== true) throw new Error('autonomous-mailbox-disabled-during-processing');
-        const attachment = await attachmentBytes(claimed, sourceRef, token, sendersOf(currentMail), f);
+        const attachment = await loadAttachment(claimed, sourceRef, token, sendersOf(currentMail), f);
         const layoutDocs = await db.collection('users').doc(uid).collection('statementLayouts').limit(100).get();
         const layouts = layoutDocs.docs.map(doc => ({ ...doc.data(), _docId: doc.id }));
         const passwordOffset = Math.max(0, Number(claimed.passwordOffset) || 0);
         const passwordBatch = passwords.slice(passwordOffset, passwordOffset + PASSWORD_BATCH);
         let result;
-        const rendered = typeof claimed.renderedText === 'string' && claimed.renderedText
+        const rendered = typeof claimed.renderedText === 'string' && claimed.renderedText && claimed.renderedVersion === RENDERED_VERSION
             ? { text: claimed.renderedText, incompleteRows: Number(claimed.renderedIncompleteRows) || 0, verified: claimed.renderedVerified === true, confirmed: claimed.renderedConfirmed === true } : null;
         try { result = await read({ ...attachment, passwords: passwordBatch, bank: claimed.bank || '', layouts, confirmedTemplateId: claimed.learnedTemplate || '', rendered }); }
         catch (error) {
@@ -552,7 +557,7 @@ async function enqueueStatementSync({ db, owner, env = process.env, f = fetch, s
     return runStatementSync({ db, owner, action: 'drain', env, f, preferredSourcePath: sourcePath, maxSteps });
 }
 
-export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '' }) {
+export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '', loadAttachment = attachmentBytes }) {
     const start = Date.now();
     const uid = owner.uid, email = String(owner.email || '').toLowerCase();
     const mailRef = db.collection('wf-mail').doc(userKeyFor(email));
@@ -584,7 +589,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     let processed = 0, attempted = 0, last = null;
     for (;;) {
         if (attempted >= maxSteps || Date.now() - start > budgetMs) break;
-        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, preferredSourcePath });
+        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, preferredSourcePath, loadAttachment });
         if (!step) break;
         attempted += 1;
         if (step.status !== 'retry_pending') processed += 1;
@@ -713,7 +718,7 @@ export async function submitRenderedStatement({ db, owner, id, htmlGz, env = pro
         }
         tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0,
             renderedText: read.text, renderedIncompleteRows: Number(read.parsed?.htmlIncompleteRows) || 0,
-            renderedVerified: read.parsed?.verdict === 'parsed' && read.parsed?.understood === true && !read.parsed?.htmlIncompleteRows, renderedConfirmed: false, renderedAt: now, updatedAt: now }, { merge: true });
+            renderedVerified: read.parsed?.verdict === 'parsed' && read.parsed?.understood === true && !read.parsed?.htmlIncompleteRows, renderedConfirmed: false, renderedVersion: RENDERED_VERSION, renderedAt: now, updatedAt: now }, { merge: true });
     });
     try {
         const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path, maxSteps: 1 });
@@ -755,7 +760,7 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         for (const doc of ledger.docs) {
             if (doc.data().status === 'review') tx.set(doc.ref, { status: 'superseded_by_layout', supersededAt: now, templateId }, { merge: true });
         }
-        tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, ...(source.renderedText ? { renderedConfirmed: true } : {}), updatedAt: Date.now() }, { merge: true });
+        tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, ...(source.renderedText && source.renderedVersion === RENDERED_VERSION ? { renderedConfirmed: true } : {}), updatedAt: Date.now() }, { merge: true });
     });
     
     try {
@@ -775,7 +780,7 @@ export async function continueMappedLayout({ db, owner, id, env = process.env, f
     const reviewSnap = await reviewRef.get(), review = reviewSnap.data();
     if (!reviewSnap.exists || review.uid !== owner.uid || review.status !== 'mapped' || !review.sourcePath) throw new Error('whole-statement-review-required');
     const sourceRef = db.doc(review.sourcePath), sourceSnap = await sourceRef.get(), source = sourceSnap.data();
-    if (!sourceSnap.exists || source.uid !== owner.uid || (!source.learnedTemplate && !source.renderedText)) throw new Error('review-source-owner-mismatch');
+    if (!sourceSnap.exists || source.uid !== owner.uid || (!source.learnedTemplate && !(source.renderedText && source.renderedVersion === RENDERED_VERSION))) throw new Error('review-source-owner-mismatch');
     if (source.status === 'filed' || source.filed === true) {
         await reviewRef.set({ status: 'resolved', resolvedAt: Date.now(), replayStatus: 'filed' }, { merge: true });
         return { ok: true, filed: 0, review: 0, queued: false, replayStatus: 'filed' };
@@ -784,6 +789,10 @@ export async function continueMappedLayout({ db, owner, id, env = process.env, f
         await reviewRef.set({ status: 'resolved', resolvedAt: Date.now(), replayStatus: 'needs_review' }, { merge: true });
         return { ok: true, filed: 0, review: 1, queued: false, replayStatus: 'needs_review' };
     }
+    // A source that is neither waiting nor being worked on (retired, rejected,
+    // gone) can make no more progress: say so instead of reporting "pending"
+    // for ever and inviting the caller to ask again.
+    if (!['pending', 'processing'].includes(source.status)) return { ok: true, filed: 0, review: 0, queued: false, replayStatus: String(source.status || 'unknown') };
     const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path, maxSteps: 1 });
     const filed = Math.max(0, Number(replay?.filed) || 0), needsReview = Math.max(0, Number(replay?.review) || 0);
     const replayStatus = String(replay?.status || 'pending');

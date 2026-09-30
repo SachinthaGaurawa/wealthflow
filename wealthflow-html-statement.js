@@ -240,6 +240,33 @@
     var _MON = { jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',
                  jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12' };
     function _pad(n) { return String(n).padStart(2, '0'); }
+
+    /* "13 JUL" carries no year; the statement's own "Statement Period" says which.
+     * Without it the reader used TODAY's year, so a December statement read in
+     * January was filed a year late. Set for the duration of one document read. */
+    var _periodEnd = null;
+    function _periodEndOf(text) {
+        var flat = String(text || '').replace(/\s+/g, ' ');
+        var m = flat.match(/statement period\s*:?\s*\d{1,2}[-\/ ][A-Za-z]{3}[A-Za-z]*[-\/ ]\d{4}\s*(?:to|-|\u2013|\u2014)\s*(\d{1,2})[-\/ ]([A-Za-z]{3})[A-Za-z]*[-\/ ](\d{4})/i);
+        if (m && _MON[m[2].toLowerCase()]) return Date.UTC(+m[3], parseInt(_MON[m[2].toLowerCase()], 10) - 1, +m[1]);
+        m = flat.match(/statement period\s*:?\s*\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4}\s*(?:to|-|\u2013|\u2014)\s*(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/i);
+        return m && +m[2] >= 1 && +m[2] <= 12 ? Date.UTC(+m[3], +m[2] - 1, +m[1]) : null;
+    }
+    function _yearlessYear(mm, day) {
+        if (_periodEnd === null) return String(new Date().getFullYear());
+        var endYear = new Date(_periodEnd).getUTCFullYear();
+        for (var i = 0; i < 2; i++) {
+            var y = endYear - i, at = Date.UTC(y, parseInt(mm, 10) - 1, +day);
+            if (new Date(at).getUTCMonth() === parseInt(mm, 10) - 1 && at <= _periodEnd + 7 * 86400000) return String(y);
+        }
+        return String(endYear);
+    }
+    function _withPeriod(html, work) {
+        var before = _periodEnd;
+        try { _periodEnd = _periodEndOf(String(html || '').replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ')); }
+        catch (_) { _periodEnd = null; }
+        try { return work(); } finally { _periodEnd = before; }
+    }
     function _yr(y) {
         y = String(y);
         if (y.length === 4) return y;
@@ -278,7 +305,7 @@
         m = d.match(/^(\d{1,2})[\s\-\/.]+([A-Za-z]{3,})\.?[\s\-\/.]*(\d{2,4})?$/);
         if (m) {
             var mm = _MON[m[2].slice(0, 3).toLowerCase()];
-            if (mm) return (m[3] ? _yr(m[3]) : String(new Date().getFullYear())) + '-' + mm + '-' + _pad(m[1]);
+            if (mm) return (m[3] ? _yr(m[3]) : _yearlessYear(mm, m[1])) + '-' + mm + '-' + _pad(m[1]);
         }
 
         // MMM D YYYY — "Aug 02 2026" (the comma was stripped above)
@@ -406,27 +433,59 @@
     }
 
     // ── layer 1: tables ───────────────────────────────────────────────────────
+    /* What a header cell means. Without it the reader took the RIGHT-MOST money
+     * cell as the amount — which on a Debit | Credit | Balance ledger is the
+     * running BALANCE, so a 5,599.00 purchase was filed as 18,459.89. */
+    function _roleOf(h) {
+        var t = String(h || '').toLowerCase().replace(/[^a-z]/g, '');
+        if (/^(?:debit|debits|withdrawal|withdrawals|debitamount)$/.test(t)) return 'debit';
+        if (/^(?:credit|credits|deposit|deposits|creditamount)$/.test(t)) return 'credit';
+        if (/^(?:balance|runningbalance|closingbalance)$/.test(t)) return 'balance';
+        if (/^amount(?:lkr|rs)?$/.test(t)) return 'amount';
+        return '';
+    }
     function _fromTables(doc) {
         var out = [];
         _slice(doc.querySelectorAll('table')).forEach(function (table, tableIndex) {
+            var roles = null;
             _slice(table.querySelectorAll('tr')).forEach(function (tr) {
                 var cells = _cellsOf(tr);
                 if (cells.length < 2) return;
 
+                // A header row: no date in it, and it names its money columns.
+                var named = cells.map(_roleOf);
+                if (named.some(Boolean) && !cells.some(function (c) { return _toISO(c); })
+                    && ((named.indexOf('debit') >= 0 && named.indexOf('credit') >= 0) || named.indexOf('balance') >= 0 || named.indexOf('amount') >= 0)) {
+                    roles = named; return;
+                }
+                var byRole = roles && roles.length === cells.length ? roles : null;
+                var balIdx = byRole ? byRole.indexOf('balance') : -1;
+
                 var date = '', di = -1;
                 for (var i = 0; i < cells.length && !date; i++) { var d = _toISO(cells[i]); if (d) { date = d; di = i; } }
+
+                var amtRaw = null, roleDir = '';
+                if (byRole && byRole.indexOf('debit') >= 0 && byRole.indexOf('credit') >= 0) {
+                    var dc = cells[byRole.indexOf('debit')], cc = cells[byRole.indexOf('credit')];
+                    if (_isMoney(dc) && _num(dc) != null && !(_isMoney(cc) && _num(cc) != null)) { amtRaw = dc; roleDir = 'debit'; }
+                    else if (_isMoney(cc) && _num(cc) != null && !(_isMoney(dc) && _num(dc) != null)) { amtRaw = cc; roleDir = 'credit'; }
+                } else if (byRole && byRole.indexOf('amount') >= 0) {
+                    var ac = cells[byRole.lastIndexOf('amount')];
+                    if (_isMoney(ac) && _num(ac) != null) amtRaw = ac;
+                }
 
                 /* RIGHT TO LEFT, money-only cells first. Left-to-right took the
                  * first number on the row, so "FUEL 20.00 LTR" became a 20.00
                  * charge. Money columns sit right and hold only money. */
-                var amtRaw = null;
-                for (var j = cells.length - 1; j >= 0; j--) {
-                    if (j === di || _isCur(cells[j])) continue;
-                    if (_isMoney(cells[j]) && _num(cells[j]) != null) { amtRaw = cells[j]; break; }
+                if (amtRaw == null) {
+                    for (var j = cells.length - 1; j >= 0; j--) {
+                        if (j === di || j === balIdx || _isCur(cells[j])) continue;
+                        if (_isMoney(cells[j]) && _num(cells[j]) != null) { amtRaw = cells[j]; break; }
+                    }
                 }
                 if (amtRaw == null) {
                     for (var k = cells.length - 1; k >= 0; k--) {
-                        if (k === di || _isCur(cells[k])) continue;
+                        if (k === di || k === balIdx || _isCur(cells[k])) continue;
                         if (/\b(DR|CR)\b/i.test(cells[k]) && _num(cells[k]) != null) { amtRaw = cells[k]; break; }
                     }
                 }
@@ -440,7 +499,7 @@
                     if (c.length > narr.length) narr = c;
                 });
 
-                var dirHint = _dirOf(amtRaw);
+                var dirHint = roleDir || _dirOf(amtRaw);
                 if (!dirHint) {
                     for (var m = cells.length - 1; m >= 0; m--) {
                         if (m === di) continue;
@@ -800,6 +859,9 @@
 
     function htmlToTransactions(html) {
         if (!html) return [];
+        return _withPeriod(html, function () { return _htmlToTransactions(html); });
+    }
+    function _htmlToTransactions(html) {
         var doc = null;
         try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (_) { doc = null; }
 
@@ -1124,7 +1186,7 @@
     /* The layers individually: asserting only on htmlToTransactions cannot tell
      * WHICH one answered, so a broken table layer hid behind the text scan. */
     function _layerTables(html) {
-        try { return _dedupe(_fromTables(new DOMParser().parseFromString(html, 'text/html'))); }
+        try { return _withPeriod(html, function () { return _dedupe(_fromTables(new DOMParser().parseFromString(html, 'text/html'))); }); }
         catch (_) { return []; }
     }
 

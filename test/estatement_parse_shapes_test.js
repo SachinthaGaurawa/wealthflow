@@ -188,6 +188,29 @@ describe('the TABLE layer handles table shapes on its own', () => {
         expect(W._layerTables(`<table>${ROW}</table><table>${ROW}${ROW}</table>`)).toHaveLength(2);
     });
 
+    /* A Debit | Credit | Balance ledger (a Nations Trust savings statement). The
+     * reader took the right-most money cell as the amount, which here is the
+     * running BALANCE: a 5,599.00 purchase was filed as 18,459.89, an amount that
+     * was never charged. */
+    const LEDGER = `<table><tr><th>Transaction Date</th><th>Value Date</th><th>Transaction Details</th><th>Reference No</th><th>Debit</th><th>Credit</th><th>Balance</th></tr>
+        <tr><td></td><td></td><td>B/F</td><td></td><td></td><td></td><td>24,058.89</td></tr>
+        <tr><td>02-Aug-2026</td><td>02-Aug-2026</td><td>POS SHOP ONE</td><td>S17616</td><td>5,599.00</td><td></td><td>18,459.89</td></tr>
+        <tr><td>06-Aug-2026</td><td>06-Aug-2026</td><td>Cash Deposit</td><td>S776800</td><td></td><td>50,000.00</td><td>68,459.89</td></tr>
+        <tr><td>Total</td><td>5,599.00</td><td>50,000.00</td><td>68,459.89</td></tr></table>`;
+    it('reads the Debit or Credit column as the amount, never the running Balance', () => {
+        expect(W.htmlToTransactions(LEDGER)).toEqual([
+            { date: '2026-08-02', narration: 'POS SHOP ONE', amount: 5599, direction: 'debit' },
+            { date: '2026-08-06', narration: 'Cash Deposit', amount: 50000, direction: 'credit' },
+        ]);
+    });
+    it('takes the year of a yearless date from the Statement Period, not from today', () => {
+        const page = period => `<div>Statement Period: ${period}</div><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr>
+            <tr><td>28 DEC</td><td>SHOP ONE</td><td>100.00 Dr</td></tr><tr><td>05 JAN</td><td>SHOP TWO</td><td>50.00 Dr</td></tr></table>`;
+        expect(W.htmlToTransactions(page('11-Dec-2025 to 10-Jan-2026')).map(r => r.date)).toEqual(['2025-12-28', '2026-01-05']);
+        expect(W.htmlToTransactions(page('11-Dec-2030 to 10-Jan-2031')).map(r => r.date)).toEqual(['2030-12-28', '2031-01-05']);
+        expect(W.htmlToTransactions(`<div>Statement Period: 01-01-2026 to 31-01-2026</div><table><tr><td>02-Jan</td><td>SHOP</td><td>9.00 Dr</td></tr></table>`)[0].date).toBe('2026-01-02');
+    });
+
     it('the layer really is the table layer (guards the guard)', () => {
         // It must find nothing in a script-only document — otherwise the two
         // assertions above could be passing through some other path.

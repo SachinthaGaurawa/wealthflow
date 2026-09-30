@@ -354,13 +354,18 @@ describe('private source inspection and durable layout replay', () => {
         });
         it('records the owner confirming a rendered statement so its reprocessing can file it', async () => {
             const args = setup();
-            args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), renderedText: '14/09/2026 KEELLS STORE 123.45 DR', renderedConfirmed: false });
+            args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), renderedText: '14/09/2026 KEELLS STORE 123.45 DR', renderedVersion: 2, renderedConfirmed: false });
             const inspect = async () => ({ text: 'x', bank: 'HNB', sourcePath: args.sourcePath });
             await mapReviewLayout({ ...args, rows: [{ date: '2026-09-14', amount: 123.45, direction: 'debit' }], inspect, learn: async () => ({ ok: true, template: { id: 't1' }, rows }), enqueue: async () => ({ status: 'pending' }) });
             expect(args.data.get(args.sourcePath)).toMatchObject({ renderedConfirmed: true });
             const plain = setup();
             await mapReviewLayout({ ...plain, rows: [{ date: '2026-09-14', amount: 123.45, direction: 'debit' }], inspect: async () => ({ text: 'x', bank: 'HNB', sourcePath: plain.sourcePath }), learn: async () => ({ ok: true, template: { id: 't1' }, rows }), enqueue: async () => ({ status: 'pending' }) });
             expect(plain.data.get(plain.sourcePath).renderedConfirmed).toBeUndefined();
+            // Text stored by an OLDER reader is never treated as something the owner confirmed.
+            const stale = setup();
+            stale.data.set(stale.sourcePath, { ...stale.data.get(stale.sourcePath), renderedText: '13 JUL 13 JUL WRONG', renderedVersion: 1 });
+            await mapReviewLayout({ ...stale, rows: [{ date: '2026-09-14', amount: 123.45, direction: 'debit' }], inspect: async () => ({ text: 'x', bank: 'HNB', sourcePath: stale.sourcePath }), learn: async () => ({ ok: true, template: { id: 't1' }, rows }), enqueue: async () => ({ status: 'pending' }) });
+            expect(stale.data.get(stale.sourcePath).renderedConfirmed).toBeUndefined();
         });
         it('rejects garbage, an empty reading and settled-data overlap before changing anything', async () => {
             const args = setup(), enqueue = vi.fn();

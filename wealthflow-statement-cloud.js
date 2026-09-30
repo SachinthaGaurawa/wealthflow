@@ -168,11 +168,19 @@ async function confirmWithRetry(body) {
             if (result.mapped !== true) throw new Error('layout-not-mapped');
             let filed=Math.max(0,Number(result.filed)||0),review=Math.max(0,Number(result.review)||0),current=result;
             
-            for(let batch=0;current.replayStatus==='pending'&&batch<100;batch+=1){
+            // A long statement is filed in batches. A batch that filed nothing
+            // and raised nothing (the statement is waiting out a retry, or
+            // another worker holds it) is not progress: after three in a row
+            // stop asking — the background queue carries on — instead of
+            // sending a hundred requests at a source that cannot move.
+            let idle=0;
+            for(let batch=0;current.replayStatus==='pending'&&idle<3&&batch<100;batch+=1){
                 current=await request('/api/statement-sync','POST',{action:'layout-continue',id:body.id});
+                const moved=Math.max(0,Number(current.filed)||0)+Math.max(0,Number(current.review)||0);
                 filed+=Math.max(0,Number(current.filed)||0);review+=Math.max(0,Number(current.review)||0);
+                idle=moved?0:idle+1;
             }
-            if(current.replayStatus==='pending')throw new Error('statement-continuation-limit');
+            if(current.replayStatus==='pending'&&idle<3)throw new Error('statement-continuation-limit');
             result.filed=filed;result.review=review;result.queued=current.queued===true;result.replayStatus=current.replayStatus;
             return result;
         } catch (error) {
@@ -198,7 +206,10 @@ async function gunzipFromB64(encoded) {
 // text-based layout teacher gets its turn instead of a dead end.
 const RENDER_FALLBACK_REASONS = new Set(['rendered-source-not-html', 'rendered-source-too-large', 'rendered-statement-invalid', 'rendered-statement-has-no-rows']);
 const RENDER_TRANSIENT_REASONS = new Set(['statement-request-timed-out', 'statement-service-unavailable']);
-const canRender = entry => entry.renderedRead !== true && /\.html?$/i.test(entry.filename || '')
+// Mirrors RENDERED_VERSION in statement-sync.js: a review marked by an OLDER
+// reader (renderedRead: true, i.e. 1) carries text that reader got wrong.
+const RENDERED_VERSION = 2;
+const canRender = entry => !(Number(entry.renderedRead) >= RENDERED_VERSION) && /\.html?$/i.test(entry.filename || '')
     && typeof window.WFHtmlStatement?.htmlToTransactionsAsync === 'function'
     && typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
 // A Smart Statement (NTB / American Express e-statements) draws its rows with
