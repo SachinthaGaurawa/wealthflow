@@ -330,7 +330,7 @@ describe('private source inspection and durable layout replay', () => {
         it('stores the text the server itself extracted and re-queues the source, never the client-sent rows', async () => {
             const args = setup(), enqueue = vi.fn(async () => ({ status: 'filed', filed: 1, review: 0 }));
             const result = await submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue, readRendered });
-            expect(result).toEqual({ ok: true, mapped: true, queued: false, filed: 1, review: 0, replayStatus: 'filed' });
+            expect(result).toEqual({ ok: true, mapped: true, queued: false, filed: 1, review: 0, replayStatus: 'filed', needsLayout: false });
             expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourcePath: args.sourcePath, maxSteps: 1 }));
             expect(args.data.get('users/u/statementReview/' + args.id).status).toBe('resolved');
             expect(readRendered.mock.calls.at(-1)[0]).toBe(renderedDoc);
@@ -343,7 +343,7 @@ describe('private source inspection and durable layout replay', () => {
             // quarantineSource() re-opens the SAME review document when the replay cannot prove the statement.
             const enqueue = vi.fn(async () => { args.data.set(reviewPath, { ...args.data.get(reviewPath), status: 'pending', statementText: 'rendered rows' }); return { status: 'needs_review', review: 1 }; });
             const result = await submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue, readRendered });
-            expect(result).toMatchObject({ mapped: true, filed: 0, replayStatus: 'needs_review' });
+            expect(result).toMatchObject({ mapped: true, filed: 0, replayStatus: 'needs_review', needsLayout: true });
             expect(args.data.get(reviewPath)).toMatchObject({ status: 'pending', statementText: 'rendered rows' });
             // A long statement: filed in batches through the same continue action a taught layout uses.
             const second = setup();
@@ -351,6 +351,16 @@ describe('private source inspection and durable layout replay', () => {
             expect(second.data.get('users/u/statementReview/' + second.id).status).toBe('mapped');
             const more = vi.fn(async () => ({ status: 'filed', filed: 3, review: 0 }));
             expect(await continueMappedLayout({ ...second, enqueue: more })).toMatchObject({ ok: true, filed: 3, replayStatus: 'filed' });
+        });
+        it('records the owner confirming a rendered statement so its reprocessing can file it', async () => {
+            const args = setup();
+            args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), renderedText: '14/09/2026 KEELLS STORE 123.45 DR', renderedConfirmed: false });
+            const inspect = async () => ({ text: 'x', bank: 'HNB', sourcePath: args.sourcePath });
+            await mapReviewLayout({ ...args, rows: [{ date: '2026-09-14', amount: 123.45, direction: 'debit' }], inspect, learn: async () => ({ ok: true, template: { id: 't1' }, rows }), enqueue: async () => ({ status: 'pending' }) });
+            expect(args.data.get(args.sourcePath)).toMatchObject({ renderedConfirmed: true });
+            const plain = setup();
+            await mapReviewLayout({ ...plain, rows: [{ date: '2026-09-14', amount: 123.45, direction: 'debit' }], inspect: async () => ({ text: 'x', bank: 'HNB', sourcePath: plain.sourcePath }), learn: async () => ({ ok: true, template: { id: 't1' }, rows }), enqueue: async () => ({ status: 'pending' }) });
+            expect(plain.data.get(plain.sourcePath).renderedConfirmed).toBeUndefined();
         });
         it('rejects garbage, an empty reading and settled-data overlap before changing anything', async () => {
             const args = setup(), enqueue = vi.fn();

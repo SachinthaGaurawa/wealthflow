@@ -280,6 +280,24 @@ describe('private statement cloud frontend transport', () => {
             expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('need your confirmation'), 'warn');
             await authChanged(null);
         });
+        it('hands a read-but-unreconciled statement to the layout teacher instead of dead-ending, and never re-renders it', async () => {
+            window._teachStatementLayout = vi.fn();
+            window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-09-14' }] })), diagnose: vi.fn(() => ({ tables: 1, rows: 4 })) };
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) }))
+                .mockResolvedValueOnce(reply(true, { ok: true, mapped: true, filed: 0, review: 1, replayStatus: 'needs_review', needsLayout: true }))
+                .mockResolvedValueOnce(reply(true, { ok: true, text: '14/09/2026 KEELLS STORE 123.45 DR', bank: 'AMEX', filename: entry.filename }));
+            await review(entry);
+            expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered', 'review-source']);
+            expect(window._teachStatementLayout).toHaveBeenCalledTimes(1);
+            expect(window._wfLayoutAttempts[0]).toMatchObject({ bank: 'AMEX', outcome: 'rendered-on-device', diag: { tables: 1 } });
+            expect(JSON.stringify(window._wfLayoutAttempts)).not.toContain('KEELLS');
+            window.WFHtmlStatement.htmlToTransactionsAsync.mockClear(); fetch.mockClear();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'rendered rows text', bank: 'AMEX', filename: entry.filename }));
+            await review({ ...entry, renderedRead: true });
+            expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['review-source']);
+            expect(window.WFHtmlStatement.htmlToTransactionsAsync).not.toHaveBeenCalled();
+            await authChanged(null);
+        });
         it('falls back to the text layout teacher when the device draws no rows', async () => {
             window._teachStatementLayout = vi.fn();
             window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: false, renderedHtml: '', transactions: [] })) };
