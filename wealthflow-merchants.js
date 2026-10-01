@@ -840,8 +840,13 @@
     // ── the AI board (asked only when the web could not settle it) ───────────
     function _askOne(item) {
         var body = { prompt: SYS + '\n\nNarration: "' + String(item.raw).replace(/"/g, "'") + '"', financialDecision: true, temperature: 0, maxTokens: 120 };
-        return fetch(AI_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-            .then(function (r) { return r ? r.json().catch(function () { return null; }) : null; })
+        function ask() { return fetch(AI_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(function (r) { return r ? r.json().catch(function () { return null; }) : null; }); }
+        // a board refused only because too few providers could answer at that moment (their per-minute limits) is asked once more a few seconds later; a board
+        // whose providers ANSWERED and differed is not — that is an answer
+        return ask().then(function (j) {
+            if (j && j.unanimous !== true && (j.reason === 'provider_unavailable' || j.reason === 'insufficient_or_invalid_roster')) return new Promise(function (resolve) { setTimeout(resolve, 6000); }).then(ask);
+            return j;
+        })
             .then(function (j) {
                 if (!j || j.unanimous !== true || j.trustworthy !== true) return { entry: null, engines: +(j && j.consensusOf) || 0, unanimous: false, item: item };
                 var e = null; try { e = JSON.parse(String(j.reply || '')); } catch (_) { return { entry: null, engines: 0, unanimous: false, item: item }; }
@@ -898,15 +903,31 @@
     //   3. DECIDE        — see _decide(). Two witnesses may agree where neither clears the gate alone.
     //   4. HOLD          — a hard case waits for the owner with every witness's answer attached, is tried again
     //                      later (1h, 6h, a day, three days) and is asked about only if it stays unresolved.
+    /* TWO AT A TIME, NOT EIGHT. Every unknown merchant that the web cannot settle asks the AI board — and one board call is a question to every
+     * configured provider at once. Eight merchants started together were eight board calls in the same second (the production log of
+     * 2026-10-01 18:20: four /api/verify and six /api/ai together, two of the boards refused 422 because the providers' own per-minute
+     * limits had been spent by the others). Two lanes finish the same batch in a few seconds more and every board gets its answers. */
+    var LANES = 2;
+    function _pool(items, lanes, worker) {
+        var out = new Array(items.length), next = 0;
+        function lane() {
+            if (next >= items.length) return Promise.resolve();
+            var i = next++;
+            return Promise.resolve(worker(items[i], i)).then(function (r) { out[i] = r; }).then(lane);
+        }
+        var runners = [];
+        for (var k = 0; k < Math.min(lanes, items.length); k++) runners.push(lane());
+        return Promise.all(runners).then(function () { return out; });
+    }
     function _resolveBatch(batch, heldBefore) {
         var holdList = _loadQ(LS_PENDING), stats = { verified: 0, byAi: 0, held: 0 };
-        return Promise.all(batch.map(function (src) {
+        return _pool(batch, LANES, function (src) {
             return _verifyBest(src).then(function (r) {
                 var v = r.v, cited = !!(v && Array.isArray(v.evidence_urls) && v.evidence_urls.length > 0);
                 if (v && v.exists === true && v.category && VALID_CATS[v.category] && cited && (+v.confidence || 0) >= WRITE_GATE) return { src: src, v: v, a: null };
                 return _askOne(src).then(function (a) { return { src: src, v: v, a: a }; });
             });
-        })).then(function (results) {
+        }).then(function (results) {
             var learnedNow = 0;
             results.forEach(function (x) {
                 var d = _decide(x.src, x.v, x.a);
