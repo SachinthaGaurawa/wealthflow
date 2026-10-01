@@ -15,10 +15,13 @@ import { settleStatement, resolveReview, transferEvidence, isZeroAmountLine } fr
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT } from './wealthflow-statement-identity.js';
-import { adaptiveRead, isMovementLine, linesOf, ADAPTIVE_VERSION, statementKey } from './statement-adaptive.mjs';
+import { adaptiveRead, isMovementLine, linesOf, ADAPTIVE_VERSION, statementKey, jsonOf } from './statement-adaptive.mjs';
 import { sameCurrency, discoverCurrency } from './statement-currency.mjs';
 import { readTable, reconcile as reconcileMailStates, applyReconcile, summarize as summarizeMailStates } from './mail-state.mjs';
 import { claimOrder, CLAIM_WINDOW, failurePatch, redriveDeadLetters, aiBreaker, DEAD_LETTER } from './statement-queue.mjs';
+import { tieredAsk } from './statement-llm-router.mjs';
+import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
+import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 
 export const config = { maxDuration: 60 };
@@ -122,9 +125,9 @@ export async function invokeBoard(prompt, handler = aiHandler) {
 /* THE MODEL THAT READS A STATEMENT NOBODY WROTE A TEMPLATE FOR. Not the unanimous board — free-form rows never agree
  * word for word across engines, and they do not need to: nothing the model says is believed until it has been checked
  * against the document and balances to the cent (statement-adaptive.mjs). One answer, advisory, no temperature. */
-export async function invokeExtractor(prompt, handler = aiHandler) {
+export async function invokeExtractor(prompt, handler = aiHandler, { engines, deadlineMs = 12000 } = {}) {
     let status = 200, result;
-    await handler({ method: 'POST', body: { prompt, task: 'advice', temperature: 0, maxTokens: 4000, deadlineMs: 12000 } }, {
+    await handler({ method: 'POST', body: { prompt, task: 'advice', temperature: 0, maxTokens: 4000, deadlineMs, ...(Array.isArray(engines) && engines.length ? { engines } : {}) } }, {
         setHeader() {}, status(code) { status = code; return this; }, json(value) { result = value; return this; }, end() {}
     });
     if (status !== 200 || typeof result?.reply !== 'string' || !result.reply.trim()) throw new Error('ai-extractor-unavailable');
@@ -728,6 +731,21 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, { reason: 'the file is not a PDF or HTML document, whatever it is called', confidence: 1 });
             return { status: 'rejected_non_statement', rejected: 1 };
         }
+        /* THE SAME FILE AGAIN. Its bytes are in hand, so its hash is known: if a statement with exactly these bytes is already
+         * filed (the bank's other address, a second message, a re-send) this one is recorded as a copy of it — finished, pointing at
+         * the original — and is never read, classified or filed a second time. A statement part-way through is not touched. */
+        if (attachment.contentSha256 && claimed.contentSha256 !== attachment.contentSha256) { try { await sourceRef.set({ contentSha256: attachment.contentSha256 }, { merge: true }); } catch (_) { /* recorded at the next look */ } }
+        if (attachment.contentSha256 && !(Number(claimed.cursor) > 0)) {
+            const twin = await findFiledTwin({ mailRef, sha: attachment.contentSha256, selfId: sourceRef.id });
+            if (twin) {
+                await db.runTransaction(async tx => {
+                    const current = await tx.get(sourceRef), source = current.data();
+                    if (!current.exists || source.uid !== uid || source.leaseToken !== claimed.leaseToken) throw new Error('statement-lease-lost');
+                    tx.set(sourceRef, duplicatePatch({ twin, now: Date.now() }), { merge: true });
+                });
+                return { status: 'filed', filed: 0, duplicate: 1 };
+            }
+        }
         const layoutDocs = await db.collection('users').doc(uid).collection('statementLayouts').limit(100).get();
         const layouts = layoutDocs.docs.map(doc => ({ ...doc.data(), _docId: doc.id }));
         const passwordOffset = Math.max(0, Number(claimed.passwordOffset) || 0);
@@ -1076,6 +1094,9 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
      * it either), and not at all when too little of this invocation is left to wait for them. A disagreement between
      * providers that DID answer is not an outage and does not trip it. */
     const breaker = aiBreaker({ state: mail.aiHealth, deadlineAt: start + INVOCATION_MS, save: async health => { await mailRef.set({ aiHealth: health }, { merge: true }); } });
+    // The default extractor asks in tiers — the strongest providers first, the next tier only if they fail (statement-llm-router.mjs).
+    // An injected one (a test, a different transport) is used as given.
+    if (extract === invokeExtractor) extract = tieredAsk({ call: (prompt, options) => invokeExtractor(prompt, aiHandler, options), accept: reply => Array.isArray(jsonOf(reply)?.accounts), deadlineAt: start + INVOCATION_MS });
     board = breaker.guard('board', board, { minRoomMs: 14000, unavailable: 'ai-consensus-unavailable' });
     extract = breaker.guard('extract', extract, { minRoomMs: 18000, unavailable: 'ai-extractor-unavailable' });
     let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
@@ -1129,9 +1150,10 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     /* Dead-lettered statements whose wait is over go back in the queue, from the place they stopped (statement-queue.mjs). */
     const redrive = await redriveDeadLetters({ db, mailRef, now: Date.now(), limit: heavy ? 25 : 10 });
     let processed = 0, attempted = 0, last = null;
+    const rotateBase = Math.floor(start / 20000);      // fixed for this invocation: see claimOrder
     for (;;) {
         if (attempted >= maxSteps || Date.now() - start > budgetMs) break;
-        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract, preferredSourcePath, loadAttachment, deadlineAt: start + INVOCATION_MS, rotate: attempted });
+        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract, preferredSourcePath, loadAttachment, deadlineAt: start + INVOCATION_MS, rotate: rotateBase + attempted });
         if (!step) break;
         attempted += 1;
         if (step.status !== 'retry_pending' && step.status !== 'dead_letter') processed += 1;
@@ -1362,6 +1384,31 @@ export async function continueMappedLayout({ db, owner, id, env = process.env, f
     return { ok: true, filed, review: needsReview, queued: replayStatus === 'pending', replayStatus };
 }
 
+/* NOBODY WAITS FOR A BACKLOG, AND THE PLATFORM NEVER HAS TO KILL A REQUEST THAT IS STILL WORKING (statement-chain.mjs):
+ *   · one link works the queue for its budget and writes everything it did to the database;
+ *   · if there is more and it made progress, it calls the next link itself (a link answers 202 at once and works in the
+ *     platform's background window), one chain at a time, stopping when there is nothing left or after twenty links;
+ *   · no caller is made to wait past 52 s: it gets a 202 and the work carries on. */
+export async function serveSync({ db, owner, scheduled, body = {}, headers = {}, res, run = runStatementSync, env = process.env, f = fetch, waitUntil = platformWaitUntil(), hardMs, log = console.info }) {
+    const mailRef = db.collection('wf-mail').doc(userKeyFor(String(owner.email).toLowerCase()));
+    // only the schedule's own secret can present a chain header: an interactive caller cannot pose as a link
+    const link = scheduled ? parseHeader(headers[CHAIN_HEADER] ?? headers[CHAIN_HEADER.toUpperCase()]) : null;
+    const job = (async () => {
+        const result = await run({ db, owner, action: body.action === 'drain' ? 'drain' : 'collect', maxSteps: Infinity, interactive: !scheduled, budgetMs: scheduled ? 45000 : 36000 });
+        let chain = { next: false, reason: 'error' };
+        try { chain = await continueChain({ db, mailRef, result, link, env, f, waitUntil }); } catch (_) { /* the schedule or the app starts it again */ }
+        try { log(JSON.stringify({ evt: 'statement-sync-chain', link: link ? link.depth : 0, next: chain.next, reason: chain.reason })); } catch (_) { /* a log line never stops a sync */ }
+        return { ...result, chain: chain.reason };
+    })();
+    if (link && waitUntil) { waitUntil(job.catch(error => console.error('statement-sync-link-failed', String(error?.message || error).slice(0, 120)))); return json(res, 202, { ok: true, accepted: true, link: link.depth }); }
+    const answered = await withHardDeadline(job, hardMs);
+    if (answered.late) {
+        if (waitUntil) waitUntil(job.catch(() => {})); else job.catch(() => {});
+        return json(res, 202, { ok: true, accepted: true, partial: true, morePending: true, retryAfterMs: 750 });
+    }
+    return json(res, 200, answered.value);
+}
+
 export default async function handler(req, res) {
     if (!['GET', 'POST'].includes(req.method)) return json(res, 405, { ok: false, reason: 'method-not-allowed' });
     let settings;
@@ -1419,7 +1466,7 @@ export default async function handler(req, res) {
         if (owner.disabled || !owner.email || !owner.emailVerified) return json(res, 403, { ok: false, reason: 'verified-owner-required' });
         // An interactive call works the queue for as long as it safely can (not one statement per call: at ten rows a minute a
         // mailbox of statements took days), keeping the heavy housekeeping to the scheduled run and to every minute and a half.
-        return json(res, 200, await runStatementSync({ db, owner, action: body.action === 'drain' ? 'drain' : 'collect', maxSteps: Infinity, interactive: !scheduled, budgetMs: scheduled ? 45000 : 36000 }));
+        return await serveSync({ db, owner, scheduled, body, headers: req.headers || {}, res });
     } catch (error) {
         const reason = String(error?.message || 'statement-sync-unavailable').slice(0, 160);
         console.error('statement-sync-failed', { reason, code: String(error?.code || '').slice(0, 40) });

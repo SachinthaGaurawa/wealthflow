@@ -48,7 +48,7 @@ export const isReady = (x, now) => num(x.retryAt) <= now && num(x.leaseUntil) <=
  * Within a bank: part-way first, never-failed before failed, newest first, then by id (so the order is total and stable).
  * Across banks: round-robin, starting at a bank that rotates with the clock.
  */
-export function claimOrder(docs, { now = Date.now(), rotate = 0 } = {}) {
+export function claimOrder(docs, { now = Date.now(), rotate = Math.floor(num(now) / ROTATE_EVERY_MS) } = {}) {
     const rows = (Array.isArray(docs) ? docs : []).map((doc) => ({ doc, x: data(doc) })).filter(({ x }) => isReady(x, now));
     const better = (a, b) =>
         (num(b.x.cursor) > 0) - (num(a.x.cursor) > 0)
@@ -63,9 +63,11 @@ export function claimOrder(docs, { now = Date.now(), rotate = 0 } = {}) {
     }
     const lists = [...byBank.keys()].sort().map((bank) => byBank.get(bank).sort(better));
     const out = [];
-    // the starting bank moves with the clock AND with every statement already taken in this invocation (`rotate`): the order
-    // below is a full round-robin, but only its first entry is claimed at a time, so without this the same bank always went first
-    const offset = lists.length ? (Math.floor(num(now) / ROTATE_EVERY_MS) + Math.max(0, Math.floor(num(rotate)))) % lists.length : 0;
+    // the starting bank is `rotate` (by default the clock, so it moves from one invocation to the next); a caller that takes several
+    // statements in a row passes clock + the number already taken, FIXED for the invocation — the order below is a full round-robin,
+    // but only its first entry is claimed at a time, so without this the same bank always went first, and a clock tick in the
+    // middle of an invocation must not skip one
+    const offset = lists.length ? Math.max(0, Math.floor(num(rotate))) % lists.length : 0;
     for (let depth = 0; out.length < rows.length; depth++) {
         for (let k = 0; k < lists.length; k++) {
             const list = lists[(k + offset) % lists.length];

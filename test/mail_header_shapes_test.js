@@ -239,3 +239,54 @@ describe('another address of the same organisation (the wildcard the owner asked
         }
     });
 });
+
+import { wellFormedFrom } from '../wealthflow-mail-ingest.mjs';
+
+describe('a From line a mail system could not have written is refused, not guessed at', () => {
+    it.each([
+        ['a NUL byte', 'DFCC <statements@dfccbank.com>\u0000<x@evil.example>'], ['a bare line feed', 'DFCC <statements@dfccbank.com>\n<x@evil.example>'], ['a bare carriage return', 'DFCC <statements@dfccbank.com>\r<x@evil.example>'],
+        ['header injection', 'DFCC <x@evil.example>\r\nFrom: statements@dfccbank.com'], ['an escape character', 'DFCC <statements@dfccbank.com>\u001b[0m'],
+        ['an unterminated quote', '"DFCC <statements@dfccbank.com>'], ['an unterminated comment', 'DFCC (statements <statements@dfccbank.com>'], ['a stray closing bracket', 'DFCC statements@dfccbank.com>'],
+        ['a stray opening bracket', 'DFCC <statements@dfccbank.com'], ['nested brackets', 'DFCC <<statements@dfccbank.com>>'], ['nothing', ''], ['only spaces', '   '], ['an absurd length', 'A'.repeat(2500) + ' <statements@dfccbank.com>'],
+    ])('%s', (_, from) => {
+        expect(wellFormedFrom(from)).toBe(false);
+        const plan = planMessage(message(from), policy);
+        expect(plan.ok).toBe(false);
+    });
+    it.each([
+        'DFCC <statements@dfccbank.com>', 'statements@dfccbank.com', '"DFCC, Statements" <statements@dfccbank.com>', 'DFCC\r\n <statements@dfccbank.com>', 'DFCC\r\n\t<statements@dfccbank.com>', 'statements@dfccbank.com (DFCC Bank)',
+        '=?UTF-8?B?REZDQw==?= <statements@dfccbank.com>', 'ඔබගේ බැංකුව <statements@dfccbank.com>', 'DFCC\t<statements@dfccbank.com>', '"a \\" quote" <statements@dfccbank.com>',
+    ])('and these are fine: %j', (from) => expect(wellFormedFrom(from)).toBe(true));
+    it('a refusal for a malformed From is logged as a security event, never offered to the owner as one tap', () => {
+        const plan = planMessage(message('DFCC <statements@dfccbank.com>\u0000'), policy);
+        expect(plan.reason).toBe(REJECT.AUTH_FAILED);
+        expect(plan.detail.why).toBe('malformed-from');
+        expect(isSecurityRefusal(plan)).toBe(true);
+    });
+});
+
+describe('a file that says invoice or receipt — and not statement — is not a statement, whatever the subject says', () => {
+    const withFiles = (subject, files) => {
+        const m = message('DFCC Bank <statements@dfccbank.com>');
+        m.payload.headers = m.payload.headers.map((h) => (h.name === 'Subject' ? { ...h, value: subject } : h));
+        m.payload.parts = [{ mimeType: 'text/plain', filename: '', body: { data: b64('Attached.') } }, ...files.map((name, i) => ({ mimeType: 'application/pdf', filename: name, body: { attachmentId: 'a' + i, size: 4000 } }))];
+        return m;
+    };
+    it.each(['Invoice_10442.pdf', 'Receipt-2402-5154-7274.pdf', 'invoice-113674.pdf', 'Tax Invoice.pdf', 'Payment Receipt.pdf', 'Order Confirmation 5521.pdf'])('%s under a subject that says statement is refused', (name) => {
+        const plan = planMessage(withFiles('Your account statement for March 2026', [name]), policy);
+        expect(plan.ok, name).toBe(false);
+        expect(plan.reason).toBe(REJECT.NOT_A_STATEMENT_DOC);
+        expect(plan.detail.where).toBe('file');
+    });
+    it('a file that says both is a statement; a file that says neither is judged as before', () => {
+        for (const name of ['e-Statement and Tax Invoice.pdf', 'Statement_2026MAR.pdf', '5996631318_455.pdf', 'DFCC_202601.pdf']) {
+            const plan = planMessage(withFiles('Your account statement for March 2026', [name]), policy);
+            expect(plan.ok, name).toBe(true);
+        }
+    });
+    it('beside a real statement the invoice is left out and the statement is taken; two invoices are refused outright', () => {
+        const mixed = planMessage(withFiles('Your account statement for March 2026', ['Statement_2026MAR.pdf', 'Invoice_10442.pdf']), policy);
+        expect(mixed.ok).toBe(true); expect(mixed.items.map((i) => i.filename)).toEqual(['Statement_2026MAR.pdf']);
+        expect(planMessage(withFiles('Your account statement for March 2026', ['Invoice_1.pdf', 'Receipt_2.pdf']), policy).ok).toBe(false);
+    });
+});

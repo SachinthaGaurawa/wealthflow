@@ -118,7 +118,7 @@ export function auditLogOf(items, { limit = 60 } = {}) {
         let status, math;
         if (state === 'filed' || state === 'empty') {
             status = added ? 'Missing-Added' : 'Synced';
-            math = item.proof?.math === 'passed' ? 'PASSED' : item.proof?.math === 'owner-confirmed' ? 'OWNER-CONFIRMED' : state === 'empty' ? 'PASSED' : 'NOT-RECORDED';
+            math = item.proof?.math === 'passed' ? 'PASSED' : item.proof?.math === 'owner-confirmed' ? 'OWNER-CONFIRMED' : item.proof?.math === 'duplicate-of' ? 'DUPLICATE' : state === 'empty' ? 'PASSED' : 'NOT-RECORDED';
         } else if (state === 'review') {
             status = 'Needs-Review';
             math = /reconcil|balance|chain|proof/i.test(String(item.reviewReason || '')) ? 'FAILED' : 'NOT-CHECKED';

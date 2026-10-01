@@ -342,7 +342,10 @@ describe('a statement that keeps failing', () => {
 describe('rotation within one invocation', () => {
     it('claimOrder\'s first entry moves to the next bank for every statement already taken', () => {
         const docs = ['A', 'B', 'C', 'D'].map(bank => doc(bank + '1', { bank, receivedMs: 1 }));
-        const firsts = [0, 1, 2, 3].map(rotate => claimOrder(docs, { now: NOW, rotate })[0].id);
+        const base = Math.floor(NOW / 20000);
+        const firsts = [0, 1, 2, 3].map(taken => claimOrder(docs, { now: NOW, rotate: base + taken })[0].id);
         expect(new Set(firsts).size).toBe(4);
+        // and it does not matter where the base falls, or which invocation: any four in a row are four different banks
+        for (const b of [0, 1, 2, 3, 77, 1790832]) expect(new Set([0, 1, 2, 3].map(taken => claimOrder(docs, { now: NOW, rotate: b + taken })[0].id)).size).toBe(4);
     });
 });

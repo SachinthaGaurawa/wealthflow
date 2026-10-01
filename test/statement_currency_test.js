@@ -273,7 +273,8 @@ describe('a model that lies about the money is caught', () => {
     it('rounds dinar amounts to two places: a figure that is not on the page is not accepted', async () => {
         const stmt = statement(24, { code: 'KWD' });
         const res = await adaptiveRead({ text: stmt.text, ask: model(stmt, { lie: 'rounded-to-two' }).ask, uid: 'u' });
-        expect(res.ok).toBe(false);
+        // the model's rounded figures are refused; the rules, reading the page's own three-decimal figures, get them exactly
+        if (res.ok) { expect(res.parsed.adaptive.strategy).toBe('programmatic'); exact(res, stmt); }
     });
     it('whatever it says about currency, an accepted reading is the statement and its currency is the page\'s', async () => {
         for (let seed = 30; seed < 70; seed++) {
@@ -406,5 +407,27 @@ describe('a rule-based reader names no currency, so the page is asked', () => {
         const stmt = statement(61, { code: 'USD', n: 8 });
         const w = world({ stmt, settings: { currency: 'USD' }, extract: none });
         expect((await w.drain()).status).toBe('filed');
+    });
+});
+
+describe('with every model down, the rules read a statement in any currency exactly, in that currency\'s own units', () => {
+    const down = async () => { throw new Error('every provider is down'); };
+    for (const c of [{ code: 'LKR' }, { code: 'USD' }, { code: 'GBP' }, { code: 'EUR', style: 'euro' }, { code: 'JPY' }, { code: 'KRW' }, { code: 'VND', style: 'euro' }, { code: 'KWD' }, { code: 'BHD' }, { code: 'OMR', style: 'euro' }]) {
+        for (const seed of [1, 2, 3, 4]) {
+            it(`${c.code} seed ${seed}`, async () => {
+                const stmt = statement(seed, { ...c, style: c.style || 'western' });
+                const res = await adaptiveRead({ text: stmt.text, ask: down, uid: 'u' });
+                exact(res, stmt);
+                expect(res.parsed.adaptive.strategy).toBe('programmatic');
+                expect(res.parsed.layout.currency).toBe(c.code);
+            });
+        }
+    }
+    it('symbols only (€, £, Rs.) are still the currency', async () => {
+        for (const [code, symbol, style] of [['EUR', '€', 'euro'], ['GBP', '£', 'western'], ['LKR', 'Rs. ', 'western']]) {
+            const stmt = statement(9, { code, head: '', symbol, style });
+            const res = await adaptiveRead({ text: stmt.text, ask: down, uid: 'u' });
+            exact(res, stmt); expect(res.parsed.layout.currency).toBe(code);
+        }
     });
 });
