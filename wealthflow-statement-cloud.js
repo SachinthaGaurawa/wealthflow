@@ -310,11 +310,12 @@ async function mapRenderedStatement(entry) {
 // them itself, one at a time — the server already has the passwords, this
 // device has the browser. A statement this route cannot read is not retried for
 // a day; one that only failed on the network is retried on the next snapshot.
-const AUTO_TRIED_KEY = 'wf_render_tried_v2', AUTO_RETRY_MS = 86400000, AUTO_BATCH = 25;
+const AUTO_TRIED_KEY = 'wf_render_tried_v3', AUTO_RETRY_MS = 86400000, AUTO_FAILED_RETRY_MS = 600000, AUTO_BATCH = 25;
 const triedMap = () => { try { return JSON.parse(window.localStorage?.getItem?.(AUTO_TRIED_KEY) || '{}') || {}; } catch (_) { return {}; } };
-function markTried(id) {
+// A page the device could not draw is retried tomorrow; a rendering the SERVER refused, in ten minutes (a fix must not wait a day). Stored shifted.
+function markTried(id, retryMs = AUTO_RETRY_MS) {
     try {
-        const tried = { ...triedMap(), [id]: Date.now() }, ids = Object.keys(tried);
+        const tried = { ...triedMap(), [id]: Date.now() - (AUTO_RETRY_MS - retryMs) }, ids = Object.keys(tried);
         if (ids.length > 200) ids.sort((a, b) => tried[a] - tried[b]).slice(0, ids.length - 200).forEach(key => delete tried[key]);
         window.localStorage?.setItem?.(AUTO_TRIED_KEY, JSON.stringify(tried));
     } catch (_) {}
@@ -333,7 +334,7 @@ export async function autoRenderPending() {
             if (!currentUser() || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) break;
             const { status, result, error } = await renderAndSubmit(entry);
             if (status === 'failed' && error?.mightAlreadyBeMapped) await resumeStatement(entry, { quiet: true });
-            if (status === 'fallback' || status === 'failed') markTried(entry.id);
+            if (status === 'fallback') markTried(entry.id); else if (status === 'failed') markTried(entry.id, AUTO_FAILED_RETRY_MS);
             if (status === 'transient' || status === 'unavailable') break;
             if (status === 'submitted') { done.statements += 1; done.filed += Math.max(0, Number(result.filed) || 0); if (result.replayStatus === 'filed' && !result.filed) done.empty += 1; }
             if (status === 'needs-layout') done.needLayout += 1;

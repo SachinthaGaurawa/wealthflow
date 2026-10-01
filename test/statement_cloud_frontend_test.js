@@ -518,6 +518,29 @@ describe('private statement cloud frontend transport', () => {
                 expect(fetch.mock.calls.length).toBe(first);
                 await authChanged(null);
             });
+            it('tries a rendering the SERVER refused again after ten minutes — a fix deployed meanwhile must not wait a day (NTB Consolidated) — while a page the device could not draw waits for tomorrow', async () => {
+                window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-07-13' }] })) };
+                await load([html('a'.repeat(64), 'ntb-feb.html')]);
+                fetch.mockImplementation(async (_, options) => JSON.parse(options.body).action === 'render-source'
+                    ? reply(true, { ok: true, htmlGz: gz(shell) }) : reply(false, { ok: false, reason: 'layout-replay-would-overlap-settled-data' }));
+                await autoRenderPending();
+                const first = fetch.mock.calls.length;
+                await autoRenderPending();
+                expect(fetch.mock.calls.length).toBe(first);                         // not hammered within the ten minutes
+                vi.setSystemTime(Date.now() + 11 * 60000);
+                await autoRenderPending();
+                expect(fetch.mock.calls.length).toBeGreaterThan(first);              // tried again
+                // …but a page the device could not draw is not tried again for a day
+                store.clear(); fetch.mockClear();
+                window.WFHtmlStatement.htmlToTransactionsAsync.mockResolvedValue({ rendered: false, renderedHtml: '', transactions: [] });
+                fetch.mockResolvedValue(reply(true, { ok: true, htmlGz: gz(shell) }));
+                await autoRenderPending();
+                const drawn = fetch.mock.calls.length;
+                vi.setSystemTime(Date.now() + 11 * 60000);
+                await autoRenderPending();
+                expect(fetch.mock.calls.length).toBe(drawn);
+                await authChanged(null);
+            });
             it('tells the owner once when statements were read but still need their confirmation', async () => {
                 window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-07-13' }] })) };
                 await load([html('a'.repeat(64), 'amex-jul.html'), html('b'.repeat(64), 'amex-aug.html')]);
