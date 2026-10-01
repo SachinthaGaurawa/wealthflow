@@ -574,19 +574,30 @@ export async function closeSettledReviews({ db, uid, limit = 20 }) {
  * "the owner has to tap Map statement layout on NTB and AMEX" could only be guessed at from outside: the reason codes are the evidence. Bank
  * names, status words, reason codes and counts only — no amount, no merchant, no account number, no file name. Every few hours, never more. */
 const CENSUS_EVERY_MS = 30 * 60 * 1000;
-export async function statementCensus({ db, mailRef, log = console.info }) {
+export async function statementCensus({ db, mailRef, uid = '', log = console.info }) {
     const found = await mailRef.collection('items').where('status', 'in', ['needs_review', 'dead_letter', 'pending', 'processing']).limit(300).get();
     const byBank = {}, reasons = {}, partial = [];
     const bump = (map, key) => { map[key] = (map[key] || 0) + 1; };
     for (const doc of found.docs) {
         const item = doc.data() || {}, bank = String(item.bank || '?').slice(0, 24), status = String(item.status || '');
         byBank[bank] = byBank[bank] || {}; bump(byBank[bank], status);
-        const why = String(item.reviewReason || (item.deadLetter && item.deadLetter.reason) || item.lastRetryReason || (item.hasReview ? 'row-reviews' : '')).replace(/\d{6,}/g, '#').slice(0, 60);
-        if (why) bump(reasons, `${bank}:${status}:${why}`);
         const cursor = Number(item.cursor) || 0, rows = Number(item.totalRows) || 0;
+        // every row settled and one waiting for the owner: the reason it stopped once (reviewReason) is history, and reading it as current sent this very report astray
+        const settled = item.hasReview === true && rows > 0 && cursor === rows;
+        const why = String(settled ? 'all-rows-settled-row-reviews-open' : item.reviewReason || (item.deadLetter && item.deadLetter.reason) || item.lastRetryReason || (item.hasReview ? 'row-reviews' : '')).replace(/\d{6,}/g, '#').slice(0, 60);
+        if (why) bump(reasons, `${bank}:${status}:${why}`);
         if (cursor > 0 && partial.length < 12) partial.push({ bank, status, cursor, rows, why, retry: Number(item.retryCount) || 0, resumed: Number(item.resumeVersion) || 0 });
     }
-    log(JSON.stringify({ evt: 'statement-census', items: found.docs.length, more: found.docs.length === 300, byBank, reasons, partial }));
+    /* WHAT THE OWNER IS ASKED, not only which statements are open: a statement whose every row is settled stays `needs_review` while one row waits for
+     * a decision, so "five statements need review" says nothing about how much is really waiting. Bank and reason codes with counts, nothing else. */
+    let reviews;
+    if (uid) {
+        const page = await db.collection('users').doc(uid).collection('statementReview').where('status', '==', 'pending').limit(500).get();
+        const rows = {}, whole = {};
+        for (const doc of page.docs) { const entry = doc.data() || {}; bump(Number(entry.index) >= 0 ? rows : whole, `${String(entry.bank || '?').slice(0, 24)}:${String(entry.reason || '?').slice(0, 48)}`); }
+        reviews = { pending: page.docs.length, more: page.docs.length === 500, rows, whole };
+    }
+    log(JSON.stringify({ evt: 'statement-census', items: found.docs.length, more: found.docs.length === 300, byBank, reasons, partial, ...(reviews ? { reviews } : {}) }));
 }
 
 /* THE OWNER'S BUTTON: "Map statement layout" on a statement that is already part-filed (or whose review is stale) cannot map a layout without
@@ -1469,7 +1480,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
      * scan is slow (`frontIncomplete`, every time on 2026-10-01), so a census placed there never appeared in the log and the owner's twelve reviews could only
      * be guessed at. Here it costs one query when the invocation has time to spare. */
     if (Date.now() - start < budgetMs - 8000 && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
-        try { await statementCensus({ db, mailRef }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
+        try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
     }
     const [pending, processing] = await Promise.all([
         mailRef.collection('items').where('status', '==', 'pending').limit(200).get(),

@@ -110,6 +110,25 @@ function world({ rows = 70, name, subscriptions = [] } = {}) {
 }
 const logs = () => { const lines = []; vi.spyOn(console, 'info').mockImplementation(line => { lines.push(String(line)); }); return () => lines.map(l => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean); };
 
+describe('the census says what the owner is asked, not only which statements are open', () => {
+    it('counts the pending reviews per bank and reason, whole-statement and row-level apart (codes and counts only)', async () => {
+        const fs = createFirestore({
+            'users/u/statementReview/a': { uid: 'u', index: 3, status: 'pending', bank: 'NTB', reason: 'ai-consensus-unavailable', row: { amount: 1234.5, description: 'SOMEONE' } },
+            'users/u/statementReview/b': { uid: 'u', index: 9, status: 'pending', bank: 'NTB', reason: 'ai-consensus-unavailable' },
+            'users/u/statementReview/c': { uid: 'u', index: -1, status: 'pending', bank: 'DFCC', reason: 'statement-layout-or-reconciliation-needs-review' },
+            'users/u/statementReview/d': { uid: 'u', index: 1, status: 'resolved', bank: 'NTB', reason: 'invalid-transaction' },
+        });
+        const lines = [];
+        const docs = [{ id: 'i0', data: () => ({ bank: 'NTB', status: 'needs_review', hasReview: true, cursor: 66, totalRows: 66, reviewReason: 'statement-cursor-or-content-changed' }) }];
+        const mailRef = { collection: () => ({ where: () => ({ limit: () => ({ get: async () => ({ docs }) }) }) }) };
+        await statementCensus({ db: fs.db, mailRef, uid: 'u', log: line => lines.push(line) });
+        const out = JSON.parse(lines[0]);
+        expect(out.reviews).toEqual({ pending: 3, more: false, rows: { 'NTB:ai-consensus-unavailable': 2 }, whole: { 'DFCC:statement-layout-or-reconciliation-needs-review': 1 } });
+        expect(lines[0]).not.toMatch(/1234|SOMEONE/);                                       // no amount, no merchant
+        expect(out.reasons).toEqual({ 'NTB:needs_review:all-rows-settled-row-reviews-open': 1 });     // cursor 66 of 66 with a review open: settled, not stuck
+    });
+});
+
 describe('a long card statement in one invocation', () => {
     it('is read ONCE and filed slice after slice in a single step — no AI board, no second reading of the document', async () => {
         const w = world({ rows: 70 });
