@@ -200,6 +200,25 @@ export function addressOf(from) {
 }
 
 /**
+ * Is this a From line a mail system could have written? Bank statements come from machines, and a machine writes a clean header.
+ * Refused outright — never guessed at — are: a control character (a NUL, a bare CR or LF, an escape: the shapes of header
+ * injection), an unterminated quote or comment, angle brackets that do not pair up, and a line longer than any mail program
+ * writes. A CRLF followed by a space or tab is a fold and is fine. When two readers could disagree about who a message is from,
+ * the intake does not pick one: it refuses (and logs it as a security event).
+ */
+export function wellFormedFrom(value) {
+    const s = String(value == null ? '' : value);
+    if (!s.trim() || s.length > 2000) return false;
+    const unfolded = s.replace(/\r\n[ \t]/g, ' ');
+    if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\r\n]/.test(unfolded)) return false;
+    const skeleton = skeletonOf(unfolded);
+    if (skeleton === null) return false;
+    let open = 0;
+    for (const c of skeleton) { if (c === '<') { if (open) return false; open++; } else if (c === '>') { if (!open) return false; open--; } }
+    return open === 0;
+}
+
+/**
  * EVERY mailbox a From header names, lower-cased, de-duplicated, in order. One for a normal message. More than one is
  * not something a bank's statement mailer writes, and which of them a reader shows is the reader's choice — so the
  * intake treats it exactly like two From lines (see planCore).
@@ -872,6 +891,10 @@ function planCore(message, policy = {}) {
         return { ok: false, reason: REJECT.AUTH_FAILED, detail: { from: domainOf(headers.from), froms: mailboxes.slice(0, 4), why: 'multiple-from-addresses', lines: 1 }, from: String(headers.from == null ? '' : headers.from), subject: headers.subject || '' };
     }
 
+    if (headers.from !== undefined && !wellFormedFrom(headers.from)) {
+        return { ok: false, reason: REJECT.AUTH_FAILED, detail: { from: domainOf(headers.from), why: 'malformed-from', lines: 1 }, from: String(headers.from == null ? '' : headers.from).slice(0, 300), subject: headers.subject || '' };
+    }
+
     /* Carried out on every plan, refused or not, so the caller can offer the
      * owner the senders it saw. The gathering the owner asked for depends on
      * this being reported for mail that did NOT get in — a sender nobody has
@@ -883,6 +906,13 @@ function planCore(message, policy = {}) {
 
     const what = selectAttachments(message && message.payload);
     if (!what.ok) return { ok: false, ...what, bank: who.bank, from: seenFrom, subject: headers.subject || '' };
+    /* A FILE THAT SAYS INVOICE OR RECEIPT, AND NOT STATEMENT, IS NOT A STATEMENT — whatever the subject says. The subject is written
+     * by the sender: "Your account statement" over an attached Invoice_10442.pdf is the oldest way to carry a bill past a filter. A
+     * file that says both ("e-Statement / Tax Invoice") is a statement; a file that says neither is judged by the mail and its
+     * contents as before. Files like that beside a real statement are left out; if every file is one, the message is refused. */
+    const vetoedFiles = what.take.filter((a) => nameVerdict({ subject: '', filenames: [a && a.filename] }).verdict === ID_VERDICT.NOT_STATEMENT);
+    const everyFileVetoed = vetoedFiles.length > 0 && vetoedFiles.length === what.take.length;
+    if (vetoedFiles.length && !everyFileVetoed) what.take = what.take.filter((a) => !vetoedFiles.includes(a));
 
     /* ── THE OWNER'S LIST IS THE ONLY AUTHORITY, CURATED OR NOT ───────────
      *
@@ -990,12 +1020,13 @@ function planCore(message, policy = {}) {
         body: bodyTextOf(message && message.payload),
     });
     const ownerTap = policy.forced === true && who.approved === true;   // an exact-address approval the owner tapped, never a release
-    if (intent.intent === 'block' && !ownerTap) {
+    if ((intent.intent === 'block' || everyFileVetoed) && !ownerTap) {
+        const fileSays = nameVerdict({ subject: '', filenames: [vetoedFiles[0] && vetoedFiles[0].filename] });
         return {
             ok: false,
             reason: REJECT.NOT_A_STATEMENT_DOC,
             bank: who.bank,
-            detail: { from: who.domain, why: intent.reason, hits: intent.hits.slice(0, 4), where: intent.where },
+            detail: intent.intent === 'block' ? { from: who.domain, why: intent.reason, hits: intent.hits.slice(0, 4), where: intent.where } : { from: who.domain, why: 'the file name ' + fileSays.reason.replace(/^the name /, ''), hits: fileSays.hits.slice(0, 4), where: 'file' },
             from: seenFrom,
             subject: headers.subject || '',
         };
@@ -1003,7 +1034,7 @@ function planCore(message, policy = {}) {
     // A block the owner lifted is still only as trusted as its contents: the attachment has to prove itself.
     /* A sibling address is not the address the owner wrote down, so nothing is taken from it on the strength of the mail
      * alone: its document must prove itself a statement from its own contents, and reconcile, before anything is filed. */
-    const intentKind = (intent.intent === 'block' || releasedBySibling) ? 'suspect' : intent.intent;
+    const intentKind = (intent.intent === 'block' || everyFileVetoed || releasedBySibling) ? 'suspect' : intent.intent;
 
     /* THE KEYWORD GUESS THAT USED TO LIVE HERE IS GONE.
      *

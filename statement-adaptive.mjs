@@ -289,7 +289,11 @@ export function verifyAccount(account, lines, claimed = new Set(), { decimals = 
         if (at < 0) { problems.push(`${tag}: the amount ${show(amount)} is not on that line or the next two`); continue; }
         const near = lines.slice(Math.max(0, r.line - 3), Math.min(lines.length, r.line + 2)).join(' ');
         let families = familiesIn(near, r.date);
-        if (!families.size && r.dateText) {
+        /* A DATE PRINTED WITH A MONTH WORD IS UNAMBIGUOUS, whatever else the neighbouring figures happen to look like: "08 ene 2026"
+         * is the 8th of the month named "ene", and a coincidental "01 08" in the amount beside it is not a month-first date. When the
+         * quoted text is on the page and its day and year are this date's, the row is a month-name row (N) — in addition to anything
+         * the figures spelt by accident. A row whose families are empty depends on it. */
+        if (r.dateText) {
             // a month written in a language the forms above do not know: the model must quote the date as printed, the quote
             // must be there, and its digits must be this date's day and year; the month WORD must mean the same month everywhere
             const printed = r.dateText.toLowerCase().replace(/\s+/g, ' ');
@@ -297,7 +301,7 @@ export function verifyAccount(account, lines, claimed = new Set(), { decimals = 
             const word = (printed.match(/\p{L}{3,}/gu) || [])[0] || '';
             if (word && near.toLowerCase().replace(/\s+/g, ' ').includes(printed) && nums.includes(Dd) && (!nums.some((n) => n > 31) || nums.includes(Y) || nums.includes(Y % 100))) {
                 if (monthWords.has(word) && monthWords.get(word) !== M) { problems.push(`${tag}: the month word "${word}" is read as two different months`); continue; }
-                monthWords.set(word, M); families = new Set(['N']);
+                monthWords.set(word, M); families = new Set([...families, 'N']);
             }
         }
         if (!families.size) { problems.push(`${tag}: the date ${r.date} is not written there`); continue; }
@@ -446,13 +450,56 @@ export function windowsFor(total, variant) {
  */
 export async function adaptiveRead({ text, ask, uid = '', maxAttempts = MAX_ATTEMPTS, budgetMs = 40000, now = Date.now } = {}) {
     const lines = linesOf(text);
-    if (typeof ask !== 'function') return { ok: false, reason: 'ai-unavailable', attempts: 0, problems: [] };
+    const readable = lines.length >= 6 && lines.length <= MAX_LINES;
+    const discovered = readable ? discoverCurrency(lines) : null;
+    let problems = [], lastDifference;
+
+    /* Judge a proposed reading against the document, whoever proposed it: every account verified from scratch (lines may serve
+     * only one account), and nothing on the page that looks like a movement left out. Returns the accepted result or what is
+     * still wrong. */
+    const judge = (accts, attemptNo, strategy) => {
+        const claimed = new Set();
+        const checked = [];
+        const found = [];
+        let difference;
+        for (const a of accts) {
+            const cur = resolveCurrency(a.currency, discovered, lines);
+            const v = verifyAccount(a, lines, claimed, { decimals: cur.decimals });
+            for (const r of v.rows) claimed.add(r.usedLine);
+            if (cur.problem) { v.ok = false; v.problems = [...v.problems, cur.problem]; }
+            if (!v.ok) { found.push(...v.problems); if (Number.isFinite(v.differenceCents)) difference = v.differenceCents; }
+            checked.push({ ...a, currency: cur.code, verified: v });
+        }
+        if (checked.length && checked.every((c) => c.verified.ok)) {
+            // a line whose every amount is an account's opening or closing balance is a heading in any language, not a movement
+            const places = [...new Set(checked.map((c) => c.verified.decimals))];
+            const heads = new Map(places.map((d) => [d, new Set(checked.filter((c) => c.verified.decimals === d).flatMap((c) => [Number(c.verified.minor.opening), Number(c.verified.minor.closing)]))]));
+            const looksLikeMovement = (i) => places.some((d) => isMovementLine(lines[i], d) && !moneyIn(lines[i], d).every((m) => heads.get(d).has(m)));
+            const left = lines.map((l, i) => i).filter((i) => !claimed.has(i) && looksLikeMovement(i));
+            if (!checked.some((c) => c.verified.rows.length)) return { result: { ok: false, reason: 'no-transactions-read', attempts: attemptNo, problems: [] }, problems: [] };
+            if (!left.length || left.every((i) => isTotalLike(lines[i]))) return { result: { ok: true, parsed: toParsed(checked, { uid, lines, attempts: attemptNo, strategy }), attempts: attemptNo }, problems: [] };
+            found.push(`${left.length} line(s) that look like transactions are not accounted for`);
+            checked.forEach((c) => { c.verified.unclaimed = left; });
+            difference = 0;
+        }
+        return { result: null, problems: found, difference, checked };
+    };
+
+    /* NO MODEL NEEDED FOR A STATEMENT WITH RUNNING BALANCES. When every model is down (or none could balance), the document is
+     * read by the rules in proposeFromLines() — and held to exactly the same account by judge(): a reading that does not
+     * balance to the unit is not a reading, whoever made it. It can only ever add a statement, never a wrong figure. */
+    const programmatic = () => {
+        if (!readable) return null;
+        try { const proposal = proposeFromLines(lines, discovered); if (!proposal.length) return null; const j = judge(proposal, 1, 'programmatic'); return j.result && j.result.ok ? j.result : null; }
+        catch (_) { return null; }
+    };
+
+    if (typeof ask !== 'function') return programmatic() || { ok: false, reason: 'ai-unavailable', attempts: 0, problems: [] };
     if (lines.length < 6) return { ok: false, reason: 'document-too-short', attempts: 0, problems: [] };
     if (lines.length > MAX_LINES) return { ok: false, reason: 'document-too-long', attempts: 0, problems: [] };
-    const discovered = discoverCurrency(lines);
     if (lines.filter((l) => isMovementLine(l, discovered.decimals) || isMovementLine(l, 2)).length < 2) return { ok: false, reason: 'no-movement-lines', attempts: 0, problems: [] };
     const started = now();
-    let problems = [], lastDifference, asked = 0;
+    let asked = 0;
     let accounts = null;          // the verified-so-far picture: [{account,type,opening,closing,periodStart,periodEnd,rows}]
     let unavailable = 0;
 
@@ -471,43 +518,145 @@ export async function adaptiveRead({ text, ask, uid = '', maxAttempts = MAX_ATTE
             if (lines.length <= WINDOW_LINES && variant === 0) jobs.push(callModel(firstPrompt(lines, 0, lines.length, { header: true })));
             else { jobs.push(callModel(headerPrompt(lines))); for (const [a, b] of windowsFor(lines.length, variant).slice(0, 14)) jobs.push(callModel(firstPrompt(lines, a, b, { header: false }))); }
             const answers = await Promise.all(jobs);
-            if (answers.every((x) => x === null)) return { ok: false, reason: 'ai-unavailable', attempts: attempt + 1, problems };
+            if (answers.every((x) => x === null)) return programmatic() || { ok: false, reason: 'ai-unavailable', attempts: attempt + 1, problems };
             accounts = mergeAnswers(answers.filter(Boolean), lines.length <= WINDOW_LINES);
         } else {
             // repair: hand back exactly which lines nobody accounted for and by how much the books are out
             const verdicts = accounts.map((a) => verifyAccount(a, lines, new Set(), { decimals: resolveCurrency(a.currency, discovered, lines).decimals }));
             const feedback = { differenceCents: Number.isFinite(verdicts[0] && verdicts[0].differenceCents) ? verdicts[0].differenceCents : 0, decimals: verdicts[0] && verdicts[0].decimals, problems, unclaimed: verdicts.flatMap((v) => v.unclaimed || []) };
             const answer = await callModel(repairPrompt(lines, feedback));
-            if (answer === null) { if (unavailable > 2) return { ok: false, reason: 'ai-unavailable', attempts: attempt + 1, problems }; continue; }
+            if (answer === null) { if (unavailable > 2) return programmatic() || { ok: false, reason: 'ai-unavailable', attempts: attempt + 1, problems }; continue; }
             accounts = mergeRepair(accounts, answer, verdicts);
         }
-        // verify every account from scratch; lines may serve only one account
-        const claimed = new Set();
-        const checked = [];
-        problems = [];
-        for (const a of accounts) {
-            const cur = resolveCurrency(a.currency, discovered, lines);
-            const v = verifyAccount(a, lines, claimed, { decimals: cur.decimals });
-            for (const r of v.rows) claimed.add(r.usedLine);
-            if (cur.problem) { v.ok = false; v.problems = [...v.problems, cur.problem]; }
-            if (!v.ok) { problems.push(...v.problems); if (Number.isFinite(v.differenceCents)) lastDifference = v.differenceCents; }
-            checked.push({ ...a, currency: cur.code, verified: v });
-        }
-        if (checked.length && checked.every((c) => c.verified.ok)) {
-            // nothing on the page that looks like a movement may be left out
-            // a line whose every amount is an account's opening or closing balance is a heading in any language, not a movement
-            const places = [...new Set(checked.map((c) => c.verified.decimals))];
-            const heads = new Map(places.map((d) => [d, new Set(checked.filter((c) => c.verified.decimals === d).flatMap((c) => [Number(c.verified.minor.opening), Number(c.verified.minor.closing)]))]));
-            const looksLikeMovement = (i) => places.some((d) => isMovementLine(lines[i], d) && !moneyIn(lines[i], d).every((m) => heads.get(d).has(m)));
-            const left = lines.map((l, i) => i).filter((i) => !claimed.has(i) && looksLikeMovement(i));
-            if (!checked.some((c) => c.verified.rows.length)) return { ok: false, reason: 'no-transactions-read', attempts: attempt + 1, problems: [] };
-            if (!left.length || left.every((i) => isTotalLike(lines[i]))) return { ok: true, parsed: toParsed(checked, { uid, lines, attempts: attempt + 1, strategy: attempt === 0 ? 'whole' : 'repaired' }), attempts: attempt + 1 };
-            problems.push(`${left.length} line(s) that look like transactions are not accounted for`);
-            accounts.forEach((a, n) => { checked[n].verified.unclaimed = left; });
-            lastDifference = 0;
-        }
+        const j = judge(accounts, attempt + 1, attempt === 0 ? 'whole' : 'repaired');
+        if (j.result) return j.result;
+        problems = j.problems;
+        if (j.difference !== undefined) lastDifference = j.difference;
     }
+    const fallback = programmatic();
+    if (fallback) return fallback;
     return { ok: false, reason: 'did-not-balance', attempts: maxAttempts, problems: problems.slice(0, 12), ...(lastDifference !== undefined ? { differenceCents: lastDifference } : {}) };
+}
+
+
+/* ── THE PROGRAMMATIC READER ────────────────────────────────────────────────────────────────────────────────────────── */
+
+// month words in the languages the owner's banks and their customers' banks write in; three-letter prefixes, plus the few longer words that collide
+const MONTH_BY_WORD = { jan: 1, ene: 1, janv: 1, feb: 2, fev: 2, fevr: 2, mar: 3, mars: 3, mrz: 3, marz: 3, apr: 4, abr: 4, avr: 4, may: 5, mai: 5, jun: 6, juin: 6, juni: 6, jul: 7, juil: 7, juli: 7, aug: 8, ago: 8, aou: 8, aout: 8,
+    sep: 9, sept: 9, set: 9, oct: 10, okt: 10, out: 10, nov: 11, dec: 12, dic: 12, dez: 12 };
+const monthOfWord = (word) => { const k = String(word).toLowerCase().normalize('NFD').replace(/[̀-ͯ.]/g, ''); return MONTH_BY_WORD[k] || MONTH_BY_WORD[k.slice(0, 3)] || 0; };
+
+const DATE_PATTERNS = [
+    { re: /(?<!\d)(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?!\d)/u, to: (m) => [+m[1], +m[2], +m[3]] },
+    { re: /(?<![\d.,])(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})(?!\d)/u, to: (m, order) => { const y = +m[3] < 100 ? 2000 + +m[3] : +m[3]; return order === 'MDY' ? [y, +m[1], +m[2]] : [y, +m[2], +m[1]]; } },
+    { re: /(?<!\d)(\d{1,2})[ \-.]?(?:de )?(\p{L}{3,12})\.?[ \-,]*(?:de )?(\d{2,4})(?!\d)/iu, to: (m) => { const mo = monthOfWord(m[2]); return mo ? [+m[3] < 100 ? 2000 + +m[3] : +m[3], mo, +m[1]] : null; } },
+    { re: /(\p{L}{3,12})\.? (\d{1,2}),? (\d{4})(?!\d)/iu, to: (m) => { const mo = monthOfWord(m[1]); return mo ? [+m[3], mo, +m[2]] : null; } },
+];
+const two = (n) => String(n).padStart(2, '0');
+/** The first real date written on a line: { iso, text }, or null. `order` says how a numeric 05/03/2026 is read (decided once for the whole document). */
+function dateOnLine(line, order) {
+    for (const { re, to } of DATE_PATTERNS) {
+        const m = re.exec(line);
+        if (!m) continue;
+        const ymd = to(m, order);
+        if (!ymd) continue;
+        const iso = `${ymd[0]}-${two(ymd[1])}-${two(ymd[2])}`;
+        if (isIsoDate(iso)) return { iso, text: m[0].trim() };
+    }
+    return null;
+}
+/** Day-first unless the document itself shows month-first: a numeric date whose first part cannot be a month is day-first, whose second cannot be, month-first. */
+function dateOrderOf(lines) {
+    let dayFirst = 0, monthFirst = 0;
+    for (const line of lines) {
+        const m = /(?<![\d.,])(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})(?!\d)/.exec(line);
+        if (!m) continue;
+        if (+m[1] > 12) dayFirst++; else if (+m[2] > 12) monthFirst++;
+    }
+    return monthFirst > dayFirst ? 'MDY' : 'DMY';
+}
+
+const OPENING_LABEL = /\b(?:opening balance|balance brought forward|brought forward|b\/f|previous balance|balance forward|opening|saldo inicial|saldo anterior|solde (?:initial|precedent)|anfangssaldo)\b/i;
+const CLOSING_LABEL = /\b(?:closing balance|balance carried forward|carried forward|c\/f|new balance|ending balance|closing|saldo final|solde final|endsaldo|saldo actual|saldo atual)\b/i;
+const HEADING_DATE = /\b(?:period|periodo|statement date|due date|payment due|from|to|date)\s*:|\bperiod\b/i;
+const CARD_LABEL = /\b(?:previous balance|new balance)\b/i;
+const MARKER = /(?:^|[^\p{L}])(DR|CR|DEBIT|CREDIT)(?![\p{L}])/iu;
+const ACCOUNT_LABEL = /(?:account|a\/c|acct|cuenta|compte|konto)\s*(?:no\.?|number|num\.?|n[°º])?\s*[:#]?\s*([\dXx*\-]{4,})/i;
+
+/**
+ * Read a statement WITHOUT a model, from what every statement with a running balance has in common: dated lines that end in an
+ * amount and the balance after it, an opening and a closing balance, and arithmetic that links them. Direction is not guessed
+ * from a word: it is what the balances prove (each balance is the one before it, plus or minus the amount). Returns the shape the
+ * model's answer has, for judge() to hold to the document; [] when the document is not one of these.
+ */
+export function proposeFromLines(lines, discovered = discoverCurrency(lines)) {
+    const D = discovered.decimals;
+    const order = dateOrderOf(lines);
+    const toStr = (minor) => minorToString(BigInt(minor), D);
+    const labelled = (re) => { for (let i = 0; i < lines.length; i++) { if (!re.test(lines[i]) || dateOnLine(lines[i], order)) continue; const t = moneyIn(lines[i], D); if (t.length) return t[t.length - 1]; } return null; };
+    let opening = labelled(OPENING_LABEL), closing = null;
+    for (let i = lines.length - 1; i >= 0; i--) { if (!CLOSING_LABEL.test(lines[i]) || dateOnLine(lines[i], order)) continue; const t = moneyIn(lines[i], D); if (t.length) { closing = t[t.length - 1]; break; } }
+    if (opening === null || closing === null) return [];
+    const card = lines.some((l) => CARD_LABEL.test(l) && !dateOnLine(l, order));
+    const strip = (line, date, tokens) => {
+        let out = line.replace(date.text, ' ');
+        out = out.replace(AMOUNT_RES[D] || AMOUNT_RE, ' ');
+        return out.replace(MARKER, ' ').replace(/[|;]+/g, ' ').replace(/\s+/g, ' ').trim();
+    };
+
+    const rows = [];
+    for (let i = 0; i < lines.length; i++) {
+        const date = dateOnLine(lines[i], order);
+        if (!date) continue;
+        let tokens = moneyIn(lines[i], D), at = i;
+        if (!tokens.length && lines[i].trim().startsWith(date.text) && !HEADING_DATE.test(lines[i])) {
+            // the amount on the line (or two) after a wrapped description, which carries no date of its own — never a labelled
+            // opening / closing / total line, and never under a period or statement-date heading
+            for (const j of [i + 1, i + 2]) {
+                if (j >= lines.length || dateOnLine(lines[j], order) || OPENING_LABEL.test(lines[j]) || CLOSING_LABEL.test(lines[j]) || isTotalLike(lines[j])) break;
+                const t = moneyIn(lines[j], D);
+                if (t.length) { tokens = t; at = j; break; }
+            }
+        }
+        if (!tokens.length) continue;
+        const marker = MARKER.exec(lines[at]);
+        let amount, balance = null;
+        const n = tokens.length;
+        if (n >= 3) { amount = tokens[n - 3] === 0 ? tokens[n - 2] : tokens[n - 2] === 0 ? tokens[n - 3] : tokens[n - 2]; balance = tokens[n - 1]; }
+        else if (n === 2) { amount = tokens[0]; balance = tokens[1]; }
+        else amount = tokens[0];
+        if (!amount) continue;                                          // a line that moves no money is not a transaction
+        const description = strip(lines[i], date) || strip(lines[at], date);
+        rows.push({ line: i + 1, date: date.iso, dateText: date.text, description, amount, balance, marker: marker ? (/^(?:dr|debit)$/i.test(marker[1]) ? 'debit' : 'credit') : '' });
+    }
+    if (rows.length < 2) return [];
+
+    // direction: proven by the balances when every row has one (in page order, or newest first), else by the DR / CR marker on the line
+    const withBalance = rows.every((r) => r.balance !== null);
+    const upIsCredit = !card;                                            // a bank balance rises with a credit; a card balance rises with a charge
+    const chain = (list) => {
+        let prev = opening;
+        const out = [];
+        for (const r of list) {
+            if (prev + r.amount === r.balance) out.push(upIsCredit ? 'credit' : 'debit');
+            else if (prev - r.amount === r.balance) out.push(upIsCredit ? 'debit' : 'credit');
+            else return null;
+            prev = r.balance;
+        }
+        return prev === closing ? out : null;
+    };
+    let directions = null;
+    if (withBalance) {
+        directions = chain(rows);
+        if (!directions) { const rev = chain([...rows].reverse()); if (rev) directions = rev.reverse(); }
+    } else if (rows.every((r) => r.marker)) directions = rows.map((r) => r.marker);
+    if (!directions) return [];
+
+    const account = (lines.map((l) => ACCOUNT_LABEL.exec(l)).find(Boolean) || [])[1] || '';
+    return [{
+        account: account.slice(0, 40), type: card ? 'card' : 'bank', opening: toStr(opening), closing: toStr(closing), currency: discovered.code || '', periodStart: null, periodEnd: null,
+        rows: rows.map((r, i) => ({ line: r.line, date: r.date, dateText: r.dateText, description: r.description, debit: directions[i] === 'debit' ? toStr(r.amount) : 0, credit: directions[i] === 'credit' ? toStr(r.amount) : 0, balance: r.balance === null ? null : toStr(r.balance) })),
+    }];
 }
 
 const isTotalLike = (line) => /\b(total|opening|closing|brought forward|carried forward|b\/f|c\/f|balance|previous|minimum|credit limit|available)\b/i.test(line);

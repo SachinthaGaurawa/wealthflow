@@ -16,6 +16,10 @@
 //   array) inside the `messages[].images` field for vision models.
 
 import * as Matrix from './ai-matrix.mjs';
+import { createModelBook, isModelGone, loadModels, QUOTA_BAD_MS } from '../ai-models.mjs';
+
+/* What each provider serves NOW, remembered for hours: a retired model is replaced by one the provider itself lists (ai-models.mjs). */
+export const modelBook = createModelBook();
 
 const providerCooldownUntil = new Map();
 function providerCooldownMs(error) {
@@ -139,10 +143,9 @@ export default async function handler(req, res) {
         // gemini-2.0-flash / gemini-2.5-flash were retired by Google (confirmed live:
         // "This model models/gemini-2.0-flash is no longer available... use
         // models/gemini-3.8-flash"). 3.8 Flash is multimodal, so one model serves
-        // both the text and vision paths.
-        const model = 'gemini-3.8-flash';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
-
+        // both the text and vision paths. When THAT is retired or its quota is spent
+        // (a Gemini quota is per model), the models Google lists today are tried.
+        const slot = 'Gemini:any';
         const parts = [{ text: prompt }];
         if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
 
@@ -151,28 +154,39 @@ export default async function handler(req, res) {
         if (wantsJSON || financialDecision) {
             generationConfig.responseMimeType = 'application/json';
         }
-
-        const response = await fetchWithTimeout(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts }],
-                generationConfig,
-                safetySettings: [
-                    { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_ONLY_HIGH' },
-                    { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_ONLY_HIGH' },
-                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-                ]
-            })
-        });
-
-        if (!response.ok) {
-            const errText = await response.text().catch(() => '');
-            throw new Error(`Gemini status ${response.status}: ${errText.substring(0, 200)}`);
+        const send = async (model) => {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+            const response = await fetchWithTimeout(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts }],
+                    generationConfig,
+                    safetySettings: [
+                        { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_ONLY_HIGH' },
+                        { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_ONLY_HIGH' },
+                        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+                        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+                    ]
+                })
+            });
+            if (response.ok) return { ok: true, response };
+            return { ok: false, status: response.status, text: await response.text().catch(() => '') };
+        };
+        let model = modelBook.current(slot) || 'gemini-3.8-flash';
+        let out = await send(model);
+        if (!out.ok && (isModelGone(out.status, out.text) || out.status === 429)) {
+            modelBook.markBad(slot, model, out.status === 429 ? QUOTA_BAD_MS : undefined);
+            const next = await modelBook.replacement({ slot, provider: 'Gemini', failed: model,
+                load: () => loadModels({ kind: 'gemini', url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', key: geminiKey, fetcher: fetchWithTimeout }) });
+            if (next) {
+                const retry = await send(next);
+                if (retry.ok) { modelBook.remember(slot, next); model = next; out = retry; }
+                else modelBook.markBad(slot, next, retry.status === 429 ? QUOTA_BAD_MS : undefined);
+            }
         }
-
-        const data = await response.json();
+        if (!out.ok) throw new Error(`Gemini status ${out.status}: ${out.text.substring(0, 200)}`);
+        const data = await out.response.json();
         if (data.promptFeedback?.blockReason) throw new Error('Blocked by Google Safety');
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) return { reply: text, provider: `gemini:${model}` };
@@ -183,26 +197,36 @@ export default async function handler(req, res) {
     async function fetchDeepSeek() {
         if (image) throw new Error('DeepSeek skipped (text-only)');
         if (!deepseekKey) throw new Error('DeepSeek key not configured');
-
-        const response = await fetchWithTimeout('https://api.deepseek.com/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${deepseekKey}`
-            },
-            body: JSON.stringify({
-                model: 'deepseek-chat',
-                messages: [{ role: 'user', content: prompt }],
-                temperature: temp,
-                max_tokens: tokens
-            })
-        });
-
-        if (!response.ok) throw new Error(`DeepSeek status ${response.status}`);
-        const data = await response.json();
+        const slot = 'DeepSeek:text';
+        const send = async (model) => {
+            const response = await fetchWithTimeout('https://api.deepseek.com/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${deepseekKey}`
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature: temp,
+                    max_tokens: tokens
+                })
+            });
+            if (response.ok) return { ok: true, response };
+            return { ok: false, status: response.status, text: await response.text().catch(() => '') };
+        };
+        let model = modelBook.current(slot) || 'deepseek-chat';
+        let out = await send(model);
+        if (!out.ok && isModelGone(out.status, out.text)) {
+            modelBook.markBad(slot, model);
+            const next = await modelBook.replacement({ slot, provider: 'DeepSeek', failed: model, load: () => loadModels({ kind: 'openai', url: 'https://api.deepseek.com/models', key: deepseekKey, fetcher: fetchWithTimeout }) });
+            if (next) { const retry = await send(next); if (retry.ok) { modelBook.remember(slot, next); model = next; out = retry; } else modelBook.markBad(slot, next); }
+        }
+        if (!out.ok) throw new Error(`DeepSeek status ${out.status}`);
+        const data = await out.response.json();
         const text = data.choices?.[0]?.message?.content;
         if (!text) throw new Error('DeepSeek returned empty');
-        return { reply: text, provider: 'deepseek' };
+        return { reply: text, provider: model === 'deepseek-chat' ? 'deepseek' : `deepseek:${model}` };
     }
 
     // ---------- ENGINE 3: GROQ (ultra-fast text + vision via Llava) ----------
@@ -260,29 +284,35 @@ export default async function handler(req, res) {
         if (image) message.images = [image];
 
         // Pick the right model: vision-capable for images, text-only otherwise
-        const model = image ? 'llama3.2-vision' : 'gpt-oss:120b';
-
-        const response = await fetchWithTimeout('https://ollama.com/api/chat', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${ollamaKey}`
-            },
-            body: JSON.stringify({
-                model,
-                messages: [message],
-                stream: false,
-                // Suggest JSON output if the prompt hints at it
-                ...(/return only.*json|extract.*json/i.test(prompt) ? { format: 'json' } : {}),
-                options: { temperature: temp, num_predict: Math.min(tokens, 4096) }
-            })
-        });
-
-        if (!response.ok) {
-            const errText = await response.text().catch(() => '');
-            throw new Error(`Ollama status ${response.status}: ${errText.substring(0, 200)}`);
+        const slot = image ? 'Ollama:vision' : 'Ollama:text';
+        const send = async (model) => {
+            const response = await fetchWithTimeout('https://ollama.com/api/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${ollamaKey}`
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [message],
+                    stream: false,
+                    // Suggest JSON output if the prompt hints at it
+                    ...(/return only.*json|extract.*json/i.test(prompt) ? { format: 'json' } : {}),
+                    options: { temperature: temp, num_predict: Math.min(tokens, 4096) }
+                })
+            });
+            if (response.ok) return { ok: true, response };
+            return { ok: false, status: response.status, text: await response.text().catch(() => '') };
+        };
+        let model = modelBook.current(slot) || (image ? 'llama3.2-vision' : 'gpt-oss:120b');
+        let out = await send(model);
+        if (!out.ok && isModelGone(out.status, out.text)) {
+            modelBook.markBad(slot, model);
+            const next = await modelBook.replacement({ slot, provider: 'Ollama', vision: !!image, failed: model, load: () => loadModels({ kind: 'ollama', url: 'https://ollama.com/api/tags', key: ollamaKey, fetcher: fetchWithTimeout }) });
+            if (next) { const retry = await send(next); if (retry.ok) { modelBook.remember(slot, next); model = next; out = retry; } else modelBook.markBad(slot, next); }
         }
-        const data = await response.json();
+        if (!out.ok) throw new Error(`Ollama status ${out.status}: ${out.text.substring(0, 200)}`);
+        const data = await out.response.json();
         const text = data.message?.content;
         if (!text) throw new Error('Ollama returned empty');
         return { reply: text, provider: `ollama:${model}` };
@@ -321,54 +351,69 @@ export default async function handler(req, res) {
         return async function () {
             if (!opts.key) throw new Error(opts.name + ' key not configured');
             if (image && !opts.visionModel) throw new Error(opts.name + ' skipped (text-only)');
-            const model = image ? opts.visionModel : opts.textModel;
+            const slot = `${opts.name}:${image ? 'vision' : 'text'}`;
             const content = image
                 ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } }]
                 : prompt;
-            const body = {
-                model,
-                messages: [{ role: 'user', content }],
-                temperature: temp,
-                max_tokens: Math.min(tokens, opts.maxTokens || 4096)
-            };
-            if (!image && opts.jsonMode && /return only.*json|extract.*json|\{[^}]*"vendor"[^}]*\}/i.test(prompt)) {
-                body.response_format = { type: 'json_object' };
-            }
             const headers = Object.assign(
                 { 'Content-Type': 'application/json', 'Authorization': `Bearer ${opts.key}` },
                 opts.extraHeaders || {}
             );
-            const r = await fetchWithTimeout(opts.url, { method: 'POST', headers, body: JSON.stringify(body) }, opts.timeout || 22000);
-            if (!r.ok) {
-                const t = await r.text().catch(() => '');
-                throw new Error(`${opts.name} status ${r.status}: ${t.substring(0, 160)}`);
+            const send = async (model) => {
+                const body = {
+                    model,
+                    messages: [{ role: 'user', content }],
+                    temperature: temp,
+                    max_tokens: Math.min(tokens, opts.maxTokens || 4096)
+                };
+                if (!image && opts.jsonMode && /return only.*json|extract.*json|\{[^}]*"vendor"[^}]*\}/i.test(prompt)) {
+                    body.response_format = { type: 'json_object' };
+                }
+                const r = await fetchWithTimeout(opts.url, { method: 'POST', headers, body: JSON.stringify(body) }, opts.timeout || 22000);
+                if (r.ok) return { ok: true, r };
+                return { ok: false, status: r.status, text: await r.text().catch(() => '') };
+            };
+            let model = modelBook.current(slot) || (image ? opts.visionModel : opts.textModel);
+            let out = await send(model);
+            /* THE MODEL IS GONE, NOT THE PROVIDER: ask the provider what it serves now, choose the best live model for this
+             * role, try it once, and remember it (api/ai-models.mjs). The next call goes straight there. */
+            if (!out.ok && opts.list && isModelGone(out.status, out.text)) {
+                modelBook.markBad(slot, model);
+                const next = await modelBook.replacement({ slot, provider: opts.name, listKey: opts.list, vision: !!image, failed: model,
+                    load: () => loadModels({ kind: 'openai', url: opts.list, key: opts.key, headers: opts.extraHeaders, fetcher: fetchWithTimeout }) });
+                if (next) {
+                    const retry = await send(next);
+                    if (retry.ok) { modelBook.remember(slot, next); model = next; out = retry; }
+                    else modelBook.markBad(slot, next);
+                }
             }
-            const data = await r.json();
+            if (!out.ok) throw new Error(`${opts.name} status ${out.status}: ${out.text.substring(0, 160)}`);
+            const data = await out.r.json();
             let text = data.choices?.[0]?.message?.content;
             if (Array.isArray(text)) text = text.map(p => (p && (p.text || p.content)) || '').join('');
             if (!text || !String(text).trim()) throw new Error(opts.name + ' returned empty');
-            return { reply: String(text), provider: opts.provider };
+            return { reply: String(text), provider: model === (image ? opts.visionModel : opts.textModel) ? opts.provider : `${opts.provider}:${model}` };
         };
     }
 
     // mistral-large-latest is paid-tier only (confirmed live: 403 "not available in
     // your subscription tier"); mistral-small-latest is served on the free plan.
-    const fetchMistral = makeOAI({ name: 'Mistral', provider: 'mistral', key: mistralKey, url: 'https://api.mistral.ai/v1/chat/completions', textModel: 'mistral-small-latest', visionModel: 'pixtral-12b-2409', jsonMode: true });
-    const fetchTogether = makeOAI({ name: 'Together', provider: 'together', key: togetherKey, url: 'https://api.together.xyz/v1/chat/completions', textModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', visionModel: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo' });
-    const fetchFireworks = makeOAI({ name: 'Fireworks', provider: 'fireworks', key: fireworksKey, url: 'https://api.fireworks.ai/inference/v1/chat/completions', textModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct', visionModel: 'accounts/fireworks/models/llama-v3p2-90b-vision-instruct' });
+    const fetchMistral = makeOAI({ name: 'Mistral', provider: 'mistral', key: mistralKey, url: 'https://api.mistral.ai/v1/chat/completions', list: 'https://api.mistral.ai/v1/models', textModel: 'mistral-small-latest', visionModel: 'pixtral-12b-2409', jsonMode: true });
+    const fetchTogether = makeOAI({ name: 'Together', provider: 'together', key: togetherKey, url: 'https://api.together.xyz/v1/chat/completions', list: 'https://api.together.xyz/v1/models', textModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', visionModel: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo' });
+    const fetchFireworks = makeOAI({ name: 'Fireworks', provider: 'fireworks', key: fireworksKey, url: 'https://api.fireworks.ai/inference/v1/chat/completions', list: 'https://api.fireworks.ai/inference/v1/models', textModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct', visionModel: 'accounts/fireworks/models/llama-v3p2-90b-vision-instruct' });
     const openRouterHeaders = { 'HTTP-Referer': 'https://wealthflow-personal.vercel.app', 'X-Title': 'WealthFlow' };
-    const fetchOpenRouterFinance = makeOAI({ name: 'OpenRouterFinance', provider: 'openrouter:ling-fin-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'inclusionai/ling-3.0-flash-fin:free', visionModel: null, extraHeaders: openRouterHeaders });
-    const fetchOpenRouterQwen = makeOAI({ name: 'OpenRouterQwen', provider: 'openrouter:qwen-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'qwen/qwen3.8-27b:free', visionModel: 'qwen/qwen3.8-27b:free', jsonMode: true, extraHeaders: openRouterHeaders });
-    const fetchOpenRouterNemotron = makeOAI({ name: 'OpenRouterNemotron', provider: 'openrouter:nemotron-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'nvidia/nemotron-3-ultra-550b-a55b:free', visionModel: null, extraHeaders: openRouterHeaders });
+    const fetchOpenRouterFinance = makeOAI({ name: 'OpenRouterFinance', provider: 'openrouter:ling-fin-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Finance', textModel: 'inclusionai/ling-3.0-flash-fin:free', visionModel: null, extraHeaders: openRouterHeaders });
+    const fetchOpenRouterQwen = makeOAI({ name: 'OpenRouterQwen', provider: 'openrouter:qwen-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Qwen', textModel: 'qwen/qwen3.8-27b:free', visionModel: 'qwen/qwen3.8-27b:free', jsonMode: true, extraHeaders: openRouterHeaders });
+    const fetchOpenRouterNemotron = makeOAI({ name: 'OpenRouterNemotron', provider: 'openrouter:nemotron-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Nemotron', textModel: 'nvidia/nemotron-3-ultra-550b-a55b:free', visionModel: null, extraHeaders: openRouterHeaders });
     // llama-3.3-70b is a real Cerebras model name but returned 404 "does not exist
     // or you do not have access to it" live -- an access/tier gap, not a spelling
     // one. llama3.1-8b is the smaller model Cerebras documents alongside it as
     // generally available.
-    const fetchCerebras = makeOAI({ name: 'Cerebras', provider: 'cerebras', key: cerebrasKey, url: 'https://api.cerebras.ai/v1/chat/completions', textModel: 'llama3.1-8b', visionModel: null });
+    const fetchCerebras = makeOAI({ name: 'Cerebras', provider: 'cerebras', key: cerebrasKey, url: 'https://api.cerebras.ai/v1/chat/completions', list: 'https://api.cerebras.ai/v1/models', textModel: 'llama3.1-8b', visionModel: null });
     // meta/llama-3.3-70b-instruct reached end of life 2026-08-26 (confirmed live:
     // 410 Gone). meta/llama-3.1-8b-instruct is NVIDIA's smaller, currently-documented
     // sibling model in the same family.
-    const fetchNvidia = makeOAI({ name: 'NVIDIA', provider: 'nvidia', key: nvidiaKey, url: 'https://integrate.api.nvidia.com/v1/chat/completions', textModel: 'meta/llama-3.1-8b-instruct', visionModel: 'meta/llama-3.2-90b-vision-instruct' });
+    const fetchNvidia = makeOAI({ name: 'NVIDIA', provider: 'nvidia', key: nvidiaKey, url: 'https://integrate.api.nvidia.com/v1/chat/completions', list: 'https://integrate.api.nvidia.com/v1/models', textModel: 'meta/llama-3.1-8b-instruct', visionModel: 'meta/llama-3.2-90b-vision-instruct' });
     // The old Azure-fronted endpoint and bare model names (models.inference.ai.azure.com,
     // "Llama-3.3-70B-Instruct") are retired (confirmed live: fetch failed — the host no
     // longer resolves for this traffic). Current: models.github.ai/inference, with every
@@ -461,6 +506,14 @@ export default async function handler(req, res) {
         NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey,
         CloudflareAI: cloudflareToken && cloudflareAccount };
     engines = engines.filter(engine => Boolean(configured[engine.name]) && providerAvailable(engine.name));
+    /* A caller that wants ONE answer it will check itself (the statement reader: nothing a model says is believed until it balances
+     * to the unit) may name which providers to ask. It asks the strongest few first and widens only if they fail — instead of every
+     * provider at once, which spent every quota on every call. Never honoured for a financial decision: that board is the whole
+     * configured roster by design. */
+    if (!financialDecision && Array.isArray(req.body?.engines)) {
+        const only = new Set(req.body.engines.filter(name => typeof name === 'string').slice(0, 20));
+        if (only.size) engines = engines.filter(engine => only.has(engine.name));
+    }
     // The required roster must match the task capability. A configured
     // text-only provider is not a missing vision voter; every eligible provider
     // is still required and a failed eligible provider still blocks unanimity.

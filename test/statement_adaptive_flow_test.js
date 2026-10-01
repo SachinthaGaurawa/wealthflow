@@ -14,7 +14,10 @@ const mailPath = 'wf-mail/owner_example_com', sourcePath = `${mailPath}/items/it
 const DOC = ['BANCO DEL SUR', 'Extracto de cuenta', 'Cuenta: 1234567890', 'Periodo: 01 abr 2026 - 30 abr 2026', 'Saldo inicial 1.000,00', 'Fecha Concepto Importe Saldo',
     '03 abr 2026 POS Transaction - SHOP ONE 120,50 879,50', '07 abr 2026 Cash Deposit - BRANCH 2.000,00 2.879,50', '15 abr 2026 CEFTS/6719/FT/NSB/SOME NAME/100175 45,25 2.834,25',
     '22 abr 2026 POS Transaction - SHOP TWO 100,00 2.734,25', 'Saldo final 2.734,25'];
-const html = '<html><body>' + DOC.map(l => '<p>' + l + '</p>').join('') + '</body></html>';
+const htmlOf = doc => '<html><body>' + doc.map(l => '<p>' + l + '</p>').join('') + '</body></html>';
+const html = htmlOf(DOC);
+// the same statement with no running balances and no DR / CR marks: the model can read it, the rules cannot prove a direction
+const DOC_NO_BALANCES = DOC.map(l => (/^\d\d abr/.test(l) ? l.replace(/ \S+$/, '') : l)).filter(l => !/^Fecha/.test(l));
 const TRUTH = [['2026-04-03', 120.5, 'debit', 879.5], ['2026-04-07', 2000, 'credit', 2879.5], ['2026-04-15', 45.25, 'debit', 2834.25], ['2026-04-22', 100, 'debit', 2734.25]];
 
 function honestModel({ lie = false } = {}) {
@@ -32,7 +35,7 @@ function honestModel({ lie = false } = {}) {
     return { ask, calls };
 }
 
-function world({ extract, intent = 'stated' }) {
+function world({ extract, intent = 'stated', doc = DOC }) {
     const { db, data } = createFirestore({
         [mailPath]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders: [{ id: 'statements@bancosur.example', kind: 'address', status: 'approved' }] },
         'wf-statement-vault/u': { uid: 'u' },
@@ -40,7 +43,7 @@ function world({ extract, intent = 'stated' }) {
         [sourcePath]: { uid: 'u', bank: 'Banco del Sur', filename: 'extracto_abril.html', from: 'statements@bancosur.example', messageId: 'm0', status: 'pending', hasReview: false, filed: false, cursor: 0, intent },
     });
     const f = async () => ({ ok: true, json: async () => ({ access_token: 'token' }) });
-    const loadAttachment = async () => ({ bytes: Buffer.from(html), filename: 'extracto_abril.html', contentSha256: 'x' });
+    const loadAttachment = async () => ({ bytes: Buffer.from(htmlOf(doc)), filename: 'extracto_abril.html', contentSha256: 'x' });
     const drain = async () => { let last; for (let i = 0; i < 8; i++) { last = await runStatementSync({ action: 'drain', db, owner, env: {}, f, read: readStatement, open: async () => [{ password: 'x', bank: 'Banco del Sur' }], settle: settleStatement, board: async () => { throw new Error('ai-consensus-unavailable'); }, extract, loadAttachment, maxSteps: 1 }); if (['filed', 'needs_review', 'rejected_non_statement'].includes(last.status)) break; } return last; };
     return { db, drain, data, source: () => data.get(sourcePath), user: () => data.get('users/u'), parts: () => [...data.keys()].filter(k => k.startsWith(`${sourcePath}/adaptive/`)) };
 }
@@ -65,8 +68,17 @@ describe('a statement in a layout nobody wrote a template for', () => {
         expect(asked).toBeGreaterThan(0);
         expect(asked).toBeLessThanOrEqual(2);
     });
-    it('is NOT filed when the model\'s reading does not balance, and nothing from it reaches the ledger', async () => {
+    it('a model whose reading does not balance is never filed — and where the rules can read the statement themselves, THEY file it, exactly', async () => {
         const w = world({ extract: honestModel({ lie: true }).ask });
+        const out = await w.drain();
+        expect(out.status, JSON.stringify({ out, src: w.source() })).toBe('filed');
+        // not one figure of the lie (a credit of 2,500) reached the ledger: the rules' own reading did
+        const filed = [...w.user().expenses, ...w.user().incomeRecv];
+        expect(filed.map(r => [r.date, r.amount]).sort()).toEqual([['2026-04-03', 120.5], ['2026-04-07', 2000], ['2026-04-15', 45.25], ['2026-04-22', 100]].sort());
+        expect(w.source().adaptive).toMatchObject({ strategy: 'programmatic' });
+    });
+    it('is NOT filed when the model\'s reading does not balance and the rules cannot read it either: nothing reaches the ledger and the owner is asked', async () => {
+        const w = world({ extract: honestModel({ lie: true }).ask, doc: DOC_NO_BALANCES });
         const out = await w.drain();
         expect(['needs_review', 'retry_pending']).toContain(out.status);
         expect(w.user().expenses).toEqual([]);
@@ -74,12 +86,20 @@ describe('a statement in a layout nobody wrote a template for', () => {
         expect(w.source().adaptive).toBeUndefined();
         expect(w.source()).toMatchObject({ adaptiveTries: 1, adaptiveResult: { reason: 'did-not-balance' } });
     });
-    it('goes to the owner exactly as before when no model is reachable, and is tried again later', async () => {
-        const w = world({ extract: async () => { throw new Error('down'); } });
+    it('goes to the owner exactly as before when no model is reachable and the rules cannot read it, and is tried again later', async () => {
+        const w = world({ extract: async () => { throw new Error('down'); }, doc: DOC_NO_BALANCES });
         const out = await w.drain();
         expect(['needs_review', 'rejected_non_statement']).toContain(out.status);
         expect(w.user().expenses).toEqual([]);
         expect(w.source().adaptiveTries).toBeUndefined();          // an outage is not a failed reading: nothing is counted against the statement
+    });
+    it('with NO model reachable, a statement with running balances is still read — by the rules, held to the same account — and filed', async () => {
+        const w = world({ extract: async () => { throw new Error('every provider is down'); } });
+        const out = await w.drain();
+        expect(out.status, JSON.stringify({ out, src: w.source() })).toBe('filed');
+        const filed = [...w.user().expenses, ...w.user().incomeRecv];
+        expect(filed.map(r => [r.date, r.amount]).sort()).toEqual([['2026-04-03', 120.5], ['2026-04-07', 2000], ['2026-04-15', 45.25], ['2026-04-22', 100]].sort());
+        expect(w.source()).toMatchObject({ status: 'filed', filed: true, adaptive: { strategy: 'programmatic' }, proof: { math: 'passed', method: 'ai-checked' } });
     });
 });
 

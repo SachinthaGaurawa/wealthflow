@@ -116,9 +116,8 @@ export async function sync(){
     state.syncing=true;state.error='';change();
     const again=delay=>{if(!continuationTimer)continuationTimer=setTimeout(()=>{continuationTimer=null;sync().catch(()=>{})},delay)};
     syncPromise=request('/api/statement-sync','POST',{action:'sync'}).then(result=>{
-        state.queued=Math.max(0,Number(result.pendingRemaining)||0)+Math.max(0,Number(result.processingRemaining)||0);
-        state.parked=Math.max(0,Number(result.deadLettered)||0);
-        retrying=Array.isArray(result.retrying)?result.retrying:[];
+        // a 202 ("accepted, still working") carries no counts: the last known ones stand, and the next answer replaces them
+        if(!result.partial&&!result.accepted){state.queued=Math.max(0,Number(result.pendingRemaining)||0)+Math.max(0,Number(result.processingRemaining)||0);state.parked=Math.max(0,Number(result.deadLettered)||0);retrying=Array.isArray(result.retrying)?result.retrying:[]}
         if(result.coverage&&typeof result.coverage==='object')coverage=result.coverage;
         if(result.morePending)again(Math.max(750,Math.min(180250,Number(result.retryAfterMs)||750)))
         return result

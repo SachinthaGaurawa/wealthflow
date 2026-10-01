@@ -218,9 +218,9 @@ describe('a model that is wrong is caught, told exactly where, and given another
         const stmt = make(6, { n: 12, dateFormat: 'dd/mm/yyyy', money: 'western' });
         const m = model(stmt, { fault, seed: 6 });     // wrong on EVERY call
         const out = await adaptiveRead({ text: stmt.text, ask: m.ask });
-        expect(out.ok, `${fault} was accepted`).toBe(false);
-        expect(['did-not-balance', 'no-transactions-read']).toContain(out.reason);
-        expect(out.problems.length).toBeGreaterThan(0);
+        // the model's reading is never what is accepted: either nothing is, or the RULES read the document themselves and it is exactly the statement
+        if (out.ok) { expect(out.parsed.adaptive.strategy, `${fault}: the model's own reading was accepted`).toBe('programmatic'); expect(sameAsTruth(out.parsed, stmt)).toBe(true); }
+        else { expect(['did-not-balance', 'no-transactions-read']).toContain(out.reason); expect(out.problems.length).toBeGreaterThan(0); }
     });
     it('an invented row is thrown away and what is left is checked again from scratch: if it balances it is exactly the statement', async () => {
         const stmt = make(6, { n: 12, dateFormat: 'dd/mm/yyyy', money: 'western' });
@@ -239,7 +239,8 @@ describe('a model that is wrong is caught, told exactly where, and given another
     it('a date read day-first on some rows and month-first on others is refused, as is a month word that means two months', async () => {
         const stmt = make(15, { n: 12, dateFormat: 'dd/mm/yyyy', money: 'western' });
         const out = await adaptiveRead({ text: stmt.text, ask: model(stmt, { fault: 'swap-dm' }).ask });
-        expect(out.ok).toBe(false);
+        // the model's swapped dates are refused; the rules, reading the document themselves, get the dates right
+        if (out.ok) { expect(out.parsed.adaptive.strategy).toBe('programmatic'); expect(sameAsTruth(out.parsed, stmt)).toBe(true); }
         const es = make(16, { n: 12, dateFormat: 'dd mmm yyyy (es)', money: 'western' });
         const lines = linesOf(es.text);
         const where = locate(es);
@@ -257,9 +258,10 @@ describe('a model that is wrong is caught, told exactly where, and given another
         }
     });
     it('a service that is down is reported as down, not as a statement that cannot be read', async () => {
-        const stmt = make(18, { n: 10 });
-        expect(await adaptiveRead({ text: stmt.text, ask: model(stmt, { fault: 'down' }).ask })).toMatchObject({ ok: false, reason: 'ai-unavailable' });
-        expect(await adaptiveRead({ text: stmt.text })).toMatchObject({ ok: false, reason: 'ai-unavailable' });
+        // a document the rules cannot read either (no balances, no DR / CR marks, so direction cannot be proven)
+        const text = ['SOME BANK', 'STATEMENT', 'Account Number: 1234567890', 'Opening Balance 100.00', '01/03/2026 SHOP ONE 10.00', '02/03/2026 SHOP TWO 20.00', 'Closing Balance 70.00'].join('\n');
+        expect(await adaptiveRead({ text, ask: async () => { throw new Error('down'); } })).toMatchObject({ ok: false, reason: 'ai-unavailable' });
+        expect(await adaptiveRead({ text })).toMatchObject({ ok: false, reason: 'ai-unavailable' });
     });
     it('does not even ask about a document that is too short, too long, or has no movements on it', async () => {
         const never = async () => { throw new Error('should not be asked'); };
@@ -355,5 +357,93 @@ describe('whatever the model does, an accepted reading is exactly the statement'
         }
         // an honest model is always accepted
         if (fault === null) expect(out.ok, JSON.stringify(out.problems)).toBe(true);
+    });
+});
+
+/* ── NO MODEL AT ALL ────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+describe('with every model down, a statement with running balances is still read — by the rules, held to the same account', () => {
+    const down = async () => { throw new Error('every provider is down'); };
+    const seeds = Array.from({ length: Number(process.env.WF_FUZZ_SEEDS) || 150 }, (_, i) => i + 1);
+
+    it.each(seeds)('seed %i: read exactly, in whatever date and money format, wrapped, newest-first or a card', async (seed) => {
+        const r = rng(seed * 17);
+        const stmt = make(seed, { n: 4 + Math.floor(r() * 60), card: r() < 0.2, descending: r() < 0.25, wrapped: r() < 0.3 });
+        const out = await adaptiveRead({ text: stmt.text, ask: down, uid: 'u' });
+        expect(out.ok, JSON.stringify({ reason: out.reason, problems: out.problems })).toBe(true);
+        expect(out.parsed.adaptive.strategy).toBe('programmatic');
+        expect(sameAsTruth(out.parsed, stmt), `a wrong reading was accepted (seed ${seed})`).toBe(true);
+        expect(out.parsed.reconciliation).toMatchObject({ ok: true, difference: 0 });
+    });
+
+    it('no model function at all is the same as every model down', async () => {
+        const stmt = make(5, { n: 10 });
+        const out = await adaptiveRead({ text: stmt.text, uid: 'u' });
+        expect(out.ok).toBe(true); expect(sameAsTruth(out.parsed, stmt)).toBe(true);
+    });
+
+    it('a model that is up but cannot balance is followed by the rules, which may — and may not make anything up', async () => {
+        const stmt = make(9, { n: 12 });
+        const out = await adaptiveRead({ text: stmt.text, ask: model(stmt, { fault: 'garbage' }).ask, uid: 'u' });
+        expect(out.ok).toBe(true); expect(sameAsTruth(out.parsed, stmt)).toBe(true);
+    });
+
+    describe('and is never fooled: a document that does not add up is refused, whoever read it', () => {
+        // a digit inside the amount or the balance (the last two tokens of the line) — not a reference number in the description
+        const digitSwap = (line, r) => { const tail = line.search(/\S+ \S+$/); const at = [...line.matchAll(/\d/g)].filter((m) => m.index >= tail); if (!at.length) return line; const m = at[Math.floor(r() * at.length)]; return line.slice(0, m.index) + String((Number(m[0]) + 1 + Math.floor(r() * 8)) % 10) + line.slice(m.index + 1); };
+        it.each(seeds.slice(0, 60))('seed %i: one figure altered, one line dropped, two lines swapped, one line repeated', async (seed) => {
+            const r = rng(seed * 7919);
+            const stmt = make(seed, { n: 12 + Math.floor(r() * 20) });
+            const lines = stmt.lines;
+            const first = lines.findIndex((l) => /^\S+ \S/.test(l) && moneyIn(l).length >= 2 && /REF\d+/.test(l));
+            const rowIdx = lines.map((l, i) => (/REF\d+/.test(l) && moneyIn(l).length >= 2 ? i : -1)).filter((i) => i >= 0);
+            expect(first).toBeGreaterThan(0);
+            const pick = () => rowIdx[Math.floor(r() * rowIdx.length)];
+            const mutations = {
+                altered: () => { const i = pick(); const out = [...lines]; out[i] = digitSwap(out[i], r); return out; },
+                dropped: () => { const i = pick(); return lines.filter((_, k) => k !== i); },
+                swapped: () => { const i = rowIdx[1 + Math.floor(r() * (rowIdx.length - 2))]; const out = [...lines]; [out[i], out[i + 1]] = [out[i + 1], out[i]]; return out; },
+                repeated: () => { const i = pick(); const out = [...lines]; out.splice(i, 0, out[i]); return out; },
+            };
+            for (const [name, mutate] of Object.entries(mutations)) {
+                const out = await adaptiveRead({ text: mutate().join('\n'), ask: down, uid: 'u' });
+                // a figure that no longer fits the arithmetic, a missing line, a swapped pair, a repeated line: the books do not balance
+                if (name === 'swapped' && out.ok) { expect(out.parsed.reconciliation.difference).toBe(0); continue; }   // two adjacent rows traded places: the chain may still hold in the reverse order
+                expect(out.ok, `${name} was accepted (seed ${seed})`).toBe(false);
+            }
+        });
+    });
+
+    it('a statement with no balances and no DR / CR marks cannot have its direction proven, so it is not read', async () => {
+        const text = ['SOME BANK', 'STATEMENT', 'Account Number: 1234567890', 'Opening Balance 100.00', '01/03/2026 SHOP ONE 10.00', '02/03/2026 SHOP TWO 20.00', 'Closing Balance 70.00'].join('\n');
+        expect((await adaptiveRead({ text, ask: down, uid: 'u' })).ok).toBe(false);
+    });
+    it('DR / CR marks prove direction where there are no balances', async () => {
+        const text = ['SOME BANK', 'CREDIT CARD STATEMENT', 'Account Number: 1234567890', 'Previous Balance 100.00', '01/03/2026 SHOP ONE 10.00 DR', '02/03/2026 PAYMENT THANK YOU 25.00 CR', '03/03/2026 SHOP TWO 5.00 DR', 'New Balance 90.00'].join('\n');
+        const out = await adaptiveRead({ text, ask: down, uid: 'u' });
+        expect(out.ok, JSON.stringify(out)).toBe(true);
+        expect(out.parsed.rows.map((x) => [x.direction, x.amount])).toEqual([['debit', 10], ['credit', 25], ['debit', 5]]);
+    });
+    it('a wrong mark is caught by the books: the same document with a swapped mark does not balance', async () => {
+        const text = ['SOME BANK', 'CREDIT CARD STATEMENT', 'Account Number: 1234567890', 'Previous Balance 100.00', '01/03/2026 SHOP ONE 10.00 CR', '02/03/2026 PAYMENT THANK YOU 25.00 CR', '03/03/2026 SHOP TWO 5.00 DR', 'New Balance 90.00'].join('\n');
+        expect((await adaptiveRead({ text, ask: down, uid: 'u' })).ok).toBe(false);
+    });
+});
+
+describe('a date printed with a month word is unambiguous, whatever the figures beside it look like', () => {
+    it('seed 529: "08 ene 2026" next to ",01 08" is the 8th of "ene", not a month-first date — so rows are not called inconsistent', async () => {
+        const r = rng(529 * 17);
+        const stmt = make(529, { n: 4 + Math.floor(r() * 60), card: r() < 0.2, descending: r() < 0.25, wrapped: r() < 0.3 });
+        expect(stmt.truth.df).toBe('dd mmm yyyy (es)');
+        const out = await adaptiveRead({ text: stmt.text, ask: async () => { throw new Error('down'); }, uid: 'u' });
+        expect(out.ok, JSON.stringify(out.problems)).toBe(true);
+        expect(sameAsTruth(out.parsed, stmt)).toBe(true);
+    });
+    it('and a printed month word that contradicts the date the model gave is still refused', () => {
+        const lines = linesOf(['BANCO', 'EXTRACTO', 'Cuenta: 1234567890', 'Saldo inicial 100,00', '05 mar 2026 TIENDA UNO 10,00 90,00', '06 mar 2026 TIENDA DOS 20,00 70,00', 'Saldo final 70,00'].join('\n'));
+        const rows = (date) => [{ line: 5, date, dateText: '05 mar 2026', description: 'TIENDA UNO', debit: 10, credit: 0, balance: 90 }];
+        const account = (date) => ({ account: '1234567890', type: 'bank', opening: 100, closing: 90, periodStart: null, periodEnd: null, rows: rows(date) });
+        expect(verifyAccount(account('2026-03-05'), lines).problems.join()).not.toMatch(/date/);
+        expect(verifyAccount(account('2026-05-03'), lines).ok).toBe(false);          // March the 5th is not the 3rd of May
     });
 });
