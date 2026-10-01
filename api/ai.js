@@ -430,6 +430,8 @@ export default async function handler(req, res) {
         Fireworks: fireworksKey, OpenRouterFinance: openrouterKey, OpenRouterQwen: openrouterKey, OpenRouterNemotron: openrouterKey, Cerebras: cerebrasKey,
         NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey,
         CloudflareAI: cloudflareToken && cloudflareAccount };
+    // providers that are configured but resting in a cooldown are not asked; they are named in the board's log line below
+    const resting = engines.filter(engine => Boolean(configured[engine.name]) && !providerAvailable(engine.name)).map(engine => engine.name);
     engines = engines.filter(engine => Boolean(configured[engine.name]) && providerAvailable(engine.name));
     /* A caller that wants ONE answer it will check itself (the statement reader: nothing a model says is believed until it balances
      * to the unit) may name which providers to ask. It asks the strongest few first and widens only if they fail — instead of every
@@ -475,6 +477,7 @@ export default async function handler(req, res) {
 
     // Start the entire eligible board before awaiting any member, then retain
     // every success, failure and timeout in the decision record.
+    const boardStarted = Date.now();
     const results = await Promise.all(engines.map(run));
     if (mode === 'unanimous') {
         // Five independent engines already gives real cross-checking (chance
@@ -484,6 +487,12 @@ export default async function handler(req, res) {
         // failed every unanimous vote whenever fewer than ten were up at once
         // — which is the normal case, not the exception, for free-tier keys.
         const decision = Matrix.unanimousDecision(results, { task, expected: expectedNames, minimumProviders: 5, allowUnavailable: true });
+        /* ONE LINE PER FINANCIAL DECISION, so the log says why a board of sixteen did or did not reach five: who answered, who was asked
+         * and failed (and how), who was resting, and the reason. (Before this the answer had to be inferred from scattered warnings.) */
+        try {
+            console.info(JSON.stringify({ evt: 'ai-board', ok: decision.unanimous, reason: decision.reason || '', answered: decision.answered, invalid: decision.invalid,
+                failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, ms: Date.now() - boardStarted }));
+        } catch (_) { /* a log line never decides a financial question */ }
         // Preserve a machine-readable quarantine outcome; no partial answer is
         // released to consumers that might otherwise file a majority guess.
         return res.status(decision.unanimous ? 200 : 422).json({

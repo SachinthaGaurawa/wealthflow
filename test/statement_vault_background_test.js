@@ -76,6 +76,15 @@ describe('a vault save does not wait for the statement queue', () => {
         const b = await put();
         expect(b.status).toBe(200); expect(b.body).toMatchObject({ saved: true, queued: false });
     });
+    it('a chain that is already draining the queue is not competed with: the save answers, no second drain starts', async () => {
+        globalThis[CTX] = { get: () => ({ waitUntil: (p) => background.push(p) }) };
+        const db = fake.admin.firestore();
+        await db.collection('wf-mail').doc((await import('../gmail-link.mjs')).userKeyFor('owner@example.org')).set({ chain: { id: 'c1', depth: 3, until: Date.now() + 60000, at: Date.now() } }, { merge: true });
+        const result = await put();
+        expect(result.body).toMatchObject({ saved: true, queued: true });
+        await Promise.all(background);
+        expect(drain.started).toBe(0);
+    });
     it('with no background window (local, tests) the caller waits for the drain, as before', async () => {
         const promise = put();
         await vi.waitFor(() => expect(drain.started).toBe(1));
