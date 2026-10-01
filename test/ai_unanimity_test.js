@@ -72,12 +72,19 @@ describe('the reason a board gives is the true one (production 2026-10-01: nine 
             expect(d.unanimous, JSON.stringify(odd)).toBe(false); expect(d.reason).toBe('provider_disagreement'); expect(d.reply).toBeNull();
         }
     });
+    it('a key that merely CONTAINS the required word is a word of its own, not a torn key: it vetoes', () => {
+        const yes = { approved: true }, run = (odd) => ask([...live(six.slice(0, 5), yes), reply('F', odd), { name: 'G', ok: false, error: 'y' }], seven);
+        for (const odd of [{ not_approved: true }, { approved_by_nobody: 1 }, { unapproved: true }, { approvedNot: true }]) expect(run(odd).unanimous, JSON.stringify(odd)).toBe(false);
+        for (const torn of [{ 'approved [{': 1 }, { '"approved': true }, { 'approved,': 0 }]) expect(run(torn).unanimous, JSON.stringify(torn)).toBe(true);
+        const decisions = ask([...live(six.slice(0, 5), answer), reply('F', { decisions_rejected: true }), { name: 'G', ok: false, error: 'y' }], seven);
+        expect(decisions.unanimous).toBe(false); expect(decisions.reason).toBe('provider_disagreement');
+    });
     it('a peer review: {"approved":false} vetoes, {"verdict":"reject"} vetoes, only a mangled key is set aside', () => {
         const yes = { approved: true };
         const run = (odd) => ask([...live(six.slice(0, 5), yes), reply('F', odd), { name: 'G', ok: false, error: 'y' }], seven);
         expect(run({ approved: false }).unanimous).toBe(false);
         expect(run({ verdict: 'reject' }).unanimous).toBe(false);
-        expect(run({ 'approved: tr': 1 }).unanimous).toBe(true);
+        expect(run({ 'approved [{': 1 }).unanimous).toBe(true);
     });
     it('without a clear majority nothing is called mangled: a split board is split', () => {
         const four = live(['A', 'B', 'C', 'D'], answer), others = live(['E', 'F', 'G'], { 'decisions [{': 0 });
