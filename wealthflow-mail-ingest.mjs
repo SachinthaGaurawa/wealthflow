@@ -1173,8 +1173,12 @@ export function worthSighting(plan) {
  * whole history once, under the new rules — so an improvement to what is accepted
  * is applied to the statements the old rules turned away, and not only to mail
  * that arrives afterwards.
+ *
+ *   4  an address with an RFC 5322 comment is read as the address; DMARC pass for the From domain vouches for it (so mail
+ *      with SPF + DMARC and no DKIM, or signed by a sub-domain of the same organisation, is no longer turned away); one
+ *      From naming several mailboxes is forged. Every genuine statement the version-3 rules refused is judged again.
  */
-export const INTAKE_VERSION = 3;
+export const INTAKE_VERSION = 4;
 
 /**
  * Is this refusal one the owner would call a MISSED STATEMENT? Only mail from an

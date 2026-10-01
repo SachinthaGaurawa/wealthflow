@@ -192,3 +192,23 @@ describe('four banks, from the mailbox to the ledger, with the AI board down', (
         expect([...w.data.entries()].filter(([k]) => k.startsWith(MAIL + '/items/')).every(([, v]) => v.filed === true)).toBe(true);
     });
 });
+
+describe('the statements the version-3 rules turned away are judged again under the new rules', () => {
+    it('a mailbox that already refused the six genuine messages takes them on its next pass, without any message arriving', async () => {
+        const w = world();
+        // the state production is in: the audit ran under rules version 3, took the six it understood, and recorded the other six as refused
+        const mailRef = w.db.collection('wf-mail').doc('owner_example_org');
+        const OLD = ['dfcc-2', 'dfcc-3', 'ntb-2', 'amex-2', 'amex-3', 'hnb-2'];
+        for (const id of OLD) await mailRef.collection('emails').doc(id).set({ messageId: id, state: 'REFUSED', reason: 'dkim-did-not-pass', from: 'x', v: 3, firstSeenMs: 1, updatedMs: 1, attempts: 1 });
+        await mailRef.set({ historyId: '1000', lastReconcileMs: Date.now(), auditVersion: 3, lastAuditMs: Date.now() - 6 * 60_000, collectedSenderClauses: approvedClauses(senders) }, { merge: true });
+        for (const id of GENUINE.filter(g => !OLD.includes(g))) await mailRef.collection('emails').doc(id).set({ messageId: id, state: 'INGESTED', reason: '', from: 'x', v: 3, firstSeenMs: 1, updatedMs: 1, attempts: 1 });
+        // the six it took are already stored; the six it refused are not
+        for (const [id, m] of inbox.map(x => [x.id, x])) if (GENUINE.includes(id) && !OLD.includes(id)) await mailRef.collection('items').doc(`${id}.stored`).set({ uid: 'u', messageId: id, status: 'filed', filed: true, bank: 'x', filename: 'x.html' });
+        await intakeAll(w);
+        const taken = [...w.data.entries()].filter(([k]) => k.startsWith(MAIL + '/items/')).map(([, v]) => v.messageId);
+        for (const id of OLD) expect(taken, id).toContain(id);
+        expect(w.data.get(MAIL).auditVersion).toBe(4);
+        // the forgeries are still not
+        for (const bad of [...FORGED, ...REFUSED]) expect(taken, bad).not.toContain(bad);
+    });
+});
