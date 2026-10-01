@@ -8,7 +8,7 @@ import { policyFrom, matchSender, normalizeList, approvedClauses, relatedApprova
 import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf } from './statement-coverage.mjs';
 import { REJECT_TEXT, REJECT } from './wealthflow-mail-ingest.mjs';
 import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
-import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped } from './statement-emptiness.mjs';
+import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped, statedBalanceCents, continuityOf } from './statement-emptiness.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine } from './statement-ledger.mjs';
@@ -321,8 +321,13 @@ export async function checkpointRows(db, ref, uid, leaseToken, rows) {
 // statement-emptiness.mjs agrees AND the AI board, asked independently, does not count transaction lines
 // the rules did not see. Anything else is one clear question for the owner (never a row that is not there),
 // and a statement whose balances moved, or whose text carries money, is never closed.
-async function decideEmptiness({ text, parsed, board }) {
+async function decideEmptiness({ text, parsed, board, previous = null }) {
     const assessment = assessEmptiness({ text, parsed });
+    /* (c) THE ACCOUNT'S OWN TIMELINE: the statement before this one closed at `previous`; a month in which nothing happened opens at that balance.
+     * A break (money moved in between, or a statement is missing) never refuses by itself — it makes the AI board's independent count required, and is
+     * kept on the record. Nothing to compare (no earlier statement of this account on file) is never a reason to wait. */
+    const balance = statedBalanceCents({ text, parsed }), continuity = continuityOf(balance, previous);
+    const noted = evidence => ({ ...evidence, continuity, ...(Number.isFinite(balance) ? { balanceCents: balance } : {}) });
     /* A MONTH THAT NOTHING ON THE PAGE CONTRADICTS BUT NOTHING ON THE PAGE PROVES (no period, no closing balance, a layout the rules do not know) used to
      * be put to the owner: "This month looks like it had no transactions, but the statement does not say so clearly. Check the original and confirm."
      * The AI board is asked, independently, to count the lines that move money; if it counts none — on top of the rules having found no row and no
@@ -333,14 +338,36 @@ async function decideEmptiness({ text, parsed, board }) {
         const witness = await witnessEmpty({ text, board });
         if (!witness.available) return { decision: 'retry', why: 'the-ai-board-is-needed-to-confirm-an-unclear-month' };
         if (!witness.agrees) return { decision: 'has-transactions', why: 'the-ai-board-counted-transaction-lines' };
-        return { decision: 'empty', evidence: { ...assessment.evidence, how: 'rules+ai', witness: 'agrees', strength: 'witnessed' } };
+        return { decision: 'empty', evidence: noted({ ...assessment.evidence, how: 'rules+ai', witness: 'agrees', strength: 'witnessed' }) };
     }
     if (assessment.decision !== 'empty') return assessment;
     const witness = await witnessEmpty({ text, board });
     if (witness.available && !witness.agrees) return { decision: 'has-transactions', why: 'the-ai-board-counted-transaction-lines' };
     // an `empty` that rests on the page alone (every amount on it is zero) is closed only with the board's independent count; without it, later
     if (assessment.strength === 'zero' && !witness.available) return { decision: 'retry', why: 'the-ai-board-is-needed-to-confirm-a-zero-page' };
-    return { decision: 'empty', evidence: { ...assessment.evidence, balances: assessment.evidence.balances, how: witness.available ? 'rules+ai' : 'rules', witness: witness.available ? 'agrees' : 'unavailable', strength: assessment.strength } };
+    if (continuity === 'breaks' && !witness.available) return { decision: 'retry', why: 'the-timeline-breaks-so-the-ai-board-is-needed' };
+    return { decision: 'empty', evidence: noted({ ...assessment.evidence, balances: assessment.evidence.balances, how: witness.available ? 'rules+ai' : 'rules', witness: witness.available ? 'agrees' : 'unavailable', strength: assessment.strength }) };
+}
+
+/* The balance the account's PREVIOUS statement closed at, in cents, or null: the latest statement of the same bank received before this one (within
+ * ~2½ months, so it really is the one before) that was filed with its balances on record, and is the same account — by last four digits when both
+ * are known, else by the shape of the file name (an HNB month is "074-02-XXXXX-88.pdf" every month). Advice only: any failure is "nothing to compare". */
+const CHAIN_WINDOW_MS = 75 * 86400000;
+async function previousBalanceOf({ mailRef, uid, selfId, claimed, last4 }) {
+    try {
+        const snap = await mailRef.collection('items').where('bank', '==', claimed.bank || '').limit(400).get();
+        const stem = filenameStem(claimed.filename || ''), at = Number(claimed.receivedMs) || 0;
+        let best = null;
+        for (const doc of snap.docs) {
+            const x = doc.data() || {}, when = Number(x.receivedMs) || 0;
+            if (doc.id === selfId || x.uid !== uid || x.filed !== true || !(when > 0) || !(at > 0) || when >= at || at - when > CHAIN_WINDOW_MS) continue;
+            const cents = Number.isFinite(x.emptyEvidence?.balanceCents) ? x.emptyEvidence.balanceCents : Number.isFinite(x.proof?.closing) ? Math.round(x.proof.closing * 100) : null;
+            if (cents === null) continue;
+            const sameAccount = last4 && x.proof?.last4 ? x.proof.last4 === last4 : Boolean(stem) && filenameStem(x.filename || '') === stem;
+            if (sameAccount && (!best || when > best.when)) best = { when, cents };
+        }
+        return best ? best.cents : null;
+    } catch (_) { return null; }
 }
 
 // A statement whose own balances prove nothing moved has nothing to file, and
@@ -362,11 +389,12 @@ async function fileEmptyStatement(db, uid, ref, leaseToken, mailRef, evidence = 
         resolved = 0;
         for (const doc of reviews.docs) if (doc.data().uid === uid && doc.data().status === 'pending') { tx.set(doc.ref, { status: 'resolved', resolvedAt: now, replayStatus: 'filed', emptyStatement: true }, { merge: true }); resolved += 1; }
         tx.set(ref, { status: 'filed', filed: true, emptyStatement: true, emptyEvidence: { balances: String(evidence.balances || '').slice(0, 20), dataRows: Number(evidence.dataRows) || 0, pdf: String(evidence.pdf || 'absent').slice(0, 24),
-            ...(evidence.how ? { how: String(evidence.how).slice(0, 16), witness: String(evidence.witness || '').slice(0, 16), zeroLines: Number(evidence.zeroLines) || 0, phantomRows: Number(evidence.phantomRows) || 0, noActivityStated: evidence.noActivityStated === true } : {}), at: now }, cursor: 0, totalRows: 0, hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
+            ...(evidence.how ? { how: String(evidence.how).slice(0, 16), witness: String(evidence.witness || '').slice(0, 16), zeroLines: Number(evidence.zeroLines) || 0, phantomRows: Number(evidence.phantomRows) || 0, noActivityStated: evidence.noActivityStated === true } : {}),
+            ...(evidence.continuity ? { continuity: String(evidence.continuity).slice(0, 8) } : {}), ...(Number.isFinite(evidence.balanceCents) ? { balanceCents: evidence.balanceCents } : {}), at: now }, cursor: 0, totalRows: 0, hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
     });
     // a closed month leaves a line in the log like any other statement does (fixed words only, never a figure): without it
     // "processed 1, filed" cannot be told from a statement that was filed with rows
-    logItem({ bank, status: 'closed_empty', how: String(evidence.how || 'rules').slice(0, 16), witness: String(evidence.witness || '').slice(0, 16), strength: String(evidence.strength || '').slice(0, 16), reviewsResolved: resolved });
+    logItem({ bank, status: 'closed_empty', how: String(evidence.how || 'rules').slice(0, 16), witness: String(evidence.witness || '').slice(0, 16), strength: String(evidence.strength || '').slice(0, 16), continuity: String(evidence.continuity || 'none').slice(0, 8), reviewsResolved: resolved });
     return { status: 'filed', filed: 0, review: 0, empty: 1 };
 }
 async function quarantineSource(db, uid, ref, leaseToken, reason, evidence = {}) {
@@ -1138,7 +1166,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
              * be counted as a failed attempt — thirty-four HNB statements took turns at the little room each run had, and every refusal for
              * lack of room moved one of them a step toward the dead-letter queue. */
             const boardRoom = deadlineAt - Date.now() >= BOARD_ROOM_MS;
-            const verdict = await decideEmptiness({ text, parsed, board });
+            const verdict = await decideEmptiness({ text, parsed, board, previous: await previousBalanceOf({ mailRef, uid, selfId: sourceRef.id, claimed, last4: parsed?.layout?.accountLast4 || '' }) });
             if (verdict.decision === 'retry') throw boardRoom ? new Error('statement-worker-retry-required') : deferral();
             if (verdict.decision === 'empty') outcome = await fileEmptyStatement(db, uid, sourceRef, claimed.leaseToken, mailRef, { balances: verdict.evidence.balances, dataRows: 0, pdf: 'text', ...verdict.evidence });
             // "Empty, please confirm" is only said of a statement the reader did read as having no lines that move

@@ -36,13 +36,14 @@ const layouts = {
 const board = (lines = 0) => vi.fn(async () => ({ fields: { transactionLines: lines }, unanimous: true }));
 const down = () => vi.fn(async () => { throw new Error('ai-consensus-unavailable'); });
 
-function setup(name, { source = {}, bytes, withBoard = board() } = {}) {
+function setup(name, { source = {}, bytes, withBoard = board(), extra = {} } = {}) {
     const filename = `074-02-XXXXX-88_${name}.pdf`, sourcePath = `${mailPath}/items/item0`;
     const { db, data } = createFirestore({
         [mailPath]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders: [{ id: 'statements@hnb.lk', kind: 'address', status: 'approved' }] },
         'wf-statement-vault/u': { uid: 'u' },
         'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [] },
         [sourcePath]: { uid: 'u', bank: 'HNB', filename, from: 'statements@hnb.lk', messageId: 'm0', status: 'pending', hasReview: false, filed: false, cursor: 0, receivedMs: Date.parse('2024-05-02T05:00:00Z'), ...source },
+        ...extra,
     });
     const f = async () => ({ ok: true, json: async () => ({ access_token: 'token' }) });
     const loadAttachment = async () => ({ bytes: Buffer.from(bytes || layouts[name]), filename, contentSha256: 'x' });
@@ -119,7 +120,7 @@ describe('a statement with no transactions is closed when — and only when — 
             const s = setup('x', { bytes: unclear });
             await s.drain();
             const items = info.mock.calls.map(call => { try { return JSON.parse(String(call[0])); } catch (_) { return null; } }).filter(line => line && line.evt === 'statement-sync-item');
-            expect(items).toEqual([{ evt: 'statement-sync-item', bank: 'HNB', status: 'closed_empty', how: 'rules+ai', witness: 'agrees', strength: 'witnessed', reviewsResolved: 0 }]);
+            expect(items).toEqual([{ evt: 'statement-sync-item', bank: 'HNB', status: 'closed_empty', how: 'rules+ai', witness: 'agrees', strength: 'witnessed', continuity: 'none', reviewsResolved: 0 }]);
         } finally { info.mockRestore(); }
     });
     it('…waits for the board when it cannot be heard (no question to the owner), and is a statement the rules could not read when the board counts lines', async () => {
@@ -319,5 +320,42 @@ describe('the one question the system may ask about an empty month', () => {
         await expect(ownerCloseEmpty({ db: s.db, owner, id: '../x' })).rejects.toThrow('invalid-close-request');
         s.data.set(s.sourcePath, { ...s.source(), filed: true });
         await expect(ownerCloseEmpty({ db: s.db, owner, id: review.id })).rejects.toThrow('statement-not-closable');
+    });
+});
+
+describe('(c) the account\'s own timeline: a month with nothing in it opens at the balance the month before closed at', () => {
+    const earlier = (name, over = {}) => [`${mailPath}/items/item_prev`, { uid: 'u', bank: 'HNB', filename: `074-02-XXXXX-88_${name}.pdf`, messageId: 'm_prev', status: 'filed', filed: true, receivedMs: Date.parse('2024-04-02T05:00:00Z'), ...over }];
+    const withPrev = (name, over, extra = {}) => ({ extra: Object.fromEntries([earlier(name, over)]), ...extra });
+    it('agrees: the previous month closed at zero and this page opens at zero — recorded on the evidence', async () => {
+        const s = setup('real', withPrev('real', { emptyEvidence: { balanceCents: 0 } }));
+        await s.drain();
+        expect(s.source()).toMatchObject({ status: 'filed', emptyStatement: true });
+        expect(s.source().emptyEvidence).toMatchObject({ continuity: 'agrees', balanceCents: 0, how: 'rules+ai' });
+    });
+    it('reads the previous month\'s closing balance from a filed statement\'s proof as well', async () => {
+        const s = setup('agree', withPrev('agree', { proof: { math: 'passed', rows: 3, closing: 12345.67, last4: '' } }));
+        await s.drain();
+        expect(s.source().emptyEvidence).toMatchObject({ continuity: 'agrees', balanceCents: 1234567 });
+    });
+    it('breaks: the balance moved between the two statements — the AI board\'s independent count is then required, never skipped', async () => {
+        // a page that is empty on its own evidence (balances agree) — but the previous month closed at another balance
+        const down1 = setup('agree', { ...withPrev('agree', { emptyEvidence: { balanceCents: 0 } }), withBoard: down() });
+        await down1.drain();
+        expect(down1.source().emptyStatement).not.toBe(true); expect(down1.source().status).not.toBe('needs_review'); expect(down1.reviews()).toEqual([]);   // waits, asks nothing
+        const heard = setup('agree', withPrev('agree', { emptyEvidence: { balanceCents: 0 } }));
+        await heard.drain();
+        expect(heard.source()).toMatchObject({ status: 'filed', emptyStatement: true });
+        expect(heard.source().emptyEvidence).toMatchObject({ continuity: 'breaks', how: 'rules+ai', witness: 'agrees', balanceCents: 1234567 });
+        const counted = setup('agree', { ...withPrev('agree', { emptyEvidence: { balanceCents: 0 } }), withBoard: board(2) });
+        await counted.drain();
+        expect(counted.source().emptyStatement).not.toBe(true);                                   // lines the rules did not see: not closed
+    });
+    it('none: nothing to compare is never a reason to wait — an account with no earlier statement, an older one, or another account', async () => {
+        for (const [label, options] of [['no earlier statement', {}], ['an earlier one too old to be the month before', withPrev('agree', { emptyEvidence: { balanceCents: 0 }, receivedMs: Date.parse('2023-12-01T05:00:00Z') })], ['another account (another file name)', { extra: Object.fromEntries([earlier('other_account', { filename: 'Statement_2024APR.pdf', emptyEvidence: { balanceCents: 0 } })]) }]]) {
+            const s = setup('agree', { ...options, withBoard: down() });
+            await s.drain();
+            expect(s.source(), label).toMatchObject({ status: 'filed', emptyStatement: true });
+            expect(s.source().emptyEvidence.continuity, label).toBe('none');
+        }
     });
 });
