@@ -48,7 +48,8 @@ function domStub({ tagCount = 5, activePage = 'dashboard' } = {}) {
 
 function load(seed = {}, { dom, appData, DB } = {}) {
     globalThis.document = dom || domStub();
-    const mem = new Map(Object.entries(seed).map(([k, v]) => [k, JSON.stringify(v)]));
+    // a device already on the current detector generation: the one-time reset of the first generation's counts has nothing to do here
+    const mem = new Map(Object.entries({ wf_crash_detector: 2, ...seed }).map(([k, v]) => [k, JSON.stringify(v)]));
     const win = {
         localStorage: {
             getItem: (k) => (mem.has(k) ? mem.get(k) : null),

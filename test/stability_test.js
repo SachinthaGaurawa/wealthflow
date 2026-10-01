@@ -48,7 +48,8 @@ function domStub({ tagCount = 5, activePage = 'dashboard' } = {}) {
  * not in the fix it is meant to prove. afterEach cleans it up instead. */
 function load(seed = {}, dom) {
     globalThis.document = dom || domStub();
-    const mem = new Map(Object.entries(seed).map(([k, v]) => [k, JSON.stringify(v)]));
+    // a device already on the current detector generation: the one-time reset of the first generation's counts has nothing to do here
+    const mem = new Map(Object.entries({ wf_crash_detector: 2, ...seed }).map(([k, v]) => [k, JSON.stringify(v)]));
     const win = {
         localStorage: {
             getItem: (k) => (mem.has(k) ? mem.get(k) : null),
@@ -146,5 +147,126 @@ describe('crashes() and integrity() still answer honestly', () => {
         mem.delete('wf_session_alive');
         const { S } = load({});
         expect(S.crashes()).toEqual([]);
+    });
+});
+
+/* ── THE FALSE CRASHES: "27 crashes, survived 0s, 19 of them on the dashboard" ─────────────────────────────────────────────────────────── */
+
+/** A window whose listeners can be fired, in front of a document whose visibility can be changed. */
+function liveLoad(seed = {}) {
+    const dom = domStub(); dom.visibilityState = 'visible';
+    globalThis.document = dom;
+    const mem = new Map(Object.entries({ wf_crash_detector: 2, ...seed }).map(([k, v]) => [k, JSON.stringify(v)]));
+    const listeners = {};
+    const win = {
+        localStorage: { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) },
+        addEventListener: (ev, fn) => { (listeners[ev] = listeners[ev] || []).push(fn); },
+        WF_APP_VERSION: '7.69.33',
+    };
+    new Function('window', 'console', SRC)(win, { log() {}, warn() {}, error() {} });
+    const fire = (ev, arg) => (listeners[ev] || []).forEach((fn) => fn(arg));
+    return { S: win.WFStability, mem, win, dom, fire, listeners };
+}
+
+describe('backgrounding is not a crash', () => {
+    it('after the app is sent to the background the heartbeats do NOT write the alive-marker again — so the next launch finds none', () => {
+        const { mem, dom } = liveLoad();
+        expect(mem.has('wf_session_alive')).toBe(true);
+        dom.visibilityState = 'hidden'; dom.__fire('visibilitychange');
+        expect(mem.has('wf_session_alive')).toBe(false);                    // the clean exit
+        vi.advanceTimersByTime(60_000);                                      // the fast ticks, then the five-second heartbeat: all still firing
+        expect(mem.has('wf_session_alive')).toBe(false);                    // …and none of them brings it back
+        const next = liveLoad(Object.fromEntries([...mem.entries()].map(([k, v]) => [k, JSON.parse(v)])));
+        expect(next.S.crashes()).toEqual([]); expect(next.S.totalCrashCount()).toBe(0);
+    });
+    it('the same through pagehide (closing, or the app switcher)', () => {
+        const { mem, fire } = liveLoad();
+        fire('pagehide'); vi.advanceTimersByTime(30_000);
+        expect(mem.has('wf_session_alive')).toBe(false);
+    });
+    it('a page that is OPENED hidden (a background launch) is not a session until it is shown', () => {
+        globalThis.document = Object.assign(domStub(), { visibilityState: 'hidden' });
+        const mem = new Map([['wf_crash_detector', '2']]);
+        const win = { localStorage: { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) }, addEventListener() {}, WF_APP_VERSION: '7' };
+        new Function('window', 'console', SRC)(win, { log() {}, warn() {}, error() {} });
+        vi.advanceTimersByTime(20_000);
+        expect(mem.has('wf_session_alive')).toBe(false);
+    });
+    it('shown again, a new session begins — and a REAL kill while it is in front is still recorded, with how long it had been alive', () => {
+        const { mem, dom } = liveLoad();
+        dom.visibilityState = 'hidden'; dom.__fire('visibilitychange');
+        vi.advanceTimersByTime(120_000);
+        dom.visibilityState = 'visible'; dom.__fire('visibilitychange');
+        expect(mem.has('wf_session_alive')).toBe(true);
+        vi.advanceTimersByTime(42_000);                                      // forty-two seconds in front… then the process is killed with no event at all
+        const next = liveLoad(Object.fromEntries([...mem.entries()].map(([k, v]) => [k, JSON.parse(v)])));
+        expect(next.S.crashes()).toHaveLength(1);
+        expect(next.S.crashes()[0].aliveSec).toBeGreaterThanOrEqual(40);     // a real number, not "survived 0s"
+    });
+    it('restored from the back/forward cache (pageshow) it re-arms; a visible page that never said it was leaving keeps beating', () => {
+        const { mem, fire } = liveLoad();
+        fire('pagehide'); expect(mem.has('wf_session_alive')).toBe(false);
+        fire('pageshow', { persisted: true }); expect(mem.has('wf_session_alive')).toBe(true);
+        mem.delete('wf_session_alive'); vi.advanceTimersByTime(6000);        // a visible, living page keeps the marker current
+        expect(mem.has('wf_session_alive')).toBe(true);
+    });
+});
+
+describe("the first generation's count is not believed — and not erased", () => {
+    it('a device with the old detector\'s 27 "crashes" starts again at zero, with the old count kept in one line', () => {
+        const old = Array.from({ length: 27 }, (_, i) => ({ when: new Date(1e12 + i).toISOString(), build: '7.69.33', page: 'page-dashboard', dom: 3069, charts: 0, aliveSec: 0 }));
+        const { S, mem } = liveLoad({ wf_crash_detector: undefined, wf_crash_log: old.slice(-20), wf_crash_total_count: 27, wf_session_alive: { start: 1, last: 1, build: '7.69.33', page: 'page-dashboard' } });
+        expect(S.crashes()).toEqual([]); expect(S.totalCrashCount()).toBe(0);
+        expect(S.legacyCrashes()).toMatchObject({ count: 27, shortLived: 20, detector: 1 });
+        expect(JSON.parse(mem.get('wf_crash_detector'))).toBe(2);
+    });
+    it('on a device already on the new generation nothing is reset: the next real crash is recorded and survives the next boot', () => {
+        const a = liveLoad({ wf_session_alive: { start: Date.now() - 50_000, last: Date.now() - 1000, build: '7.69.33', page: 'page-dashboard', dom: 3000, charts: 0 } });
+        expect(a.S.crashes()).toHaveLength(1); expect(a.S.crashes()[0].aliveSec).toBe(49);
+        a.fire('pagehide');                                                  // this launch ends cleanly
+        const b = liveLoad(Object.fromEntries([...a.mem.entries()].map(([k, v]) => [k, JSON.parse(v)])));
+        expect(b.S.totalCrashCount()).toBe(1); expect(b.S.legacyCrashes()).toBeNull();
+    });
+});
+
+describe('a module that will not link clears the app\'s own code caches, once', () => {
+    function healWorld() {
+        const w = liveLoad();
+        const deleted = [], unregistered = []; let reloads = 0;
+        w.win.caches = { keys: async () => ['wealthflow-v7.69.33', 'wealthflow-old', 'someone-elses-cache'], delete: async (k) => { deleted.push(k); return true; } };
+        w.win.navigator = { serviceWorker: { getRegistrations: async () => [{ unregister: async () => { unregistered.push('sw'); return true; } }] } };
+        w.win.location = { reload: () => { reloads++; } };
+        return { ...w, deleted, unregistered, reloads: () => reloads };
+    }
+    const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+    it('"Importing binding name \'CONSUMER_MAIL\' is not found": the app\'s code caches and service workers go, nothing else, then it reloads', async () => {
+        const w = healWorld();
+        w.fire('error', { message: "SyntaxError: Importing binding name 'CONSUMER_MAIL' is not found." });
+        await flush();
+        expect(w.deleted.sort()).toEqual(['wealthflow-old', 'wealthflow-v7.69.33']);    // never a cache that is not the app's
+        expect(w.unregistered).toEqual(['sw']); expect(w.reloads()).toBe(1);
+        expect(JSON.parse(w.mem.get('wf_module_heal'))).toMatchObject({ reason: expect.stringContaining('CONSUMER_MAIL') });
+    });
+    it('a second failure within six hours does nothing — no reload loop', async () => {
+        const w = healWorld();
+        w.fire('error', { message: 'Importing binding name X is not found.' }); await flush();
+        w.fire('error', { message: 'Importing binding name Y is not found.' }); await flush();
+        expect(w.reloads()).toBe(1);
+        vi.setSystemTime(Date.now() + 7 * 3600 * 1000);
+        w.fire('error', { message: 'Importing binding name Z is not found.' }); await flush();
+        expect(w.reloads()).toBe(2);
+    });
+    it('an unrelated error, or a failed module <script>, is judged correctly; and nothing reloads under someone who is typing', async () => {
+        const w = healWorld();
+        w.fire('error', { message: "TypeError: undefined is not an object (evaluating 'x.y')" }); await flush();
+        expect(w.reloads()).toBe(0); expect(w.deleted).toEqual([]);
+        w.dom.activeElement = { tagName: 'INPUT' };
+        w.fire('error', { message: '', target: { tagName: 'SCRIPT', type: 'module', src: 'https://x.example/wealthflow-sender-discovery-ab12cd34.js' } }); await flush();
+        expect(w.deleted.length).toBe(2); expect(w.reloads()).toBe(0);                    // purged, so the next start is clean — but the page is not pulled from under the typing
+    });
+    it('an unhandled rejection from a dynamic import is the same failure', async () => {
+        const w = healWorld();
+        w.fire('unhandledrejection', { reason: new TypeError('Failed to fetch dynamically imported module: https://x.example/a.js') }); await flush();
+        expect(w.reloads()).toBe(1);
     });
 });

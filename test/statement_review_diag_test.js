@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createFirestore } from './helpers/fake-firestore.js';
-import { runStatementSync, shapeOf } from '../statement-sync.js';
+import { runStatementSync, shapeOf, skeletonOf } from '../statement-sync.js';
 import { readStatement } from '../statement-reader.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
 
@@ -37,12 +37,26 @@ describe('what the log says about a statement that went to review', () => {
         const item = lines.map((l) => { try { return JSON.parse(l); } catch (_) { return null; } }).find((l) => l && l.evt === 'statement-sync-item' && l.status === 'needs_review');
         expect(item, lines.join('\n')).toBeTruthy();
         expect(item.bank).toBe('HNB');
-        expect(item.reason).toMatch(/needs-review$/);
+        expect(item.reason).toMatch(/needs-(?:review|confirmation)$/);
         expect(item.diag).toMatchObject({ rows: expect.any(Number), tries: expect.any(Number) });
         expect(item.diag.shape).toMatchObject({ lines: 4, dated: 0, money: 1, stmt: false });
         expect(item.diag.identity).toMatchObject({ verdict: expect.any(String) });
+        // the layout without the content: the banking words survive, every digit is a 9, every other word a run of a's
+        expect(item.diag).toMatchObject({ intent: 'stated', rec: { open: expect.any(Boolean), close: expect.any(Boolean) } });
+        expect(item.diag.skeleton).toMatch(/Account/); expect(item.diag.skeleton).toMatch(/9{3,}/);
         const text = JSON.stringify(item);
         for (const secret of [SECRET_NAME, SECRET_ACCOUNT, SECRET_AMOUNT, 'PIZZA']) expect(text, secret).not.toContain(secret);
+    });
+});
+
+describe('skeletonOf', () => {
+    it('keeps the layout and banking words, masks every digit and every other word', () => {
+        const sk = skeletonOf('Statement of Account\nKULASOORIYAGE SACHINTHA\nAccount No: 074-02-12345-88\nOpening Balance 12,345.67\n03/09/2026 PIZZA HUT COLOMBO 4,250.00 8,095.67\nowner@example.com');
+        expect(sk).toContain('Statement of Account'); expect(sk).toContain('Opening Balance 99,999.99'); expect(sk).toContain('99/99/9999');
+        for (const secret of ['KULASOORIYAGE', 'SACHINTHA', '074-02', '12345', 'PIZZA', 'COLOMBO', 'owner@', '4,250', '8,095']) expect(sk, secret).not.toContain(secret);
+        expect(sk).toContain('<email>');
+        for (const junk of [null, undefined, 5, {}]) expect(() => skeletonOf(junk)).not.toThrow();
+        expect(skeletonOf('x '.repeat(5000)).length).toBeLessThanOrEqual(900);
     });
 });
 
