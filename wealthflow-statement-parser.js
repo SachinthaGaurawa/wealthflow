@@ -114,6 +114,8 @@
         return residual.length <= 14;
     }
 
+    // "Account Number: 123456789012" — a line that names the account the rows below belong to (a document may hold several)
+    var ACCT_RE = /\baccount\s*(?:number|no\.?)\s*[:.]?\s*(\d[\d -]{5,})/i;
     var CARD_WORDS_RE = /\b(credit limit|available credit|minimum payment|payment due date|card no|card number|cardmember|credit card)\b/i;
     var MONTHS = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
 
@@ -333,6 +335,8 @@
             // a row that was silently skipped — could never run. It also left the
             // first real row without a previous balance, so its direction had to be
             // inferred from a CR/DR marker instead of verified by the running total.
+            var am = ACCT_RE.exec(line);
+            if (am) { cands.push({ line: line, acct: am[1].replace(/\D/g, '').slice(-4), block: [] }); continue; }
             var isOpening = OPENING_RE.test(line) && looksLikeBalanceLine(line, OPENING_RE);
             var isClosing = CLOSING_RE.test(line) && looksLikeBalanceLine(line, CLOSING_RE);
             if (isOpening || isClosing) {
@@ -379,14 +383,18 @@
         // pass 2 — emit rows
         var rows = [], prevBal = null, opening = null, closing = null;
         var credits = 0, debits = 0;
+        // A SECTION is what one opening balance starts: an account of a document that holds several, or a page of one that is carried forward.
+        var secs = [], sec = null, acct = '', rowSec = [];
+        function endSec() { if (sec) { if (sec.closing === null) sec.closing = sec.n ? sec.last : sec.opening; secs.push(sec); } sec = null; }
 
         for (var n = 0; n < cands.length; n++) {
             var c = cands[n];
+            if (c.acct !== undefined) { acct = c.acct; continue; }
             var block = c.block;
             var lastTok = block[block.length - 1];
 
-            if (c.opening) { prevBal = lastTok.v; if (opening === null) opening = lastTok.v; continue; }
-            if (c.closing) { closing = lastTok.v; continue; }
+            if (c.opening) { prevBal = lastTok.v; if (opening === null) opening = lastTok.v; endSec(); sec = { opening: lastTok.v, closing: null, last: null, n: 0, credits: 0, debits: 0, acct: acct }; continue; }
+            if (c.closing) { closing = lastTok.v; if (sec) sec.closing = lastTok.v; continue; }
 
             var balance = layout.balanceColumn ? lastTok.v : null;
             var amountToks = layout.balanceColumn ? block.slice(0, -1) : block.slice();
@@ -470,7 +478,10 @@
             if (direction === 'credit') credits += amount;
             else if (direction === 'debit') debits += amount;
             if (balance !== null) prevBal = balance;
+            rowSec.push(sec);
+            if (sec) { sec.n++; if (balance !== null) sec.last = balance; if (direction === 'credit') sec.credits += amount; else if (direction === 'debit') sec.debits += amount; }
         }
+        endSec();
 
         // ── whole-statement cross-validation ────────────────────────────────
         // A per-row balance check cannot notice a row that was never parsed.
@@ -502,71 +513,42 @@
             }
         }
 
-        /* ── DID WE ACTUALLY UNDERSTAND THIS? ────────────────────────────
-         *
-         * THE DEFECT: an unreadable layout returned `rows: []`, and so did a
-         * statement that genuinely had no transactions. To every caller those
-         * are the same value, so a PDF from a bank whose layout this parser has
-         * never seen was indistinguishable from an empty month — and was
-         * therefore dropped, silently, with a green tick.
-         *
-         * The owner asked for the opposite in as many words: "if it catches a
-         * completely new bank PDF and cannot understand the layout, DO NOT
-         * SILENTLY DROP IT. Send it to the Needs Review widget."
-         *
-         * You cannot route what you cannot name, so the parser now says which
-         * of the two happened, and why, in terms a screen can show:
-         *
-         *   'parsed'      rows were read and the arithmetic checks out
-         *   'unverified'  rows were read but opening + credits - debits does
-         *                 not reach closing — readable, not trustworthy
-         *   'empty'       the document IS a statement and has no transactions
-         *   'unreadable'  money and dates are present but no row could be
-         *                 assembled — an unknown layout, the case that matters
-         *   'no-text'     an image-only PDF; OCR's problem, not the parser's
-         *
-         * `understood` is the single boolean a caller needs to decide between
-         * filing and quarantining, so no caller has to re-derive the rule and
-         * two callers cannot derive it differently. */
+        /* Several sections: each is proven on its own, and a statement the one chain cannot balance (two accounts in one document, a page carried forward
+         * over a stale closing line) is proven when EVERY section balances — a row missing from one section is still caught by that section. */
+        if (secs.length > 1 && reconciliation.ok !== true) {
+            var allOk = true;
+            for (var q = 0; q < secs.length; q++) {
+                var S = secs[q];
+                var good = S.closing !== null && (_eq(S.closing, _r2(S.opening + S.credits - S.debits)) || (CARD_WORDS_RE.test(src) && _eq(S.closing, _r2(S.opening - S.credits + S.debits))));
+                if (!good) allOk = false;
+            }
+            if (allOk) { reconciliation.ok = true; reconciliation.sections = secs.length; }
+        }
+        var accts = {}, acctN = 0;
+        for (var w = 0; w < secs.length; w++) if (secs[w].acct && !accts[secs[w].acct]) { accts[secs[w].acct] = 1; acctN++; }
+        if (acctN > 1) for (var r = 0; r < rows.length; r++) if (rowSec[r] && rowSec[r].acct) rows[r].card_last4 = rowSec[r].acct;   // rows of two accounts never mix
+
+        /* DID WE UNDERSTAND THIS? An unreadable layout and a statement with no transactions both used to return `rows: []`, so a PDF from an unknown
+         * bank looked like an empty month and was dropped with a green tick. The verdict says which happened:
+         *   'parsed' rows read and the arithmetic checks out   'unverified' rows read, opening + credits - debits does not reach closing
+         *   'empty' a statement with no transactions           'unreadable' money and dates on the page, no row assembled
+         *   'no-text' an image-only PDF (the image scanner's job)
+         * `understood` is the one boolean a caller needs to decide between filing and quarantining. */
         var moneyLines = 0;
         for (var mi = 0; mi < lines.length; mi++) if (moneyTokens(lines[mi]).length) moneyLines++;
 
-        /* hasTextLayer() is NOT the test for "is there a text layer" — it
-         * requires three or more DATES, which is a test for "does this look
-         * like a statement page". Using it here made every fixture come back
-         * 'no-text', including one that parsed two rows perfectly. It is the
-         * kind of mistake that only announces itself if you look at the answer
-         * rather than at whether the code ran.
-         *
-         * A text layer is text. Anything else is a judgement about content. */
+        // A text layer is text: hasTextLayer() needs three dates ("looks like a statement page"), which made every fixture 'no-text'.
         var hasText = String(text || '').replace(/\s+/g, ' ').trim().length > 40;
 
         var verdict;
         if (!hasText) verdict = 'no-text';
         else if (invalidDates || balanceMismatches || (rows.length && reconciliation.ok === false)) verdict = 'unverified';
         else if (rows.length) verdict = 'parsed';
-        /* MONEY ON THE PAGE AND NOT ONE ROW ASSEMBLED. That is the signature of
-         * a layout nobody taught this parser, whether it failed on the dates or
-         * on the columns. A statement with genuinely no transactions carries
-         * only its opening and closing balance, so the threshold separates
-         * them — and it errs toward 'unreadable', because asking the owner
-         * about a statement that turns out to be empty costs one tap, and
-         * dropping one that was not costs a month of their ledger. */
+        // Money on the page and not one row assembled is a layout nobody taught this parser (a statement with no transactions carries only its balances): erring toward 'unreadable' costs one tap, dropping a real one costs a month.
         else if (moneyLines >= 3) verdict = 'unreadable';
         else verdict = 'empty';
 
-        /* ── THE LAYOUT THE OWNER ALREADY TAUGHT US ──────────────────────
-         *
-         * 'unreadable' means money and dates are on the page and not one row
-         * could be assembled — a format this parser has never been shown. If
-         * the owner has confirmed a reading of this bank before,
-         * wealthflow-layout-memory.js holds the date shape that unlocked it.
-         * Applying it rewrites the dates into a form the code above already
-         * matches, and the SAME parser reads the statement — no second row
-         * reader, no second set of direction rules, nothing that can drift.
-         *
-         * `__learned` stops the recursion at one level, so a template that
-         * happens to produce another unreadable page cannot spin. */
+        // An 'unreadable' page is retried with the date shape the owner already confirmed for this bank (wealthflow-layout-memory.js); `__learned` stops the recursion at one level.
         if (verdict === 'unreadable' && !opts.__learned) {
             var W = (typeof window !== 'undefined') ? window : null;
             var mem = W && W.WFLayoutMemory;
