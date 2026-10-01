@@ -77,13 +77,13 @@ function linkInstallment(loans, expenses, record, now) {
 /* THE PAYMENT IS ALREADY IN THE BOOKS UNDER ANOTHER NAME (statement-links.mjs). A row that the owner typed in by hand, tracks as a subscription, wrote as
  * an issued cheque, or that is the bank settling a card whose purchases are already counted, is not filed as a second expense or income. Evidence only;
  * no counterpart found means the row is filed exactly as before. */
-function findCounterpart({ row, module, user, trackedCards, cardRegistry }) {
+function findCounterpart({ row, module, user, cards, cardRegistry }) {
     const records = module === 'expenses' ? user.expenses : module === 'incomeRecv' ? user.incomeRecv : module === 'cconetime' ? user.cconetime : null;
     if (Array.isArray(records)) { const twin = manualTwin(records, row); if (twin) return { kind: 'twin', twin }; }
     if (module === 'expenses' && row.direction === 'debit') {
         const cheque = matchChequeForDebit(row, user.cheques);
         if (cheque) return { kind: 'cheque', cheque };
-        if (cardSettlementDebit(row, { cardRegistry, trackedCards })) return { kind: 'card-settlement' };
+        if (cardSettlementDebit(row, { cardRegistry, cards })) return { kind: 'card-settlement' };
     }
     if (module === 'expenses' || module === 'cconetime') { const sub = matchSubscriptionForDebit(row, user.subscriptions); if (sub) return { kind: 'subscription', sub }; }
     return null;
@@ -194,7 +194,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         const user = structuredClone(userSnap.data() || {});
         const changes = {};
         const allRecords = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
-        const trackedCards = new Set([...(Array.isArray(user.cconetime) ? user.cconetime : []), ...(Array.isArray(user.ccPayments) ? user.ccPayments : [])].map(record => record && record.card_last4).filter(Boolean)).size;
+        const cards = [...(Array.isArray(user.cconetime) ? user.cconetime : []), ...(Array.isArray(user.ccPayments) ? user.ccPayments : [])].filter(record => record && (record.card_last4 || record.bank));
         const outcome = { filed: 0, duplicates: 0, skipped: 0, review: 0, dateShifted: 0, cursor: cursor + rows.length };
         const writes = [];
         
@@ -242,7 +242,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             }
             if (matching.length) reason = 'ambiguous-cross-source-match';
             
-            const counterpart = reason ? null : findCounterpart({ row, module, user, trackedCards, cardRegistry });
+            const counterpart = reason ? null : findCounterpart({ row, module, user, cards, cardRegistry });
             let subscriptionOfCard = null;
             if (counterpart && counterpart.kind === 'twin') {
                 markTwin(counterpart.twin, row.date.slice(0, 7), sourceRef.path, index, now); changes[module] = user[module];

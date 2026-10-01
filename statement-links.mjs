@@ -78,6 +78,8 @@ export function matchSubscriptionForDebit(row, subs) {
     const hits = [];
     for (const sub of arr(subs)) {
         if (!sub || !sub.id || !subscriptionCountedIn(sub, ym)) continue;
+        // the subscription's month holds ONE amount: a second charge in the same month is its own payment and is filed as one
+        if (arr(sub.history).some((h) => h && h.month === ym && h.source === 'statement')) continue;
         const name = words(sub.name);
         if (name.length < 4) continue;
         const named = text.includes(name) || (tokens(name).length > 0 && tokens(name).every((t) => text.includes(t)));
@@ -113,14 +115,23 @@ export function matchChequeForDebit(row, cheques) {
 
 /* ── 4. THE BANK PAYING A CREDIT CARD ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 const CARD_PAYMENT = /\b(?:credit\s*card|card|cc|amex|visa|master\s*card|mastercard)\s*(?:payment|settlement|bill|repayment|dues?|instal?ment)\b|\bpayment\s+(?:to|for|of)\s+(?:my\s+)?(?:credit\s*)?card\b|\bpay\s+(?:to\s+)?(?:credit\s*)?card\b/i;
+const BANK_GENERIC = new Set(['bank', 'plc', 'limited', 'ltd', 'credit', 'card', 'cards', 'finance', 'lanka', 'sri', 'commercial', 'national', 'of', 'the']);
+const bankWords = (name) => words(name).split(' ').filter((t) => t.length >= 3 && !BANK_GENERIC.has(t));
 /**
- * A debit on a BANK account that settles a credit card the owner tracks: the card's own statement carries the purchases, so the settlement is
- * not spending. Only when the owner tracks at least one card (otherwise this payment is the only record of that spending and stays an expense).
+ * A debit on a BANK account that settles a credit card the owner TRACKS: the card's own statement carries the purchases, so the settlement is not
+ * spending. The narration must say which card — its last four digits or its bank's name — and that card must be one the owner's books hold
+ * (the card registry, or a card charge / card payment on record). A settlement of a card the books know nothing about is the only record of that
+ * spending and stays an expense.
  */
-export function cardSettlementDebit(row, { cardRegistry = {}, trackedCards = 0 } = {}) {
-    const text = String((row && (row.description || row.narration)) || '');
-    if (!CARD_PAYMENT.test(text)) return false;
-    return Object.keys(cardRegistry || {}).length > 0 || num(trackedCards) > 0;
+export function cardSettlementDebit(row, { cardRegistry = {}, cards = [] } = {}) {
+    const raw = String((row && (row.description || row.narration)) || '');
+    if (!CARD_PAYMENT.test(raw)) return false;
+    const text = words(raw), digits = raw.replace(/\D/g, ' ');
+    const tracked = [];
+    for (const [last4, entry] of Object.entries(cardRegistry || {})) tracked.push({ last4: String(last4), bank: entry && entry.bank });
+    for (const c of arr(cards)) tracked.push({ last4: String((c && c.card_last4) || ''), bank: c && c.bank });
+    return tracked.some((card) => (/^\d{4}$/.test(card.last4) && new RegExp(`(^|\\D)\\d*${card.last4}(\\D|$)`).test(digits))
+        || bankWords(card.bank).some((w) => text.split(' ').includes(w)));
 }
 
 export default { manualTwin, markTwin, subscriptionCountedIn, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit };

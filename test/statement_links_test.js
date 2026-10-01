@@ -48,12 +48,19 @@ describe('the matchers', () => {
         expect(matchChequeForDebit(row('CHEQUE 000123', 25000), [{ ...cheque, type: 'received' }])).toBeNull();
         expect(matchChequeForDebit(row('CHEQUE 000123', 25000), [{ ...cheque, status: 'bounced' }])).toBeNull();
     });
-    it('the bank paying a card: only when the owner tracks a card, and only with settlement wording', () => {
-        const tracked = { cardRegistry: { 4512: { bank: 'HNB', type: 'credit_card' } } };
-        for (const text of ['CREDIT CARD PAYMENT HNB 4512', 'CC PAYMENT', 'AMEX PAYMENT 4455', 'PAYMENT TO CREDIT CARD', 'CARD SETTLEMENT']) expect(cardSettlementDebit(row(text, 50000), tracked), text).toBe(true);
+    it('the bank paying a card: settlement wording AND a card the owner tracks (its last four digits, or its bank\'s name) in the narration', () => {
+        const tracked = { cardRegistry: { 4512: { bank: 'HNB', type: 'credit_card' } }, cards: [{ card_last4: '0276', bank: 'American Express (AMEX)' }] };
+        for (const text of ['CREDIT CARD PAYMENT HNB 4512', 'CARD PAYMENT 4512', 'AMEX PAYMENT 4455', 'CC PAYMENT AMERICAN EXPRESS', 'CARD SETTLEMENT 3782 8224 6310 0276', 'PAYMENT TO CARD HNB']) expect(cardSettlementDebit(row(text, 50000), tracked), text).toBe(true);
         expect(cardSettlementDebit(row('CREDIT CARD PAYMENT HNB 4512', 50000), {})).toBe(false);                      // no card tracked: this payment is the only record
+        expect(cardSettlementDebit(row('CREDIT CARD PAYMENT SEYLAN 9981', 50000), tracked)).toBe(false);              // a card the books know nothing about
+        expect(cardSettlementDebit(row('CC PAYMENT', 50000), tracked)).toBe(false);                                   // which card? not guessed
         expect(cardSettlementDebit(row('POS KEELLS CARD', 4000), tracked)).toBe(false);
-        expect(cardSettlementDebit(row('VISA POS PURCHASE', 4000), tracked)).toBe(false);
+        expect(cardSettlementDebit(row('VISA POS PURCHASE HNB', 4000), tracked)).toBe(false);
+    });
+    it('a second charge in a month the subscription already holds a statement payment for is its own payment', () => {
+        const netflix = { id: 'S1', name: 'Netflix', amount: 1500, cycle: 'monthly', createdAt: '2026-01-10T00:00:00Z', history: [{ month: '2026-03', amount: 1500, date: '2026-03-02', source: 'statement' }] };
+        expect(matchSubscriptionForDebit(row('NETFLIX.COM', 1500, '2026-03-20'), [netflix])).toBeNull();
+        expect(matchSubscriptionForDebit(row('NETFLIX.COM', 1500, '2026-04-02'), [netflix]).id).toBe('S1');
     });
 });
 
