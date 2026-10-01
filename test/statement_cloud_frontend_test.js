@@ -570,6 +570,27 @@ describe('private statement cloud frontend transport', () => {
             expect(window._teachStatementLayout).not.toHaveBeenCalled();
             await authChanged(null);
         });
+        it('resumes a part-filed statement instead of asking the owner to map its layout again', async () => {
+            window._teachStatementLayout = vi.fn();
+            window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-09-14' }] })) };
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) }))
+                .mockResolvedValueOnce(reply(false, { ok: false, reason: 'layout-replay-would-overlap-settled-data' }))
+                .mockResolvedValueOnce(reply(true, { ok: true, resumed: true, state: 'resumed', filed: 3, review: 0, replayStatus: 'pending' }));
+            await review(entry);
+            expect(fetch.mock.calls.slice(0, 3).map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered', 'resume-review']);
+            expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('finished from where it stopped'), 'success');
+            expect(window.notify).not.toHaveBeenCalledWith(expect.stringContaining('may already be read'), expect.anything());
+            await authChanged(null);
+        });
+        it('a statement that stopped part-way for a reason a second reading mends is resumed first, with no layout mapping at all', async () => {
+            window._teachStatementLayout = vi.fn();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, resumed: false, state: 'filed' }));
+            await review({ ...entry, reason: 'statement-cursor-or-content-changed' });
+            expect(bodyOf(0).action).toBe('resume-review');
+            expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('already filed'), 'info');
+            expect(window._teachStatementLayout).not.toHaveBeenCalled();
+            await authChanged(null);
+        });
         it('never takes the render route for a PDF or when no renderer is loaded', async () => {
             window._teachStatementLayout = vi.fn();
             fetch.mockResolvedValue(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }));
@@ -656,7 +677,8 @@ describe('private statement cloud frontend transport', () => {
                 .mockResolvedValueOnce(reply(false, { ok: false, reason: 'layout-replay-would-overlap-settled-data' }));
             review({ id: 'whole-statement-id', index: -1 });
             await vi.waitFor(() => expect(window.notify).toHaveBeenCalled());
-            expect(fetch).toHaveBeenCalledTimes(2);
+            // the third call is the server being asked to resume the statement (it could not be reached here, so the owner is told what is known)
+            expect(fetch).toHaveBeenCalledTimes(3); expect(JSON.parse(fetch.mock.calls[2][1].body).action).toBe('resume-review');
             expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('may already be confirmed'), 'warn');
             await authChanged(null);
         });
@@ -675,7 +697,8 @@ describe('private statement cloud frontend transport', () => {
                 .mockResolvedValueOnce(reply(false, { ok: false, reason: 'whole-statement-review-required' }));
             review({ id: 'whole-statement-id', index: -1 });
             await vi.waitFor(() => expect(window.notify).toHaveBeenCalled());
-            expect(fetch).toHaveBeenCalledTimes(2);
+            // the third call is the server being asked to resume the statement (it could not be reached here, so the owner is told what is known)
+            expect(fetch).toHaveBeenCalledTimes(3); expect(JSON.parse(fetch.mock.calls[2][1].body).action).toBe('resume-review');
             expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('may already be confirmed'), 'warn');
             await authChanged(null);
         });

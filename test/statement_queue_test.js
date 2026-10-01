@@ -244,9 +244,9 @@ describe('a backlog of four banks, with the AI board down', () => {
         for (let i = 0; i < 8 && s.settled.length < 24; i++) runs.push(await runStatementSync({ ...s.args, interactive: true, maxSteps: Infinity }));
         expect(s.settled).toHaveLength(24);
         for (const path of Object.keys(s.sources)) expect(s.db.docs.get(path)).toMatchObject({ filed: true });
-        // the AI board was found down once for the whole backlog (it is remembered on the mailbox for the next invocation too)
+        // The board is asked only about rows the rules could not settle. These card statements are a grocery purchase and a payment — the rules
+        // settle both — so a dead board is never even asked (it used to be asked, found down once, and remembered on the mailbox).
         expect(s.board.mock.calls.length).toBeLessThanOrEqual(2);
-        expect(s.db.docs.get('wf-mail/owner_example_com').aiHealth.board.downUntil).toBeGreaterThan(Date.now());
         // within every bank the newest statement was filed before the oldest
         for (const bank of BANKS) {
             const mine = s.settled.filter(path => s.db.docs.get(path).bank === bank.name).map(path => s.db.docs.get(path).receivedMs);

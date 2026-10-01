@@ -259,6 +259,22 @@ async function renderAndSubmit(entry) {
         return { status: RENDER_TRANSIENT_REASONS.has(error?.message) ? 'transient' : 'failed', error };
     }
 }
+// A statement that is already part-filed, or whose review is stale, cannot have a layout mapped over it without risking a second filing of its
+// rows (the server refuses, and this used to end in "may already be read"). It is resumed instead, from its first row: every row already filed
+// is checked, never filed twice. True when the server dealt with it (said, unless quiet).
+const RESUME_FIRST = new Set(['statement-cursor-or-content-changed', 'statement-retries-exhausted']);
+async function resumeStatement(entry, { quiet = false } = {}) {
+    try {
+        const r = await request('/api/statement-sync', 'POST', { action: 'resume-review', id: entry.id });
+        if (!quiet) {
+            if (r.resumed) say(r.filed > 0 ? `${r.filed} more transaction${r.filed === 1 ? '' : 's'} filed. The rest of this statement is being finished from where it stopped; nothing is filed twice.` : 'This statement is being finished from where it stopped; nothing is filed twice.', 'success');
+            else say(r.state === 'filed' ? 'This statement is already filed, so its review is closed.' : r.state === 'busy' ? 'WealthFlow is working on this statement right now.' : 'This review was already handled.', 'info');
+            overlay?.remove(); overlay = null;
+        }
+        if (r.resumed || r.state === 'filed') { await refreshFinancialData().catch(() => {}); if (!quiet) await sync().catch(() => {}); }
+        return true;
+    } catch (_) { return false; }
+}
 // Resolves true only when it took the statement all the way to the server.
 async function mapRenderedStatement(entry) {
     if (!canRender(entry)) return false;
@@ -277,7 +293,7 @@ async function mapRenderedStatement(entry) {
         overlay?.remove(); overlay = null;
         await refreshFinancialData().catch(() => {});
         await sync().catch(() => say('The statement was read, but the immediate processing request failed. It remains queued for retry.', 'warn'));
-    } else {
+    } else if (!(error?.mightAlreadyBeMapped && await resumeStatement(entry))) {
         say(error?.mightAlreadyBeMapped
             ? 'This may already be read from an earlier attempt — check Open reviews for its current status before mapping it again.'
             : 'Reading this statement on your device was not completed. The original statement remains pending.', error?.mightAlreadyBeMapped ? 'warn' : 'error');
@@ -311,7 +327,8 @@ export async function autoRenderPending() {
     try {
         for (const entry of autoCandidates().slice(0, AUTO_BATCH)) {
             if (!currentUser() || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) break;
-            const { status, result } = await renderAndSubmit(entry);
+            const { status, result, error } = await renderAndSubmit(entry);
+            if (status === 'failed' && error?.mightAlreadyBeMapped) await resumeStatement(entry, { quiet: true });
             if (status === 'fallback' || status === 'failed') markTried(entry.id);
             if (status === 'transient' || status === 'unavailable') break;
             if (status === 'submitted') { done.statements += 1; done.filed += Math.max(0, Number(result.filed) || 0); if (result.replayStatus === 'filed' && !result.filed) done.empty += 1; }
@@ -326,6 +343,7 @@ export async function autoRenderPending() {
 }
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleAutoRender(); });
 async function mapLayout(entry) {
+    if (RESUME_FIRST.has(entry.reason) && await resumeStatement(entry)) { openReview(); return; }
     if (await mapRenderedStatement(entry)) return;
     if (typeof window._teachStatementLayout !== 'function') return say('The statement layout mapper is not loaded yet.', 'warn');
     try {
@@ -344,7 +362,7 @@ async function mapLayout(entry) {
                 await refreshFinancialData().catch(() => {});
                 await sync().catch(() => say('The layout is saved, but the immediate processing request failed. Its queued statement remains pending for retry.', 'warn'));
             } catch (error) {
-                say(error?.mightAlreadyBeMapped
+                if (!(error?.mightAlreadyBeMapped && await resumeStatement(entry))) say(error?.mightAlreadyBeMapped
                     ? 'This may already be confirmed from an earlier attempt — check Open reviews for its current status before mapping it again.'
                     : 'Cloud layout saving was not completed. The original statement remains pending.', error?.mightAlreadyBeMapped ? 'warn' : 'error');
             }
@@ -372,7 +390,7 @@ const WHOLE_TEXT = {
     'statement-layout-identity-needs-review': 'WealthFlow could not confirm this document is a bank statement.',
     'statement-retries-exhausted': 'This statement could not be processed after many automatic tries over a day and a half (the reason is on record). It is still here, from where it stopped — open it to read it yourself.',
     'statement-currency-differs': 'This statement is in a different currency from your account, so none of it was filed (its figures would have been counted as your own currency). Check the original.',
-    'statement-cursor-or-content-changed': 'This statement read differently the second time, so nothing was filed from it. It is being read again.',
+    'statement-cursor-or-content-changed': 'This statement read differently the second time, so it was stopped part-way. Rows already filed are kept and checked; open it to finish it from where it stopped.',
 };
 function reviewReasonText(reason) {
     return ({
