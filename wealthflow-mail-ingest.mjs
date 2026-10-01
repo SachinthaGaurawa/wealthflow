@@ -62,7 +62,7 @@
  * because the match is anchored to a label boundary at the end.
  */
 import { BANK_DOMAINS } from './wealthflow-institutions.js';
-import { nameVerdict, VERDICT as ID_VERDICT } from './wealthflow-statement-identity.js';
+import { nameVerdict, intentVerdict, VERDICT as ID_VERDICT } from './wealthflow-statement-identity.js';
 import { STATEMENT_TERMS } from './wealthflow-backfill.js';
 
 /* DERIVED, NOT DECLARED. This used to be a hand-written list of four
@@ -117,6 +117,10 @@ export const REJECT = {
     NOT_A_STATEMENT_DOC: 'the-attachment-is-not-a-bank-statement',
     DKIM_FAILED: 'dkim-did-not-pass',
     DKIM_DOMAIN_MISMATCH: 'signed-by-a-different-domain',
+    /* SPF or DMARC said the message is NOT from the domain it claims — or the header that says so cannot be trusted
+     * (two From lines). Evidence of forgery, not absence of a signature: dropped, logged as a security anomaly, and
+     * never one tap from being taken. */
+    AUTH_FAILED: 'spf-or-dmarc-failed',
     NO_ATTACHMENT: 'no-pdf-attachment',
     TOO_LARGE: 'attachment-over-the-size-ceiling',
     TOO_MANY: 'more-attachments-than-a-statement-should-have',
@@ -218,6 +222,56 @@ export function dkimPassedFor(authResults) {
 }
 
 /**
+ * WHICH `Authentication-Results` HEADER IS GOOGLE'S.
+ *
+ * A message can carry several, and all but one are the sender's own text: anyone can write
+ * `Authentication-Results: mx.google.com; dkim=pass header.i=@hnb.lk` into the mail they send. Google adds its own at
+ * the TOP when it receives the message. The old reader kept whichever header came LAST — the bottom-most, the one
+ * the sender controls. So: only a header whose authserv-id is a google.com host counts, and of those the first, which is
+ * the newest; with none, the topmost one (another provider's, or a test's).
+ */
+export function pickAuthHeader(values) {
+    const list = (Array.isArray(values) ? values : [values]).map((v) => String(v == null ? '' : v)).filter((v) => v.trim());
+    const idOf = (v) => lower(v).split(';')[0].trim().split(/\s+/)[0];
+    const google = list.filter((v) => /(^|\.)google\.com$/.test(idOf(v)));
+    const value = google.length ? google[0] : (list[0] || '');
+    return { value, count: list.length, google: google.length };
+}
+
+/**
+ * Everything Google said about the message, as data: each DKIM result with its signing domain, SPF and DMARC.
+ * `spf` and `dmarc` are the worst result seen (an explicit fail is never outvoted by a pass elsewhere in the line).
+ */
+export function authSummary(authResults) {
+    const out = { dkimPass: new Set(), dkimFail: new Set(), spf: '', dmarc: '', dmarcFrom: '' };
+    const rank = { fail: 4, hardfail: 4, permerror: 3, softfail: 3, temperror: 2, neutral: 1, none: 1, pass: 0 };
+    const worse = (a, b) => (!a || (rank[b] || 0) > (rank[a] || 0) ? b : a);
+    for (const line of (Array.isArray(authResults) ? authResults : [authResults])) {
+        const s = lower(line);
+        if (!s) continue;
+        for (const part of s.split(';')) {
+            const m = /^\s*(dkim|spf|dmarc)\s*=\s*([a-z]+)\b([\s\S]*)$/.exec(part);
+            if (!m) continue;
+            const [, what, result, rest] = m;
+            if (what === 'dkim') {
+                const id = /header\.(?:i|d)=@?([a-z0-9.-]+)/.exec(rest);
+                const dom = id && id[1] ? id[1].replace(/^\.+|\.+$/g, '') : '';
+                if (result === 'pass') { if (dom) out.dkimPass.add(dom); } else if (result === 'fail' || result === 'permerror') out.dkimFail.add(dom || '?');
+            } else if (what === 'spf') out.spf = worse(out.spf, result);
+            else {
+                out.dmarc = worse(out.dmarc, result);
+                const hf = /header\.from=@?([a-z0-9.-]+)/.exec(rest);
+                if (hf) out.dmarcFrom = hf[1];
+            }
+        }
+    }
+    return out;
+}
+
+/** SPF said the sending host is not allowed to send for the domain. `neutral`, `none` and a DNS hiccup are not evidence. */
+export const SPF_BAD = new Set(['fail', 'hardfail', 'softfail', 'permerror']);
+
+/**
  * Which bank sent this, if any — and only if Google says the signature holds.
  *
  * @param headers  { from, 'authentication-results' } (case-insensitive keys)
@@ -313,24 +367,46 @@ export function identifyBank(headers, policy = {}) {
         }
     }
 
-    const passed = dkimPassedFor(h['authentication-results']);
-    /* `policy.forced` is the OWNER's own tap on ONE refused message ("take this
-     * one") — never produced by the sender list, which still cannot wave a
-     * signature through. Honoured only for an address they approved, and only here:
-     * it lifts the signature check for that single message and nothing else. The
-     * statement is still read and must still reconcile to the cent before it is filed. */
-    const forced = policy.forced === true && said.verdict === 'approved';
-    if (!forced && !passed.size) {
-        return { ok: false, reason: REJECT.DKIM_FAILED, detail: { from, claimed: hit ? hit.name : from } };
-    }
+    const authHeader = h['authentication-results'];
+    const passed = dkimPassedFor(authHeader);
+    const auth = authSummary(authHeader);
+    const claimedName = hit ? hit.name : from;
+    const authSeen = { spf: auth.spf || 'none', dmarc: auth.dmarc || 'none', dkim: [...passed].slice(0, 3), dkimFailed: [...auth.dkimFail].slice(0, 3) };
     /* The signing domain must cover the domain the message claims to be from.
      * A valid signature by some other domain is the attack, not a pass. */
     const signedByClaimed = [...passed].some((d) => isUnder(from, d) || (hit && isUnder(d, hit.domain)));
-    if (!forced && !signedByClaimed) {
+
+    /* ── EVIDENCE OF FORGERY IS NEVER LIFTED ─────────────────────────────────
+     *
+     * DMARC is the receiver's own verdict that the message is, or is not, from the domain in its From line, and a
+     * `fail` is decisive even next to a passing signature. SPF says which hosts may send for the domain; a failing SPF
+     * is only evidence when nothing else vouches for the domain — a signature by the claimed domain, or a DMARC pass —
+     * because forwarding breaks SPF and leaves the signature intact, and dropping that mail would lose real statements
+     * to stop forgeries that cannot happen (nobody can forge the signature). A DMARC pass for a DIFFERENT domain than
+     * the From line is no pass at all.
+     *
+     * None of these can be waved through by the owner's "take it": that tap answers "is this MINE?", which an attacker
+     * answers "yes" to as well as anyone. */
+    const dmarcFailed = auth.dmarc === 'fail' || auth.dmarc === 'hardfail';
+    const spfFailed = SPF_BAD.has(auth.spf) && auth.dmarc !== 'pass' && !signedByClaimed;
+    const dmarcForOther = auth.dmarc === 'pass' && !!auth.dmarcFrom && !isUnder(from, auth.dmarcFrom) && !isUnder(auth.dmarcFrom, from);
+    if (dmarcFailed || spfFailed || dmarcForOther) {
+        return { ok: false, reason: REJECT.AUTH_FAILED, detail: { from, claimed: claimedName, ...authSeen, why: dmarcFailed ? 'dmarc-fail' : dmarcForOther ? 'dmarc-for-another-domain' : 'spf-fail' } };
+    }
+    /* `policy.forced` is the OWNER's own tap on ONE refused message ("take this one") — never produced by the sender
+     * list, which still cannot wave a signature through. Honoured only for an address they approved, and only for a
+     * message that merely carries NO signature: a signature that FAILED is evidence, not absence, and stays refused.
+     * The statement is still read and must still reconcile to the cent before it is filed. */
+    const dkimBroken = auth.dkimFail.size > 0 && !signedByClaimed;
+    const forced = policy.forced === true && said.verdict === 'approved' && !dkimBroken;
+    if (!forced && !passed.size) {
+        return { ok: false, reason: REJECT.DKIM_FAILED, detail: { from, claimed: claimedName, ...authSeen, explicit: dkimBroken } };
+    }
+    if (passed.size && !signedByClaimed) {
         return {
             ok: false,
             reason: REJECT.DKIM_DOMAIN_MISMATCH,
-            detail: { from, signedBy: [...passed].slice(0, 4) },
+            detail: { from, signedBy: [...passed].slice(0, 4), ...authSeen },
         };
     }
 
@@ -456,13 +532,42 @@ export function releasedBy(held, decide) {
 
 /* ── 2. what to take ──────────────────────────────────────────────────────── */
 
-const isStatementAttachment = (part) => {
+/* A deterministic allowlist, not a pattern: the file must be a PDF or an HTML document, its NAME must agree with its
+ * declared TYPE, and nothing executable may appear anywhere in the name. `statement.pdf.exe`, `statement.exe.pdf`
+ * (an executable dressed as a PDF), a `.zip`, a `.docm` and a `.js` are refused here, before a byte is fetched.
+ * A name with no extension at all is allowed when the TYPE says PDF — real banks attach `5996631318_455` — and the
+ * bytes are checked again after download (see sniffKind), so a lying name or type reaches nothing. */
+const DANGEROUS_PART = /\.(?:exe|scr|bat|cmd|com|pif|js|jse|vbs|vbe|wsf|wsh|msi|msp|jar|lnk|ps1|psm1|hta|dll|cpl|reg|docm|xlsm|pptm|iso|img|zip|rar|7z|gz|tar|apk|dmg|svg)(?:\.|$)/;
+const extOf = (name) => { const m = /\.([a-z][a-z0-9]{0,4})$/.exec(name); return m ? m[1] : ''; };
+export const isStatementAttachment = (part) => {
     const mime = lower(part && part.mimeType);
     const name = lower(part && part.filename);
-    return mime === 'application/pdf'
-        || (mime === 'application/octet-stream' && name.endsWith('.pdf'))
-        || ((mime === 'text/html' || mime === 'application/octet-stream') && /\.html?$/.test(name));
+    const ext = extOf(name);
+    if (name && DANGEROUS_PART.test(name)) return false;
+    if (ext && ext !== 'pdf' && ext !== 'htm' && ext !== 'html') return false;
+    if (mime === 'application/pdf') return !ext || ext === 'pdf';
+    if (mime === 'application/octet-stream') return ext === 'pdf' || ext === 'htm' || ext === 'html';
+    if (mime === 'text/html') return !ext || ext === 'htm' || ext === 'html';
+    return false;
 };
+
+/** The readable text of the mail itself (not its attachments): text/plain if there is any, else the HTML with its
+ * markup stripped. Bounded — it is read for what it says, not stored. */
+export function bodyTextOf(payload) {
+    const found = [];
+    const visit = (p) => {
+        if (!p) return;
+        if (Array.isArray(p.parts)) p.parts.forEach(visit);
+        const mime = lower(p.mimeType);
+        if (!p.filename && (mime === 'text/plain' || mime === 'text/html') && p.body && typeof p.body.data === 'string') found.push({ mime, data: p.body.data });
+    };
+    visit(payload);
+    const decode = (d) => { try { return Buffer.from(String(d).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'); } catch (_) { return ''; } };
+    const plain = found.filter((x) => x.mime === 'text/plain').map((x) => decode(x.data)).join('\n');
+    const text = plain.trim() ? plain : found.filter((x) => x.mime === 'text/html').map((x) => decode(x.data)
+        .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/gi, ' ').replace(/&amp;/gi, '&')).join('\n');
+    return text.replace(/\s+/g, ' ').trim().slice(0, 40000);
+}
 
 /** Walk the MIME tree; Gmail nests parts arbitrarily deep under multipart/*. */
 function walk(part, out) {
@@ -696,10 +801,23 @@ export function betterCopy(a, b) {
     return a;
 }
 
-export function planMessage(message, policy = {}) {
+function planCore(message, policy = {}) {
     const headers = {};
+    const fromLines = [], authLines = [];
     for (const h of (message && message.payload && message.payload.headers) || []) {
-        if (h && h.name) headers[lower(h.name)] = h.value;
+        if (!h || !h.name) continue;
+        const name = lower(h.name);
+        if (name === 'from') fromLines.push(h.value);
+        if (name === 'authentication-results') authLines.push(h.value);
+        headers[name] = h.value;
+    }
+    /* Only Google's own verdict counts (see pickAuthHeader): the LAST such header used to win, and the last one is the
+     * one the sender wrote. */
+    if (authLines.length) headers['authentication-results'] = pickAuthHeader(authLines).value;
+    /* Two From lines is not a message any mail program writes. Which one a reader shows depends on the reader, and the
+     * signature may cover only one of them — the classic way to show the owner a bank and verify a stranger. */
+    if (fromLines.length > 1) {
+        return { ok: false, reason: REJECT.AUTH_FAILED, detail: { from: domainOf(fromLines[0]), froms: fromLines.map((v) => String(v == null ? '' : v).slice(0, 160)).slice(0, 4), why: 'multiple-from-headers', lines: fromLines.length }, from: String(fromLines[0] == null ? '' : fromLines[0]), subject: headers.subject || '' };
     }
 
     /* Carried out on every plan, refused or not, so the caller can offer the
@@ -755,9 +873,19 @@ export function planMessage(message, policy = {}) {
     const rel0 = typeof policy.related === 'function' ? policy.related(seenFrom) : null;
     const releasedBySeries = who.approved !== true && !!rel0 && policy.siblingSeries instanceof Set && policy.siblingSeries.size > 0
         && what.take.length > 0 && what.take.every((a) => policy.siblingSeries.has(filenameStem(a && a.filename)));
-    const ownerApproved = who.approved === true || releasedBySeries;
+    /* A BANK WRITING FROM ANOTHER OF ITS OWN ADDRESSES, AND SAYING SO. The owner approved `e-statements@hnb.lk`; the
+     * bank's account statements come from a second address, and 104 of them sat held because nothing named like a
+     * statement had been filed from the approved one. The owner's approval already said WHICH BANK; the rest is
+     * decided on the message itself — the signature held (above), the subject or a file name calls it a statement
+     * (here), and the document must show the shape of one and reconcile before anything is filed (the worker). A
+     * bank's marketing from that same address says no such thing and stays held. */
+    const releasedBySibling = who.approved !== true && !releasedBySeries && !!rel0 && what.take.length > 0
+        && intentVerdict({ subject: headers.subject || '', filenames: what.take.map((a) => a && a.filename).filter(Boolean), body: '' }).intent === 'stated';
+    const ownerApproved = who.approved === true || releasedBySeries || releasedBySibling;
+    const released = releasedBySeries || releasedBySibling;
+    const releasedVia = releasedBySeries ? 'series' : 'sibling';
     // Filed under the name the owner gave the bank, not one guessed from the second address's domain.
-    const bankName = releasedBySeries && rel0.name ? rel0.name : who.bank;
+    const bankName = released && rel0.name && !rel0.legacyDomain ? rel0.name : who.bank;
     if (!ownerApproved) {
         const rel = rel0;
         return {
@@ -802,20 +930,28 @@ export function planMessage(message, policy = {}) {
      * `5996631318_455.pdf` and parsed two transactions correctly. A rule that
      * required the name to SAY "statement" would have deleted it. See
      * wealthflow-statement-identity.js. */
-    const byName = nameVerdict({
+    /* WHAT THE MAIL SAYS IT IS — subject, file names AND body (see intentVerdict). A block is on the subject or a file
+     * name only; the body can raise the bar (the attachment must prove itself) but never throws a message away alone. */
+    const intent = intentVerdict({
         subject: headers.subject || '',
         filenames: what.take.map((a) => a && a.filename).filter(Boolean),
+        body: bodyTextOf(message && message.payload),
     });
-    if (byName.verdict === ID_VERDICT.NOT_STATEMENT && !(policy.forced === true && who.approved === true)) {
+    const ownerTap = policy.forced === true && who.approved === true;   // an exact-address approval the owner tapped, never a release
+    if (intent.intent === 'block' && !ownerTap) {
         return {
             ok: false,
             reason: REJECT.NOT_A_STATEMENT_DOC,
             bank: who.bank,
-            detail: { from: who.domain, why: byName.reason, hits: byName.hits.slice(0, 4) },
+            detail: { from: who.domain, why: intent.reason, hits: intent.hits.slice(0, 4), where: intent.where },
             from: seenFrom,
             subject: headers.subject || '',
         };
     }
+    // A block the owner lifted is still only as trusted as its contents: the attachment has to prove itself.
+    /* A sibling address is not the address the owner wrote down, so nothing is taken from it on the strength of the mail
+     * alone: its document must prove itself a statement from its own contents, and reconcile, before anything is filed. */
+    const intentKind = (intent.intent === 'block' || releasedBySibling) ? 'suspect' : intent.intent;
 
     /* THE KEYWORD GUESS THAT USED TO LIVE HERE IS GONE.
      *
@@ -856,10 +992,12 @@ export function planMessage(message, policy = {}) {
              * verified-but-unrecognised sender was filed exactly like a
              * confirmed bank. Both call sites now put it in the manifest, and
              * the mailbox card reads it back. */
-            known: who.known !== false || releasedBySeries,
-            approved: who.approved === true || releasedBySeries,
-            ...(releasedBySeries ? { via: 'series' } : {}),
+            known: who.known !== false || released,
+            approved: who.approved === true || released,
+            ...(released ? { via: releasedVia } : {}),
             ...(who.forced ? { via: 'owner' } : {}),
+            /* stated | unproven | suspect — what the worker must see in the DOCUMENT before it goes any further. */
+            intent: intentKind,
             from: seenFrom,
             messageId: message.id,
             receivedMs: Number(message.internalDate) || null,
@@ -870,9 +1008,69 @@ export function planMessage(message, policy = {}) {
         return { ok: false, reason: REJECT.NO_ATTACHMENT, bank: who.bank, detail: {}, from: seenFrom, subject: headers.subject || '' };
     }
     return {
-        ok: true, bank: bankName, domain: who.domain, items, skipped: what.skipped,
-        from: seenFrom, subject: headers.subject || '', known: who.known !== false || releasedBySeries,
-        ...(releasedBySeries ? { via: 'series' } : {}),
+        ok: true, bank: bankName, domain: who.domain, items, skipped: what.skipped, intent: intentKind,
+        from: seenFrom, subject: headers.subject || '', known: who.known !== false || released,
+        ...(released ? { via: releasedVia } : {}),
+    };
+}
+
+/* ── 4b. forgery is a security event, not a missed statement ──────────────── */
+
+/**
+ * Refusals that are evidence of FORGERY rather than of a message that merely could not be read: SPF or DMARC saying the
+ * message is not from its domain, a signature by a different domain, a signature that FAILED, two From lines, a
+ * lookalike of a bank's domain. Kept apart from the refused list on purpose — that list offers "take it"; this one
+ * does not, because a forger answers "yes, it is mine" as readily as anyone.
+ *
+ * An unsigned message is NOT in this class: no signature proves nothing either way, and the owner can still take it.
+ */
+export function isSecurityRefusal(plan) {
+    if (!plan || plan.ok !== false) return false;
+    if (plan.reason === REJECT.AUTH_FAILED || plan.reason === REJECT.DKIM_DOMAIN_MISMATCH) return true;
+    if (plan.reason === REJECT.DKIM_FAILED) return !!(plan.detail && plan.detail.explicit === true);
+    if (plan.reason === REJECT.NOT_A_BANK) return !!(plan.detail && plan.detail.lookalikeOf);
+    return false;
+}
+
+/** Does this sender CLAIM to be somebody the owner (or the bank list) would trust? Random spam failing SPF is not news. */
+function claimsToBeABank(plan, policy) {
+    if (plan.reason === REJECT.NOT_A_BANK && plan.detail && plan.detail.lookalikeOf) return true;
+    // a message with two From lines claims every one of them
+    for (const line of [plan.from, ...((plan.detail && Array.isArray(plan.detail.froms)) ? plan.detail.froms : [])]) {
+        const from = domainOf(line);
+        if (BANKS.some((b) => isUnder(from, b.domain))) return true;
+        if ((Array.isArray(policy.domains) ? policy.domains : []).some((d) => d && isUnder(from, lower(d)))) return true;
+        const said = typeof policy.decide === 'function' ? (policy.decide(line) || {}) : {};
+        if (said.verdict === 'approved') return true;
+    }
+    return false;
+}
+
+export function planMessage(message, policy = {}) {
+    const plan = planCore(message, policy);
+    if (!plan.ok && isSecurityRefusal(plan) && claimsToBeABank(plan, policy)) return { ...plan, security: true };
+    return plan;
+}
+
+/** The record kept of a forged or unauthenticated message that was dropped — what it claimed, what the checks said. */
+export function securityOf(plan, message) {
+    if (!plan || plan.security !== true) return null;
+    const id = String((message && message.id) || '').trim();
+    if (!id) return null;
+    const d = plan.detail || {};
+    const received = Number(message && message.internalDate);
+    return {
+        messageId: id,
+        reason: plan.reason,
+        from: String(plan.from || '').slice(0, 160),
+        subject: String(plan.subject || '').slice(0, 160),
+        checks: {
+            spf: String(d.spf || '').slice(0, 12), dmarc: String(d.dmarc || '').slice(0, 12),
+            dkim: (Array.isArray(d.dkim) ? d.dkim : []).slice(0, 3).map(String), signedBy: (Array.isArray(d.signedBy) ? d.signedBy : []).slice(0, 3).map(String),
+            why: String(d.why || (d.lookalikeOf ? 'lookalike-of-' + d.lookalikeOf : '')).slice(0, 60),
+        },
+        receivedMs: Number.isFinite(received) && received > 0 ? received : null,
+        v: INTAKE_VERSION,
     };
 }
 
@@ -924,7 +1122,7 @@ export function worthSighting(plan) {
  * is applied to the statements the old rules turned away, and not only to mail
  * that arrives afterwards.
  */
-export const INTAKE_VERSION = 2;
+export const INTAKE_VERSION = 3;
 
 /**
  * Is this refusal one the owner would call a MISSED STATEMENT? Only mail from an
@@ -937,6 +1135,7 @@ export const INTAKE_VERSION = 2;
  */
 export function refusalOf(plan, message, policy = {}) {
     if (!plan || plan.ok !== false) return null;
+    if (plan.security === true) return null;   // forgery is logged, never offered back (see isSecurityRefusal)
     const id = String((message && message.id) || '').trim();
     if (!id) return null;
     const reasons = [REJECT.DKIM_FAILED, REJECT.DKIM_DOMAIN_MISMATCH, REJECT.NOT_A_STATEMENT_DOC, REJECT.TOO_LARGE, REJECT.TOO_MANY, REJECT.NO_ATTACHMENT];
@@ -963,6 +1162,7 @@ export function isWorthTelling(plan) {
         || plan.reason === REJECT.TOO_MANY
         || plan.reason === REJECT.DKIM_FAILED
         || plan.reason === REJECT.DKIM_DOMAIN_MISMATCH
+        || plan.reason === REJECT.AUTH_FAILED
         /* Counted and named. The owner's standing instruction is that nothing
          * is dropped in silence: an invoice correctly refused and a statement
          * wrongly refused have to be told apart by looking at the report, and
@@ -979,6 +1179,7 @@ export const REJECT_TEXT = {
     [REJECT.NOT_A_STATEMENT_DOC]: 'the attachment says it is an invoice, a receipt or a payslip — not a bank statement',
     [REJECT.DKIM_FAILED]: 'it claims to be from your bank but carries no valid signature',
     [REJECT.DKIM_DOMAIN_MISMATCH]: 'it is signed by a domain other than the one it claims to be from',
+    [REJECT.AUTH_FAILED]: 'the sender checks (SPF / DMARC) say it is forged',
     [REJECT.NO_ATTACHMENT]: 'there is no PDF attached',
     [REJECT.TOO_LARGE]: 'the attachment is larger than the store can hold',
     [REJECT.TOO_MANY]: 'it carries more attachments than a statement should',
@@ -987,7 +1188,7 @@ export const REJECT_TEXT = {
 const API = {
     BANKS, REJECT, REJECT_TEXT,
     SINGLE_MAX, CHUNK_SIZE, MAX_PARTS, MAX_BASE64, MAX_ATTACHMENTS,
-    addressOf, domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
+    addressOf, domainOf, isUnder, dkimPassedFor, pickAuthHeader, authSummary, identifyBank, selectAttachments, bodyTextOf, isSecurityRefusal, securityOf,
     itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, worthSighting, looksLikeStatement, nameFromDomain, refusalOf, INTAKE_VERSION,
     dedupeStored, betterCopy,
 };

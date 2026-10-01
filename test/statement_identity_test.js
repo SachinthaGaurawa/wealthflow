@@ -275,7 +275,7 @@ describe('THE FIX IS WIRED — the veto is universal, not only for unknown sende
     const intake = codeOnly(fs.readFileSync('wealthflow-mail-intake.js', 'utf8'));
 
     it('planMessage vetoes by name for EVERY sender, not only unrecognised ones', () => {
-        const at = ingest.indexOf('const byName = nameVerdict(');
+        const at = ingest.indexOf('const intent = intentVerdict(');
         expect(at, 'the universal veto is gone').toBeGreaterThan(-1);
         /* The narrowing this used to sit behind — `if (who.known === false)`
          * — is not merely reordered, it is gone from the source entirely: the

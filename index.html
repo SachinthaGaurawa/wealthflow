@@ -7918,8 +7918,10 @@
         let isInitialised = false;
         let inactivityTimer = 0;
         let isDirty = localStorage.getItem('wf2_isDirty') === 'true';
+        let _dirtyGen = 0;   // bumped by every local change, so a push can tell whether anything changed while it was in flight
         function setDirty(state) {
             isDirty = state;
+            if (state) _dirtyGen++;
             _persistRaw('wf2_isDirty', state ? 'true' : 'false');
         }
         let isSyncingFromCloud = false;
@@ -8041,6 +8043,22 @@
         }
         try { window._wfExpectBulkRemoval = _wfExpectBulkRemoval; } catch (_) {}
 
+        // A stamp is never older than anything this device has SEEN. Device clocks disagree (a phone a few minutes
+        // slow is enough), and a record edited on the slow device after it received the fast device's version would
+        // be stamped OLDER than the version it just read — so the edit lost the merge on every device, silently.
+        let _wfHlc = 0;
+        function _wfStampNow() { const t = Math.max(Date.now(), _wfHlc + 1); _wfHlc = t; return t; }
+        // Advance the clock past the newest stamp in a cloud document (bounded: a clock set years ahead must not drag everyone with it).
+        function _wfObserveStamps(cloud) {
+            if (!cloud || typeof cloud !== 'object') return;
+            let m = 0;
+            const num = v => (typeof v === 'number' && isFinite(v) && v > m ? (m = v) : 0);
+            _WF_RECORD_KEYS.forEach(k => { if (Array.isArray(cloud[k])) cloud[k].forEach(r => num(r && r._ut)); });
+            ['_tomb'].forEach(k => { const t = cloud[k]; if (t && typeof t === 'object') Object.keys(t).forEach(rk => { const mm = t[rk]; if (mm && typeof mm === 'object') Object.keys(mm).forEach(id => num(mm[id])); }); });
+            if (cloud._kut && typeof cloud._kut === 'object') Object.keys(cloud._kut).forEach(k => num(cloud._kut[k]));
+            if (cloud._kuf && typeof cloud._kuf === 'object') Object.keys(cloud._kuf).forEach(k => { const f = cloud._kuf[k]; if (f && typeof f === 'object') Object.keys(f).forEach(n => num(f[n])); });
+            if (m > _wfHlc) _wfHlc = Math.min(m, Date.now() + 864e5);
+        }
         function _wfStampAndTomb(key, newArr) {
             if (!Array.isArray(newArr)) return newArr;
             try { _wfDedupRecordIds(newArr); }
@@ -8050,7 +8068,7 @@
             if (!Array.isArray(prev)) prev = [];
             const prevById = new Map();
             prev.forEach(r => { if (r && r.id != null) prevById.set(r.id, r); });
-            const now = Date.now();
+            const now = _wfStampNow();
             const seen = new Set();
             newArr.forEach(r => {
                 if (!r || typeof r !== 'object' || r.id == null) return;
@@ -8175,7 +8193,7 @@
         function _wfStampKey(k) {
             if (_WF_KUT_EXEMPT[k] || _WF_SYNC_META_KEYS[k] || _WF_RECORD_KEYS.indexOf(k) !== -1) return;
             if (!appData._kut || typeof appData._kut !== 'object') appData._kut = {};
-            appData._kut[k] = Date.now();
+            appData._kut[k] = _wfStampNow();
             _persistRaw('wf2__kut', JSON.stringify(appData._kut));
         }
 
@@ -8221,7 +8239,7 @@
                 if (raw != null) prev = JSON.parse(raw);
             } catch (_) { prev = null; }
 
-            const now = Date.now();
+            const now = _wfStampNow();
             if (!appData._kuf || typeof appData._kuf !== 'object') appData._kuf = {};
             const forKey = (appData._kuf[k] && typeof appData._kuf[k] === 'object') ? appData._kuf[k] : {};
 
@@ -8351,6 +8369,7 @@
         function _wfApplyCloudData(cloudData) {
             const res = { nonSessionChanged: false, sessionsChanged: false, needPush: false };
             if (!cloudData || typeof cloudData !== 'object') return res;
+            try { _wfObserveStamps(cloudData); } catch (_) { }
             // Panic/Decoy mode is READ-ONLY, and that has to include the way in as
             // well as the way out. DB.set and DB.delKey refuse to write; this
             // function did not, so one snapshot from the cloud would merge the real
@@ -8804,6 +8823,13 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         (function _wfInstallErrorBreadcrumb() {
             try {
                 window.addEventListener('error', function (e) {
+                    // A cross-origin script (a CDN, Firebase, Google sign-in) that throws reaches this page as the bare text "Script error."
+                    // with no file, no line and no stack: the browser hides everything on purpose, so there is nothing in it to diagnose.
+                    // It is COUNTED, not logged — twenty slots of the error log are worth more than a row that says nothing.
+                    if (e && e.message === 'Script error.' && !e.filename && !e.lineno && !e.error) {
+                        try { localStorage.setItem('wf_masked_script_errors', String((parseInt(localStorage.getItem('wf_masked_script_errors') || '0', 10) || 0) + 1)); } catch (_) {}
+                        return;
+                    }
                     _wfLogClientError('window.onerror', (e && e.error) || (e && e.message) || e, (e && e.filename) ? (e.filename + ':' + e.lineno + ':' + e.colno) : '');
                 });
                 window.addEventListener('unhandledrejection', function (e) {
@@ -8827,7 +8853,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     cloudConnected: (typeof userDocRef !== 'undefined') ? !!userDocRef : null,
                     lastSyncAgeSec: (typeof lastSyncTime !== 'undefined') ? ageSec(lastSyncTime) : null,
                     pendingRecordDeletes: (typeof _pendingCloudDeletes !== 'undefined' && _pendingCloudDeletes) ? (function () { try { return Object.keys(_pendingCloudDeletes).length; } catch (_) { return null; } })() : 0,
-                    deviceId: (function () { try { return typeof getDeviceId === 'function' ? getDeviceId() : null; } catch (_) { return null; } })()
+                    // was `getDeviceId`, a function that does not exist — so every diagnostics report said deviceId: null and two devices could not be told apart
+                    deviceId: (function () { try { return typeof _getDeviceId === 'function' ? _getDeviceId() : null; } catch (_) { return null; } })(),
+                    reconcile: (function () { try { return (typeof _wfLastReconcile !== 'undefined' && _wfLastReconcile) ? { ageSec: ageSec(_wfLastReconcile.at), why: _wfLastReconcile.why, changed: !!_wfLastReconcile.changed } : null; } catch (_) { return null; } })(),
+                    reconcileLoop: (typeof _wfReconcileStarted !== 'undefined') ? !!_wfReconcileStarted : null
                 };
             } catch (e) { H.sync = { error: String(e && e.message) }; }
             try {
@@ -8845,7 +8874,19 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 });
                 let tombN = 0; const tomb = (appData._tomb && typeof appData._tomb === 'object') ? appData._tomb : {};
                 Object.keys(tomb).forEach(k => { try { tombN += Object.keys(tomb[k] || {}).length; } catch (_) {} });
-                H.data = { totalRecords: grand, missingId: missId, missingUpdateStamp: missUt, tombstones: tombN, byKey: byKey };
+                // PARITY: one short checksum per collection over (id, edit stamp) of every record. Two devices that show the same
+                // count AND the same checksum for a collection hold identical records — comparing two reports needs no data.
+                const parity = {};
+                keys.forEach(k => {
+                    try {
+                        const arr = Array.isArray(appData[k]) ? appData[k] : [];
+                        const parts = arr.map(r => (r && r.id != null ? String(r.id) : '?') + ':' + (r && typeof r._ut === 'number' ? r._ut : 0)).sort();
+                        let h = 5381; const text = parts.join('|');
+                        for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+                        parity[k] = arr.length + '/' + (h >>> 0).toString(16);
+                    } catch (_) { parity[k] = 'error'; }
+                });
+                H.data = { totalRecords: grand, missingId: missId, missingUpdateStamp: missUt, tombstones: tombN, parity: parity, byKey: byKey };
             } catch (e) { H.data = { error: String(e && e.message) }; }
             try {
                 let bytes = 0, wfKeys = 0;
@@ -9212,6 +9253,32 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (Object.getPrototypeOf(v) !== Object.prototype) return v;
             const o = {}; for (const k in v) { const c = _wfCloudSafe(v[k], d + 1); if (c !== undefined) o[k] = c; } return o;
         }
+        // Paint what a merge changed — the same repaint the live listener does, for the paths that merge outside it.
+        function _wfPaintCloudChange(applied) {
+            if (!applied) return;
+            if (applied.nonSessionChanged) {
+                if ($('app') && $('app').classList.contains('show')) {
+                    _wfAfterScrollIdle('cloud-snapshot-paint', () => {
+                        const active = document.querySelector('.page.active');
+                        if (active) renderPage(active.id.replace('page-', ''));
+                        try { updateCCOTBadge(); } catch (e) { }
+                        try { updateChequeBadge(); } catch (e) { }
+                    });
+                }
+            } else if (applied.sessionsChanged) {
+                if ($('app') && $('app').classList.contains('show') && document.getElementById('page-sessions')?.classList.contains('active')) { try { _renderSessionsDebounced(); } catch (e) { } }
+            }
+        }
+        /* THE PUSH IS A READ-MERGE-WRITE, IN ONE TRANSACTION.
+         *
+         * It used to be `set(appData, {merge:true})`. A merge-set replaces every ARRAY in the document wholesale, so
+         * a device that had not yet seen a record (one the statement worker had just filed, or one another device had
+         * just added) pushed its own shorter copy of the list over it — and the record was gone from the cloud. The
+         * listener merges what it receives, but a push can leave before a snapshot arrives (a phone waking from the
+         * background, a heartbeat, an edit seconds after a statement was filed). Now the newest cloud document is read
+         * INSIDE the transaction, merged into this device's data by the one convergent applier, and only then written;
+         * if anything changed the document in between, Firestore re-runs it. Whatever any device or the server wrote
+         * before this commit is in what this commits, so nothing can be overwritten by a stale copy. */
         function syncToCloud() {
             _lastCloudPushError = '';
             // Same contract, the other direction. The payload below is
@@ -9233,31 +9300,72 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             // explicit field deletes or they silently come back on the next load.
             try { _flushCloudDeletes(); } catch (_) { }
 
-            // Add sync metadata — include a device-level write stamp to identify our own echoes
-            const syncPayload = Object.assign({}, _wfCloudSafe(appData), {
-                _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
-                _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
-                _writeDeviceId: _getDeviceId(),
-                _writeTs: Date.now()
-            });
-
-            // Use merge:true so we never accidentally drop fields that exist in cloud but not in local appData
-            let _push;
-            try { _push = userDocRef.set(syncPayload, { merge: true }); } catch (err) { _push = Promise.reject(err); }
+            const gen = _dirtyGen;   // anything changed after this is NOT covered by this push
+            let seen = null, _push;
+            try {
+                _push = userDocRef.firestore.runTransaction(async tx => {
+                    const snap = await tx.get(userDocRef);
+                    if (snap.exists) { isSyncingFromCloud = true; try { seen = _wfApplyCloudData(snap.data()); } finally { isSyncingFromCloud = false; } }
+                    // sync metadata — a device-level write stamp identifies our own echoes; the payload is what is on this device AFTER the merge above
+                    tx.set(userDocRef, Object.assign({}, _wfCloudSafe(appData), {
+                        _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
+                        _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
+                        _writeDeviceId: _getDeviceId(),
+                        _writeTs: Date.now()
+                    }), { merge: true });
+                });
+            } catch (err) { _push = Promise.reject(err); }
             return _push.then(() => {
-                setDirty(false);
+                if (_dirtyGen === gen) setDirty(false); else setTimeout(debouncedSync, 50);   // changed while in flight: still dirty
                 lastSyncTime = Date.now();
                 _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
                 console.log('[SYNC] ✅ Pushed to cloud at', new Date().toLocaleTimeString());
                 setTimeout(() => setSyncStatus('online'), 300);
+                try { _wfPaintCloudChange(seen); } catch (_) { }
                 return true;
             }).catch(err => {
                 console.error('[SYNC] ❌ Push failed:', err && err.code, err && err.message);
-                // Don't set offline — Firestore will retry automatically via persistence
+                // Stay dirty: it is retried on the next change, on coming back online, and by the reconcile loop.
                 setTimeout(() => setSyncStatus(navigator.onLine ? 'online' : 'offline'), 1000);
                 _lastCloudPushError = (err && (err.code || err.message)) || 'unknown';
                 return false;
             });
+        }
+
+        /* THE DOCUMENT IS RE-READ FROM THE SERVER, NOT TRUSTED TO ARRIVE.
+         *
+         * The live listener is the fast path and is usually all there is. But a listener is a stream, and a stream
+         * can stall without any error: a phone resumed from the background, a flaky network, a Safari tab that was
+         * throttled. "Online" only says the browser has a network. So every device also asks the server directly —
+         * on coming back to the foreground, on regaining the network, and every minute while it is open —
+         * merges what it finds (the same commutative, idempotent applier), paints if anything changed, and pushes
+         * anything the cloud was missing. Two devices can therefore disagree for at most the length of that gap. */
+        let _wfReconciling = false, _wfReconcileStarted = false, _wfLastReconcile = null;
+        async function _wfReconcileWithCloud(why) {
+            if (_wfReconciling || !userDocRef || !isInitialised || window._isDecoyMode === true || !navigator.onLine) return false;
+            _wfReconciling = true;
+            try {
+                const doc = await Promise.race([userDocRef.get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('reconcile-timeout')), 8000))]);
+                if (!doc.exists) return false;
+                isSyncingFromCloud = true;
+                let applied; try { applied = _wfApplyCloudData(doc.data()); } finally { isSyncingFromCloud = false; }
+                lastSyncTime = Date.now();
+                _wfLastReconcile = { at: lastSyncTime, why: why, changed: !!(applied.nonSessionChanged || applied.sessionsChanged), push: !!applied.needPush };
+                try { _wfApplyPendingDeletesLocally(); _flushCloudDeletes(); } catch (_) { }
+                _wfPaintCloudChange(applied);
+                if (isDirty || applied.needPush) { setDirty(true); debouncedSync(); }
+                return true;
+            } catch (_) { return false; } finally { _wfReconciling = false; }
+        }
+        function _wfStartReconcileLoop() {
+            if (_wfReconcileStarted) return; _wfReconcileStarted = true;
+            try {
+                document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _wfReconcileWithCloud('resume'); });
+                window.addEventListener('online', () => _wfReconcileWithCloud('online'));
+                window.addEventListener('pageshow', e => { if (e && e.persisted) _wfReconcileWithCloud('pageshow'); });
+                setInterval(() => { if (document.visibilityState !== 'hidden') _wfReconcileWithCloud('interval'); }, 60000);
+                setTimeout(() => _wfReconcileWithCloud('start'), 3000);
+            } catch (_) { }
         }
 
         // Force re-read from Firestore server (bypass cache)
@@ -16349,6 +16457,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                     if (window.__wfClearFailsafe) window.__wfClearFailsafe();
                                     if (window.__wfBootCompleted) window.__wfBootCompleted();
                                     finishBoot();
+                                    try { _wfStartReconcileLoop(); } catch (_) { }
 
                                     // Real-time listener for cross-device sync (PROVEN-WORKING v6.9.1 LOGIC)
                                     try {
@@ -32644,17 +32753,22 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             return "Just now";
         }
 
+        /* A heartbeat is a write of the whole document, and every other device is told about it. It used to fire every
+         * minute AND write `{sessions}` straight to the cloud — replacing the cloud's list with this device's copy, so a
+         * device that had registered since this one last heard from the cloud vanished from the list. It now goes out
+         * through the same merged push as every other change (sessions are records, merged by id), and at most once in
+         * five minutes: "last active" does not need to be fresher than that. */
+        let _wfLastHeartbeatWrite = 0;
         async function _pulseSessionHeartbeat() {
             const sessionId = localStorage.getItem('wf_session_id');
             if (!sessionId) return;
+            if (Date.now() - _wfLastHeartbeatWrite < 300000) return;
             let sessions = DB.get('sessions') || [];
             const idx = sessions.findIndex(s => s.id === sessionId);
             if (idx > -1) {
+                _wfLastHeartbeatWrite = Date.now();
                 sessions[idx].lastActive = new Date().toISOString();
                 DB.set('sessions', sessions);
-                if (currentUser && firebase.firestore && userDocRef) {
-                    try { await userDocRef.set({ sessions }, { merge: true }); } catch(e) {}
-                }
                 if (document.getElementById('page-sessions')?.classList.contains('active')) {
                     _renderSessionsDebounced();
                 }
@@ -32775,10 +32889,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
             DB.set('sessions', sessions);
 
+            // pushed now, through the merged push — a bare `set({sessions})` replaced the cloud's list with this device's copy
             if (currentUser && firebase.firestore && userDocRef) {
-                try {
-                    await userDocRef.set({ sessions }, { merge: true });
-                } catch(e) {}
+                try { await syncToCloud(); } catch(e) {}
             }
 
             if (document.getElementById('page-sessions')?.classList.contains('active')) {

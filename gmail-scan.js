@@ -314,6 +314,7 @@ export default async function handler(req, res, deps) {
                      * device could not tell a confirmed bank from a merely
                      * verified stranger and drew them identically. */
                     known: item.known !== false,
+                    intent: item.intent || 'stated',
                     from: item.from || '',
                 });
                 if (!write.ok) {

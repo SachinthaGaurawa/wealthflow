@@ -257,7 +257,14 @@ export const BUDGETS = {
     // read as a financial decision needing five engines to return identical words — so every chat
     // reply and every AI Insight came back HTTP 422 ("All Intelligence Engines Offline"). Two lines
     // and a comment (measured 2,078,822).
-    htmlBytes: 2_079_000,
+    // Raised 2026-10-01: 2,079,000 -> 2,090,000 (measured 2,086,674). The cloud push is now a read-merge-write in ONE
+    // transaction (it was a merge-set, which replaces every ARRAY in the document: a device that had not yet seen a
+    // record the statement worker had just filed pushed its shorter copy over it, and the record was gone for every
+    // device); stamps never go backwards past anything this device has seen (a phone minutes slow lost its own edits
+    // to a version it had just read); an edit made while a push is in flight is no longer marked saved; every device
+    // re-reads the server on resume, on reconnecting and every half minute instead of trusting a live stream that can
+    // stall without an error; and the session heartbeat no longer overwrites the cloud's session list. ~0.15% headroom.
+    htmlBytes: 2_090_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -508,7 +515,15 @@ export const BUDGETS = {
     // three names; tries held merchants again on a back-off; recognises the same shop by its words; and sweeps the
     // generic rows statements filed. The panel ranks the hard cases by how many transactions an answer changes.
     // ~0.1% headroom.
-    totalJsBytes: 1_952_500,
+    // 2026-10-01 (cross-device sync, intake rules, state table, adaptive reader): 1,952,500 -> 1,975,000 (measured
+    // 1,972,258, no new browser module). index.html carries the transactional push, the hybrid clock and the reconcile
+    // loop (+7.7 KB); wealthflow-statement-identity.js carries intent (subject, file names AND body), the byte sniff and
+    // the wider statement vocabulary; wealthflow-mail-ingest.mjs the SPF/DKIM/DMARC verdict, the trusted
+    // Authentication-Results header, the attachment allowlist and the security record; wealthflow-mail-senders.mjs
+    // the same-bank recognition; wealthflow-statement-cloud.js the table, per-sender status and security panels.
+    // Every one is a way a forged or unwanted message is kept out, or a real statement is no longer lost in silence.
+    // ~0.14% headroom.
+    totalJsBytes: 1_975_000,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

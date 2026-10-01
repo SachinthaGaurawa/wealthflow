@@ -171,7 +171,10 @@ describe('a message that merely claims to be from a bank is refused', () => {
     });
 
     it.each([
-        ['no signature at all', '<statements@hnb.lk>', 'mx.google.com; spf=fail', REJECT.DKIM_FAILED],
+        ['no signature at all', '<statements@hnb.lk>', 'mx.google.com; spf=none', REJECT.DKIM_FAILED],
+        ['no signature and an SPF that failed', '<statements@hnb.lk>', 'mx.google.com; spf=fail', REJECT.AUTH_FAILED],
+        ['a signature by the bank beside a DMARC fail', '<statements@hnb.lk>', 'mx.google.com; dkim=pass header.i=@hnb.lk; dmarc=fail header.from=hnb.lk', REJECT.AUTH_FAILED],
+        ['a DMARC pass for another domain than the From line', '<statements@hnb.lk>', 'mx.google.com; dkim=pass header.i=@hnb.lk; dmarc=pass header.from=evil.net', REJECT.AUTH_FAILED],
         ['a signature that failed', '<statements@hnb.lk>', 'dkim=fail header.i=@hnb.lk', REJECT.DKIM_FAILED],
         ['a valid signature by somebody else', '<statements@hnb.lk>', 'dkim=pass header.i=@evil.net', REJECT.DKIM_DOMAIN_MISMATCH],
         ['a fail for the bank beside a pass for the attacker', '<statements@hnb.lk>',

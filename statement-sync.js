@@ -14,7 +14,9 @@ import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } 
 import { settleStatement, resolveReview, transferEvidence, isZeroAmountLine } from './statement-ledger.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
-import { textVerdict, VERDICT } from './wealthflow-statement-identity.js';
+import { textVerdict, sniffKind, VERDICT } from './wealthflow-statement-identity.js';
+import { adaptiveRead, isMovementLine, linesOf, ADAPTIVE_VERSION } from './statement-adaptive.mjs';
+import { readTable, reconcile as reconcileMailStates, applyReconcile, summarize as summarizeMailStates } from './mail-state.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 
 export const config = { maxDuration: 60 };
@@ -108,6 +110,18 @@ export async function invokeBoard(prompt, handler = aiHandler) {
     });
     if (status !== 200 || !result?.unanimous || !result.trustworthy || !Array.isArray(result.expected) || result.expected.length < 5 || new Set(result.expected).size !== result.expected.length || !result.fields) throw new Error('ai-consensus-unavailable');
     return result;
+}
+
+/* THE MODEL THAT READS A STATEMENT NOBODY WROTE A TEMPLATE FOR. Not the unanimous board — free-form rows never agree
+ * word for word across engines, and they do not need to: nothing the model says is believed until it has been checked
+ * against the document and balances to the cent (statement-adaptive.mjs). One answer, advisory, no temperature. */
+export async function invokeExtractor(prompt, handler = aiHandler) {
+    let status = 200, result;
+    await handler({ method: 'POST', body: { prompt, task: 'advice', temperature: 0, maxTokens: 4000, deadlineMs: 24000 } }, {
+        setHeader() {}, status(code) { status = code; return this; }, json(value) { result = value; return this; }, end() {}
+    });
+    if (status !== 200 || typeof result?.reply !== 'string' || !result.reply.trim()) throw new Error('ai-extractor-unavailable');
+    return result.reply;
 }
 
 export async function classifySlice(rows, allocations, { board = invokeBoard } = {}) {
@@ -255,7 +269,7 @@ async function rejectNonStatement(db, uid, ref, leaseToken, identity) {
 // while the owner still approves an address at that bank; revoke it and the statement is retired.
 function senderStillApproved(senders, source) {
     if (matchSender(senders, source.from || '').verdict === 'approved') return true;
-    return source.via === 'series' && !!relatedApproval(senders, source.from || '');
+    return (source.via === 'series' || source.via === 'sibling') && !!relatedApproval(senders, source.from || '');
 }
 
 // The rules a stored message was taken under, so reading it again judges it the same way.
@@ -596,7 +610,55 @@ export async function recoverRevokedSenderReviews({ db, uid, limit = 25 }) {
     return { recovered, more: recovered >= cap || page.docs.length === 100 };
 }
 
-async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, preferredSourcePath = '', loadAttachment = attachmentBytes }) {
+// ── reading a layout nobody has a template for ─────────────────────────────
+// Tried only for a statement the rules could not read and that visibly carries movements; at most three times, and not
+// again within six hours of the last try. What a verified reading produced is stored beside the statement, so every
+// later slice (and every retry after a crash) uses the SAME rows — the model is never asked twice for one statement.
+const ADAPTIVE_MAX_TRIES = 3, ADAPTIVE_COOLDOWN_MS = 6 * 3600 * 1000, ADAPTIVE_PART = 100;
+function adaptiveWanted({ parsed, result, claimed, text, now }) {
+    if (parsed.verdict === 'parsed' && parsed.understood === true && parsed.reconciliation?.ok !== false && Array.isArray(parsed.rows) && parsed.rows.length) return false;
+    if (parsed.layout?.reconciliationBypassed || result.zeroActivity === true || claimed.emptyOverride === 'owner') return false;
+    if ((Number(claimed.adaptiveTries) || 0) >= ADAPTIVE_MAX_TRIES || (claimed.adaptiveAt && now - Number(claimed.adaptiveAt) < ADAPTIVE_COOLDOWN_MS)) return false;
+    if (textVerdict(text || '').verdict === VERDICT.NOT_STATEMENT) return false;
+    return assessEmptiness({ text, parsed }).decision !== 'empty';
+}
+const adaptiveHash = parsed => createHash('sha256').update(JSON.stringify([parsed.rows, parsed.reconciliation, parsed.layout?.accountLast4])).digest('hex');
+async function saveAdaptive(sourceRef, parsed, now) {
+    const rows = parsed.rows, parts = Math.ceil(rows.length / ADAPTIVE_PART);
+    for (let n = 0; n < parts; n++) await sourceRef.collection('adaptive').doc(`part-${n}`).set({ n, rows: rows.slice(n * ADAPTIVE_PART, (n + 1) * ADAPTIVE_PART) });
+    // manifest LAST: its presence says every part landed
+    await sourceRef.set({ adaptive: { v: ADAPTIVE_VERSION, rows: rows.length, parts, hash: adaptiveHash(parsed), at: now, attempts: parsed.adaptive?.attempts || 1, strategy: parsed.adaptive?.strategy || 'whole',
+        layout: parsed.layout, reconciliation: parsed.reconciliation, dateOrder: parsed.dateOrder, keys: parsed.adaptive?.keys || [], chains: parsed.adaptive?.chains || [] } }, { merge: true });
+}
+async function loadAdaptive(sourceRef, manifest) {
+    const rows = [];
+    for (let n = 0; n < (Number(manifest.parts) || 0); n++) {
+        const snap = await sourceRef.collection('adaptive').doc(`part-${n}`).get();
+        if (!snap.exists || !Array.isArray(snap.data()?.rows)) return null;
+        rows.push(...snap.data().rows);
+    }
+    const parsed = { rows, layout: manifest.layout || {}, reconciliation: manifest.reconciliation || {}, dateOrder: manifest.dateOrder || 'ascending', verdict: 'parsed', understood: true, reason: '', moneyLines: rows.length, candidateRows: rows.length, invalidDates: 0, balanceMismatches: 0,
+        adaptive: { v: manifest.v, attempts: manifest.attempts, strategy: manifest.strategy, keys: manifest.keys || [], chains: manifest.chains || [] } };
+    return rows.length === manifest.rows && adaptiveHash(parsed) === manifest.hash ? parsed : null;
+}
+// A reading the model could not make balance is not lost: it is counted, dated and explained beside the statement.
+async function noteAdaptiveFailure(sourceRef, claimed, outcome, now) {
+    try { await sourceRef.set({ adaptiveTries: (Number(claimed.adaptiveTries) || 0) + 1, adaptiveAt: now, adaptiveResult: { reason: String(outcome.reason || '').slice(0, 60), attempts: Number(outcome.attempts) || 0, problems: (outcome.problems || []).slice(0, 4).map(p => String(p).slice(0, 160)), differenceCents: Number.isFinite(outcome.differenceCents) ? outcome.differenceCents : null } }, { merge: true }); } catch (_) { /* advice */ }
+}
+// Learn the layout so that next month needs no model: only when the rules reproduce the SAME rows from the template.
+async function rememberLayout(db, uid, bank, text, parsed) {
+    try {
+        const learn = (await import('./statement-layout.mjs')).learnCloudLayout;
+        const rows = parsed.rows.map(r => ({ date: r.date, amount: r.amount, direction: r.direction }));
+        const out = await learn(text, rows, { bank });
+        if (!out?.ok || !out.template?.id) return false;
+        const id = createHash('sha256').update(JSON.stringify([bank, out.template.id])).digest('hex');
+        await db.collection('users').doc(uid).collection('statementLayouts').doc(id).set({ uid, bank, template: out.template, savedAt: Date.now(), source: 'adaptive' });
+        return true;
+    } catch (_) { return false; }
+}
+
+async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract = invokeExtractor, preferredSourcePath = '', loadAttachment = attachmentBytes }) {
     let claimed = null, sourceRef;
     if (preferredSourcePath) {
         const prefix = `${mailRef.path}/items/`;
@@ -642,6 +704,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         const currentMail = (await mailRef.get()).data();
         if (!currentMail || currentMail.uid !== uid || currentMail.autonomous !== true) throw new Error('autonomous-mailbox-disabled-during-processing');
         const attachment = await loadAttachment(claimed, sourceRef, token, sendersOf(currentMail), f);
+        /* THE BYTES, NOT THE NAME. A file called statement.pdf that is not a PDF (or an HTML document) is refused before
+         * any reader touches it: what the mail said about the file, and what the file is, are two different claims. */
+        if (sniffKind(attachment.bytes) === 'other') {
+            await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, { reason: 'the file is not a PDF or HTML document, whatever it is called', confidence: 1 });
+            return { status: 'rejected_non_statement', rejected: 1 };
+        }
         const layoutDocs = await db.collection('users').doc(uid).collection('statementLayouts').limit(100).get();
         const layouts = layoutDocs.docs.map(doc => ({ ...doc.data(), _docId: doc.id }));
         const passwordOffset = Math.max(0, Number(claimed.passwordOffset) || 0);
@@ -658,8 +726,23 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             }
             throw error;
         }
-        const { parsed, text } = result;
+        let { parsed } = result;
+        const { text } = result;
         reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '', rendered: result.renderedOverride === true, embedded: parsed?.embeddedProblems };
+        /* A STATEMENT THE RULES COULD NOT READ is read by a model, and believed only when the document agrees with every
+         * word of it and the books balance to the cent (statement-adaptive.mjs). Anything less goes where it always went. */
+        const adaptiveNow = Date.now();
+        if (claimed.adaptive?.v === ADAPTIVE_VERSION) {
+            const saved = await loadAdaptive(sourceRef, claimed.adaptive);
+            if (saved) parsed = saved;
+        } else if (adaptiveWanted({ parsed, result, claimed, text, now: adaptiveNow })) {
+            const ai = await adaptiveRead({ text, ask: prompt => extract(prompt), uid, budgetMs: 30000 });
+            if (ai.ok) {
+                parsed = ai.parsed;
+                try { await saveAdaptive(sourceRef, parsed, adaptiveNow); } catch (_) { throw new Error('statement-worker-retry-required'); }
+                await rememberLayout(db, uid, claimed.bank || '', text, parsed);
+            } else if (ai.reason !== 'ai-unavailable') await noteAdaptiveFailure(sourceRef, claimed, ai, adaptiveNow);
+        }
         
         // --- Added Cryptographic Identity verification bound to the extracted raw source ---
         const identity = textVerdict(text || '');
@@ -667,6 +750,25 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         const parserProof = (confirmedBypass || (parsed?.understood === true && parsed.verdict === 'parsed'
             && parsed.reconciliation?.ok !== false)) && Array.isArray(parsed.rows) && parsed.rows.length > 0;
             
+        /* WHEN THE MAIL DID NOT VOUCH FOR THE ATTACHMENT, THE ATTACHMENT MUST VOUCH FOR ITSELF. `suspect` (the body talks
+         * about a purchase or a subscription and never says statement): it has to be proven a statement from its own
+         * contents. `unproven` (nothing in the mail says what it is): it must show SOME statement structure — a period, a
+         * balance, an account, dated movements. Either way a document that has text and none of that is not a statement,
+         * and it is retired here — counted and named — instead of being put in front of the owner as a statement that
+         * "needs review". A statement the parser itself proved (reconciled rows) is never retired by this. */
+        const hasText = String(text || '').replace(/\s+/g, ' ').trim().length >= 40;
+        const mailDidNotVouch = claimed.intent === 'suspect' || claimed.intent === 'unproven';
+        const selfProven = identity.verdict === VERDICT.STATEMENT || parserProof;
+        const unvouched = mailDidNotVouch && !selfProven && hasText
+            // `unproven` is retired only when the text has NO line with a date and an amount on it at all — a statement short enough
+            // to have fewer than three movements, in a language the vocabulary does not know, still goes to the owner, never away
+            && (claimed.intent === 'suspect' || ((identity.evidence || []).length === 0 && linesOf(text).filter(isMovementLine).length === 0));
+        if (unvouched && identity.verdict !== VERDICT.NOT_STATEMENT) {
+            identity.verdict = VERDICT.NOT_STATEMENT;
+            identity.reason = claimed.intent === 'suspect'
+                ? 'the mail talks about a purchase or subscription and the document does not prove itself a statement'
+                : 'nothing in the mail calls it a statement and nothing in the document is shaped like one (no period, balance, account or dated movements)';
+        }
         if (identity.verdict === VERDICT.NOT_STATEMENT) {
             await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, identity);
             outcome = { status: 'rejected_non_statement', rejected: 1 };
@@ -734,7 +836,8 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
 const cents = v => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 100) / 100 : null);
 async function recordProof(sourceRef, parsed, bypassed) {
     const r = parsed?.reconciliation || {};
-    const proof = { math: bypassed ? 'owner-confirmed' : r.ok === true ? 'passed' : 'unchecked', rows: Array.isArray(parsed?.rows) ? parsed.rows.length : 0, last4: String(parsed?.layout?.accountLast4 || '').slice(0, 4) };
+    const proof = { math: bypassed ? 'owner-confirmed' : r.ok === true ? 'passed' : 'unchecked', rows: Array.isArray(parsed?.rows) ? parsed.rows.length : 0, last4: String(parsed?.layout?.accountLast4 || '').slice(0, 4),
+        ...(parsed?.adaptive ? { method: 'ai-checked', attempts: Number(parsed.adaptive.attempts) || 1, key: String((parsed.adaptive.keys || [])[0] || '').slice(0, 64) } : {}) };
     for (const key of ['opening', 'closing', 'credits', 'debits']) { const v = cents(r[key]); if (v !== null) proof[key] = v; }
     try { await sourceRef.set({ proof }, { merge: true }); } catch (_) { /* see above */ }
 }
@@ -770,7 +873,10 @@ export async function takeRefusedMessage({ db, owner, messageId }) {
     await db.runTransaction(async tx => {
         const snap = await tx.get(mailRef), mail = snap.data();
         if (!snap.exists || mail.uid !== owner.uid) throw new Error('not-your-mailbox');
-        if (!(Array.isArray(mail.refused) ? mail.refused : []).some(entry => entry?.messageId === id)) throw new Error('not-a-refused-message');
+        const entry = (Array.isArray(mail.refused) ? mail.refused : []).find(e => e?.messageId === id);
+        if (!entry) throw new Error('not-a-refused-message');
+        // A refusal recorded before forgery was kept apart (a signature by another domain) is still not the owner's to lift.
+        if (!TAKEABLE.has(entry.reason)) throw new Error('not-a-takeable-refusal');
         tx.set(mailRef, { takeQueue: [...new Set([...(Array.isArray(mail.takeQueue) ? mail.takeQueue : []).map(String), id])].slice(-50) }, { merge: true });
     });
     return { ok: true, queued: true };
@@ -805,7 +911,8 @@ export async function ownerCloseEmpty({ db, owner, id }) {
 // Only a refusal the owner's word can lift is offered as a tap: a signature that did not verify, or a
 // name that read as an invoice. Too many or too large attachments, or no readable attachment, cannot be
 // fixed by asking — the statement has to be downloaded from the bank.
-const TAKEABLE = new Set([REJECT.DKIM_FAILED, REJECT.DKIM_DOMAIN_MISMATCH, REJECT.NOT_A_STATEMENT_DOC]);
+// Forgery is never takeable: a signature by another domain, a failed SPF/DMARC (see isSecurityRefusal). An unsigned message is.
+const TAKEABLE = new Set([REJECT.DKIM_FAILED, REJECT.NOT_A_STATEMENT_DOC]);
 const GAP_SEARCH_EVERY_MS = 6 * 3600 * 1000, GAP_MONTHS_PER_RUN = 3, GAP_MESSAGES_PER_MONTH = 12;
 const addressOnly = from => { const m = /<([^<>]+@[^<>]+)>|([^\s<>"]+@[^\s<>"]+)/.exec(String(from || '').replace(/"(?:[^"\\]|\\.)*"/g, ' ')); return String(m?.[1] || m?.[2] || '').toLowerCase().slice(0, 120); };
 
@@ -816,8 +923,23 @@ async function storedItems(mailRef) {
     return (await query.get()).docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
 
+/* THE STATE TABLE, KEPT HONEST. Every message the hook found is on record (mail-state.mjs); here the record is brought in
+ * line with what the stored statements say — INGESTED only when every attachment of a message is filed — and whatever
+ * is stuck is queued again. Advice: a failure here costs the screen a number, never a statement. */
+async function reconcileMailTable(mailRef, items, now) {
+    try {
+        const table = await readTable(mailRef);
+        const { writes, requeue } = reconcileMailStates({ table, items, now });
+        if (writes.length) await applyReconcile(mailRef, writes, table, { now });
+        if (requeue.length) { try { await mailRef.set({ requeue }, { merge: true }); } catch (_) { /* found again next run */ } }
+        const fresh = writes.length ? await readTable(mailRef) : table;
+        return { ...summarizeMailStates(fresh, { now }), requeued: requeue.length };
+    } catch (_) { return null; }
+}
+
 export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.now(), search = true }) {
     const items = await storedItems(mailRef);
+    const table = await reconcileMailTable(mailRef, items, now);
     const coverage = coverageOf(items, { now });
     // What the mailbox document says NOW (the collection that just ran has written to it), and what the
     // last search found: a month that is still missing keeps its answer until the search is due again.
@@ -882,15 +1004,18 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
     }
     const refused = (Array.isArray(live.refused) ? live.refused : []).slice(0, 20).map(r => ({ messageId: String(r.messageId || ''), reason: String(r.reason || ''), text: String(REJECT_TEXT[r.reason] || r.reason || '').slice(0, 160), takeable: TAKEABLE.has(r.reason), from: addressOnly(r.from), subject: String(r.subject || '').slice(0, 100), filename: String(r.filename || '').slice(0, 100), receivedMs: Number(r.receivedMs) || 0,
         asked: (Array.isArray(live.takeQueue) ? live.takeQueue : []).includes(r.messageId) }));
+    // Mail that claimed to be the owner's bank and failed SPF / DKIM / DMARC: shown, counted, never takeable.
+    const security = (Array.isArray(live.security) ? live.security : []).slice(0, 20).map(r => ({ messageId: String(r.messageId || ''), reason: String(r.reason || ''), text: String(REJECT_TEXT[r.reason] || r.reason || '').slice(0, 160), from: addressOnly(r.from), subject: String(r.subject || '').slice(0, 100), receivedMs: Number(r.receivedMs) || 0,
+        checks: { spf: String(r.checks?.spf || '').slice(0, 12), dmarc: String(r.checks?.dmarc || '').slice(0, 12), why: String(r.checks?.why || '').slice(0, 60) } }));
     const h = live.historyAudit && typeof live.historyAudit === 'object' ? live.historyAudit : null;
     const audit = h ? { at: Number(h.at) || 0, listed: Number(h.listed) || 0, accounted: Number(h.accounted) || 0, examined: Number(h.examined) || 0, taken: Number(h.taken) || 0, refused: Number(h.refused) || 0, held: Number(h.held) || 0, complete: h.complete === true } : null;
-    const summary = { at: now, missing: coverage.missing, staged, empties, refused, log: auditLogOf(items), ...(audit ? { audit } : {}), series: coverage.series.slice(0, 20).map(s => ({ label: s.label, bank: s.bank, first: s.first, last: s.last, months: s.months, missing: s.missing, ...(s.gaps ? { gaps: s.gaps } : {}) })) };
+    const summary = { at: now, missing: coverage.missing, staged, empties, refused, ...(table ? { table } : {}), security, securityCount: Array.isArray(live.security) ? live.security.length : 0, log: auditLogOf(items), ...(audit ? { audit } : {}), series: coverage.series.slice(0, 20).map(s => ({ label: s.label, bank: s.bank, first: s.first, last: s.last, months: s.months, missing: s.missing, ...(s.gaps ? { gaps: s.gaps } : {}) })) };
     const patch = { coverage: summary, ...(due && !failed ? { lastGapSearchMs: now, gapMissingKey: missingKey } : {}) };
     try { await mailRef.set(patch, { merge: true }); } catch (_) { /* the report is advice; failing to store it must not stop a sync */ }
     return summary;
 }
 
-export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '', loadAttachment = attachmentBytes }) {
+export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, extract = invokeExtractor, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '', loadAttachment = attachmentBytes }) {
     const start = Date.now();
     const uid = owner.uid, email = String(owner.email || '').toLowerCase();
     const mailRef = db.collection('wf-mail').doc(userKeyFor(email));
@@ -941,7 +1066,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     let processed = 0, attempted = 0, last = null;
     for (;;) {
         if (attempted >= maxSteps || Date.now() - start > budgetMs) break;
-        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, preferredSourcePath, loadAttachment });
+        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract, preferredSourcePath, loadAttachment });
         if (!step) break;
         attempted += 1;
         if (step.status !== 'retry_pending') processed += 1;

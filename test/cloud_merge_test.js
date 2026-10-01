@@ -109,6 +109,9 @@ function loadMerge({ decoy = false } = {}) {
         'let _wfBulkIntent = null;',
         blockAt('function _wfExpectBulkRemoval(keys, ms)'),
         blockAt('function _wfBulkAnnounced(key)'),
+        'let _wfHlc = 0;',
+        blockAt('function _wfStampNow()'),
+        blockAt('function _wfObserveStamps(cloud)'),
         blockAt('function _wfStampAndTomb(key, newArr)'),
         blockAt('function _wfMergeRecordArray(localArr, cloudArr, tombMap)'),
         blockAt('function _wfMergeTombMaps(a, b)'),
@@ -120,7 +123,7 @@ function loadMerge({ decoy = false } = {}) {
     ].join('\n');
     const api = new Function('localStorage', 'appData', 'notify', 'console', 'window',
         src + '; let _wfLocalWriteBlocked = false;'
-        + ' return { uid, _wfDedupRecordIds, _wfExpectBulkRemoval, _wfStampAndTomb,'
+        + ' return { uid, _wfDedupRecordIds, _wfExpectBulkRemoval, _wfStampAndTomb, _wfStampNow, _wfObserveStamps,'
         + ' _wfMergeRecordArray, _wfMergeTombMaps, _wfStampKey, _wfMergeKeyed, _wfApplyCloudData };'
     )(localStorage, appData, (m, t) => notes.push([t, m]), { log() {}, warn() {}, error() {} }, { _isDecoyMode: decoy });
     return { api, appData, store, notes, setFull: (v) => { failWrites = v; } };

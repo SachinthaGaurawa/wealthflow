@@ -79,8 +79,23 @@ const DEPS = [
     'firebase', 'currentUser', '_getDeviceId', 'setDirty', 'console', 'notify', 'triggerHaptic',
     'DB', 'gapiToken', 'localStorage', 'tokenClient', 'window', 'executeDriveBackup',
     '_wfTotalRecordCount', '_writePendingBackupSnapshotToSW', '_wfDriveAuthPhase',
-    'document', 'renderSettings', '_wfCloudSafe',
+    'document', 'renderSettings', '_wfCloudSafe', '_wfApplyCloudData', 'debouncedSync', '_wfPaintCloudChange',
 ];
+
+/* The page pushes through a Firestore transaction (read the newest cloud document, merge it, write), so the fake
+ * document reference has to offer one. `set` is what the test wants the WRITE to do; a rejection fails the transaction,
+ * as it does in Firestore. */
+const docWith = (set) => {
+    const ref = { set };
+    ref.firestore = {
+        runTransaction: async (fn) => {
+            const writes = [];
+            await fn({ get: async () => ({ exists: false }), set: (r, data, opts) => { writes.push(r.set(data, opts)); } });
+            await Promise.all(writes);
+        },
+    };
+    return ref;
+};
 
 /* Both functions in ONE scope, exactly as they are in the page, so they share
  * the real _lastCloudPushError binding rather than a copy the test invented. */
@@ -88,7 +103,7 @@ function load(over = {}) {
     const settings = {};
     const store = new Map();
     const env = {
-        userDocRef: over.userDocRef !== undefined ? over.userDocRef : { set: () => Promise.resolve() },
+        userDocRef: over.userDocRef !== undefined ? over.userDocRef : docWith(() => Promise.resolve()),
         navigator: { onLine: over.onLine !== false },
         setSyncStatus: () => {},
         isDirty: over.isDirty !== undefined ? over.isDirty : true,
@@ -121,6 +136,9 @@ function load(over = {}) {
         _wfDriveAuthPhase: '',
         document: { getElementById: () => null },
         renderSettings: () => {},
+        _wfApplyCloudData: () => ({ nonSessionChanged: false, sessionsChanged: false, needPush: false }),
+        debouncedSync: () => {},
+        _wfPaintCloudChange: () => {},
     };
     // _persistLocal/_persistRaw come along for the ride rather than being
     // stubbed. backupNow stamps wf_last_auto_backup through the guarded writer,
@@ -134,7 +152,7 @@ function load(over = {}) {
     // `let _lastCloudPushError` sits just above syncToCloud in the page, and
     // `_wfLocalWriteBlocked` just above _persistLocal; both are declared here so
     // the extracted functions share one binding each.
-    const api = new Function(...DEPS, 'let _lastCloudPushError = ""; let _wfLocalWriteBlocked = false;\n' + body)(
+    const api = new Function(...DEPS, 'let _lastCloudPushError = ""; let _wfLocalWriteBlocked = false; let _dirtyGen = 0; let isSyncingFromCloud = false;\n' + body)(
         ...DEPS.map((d) => env[d]));
     return { ...api, settings, store };
 }
@@ -153,7 +171,7 @@ describe('syncToCloud reports what it actually did', () => {
     it('resolves true only after Firestore acknowledges the write', async () => {
         let called = false;
         const { syncToCloud } = load({
-            userDocRef: { set: () => { called = true; return Promise.resolve(); } },
+            userDocRef: docWith(() => { called = true; return Promise.resolve(); }),
         });
         expect(await syncToCloud()).toBe(true);
         expect(called, 'it reported success without writing anything').toBe(true);
@@ -161,7 +179,7 @@ describe('syncToCloud reports what it actually did', () => {
 
     it('resolves false when Firestore rejects the write', async () => {
         const { syncToCloud } = load({
-            userDocRef: { set: () => Promise.reject({ code: 'permission-denied', message: 'nope' }) },
+            userDocRef: docWith(() => Promise.reject({ code: 'permission-denied', message: 'nope' })),
         });
         expect(await syncToCloud(),
             'a rejected write still reported success — this is the reported bug')
@@ -183,13 +201,13 @@ describe('syncToCloud reports what it actually did', () => {
         // "not dirty" genuinely means backed up — it is not a shrug.
         const { syncToCloud } = load({
             isDirty: false,
-            userDocRef: { set: () => { throw new Error('must not write'); } },
+            userDocRef: docWith(() => { throw new Error('must not write'); }),
         });
         expect(await syncToCloud()).toBe(true);
     });
 
     it('never rejects, so the fire-and-forget callers are unharmed', async () => {
-        const { syncToCloud } = load({ userDocRef: { set: () => Promise.reject(new Error('x')) } });
+        const { syncToCloud } = load({ userDocRef: docWith(() => Promise.reject(new Error('x'))) });
         await expect(syncToCloud()).resolves.toBe(false);
     });
 });
@@ -197,7 +215,7 @@ describe('syncToCloud reports what it actually did', () => {
 describe('backupNow refuses to claim a backup that did not happen', () => {
     it('returns false when the cloud write was rejected and Drive is absent', async () => {
         const { backupNow } = load({
-            userDocRef: { set: () => Promise.reject({ code: 'permission-denied', message: 'nope' }) },
+            userDocRef: docWith(() => Promise.reject({ code: 'permission-denied', message: 'nope' })),
         });
         expect(await backupNow(true, 'auto'),
             'the scheduler stamps its success timestamp on this value')
@@ -206,7 +224,7 @@ describe('backupNow refuses to claim a backup that did not happen', () => {
 
     it('does not stamp a success timestamp on a failed backup', async () => {
         const { backupNow, settings, store } = load({
-            userDocRef: { set: () => Promise.reject({ code: 'unavailable', message: 'down' }) },
+            userDocRef: docWith(() => Promise.reject({ code: 'unavailable', message: 'down' })),
         });
         await backupNow(true, 'auto');
         expect(settings.lastBackup, 'a failed backup left a "last backup" time behind')
@@ -217,7 +235,7 @@ describe('backupNow refuses to claim a backup that did not happen', () => {
 
     it('names the actual cause instead of a generic sentence', async () => {
         const { backupNow, settings } = load({
-            userDocRef: { set: () => Promise.reject({ code: 'permission-denied', message: 'nope' }) },
+            userDocRef: docWith(() => Promise.reject({ code: 'permission-denied', message: 'nope' })),
         });
         await backupNow(true, 'auto');
         expect(settings.lastBackupAttempt.success).toBe(false);

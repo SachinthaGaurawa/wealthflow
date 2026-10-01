@@ -89,7 +89,7 @@ describe('a mailbox where every old way of losing a statement is present', () =>
         const by = Object.fromEntries(items.map(i => [i.messageId, i]));
         // MAR (the bank's other address), MAY (Spam) and JUN (today) are found, stored and filed — with no tap
         for (const id of ['mMAR', 'mMAY', 'mJUN']) expect(by[id], id).toMatchObject({ status: 'filed', filed: true });
-        expect(by.mMAR.via).toBe('series');
+        expect(by.mMAR.via).toBe('sibling');   // the bank's other address, subject says statement
         expect(by.mMAY.via).toBe('audit');
         // APR arrived without a verifiable signature: on record with its reason, not stored, not lost
         expect(by.mAPR).toBeUndefined();

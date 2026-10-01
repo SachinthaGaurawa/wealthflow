@@ -255,6 +255,28 @@ export function mergeRefused(existing, incoming, cleared = [], now = Date.now())
 
 export const refusedOf = (state) => mergeRefused(state && state[REFUSED_FIELD], []);
 
+/* Mail that CLAIMED to be from a bank the owner approved (or from a listed bank) and failed the sender checks — SPF,
+ * DKIM, DMARC, a second From line, a lookalike domain. A separate list from `refused` on purpose: that one offers
+ * "take it", this one never does. Bounded, newest first, one entry per message id. */
+export const SECURITY_FIELD = 'security';
+export const MAX_SECURITY = 100;
+export function mergeSecurity(existing, incoming, now = Date.now()) {
+    const out = [], at = new Map();
+    const push = (h) => {
+        if (!h || typeof h !== 'object') return;
+        const key = String(h.messageId || '').trim();
+        if (!key) return;
+        const stamp = Number(h.at) > 0 ? Number(h.at) : now;
+        if (at.has(key)) { const row = out[at.get(key)]; row.at = Math.min(row.at, stamp); return; }
+        at.set(key, out.length);
+        out.push({ ...h, messageId: key, at: stamp });
+    };
+    for (const h of (Array.isArray(incoming) ? incoming : [])) push(h);
+    for (const h of (Array.isArray(existing) ? existing : [])) push(h);
+    return out.slice(0, MAX_SECURITY);
+}
+export const securityOfState = (state) => mergeSecurity(state && state[SECURITY_FIELD], []);
+
 /** The stored sender list, defaulted so a document written before it existed
  *  reads as "nothing decided yet" rather than as an error. */
 export function sendersOf(doc) {
