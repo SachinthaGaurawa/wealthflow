@@ -581,7 +581,7 @@ describe('the per-bank answer is on the screen', () => {
     it('the panel is computed and rendered', () => {
         expect(APP).toContain('function _bankHuntPanel()');
         expect(APP).toContain('+ _bankHuntPanel()');
-        expect(APP).toContain('D.bankHunt(banks, _senders.pending)');
+        expect(APP).toContain('D.bankHunt(banks, _senders.pending, _senders.approved)');
     });
 
     it('the owner\'s banks are SENT with the run', () => {
@@ -653,5 +653,43 @@ describe('a second search cannot start on top of the first', () => {
         expect(bar).toContain("' Keep looking'");
         expect(bar).toContain("' Find my banks'");
         expect(bar).toContain("' Searching'");
+    });
+});
+
+describe('a bank whose address the owner has already approved is a bank that matched', () => {
+    it('AMEX approved at its Nations Trust address: matched, shown with that address — not "not found"', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const approved = [{ id: 'nationstrust@estmt.nationstrust.com', kind: 'address', status: 'approved', name: 'AMEX', domain: 'estmt.nationstrust.com', seenCount: 585 }];
+        const r = bankHunt(['American Express (AMEX)'], [], approved);
+        expect(r.matched).toBe(1); expect(r.of).toBe(1); expect(r.missing).toEqual([]);
+        expect(r.rows[0].approved.map((a) => a.address)).toEqual(['nationstrust@estmt.nationstrust.com']);
+    });
+    it('the screenshot: four approved senders, one owned bank (AMEX): 1 of 1, not 0 of 1', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const approved = [
+            { id: 'e-statements@hnb.lk', kind: 'address', status: 'approved', name: 'HNB', domain: 'hnb.lk', seenCount: 373 },
+            { id: 'estatement@info.nationstrust.com', kind: 'address', status: 'approved', name: 'NTB', domain: 'info.nationstrust.com', seenCount: 612 },
+            { id: 'statements@dfccbank.com', kind: 'address', status: 'approved', name: 'DFCC Bank', domain: 'dfccbank.com', seenCount: 555 },
+            { id: 'nationstrust@estmt.nationstrust.com', kind: 'address', status: 'approved', name: 'AMEX', domain: 'estmt.nationstrust.com', seenCount: 585 },
+        ];
+        const r = bankHunt(['American Express (AMEX)'], [], approved);
+        expect(r.matched).toBe(1);
+        // and each of the other banks, when they are on the owner's records, matches ITS address only
+        const all = bankHunt(['Hatton National Bank (HNB)', 'Nations Trust Bank (NTB) \u2014 AMEX', 'DFCC Bank', 'American Express (AMEX)'], [], approved);
+        expect(all.matched).toBe(all.of);
+        const by = Object.fromEntries(all.rows.map((x) => [x.bank, x.approved.map((a) => a.address)]));
+        expect(by['Hatton National Bank (HNB)']).toEqual(['e-statements@hnb.lk']);
+        expect(by['DFCC Bank']).toEqual(['statements@dfccbank.com']);
+        expect(by['American Express (AMEX)']).toEqual(['nationstrust@estmt.nationstrust.com']);
+    });
+    it('a blocked or pending entry is not an approval; with nothing approved and nothing pending the bank is still missing', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['DFCC Bank'], [], [{ id: 'statements@dfccbank.com', kind: 'address', status: 'blocked', name: 'DFCC Bank', domain: 'dfccbank.com' }, { id: 'x@dfccbank.com', kind: 'address', status: 'new', name: 'DFCC Bank', domain: 'dfccbank.com' }]);
+        expect(r.matched).toBe(0); expect(r.missing).toEqual(['DFCC Bank']);
+    });
+    it('the panel counts approved banks and no longer says 0 of 1', () => {
+        const APP = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
+        expect(APP).toContain('have.length');
+        expect(APP).not.toContain("' banks matched to an address so far.'");
     });
 });

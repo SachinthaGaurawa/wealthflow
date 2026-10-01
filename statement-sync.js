@@ -15,8 +15,10 @@ import { settleStatement, resolveReview, transferEvidence, isZeroAmountLine } fr
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT } from './wealthflow-statement-identity.js';
-import { adaptiveRead, isMovementLine, linesOf, ADAPTIVE_VERSION } from './statement-adaptive.mjs';
+import { adaptiveRead, isMovementLine, linesOf, ADAPTIVE_VERSION, statementKey } from './statement-adaptive.mjs';
+import { sameCurrency, discoverCurrency } from './statement-currency.mjs';
 import { readTable, reconcile as reconcileMailStates, applyReconcile, summarize as summarizeMailStates } from './mail-state.mjs';
+import { claimOrder, CLAIM_WINDOW, failurePatch, redriveDeadLetters, aiBreaker, DEAD_LETTER } from './statement-queue.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 
 export const config = { maxDuration: 60 };
@@ -72,7 +74,7 @@ const permanentFailure = error => /^(?:PASSWORD_FAILED|NO_VAULT_KEYS|PDF_UNREADA
     'statement-layout-identity-needs-review', 'statement-layout-or-reconciliation-needs-review', 'statement-empty-needs-confirmation', 'statement-cursor-or-content-changed',
     'statement-message-missing', 'statement-message-deleted', 'statement-sender-no-longer-approved',
     'statement-attachment-identity-mismatch', 'statement-attachment-invalid', 'statement-attachment-size',
-    'statement-attachment-content-mismatch'
+    'statement-attachment-content-mismatch', 'statement-currency-differs'
 ]).has(error?.message);
 
 const json = (res, code, body) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(body)); };
@@ -108,7 +110,12 @@ export async function invokeBoard(prompt, handler = aiHandler) {
     await handler({ method: 'POST', body: { prompt, financialDecision: true, mode: 'unanimous', temperature: 0, maxTokens: 3500, deadlineMs: 10000 } }, {
         setHeader() {}, status(code) { status = code; return this; }, json(value) { result = value; return this; }, end() {}
     });
-    if (status !== 200 || !result?.unanimous || !result.trustworthy || !Array.isArray(result.expected) || result.expected.length < 5 || new Set(result.expected).size !== result.expected.length || !result.fields) throw new Error('ai-consensus-unavailable');
+    if (status !== 200 || !result?.unanimous || !result.trustworthy || !Array.isArray(result.expected) || result.expected.length < 5 || new Set(result.expected).size !== result.expected.length || !result.fields) {
+        const error = new Error('ai-consensus-unavailable');
+        // Providers that ANSWERED and disagreed are not an outage; providers that did not answer (or too few configured/healthy) are.
+        error.outage = !(result && ['provider_disagreement', 'invalid_response'].includes(result.reason));
+        throw error;
+    }
     return result;
 }
 
@@ -622,6 +629,13 @@ function adaptiveWanted({ parsed, result, claimed, text, now }) {
     if (textVerdict(text || '').verdict === VERDICT.NOT_STATEMENT) return false;
     return assessEmptiness({ text, parsed }).decision !== 'empty';
 }
+/* A rule-based reader names no currency, so the page is asked: the statement is held back only when it is clearly printed in
+ * ANOTHER currency (printed at least twice and twice as often as any other) and never once in the account's own. A rupee
+ * statement with a few foreign-purchase lines in dollars prints rupees too, and is not touched. */
+function currencyConflict(text, base) {
+    const found = discoverCurrency(String(text || ''));
+    return Boolean(found.code) && found.confidence === 'high' && !sameCurrency(found.code, base) && !(found.counts && found.counts[String(base).toUpperCase()] > 0);
+}
 const adaptiveHash = parsed => createHash('sha256').update(JSON.stringify([parsed.rows, parsed.reconciliation, parsed.layout?.accountLast4])).digest('hex');
 async function saveAdaptive(sourceRef, parsed, now) {
     const rows = parsed.rows, parts = Math.ceil(rows.length / ADAPTIVE_PART);
@@ -658,7 +672,7 @@ async function rememberLayout(db, uid, bank, text, parsed) {
     } catch (_) { return false; }
 }
 
-async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract = invokeExtractor, preferredSourcePath = '', loadAttachment = attachmentBytes, deadlineAt = Infinity }) {
+async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract = invokeExtractor, preferredSourcePath = '', loadAttachment = attachmentBytes, deadlineAt = Infinity, rotate = 0 }) {
     let claimed = null, sourceRef;
     if (preferredSourcePath) {
         const prefix = `${mailRef.path}/items/`;
@@ -670,8 +684,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
         if (!claimed) return null;
     }
-    const page = await mailRef.collection('items').where('status', '==', 'pending').limit(200).get();
-    for (const doc of claimed ? [] : page.docs) {
+    /* THE NEXT STATEMENT IS CHOSEN, NOT LISTED: part-way first, never-failed before failed, newest first, and one bank after
+     * another (see statement-queue.mjs). Only small records are read to choose; the winner is read in full when claimed. */
+    let pendingQuery = mailRef.collection('items').where('status', '==', 'pending');
+    if (typeof pendingQuery.select === 'function') pendingQuery = pendingQuery.select('bank', 'receivedMs', 'retryCount', 'retryAt', 'leaseUntil', 'cursor');
+    const page = await pendingQuery.limit(CLAIM_WINDOW).get();
+    for (const doc of claimed ? [] : claimOrder(page.docs, { now: Date.now(), rotate })) {
         if (await retireUnapprovedSource(db, uid, mailRef, doc.ref)) continue;
         const source = await claimSource(db, doc.ref, uid);
         if (source) { claimed = source; sourceRef = doc.ref; break; }
@@ -796,11 +814,17 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         } else {
             if (identity.verdict !== VERDICT.STATEMENT && !parserProof) throw new Error('statement-layout-identity-needs-review');
             if (!parserProof) throw new Error('statement-layout-or-reconciliation-needs-review');
+            const user = (await db.collection('users').doc(uid).get()).data() || {};
+            /* A STATEMENT IN ANOTHER CURRENCY IS NOT FILED INTO THE LEDGER, WHATEVER IT ADDS UP TO. The reading that discovers a
+             * statement's currency (statement-currency.mjs) says which it is; rupees are added to rupees only. A dollar card
+             * statement balances to the cent in dollars, and filing those figures as rupees would be a perfectly reconciled wrong
+             * ledger. It goes to the owner with the reason named. */
+            const baseCurrency = user.settings?.currency || 'LKR', statementCurrency = String(parsed.layout?.currency || '');
+            if (statementCurrency ? !sameCurrency(statementCurrency, baseCurrency) : currencyConflict(text, baseCurrency)) throw new Error('statement-currency-differs');
             await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
             const cursor = claimed.cursor || 0;
-            if (cursor === 0) await recordProof(sourceRef, parsed, confirmedBypass);
+            if (cursor === 0) await recordProof(sourceRef, parsed, confirmedBypass, uid);
             if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor >= parsed.rows.length || (claimed.totalRows != null && claimed.totalRows !== parsed.rows.length)) throw new Error('statement-cursor-or-content-changed');
-            const user = (await db.collection('users').doc(uid).get()).data() || {};
             const statementType = parsed.layout?.statementType || '';
             const rows = parsed.rows.slice(cursor, cursor + 10);
             
@@ -814,18 +838,21 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
     } catch (error) {
         if (!permanentFailure(error)) {
-            const retry = await db.runTransaction(async tx => {
+            /* The attempt is COUNTED before anything else, in one write, so a run the platform kills still counts. Five in a
+             * row park the statement (dead_letter) with its place frozen; it is re-driven on a schedule and, after every round,
+             * becomes one question for the owner. It is never dropped and never skipped (statement-queue.mjs). */
+            const result = await db.runTransaction(async tx => {
                 const snap = await tx.get(sourceRef), source = snap.data();
-                if (!snap.exists || source.leaseToken !== claimed.leaseToken || source.uid !== uid) return 750;
-                const retryCount = Math.max(0, Number(source.retryCount) || 0) + 1;
-                const retryAfterMs = Math.min(RETRY_MAX_MS, 1000 * (2 ** Math.min(retryCount - 1, 8)));
-                const now = Date.now();
-                tx.set(sourceRef, { status: 'pending', leaseToken: '', leaseUntil: 0, retryAt: now + retryAfterMs,
-                    ...(Number.isSafeInteger(error?.passwordOffset) ? { passwordOffset: error.passwordOffset } : {}),
-                    retryCount, lastRetryReason: String(error?.message || 'statement-worker-retry-required').slice(0, 120), updatedAt: now }, { merge: true });
-                return retryAfterMs;
+                if (!snap.exists || source.leaseToken !== claimed.leaseToken || source.uid !== uid) return { outcome: 'lost', retryAfterMs: 750 };
+                const next = failurePatch({ source, error, now: Date.now(), retryMaxMs: RETRY_MAX_MS });
+                tx.set(sourceRef, next.patch, { merge: true });      // the history is kept even when the owner is asked
+                return next;
             });
-            outcome = { status: 'retry_pending', retry: 1, retryAfterMs: retry };
+            if (result.outcome === 'escalate') {
+                await quarantineSource(db, uid, sourceRef, claimed.leaseToken, 'statement-retries-exhausted', reviewEvidence);
+                outcome = { status: 'needs_review', review: 1, deadLettered: 1 };
+            } else if (result.outcome === 'dead-letter') outcome = { status: 'dead_letter', retry: 0, deadLetter: 1, retryAfterMs: result.retryAfterMs };
+            else outcome = { status: 'retry_pending', retry: 1, retryAfterMs: result.retryAfterMs };
         } else {
             const reason = error.message;
             await quarantineSource(db, uid, sourceRef, claimed.leaseToken, reason, reviewEvidence);
@@ -839,12 +866,22 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
 // back, so "it reconciled" is a recorded fact and not an inference from "it was filed".
 // Advice only — failing to write it never stops a statement from being filed.
 const cents = v => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 100) / 100 : null);
-async function recordProof(sourceRef, parsed, bypassed) {
+/* THE COMPOSITE KEY OF A STATEMENT: Hash(user + account + period start + closing balance (+ currency)), for EVERY reading, the
+ * layout-free one and the rule-based one alike. Two copies of one statement (the bank sent it twice, from two addresses, in two
+ * formats) have the same key; two different statements never do. Kept on the item so a repeat can be recognised at a glance. */
+function compositeKeyOf(uid, parsed) {
+    const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
+    const dates = rows.map(row => String(row?.date || '')).filter(Boolean).sort();
+    const closing = parsed?.reconciliation?.closing;
+    return statementKey({ uid, account: String(parsed?.layout?.accountLast4 || ''), start: dates[0] || '', closing: Number.isFinite(Number(closing)) && closing !== null && closing !== '' ? Number(closing) : null, currency: String(parsed?.layout?.currency || '') });
+}
+async function recordProof(sourceRef, parsed, bypassed, uid = '') {
     const r = parsed?.reconciliation || {};
+    const key = parsed?.adaptive ? String((parsed.adaptive.keys || [])[0] || '') : compositeKeyOf(uid, parsed);
     const proof = { math: bypassed ? 'owner-confirmed' : r.ok === true ? 'passed' : 'unchecked', rows: Array.isArray(parsed?.rows) ? parsed.rows.length : 0, last4: String(parsed?.layout?.accountLast4 || '').slice(0, 4),
-        ...(parsed?.adaptive ? { method: 'ai-checked', attempts: Number(parsed.adaptive.attempts) || 1, key: String((parsed.adaptive.keys || [])[0] || '').slice(0, 64) } : {}) };
-    for (const key of ['opening', 'closing', 'credits', 'debits']) { const v = cents(r[key]); if (v !== null) proof[key] = v; }
-    try { await sourceRef.set({ proof }, { merge: true }); } catch (_) { /* see above */ }
+        ...(parsed?.adaptive ? { method: 'ai-checked', attempts: Number(parsed.adaptive.attempts) || 1 } : {}), ...(key ? { key: key.slice(0, 64) } : {}) };
+    for (const field of ['opening', 'closing', 'credits', 'debits']) { const v = cents(r[field]); if (v !== null) proof[field] = v; }
+    try { await sourceRef.set({ proof, ...(key ? { statementKey: key.slice(0, 64) } : {}) }, { merge: true }); } catch (_) { /* see above */ }
 }
 
 async function enqueueStatementSync({ db, owner, env = process.env, f = fetch, sourcePath = '', maxSteps = Infinity }) {
@@ -1026,15 +1063,29 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
     return summary;
 }
 
-export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, extract = invokeExtractor, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '', loadAttachment = attachmentBytes, startedAt = Date.now() }) {
+const FRONT_EVERY_MS = 90 * 1000;
+export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, extract = invokeExtractor, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '', loadAttachment = attachmentBytes, startedAt = Date.now(), interactive = false, frontEveryMs = FRONT_EVERY_MS }) {
     const start = startedAt;
     const uid = owner.uid, email = String(owner.email || '').toLowerCase();
     const mailRef = db.collection('wf-mail').doc(userKeyFor(email));
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
     const token = await accessTokenFrom(mail.refresh_token, env, f);
+    /* A MODEL PROVIDER THAT IS DOWN IS FOUND OUT ONCE, NOT ONCE PER STATEMENT. The board and the extractor are wrapped: after a
+     * failure they are not asked again for a few minutes (remembered on the mailbox, so the next invocation does not pay for
+     * it either), and not at all when too little of this invocation is left to wait for them. A disagreement between
+     * providers that DID answer is not an outage and does not trip it. */
+    const breaker = aiBreaker({ state: mail.aiHealth, deadlineAt: start + INVOCATION_MS, save: async health => { await mailRef.set({ aiHealth: health }, { merge: true }); } });
+    board = breaker.guard('board', board, { minRoomMs: 14000, unavailable: 'ai-consensus-unavailable' });
+    extract = breaker.guard('extract', extract, { minRoomMs: 18000, unavailable: 'ai-extractor-unavailable' });
     let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
-    if (action !== 'drain') {
+    /* The housekeeping in front of the queue (find new mail, audit the mailbox, recover and repair) is a full pass over the
+     * mailbox; run once for every statement an interactive caller asks for, it left almost none of the 60 seconds for the
+     * statements. An interactive call repeats it at most every minute and a half — unless a collection is part-way, when
+     * finishing it is the work — and then spends the rest of the invocation on the queue. */
+    const frontDue = action !== 'drain' && (!interactive || !mail.lastFrontMs || start - Number(mail.lastFrontMs) >= frontEveryMs || Boolean(mail.pendingCollection && mail.pendingCollection.ids));
+    const heavy = maxSteps === Infinity && !interactive;
+    if (frontDue) {
         const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
         if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
         const profile = await profileResponse.json();
@@ -1045,7 +1096,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
             collectionMore = intakeResult.body.collectionPending === true;
             // An unattended run has no browser to follow `collectionPending`, and one pass takes
             // ten messages: without this a backlog of statements clears ten per day.
-            for (let pass = 0; collectionMore && maxSteps === Infinity && pass < 40 && Date.now() - start < Math.min(budgetMs * 0.5, 25000); pass++) {
+            for (let pass = 0; collectionMore && heavy && pass < 40 && Date.now() - start < Math.min(budgetMs * 0.5, 25000); pass++) {
                 const next = await intake(db, { emailAddress: email, historyId: String(profile.historyId) }, { env, f });
                 if (!next?.body?.ok) break;
                 collectionMore = next.body.collectionPending === true;
@@ -1059,7 +1110,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         migrationMore = await migrateItems(db, mailRef, mail, uid);
         const vault = await db.collection(VAULT_ROOT).doc(uid).get();
         recovered = vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
-        const recoveryLimit = maxSteps === Infinity ? 25 : 5;
+        const recoveryLimit = heavy ? 25 : 5;
         const whole = await recoverWholeStatementFailures({ db, uid, limit: recoveryLimit });
         wholeRecovered = whole.recovered; wholeMore = whole.more;
         categoriesRepaired = (await repairStatementCategories({ db, uid })).total;
@@ -1069,18 +1120,21 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         revokedRecovered = revoked.recovered; revokedMore = revoked.more;
         reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
         zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
-        const phantom = await recheckPhantomStatements({ db, uid, limit: maxSteps === Infinity ? 10 : 3 });
+        const phantom = await recheckPhantomStatements({ db, uid, limit: heavy ? 10 : 3 });
         phantomRequeued = phantom.requeued; phantomMore = phantom.more;
-        const healed = await healMissingRows({ db, uid, limit: maxSteps === Infinity ? 5 : 2 });
+        const healed = await healMissingRows({ db, uid, limit: heavy ? 5 : 2 });
         rowsHealed = healed.rows; healMore = healed.more;
+        if (interactive) { try { await mailRef.set({ lastFrontMs: Date.now() }, { merge: true }); } catch (_) { /* the front pass simply runs again */ } }
     }
+    /* Dead-lettered statements whose wait is over go back in the queue, from the place they stopped (statement-queue.mjs). */
+    const redrive = await redriveDeadLetters({ db, mailRef, now: Date.now(), limit: heavy ? 25 : 10 });
     let processed = 0, attempted = 0, last = null;
     for (;;) {
         if (attempted >= maxSteps || Date.now() - start > budgetMs) break;
-        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract, preferredSourcePath, loadAttachment, deadlineAt: start + INVOCATION_MS });
+        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract, preferredSourcePath, loadAttachment, deadlineAt: start + INVOCATION_MS, rotate: attempted });
         if (!step) break;
         attempted += 1;
-        if (step.status !== 'retry_pending') processed += 1;
+        if (step.status !== 'retry_pending' && step.status !== 'dead_letter') processed += 1;
         last = step;
     }
     const [pending, processing] = await Promise.all([
@@ -1105,7 +1159,15 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         .filter(data => Number(data?.retryCount) > 0)
         .slice(0, 20)
         .map(data => ({ bank: data.bank || '', filename: data.filename || '', retryCount: data.retryCount || 0, lastRetryReason: data.lastRetryReason || '' }));
-    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, ...(coverage ? { coverage } : {}),
+    /* ONE LINE PER RUN IN THE PLATFORM LOGS, so what the queue is doing can be read without anyone's help: how long it took, what
+     * was worked on, what is waiting per bank, which model providers are marked down. No amounts, no descriptions, no addresses. */
+    try {
+        const byBank = {};
+        for (const doc of pending.docs) { const bank = String(doc.data()?.bank || '?').slice(0, 24); byBank[bank] = (byBank[bank] || 0) + 1; }
+        console.info(JSON.stringify({ evt: 'statement-sync-run', ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', redriven: redrive.redriven, deadLettered: redrive.waiting,
+            pending: pending.docs.length, processing: processing.docs.length, byBank, collectionMore, aiDown: Object.entries(breaker.health).filter(([, v]) => Number(v?.downUntil) > Date.now()).map(([k, v]) => `${k}:${String(v.reason || '').slice(0, 40)}`) }));
+    } catch (_) { /* a log line never stops a sync */ }
+    return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, ...(coverage ? { coverage } : {}),
         pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending, retrying,
         ...(morePending ? { retryAfterMs } : {}) };
 }
@@ -1355,7 +1417,9 @@ export default async function handler(req, res) {
     try {
         const owner = await admin.auth().getUser(settings.ownerUid);
         if (owner.disabled || !owner.email || !owner.emailVerified) return json(res, 403, { ok: false, reason: 'verified-owner-required' });
-        return json(res, 200, await runStatementSync({ db, owner, action: body.action === 'drain' ? 'drain' : 'collect', maxSteps: scheduled ? Infinity : 1 }));
+        // An interactive call works the queue for as long as it safely can (not one statement per call: at ten rows a minute a
+        // mailbox of statements took days), keeping the heavy housekeeping to the scheduled run and to every minute and a half.
+        return json(res, 200, await runStatementSync({ db, owner, action: body.action === 'drain' ? 'drain' : 'collect', maxSteps: Infinity, interactive: !scheduled, budgetMs: scheduled ? 45000 : 36000 }));
     } catch (error) {
         const reason = String(error?.message || 'statement-sync-unavailable').slice(0, 160);
         console.error('statement-sync-failed', { reason, code: String(error?.code || '').slice(0, 40) });

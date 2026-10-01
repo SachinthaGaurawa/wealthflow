@@ -94,20 +94,22 @@ export async function logStates(db, mailRef, inputs, { now = Date.now() } = {}) 
     const list = (Array.isArray(inputs) ? inputs : []).filter((i) => i && i.messageId && MAIL_STATE[i.state]);
     if (!list.length) return { written: 0, skipped: 0, ok: true };
     try {
-        let written = 0;
+        let written = 0, fresh = [];
         await db.runTransaction(async (tx) => {
-            written = 0;
+            written = 0; fresh = [];
             const refs = list.map((i) => mailRef.collection(EMAILS).doc(docIdOf(i.messageId)));
             const snaps = [];
             for (const ref of refs) snaps.push(await tx.get(ref));
             list.forEach((input, n) => {
                 const prev = snaps[n].exists ? snaps[n].data() : null;
+                // never on record before this: the first time this MESSAGE has been found (a sender's count is of messages, not of scans)
+                if (!prev) fresh.push(String(input.messageId));
                 if (prev && !mayReplace(prev, input)) return;
                 tx.set(refs[n], entryOf(input, prev, now), { merge: false });
                 written += 1;
             });
         });
-        return { written, skipped: list.length - written, ok: true };
+        return { written, skipped: list.length - written, ok: true, fresh };
     } catch (error) {
         return { written: 0, skipped: list.length, ok: false, error: clean(error && error.message, 120) };
     }
@@ -151,11 +153,11 @@ export function rollupItems(items) {
     for (const [id, list] of by) {
         const settled = list.every((i) => i.filed === true || i.emptyStatement === true);
         const rejected = list.every((i) => i.status === 'rejected_non_statement');
-        const review = list.some((i) => i.status === 'needs_review' || i.hasReview === true);
+        const review = list.some((i) => i.status === 'needs_review' || i.status === 'dead_letter' || i.hasReview === true);
         let state = MAIL_STATE.PROCESSED, reason = '';
         if (settled) state = MAIL_STATE.INGESTED;
         else if (rejected) { state = MAIL_STATE.REFUSED; reason = 'the-document-is-not-a-bank-statement'; }
-        else if (review) { state = MAIL_STATE.REVIEW; reason = clean(list.find((i) => i.reviewReason)?.reviewReason || 'needs-review', 80); }
+        else if (review) { state = MAIL_STATE.REVIEW; reason = clean(list.find((i) => i.reviewReason)?.reviewReason || (list.some((i) => i.status === 'dead_letter') ? 'retrying-after-repeated-failures' : 'needs-review'), 80); }
         out.set(id, { state, reason, items: list.map((i) => String(i.id || '')).filter(Boolean), sha: list.map((i) => String(i.contentSha256 || '')).filter(Boolean), from: list[0].from, receivedMs: list[0].receivedMs });
     }
     return out;

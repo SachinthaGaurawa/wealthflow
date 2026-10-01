@@ -21,6 +21,9 @@ const providerCooldownUntil = new Map();
 function providerCooldownMs(error) {
     const message = String(error?.message || error || '');
     if (/credit balance|billing|insufficient[_\s-]*(?:credit|quota)|payment required|status 402/i.test(message)) return 6 * 60 * 60 * 1000;
+    // a model that no longer exists (404 "model not found", 410 "end of life") does not come back until the code names another:
+    // asking again every fifteen seconds only spends the deadline of every call on a certain failure
+    if (/status (?:404|410)\b|model (?:not found|does not exist)|not deployed|end of life|no longer available|unavailable for free/i.test(message)) return 6 * 60 * 60 * 1000;
     if (/unauthori[sz]ed|forbidden|invalid api key|status 401|status 403/i.test(message)) return 60 * 60 * 1000;
     if (/rate.?limit|quota|status 429/i.test(message)) return 2 * 60 * 1000;
     if (/deadline|timed?\s*out|abort/i.test(message)) return 60 * 1000;

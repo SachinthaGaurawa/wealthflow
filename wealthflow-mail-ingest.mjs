@@ -164,18 +164,55 @@ const lower = (s) => String(s == null ? '' : s).toLowerCase().trim();
  * Quoted strings are removed first, then the LAST angled group is taken, which
  * is the addr-spec in every shape a mail client produces.
  */
+/**
+ * RFC 5322 reading of an address header: quoted strings AND comments are removed, wherever they are, before anything is
+ * looked for. `statements@dfccbank.com (DFCC Bank)` — an address with a trailing comment, which older mail systems write
+ * — used to come out as the "address" `statements@dfccbank.com (dfcc bank)` with the "domain" `dfccbank.com (dfcc bank)`,
+ * which matches no approved sender: every statement from such a bank was a stranger. Returns null when a quote or a
+ * comment is never closed, so the caller keeps the older, forgiving reading.
+ */
+function skeletonOf(s) {
+    let out = '', inQuote = false, depth = 0;
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (inQuote) { if (c === '\\') i++; else if (c === '"') { inQuote = false; out += ' '; } continue; }
+        if (depth > 0) { if (c === '\\') i++; else if (c === '(') depth++; else if (c === ')') { depth--; if (!depth) out += ' '; } continue; }
+        if (c === '"') { inQuote = true; continue; }
+        if (c === '(') { depth = 1; continue; }
+        out += c;
+    }
+    return inQuote || depth > 0 ? null : out;
+}
+const tidyAddress = (a) => String(a).replace(/^mailto:/, '').replace(/[<>\s,;]+$/, '').trim().replace(/\.+$/, '');
+
 export function addressOf(from) {
     const s = lower(from);
     /* Backslash escapes honoured, so a quoted string containing \" does not end
      * where it appears to. An unterminated quote matches nothing and leaves the
      * header exactly as it was — the angle brackets below still decide. */
-    const bare = s.replace(/"(?:[^"\\]|\\.)*"/g, ' ');
+    const bare = skeletonOf(s) ?? s.replace(/"(?:[^"\\]|\\.)*"/g, ' ');
     let addr = '';
     const re = /<([^<>]*)>/g;
     let m;
     while ((m = re.exec(bare)) !== null) addr = m[1];
     if (!addr) addr = bare;
-    return addr.replace(/^mailto:/, '').replace(/[<>\s,;]+$/, '').trim();
+    return tidyAddress(addr);
+}
+
+/**
+ * EVERY mailbox a From header names, lower-cased, de-duplicated, in order. One for a normal message. More than one is
+ * not something a bank's statement mailer writes, and which of them a reader shows is the reader's choice — so the
+ * intake treats it exactly like two From lines (see planCore).
+ */
+export function addressesOf(from) {
+    const s = lower(from);
+    const bare = skeletonOf(s) ?? s.replace(/"(?:[^"\\]|\\.)*"/g, ' ');
+    const out = [];
+    const angled = [...bare.matchAll(/<([^<>]*)>/g)].map((m) => tidyAddress(m[1])).filter((a) => a.includes('@'));
+    // a bare mailbox list ("a@x.com, b@y.com") has no angle brackets; with them, the angled part is the mailbox
+    const found = angled.length ? angled : bare.split(/[,;]/).map(tidyAddress).filter((a) => a.includes('@'));
+    for (const a of found) if (!out.includes(a)) out.push(a);
+    return out;
 }
 
 /** The domain out of a From header, whatever shape the display name takes. */
@@ -183,7 +220,7 @@ export function domainOf(from) {
     const addr = addressOf(from);
     const at = addr.lastIndexOf('@');
     if (at < 0) return '';
-    return addr.slice(at + 1).replace(/[>\s,;]+$/, '').trim();
+    return addr.slice(at + 1).replace(/[>\s,;]+$/, '').replace(/\.+$/, '').trim();
 }
 
 /** `a.b.example.com` is under `example.com`; `example.com.evil.net` is not. */
@@ -375,6 +412,14 @@ export function identifyBank(headers, policy = {}) {
     /* The signing domain must cover the domain the message claims to be from.
      * A valid signature by some other domain is the attack, not a pass. */
     const signedByClaimed = [...passed].some((d) => isUnder(from, d) || (hit && isUnder(d, hit.domain)));
+    /* DMARC IS THE RECEIVER'S OWN VERDICT THAT THE FROM DOMAIN IS AUTHENTIC. `dmarc=pass header.from=<this domain>` means
+     * Google found a DKIM signature or an SPF result that is ALIGNED with the From domain — "aligned" meaning the same
+     * organisation, so a signature by mail.bank.com or by a sibling sub-domain of the From's own organisation counts, and
+     * so does an SPF pass with no signature at all. Judging only "is the signer the From domain or its parent" refused
+     * exactly these: a bank that signs from a sub-domain, or relays through its own SPF-authorised servers, looked like a
+     * stranger. A pass for ANOTHER domain than the From line is not this (dmarcForOther, below) and an explicit DKIM
+     * failure is still evidence (dkimBroken, below). */
+    const dmarcVouches = auth.dmarc === 'pass' && !!auth.dmarcFrom && (isUnder(from, auth.dmarcFrom) || isUnder(auth.dmarcFrom, from));
 
     /* ── EVIDENCE OF FORGERY IS NEVER LIFTED ─────────────────────────────────
      *
@@ -399,10 +444,11 @@ export function identifyBank(headers, policy = {}) {
      * The statement is still read and must still reconcile to the cent before it is filed. */
     const dkimBroken = auth.dkimFail.size > 0 && !signedByClaimed;
     const forced = policy.forced === true && said.verdict === 'approved' && !dkimBroken;
-    if (!forced && !passed.size) {
+    const vouched = signedByClaimed || (dmarcVouches && !dkimBroken);
+    if (!forced && !vouched && !passed.size) {
         return { ok: false, reason: REJECT.DKIM_FAILED, detail: { from, claimed: claimedName, ...authSeen, explicit: dkimBroken } };
     }
-    if (passed.size && !signedByClaimed) {
+    if (passed.size && !vouched) {
         return {
             ok: false,
             reason: REJECT.DKIM_DOMAIN_MISMATCH,
@@ -818,6 +864,12 @@ function planCore(message, policy = {}) {
      * signature may cover only one of them — the classic way to show the owner a bank and verify a stranger. */
     if (fromLines.length > 1) {
         return { ok: false, reason: REJECT.AUTH_FAILED, detail: { from: domainOf(fromLines[0]), froms: fromLines.map((v) => String(v == null ? '' : v).slice(0, 160)).slice(0, 4), why: 'multiple-from-headers', lines: fromLines.length }, from: String(fromLines[0] == null ? '' : fromLines[0]), subject: headers.subject || '' };
+    }
+
+    /* ONE From line naming several mailboxes is the same trick in one header: the reader shows one, the signature covers another. */
+    const mailboxes = addressesOf(headers.from);
+    if (mailboxes.length > 1) {
+        return { ok: false, reason: REJECT.AUTH_FAILED, detail: { from: domainOf(headers.from), froms: mailboxes.slice(0, 4), why: 'multiple-from-addresses', lines: 1 }, from: String(headers.from == null ? '' : headers.from), subject: headers.subject || '' };
     }
 
     /* Carried out on every plan, refused or not, so the caller can offer the

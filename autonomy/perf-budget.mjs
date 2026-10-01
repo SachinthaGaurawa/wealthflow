@@ -264,7 +264,11 @@ export const BUDGETS = {
     // to a version it had just read); an edit made while a push is in flight is no longer marked saved; every device
     // re-reads the server on resume, on reconnecting and every half minute instead of trusting a live stream that can
     // stall without an error; and the session heartbeat no longer overwrites the cloud's session list. ~0.15% headroom.
-    htmlBytes: 2_090_000,
+    // Raised 2026-10-01 (bank hunt and sender rows): 2,090,000 -> 2,100,000 (measured 2,091,425). The hunt now counts the
+    // addresses the owner already approved (it said "0 of your 1 banks matched" beside an approved AMEX address), and a sender
+    // row says how many EMAILS it sent and where they are from the state table instead of "seen 585 times" (a count of scans).
+    // ~0.4% headroom.
+    htmlBytes: 2_100_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -523,7 +527,10 @@ export const BUDGETS = {
     // the same-bank recognition; wealthflow-statement-cloud.js the table, per-sender status and security panels.
     // Every one is a way a forged or unwanted message is kept out, or a real statement is no longer lost in silence.
     // ~0.14% headroom.
-    totalJsBytes: 1_975_000,
+    // 2026-10-01 (sender truth, header shapes, queue): 1,975,000 -> 1,985_000 (measured 1,977,609): index.html (hunt + sender
+    // rows), wealthflow-mail-ingest.mjs (RFC 5322 address reading, several mailboxes in one From, DMARC as the From domain's own
+    // verdict), wealthflow-sender-discovery.js (approved senders are matched banks), wealthflow-statement-cloud.js (the per-sender funnel accessor).
+    totalJsBytes: 1_985_000,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

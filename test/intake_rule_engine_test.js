@@ -38,6 +38,11 @@ const AUTHS = {
     'signed by somebody else':  { h: [GOOGLE + 'dkim=pass header.i=@evil.net'], out: 'mismatch' },
     'fail for bank, pass for attacker': { h: [GOOGLE + 'dkim=fail header.i=@hnb.lk; dkim=pass header.i=@evil.net'], out: 'mismatch' },
     'no header at all':         { h: [], out: 'unsigned' },
+    // DMARC pass for the From domain IS Google's verdict that the From is authentic (aligned DKIM or aligned SPF)
+    'no signature, spf + dmarc pass for the From domain': { h: [GOOGLE + 'spf=pass smtp.mailfrom=hnb.lk; dmarc=pass (p=REJECT) header.from=hnb.lk'], out: 'pass' },
+    'mailer signature only, dmarc pass through aligned spf': { h: [GOOGLE + 'dkim=pass header.i=@sendgrid.net; spf=pass smtp.mailfrom=hnb.lk; dmarc=pass header.from=hnb.lk'], out: 'pass' },
+    'dkim FAIL even though spf carries dmarc': { h: [GOOGLE + 'dkim=fail header.i=@hnb.lk; spf=pass smtp.mailfrom=hnb.lk; dmarc=pass header.from=hnb.lk'], out: 'dkim-failed' },
+    'dmarc pass that names no domain': { h: [GOOGLE + 'dmarc=pass'], out: 'unsigned' },
     // the sender writes an Authentication-Results header into the mail they send; Google's own is ABOVE it and says no
     'forged header below Google\'s': { h: [GOOGLE + 'dkim=none; spf=pass', GOOGLE + 'dkim=pass header.i=@hnb.lk'], out: 'unsigned' },
     'forged header naming another authserv-id above Google\'s': { h: ['attacker.example; dkim=pass header.i=@hnb.lk', GOOGLE + 'dkim=fail header.i=@hnb.lk'], out: 'dkim-failed' },

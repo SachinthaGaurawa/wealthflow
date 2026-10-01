@@ -1,5 +1,5 @@
 let coverage=null,user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null,retrying=[],autoTimer=null,autoRunning=false;
-const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,queued:0};
+const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,queued:0,parked:0};
 
 export const getState=()=>({...state});
 export const retryAttemptsSummary=()=>retrying.map(r=>({bank:r.bank||'',filename:r.filename||'',retryCount:r.retryCount||0,lastRetryReason:r.lastRetryReason||''}));
@@ -15,6 +15,9 @@ export function reviewSummary(){
 }
 // Which months of which statement the mailbox has not given us, and what the search for them found —
 // outcomes only, so the owner can share it without an address or an amount in it.
+/** Per sender address: how many distinct emails, and where each is (from the state table). [] until the first sync has reported. */
+export function senderFunnel(){return Array.isArray(coverage?.table?.senders)?coverage.table.senders:[]}
+
 export function coverageSummary(){
     if(!coverage)return null;
     const tally=(list,key)=>(list||[]).reduce((o,e)=>{o[e[key]]=(o[e[key]]||0)+1;return o},{});
@@ -114,6 +117,7 @@ export async function sync(){
     const again=delay=>{if(!continuationTimer)continuationTimer=setTimeout(()=>{continuationTimer=null;sync().catch(()=>{})},delay)};
     syncPromise=request('/api/statement-sync','POST',{action:'sync'}).then(result=>{
         state.queued=Math.max(0,Number(result.pendingRemaining)||0)+Math.max(0,Number(result.processingRemaining)||0);
+        state.parked=Math.max(0,Number(result.deadLettered)||0);
         retrying=Array.isArray(result.retrying)?result.retrying:[];
         if(result.coverage&&typeof result.coverage==='object')coverage=result.coverage;
         if(result.morePending)again(Math.max(750,Math.min(180250,Number(result.retryAfterMs)||750)))
@@ -367,6 +371,8 @@ const WHOLE_TEXT = {
     'statement-empty-needs-confirmation': 'This month looks like it had no transactions, but the statement does not say so clearly. Check the original and confirm.',
     'statement-layout-or-reconciliation-needs-review': "The rows could not be proven to add up to this statement's balances, so nothing was filed from it.",
     'statement-layout-identity-needs-review': 'WealthFlow could not confirm this document is a bank statement.',
+    'statement-retries-exhausted': 'This statement could not be processed after many automatic tries over a day and a half (the reason is on record). It is still here, from where it stopped — open it to read it yourself.',
+    'statement-currency-differs': 'This statement is in a different currency from your account, so none of it was filed (its figures would have been counted as your own currency). Check the original.',
     'statement-cursor-or-content-changed': 'This statement read differently the second time, so nothing was filed from it. It is being read again.',
 };
 function reviewReasonText(reason) {
@@ -438,6 +444,7 @@ function drawReview() {
         note(box, `${C.INGESTED || 0} in your ledger · ${C.PROCESSED || 0} stored, being read · ${C.REVIEW || 0} in review · ${C.PENDING || 0} just found · ${C.HELD || 0} waiting on a sender decision · ${C.REFUSED || 0} not statements · ${C.FAILED_VERIFICATION || 0} forged`);
         for (const r of table.senders || []) note(box, `${r.address}: ${r.total} email${r.total === 1 ? '' : 's'} — ${r.INGESTED} ingested${r.PROCESSED ? `, ${r.PROCESSED} being read` : ''}${r.REVIEW ? `, ${r.REVIEW} in review` : ''}${r.HELD ? `, ${r.HELD} held` : ''}${r.REFUSED ? `, ${r.REFUSED} not statements` : ''}${r.FAILED_VERIFICATION ? `, ${r.FAILED_VERIFICATION} forged` : ''}`);
         if (table.stuckCount) note(box, `${table.stuckCount} not finished yet — each is retried automatically.`);
+        if (state.parked) note(box, `${state.parked} statement${state.parked === 1 ? ' is' : 's are'} paused after repeated failures and put back automatically (after 15 minutes, then 1, 6 and 24 hours), from where ${state.parked === 1 ? 'it' : 'they'} stopped. None is dropped.`);
     }
     if (coverage?.refused?.length) {
         const refusedBox = panel(`${coverage.refused.length} email${coverage.refused.length === 1 ? '' : 's'} from your banks that were not taken`);
@@ -517,7 +524,7 @@ if (typeof window !== 'undefined') {
         const text = document.getElementById('_statement_cloud_status');
         if (text) text.textContent = state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
     });
-    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, coverageSummary, retryAttemptsSummary };
+    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, coverageSummary, retryAttemptsSummary, senderFunnel };
     const start=()=>{
         if (authBound) return;
         if (window.firebase?.apps?.length && typeof window.firebase.auth === 'function') {

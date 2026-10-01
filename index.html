@@ -25462,13 +25462,41 @@ table.amort tbody tr { page-break-inside: avoid; }
             return /^[a-z0-9._%+-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(raw);
         }
 
+        /* WHAT A SENDER HAS ACTUALLY DONE, IN MESSAGES.
+         *
+         * `seenCount` goes up every time a scan walks past a message, and the scans walk the same recent mail again and
+         * again — so a bank that sends one statement a month showed "seen 555 times", a number that said nothing about
+         * mail and was read as "555 emails, none ingested". The state table has one record per MESSAGE: the distinct count,
+         * and where each one is (filed, waiting, not taken and why), is read from it whenever it is known. */
+        function _senderFunnelOf(id) {
+            let rows;
+            try { rows = window.WFStatementCloud && window.WFStatementCloud.senderFunnel ? window.WFStatementCloud.senderFunnel() : null; } catch (_) { rows = null; }
+            if (!Array.isArray(rows) || !rows.length) return null;
+            const key = String(id || '').toLowerCase();
+            const mine = key.indexOf('@') > 0 ? rows.filter((r) => r.address === key) : rows.filter((r) => String(r.address || '').endsWith('@' + key) || String(r.address || '').endsWith('.' + key));
+            if (!mine.length) return null;
+            const sum = (k) => mine.reduce((n, r) => n + (Number(r[k]) || 0), 0);
+            return { total: sum('total'), filed: sum('INGESTED'), waiting: sum('PENDING') + sum('PROCESSED'), review: sum('REVIEW'), held: sum('HELD'), refused: sum('REFUSED'), forged: sum('FAILED_VERIFICATION') };
+        }
+        function _senderFunnelText(id, fallback) {
+            const f = _senderFunnelOf(id);
+            if (!f) return fallback;
+            const parts = [f.total + (f.total === 1 ? ' email' : ' emails'), f.filed + ' filed'];
+            if (f.waiting) parts.push(f.waiting + ' waiting');
+            if (f.review) parts.push(f.review + ' to review');
+            if (f.held) parts.push(f.held + ' held for you');
+            if (f.refused) parts.push(f.refused + ' not statements');
+            if (f.forged) parts.push(f.forged + ' blocked as unauthenticated');
+            return ' \u00b7 ' + parts.join(' \u00b7 ');
+        }
+
         function _senderRow(e, buttons, scored) {
             const seen = Number(e.seenCount) || 0;
+            const counted = _senderFunnelText(e.id, seen ? ' \u00b7 scanned ' + seen + (seen === 1 ? ' time' : ' times') : '');
             return '<div class="wf-sender-row">'
                 + '<div class="wf-sender-id">'
                 +   '<div class="wf-sender-name">' + _wfEsc(e.name || e.id) + '</div>'
-                +   '<div class="wf-sender-sub">' + _wfEsc(e.id)
-                +     (seen ? ' &middot; seen ' + seen + (seen === 1 ? ' time' : ' times') : '')
+                +   '<div class="wf-sender-sub">' + _wfEsc(e.id) + _wfEsc(counted)
                 +   '</div>'
                 +   (e.lastSubject ? '<div class="wf-sender-sub">' + _wfEsc(e.lastSubject) + '</div>' : '')
                 +   (scored && scored.why && scored.why.length
@@ -25537,22 +25565,25 @@ table.amort tbody tr { page-break-inside: avoid; }
             const banks = _ownedBanks();
             if (!banks.length) return '';
             let hunt;
-            try { hunt = D.bankHunt(banks, _senders.pending); } catch (_) { return ''; }
+            try { hunt = D.bankHunt(banks, _senders.pending, _senders.approved); } catch (_) { return ''; }
             if (!hunt || !hunt.rows.length) return '';
 
             const rows = hunt.rows.map((r) => {
-                const found = r.best
+                const have = Array.isArray(r.approved) ? r.approved : [];
+                const found = have.length
+                    ? have.map((a) => '<div class="wf-hunt-addr">\u2713 ' + _wfEsc(a.address) + ' \u00b7 approved' + _wfEsc(_senderFunnelText(a.address, '')) + '</div>').join('')
+                    : r.best
                     ? '<div class="wf-hunt-addr">' + _wfEsc(r.best.address) + '</div>'
                         + (r.best.why && r.best.why.length
                             ? '<div class="wf-hunt-why">' + _wfEsc(r.best.why.join(' \u00b7 ')) + '</div>' : '')
                     : '<div class="wf-hunt-none">not found in the months searched so far</div>';
-                const act = r.best && _exactStatementAddress(r.best.address)
+                const act = !have.length && r.best && _exactStatementAddress(r.best.address)
                     ? '<button class="btn btn-primary btn-sm" data-hact="add"'
                         + ' data-haddr="' + _wfEsc(r.best.address) + '"'
                         + ' data-hbank="' + _wfEsc(r.bank) + '">'
                         + (window.WFIcon && WFIcon.has('check') ? WFIcon('check') : '') + ' Yes, that is it</button>'
                     : '';
-                return '<div class="wf-hunt-row' + (r.best ? '' : ' empty') + '">'
+                return '<div class="wf-hunt-row' + (r.best || have.length ? '' : ' empty') + '">'
                     + '<div class="wf-hunt-bank"><b>' + _wfEsc(r.bank) + '</b>' + found + '</div>'
                     + '<div class="wf-sender-acts">' + act + '</div>'
                     + '</div>';
@@ -25561,7 +25592,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return '<div class="wf-hunt">'
                 + '<div class="wf-sender-h">Your banks, and where they write from</div>'
                 + '<div class="wf-sender-note">'
-                +   _wfEsc(hunt.matched + ' of your ' + hunt.of + ' banks matched to an address so far.')
+                +   _wfEsc(hunt.matched + ' of your ' + hunt.of + (hunt.of === 1 ? ' bank has' : ' banks have') + ' an address, approved or waiting for you.')
                 +   ' Accepting one saves it under that bank\u2019s own name, so its statements file themselves.'
                 + '</div>'
                 + rows

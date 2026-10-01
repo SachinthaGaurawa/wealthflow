@@ -391,7 +391,7 @@ export function removeSender(list, id) {
  * changes a decision — an approved sender stays approved and a blocked one
  * stays blocked, and only the counters move.
  */
-export function recordSighting(list, { from = '', subject = '', now = 0, month = '' } = {}) {
+export function recordSighting(list, { from = '', subject = '', now = 0, month = '', count = true } = {}) {
     const domain = domainOf(from);
     if (!domain) return normalizeList(list);
     /* Recorded at domain level. An address-level sighting would fill the screen
@@ -408,7 +408,8 @@ export function recordSighting(list, { from = '', subject = '', now = 0, month =
         const next = {
             ...e,
             lastSeenMs: Math.max(num(e.lastSeenMs), num(now)),
-            seenCount: num(e.seenCount) + 1,
+            // `count: false` is a message already counted once: the sender is still noted as recently seen, the number does not move
+            seenCount: num(e.seenCount) + (count === false ? 0 : 1),
             lastSubject: e.status === STATUS.NEW ? String(subject || '').slice(0, 120) : e.lastSubject,
             /* Merged, never replaced. A scan walks months newest-first, so the
              * later call carries the OLDER month — overwriting would leave one

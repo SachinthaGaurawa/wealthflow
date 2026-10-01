@@ -506,6 +506,7 @@ async function ingestMailbox(db, note, env, f, res) {
     // Nothing is fetched or read that is not on record first. The cursor has not moved, so the same batch comes round again.
     if (logged.ok === false) return j(res, 503, { ok: false, error: 'state log unavailable', collectionPending: true });
     const forcedIds = new Set(Array.isArray(pending.forced) ? pending.forced.map(String) : []);
+    const freshIds = new Set(Array.isArray(logged.fresh) ? logged.fresh : []);
     let stems = null;
     for (const [offset, id] of pending.ids.slice(pending.cursor, batchEnd).entries()) {
         const via = forcedIds.has(String(id)) ? 'owner' : ((pending.cursor + offset) >= (Number(pending.viaFrom) || 0) ? String(pending.via || '') : '');
@@ -538,7 +539,10 @@ async function ingestMailbox(db, note, env, f, res) {
          * added a row to the owner's senders list. gmail-scan.js's routine
          * path applies the identical gate for the identical reason. */
         if (worthSighting(plan)) {
-            const sighting = { from: plan.from, subject: plan.subject, now: Date.now() };
+            /* A sender's count is of MESSAGES. Every scan walks the recent mail again, and counting each walk made a bank that
+             * writes once a month "seen 555 times"; only a message the state table has never held adds to it. (If the table
+             * could not say — an older store without `fresh` — the old behaviour stands: better a high count than none.) */
+            const sighting = { from: plan.from, subject: plan.subject, now: Date.now(), count: !Array.isArray(logged.fresh) || freshIds.has(String(id)) };
             sightings.push(sighting);
             seen = recordSighting(seen, sighting);
         }
