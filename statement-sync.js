@@ -31,7 +31,7 @@ const PASSWORD_BATCH = 6;
 /* Bumped when the reader or the AI behind it has changed so that a statement it could not read earlier deserves another look. Version 4: the
  * AI roster was repaired (reasoning-model empties, retired models) and the model-free reader added — thirty-four HNB statements had used up
  * their three adaptive tries (and the six-hour wait between them) during the outage and sat in review as "not waiting to be processed again". */
-const WHOLE_REPLAY_VERSION = 9;
+const WHOLE_REPLAY_VERSION = 10;   // 10: a statement with several accounts is now proven account by account (the DFCC Aug 26 one, stopped by the one-chain reading)
 /* A statement that was PART-WAY through (some rows already filed) when it stopped is resumed, not re-mapped: it is read again from its first row
  * and every row the ledger already holds is checked against the new reading by its fingerprint, so a row is never filed twice and a statement
  * whose reading really did change is refused at the first row that differs (statement-cursor-or-content-changed) — nothing is guessed.

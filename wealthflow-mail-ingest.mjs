@@ -1205,8 +1205,10 @@ export function worthSighting(plan) {
  *   4  an address with an RFC 5322 comment is read as the address; DMARC pass for the From domain vouches for it (so mail
  *      with SPF + DMARC and no DKIM, or signed by a sub-domain of the same organisation, is no longer turned away); one
  *      From naming several mailboxes is forged. Every genuine statement the version-3 rules refused is judged again.
+ *   6  a message the owner was once asked about (held) that is judged again and is no longer a question about its sender leaves the held list;
+ *      the three that kept "waiting on a sender decision" after version 5 judged them are decided again.
  */
-export const INTAKE_VERSION = 5;
+export const INTAKE_VERSION = 6;
 
 /**
  * Is this refusal one the owner would call a MISSED STATEMENT? Only mail from an

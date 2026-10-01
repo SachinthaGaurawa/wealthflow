@@ -5,6 +5,7 @@ import { textPdf } from './helpers/embedded-statements.js';
 import { readStatement } from '../statement-reader.mjs';
 import { createFirestore } from './helpers/fake-firestore.js';
 import { runStatementSync } from '../statement-sync.js';
+import { createHash } from 'node:crypto';
 import { settleStatement } from '../statement-ledger.mjs';
 
 const P = loadParser(fs);
@@ -123,5 +124,29 @@ describe('and files it: every row of both accounts, once', () => {
         expect([...data.keys()].filter(k => k.startsWith('users/u/statementReview/'))).toEqual([]);
         expect(user.expenses.map(r => r.amount).sort((a, b) => a - b)).toEqual([4000, 46000]);
         expect(user.incomeRecv.map(r => r.amount).sort((a, b) => a - b)).toEqual([1000, 30000]);
+    });
+});
+
+describe('a two-account statement that stopped before the reader could prove it is read again, and filed', () => {
+    it('the DFCC Aug 26 statement, stopped for reconciliation and already replayed once, is read again by the new reader with no question to the owner', async () => {
+        const owner = { uid: 'u', email: 'owner@example.com' }, mailPath = 'wf-mail/owner_example_com', sourcePath = `${mailPath}/items/item0`;
+        const reviewId = createHash('sha256').update(sourcePath).digest('hex');
+        const reason = 'statement-layout-or-reconciliation-needs-review';
+        const { db, data } = createFirestore({
+            [mailPath]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders: [{ id: 'statements@dfccbank.com', kind: 'address', status: 'approved', name: 'DFCC Bank', domain: 'dfccbank.com' }] },
+            'wf-statement-vault/u': { uid: 'u' },
+            'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [] },
+            [sourcePath]: { uid: 'u', bank: 'DFCC Bank', filename: 'DFCC Bank Statement - Aug 26.pdf', from: 'statements@dfccbank.com', messageId: 'm0', status: 'needs_review', reviewReason: reason, hasReview: true, filed: false, cursor: 0, wholeReplayVersion: 9, receivedMs: Date.parse('2026-09-04T05:00:00Z') },
+            ['users/u/statementReview/' + reviewId]: { uid: 'u', sourcePath, index: -1, status: 'pending', reason },
+        });
+        const f = async () => ({ ok: true, json: async () => ({ access_token: 'token' }) });
+        const loadAttachment = async () => ({ bytes: textPdf(DFCC.trim().split('\n')), filename: 'DFCC Bank Statement - Aug 26.pdf', contentSha256: 'x' });
+        const open = async () => [{ password: 'fixture-password', bank: 'DFCC Bank' }];
+        const board = async () => { throw new Error('ai-consensus-unavailable'); };
+        for (let run = 0; run < 3 && data.get(sourcePath).status !== 'filed'; run += 1) await runStatementSync({ action: 'drain', db, owner, env: {}, f, read: readStatement, open, settle: settleStatement, board, loadAttachment });
+        expect(data.get(sourcePath)).toMatchObject({ status: 'filed', filed: true, hasReview: false, wholeReplayVersion: 10 });
+        expect(data.get('users/u/statementReview/' + reviewId).status).not.toBe('pending');
+        const user = data.get('users/u');
+        expect(user.expenses).toHaveLength(2); expect(user.incomeRecv).toHaveLength(2);
     });
 });
