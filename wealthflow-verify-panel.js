@@ -81,7 +81,24 @@
         catch (_) { return null; }
     }
     function M() { return W.WFMerchants; }
-    function pending() { try { return (M() && M().pending && M().pending()) || []; } catch (_) { return []; } }
+    function impactOf(p) { try { return (M() && M().impact && M().impact(p.key)) || 0; } catch (_) { return 0; } }
+    // The questions that change the most of the owner's data come first.
+    function pending() {
+        try {
+            var list = (M() && M().pending && M().pending()) || [];
+            return list.map(function (p) { p._impact = impactOf(p); return p; })
+                .sort(function (a, b) { return (b._impact - a._impact) || ((+b.confidence || 0) - (+a.confidence || 0)); });
+        } catch (_) { return []; }
+    }
+    function autonomyLine() {
+        try {
+            var a = M() && M().autonomy && M().autonomy();
+            if (!a) return 'Verified against the web. Nothing was guessed.';
+            return 'The system settled ' + a.settledByTheSystem + ' merchant' + (a.settledByTheSystem === 1 ? '' : 's') + ' on its own'
+                + (a.waitingForYou ? ' · ' + a.waitingForYou + ' hard case' + (a.waitingForYou === 1 ? '' : 's') + ' need you' : ' · nothing needs you');
+        } catch (_) { return 'Verified against the web. Nothing was guessed.'; }
+    }
+    var SRC = { web: 'Web search', ai: 'AI board', rules: 'Rules' };
     function count() { return pending().length; }
 
     function styleOnce() {
@@ -103,7 +120,11 @@
             '<div class="wfv-name">' + esc(p.merchant || p.key) +
               (conf > 0 ? '<span class="wfv-conf">' + Math.round(conf * 100) + '% sure</span>' : '') + '</div>' +
             (p.industry ? '<div class="wfv-ind">' + esc(p.industry) + '</div>' : '') +
+            (p._impact ? '<div class="wfv-ind">Answering this will categorise ' + p._impact + ' transaction' + (p._impact === 1 ? '' : 's') + ' in your statements.</div>' : '') +
             (p.reason ? '<div class="wfv-why">Held: ' + esc(p.reason) + '</div>' : '') +
+            (Array.isArray(p.alternatives) && p.alternatives.length ? '<div class="wfv-src">' + p.alternatives.slice(0, 3).map(function (a) {
+                return '<button type="button" class="wfv-sk" data-alt="' + esc(a.category) + '">' + esc(SRC[a.source] || a.source) + ': ' + esc(a.category) + '</button>';
+            }).join('') + '</div>' : '') +
             (srcs ? '<div class="wfv-src">' + srcs + '</div>' : '') +
             '<div class="wfv-row">' +
               '<select class="wfv-sel">' + (p.type ? '' : '<option value="">Choose a category…</option>') + opts + '</select>' +
@@ -129,12 +150,15 @@
                 var done = false;
                 try { done = M().confirm(key, cat); } catch (_) {}
                 if (!done) { try { W.notify && W.notify('Could not save that.', 'error'); } catch (_) {} return; }
-                try { W.notify && W.notify('Learned: ' + cat + '. It will be filed there from now on.', 'success'); } catch (_) {}
+                var applied = 0;
+                try { applied = (M().applyLearned && M().applyLearned().changed) || 0; } catch (_) {}
+                try { W.notify && W.notify('Learned: ' + cat + (applied ? '. ' + applied + ' transaction' + (applied === 1 ? '' : 's') + ' updated.' : '. It will be filed there from now on.'), 'success'); } catch (_) {}
                 try { if (typeof W._routeAll === 'function') W._routeAll(); } catch (_) {}
                 render(body);
                 badge();
             };
-            card.querySelector('.wfv-sk').onclick = function () { card.remove(); if (!body.querySelector('.wfv-card')) render(body); };
+            card.querySelectorAll('[data-alt]').forEach(function (b) { b.onclick = function () { card.querySelector('.wfv-sel').value = b.getAttribute('data-alt'); }; });
+            card.querySelector('.wfv-row .wfv-sk').onclick = function () { card.remove(); if (!body.querySelector('.wfv-card')) render(body); };
         });
     }
 
@@ -147,13 +171,14 @@
             '<div class="wfv-sh" role="dialog" aria-modal="true">' +
               '<div class="wfv-hd">' +
                 '<div class="wfv-ic">' + ICON.shield + '</div>' +
-                '<div><h3>Merchant review</h3><p>Verified against the web. Nothing was guessed.</p></div>' +
+                '<div><h3>Merchant review</h3><p id="wfvAuto">Verified against the web. Nothing was guessed.</p></div>' +
                 '<button class="wfv-x" type="button" aria-label="Close">' + ICON.x + '</button>' +
               '</div><div class="wfv-bd" id="wfvBody"></div></div>';
         document.body.appendChild(ov);
         ov.querySelector('.wfv-x').onclick = close;
         ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
         render(ov.querySelector('#wfvBody'));
+        try { ov.querySelector('#wfvAuto').textContent = autonomyLine(); } catch (_) {}
     }
     function close() { var o = document.getElementById('wfvOverlay'); if (o) o.remove(); }
 

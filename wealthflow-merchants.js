@@ -236,7 +236,7 @@
      * writes it, which is the only way it can change from under us — a stale
      * learned map would file a merchant into the category the user had just
      * corrected, so the invalidation matters more than the speed does. */
-    var _learnedCache = null;
+    var _learnedCache = null, _lidx = null;
     function _loadLearned() {
         if (_learnedCache) return _learnedCache;
         try { _learnedCache = JSON.parse(root.localStorage.getItem(LS_LEARN) || '{}') || {}; }
@@ -244,18 +244,63 @@
         return _learnedCache;
     }
     function _saveLearned(o) {
-        _learnedCache = o || {};
+        _learnedCache = o || {}; _lidx = null;
         _clsForget();          // the learned map is an input to every classification
         try { root.localStorage.setItem(LS_LEARN, JSON.stringify(o)); } catch (_) {}
     }
     /* Anything that changes the map outside _saveLearned — another tab, a cloud
      * sync, a manual edit — must be able to drop the cache. */
-    function _forgetLearned() { _learnedCache = null; _clsForget(); }
+    function _forgetLearned() { _learnedCache = null; _lidx = null; _clsForget(); }
     // a stable merchant key from a noisy narration: strip prefix, drop trailing city/refs,
     // keep the first strong tokens.
     function merchantKey(desc) {
         var s = norm(stripPrefix(desc)).replace(/\b(colombo|kandy|kurunegala|kuliyapitiya|negombo|galle|matara|jaffna|gampaha|kaluthara|kalutara|dambulla|homagama|nugegoda|wellampitiya|ibbagamuwa|meerigama|mirigama|maharagama|moratuwa|panadura|ja ela|jaela|wattala|dehiwala|ratmalana|pvt|ltd|plc|private|limited|the|and)\b/g, ' ').replace(/\d{4,}/g, ' ').replace(/\s+/g, ' ').trim();
         return s.split(' ').slice(0, 4).join(' ').trim();
+    }
+
+    /* The owner's learned map, asked the way a person would ask it. Learned keys are the first four tokens of a
+     * narration as it looked the day it was learned — "keells super" — and the same shop arrives next month as
+     * "KEELLS SUPER WELLAWATTE 0231" or "POS KEELLS SUPER COLOMBO". An exact-key lookup only ever found the
+     * narration it had seen; this finds the key whose every word is in the new narration (longest first, so
+     * "amazon prime" beats "amazon"), and only for keys that are specific enough to mean one business: two or more
+     * words, or one word of six letters or more. */
+    var _TOKEN_NOISE = /\b(pos|ib|ceft|slips|crm|atm|dcc|pvt|pv|ltd|lt|plc|limited|private|the|and|of|co)\b/g;
+    function _tokens(desc) {
+        var t = norm(stripPrefix(desc)).replace(_TOKEN_NOISE, ' ').replace(/\b\d+\b/g, ' ');
+        var seen = {}, out = [];
+        t.split(' ').forEach(function (w) { if (w && !seen[w]) { seen[w] = 1; out.push(w); } });
+        return out;
+    }
+    function _core(kt) { return kt.length >= 2 ? kt.slice(0, 2) : (kt.length === 1 && kt[0].length >= 6 ? kt : null); }
+    // The learned map, tokenised once per change rather than once per narration.
+    function _learnedIndex() {
+        if (_lidx) return _lidx;
+        var o = _loadLearned(), cores = {}, list = [];
+        Object.keys(o).forEach(function (k) {
+            var e = o[k]; if (!e || !e.category) return;
+            var kt = _tokens(k), c = _core(kt);
+            list.push({ key: k, e: e, kt: kt, c: c });
+            // the first two words of a learned key are the business; the rest is often a branch or a town. A core
+            // counts only when every learned key that shares it agrees on the category.
+            if (c) { var id = c.join(' '); cores[id] = cores[id] === undefined || cores[id] === e.category ? e.category : null; }
+        });
+        return (_lidx = { o: o, list: list, cores: cores });
+    }
+    function _learnedHit(raw) {
+        var ix = _learnedIndex(), mk = merchantKey(raw);
+        if (mk && ix.o[mk] && ix.o[mk].category) return { key: mk, e: ix.o[mk], exact: true };
+        var have = {}; _tokens(raw).forEach(function (w) { have[w] = 1; });
+        var best = null;
+        for (var i = 0; i < ix.list.length; i++) {
+            var it = ix.list[i], c = it.c;
+            if (!c) continue;
+            var full = true; for (var a = 0; a < it.kt.length; a++) if (!have[it.kt[a]]) { full = false; break; }
+            var core = !full && c.every(function (w) { return have[w]; }) && ix.cores[c.join(' ')] === it.e.category;
+            if (!full && !core) continue;
+            var score = (full ? it.kt : c).join('').length - (full ? 0 : 0.5);
+            if (!best || score > best.score || (score === best.score && (it.e.n || 0) > (best.e.n || 0))) best = { key: it.key, e: it.e, score: score, exact: false };
+        }
+        return best;
     }
 
     function _matchRegistry(nd, gd) {
@@ -498,10 +543,11 @@
         }
 
         // 3) learned override (user-confirmed memory)
-        var learned = _loadLearned(); var mk = merchantKey(raw);
-        if (mk && learned[mk] && learned[mk].category) {
+        var lh = _learnedHit(raw);
+        if (lh) {
+            var learned = {}; learned[lh.key] = lh.e; var mk = lh.key;
             var lc = learned[mk].category;
-            out.category = lc; out.matched = 'learned:' + mk; out.confidence = 0.97;
+            out.category = lc; out.matched = 'learned:' + mk; out.confidence = lh.exact ? 0.97 : 0.96;
             out.goesTo = SUB_CATS[lc] ? 'subscription' : (learned[mk].tab || 'expenses');
             if (SUB_CATS[lc]) { out.subName = _subName(raw, lc); out.subPhone = phoneOf(raw) || ''; }
             out.type = out.category === 'Fuel' ? 'fuel' : (out.category === 'Bank Charges' ? 'service_fee' : 'purchase');
@@ -727,6 +773,7 @@
             if (!key || key.length < 3 || /^\d+$/.test(key.replace(/\s/g, ''))) return null;
             var q = _loadQ(LS_UNKNOWN);
             if (q.some(function (x) { return x.key === key; })) return null;
+            if (_loadQ(LS_PENDING).some(function (h) { return h.key === key; })) return null;   // already with the owner
             q.push({ key: key, raw: String(desc || '').slice(0, 120), name: a.isolated_merchant_name, at: Date.now() });
             _saveQ(LS_UNKNOWN, q);
             return key;
@@ -735,26 +782,25 @@
     function unknowns() { return _loadQ(LS_UNKNOWN); }
     function pending() { return _loadQ(LS_PENDING); }
 
-    // The prompt MUST contain "Return only JSON" and a {"vendor":...} example: that is
-    // exactly what ai.js's wantsJSON regex looks for, and it is what switches the backend
-    // from mode=fastest (ONE engine) to mode=consensus (ALL 16 engines, then a field-wise
-    // MAJORITY VOTE on vendor/category/destination). Without it we were trusting a single
-    // model's guess and calling it consensus.
+    /* ── THE QUESTION PUT TO THE AI BOARD ──────────────────────────────────────
+     *
+     * The board accepts an answer only when EVERY engine's JSON is identical, key for key. This question used to ask
+     * for {"vendor","category","destination","confidence","why"} — a free-text sentence and a decimal from a dozen
+     * different models, which are never identical — so the board could not agree on anything, every merchant came
+     * back "the AI could not read this merchant", and every one was held for the owner. The question is now two
+     * closed fields, both from fixed lists. Identical answers are then possible, and when a dozen independent engines
+     * do give the same two words that agreement IS the evidence: no engine's own confidence is asked for or trusted. */
     var SYS = [
-        'You are the WealthFlow Autonomous Merchant Verification Engine for Sri Lanka.',
+        'You are the WealthFlow Merchant Verification Board for Sri Lanka.',
         'Identify the merchant in a raw bank narration: discard POS/terminal codes, city names and reference numbers.',
-        'Deduce the industry from the text. A 10-digit number starting 077/071/070/078/076/075/074/072 is a Sri Lankan mobile -> Telecom.',
+        'Deduce its industry from the text. A 10-digit number starting 077/071/070/078/076/075/074/072 is a Sri Lankan mobile -> Telecom.',
         '"Life"/"Insurance"/"Assurance" -> Insurance. CEB/LECO/Water Board -> Utilities. Supermarkets -> Groceries.',
-        'If the entity could honestly belong to more than one category, LOWER the confidence. Never invent a merchant.',
         'category must be exactly one of: ' + CATEGORIES.join(', ') + '.',
-        'A bank\'s own charge is Bank Charges. Cash drawn against a card is Cash Advance; '
-            + 'cash taken from an ATM with your own money is Cash Withdrawal. '
-            + 'If none of them honestly fits, answer Other with a LOW confidence rather than '
-            + 'forcing the nearest merchant category.',
-        'destination must be exactly "subscription" or "expenses".',
-        'confidence is 0.00-1.00. Use >= 0.95 ONLY when the merchant is unmistakable. A low score is CORRECT and safe; a confident wrong answer is a system failure.',
+        'A bank\'s own charge is Bank Charges. Cash drawn against a card is Cash Advance; cash from an ATM with your own money is Cash Withdrawal.',
+        'destination must be exactly "subscription" (recurring services) or "expenses".',
+        'If the entity could honestly belong to more than one category, or you cannot tell what it is, answer {"category":"Other","destination":"expenses"}. A wrong confident answer is a system failure; "Other" is always safe.',
         'Return only JSON, no prose and no markdown fences, in exactly this shape:',
-        '{"vendor":"...","category":"...","destination":"subscription|expenses","confidence":0.00,"why":"..."}'
+        '{"category":"...","destination":"subscription|expenses"}'
     ].join('\n');
 
     // ── SEARCH-FIRST verification (the primary path) ─────────────────────────
@@ -762,99 +808,165 @@
     // those results to one fast model, and refuses to answer unless it can cite a URL
     // that really appeared in them. Evidence beats recall — a model cannot invent a
     // shop that does not exist.
-    function _verify(item) {
-        return fetch(VERIFY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ merchant: item.raw }) })
+    function _verify(item, query) {
+        return fetch(VERIFY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ merchant: String(query || item.raw) }) })
             .then(function (r) { return r && r.ok ? r.json() : null; })
             .then(function (v) { return { v: v, item: item }; })
             .catch(function () { return { v: null, item: item }; });
     }
-
-    // ── 16-engine consensus (the fallback, when search finds nothing) ────────
-    function _askOne(item) {
-        var body = { prompt: SYS + '\n\nNarration: "' + String(item.raw).replace(/"/g, "'") + '"', mode: 'consensus', temperature: 0, maxTokens: 400 };
-        return fetch(AI_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-            .then(function (r) { return r && r.ok ? r.json() : null; })
-            .then(function (j) {
-                if (!j) return { entry: null, engines: 0, item: item };
-                var m = String(j.reply || '').match(/\{[\s\S]*\}/);
-                if (!m) return { entry: null, engines: 0, item: item };
-                var e = null; try { e = JSON.parse(m[0]); } catch (_) { return { entry: null, engines: 0, item: item }; }
-                return { entry: e, engines: +(j.consensusOf || 1), item: item };
-            })
-            .catch(function () { return { entry: null, engines: 0, item: item }; });
+    /* A narration is noisy and a search engine is literal: "IB POS ANURA TRADING CO 0231 KUL" finds nothing where
+     * "anura trading" finds the shop. When the web has no record under the narration, ask again under the cleaned
+     * name, then under its first two words — never when the answer was "search is not configured". */
+    function _queries(item) {
+        var out = [String(item.raw || '')], iso = isolate(item.raw), two = iso.split(' ').slice(0, 2).join(' ');
+        if (iso && iso.length >= 3 && out.indexOf(iso) < 0) out.push(iso);
+        if (two && two.length >= 4 && out.indexOf(two) < 0) out.push(two);
+        return out;
+    }
+    function _verifyBest(item) {
+        var qs = _queries(item), i = 0;
+        function next() {
+            var q = qs[i++];
+            return _verify(item, q).then(function (r) {
+                var v = r.v;
+                var nothing = v && v.exists !== true && (v.abstain_reason === 'no_search_results' || v.abstain_reason == null || v.abstain_reason === 'no_valid_citation');
+                if (nothing && i < qs.length) return next();
+                return r;
+            });
+        }
+        return next();
     }
 
+    // ── the AI board (asked only when the web could not settle it) ───────────
+    function _askOne(item) {
+        var body = { prompt: SYS + '\n\nNarration: "' + String(item.raw).replace(/"/g, "'") + '"', financialDecision: true, temperature: 0, maxTokens: 120 };
+        return fetch(AI_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+            .then(function (r) { return r ? r.json().catch(function () { return null; }) : null; })
+            .then(function (j) {
+                if (!j || j.unanimous !== true || j.trustworthy !== true) return { entry: null, engines: +(j && j.consensusOf) || 0, unanimous: false, item: item };
+                var e = null; try { e = JSON.parse(String(j.reply || '')); } catch (_) { return { entry: null, engines: 0, unanimous: false, item: item }; }
+                if (!e || typeof e !== 'object' || Object.keys(e).length !== 2) return { entry: null, engines: 0, unanimous: false, item: item };
+                return { entry: e, engines: +(j.consensusOf || 0), unanimous: true, item: item };
+            })
+            .catch(function () { return { entry: null, engines: 0, unanimous: false, item: item }; });
+    }
+
+    /* ── THE DECISION ─────────────────────────────────────────────────────────
+     * A merchant is settled on its own — nothing asked of the owner — when one of these holds, and only these:
+     *   web      the web search found the business, cited a real page, and is >= 0.95 sure;
+     *   web+ai   the search (>= 0.85, cited) and the unanimous AI board name the SAME category: two independent
+     *            witnesses, neither enough alone to clear the gate, agreeing;
+     *   ai       the unanimous AI board alone (>= 5 engines, identical answer), when nothing in the text is ambiguous
+     *            between categories and nothing the system already knows contradicts it.
+     * Anything else — the witnesses disagree, the web is silent and the board split, the category is "Other" — is a
+     * hard case, and only hard cases are put to the owner, with what each witness said. */
+    function _decide(src, v, a) {
+        var cited = !!(v && Array.isArray(v.evidence_urls) && v.evidence_urls.length > 0);
+        var vCat = (v && v.exists === true && v.category && VALID_CATS[v.category] && cited) ? v.category : '';
+        var vConf = vCat ? (+v.confidence || 0) : 0;
+        var e = a && a.entry;
+        var aCat = (a && a.unanimous && e && e.category && VALID_CATS[e.category] && e.category !== 'Other') ? e.category : '';
+        var aDest = aCat && e.destination === 'subscription' ? 'subscription' : 'expenses';
+        var nd = norm(src.raw), gd = glue(src.raw);
+        var amb = ambiguity(nd, gd), known = classify(src.raw, 'debit');
+        var alt = [];
+        if (vCat) alt.push({ category: vCat, source: 'web', conf: +vConf.toFixed(2) });
+        if (aCat) alt.push({ category: aCat, source: 'ai', conf: 0.96 });
+        if (vCat && aCat && vCat !== aCat) return { accept: false, why: 'conflict', alt: alt };
+        if (vCat && vConf >= WRITE_GATE) return { accept: true, category: vCat, dest: (v.destination === 'subscription' || SUB_CATS[vCat]) ? 'subscription' : 'expenses', conf: vConf, how: aCat === vCat ? 'web+ai' : 'web', alt: alt };
+        if (vCat && vConf >= 0.85 && aCat === vCat) return { accept: true, category: vCat, dest: (aDest === 'subscription' || SUB_CATS[vCat]) ? 'subscription' : 'expenses', conf: 0.96, how: 'web+ai', alt: alt };
+        if (aCat) {
+            if (amb && amb.indexOf(aCat) < 0) return { accept: false, why: 'ambiguous', alt: alt };
+            if (known && known.category && known.confidence >= 0.85 && known.category !== aCat) { alt.push({ category: known.category, source: 'rules', conf: +known.confidence.toFixed(2) }); return { accept: false, why: 'contradicts-rules', alt: alt }; }
+            return { accept: true, category: aCat, dest: (aDest === 'subscription' || SUB_CATS[aCat]) ? 'subscription' : 'expenses', conf: 0.96, how: 'ai', alt: alt };
+        }
+        return { accept: false, why: a && a.unanimous ? 'board-unsure' : a && a.engines ? 'board-split' : 'no-answer', alt: alt };
+    }
+    var BACKOFF = [3600e3, 6 * 3600e3, 24 * 3600e3, 72 * 3600e3];
+    var REASON = {
+        conflict: 'the web and the AI board named different categories',
+        ambiguous: 'the text fits more than one category and the witnesses did not settle it',
+        'contradicts-rules': 'the AI board disagrees with what the rules already know about this name',
+        'board-split': 'the AI engines did not all give the same answer',
+        'board-unsure': 'the AI engines agreed only that they cannot tell what this is',
+        'no-answer': 'neither the web nor the AI board could identify this merchant'
+    };
+
     // Resolve every merchant YOUR statements contain that nothing could identify.
-    //   1. SEARCH-FIRST  — /api/verify must find the business AND cite a real URL.
-    //   2. FALLBACK      — if search finds nothing, fall back to the 16-engine consensus.
-    //   3. HOLD          — if neither clears 0.95, nothing is written. It waits for you,
-    //                      with the reason and the evidence links attached.
+    //   1. SEARCH-FIRST  — /api/verify must find the business AND cite a real URL (three names tried).
+    //   2. THE BOARD     — only when the web cannot settle it: one closed question, identical answers needed.
+    //   3. DECIDE        — see _decide(). Two witnesses may agree where neither clears the gate alone.
+    //   4. HOLD          — a hard case waits for the owner with every witness's answer attached, is tried again
+    //                      later (1h, 6h, a day, three days) and is asked about only if it stays unresolved.
+    function _resolveBatch(batch, heldBefore) {
+        var holdList = _loadQ(LS_PENDING), stats = { verified: 0, byAi: 0, held: 0 };
+        return Promise.all(batch.map(function (src) {
+            return _verifyBest(src).then(function (r) {
+                var v = r.v, cited = !!(v && Array.isArray(v.evidence_urls) && v.evidence_urls.length > 0);
+                if (v && v.exists === true && v.category && VALID_CATS[v.category] && cited && (+v.confidence || 0) >= WRITE_GATE) return { src: src, v: v, a: null };
+                return _askOne(src).then(function (a) { return { src: src, v: v, a: a }; });
+            });
+        })).then(function (results) {
+            var learnedNow = 0;
+            results.forEach(function (x) {
+                var d = _decide(x.src, x.v, x.a);
+                if (d.accept) {
+                    learn(x.src.raw, d.dest, d.category, d.conf, d.how);
+                    learnedNow++;
+                    if (d.how === 'web') stats.verified++; else stats.byAi++;
+                    // a held copy of the same merchant is settled now
+                    holdList = holdList.filter(function (h) { return h.key !== x.src.key; });
+                    return;
+                }
+                stats.held++;
+                var prev = (heldBefore && heldBefore[x.src.key]) || holdList.filter(function (h) { return h.key === x.src.key; })[0] || null;
+                var tries = ((prev && prev.tries) || 0) + 1;
+                var v = x.v || {};
+                var rec = {
+                    key: x.src.key, raw: x.src.raw,
+                    merchant: v.vendor || x.src.name,
+                    type: d.alt && d.alt[0] ? d.alt[0].category : '',
+                    goesTo: d.alt && d.alt[0] && SUB_CATS[d.alt[0].category] ? 'subscription' : 'expenses',
+                    confidence: +Math.max.apply(null, [0].concat((d.alt || []).map(function (z) { return z.conf; }))).toFixed(2),
+                    alternatives: d.alt || [],
+                    evidence: v.evidence_urls || [], industry: v.industry || '',
+                    why: v.abstain_reason || '',
+                    reason: v.abstain_reason === 'search_not_configured' && d.why === 'no-answer' ? 'web search is not configured and the AI board could not identify it'
+                          : REASON[d.why] || 'could not be verified',
+                    tries: tries, nextAt: Date.now() + BACKOFF[Math.min(tries - 1, BACKOFF.length - 1)], at: (prev && prev.at) || Date.now()
+                };
+                holdList = holdList.filter(function (h) { return h.key !== rec.key; });
+                holdList.push(rec);
+            });
+            _saveQ(LS_PENDING, holdList);
+            return { resolved: stats.verified + stats.byAi, verified: stats.verified, byAi: stats.byAi, held: stats.held, learnedNow: learnedNow };
+        });
+    }
     function resolveUnknowns(limit) {
         try {
             if (typeof fetch !== 'function') return Promise.resolve({ resolved: 0, held: 0, note: 'no fetch' });
             var q = _loadQ(LS_UNKNOWN);
             if (!q.length) return Promise.resolve({ resolved: 0, held: 0, note: 'nothing unknown' });
             var batch = q.slice(0, Math.max(1, Math.min(12, limit || 8)));
-
-            return Promise.all(batch.map(_verify)).then(function (vres) {
-                var verified = 0, needFallback = [], holdList = _loadQ(LS_PENDING);
-
-                vres.forEach(function (r) {
-                    var v = r.v, src = r.item;
-                    var cited = v && Array.isArray(v.evidence_urls) && v.evidence_urls.length > 0;
-                    if (v && v.exists === true && v.category && VALID_CATS[v.category] && cited && (+v.confidence || 0) >= WRITE_GATE) {
-                        learn(src.raw, (v.destination === 'subscription' || SUB_CATS[v.category]) ? 'subscription' : 'expenses', v.category, +v.confidence);
-                        verified++;
-                        return;
-                    }
-                    needFallback.push({ item: src, v: v });
-                });
-
-                if (!needFallback.length) return { verified: verified, fb: [], holdList: holdList };
-                return Promise.all(needFallback.map(function (x) { return _askOne(x.item); })).then(function (fb) {
-                    return { verified: verified, fb: fb, holdList: holdList, vmap: needFallback };
-                });
-            }).then(function (stage) {
-                var resolved = stage.verified, held = 0, holdList = stage.holdList;
-                (stage.fb || []).forEach(function (r, i) {
-                    var src = r.item, e = r.entry;
-                    var vprev = (stage.vmap && stage.vmap[i] && stage.vmap[i].v) || null;
-                    var cat = e && e.category, conf = e ? (+e.confidence || 0) : 0;
-                    var agreed = r.engines >= 2;
-                    if (e && cat && VALID_CATS[cat] && agreed && conf >= WRITE_GATE) {
-                        learn(src.raw, (e.destination === 'subscription' || SUB_CATS[cat]) ? 'subscription' : 'expenses', cat, conf);
-                        resolved++;
-                        return;
-                    }
-                    held++;
-                    if (!holdList.some(function (h) { return h.key === src.key; })) {
-                        holdList.push({
-                            key: src.key, raw: src.raw,
-                            merchant: (vprev && vprev.vendor) || (e && e.vendor) || src.name,
-                            type: (cat && VALID_CATS[cat]) ? cat : ((vprev && vprev.category) || ''),
-                            goesTo: (cat && SUB_CATS[cat]) ? 'subscription' : 'expenses',
-                            confidence: +Math.max(conf, (vprev && +vprev.confidence) || 0).toFixed(2),
-                            evidence: (vprev && vprev.evidence_urls) || [],
-                            industry: (vprev && vprev.industry) || '',
-                            why: (e && e.why) || (vprev && vprev.abstain_reason) || '',
-                            reason: (vprev && vprev.abstain_reason === 'search_not_configured') ? 'web search is not configured — add SERPER_API_KEY in Vercel'
-                                  : (vprev && vprev.abstain_reason === 'no_search_results') ? 'the web has no record of this merchant'
-                                  : (vprev && vprev.abstain_reason === 'no_valid_citation') ? 'the AI could not cite a real source — refused'
-                                  : !e ? 'the AI could not read this merchant'
-                                  : !agreed ? 'only one engine answered — not a consensus'
-                                  : !VALID_CATS[cat] ? 'the category was outside the taxonomy'
-                                  : 'below the ' + WRITE_GATE + ' confidence gate',
-                            at: Date.now()
-                        });
-                    }
-                });
-                _saveQ(LS_PENDING, holdList);
+            return _resolveBatch(batch).then(function (r) {
                 var keys = {}; batch.forEach(function (x) { keys[x.key] = 1; });
-                _saveQ(LS_UNKNOWN, q.filter(function (x) { return !keys[x.key]; }));
-                try { root.console && root.console.log('[WFMerchants] verified ' + stage.verified + ' by web search, ' + (resolved - stage.verified) + ' by consensus, ' + held + ' held'); } catch (_) {}
-                return { resolved: resolved, verified: stage.verified, held: held, note: 'search-first, gate ' + WRITE_GATE };
+                _saveQ(LS_UNKNOWN, _loadQ(LS_UNKNOWN).filter(function (x) { return !keys[x.key]; }));
+                try { root.console && root.console.log('[WFMerchants] settled ' + r.resolved + ' on its own (' + r.verified + ' web, ' + r.byAi + ' AI board), ' + r.held + ' need you'); } catch (_) {}
+                r.note = 'search-first, gate ' + WRITE_GATE; return r;
             }).catch(function () { return { resolved: 0, held: 0, note: 'verification unreachable' }; });
         } catch (_) { return Promise.resolve({ resolved: 0, held: 0, note: 'error' }); }
+    }
+    // A held merchant whose next attempt is due is asked again (the web changes, engines come back, search gets
+    // configured). Once it has been tried MAX_TRIES times it stays with the owner and is not asked again.
+    var MAX_TRIES = 4;
+    function reconsider(limit) {
+        try {
+            var now = Date.now(), hold = _loadQ(LS_PENDING), due = hold.filter(function (h) { return (h.tries || 1) < MAX_TRIES && (+h.nextAt || 0) <= now; }).slice(0, Math.max(1, Math.min(6, limit || 4)));
+            if (!due.length || typeof fetch !== 'function') return Promise.resolve({ resolved: 0, held: 0, retried: 0 });
+            var before = {}; due.forEach(function (h) { before[h.key] = h; });
+            return _resolveBatch(due.map(function (h) { return { key: h.key, raw: h.raw, name: h.merchant, at: h.at }; }), before)
+                .then(function (r) { r.retried = due.length; return r; }).catch(function () { return { resolved: 0, held: 0, retried: 0 }; });
+        } catch (_) { return Promise.resolve({ resolved: 0, held: 0, retried: 0 }); }
     }
 
     // Accept a held merchant the user confirmed (their word beats any model).
@@ -871,7 +983,7 @@
 
     // ── learning: remember a confirmed mapping so it's instant next time ────────
     //     GATED: nothing below 0.95 is ever written to the registry.
-    function learn(desc, tab, category, confidence) {
+    function learn(desc, tab, category, confidence, how) {
         try {
             if (!desc || !category) return;
             if (!VALID_CATS[category]) return;                       // never store a category outside the taxonomy
@@ -880,7 +992,7 @@
             // don't learn pure person-transfers or numeric-only keys
             if (/^\d+$/.test(mk.replace(/\s/g, ''))) return;
             var o = _loadLearned();
-            o[mk] = { category: category, tab: tab || (SUB_CATS[category] ? 'subscription' : 'expenses'), n: (o[mk] && o[mk].n || 0) + 1, conf: confidence == null ? 1 : +confidence, ts: Date.now() };
+            o[mk] = { category: category, tab: tab || (SUB_CATS[category] ? 'subscription' : 'expenses'), n: (o[mk] && o[mk].n || 0) + 1, conf: confidence == null ? 1 : +confidence, ts: Date.now(), src: how || (o[mk] && o[mk].src) || 'user' };
             _saveLearned(o);
         } catch (_) {}
     }
@@ -909,9 +1021,114 @@
         _saveLearned(o); return n;
     }
 
+    /* ── AUTOPILOT ────────────────────────────────────────────────────────────
+     * Statements filed by the server arrive with a category and, for a merchant nothing recognised, "Other". Nothing
+     * asked anyone about them, because the merchant queue was fed only by manual imports. This sweeps the rows a
+     * statement filed and left generic: what the learned map, the registry or an industry word already knows is
+     * applied at once; what is still unknown joins the queue and is settled by the web and the AI board; what stays
+     * hard waits for the owner, is tried again later, and is applied to every matching row the moment it is answered.
+     * It never touches a row the owner entered or one that already has a real category. */
+    var GENERIC = { '': 1, other: 1, others: 1, uncategorized: 1, uncategorised: 1, 'card purchase': 1 };
+    var TARGETS = [{ key: 'expenses', field: 'cat', dest: 'expenses' }, { key: 'cconetime', field: 'category', dest: 'cc' }, { key: 'ccinstall', field: 'category', dest: 'cc' }];
+    function _generic(c) { return !!GENERIC[String(c == null ? '' : c).trim().toLowerCase()]; }
+    function _fromStatement(r) { return !!r && (r.source === 'statement' || /^wf-mail\//.test(String(r.statementKey || ''))); }
+    function _descOf(r) { return String(r.desc || r.description || r.name || r.narration || ''); }
+    function _db() { var d = root.DB; return d && typeof d.get === 'function' && typeof d.set === 'function' ? d : null; }
+    function _statementRows(fn) {
+        var DB = _db(); if (!DB) return;
+        TARGETS.forEach(function (t) {
+            var arr; try { arr = DB.get(t.key); } catch (_) { arr = null; }
+            if (Array.isArray(arr)) fn(t, arr);
+        });
+    }
+    // What is already known, applied to the statement rows that are still generic. Returns how many rows changed.
+    function applyLearned() {
+        var changed = 0;
+        _statementRows(function (t, arr) {
+            var dirty = false;
+            arr.forEach(function (rec) {
+                if (!_fromStatement(rec) || !_generic(rec[t.field])) return;
+                var desc = _descOf(rec); if (!desc) return;
+                var c = classify(desc, 'debit');
+                // a category is applied only when the classifier is sure and it is a spending category (a card
+                // payment, a transfer or a subscription is routed somewhere else, not recategorised in place)
+                if (!c.category || c.confidence < 0.85 || c.goesTo === 'cc_payment' || c.category === 'Card Payment' || _generic(c.category)) return;
+                if (c.goesTo === 'subscription' && t.key === 'expenses' && !VALID_CATS[c.category]) return;
+                rec[t.field] = c.category; rec.categorySource = 'merchant-engine'; dirty = true; changed++;
+            });
+            if (dirty) { try { _db().set(t.key, arr); } catch (_) {} }
+        });
+        return { changed: changed };
+    }
+    // Distinct merchants still unknown among the generic statement rows, queued for verification (bounded per run).
+    function _discoverFromRecords(max) {
+        var n = 0, seen = {};
+        _statementRows(function (t, arr) {
+            arr.forEach(function (rec) {
+                if (n >= (max || 40) || !_fromStatement(rec) || !_generic(rec[t.field])) return;
+                var desc = _descOf(rec), k = merchantKey(desc), c = _core(_tokens(desc)), id = c ? c.join(' ') : k;
+                if (!k || seen[id]) return; seen[id] = 1;   // one question per business, however many narrations it has
+                if (discover(desc, 'debit')) n++;
+            });
+        });
+        return n;
+    }
+    // How many statement rows a merchant's answer will change — what the owner needs to see to rank the questions.
+    function impact(key) {
+        var n = 0;
+        var core = _core(_tokens(key));
+        _statementRows(function (t, arr) {
+            arr.forEach(function (rec) {
+                if (!_fromStatement(rec) || !_generic(rec[t.field])) return;
+                var d = _descOf(rec);
+                if (merchantKey(d) === key) { n++; return; }
+                if (!core) return;
+                var have = {}; _tokens(d).forEach(function (w) { have[w] = 1; });
+                if (core.every(function (w) { return have[w]; })) n++;
+            });
+        });
+        return n;
+    }
+    var _auto = { running: false, last: 0 }, LS_AUTO = 'wf_merchant_auto';
+    function autonomy() {
+        var o = _loadLearned(), auto = 0, user = 0;
+        Object.keys(o).forEach(function (k) { var s2 = o[k] && o[k].src; if (s2 === 'web' || s2 === 'ai' || s2 === 'web+ai') auto++; else if (o[k]) user++; });
+        var run = {}; try { run = JSON.parse(root.localStorage.getItem(LS_AUTO) || '{}') || {}; } catch (_) {}
+        return { settledByTheSystem: auto, settledByYou: user, waitingForYou: pending().length, lastRun: +run.at || 0, lastApplied: +run.applied || 0 };
+    }
+    function autopilot(opts) {
+        opts = opts || {};
+        var now = Date.now();
+        if (_auto.running || (!opts.force && now - _auto.last < 600000) || !_db()) return Promise.resolve({ skipped: true });
+        _auto.running = true; _auto.last = now;
+        var out = { applied: 0, discovered: 0, resolved: 0, held: 0, retried: 0 };
+        try { out.applied += applyLearned().changed; } catch (_) {}
+        try { out.discovered = _discoverFromRecords(); } catch (_) {}
+        return resolveUnknowns(8).then(function (r) {
+            out.resolved += r.resolved || 0; out.held += r.held || 0;
+            return reconsider(4);
+        }).then(function (r2) {
+            out.resolved += r2.resolved || 0; out.retried = r2.retried || 0;
+            try { out.applied += applyLearned().changed; } catch (_) {}
+            try { root.localStorage.setItem(LS_AUTO, JSON.stringify({ at: Date.now(), applied: out.applied })); } catch (_) {}
+            _auto.running = false;
+            try { if (out.applied && typeof root._routeAll === 'function') root._routeAll(); } catch (_) {}
+            try { root.WFVerifyPanel && root.WFVerifyPanel.badge && root.WFVerifyPanel.badge(); } catch (_) {}
+            return out;
+        }).catch(function () { _auto.running = false; return out; });
+    }
+    // Self-starting in a browser only: a little after load, every quarter of an hour, and whenever the app comes back.
+    try {
+        if (root.document && typeof root.addEventListener === 'function' && typeof setTimeout === 'function') {
+            setTimeout(function () { autopilot(); }, 25000);
+            setInterval(function () { if (root.document.visibilityState !== 'hidden') autopilot(); }, 900000);
+            root.document.addEventListener('visibilitychange', function () { if (root.document.visibilityState === 'visible') setTimeout(function () { autopilot(); }, 4000); });
+        }
+    } catch (_) {}
+
     try { _setRemote(_loadRemoteCache()); } catch (_) {}   // hydrate last verified list immediately
     try { verify(); } catch (_) {}                          // heal any learned conflicts on load
     try { if (typeof fetch === 'function') syncRemote(); } catch (_) {}   // refresh in the background (throttled)
-    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, CATEGORIES: CATEGORIES, forgetLearned: _forgetLearned, _clsForget: _clsForget, _clsStats: _clsStats, epoch: epoch, VERSION: VERSION };
+    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, CATEGORIES: CATEGORIES, forgetLearned: _forgetLearned, reconsider: reconsider, autopilot: autopilot, applyLearned: applyLearned, impact: impact, autonomy: autonomy, _learnedHit: _learnedHit, SYS: SYS, _clsForget: _clsForget, _clsStats: _clsStats, epoch: epoch, VERSION: VERSION };
     try { root.console && root.console.log('[WFMerchants] ✓ v' + VERSION + ' — ' + stats().seedKeywords + ' merchant signals across ' + REGISTRY.length + ' categories'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -459,6 +459,47 @@ export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {
     return dismissed;
 }
 
+// A statement row the ledger says was filed but the owner's data no longer holds, and nobody deleted: a device
+// that had not yet seen it pushed its own copy of the list over it. The ledger keeps the statement as FILED, so
+// without this the row would be missing for good. The statement is read again and only the rows that are missing
+// are filed (every other row is already in the ledger and is skipped as a duplicate). A row the owner deleted has
+// a tombstone and is left alone; so are rows filed before a factory reset, and rows older than the tombstones'
+// 100-day life (a deletion that old could no longer be told from a loss).
+export const ROW_HEAL_VERSION = 1, ROW_HEAL_MAX = 3, ROW_HEAL_WINDOW_MS = 45 * 86400000;
+const ROW_KEYS = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'];
+export async function healMissingRows({ db, uid, limit = 5, now = Date.now() }) {
+    const userRef = db.collection('users').doc(uid);
+    const user = (await userRef.get()).data() || {};
+    const tomb = user._tomb && typeof user._tomb === 'object' ? user._tomb : {};
+    const wiped = Number(user._wipedAt) || 0;
+    const have = {}, missing = new Map();
+    const filed = await userRef.collection('statementLedger').where('status', '==', 'filed').limit(500).get();
+    for (const doc of filed.docs) {
+        const entry = doc.data();
+        if (entry.uid !== uid || !ROW_KEYS.includes(entry.module) || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(entry.sourcePath || ''))) continue;
+        const settled = Number(entry.settledAt) || 0;
+        if (!settled || settled <= wiped || now - settled > ROW_HEAL_WINDOW_MS) continue;
+        have[entry.module] ||= new Set((Array.isArray(user[entry.module]) ? user[entry.module] : []).map(record => record && record.id));
+        if (have[entry.module].has(doc.id) || tomb[entry.module]?.[doc.id] != null) continue;
+        if (!missing.has(entry.sourcePath)) missing.set(entry.sourcePath, []);
+        missing.get(entry.sourcePath).push(doc.id);
+    }
+    let requeued = 0, rows = 0, more = false;
+    for (const [sourcePath, ids] of missing) {
+        if (requeued >= Math.max(1, limit)) { more = true; break; }
+        const ref = db.doc(sourcePath);
+        const done = await db.runTransaction(async tx => {
+            const snap = await tx.get(ref), source = snap.data();
+            if (!snap.exists || source.uid !== uid || source.status === 'processing' || (source.leaseUntil || 0) > now || (Number(source.rowHeal?.count) || 0) >= ROW_HEAL_MAX) return false;
+            for (const id of ids) tx.set(userRef.collection('statementLedger').doc(id), { status: 'superseded_by_layout', supersededAt: now, supersededBy: 'row-heal' }, { merge: true });
+            tx.set(ref, { status: 'pending', filed: false, cursor: 0, totalRows: null, rowSetHash: '', leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0, rowHeal: { v: ROW_HEAL_VERSION, count: (Number(source.rowHeal?.count) || 0) + 1, at: now, rows: ids.length }, updatedAt: now }, { merge: true });
+            return true;
+        });
+        if (done) { requeued += 1; rows += ids.length; }
+    }
+    return { requeued, rows, more };
+}
+
 // Reviews raised before the reader knew better: a "transaction" with a month-end date, no description and
 // no amount is a line that is not on the statement. They are not dismissed, and the statement is not assumed
 // empty — the statement is read again, and judged on its own text exactly as a new one is (the emptiness
@@ -530,7 +571,9 @@ export async function repairStatementCategories({ db, uid }) {
         const snap = await tx.get(userRef);
         if (!snap.exists) return { expenses: 0, income: 0, total: 0 };
         const result = repairCategoriesInUser(snap.data());
-        if (result.total) tx.set(userRef, { expenses: result.user.expenses || [], incomeRecv: result.user.incomeRecv || [], _lastModified: new Date() }, { merge: true });
+        // Stamped like every other server write to this document: a snapshot whose stamp still names the last DEVICE to
+        // push is read by that device as the echo of its own write, and the repair was never applied there.
+        if (result.total) tx.set(userRef, { expenses: result.user.expenses || [], incomeRecv: result.user.incomeRecv || [], _lastModified: new Date(), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: Date.now() }, { merge: true });
         return { expenses: result.expenses, income: result.income, total: result.total };
     });
 }
@@ -854,7 +897,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
     const token = await accessTokenFrom(mail.refresh_token, env, f);
-    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, coverage = null;
+    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
     if (action !== 'drain') {
         const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
         if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
@@ -892,6 +935,8 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
         const phantom = await recheckPhantomStatements({ db, uid, limit: maxSteps === Infinity ? 10 : 3 });
         phantomRequeued = phantom.requeued; phantomMore = phantom.more;
+        const healed = await healMissingRows({ db, uid, limit: maxSteps === Infinity ? 5 : 2 });
+        rowsHealed = healed.rows; healMore = healed.more;
     }
     let processed = 0, attempted = 0, last = null;
     for (;;) {
@@ -915,7 +960,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const hasReadyPending = pendingTimes.some(at => at <= now);
     const earliestRetry = pendingTimes.filter(at => at > now).reduce((min, at) => Math.min(min, at), Infinity);
     const wakeAt = Math.min(earliestLease, earliestRetry);
-    const retryAfterMs = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || phantomMore || hasReadyPending
+    const retryAfterMs = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || phantomMore || healMore || hasReadyPending
         ? 750
         : Number.isFinite(wakeAt) ? Math.max(750, Math.min(180250, wakeAt - now + 250)) : 750;
     const morePending = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || pending.docs.length > 0 || processing.docs.length > 0;
@@ -924,7 +969,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         .filter(data => Number(data?.retryCount) > 0)
         .slice(0, 20)
         .map(data => ({ bank: data.bank || '', filename: data.filename || '', retryCount: data.retryCount || 0, lastRetryReason: data.lastRetryReason || '' }));
-    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, ...(coverage ? { coverage } : {}),
+    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, ...(coverage ? { coverage } : {}),
         pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending, retrying,
         ...(morePending ? { retryAfterMs } : {}) };
 }
