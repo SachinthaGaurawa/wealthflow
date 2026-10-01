@@ -499,7 +499,7 @@ async function ingestMailbox(db, note, env, f, res) {
 
     const stored = [];
     const notable = [];
-    const refusedNow = [], takenIds = [], seenNow = [], securityNow = [], outcomesNow = [];
+    const refusedNow = [], takenIds = [], seenNow = [], securityNow = [], outcomesNow = [], unheldNow = [];
     /* LOGGED BEFORE ANYTHING IS FETCHED OR READ. From here a crash, a timeout or a database lock cannot lose these
      * messages: each has a record, and whatever never reaches PROCESSED is queued again from it (see mail-state.mjs). */
     const logged = await logStates(db, stateRef, pending.ids.slice(pending.cursor, batchEnd).map(id => ({ messageId: String(id), state: MAIL_STATE.PENDING, v: INTAKE_VERSION })));
@@ -567,7 +567,8 @@ async function ingestMailbox(db, note, env, f, res) {
              * brought back nothing. A reference only: no attachment is fetched
              * on the strength of a refusal. */
             const hold = planHold(plan, msg);
-            if (hold) { held.push(hold); }
+            // judged again and no longer a question about who sent it (a promotion, a forgery, a non-statement): it leaves the held list
+            if (hold) { held.push(hold); } else unheldNow.push(String(id));
             continue;
         }
 
@@ -694,7 +695,8 @@ async function ingestMailbox(db, note, env, f, res) {
             }
             // A held message that has now been taken (a sibling released by its series) is no longer held.
             const heldBefore = Array.isArray(current.data()?.[HELD_FIELD]) ? current.data()[HELD_FIELD] : [];
-            const heldBase = takenIds.length ? heldBefore.filter(h => !takenIds.includes(String(h && h.messageId))) : heldBefore;
+            const leaving = new Set([...takenIds, ...unheldNow]);
+            const heldBase = leaving.size ? heldBefore.filter(h => !leaving.has(String(h && h.messageId))) : heldBefore;
             if (held.length || heldBase.length !== heldBefore.length) updates[HELD_FIELD] = mergeHeld(heldBase, held);
             // What was refused stays on record until it is taken; what was taken leaves it.
             if (refusedNow.length || takenIds.length) {
@@ -718,6 +720,13 @@ async function ingestMailbox(db, note, env, f, res) {
                 const finalHeld = updates[HELD_FIELD] || current.data()?.[HELD_FIELD] || [];
                 updates.historyAudit = { at: Date.now(), version: audit.v, listed: audit.listed, accounted: audit.accounted, examined: audit.staged, taken: audit.taken,
                     refused: Array.isArray(finalRefused) ? finalRefused.length : 0, held: Array.isArray(finalHeld) ? finalHeld.length : 0, complete: audit.complete === true };
+                /* WHAT "N waiting on a sender decision" IS MADE OF, in the platform log: reason codes and sender domains with counts (no address, subject or file name). */
+                const heldBy = {}, heldAt = {};
+                for (const h of Array.isArray(finalHeld) ? finalHeld : []) {
+                    const why = String((h && h.reason) || '?').slice(0, 40), at = String((h && h.from) || '').split('@').pop().replace(/[^a-z0-9.-]/gi, '').slice(0, 40) || '?';
+                    heldBy[why] = (heldBy[why] || 0) + 1; heldAt[at] = (heldAt[at] || 0) + 1;
+                }
+                console.info(JSON.stringify({ evt: 'mail-audit', listed: audit.listed, accounted: audit.accounted, examined: audit.staged, taken: audit.taken, refused: updates.historyAudit.refused, held: updates.historyAudit.held, heldBy, heldAt, complete: audit.complete === true }));
                 // An audit that could not finish is tried again soon, not daily, and is never recorded as done.
                 updates.lastAuditMs = Date.now();
                 // Carry on from the next page while there is one; done means the whole history was walked.

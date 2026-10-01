@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { makeFakeAdmin } from './fake-admin.mjs';
 import { syncMailbox, listAllMessages, auditClauses, AUDIT_EVERY_MS } from '../gmail-hook.js';
 import { takeRefusedMessage } from '../statement-sync.js';
@@ -308,5 +308,28 @@ describe('a bank that writes from a second address', () => {
         const s = setup({ items: filed, history: ['sib5'], inbox: [{ ...message('sib5', { from: 'Other <statements@otherbank.lk>' }), payload: { ...message('sib5', { from: 'Other <statements@otherbank.lk>' }).payload, headers: [{ name: 'From', value: 'Other <statements@otherbank.lk>' }, { name: 'Subject', value: 'Your e-Statement' }, { name: 'Authentication-Results', value: 'dkim=pass header.i=@otherbank.lk' }] } }] });
         await s.run();
         expect(Object.values(await itemsOf(s)).filter(i => i.messageId === 'sib5')).toHaveLength(0);
+    });
+});
+
+describe('"waiting on a sender decision" is only what is still a question about the sender', () => {
+    const held = id => ({ messageId: id, key: id, reason: 'a-new-address-at-a-bank-you-approved', from: 'estatements@nationstrust.com', heldMs: 5 });
+    it('a held message that is judged again and turns out to be a promotion leaves the held list (it used to stay for ever)', async () => {
+        const s = setup({ mail: { held: [held('promo1')] }, inbox: [message('promo1', { from: 'NTB Friends <friends@nationstrust.com>', filename: 'Weekend_Promotion_Offer.html', subject: 'Offers for you' })] });
+        await s.run();
+        const mail = (await s.ref.get()).data();
+        expect(mail.held || []).toEqual([]);
+        expect(mail.historyAudit).toMatchObject({ held: 0 });
+    });
+    it('the audit says in the platform log what is held: reason codes and sender domains with counts, never an address or a subject', async () => {
+        const s = setup({ mail: { held: [held('keep1')] }, inbox: [message('keep1', { from: 'Someone <someone@nationstrust.com>', dkim: false })] });
+        const lines = [];
+        const spy = vi.spyOn(console, 'info').mockImplementation(line => lines.push(String(line)));
+        try { await s.run(); } finally { spy.mockRestore(); }
+        const line = lines.find(l => l.includes('"mail-audit"'));
+        expect(line).toBeTruthy();
+        const out = JSON.parse(line);
+        expect(out).toMatchObject({ evt: 'mail-audit', listed: 1, examined: 1, taken: 0, complete: true });
+        expect(Object.values(out.heldAt).reduce((a, b) => a + b, 0)).toBe(out.held);
+        expect(line).not.toMatch(/someone@|estatements@|Your e-Statement/);
     });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createFirestore } from './helpers/fake-firestore.js';
 import { refreshCoverage, runStatementSync } from '../statement-sync.js';
+import { INTAKE_VERSION } from '../wealthflow-mail-ingest.mjs';
 
 // A month that never arrived, or arrived and was refused, leaves no trace when each
 // message is judged alone. The set of statements shows the hole, and a search of
@@ -156,7 +157,7 @@ describe('an unattended collection does not stop after ten messages', () => {
 describe('the log says what "waiting" is made of', () => {
     it('one mail-table line: counts, the waiting messages grouped by what their stored items say, and the sender domains — states and counts only', async () => {
         const s = setup({ months: ['01', '02'] });
-        const emails = (id, state, extra = {}) => s.data.set(`${mailPath}/emails/${id}`, { messageId: id, state, reason: '', from: 'Statements <statements@nationstrust.com>', updatedMs: 1, v: 5, ...extra });
+        const emails = (id, state, extra = {}) => s.data.set(`${mailPath}/emails/${id}`, { messageId: id, state, reason: '', from: 'Statements <statements@nationstrust.com>', updatedMs: 1, v: INTAKE_VERSION, ...extra });
         emails('msg01', 'INGESTED'); emails('msg02', 'PROCESSED');                     // msg02's item is filed: the table is behind
         emails('ghost1', 'PROCESSED'); emails('ghost2', 'PENDING');                    // stored, waiting — and no item at all
         s.data.set(`${mailPath}/items/m02`, { ...s.data.get(`${mailPath}/items/m02`), status: 'dismissed', filed: false });
