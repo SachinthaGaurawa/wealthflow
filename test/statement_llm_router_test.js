@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import handler, { resetProviderCooldowns } from '../api/ai.js';
-import { tieredAsk, TIERS } from '../statement-llm-router.mjs';
+import { tieredAsk, TIERS, TIER_MS } from '../statement-llm-router.mjs';
 import { invokeExtractor } from '../statement-sync.js';
 import { jsonOf } from '../statement-adaptive.mjs';
 
@@ -69,7 +69,8 @@ describe('tieredAsk', () => {
         const err = await tieredAsk({ call, now: () => t, deadlineAt: NOW + 17000 })('p').catch((e) => e);
         expect(err.message).toBe('ai-extractor-unavailable');
         expect(seen.length).toBeLessThan(TIERS.length);
-        for (const ms of seen) expect(ms).toBeLessThanOrEqual(9000);
+        seen.forEach((ms, i) => expect(ms).toBeLessThanOrEqual(TIER_MS[i]));
+        expect(seen[0]).toBe(16000);              // the strongest providers get the longest
         expect(err.tried.some((x) => x.skipped === 'no-time')).toBe(true);
     });
     it('many questions at once each find their own way down the tiers', async () => {

@@ -736,8 +736,14 @@ async function ingestMailbox(db, note, env, f, res) {
     if (state.autonomous && state.uid === env.WEALTHFLOW_OWNER_UID && stored.some(item => !item.duplicate)) {
         try {
             const { runStatementSync } = await import('./statement-sync.js');
-            await runStatementSync({ db, owner: { uid: state.uid, email: state.email }, action: 'drain', env, f, budgetMs: 20000 });
+            const result = await runStatementSync({ db, owner: { uid: state.uid, email: state.email }, action: 'drain', env, f, budgetMs: 20000 });
             queued = true;
+            /* A push is a trigger like any other: if the backlog is bigger than these twenty seconds, it starts the self-resuming
+             * chain (statement-chain.mjs) instead of waiting for the app to be opened or the once-a-day schedule. */
+            try {
+                const { continueChain } = await import('./statement-chain.mjs');
+                await continueChain({ db, mailRef: stateRef, result, link: null, env, f });
+            } catch (_) { /* the schedule or the app starts it again */ }
         } catch (_) { /* Durable manifests remain pending; scheduled catch-up retries them. */ }
     }
     return j(res, 200, { ok: true, stored: stored.length, notable: notable.length, held: held.length, queued,

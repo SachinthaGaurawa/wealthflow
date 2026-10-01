@@ -35,6 +35,8 @@
 //  ALWAYS returns JSON, NEVER throws past the handler.
 // ============================================================================
 
+import { geminiGenerate } from './gemini-client.mjs';
+
 export const config = { maxDuration: 60 }; // Hobby max — covers the full parallel multi-engine vote
 
 const PER_ENGINE_TIMEOUT_MS = 18000; // generous so slow providers still contribute, well under the 60s budget
@@ -164,23 +166,12 @@ function makeOAI(name, url, key, model, opts) {
     };
 }
 
-// Google Gemini (generateContent shape).
+// Google Gemini, through the shared client (gemini-client.mjs): a live model, quota-aware, never a retired name.
 function makeGemini(key) {
     return async function (list) {
         if (!key) return null;
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
-        const resp = await fetchWithTimeout(url, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: buildPrompt(list) }] }],
-                generationConfig: { temperature: 0, maxOutputTokens: MAX_OUTPUT_TOKENS }
-            })
-        });
-        if (!resp.ok) throw new Error('gemini ' + resp.status);
-        const data = await resp.json();
-        const txt = data && data.candidates && data.candidates[0] && data.candidates[0].content &&
-            data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
-        return parseJsonArray(txt);
+        const result = await geminiGenerate({ key, parts: [{ text: buildPrompt(list) }], thinking: 'low', temperature: 0, maxOutputTokens: MAX_OUTPUT_TOKENS, deadlineMs: PER_ENGINE_TIMEOUT_MS, fetcher: fetchWithTimeout });
+        return parseJsonArray(result.text);
     };
 }
 

@@ -73,7 +73,7 @@ const VISION_PREFER = { Mistral: [/pixtral/, /mistral-(?:small|medium)/], NVIDIA
 
 /**
  * The best live model for this role, or ''.
- *   provider  Gemini | NVIDIA | Mistral | DeepSeek | Ollama | Groq | Together | Fireworks | Cerebras | OpenRouter<Role>
+ *   provider  Gemini | GeminiPro | NVIDIA | Mistral | DeepSeek | Ollama | Groq | Together | Fireworks | Cerebras | OpenRouter<Role>
  *   models    [{ id, free?, methods? }] — what the provider serves now
  *   exclude   ids not to choose (the one that just failed, and any remembered as bad)
  */
@@ -81,11 +81,15 @@ export function choose({ provider, vision = false, models = [], exclude = [] }) 
     const bad = new Set(exclude);
     let pool = (Array.isArray(models) ? models : []).filter((m) => m && m.id && !bad.has(m.id));
     if (!pool.length) return '';
-    if (provider === 'Gemini') {
+    if (provider === 'Gemini' || provider === 'GeminiPro') {
         pool = pool.filter((m) => /^gemini-/i.test(m.id) && !NOT_CHAT.test(m.id) && (!m.methods || m.methods.includes('generateContent')));
         // flash, then flash-lite, then pro — and a preview or experiment only after the stable model of the next kind down
-        // (a preview can vanish a week later; a stable lite model will not), then the newest version
-        const rank = (m) => (/flash(?!-lite)/.test(m.id) ? 0 : /flash-lite/.test(m.id) ? 1 : /pro/.test(m.id) ? 2 : 3) + (/preview|exp|-0\d{2}$/i.test(m.id) ? 1.5 : 0);
+        // (a preview can vanish a week later; a stable lite model will not), then the newest version.
+        // GeminiPro (the slot a caller that wants the strongest reader uses) puts pro first and keeps the same preview rule.
+        const kind = provider === 'GeminiPro'
+            ? (m) => (/pro/.test(m.id) ? 0 : /flash(?!-lite)/.test(m.id) ? 1 : /flash-lite/.test(m.id) ? 2 : 3)
+            : (m) => (/flash(?!-lite)/.test(m.id) ? 0 : /flash-lite/.test(m.id) ? 1 : /pro/.test(m.id) ? 2 : 3);
+        const rank = (m) => kind(m) + (/preview|exp|-0\d{2}$/i.test(m.id) ? 1.5 : 0);
         pool.sort((a, b) => rank(a) - rank(b) || versionOf(b.id) - versionOf(a.id) || a.id.localeCompare(b.id));
         return pool.length ? pool[0].id : '';
     }

@@ -21,6 +21,7 @@
    ============================================================================ */
 
 import { fetchWithTimeout } from './fetch-timeout.mjs';
+import { geminiGenerate } from './gemini-client.mjs';
 
 export const config = { runtime: 'edge' };
 
@@ -127,20 +128,12 @@ async function viaSerper(merchant, country, key) {
 }
 
 async function viaGemini(merchant, country, key) {
-    const model = 'gemini-2.0-flash';
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + key;
     const prompt = 'A bank statement shows a merchant called "' + merchant + '"' + (country ? ' (likely in ' + country + ')' : '') +
         '. In ONE short sentence say what kind of business this is, then on a new line output exactly: CATEGORY: <one of ' +
         CATEGORIES.join(', ') + '>. If you are unsure, use CATEGORY: Other.';
-    const r = await fetchWithTimeout(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 120 } })
-    });
-    if (!r.ok) throw new Error('gemini ' + r.status);
-    const d = await r.json();
-    const txt = (((d.candidates || [])[0] || {}).content || {}).parts || [];
-    return txt.map(p => p.text || '').join(' ');
+    // the shared client finds a live model and honours a quota answer (gemini-client.mjs); no model name is written here
+    const result = await geminiGenerate({ key, parts: [{ text: prompt }], temperature: 0, maxOutputTokens: 120, deadlineMs: 10000, fetcher: fetchWithTimeout });
+    return result.text;
 }
 
 export default async function handler(req) {

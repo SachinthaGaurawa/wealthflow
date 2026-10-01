@@ -33,6 +33,13 @@ describe('parseHeader / selfUrl', () => {
         expect(selfUrl({ ...PROD, VERCEL_ENV: 'preview' })).toBe('');
         expect(selfUrl({ ...PROD, VERCEL_PROJECT_PRODUCTION_URL: 'evil.example/x?y' })).toBe('');
         expect(selfUrl({})).toBe('');
+        // Vercel's system variables switched off: the owner-configured push audience names the same public host
+        const AUD = 'https://wealthflow-personal.vercel.app/api/gmail-hook';
+        expect(selfUrl({ GMAIL_PUBSUB_AUDIENCE: AUD })).toBe('https://wealthflow-personal.vercel.app/api/statement-sync');
+        expect(selfUrl({ GMAIL_PUBSUB_AUDIENCE: AUD, VERCEL_ENV: 'preview' })).toBe('');                       // a preview never calls production
+        expect(selfUrl({ GMAIL_PUBSUB_AUDIENCE: 'http://x.example/api/gmail-hook' })).toBe('');
+        expect(selfUrl({ GMAIL_PUBSUB_AUDIENCE: 'https://x.example/other?y' })).toBe('');
+        expect(selfUrl({ ...PROD, GMAIL_PUBSUB_AUDIENCE: AUD })).toBe('https://wealthflow-peach.vercel.app/api/statement-sync');   // the system variable wins
         expect(selfUrl({ WF_CHAIN_URL: 'https://example.org/api/statement-sync' })).toBe('https://example.org/api/statement-sync');
         expect(selfUrl({ WF_CHAIN_URL: 'http://example.org/api/statement-sync' })).toBe('');
         expect(selfUrl({ WF_CHAIN_URL: 'https://example.org/other' })).toBe('');
