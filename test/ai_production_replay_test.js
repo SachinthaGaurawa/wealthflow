@@ -1,7 +1,8 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import handler, { modelBook, resetProviderCooldowns } from '../api/ai.js';
+import handler, { modelBook, resetProviderCooldowns, coolProvider, boardRoster, providerAvailable, providerIsDead } from '../api/ai.js';
 import { resetReasoningLearning } from '../ai-chat.mjs';
 import { resetGeminiLearning } from '../gemini-client.mjs';
+import { ANSWER, KEYS, response, json, failure, chat, THOUGHT, world, boardRequest } from './helpers/ai-world.js';
 
 /* =============================================================================
  * THE PRODUCTION LOG OF 2026-10-01, REPLAYED.
@@ -13,55 +14,7 @@ import { resetGeminiLearning } from '../gemini-client.mjs';
  * failed — and asks the board the way the statement reader asks it. Before the fix it was a 422; the board now reaches five.
  * ===========================================================================*/
 
-const ANSWER = '{"decisions":[{"index":0,"module":"expenses","category":"Groceries","allocationId":""}]}';
-const KEYS = ['WealthFlow_API_Key', 'DEEPSEEK_API_KEY', 'GROQ_API_KEY', 'OLLAMA_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'NVIDIA_API_KEY', 'GITHUB_MODELS_TOKEN', 'COHERE_API_KEY', 'HF_API_KEY'];
-
 afterEach(() => { modelBook.reset(); resetProviderCooldowns(); resetReasoningLearning(); resetGeminiLearning(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
-
-const response = () => ({ setHeader() {}, status(n) { this.code = n; return this; }, json(body) { this.body = body; return this; } });
-const json = (data, status = 200) => ({ ok: status < 400, status, json: async () => data, text: async () => JSON.stringify(data) });
-const failure = (status, text) => ({ ok: false, status, json: async () => ({}), text: async () => text });
-const chat = (content, finish = 'stop', extra = {}) => json({ choices: [{ message: { content, ...extra }, finish_reason: finish }] });
-const THOUGHT = (finish = 'length') => chat('', finish, { reasoning: 'let me think about this '.repeat(100) });
-
-function world() {
-    const log = [];
-    const fetch = vi.fn(async (url, init) => {
-        const u = String(url);
-        const body = init && init.body ? JSON.parse(init.body) : {};
-        const model = body.model || (/models\/([^:]+):generate/.exec(u) || [])[1] || '';
-        log.push({ u, model, body });
-        // ---- model lists
-        if (/api\.groq\.com.*\/models$/.test(u)) return json({ data: [{ id: 'openai/gpt-oss-120b' }] });
-        if (/fireworks.*\/models$/.test(u)) return json({ data: [{ id: 'accounts/fireworks/models/qwen3-235b-a22b-thinking-2507' }, { id: 'accounts/fireworks/models/llama4-maverick-instruct-basic' }, { id: 'accounts/fireworks/models/qwen3-235b-a22b-instruct-2507' }] });
-        if (/openrouter\.ai.*\/models$/.test(u)) return json({ data: [{ id: 'inclusionai/ling-3.0-flash-fin', pricing: { prompt: '0', completion: '0' } }, { id: 'google/gemma-4-27b-it:free', pricing: { prompt: '0', completion: '0' } }] });
-        if (/cerebras.*\/models$/.test(u)) return json({ data: [{ id: 'gpt-oss-120b' }, { id: 'llama3.1-8b' }] });
-        if (/nvidia.*\/models$/.test(u)) return json({ data: [{ id: 'meta/llama-3.3-70b-instruct' }, { id: 'meta/llama-4-maverick-17b-128e-instruct' }, { id: 'nvidia/nv-embedqa-e5-v5' }] });
-        if (/models\?/.test(u)) return json({ models: [] });
-        // ---- the providers, each failing the way the log says it did
-        if (/googleapis/.test(u)) return json({ candidates: [{ content: { parts: [{ text: ANSWER }] }, finishReason: 'STOP' }] });
-        if (/deepseek/.test(u)) return chat(ANSWER);
-        if (/api\.groq\.com/.test(u)) return body.max_tokens === 3500 ? THOUGHT('length') : chat(ANSWER);        // thought all of its budget; given room, it answers
-        if (/ollama\.com/.test(u)) return json({ message: { content: ANSWER }, done_reason: 'stop' });
-        if (/together/.test(u)) return chat(ANSWER);
-        if (/fireworks/.test(u)) return model === 'accounts/fireworks/models/llama-v3p3-70b-instruct' ? failure(404, '{"error":{"message":"Model not found, inaccessible, and/or not deployed","code":"NOT_FOUND"}}') : /thinking|llama4-maverick/.test(model) ? THOUGHT('length') : chat(ANSWER);   // the default is gone; the model the list offers first thinks its budget away
-        if (/openrouter\.ai/.test(u)) {
-            if (/ling-3\.0-flash-fin:free/.test(model)) return failure(404, '{"error":{"message":"This model is unavailable for free. The paid version is available now","code":404}}');
-            if (/qwen/.test(model)) return failure(429, '{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3.8-27b:free is temporarily rate-limited upstream."}}}');
-            if (/nemotron/.test(model)) return new Promise(() => {});                                                // never answers
-            return chat(ANSWER);
-        }
-        if (/cerebras/.test(u)) return model === 'llama3.1-8b' ? failure(404, '{"message":"Model does not exist or you do not have access to it.","code":"model_not_found"}') : chat(ANSWER);
-        if (/nvidia/.test(u)) return /llama-3\.1-8b|llama-3\.3-70b/.test(model) ? failure(410, '{"title":"Gone","status":410,"detail":"The model has reached its end of life"}') : chat(ANSWER);
-        if (/models\.github\.ai/.test(u)) return { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token \'O\', "OK\r\n" is not valid JSON'); }, text: async () => 'OK\r\n' };
-        if (/mistral/.test(u)) return failure(429, '{"object":"error","message":"Rate limit exceeded","type":"rate_limited","code":"1300"}');
-        if (/cohere/.test(u)) return failure(429, '');
-        if (/huggingface/.test(u)) return failure(402, '{"error":"You have depleted your monthly included credits."}');
-        throw new Error('unexpected url ' + u);
-    });
-    return { fetch, log };
-}
-const boardRequest = () => ({ method: 'POST', body: { prompt: 'Return only JSON. Output {"decisions":[{"index":0,"module":"expenses","category":"Groceries","allocationId":""}]}', financialDecision: true, mode: 'unanimous', temperature: 0, maxTokens: 3500, deadlineMs: 2000 } });
 
 describe('the production roster of 2026-10-01', () => {
     it('reaches the five-provider floor and a unanimous decision — it was a 422 in production', async () => {
@@ -129,5 +82,61 @@ describe('the production roster of 2026-10-01', () => {
         const asked = w.log.filter((l) => l.model).map((l) => l.model);
         for (const dead of ['llama3.1-8b', 'meta/llama-3.1-8b-instruct', 'meta/llama-3.3-70b-instruct', 'inclusionai/ling-3.0-flash-fin:free', 'accounts/fireworks/models/llama-v3p3-70b-instruct', 'accounts/fireworks/models/llama4-maverick-instruct-basic']) expect(asked, dead).not.toContain(dead);
         expect(w.log.filter((l) => /\/models$/.test(l.u))).toHaveLength(0);       // no list asked again either
+    });
+});
+
+describe('a cooldown is an optimisation, never a reason to refuse', () => {
+    const NOW = 1_800_000_000_000;
+    const names = ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together', 'Fireworks', 'OpenRouterFinance', 'Cerebras', 'NVIDIA', 'Mistral', 'Cohere', 'HF'];
+    afterEach(() => resetProviderCooldowns());
+
+    it('with spare voters, resting providers are left alone — busy ones and dead ones alike', () => {
+        coolProvider('Mistral', new Error('Mistral status 429'), NOW); coolProvider('HF', new Error('HF status 402: credits depleted'), NOW);
+        const r = boardRoster(names, { needed: 7, now: NOW + 1000 });
+        expect(r.asked).toHaveLength(10); expect(r.probation).toEqual([]); expect(r.resting.sort()).toEqual(['HF', 'Mistral']);
+    });
+    it('under the target, EVERY provider that was only BUSY is asked anyway — quick failers first — and the DEAD never are', () => {
+        for (const n of ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together']) coolProvider(n, new Error('Provider response deadline exceeded'), NOW);   // slow: asked last
+        coolProvider('Fireworks', new Error('Fireworks status 429: rate limited'), NOW);                                                                // quick: asked first
+        coolProvider('OpenRouterFinance', new Error('OpenRouterFinance returned empty'), NOW);
+        for (const n of ['Cerebras', 'NVIDIA', 'HF']) coolProvider(n, new Error(n + ' status 410: end of life'), NOW);                                // dead
+        const r = boardRoster(names, { needed: 8, now: NOW + 1000 });     // available: Mistral, Cohere = 2
+        expect(r.asked).toHaveLength(9);                                    // 2 available + the 7 busy; the 3 dead stay out
+        expect(r.probation[0]).toBe('Fireworks');                           // a rate limit answers at once
+        expect(r.probation[1]).toBe('OpenRouterFinance');
+        expect(r.probation.slice(2)).toHaveLength(5);
+        expect(r.probation.slice(2).every((n) => ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together'].includes(n))).toBe(true);
+        for (const dead of ['Cerebras', 'NVIDIA', 'HF']) { expect(r.asked, dead).not.toContain(dead); expect(providerIsDead(dead, NOW + 1000)).toBe(true); }
+        expect(r.resting).toEqual(expect.arrayContaining(['Cerebras', 'NVIDIA', 'HF']));
+    });
+    it('only the dead are resting: nobody is invented, the roster is what is left', () => {
+        for (const n of names) coolProvider(n, new Error(n + ' status 402: credits'), NOW);
+        const r = boardRoster(names, { needed: 7, now: NOW + 1000 });
+        expect(r.asked).toEqual([]); expect(r.probation).toEqual([]);
+    });
+    it('a cooldown that has run out is no cooldown', () => {
+        coolProvider('Groq', new Error('Groq status 429'), NOW);
+        expect(providerAvailable('Groq', NOW + 60 * 1000)).toBe(false);
+        expect(providerAvailable('Groq', NOW + 3 * 60 * 1000)).toBe(true);
+        expect(boardRoster(['Groq'], { needed: 1, now: NOW + 3 * 60 * 1000 }).probation).toEqual([]);
+    });
+    it('advisory work (needed 1) is never left with nobody to ask while a busy provider exists', () => {
+        coolProvider('Gemini', new Error('Gemini status 429'), NOW); coolProvider('Groq', new Error('Groq status 429'), NOW);
+        const r = boardRoster(['Gemini', 'Groq'], { needed: 1, now: NOW + 1000 });
+        expect(r.asked).toHaveLength(2);                                    // nobody available: every busy provider is asked rather than none
+    });
+
+    it('through the endpoint: a burst of ordinary failures has cooled most of the roster, and the board STILL reaches five (it was refused in 3 s)', async () => {
+        for (const key of KEYS) vi.stubEnv(key, 'test');
+        const w = world(); vi.stubGlobal('fetch', w.fetch);
+        for (const n of ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together', 'Fireworks', 'OpenRouterFinance', 'Cerebras', 'NVIDIA', 'OpenRouterNemotron']) coolProvider(n, new Error(n + ' status 429: rate limited'));
+        const lines = [];
+        const info = vi.spyOn(console, 'info').mockImplementation((line) => { lines.push(String(line)); });
+        let res;
+        try { res = response(); await handler(boardRequest(), res); } finally { info.mockRestore(); }
+        expect(res.code).toBe(200); expect(res.body.unanimous).toBe(true);
+        expect(res.body.answered.length).toBeGreaterThanOrEqual(5);
+        const board = lines.map((l) => { try { return JSON.parse(l); } catch (_) { return null; } }).find((l) => l && l.evt === 'ai-board');
+        expect(board.probation.length).toBeGreaterThan(0);                // and the log says who was asked on probation
     });
 });
