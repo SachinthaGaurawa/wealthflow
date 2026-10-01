@@ -18,6 +18,8 @@
 //  result instead. Never throws to the client.
 // =============================================================================
 
+import { geminiGenerate, geminiKeyOf, mimeOfBase64 } from './gemini-client.mjs';
+
 export const config = {
     runtime: 'edge'
 };
@@ -31,34 +33,16 @@ const TRANSCRIBE_PROMPT =
     "Ignore UI chrome like the contact name, timestamps headers (Friday 11:39), status bar, and phone-number links. " +
     "Output ONLY the transcribed message text.";
 
-async function transcribeWithGemini(imageB64, key, model) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 28000);
+async function transcribeWithGemini(imageB64, key, tier) {
     try {
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: controller.signal,
-            body: JSON.stringify({
-                contents: [{
-                    parts: [
-                        { text: TRANSCRIBE_PROMPT },
-                        { inline_data: { mime_type: 'image/jpeg', data: imageB64 } }
-                    ]
-                }],
-                generationConfig: { temperature: 0, maxOutputTokens: 2048 }
-            })
+        // the shared client finds a live model of this kind, honours a quota answer, and is never asked for a retired name
+        const result = await geminiGenerate({
+            key, tier, parts: [{ text: TRANSCRIBE_PROMPT }, { inline_data: { mime_type: mimeOfBase64(imageB64), data: imageB64 } }],
+            temperature: 0, maxOutputTokens: 2048, deadlineMs: 28000
         });
-        if (!resp.ok) return '';
-        const j = await resp.json();
-        const parts = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
-        if (!parts) return '';
-        return parts.map(p => p.text || '').join('').trim();
+        return result.text.trim();
     } catch (_) {
         return '';
-    } finally {
-        clearTimeout(timer);
     }
 }
 
@@ -83,9 +67,7 @@ export default async function handler(req) {
         });
     }
 
-    const key = (typeof process !== 'undefined' && process.env)
-        ? (process.env.WealthFlow_API_Key || process.env.GEMINI_API_KEY)
-        : null;
+    const key = (typeof process !== 'undefined' && process.env) ? geminiKeyOf(process.env) : null;
 
     if (!key) {
         // No server vision available — tell the client to keep its OCR result.
@@ -94,10 +76,10 @@ export default async function handler(req) {
         });
     }
 
-    // Try the frontier model first, then fall back to a faster one.
-    let text = await transcribeWithGemini(image, key, 'gemini-2.5-flash');
+    // The fast reader first (it finds its own live model); the strong one only if that returned next to nothing.
+    let text = await transcribeWithGemini(image, key, 'fast');
     if (!text || text.length < 12) {
-        text = await transcribeWithGemini(image, key, 'gemini-2.0-flash');
+        text = await transcribeWithGemini(image, key, 'pro');
     }
 
     return new Response(JSON.stringify({ ok: !!text, raw_text: text || '' }), {

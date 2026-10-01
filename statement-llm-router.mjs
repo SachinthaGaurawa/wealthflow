@@ -20,7 +20,10 @@ export const TIERS = Object.freeze([
     Object.freeze(['Cohere', 'HF', 'CloudflareAI', 'Ollama']),
 ]);
 
-export const TIER_MS = 9000;
+/* How long each tier may take, strongest first. The first tier holds the providers that read a long statement best, and a thinking-capable
+ * model needs more than nine seconds for a page of table; a tier that has been given up on early is the answer from a fast, weaker
+ * provider instead of the right one. Later tiers are fallbacks and get less. A tier ends the moment one member gives a usable reply. */
+export const TIER_MS = Object.freeze([16000, 12000, 10000, 8000]);
 export const MIN_ROOM_MS = 3000;
 
 /**
@@ -39,7 +42,7 @@ export function tieredAsk({ call, accept = (reply) => typeof reply === 'string' 
             const room = deadlineAt - now();
             if (room < minRoomMs) { trace.push({ tier: n, skipped: 'no-time' }); break; }
             try {
-                const reply = await call(prompt, { engines: [...tiers[n]], deadlineMs: Math.max(2000, Math.min(tierMs, room - 500)) });
+                const reply = await call(prompt, { engines: [...tiers[n]], deadlineMs: Math.max(2000, Math.min(Array.isArray(tierMs) ? tierMs[Math.min(n, tierMs.length - 1)] : tierMs, room - 500)) });
                 if (accept(reply)) { trace.push({ tier: n, ok: true }); finish(); return reply; }
                 trace.push({ tier: n, ok: false, why: 'unusable-reply' });
             } catch (error) {

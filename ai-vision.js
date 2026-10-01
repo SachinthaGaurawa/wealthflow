@@ -29,6 +29,7 @@
  */
 
 import { fetchWithTimeout } from './fetch-timeout.mjs';
+import { geminiGenerate, mimeOfBase64 } from './gemini-client.mjs';
 
 // Longer than the 10s library default, and deliberately so: these calls send
 // images to a vision model, which routinely takes tens of seconds on a large
@@ -42,9 +43,6 @@ export const config = { maxDuration: 60, api: { bodyParser: { sizeLimit: '8mb' }
 const MAX_IMAGES = 6;
 const MAX_PROMPT = 8000;
 
-const GEMINI_MODELS = [
-    'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-1.5-flash',
-];
 const GROQ_MODELS = [
     'meta-llama/llama-4-scout-17b-16e-instruct',
     'llama-3.2-90b-vision-preview',
@@ -81,29 +79,19 @@ function firstKey(env, names) {
 
 async function geminiVision(key, images, prompt) {
     const parts = [{ text: prompt }];
-    for (const b64 of images) parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
+    for (const b64 of images) parts.push({ inline_data: { mime_type: mimeOfBase64(b64), data: b64 } });
 
-    for (const model of GEMINI_MODELS) {
+    // The fast reader, then the strong one. Each finds a live model of its kind by itself, is parked for as long as Google says its
+    // quota is spent, and is never asked for a model Google has retired — the five names that used to be tried here, in order, on
+    // every call, were most of the 404s and 429s on the project's Gemini dashboard (gemini-client.mjs).
+    for (const tier of ['fast', 'pro']) {
         try {
-            const r = await fetchWithTimeout(
-                `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts }],
-                        generationConfig: { temperature: 0.2, maxOutputTokens: 8192, topP: 0.95 },
-                    }),
-                },
-                VISION_TIMEOUT_MS,
-            );
-            if (r.status === 429 || r.status === 503 || r.status === 404) continue;  // next model
-            if (r.status === 400 || r.status === 403) return { fatal: true };        // bad key
-            if (!r.ok) continue;
-            const d = await r.json();
-            const t = d?.candidates?.[0]?.content?.parts?.map((p) => p?.text || '').join('').trim();
-            if (t) return { text: t, model };
-        } catch { /* try the next model */ }
+            const result = await geminiGenerate({ key, parts, tier, temperature: 0.2, maxOutputTokens: 8192, generationConfig: { topP: 0.95 }, deadlineMs: VISION_TIMEOUT_MS, fetcher: fetchWithTimeout });
+            const text = result.text.trim();
+            if (text) return { text, model: result.model };
+        } catch (error) {
+            if (error && error.kind === 'key') return { fatal: true };        // bad key: nothing else will work either
+        }
     }
     return null;
 }

@@ -1,8 +1,7 @@
 // ==================== WealthFlow Vision Engine v3.0 — Frontier Multi-Provider ====================
 //
 // 12+ AI engines including 2026's frontier models:
-//   FRONTIER: Gemini 3.1 Pro Preview, Gemini 3 Flash Preview
-//   STABLE:   Gemini 2.5 Flash/Pro, Gemini 2.0 Flash
+//   GEMINI:   a fast and a strong reader, each finding its own live model (gemini-client.mjs)
 //   OPEN:     Ollama llama3.2-vision, qwen2.5vl
 //   FAST:     Groq Llava 90B, Cerebras Llama 3.3 70B
 //   AGGREGATOR: OpenRouter (Qwen2.5-VL free, DeepSeek free)
@@ -15,6 +14,8 @@
 //   WealthFlow_API_Key, OLLAMA_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY,
 //   OPENROUTER_API_KEY, MISTRAL_API_KEY, COHERE_API_KEY, DEEPSEEK_API_KEY,
 //   OCR_SPACE_API_KEY
+
+import { geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
 
 export const config = {
     maxDuration: 60,
@@ -207,109 +208,22 @@ RULES:
 
 // ==================== ENGINES ====================
 
-async function callGemini31Pro(image, prompt, geminiKey, isUniversal) {
+/* Gemini, through the one shared client (gemini-client.mjs). This file used to name five Gemini models by hand — 3.1-pro-preview,
+ * 3-flash-preview, 2.5-flash, 2.0-flash, 2.5-pro — and ask them all on every scan: the retired ones answered 404, the Pro ones
+ * answered 429 on a key with no Pro quota, and each of those showed up as an API error on the project's Gemini dashboard.
+ * Now there are two readers, a fast one and a strong one, each of which finds a live model of its kind by itself, is parked when
+ * Google says its quota is spent, and is not asked again until it can answer. */
+async function callGeminiVision(image, prompt, geminiKey, { tier = 'fast', isUniversal = false, timeoutMs = 25000 } = {}) {
     if (!geminiKey) throw new Error('no_key');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${geminiKey}`;
-    const genConfig = {
-        temperature: isUniversal ? 0.3 : 0.05,
+    const result = await geminiGenerate({
+        key: geminiKey, tier,
+        parts: [{ text: prompt }, { inline_data: { mime_type: mimeOfBase64(image), data: image } }],
+        json: !isUniversal, thinking: isUniversal ? undefined : 'low',
+        temperature: isUniversal && tier === 'pro' ? 0.3 : 0.05,
         maxOutputTokens: isUniversal ? 8192 : 4096,
-        thinkingConfig: { thinkingLevel: isUniversal ? 'high' : 'medium' }
-    };
-    if (!isUniversal) genConfig.responseMimeType = 'application/json';
-    const resp = await fetchWithTimeout(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: 'image/jpeg', data: image } }] }],
-            generationConfig: genConfig
-        })
-    }, isUniversal ? 60000 : 45000);
-    if (!resp.ok) throw new Error(`status ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-    const data = await resp.json();
-    if (data.promptFeedback?.blockReason) throw new Error('blocked');
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('empty');
-    return text;
-}
-
-async function callGemini3Flash(image, prompt, geminiKey) {
-    if (!geminiKey) throw new Error('no_key');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiKey}`;
-    const resp = await fetchWithTimeout(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: 'image/jpeg', data: image } }] }],
-            generationConfig: { temperature: 0.05, maxOutputTokens: 4096, responseMimeType: 'application/json' }
-        })
-    }, 25000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    if (data.promptFeedback?.blockReason) throw new Error('blocked');
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('empty');
-    return text;
-}
-
-async function callGemini25Flash(image, prompt, geminiKey) {
-    if (!geminiKey) throw new Error('no_key');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`;
-    const resp = await fetchWithTimeout(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: 'image/jpeg', data: image } }] }],
-            generationConfig: { temperature: 0.05, maxOutputTokens: 4096, responseMimeType: 'application/json' },
-            safetySettings: [
-                { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-                { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-                { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-                { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-            ]
-        })
-    }, 20000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    if (data.promptFeedback?.blockReason) throw new Error('blocked');
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('empty');
-    return text;
-}
-
-async function callGemini20Flash(image, prompt, geminiKey) {
-    if (!geminiKey) throw new Error('no_key');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
-    const resp = await fetchWithTimeout(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: 'image/jpeg', data: image } }] }],
-            generationConfig: { temperature: 0.05, maxOutputTokens: 4096, responseMimeType: 'application/json' }
-        })
-    }, 18000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('empty');
-    return text;
-}
-
-async function callGemini25Pro(image, prompt, geminiKey) {
-    if (!geminiKey) throw new Error('no_key');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${geminiKey}`;
-    const resp = await fetchWithTimeout(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: 'image/jpeg', data: image } }] }],
-            generationConfig: { temperature: 0.05, maxOutputTokens: 4096 }
-        })
-    }, 32000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('empty');
-    return text;
+        deadlineMs: timeoutMs, fetcher: fetchWithTimeout
+    });
+    return result.text;
 }
 
 async function callOllamaVision(image, prompt, ollamaKey) {
@@ -500,17 +414,8 @@ ${rawText.slice(0, 4000)}
 
     if (keys.geminiKey) {
         try {
-            const r = await fetchWithTimeout(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${keys.geminiKey}`,
-                { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ contents: [{ parts: [{ text: sysPrompt }] }],
-                    generationConfig: { temperature: 0.05, maxOutputTokens: 1024, responseMimeType: 'application/json' } })
-                }, 12000);
-            if (r.ok) {
-                const d = await r.json();
-                const t = d.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (t) return t;
-            }
+            const result = await geminiGenerate({ key: keys.geminiKey, parts: [{ text: sysPrompt }], json: true, thinking: 'low', temperature: 0.05, maxOutputTokens: 1024, deadlineMs: 12000, fetcher: fetchWithTimeout });
+            if (result.text) return result.text;
         } catch (_) {}
     }
     if (keys.cerebrasKey) {
@@ -1004,7 +909,7 @@ export default async function handler(req, res) {
     // ---------- QUICK ----------
     if (mode === 'quick') {
         const engines = [];
-        if (keys.geminiKey)  engines.push({ name: 'gemini-2.0-flash', fn: () => callGemini20Flash(image, prompt, keys.geminiKey) });
+        if (keys.geminiKey)  engines.push({ name: 'gemini-flash', fn: () => callGeminiVision(image, prompt, keys.geminiKey, { tier: 'fast', timeoutMs: 18000 }) });
         if (keys.ollamaKey)  engines.push({ name: 'ollama-llama3.2-vision', fn: () => callOllamaVision(image, prompt, keys.ollamaKey) });
         if (keys.groqKey)    engines.push({ name: 'groq-llava', fn: () => callGroqLlava(image, prompt, keys.groqKey) });
         if (keys.mistralKey) engines.push({ name: 'mistral-pixtral', fn: () => callMistralPixtral(image, prompt, keys.mistralKey) });
@@ -1027,22 +932,19 @@ export default async function handler(req, res) {
     const engines = [];
 
     if (mode === 'frontier' && keys.geminiKey) {
-        engines.push({ name: 'gemini-3.1-pro-preview', fn: () => callGemini31Pro(image, prompt, keys.geminiKey, isUniversal) });
-        engines.push({ name: 'gemini-3-flash-preview', fn: () => callGemini3Flash(image, prompt, keys.geminiKey) });
+        engines.push({ name: 'gemini-pro', fn: () => callGeminiVision(image, prompt, keys.geminiKey, { tier: 'pro', isUniversal, timeoutMs: isUniversal ? 60000 : 45000 }) });
     }
     // Anthropic Claude — premium quality, only in frontier mode
     if (mode === 'frontier' && keys.anthropicKey) {
         engines.push({ name: 'anthropic-claude-3.5-sonnet', fn: () => callAnthropicClaude(image, prompt, keys.anthropicKey) });
     }
     if (keys.geminiKey) {
-        engines.push({ name: 'gemini-2.5-flash', fn: () => callGemini25Flash(image, prompt, keys.geminiKey) });
-        engines.push({ name: 'gemini-2.0-flash', fn: () => callGemini20Flash(image, prompt, keys.geminiKey) });
+        engines.push({ name: 'gemini-flash', fn: () => callGeminiVision(image, prompt, keys.geminiKey, { tier: 'fast', isUniversal, timeoutMs: 25000 }) });
     }
     if (keys.ollamaKey) {
         engines.push({ name: 'ollama-llama3.2-vision', fn: () => callOllamaVision(image, prompt, keys.ollamaKey) });
     }
     if (mode === 'ultra' || mode === 'frontier') {
-        if (keys.geminiKey)   engines.push({ name: 'gemini-2.5-pro', fn: () => callGemini25Pro(image, prompt, keys.geminiKey) });
         if (keys.ollamaKey)   engines.push({ name: 'ollama-qwen2.5vl', fn: () => callOllamaQwen(image, prompt, keys.ollamaKey) });
         if (keys.togetherKey) engines.push({ name: 'together-llama-3.2-vision', fn: () => callTogetherVision(image, prompt, keys.togetherKey) });
         if (keys.nvidiaKey)   engines.push({ name: 'nvidia-llama-3.2-vision', fn: () => callNvidiaVision(image, prompt, keys.nvidiaKey) });

@@ -73,6 +73,11 @@ export function merchantNameFor(row) {
     return value.length >= 3 ? value.slice(0, 80) : '';
 }
 
+/* One line per statement worked on, so production tells which bank's statement stopped where and why — no amounts, no names, only the
+ * bank, the outcome and the reason code. The run line (statement-sync-run) counts; this one explains. */
+function logItem(fields) {
+    try { console.info(JSON.stringify({ evt: 'statement-sync-item', ...fields, ...(fields.reason ? { reason: String(fields.reason).replace(/\d{6,}/g, '#').slice(0, 80) } : {}) })); } catch (_) { /* a log line never stops a sync */ }
+}
 const permanentFailure = error => /^(?:PASSWORD_FAILED|NO_VAULT_KEYS|PDF_UNREADABLE|ATTACHMENT_TYPE_UNSUPPORTED|ATTACHMENT_SIZE_LIMIT|INVALID_ATTACHMENT|HTML_[A-Z_]+|STATEMENT_[A-Z_]+)$/.test(error?.message || '') || new Set([
     'statement-layout-identity-needs-review', 'statement-layout-or-reconciliation-needs-review', 'statement-empty-needs-confirmation', 'statement-cursor-or-content-changed',
     'statement-message-missing', 'statement-message-deleted', 'statement-sender-no-longer-approved',
@@ -853,6 +858,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const decisions = await classifySlice(rows, allocations, { board });
             outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType, cardRegistry: user.settings?.cardRegistry || {},
                 mailRef, vaultRef, vaultSavedAt, vaultExpected: vaultSnap.exists });
+            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor, how: parsed.adaptive ? 'adaptive' : 'rules' });
         }
     } catch (error) {
         if (!permanentFailure(error)) {
@@ -871,10 +877,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 outcome = { status: 'needs_review', review: 1, deadLettered: 1 };
             } else if (result.outcome === 'dead-letter') outcome = { status: 'dead_letter', retry: 0, deadLetter: 1, retryAfterMs: result.retryAfterMs };
             else outcome = { status: 'retry_pending', retry: 1, retryAfterMs: result.retryAfterMs };
+            logItem({ bank: claimed.bank || '?', status: outcome.status, reason: error?.message, retryAfterMs: result.retryAfterMs });
         } else {
             const reason = error.message;
             await quarantineSource(db, uid, sourceRef, claimed.leaseToken, reason, reviewEvidence);
             outcome = { status: 'needs_review', review: 1 };
+            logItem({ bank: claimed.bank || '?', status: outcome.status, reason });
         }
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }
     return outcome;

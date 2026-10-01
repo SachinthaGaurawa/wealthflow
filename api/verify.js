@@ -70,6 +70,8 @@ function mapIndustry() {
 }
 
 const SEARCH_TIMEOUT_MS = 8000;    // research: hard-abort the search at 8s
+import { geminiGenerate, geminiKeyOf } from '../gemini-client.mjs';
+
 const LLM_TIMEOUT_MS = 12000;
 const MAX_MERCHANT_LEN = 120;
 
@@ -212,22 +214,13 @@ async function viaGroq(prompt) {
 }
 
 async function viaGemini(prompt) {
-    const K = process.env.GEMINI_API_KEY;
+    const K = geminiKeyOf();
     if (!K) return null;
-    const g = guard(LLM_TIMEOUT_MS);
     try {
-        const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + K, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 500, responseMimeType: 'application/json' } }),
-            signal: g.signal
-        });
-        g.done();
-        if (!r.ok) return null;
-        const j = await r.json();
-        const parts = ((((j.candidates || [])[0] || {}).content || {}).parts) || [];
-        return parts.map(p => p.text || '').join('') || null;
-    } catch (_) { g.done(); return null; }
+        // the shared client finds a live model, honours a quota answer and does not ask a retired model (gemini-client.mjs)
+        const r = await geminiGenerate({ key: K, parts: [{ text: prompt }], json: true, thinking: 'low', temperature: 0, maxOutputTokens: 500, deadlineMs: LLM_TIMEOUT_MS });
+        return r.text || null;
+    } catch (_) { return null; }
 }
 
 async function viaOwnAI(prompt, origin) {

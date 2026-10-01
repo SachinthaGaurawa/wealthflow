@@ -16,10 +16,12 @@
 //   array) inside the `messages[].images` field for vision models.
 
 import * as Matrix from './ai-matrix.mjs';
-import { createModelBook, isModelGone, loadModels, QUOTA_BAD_MS } from '../ai-models.mjs';
+import { isModelGone, loadModels } from '../ai-models.mjs';
+import { geminiBook, geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
 
-/* What each provider serves NOW, remembered for hours: a retired model is replaced by one the provider itself lists (ai-models.mjs). */
-export const modelBook = createModelBook();
+/* What each provider serves NOW, remembered for hours: a retired model is replaced by one the provider itself lists (ai-models.mjs).
+ * One book for the whole process: Gemini's slots are shared with every other endpoint that asks Gemini (gemini-client.mjs). */
+export const modelBook = geminiBook;
 
 const providerCooldownUntil = new Map();
 function providerCooldownMs(error) {
@@ -140,57 +142,18 @@ export default async function handler(req, res) {
     // ---------- ENGINE 1: GEMINI (Primary, supports vision) ----------
     async function fetchGemini() {
         if (!geminiKey) throw new Error('Gemini key not configured');
-        // gemini-2.0-flash / gemini-2.5-flash were retired by Google (confirmed live:
-        // "This model models/gemini-2.0-flash is no longer available... use
-        // models/gemini-3.8-flash"). 3.8 Flash is multimodal, so one model serves
-        // both the text and vision paths. When THAT is retired or its quota is spent
-        // (a Gemini quota is per model), the models Google lists today are tried.
-        const slot = 'Gemini:any';
+        // One shared client (gemini-client.mjs) owns everything that used to fail here and in ten other files: a retired model is
+        // replaced from Google's own list, a quota answer parks that model for as long as Google said and moves to another one
+        // (the quota is per model), a busy model is asked once more then another, a 400 that names a setting is re-sent without it,
+        // a reply emptied by thinking is asked again with room — and none of it is asked twice in a row to fail the same way.
         const parts = [{ text: prompt }];
-        if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
-
-        const generationConfig = { temperature: temp, maxOutputTokens: tokens };
-        // If the prompt asks for JSON, hint the model to enforce it
-        if (wantsJSON || financialDecision) {
-            generationConfig.responseMimeType = 'application/json';
-        }
-        const send = async (model) => {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
-            const response = await fetchWithTimeout(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts }],
-                    generationConfig,
-                    safetySettings: [
-                        { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_ONLY_HIGH' },
-                        { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_ONLY_HIGH' },
-                        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-                        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-                    ]
-                })
-            });
-            if (response.ok) return { ok: true, response };
-            return { ok: false, status: response.status, text: await response.text().catch(() => '') };
-        };
-        let model = modelBook.current(slot) || 'gemini-3.8-flash';
-        let out = await send(model);
-        if (!out.ok && (isModelGone(out.status, out.text) || out.status === 429)) {
-            modelBook.markBad(slot, model, out.status === 429 ? QUOTA_BAD_MS : undefined);
-            const next = await modelBook.replacement({ slot, provider: 'Gemini', failed: model,
-                load: () => loadModels({ kind: 'gemini', url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', key: geminiKey, fetcher: fetchWithTimeout }) });
-            if (next) {
-                const retry = await send(next);
-                if (retry.ok) { modelBook.remember(slot, next); model = next; out = retry; }
-                else modelBook.markBad(slot, next, retry.status === 429 ? QUOTA_BAD_MS : undefined);
-            }
-        }
-        if (!out.ok) throw new Error(`Gemini status ${out.status}: ${out.text.substring(0, 200)}`);
-        const data = await out.response.json();
-        if (data.promptFeedback?.blockReason) throw new Error('Blocked by Google Safety');
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return { reply: text, provider: `gemini:${model}` };
-        throw new Error('Gemini returned an empty response');
+        if (image) parts.push({ inline_data: { mime_type: mimeOfBase64(image), data: image } });
+        const structured = wantsJSON || financialDecision;
+        const result = await geminiGenerate({
+            key: geminiKey, parts, json: structured, thinking: structured ? 'low' : undefined,
+            temperature: temp, maxOutputTokens: tokens, deadlineMs, fetcher: fetchWithTimeout, book: modelBook
+        });
+        return { reply: result.text, provider: `gemini:${result.model}` };
     }
 
     // ---------- ENGINE 2: DEEPSEEK (Fallback, text-only) ----------

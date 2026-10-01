@@ -47,8 +47,12 @@ export function parseHeader(value) {
 /** Where the next link is called: the production domain of this deployment, never a preview (those are behind protection). */
 export function selfUrl(env = process.env) {
     if (typeof env.WF_CHAIN_URL === 'string' && /^https:\/\/[\w.-]+(?::\d+)?\/api\/statement-sync$/.test(env.WF_CHAIN_URL)) return env.WF_CHAIN_URL;
-    if (env.VERCEL_ENV !== 'production') return '';
-    const host = env.VERCEL_PROJECT_PRODUCTION_URL || '';
+    // a deployment that says it is not production never calls production's endpoint with its own secret
+    if (env.VERCEL_ENV && env.VERCEL_ENV !== 'production') return '';
+    let host = env.VERCEL_PROJECT_PRODUCTION_URL || '';
+    // Vercel's system variables are a project setting that can be off. The mailbox push is configured with this deployment's own
+    // public address (its audience), which is the same host: use it rather than leave the chain silently dead.
+    if (!host && typeof env.GMAIL_PUBSUB_AUDIENCE === 'string') { const m = /^https:\/\/([\w.-]+)\/api\/gmail-hook\/?$/.exec(env.GMAIL_PUBSUB_AUDIENCE.trim()); if (m) host = m[1]; }
     return /^[\w.-]+$/.test(host) ? `https://${host}/api/statement-sync` : '';
 }
 

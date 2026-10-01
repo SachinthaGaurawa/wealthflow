@@ -28,6 +28,8 @@
  * ZERO dependencies — global fetch only (Node 18+; this project pins Node 24).
  * ===========================================================================*/
 
+import { DEFAULT_MODEL as DEFAULT_GEMINI_MODEL, geminiGenerate } from '../gemini-client.mjs';
+
 const DEFAULT_TIMEOUT_MS = 90_000;
 
 /**
@@ -60,7 +62,7 @@ export const PROVIDERS = [
         // WealthFlow_API_Key is this project's actual Gemini key name.
         keys: ['WealthFlow_API_Key', 'WEALTHFLOW_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY'],
         url: null,                                   // built per-request (key in query string)
-        model: () => process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+        model: () => process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
         kind: 'gemini',
         strengths: ['architecture', 'long-context'],
     },
@@ -415,6 +417,27 @@ const BUILDERS = { openai: buildOpenAI, gemini: buildGemini, anthropic: buildAnt
 async function callProvider(provider, opts) {
     const key = keyFor(provider, opts.env || process.env);
     if (!key) throw new Error(`${provider.id}: no key`);
+    // Gemini goes through the shared client: a retired model is replaced from Google's own list, a quota answer parks that model for as
+    // long as Google said and moves to another (quota is per model), a busy model is asked once more — instead of one hand-named
+    // model asked again on every run (gemini-client.mjs). The failure keeps the shape the rest of this file reads.
+    if (provider.kind === 'gemini') {
+        try {
+            const r = await geminiGenerate({
+                key: key.value, parts: [{ text: opts.prompt }], system: opts.system || '', temperature: opts.temperature, maxOutputTokens: opts.maxTokens,
+                model: process.env.GEMINI_MODEL || '', deadlineMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS, attemptMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS,
+            });
+            const text = String(r.text || '').trim();
+            if (!text) throw new Error(`${provider.id}: empty completion`);
+            return { text, provider: provider.id, label: provider.label, model: r.model };
+        } catch (e) {
+            if (e && e.status) {
+                e.message = `${provider.id}: HTTP ${e.status} ${String(e.message).slice(0, 300)}`;
+                e.rateLimited = e.status === 429;
+                e.retryAfterSec = Math.min(24 * 3600, Math.ceil((e.retryAfterMs || 0) / 1000));
+            }
+            throw e;
+        }
+    }
     const build = BUILDERS[provider.kind];
     if (!build) throw new Error(`${provider.id}: unknown kind ${provider.kind}`);
 
