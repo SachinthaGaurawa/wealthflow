@@ -39,7 +39,7 @@ describe('exact sender intake boundary', () => {
         }
         expect(approvedClauses([entry])).toEqual(['from:statement@hnb.lk']);
     });
-    it('refuses an unknown sender at the bank before emitting attachment work, even with passing DKIM, when nothing in the mail says statement', () => {
+    it('another desk of the bank, authenticated, with a PDF and nothing in the mail saying statement, is taken on that evidence — as a document that must prove itself, never as an approved address', () => {
         const message = { id: 'm', internalDate: '1788000000000', payload: {
             headers: [
                 { name: 'From', value: 'promo@hnb.lk' },
@@ -48,10 +48,11 @@ describe('exact sender intake boundary', () => {
             ], parts: [{ filename: 'offer.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a', size: 500 } }],
         } };
         const plan = planMessage(message, policyFrom([entry]));
-        expect(plan.ok).toBe(false);
-        expect(plan.items).toBeUndefined();
+        expect(plan.ok).toBe(true);
+        expect(plan.items[0]).toMatchObject({ via: 'sibling', intent: 'suspect', from: 'promo@hnb.lk' });
+        expect(policyFrom([entry]).decide('promo@hnb.lk').verdict).not.toBe('approved');
     });
-    it('takes another address at the same bank only when its subject or file says statement, and then only as a document that must prove itself', () => {
+    it('takes another address at the same bank when its subject or file says statement, and then only as a document that must prove itself', () => {
         const message = { id: 'm', internalDate: '1788000000000', payload: {
             headers: [
                 { name: 'From', value: 'promo@hnb.lk' },

@@ -14,7 +14,7 @@ import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } 
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine } from './statement-ledger.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
-import { textVerdict, sniffKind, VERDICT } from './wealthflow-statement-identity.js';
+import { textVerdict, sniffKind, VERDICT, intentVerdict } from './wealthflow-statement-identity.js';
 import { adaptiveRead, isMovementLine, linesOf, ADAPTIVE_VERSION, statementKey, jsonOf } from './statement-adaptive.mjs';
 import { sameCurrency, discoverCurrency } from './statement-currency.mjs';
 import { readTable, reconcile as reconcileMailStates, applyReconcile, summarize as summarizeMailStates } from './mail-state.mjs';
@@ -1090,11 +1090,19 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
          * movements read from it. Without any of those it is retired here, named, and never asked about. */
         const structure = shapeOf(text);
         const hasStatementStructure = structure.stmt || structure.bal || structure.open || structure.close || (Array.isArray(parsed?.rows) && parsed.rows.length > 0);
-        const selfProven = parserProof || (identity.verdict === VERDICT.STATEMENT && (claimed.intent !== 'suspect' || hasStatementStructure));
-        const unvouched = mailDidNotVouch && !selfProven && hasText
+        /* A MAIL FROM ANOTHER DESK OF THE BANK (via 'sibling') THAT NEVER SAYS STATEMENT is judged on its document alone, and a document that is not one —
+         * a brochure, a PDF with no text — is retired here, named and counted, never put to the owner: the mail was taken on evidence of WHO sent it
+         * (see planCore), so what it IS is for the document to show. A sibling whose subject or file name says statement keeps the stricter path of
+         * `suspect`; an HTML document is never retired for having no text (a Smart Statement draws itself on the owner's device) and keeps the
+         * lenient test an `unproven` mail gets. */
+        const htmlDoc = /\.html?$/i.test(String(claimed.filename || ''));
+        const siblingSilent = claimed.via === 'sibling' && intentVerdict({ subject: claimed.subject || '', filenames: [claimed.filename || ''] }).intent !== 'stated';
+        const strict = claimed.intent === 'suspect' && !(siblingSilent && htmlDoc);
+        const selfProven = parserProof || (identity.verdict === VERDICT.STATEMENT && (!strict || hasStatementStructure));
+        const unvouched = mailDidNotVouch && !selfProven && (hasText || (siblingSilent && !htmlDoc))
             // `unproven` is retired only when the text has NO line with a date and an amount on it at all — a statement short enough
             // to have fewer than three movements, in a language the vocabulary does not know, still goes to the owner, never away
-            && (claimed.intent === 'suspect' || ((identity.evidence || []).length === 0 && linesOf(text).filter(isMovementLine).length === 0));
+            && (strict || ((identity.evidence || []).length === 0 && linesOf(text).filter(isMovementLine).length === 0));
         if (unvouched && identity.verdict !== VERDICT.NOT_STATEMENT) {
             identity.verdict = VERDICT.NOT_STATEMENT;
             identity.reason = claimed.intent === 'suspect'

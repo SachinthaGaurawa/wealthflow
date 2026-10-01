@@ -181,7 +181,8 @@ describe('every message is on record before anything is fetched, and ends in the
         expect(e[docIdOf('s0001')]).toMatchObject({ state: 'PROCESSED', v: INTAKE_VERSION });
         expect(e[docIdOf('b0001')]).toMatchObject({ state: 'REFUSED', reason: 'the-attachment-is-not-a-bank-statement' });
         expect(e[docIdOf('f0001')]).toMatchObject({ state: 'FAILED_VERIFICATION' });
-        expect(e[docIdOf('h0001')]).toMatchObject({ state: 'HELD', reason: 'a-new-address-at-a-bank-you-approved' });
+        // another address at an approved bank, authenticated, with a document attached: taken on that evidence (no question to the owner) — the worker judges the document
+        expect(e[docIdOf('h0001')]).toMatchObject({ state: 'PROCESSED' });
         const st = await w.state();
         expect(st.security.map(x => x.messageId)).toEqual(['f0001']);
         expect((st.refused || []).map(x => x.messageId)).not.toContain('f0001');   // forgery is logged, never offered back
@@ -339,10 +340,12 @@ describe('under timeouts, rate limits and database aborts injected at random, ev
         await refresh(Date.now());
         const items = Object.values(await w.items());
         const ids = items.map(i => i.messageId).sort();
-        expect(ids, `a statement was dropped or stored twice (seed ${seed}, ${w.control.failures} injected failures)`).toEqual(statements.map(s => s.id).sort());
+        // the statements, and the bank's other-desk mail (taken on evidence of who sent it; the worker retires what is not a statement)
+        const siblings = noise.filter(n => /^h/.test(n.id));
+        expect(ids, `a statement was dropped or stored twice (seed ${seed}, ${w.control.failures} injected failures)`).toEqual([...statements, ...siblings].map(s => s.id).sort());
         const e = await w.emails();
         for (const s of statements) expect(e[docIdOf(s.id)]?.state, s.id).toBe('PROCESSED');
-        for (const n of noise) expect(['REFUSED', 'FAILED_VERIFICATION', 'HELD'], n.id).toContain(e[docIdOf(n.id)]?.state);
+        for (const n of noise) expect(/^h/.test(n.id) ? ['PROCESSED'] : ['REFUSED', 'FAILED_VERIFICATION', 'HELD'], n.id).toContain(e[docIdOf(n.id)]?.state);
         const st = await w.state();
         expect(st.pendingCollection || null).toBeNull();
         expect(st.auditCursor || null).toBeNull();

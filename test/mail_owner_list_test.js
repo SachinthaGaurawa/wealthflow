@@ -93,12 +93,16 @@ describe('a curated list decides for EVERYONE, built-in banks included', () => {
         expect(r.items).toHaveLength(1);
     });
 
-    it('legacy domain approval admits no mailbox', () => {
+    it('legacy domain approval admits no mailbox as an approved address — it says WHICH bank, and the mail is judged on its document', () => {
         const byDomain = policyFrom([
             { id: 'sampath.lk', kind: 'domain', domain: 'sampath.lk', name: 'Sampath Bank', status: 'approved', source: 'manual', addedMs: 1 },
         ]);
-        expect(planMessage(message('noreply@sampath.lk', 'sampath.lk'), byDomain).ok).toBe(false);
-        expect(planMessage(message('estatement@sampath.lk', 'sampath.lk'), byDomain).ok).toBe(false);
+        expect(byDomain.decide('noreply@sampath.lk').verdict).not.toBe('approved');
+        for (const from of ['noreply@sampath.lk', 'estatement@sampath.lk']) {
+            const plan = planMessage(message(from, 'sampath.lk'), byDomain);
+            expect(plan.ok, from).toBe(true);
+            expect(plan.items[0], from).toMatchObject({ via: 'sibling', intent: 'suspect' });      // never as an approved address: the document must prove itself
+        }
     });
 
     it('AN OWNER WHO HAS APPROVED NOTHING IS HELD, NOT FILED', () => {
@@ -173,19 +177,36 @@ describe('a curated list decides for EVERYONE, built-in banks included', () => {
  * "I ADDED THE ADDRESS AND THE STATEMENT STILL DID NOT ARRIVE"
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('a new desk at a bank they already approved', () => {
-    it('is named as a sibling, not as a stranger', () => {
+    it('is named as a sibling, not as a stranger — and taken on evidence, with no question to the owner', () => {
         const r = planMessage(message('noreply@sampath.lk', 'sampath.lk'), CURATED());
-        expect(r.ok).toBe(false);
-        expect(r.reason).toBe(REJECT.SENDER_SIBLING);
+        expect(r.ok).toBe(true);
+        expect(r.via).toBe('sibling');
         expect(r.bank).toBe('Sampath Bank');
-        expect(r.detail.approvedAddress).toBe('estatement@sampath.lk');
-        expect(r.detail.sawAddress).toBe('noreply@sampath.lk');
+        expect(r.items[0]).toMatchObject({ via: 'sibling', intent: 'suspect', from: 'noreply@sampath.lk' });
     });
 
-    it('is still REFUSED — approving one address is not approving a domain', () => {
-        // The line that does not move. Auto-releasing a sibling would widen a
-        // trust allowlist for financial documents without the owner saying so.
-        expect(planMessage(message('noreply@sampath.lk', 'sampath.lk'), CURATED()).ok).toBe(false);
+    it('is taken only as a document that must prove itself — the address is still not approved', () => {
+        // Who sent it is settled by the evidence (Google's verdict that it is from that domain, the same organisation as an address the
+        // owner approved, no lookalike); what it IS is for the document to show. The owner's list is unchanged by it.
+        const policy = CURATED();
+        expect(policy.decide('noreply@sampath.lk').verdict).not.toBe('approved');
+        expect(planMessage(message('noreply@sampath.lk', 'sampath.lk'), policy).items[0].intent).toBe('suspect');
+    });
+
+    it('an invoice or a receipt from another desk of the bank is refused as not a statement — not held for a decision', () => {
+        for (const subject of ['Your receipt', 'Invoice 4410']) {
+            const r = planMessage(message('noreply@sampath.lk', 'sampath.lk', subject), CURATED());
+            expect(r.ok, subject).toBe(false);
+            expect(r.reason, subject).toBe(REJECT.NOT_A_STATEMENT_DOC);
+            expect(HOLDABLE.has(r.reason), subject).toBe(false);
+        }
+    });
+
+    it('a signature that does not hold still beats the sibling rule', () => {
+        const bad = message('noreply@sampath.lk', 'evil.example');
+        const r = planMessage(bad, CURATED());
+        expect(r.ok).toBe(false);
+        expect([REJECT.DKIM_DOMAIN_MISMATCH, REJECT.AUTH_FAILED, REJECT.DKIM_FAILED]).toContain(r.reason);
     });
 
     it('a different bank entirely is NOT a sibling', () => {
@@ -219,18 +240,19 @@ describe('a new desk at a bank they already approved', () => {
  * NOTHING IS DROPPED
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('a refusal holds the message instead of losing it', () => {
-    it('holds a sibling and an unlisted sender', () => {
-        for (const from of ['noreply@sampath.lk', 'noreply@seylan.lk']) {
-            const msg = message(from, from.split('@')[1]);
-            const held = planHold(planMessage(msg, CURATED()), msg);
-            expect(held, from).toBeTruthy();
-            expect(held.messageId).toBe('MSG1');
-            expect(HOLDABLE.has(held.reason)).toBe(true);
-        }
+    it('holds an unlisted sender (a sibling of an approved bank is taken instead — nothing to hold)', () => {
+        const from = 'noreply@seylan.lk';
+        const msg = message(from, 'seylan.lk');
+        const held = planHold(planMessage(msg, CURATED()), msg);
+        expect(held, from).toBeTruthy();
+        expect(held.messageId).toBe('MSG1');
+        expect(HOLDABLE.has(held.reason)).toBe(true);
+        const sibling = message('noreply@sampath.lk', 'sampath.lk');
+        expect(planHold(planMessage(sibling, CURATED()), sibling)).toBeNull();
     });
 
     it('holds the REFERENCE only — no attachment is fetched on a refusal', () => {
-        const msg = message('noreply@sampath.lk', 'sampath.lk');
+        const msg = message('noreply@seylan.lk', 'seylan.lk');
         const held = planHold(planMessage(msg, CURATED()), msg);
         const json = JSON.stringify(held);
         expect(json).not.toContain('attachmentId');
@@ -253,20 +275,20 @@ describe('a refusal holds the message instead of losing it', () => {
     });
 
     it('APPROVING THE SENDER RELEASES IT — the half that was missing', () => {
-        const msg = message('noreply@sampath.lk', 'sampath.lk');
+        const msg = message('noreply@seylan.lk', 'seylan.lk');
         const held = planHold(planMessage(msg, CURATED()), msg);
         expect(releasedBy(held, CURATED().decide)).toBe(false);
 
         const after = policyFrom([
-            { id: 'noreply@sampath.lk', kind: 'address', domain: 'sampath.lk', status: 'approved', source: 'manual', addedMs: 1 },
+            { id: 'noreply@seylan.lk', kind: 'address', domain: 'seylan.lk', status: 'approved', source: 'manual', addedMs: 1 },
         ]);
         expect(releasedBy(held, after.decide)).toBe(true);
     });
 
     it('approving a DIFFERENT sender releases nothing', () => {
-        const msg = message('noreply@sampath.lk', 'sampath.lk');
+        const msg = message('noreply@seylan.lk', 'seylan.lk');
         const held = planHold(planMessage(msg, CURATED()), msg);
-        const other = policyFrom([{ id: 'seylan.lk', kind: 'domain', domain: 'seylan.lk', status: 'approved', source: 'manual', addedMs: 1 }]);
+        const other = policyFrom([{ id: 'othernew.lk', kind: 'domain', domain: 'othernew.lk', status: 'approved', source: 'manual', addedMs: 1 }]);
         expect(releasedBy(held, other.decide)).toBe(false);
     });
 

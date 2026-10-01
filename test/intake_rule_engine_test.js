@@ -130,8 +130,9 @@ function expected(from, auth, att, subject, body) {
     const namedStatement = (att === 'a statement PDF' || att === 'an upper-case .PDF' || att === 'a statement HTML' || att === 'an HTML sent as octet-stream' || att === 'a PDF named with a date')
         && /statement/i.test(ATTACHMENTS[att].parts[0].filename);
     const metaSays = s === 'stated' || namedStatement ? 'stated' : s === 'block' ? 'block' : 'neutral';
-    // another address at the approved bank: taken only when subject or file SAYS statement, and then only as a document that must prove itself
-    if (f.out === 'held') return metaSays === 'stated' ? { ok: true, intent: 'suspect' } : { ok: false, reason: REJECT.SENDER_SIBLING, security: false };
+    // another address at the approved bank (authenticated, above): taken on that evidence whatever the subject says — only as a document that
+    // must prove itself — except an invoice, a receipt, an order or a payment notice, which is refused as not a statement (never held for a tap)
+    if (f.out === 'held') return metaSays === 'block' ? { ok: false, reason: REJECT.NOT_A_STATEMENT_DOC, security: false } : { ok: true, intent: 'suspect' };
     if (metaSays === 'block') return { ok: false, reason: REJECT.NOT_A_STATEMENT_DOC, security: false };
     const intent = metaSays === 'stated' ? 'stated' : b.adds === 'stated' ? 'stated' : b.adds === 'suspect' ? 'suspect' : 'unproven';
     return { ok: true, intent };
@@ -369,10 +370,13 @@ describe('Layer 3 — deceptive scenarios', () => {
     it('a receipt PDF from the approved address is refused', () => {
         expect(planMessage(build({ subject: 'Payment receipt', parts: [pdf('Receipt-2402-5154.pdf')] }), policy)).toMatchObject({ ok: false, reason: REJECT.NOT_A_STATEMENT_DOC });
     });
-    it('a sub-domain leak: a bank\'s sub-domain that is NOT the approved address is held, not taken', () => {
+    it('a sub-domain of the bank that is NOT the approved address is taken only on evidence — and only as a document that must prove itself (a brochure is retired by its contents, never filed)', () => {
         const plan = planMessage(build({ from: 'Promo <offers@news.hnb.lk>', subject: 'New offers for you', parts: [pdf('Rewards.pdf')], auth: [GOOGLE + 'dkim=pass header.i=@news.hnb.lk'] }), policy);
-        expect(plan.ok).toBe(false);
-        expect([REJECT.SENDER_SIBLING, REJECT.NOT_ON_YOUR_LIST]).toContain(plan.reason);
+        expect(plan.ok).toBe(true);
+        expect(plan.items[0]).toMatchObject({ via: 'sibling', intent: 'suspect' });
+        // with no signature that holds it is not taken at all
+        const unsigned = planMessage(build({ from: 'Promo <offers@news.hnb.lk>', subject: 'New offers for you', parts: [pdf('Rewards.pdf')], auth: [GOOGLE + 'dkim=none'] }), policy);
+        expect(unsigned.ok).toBe(false);
     });
     it('the same sub-domain sending something that says statement is taken — as a document that must prove itself', () => {
         const plan = planMessage(build({ from: 'Statements <estmt@news.hnb.lk>', auth: [GOOGLE + 'dkim=pass header.i=@news.hnb.lk'] }), policy);

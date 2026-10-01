@@ -43,10 +43,18 @@ describe('coverage: which months did the mailbox not give us', () => {
         expect(s.calls[0]).toContain('nationstrust.com');
         expect(s.calls[0]).not.toContain('has%3Aattachment');
     });
-    it('names the reason when the bank wrote from an address the owner has not approved and sent something unlike its statements', async () => {
+    it('queues what the bank wrote from another address of its own even when it is unlike its statements — the document judges itself, nothing waits for the owner', async () => {
         const s = setup({ inbox: [gmailMessage('msgMAR', 'NTB E-Statements <estatements@nationstrust.com>', 'Weekend_Offers.html', Date.parse('2026-04-02T05:00:00Z'), 'Weekend offers')] });
         const out = await run(s);
-        expect(out.series[0].gaps[0].mail).toMatchObject([{ messageId: 'msgMAR', from: 'estatements@nationstrust.com', outcome: 'a-new-address-at-a-bank-you-approved' }]);
+        expect(out.series[0].gaps[0].mail).toMatchObject([{ messageId: 'msgMAR', from: 'estatements@nationstrust.com', outcome: 'missed' }]);
+        expect(out.staged).toBe(1);
+    });
+    it('names the reason when the bank\'s other address sent an invoice (refused as not a statement)', async () => {
+        const s = setup({ inbox: [gmailMessage('msgMAR', 'NTB Billing <billing@nationstrust.com>', 'Invoice-0042.pdf', Date.parse('2026-04-02T05:00:00Z'), 'Invoice')] });
+        const out = await run(s);
+        expect(out.series[0].gaps[0].mail).toMatchObject([{ messageId: 'msgMAR' }]);
+        expect(out.series[0].gaps[0].mail[0].outcome).not.toBe('missed');       // refused on what it is (or has no usable attachment), never queued, never waiting on a decision
+        expect(out.series[0].gaps[0].mail[0].outcome).not.toBe('a-new-address-at-a-bank-you-approved');
         expect(out.staged).toBe(0);
         expect(s.mailSnap().pendingCollection).toBeUndefined();
     });
