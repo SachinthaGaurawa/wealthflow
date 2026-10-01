@@ -40,11 +40,24 @@ export default async function handler(req, res) {
             tx.set(ref, sealed);
             tx.set(mailRef, { uid: who.uid, email: who.email, autonomous: true }, { merge: true });
         });
+        /* THE SAVE IS ANSWERED FIRST; THE QUEUE IS WORKED AFTER. This used to wait for a whole drain (up to 45 s, and the statement being
+         * read was allowed to finish) before answering — and half the saves in the production log of 2026-10-01 (11 of 22) were cut by the
+         * platform at 60 s with a 504, although the vault WAS saved. The drain now runs in the platform's background window with a
+         * budget that leaves room, and hands the rest of the backlog to the self-resuming chain (statement-chain.mjs). Where there is no
+         * background window (local, tests) the caller waits for it, as before. */
         let queued = false;
         try {
             const { runStatementSync } = await import('./statement-sync.js');
-            await runStatementSync({ db, owner: { uid: who.uid, email: who.email }, action: 'drain', budgetMs: 45000 });
-            queued = true;
+            const { continueChain, platformWaitUntil } = await import('./statement-chain.mjs');
+            const mailRef = db.collection('wf-mail').doc(userKeyFor(who.email));
+            const job = (async () => {
+                const result = await runStatementSync({ db, owner: { uid: who.uid, email: who.email }, action: 'drain', budgetMs: 30000 });
+                try { await continueChain({ db, mailRef, result, link: null }); } catch (_) { /* the schedule or the app starts it again */ }
+                return result;
+            })();
+            const waitUntil = platformWaitUntil();
+            if (waitUntil) { waitUntil(job.catch(() => {})); queued = true; }
+            else { await job; queued = true; }
         } catch (_) { /* The daily safety-net schedule can pick up durable vault/mailbox state. */ }
         return json(res, 200, { ok: true, saved: true, count: sealed.count, savedAt: sealed.savedAt, queued });
     } catch (_) { return json(res, 503, { ok: false, reason: 'vault-storage-unavailable' }); }
