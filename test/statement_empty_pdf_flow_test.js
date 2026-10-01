@@ -21,6 +21,13 @@ const layouts = {
     moved: pdf('Opening Balance 12,345.67', '30/04/2024 0.00', 'Closing Balance 11,000.00'),
     zeroLines: pdf('01/04/2024 B/F 0.00', '30/04/2024 Interest 0.00 0.00', '30/04/2024 C/F 0.00'),
     hidden: pdf('30-Apr-2024 0.00 12,345.67', 'POS SHOP ONE 1,500.00'),
+    /* THE OWNER'S ACTUAL HNB PAGE, as the production log's layout skeleton of 2026-10-01 describes it (288 characters, 11 lines): no "statement", no
+     * "account no", no period, no closing label — a title and an address, the account, LKR, a labelled "B/F 0.00", a dated "0.00", a footer. A zero
+     * balance and nothing moved, for thirty-four months. */
+    real: textPdf(['1', 'MRS. SILVA A B C', 'NO 12/3,TEMPLE ROAD,KANDY', 'A/C 074020123488', 'LKR', 'person@example.com HNB SMART ACCOUNT', '01.09.26 B/F 0.00', '0 0', '30-09-2026 0.00',
+        'THE ACCOUNT BALANCE IS SHOWN ABOVE. REPORT ANY ERROR TO 0112 462 462', 'THIS IS A COMPUTER GENERATED DOCUMENT E&OE.']),
+    realMoved: textPdf(['1', 'MRS. SILVA A B C', 'NO 12/3,TEMPLE ROAD,KANDY', 'A/C 074020123488', 'LKR', 'person@example.com HNB SMART ACCOUNT', '01.09.26 B/F 0.00', '0 0', '30-09-2026 1,250.00',
+        'THE ACCOUNT BALANCE IS SHOWN ABOVE. REPORT ANY ERROR TO 0112 462 462', 'THIS IS A COMPUTER GENERATED DOCUMENT E&OE.']),
 };
 const board = (lines = 0) => vi.fn(async () => ({ fields: { transactionLines: lines }, unanimous: true }));
 const down = () => vi.fn(async () => { throw new Error('ai-consensus-unavailable'); });
@@ -98,6 +105,39 @@ describe('a statement with no transactions is closed when — and only when — 
         await s.drain();
         expect(s.source()).toMatchObject({ status: 'needs_review', reviewReason: 'statement-empty-needs-confirmation' });
         expect(s.reviews()).toHaveLength(1); expect(s.reviews()[0]).toMatchObject({ index: -1, reason: 'statement-empty-needs-confirmation' });
+    });
+});
+
+describe('the owner\'s real HNB page: a zero balance, nothing moved, and a page that says nothing about itself', () => {
+    it('is recognised as a ledger, closed as empty on the page alone ONLY with the AI board\'s independent count, and never reaches the owner', async () => {
+        const s = setup('real');                                               // no `intent` on the item, as in production (diag.intent was "")
+        await s.drain();
+        expect(s.source()).toMatchObject({ status: 'filed', filed: true, emptyStatement: true, hasReview: false });
+        expect(s.source().emptyEvidence).toMatchObject({ balances: 'zero', how: 'rules+ai', witness: 'agrees', pdf: 'text' });
+        expect(s.reviews()).toEqual([]);
+        expect(s.board).toHaveBeenCalledTimes(1);
+    });
+    it('is NOT closed while the AI board cannot be reached: the page alone is not enough, so it waits (no question to the owner, nothing filed)', async () => {
+        const s = setup('real', { withBoard: down() });
+        await s.drain();
+        expect(s.source().emptyStatement).not.toBe(true); expect(s.source().filed).not.toBe(true);
+        expect(s.source().status).not.toBe('needs_review');
+        expect(s.reviews()).toEqual([]);
+    });
+    it('is NOT closed when the board counts transaction lines the rules did not see', async () => {
+        const s = setup('real', { withBoard: board(2) });
+        await s.drain();
+        expect(s.source().emptyStatement).not.toBe(true); expect(s.source().status).toBe('needs_review');
+    });
+    it('is NOT closed when any amount on the page is not zero', async () => {
+        const s = setup('realMoved');
+        await s.drain();
+        expect(s.source().emptyStatement).not.toBe(true);
+    });
+    it('and a mail that PREVIOUSLY said "unproven" or "suspect" keeps the old gate: a page that says nothing, from a mail that said nothing, is not taken on its shape', async () => {
+        const s = setup('x', { bytes: textPdf(['Thanks for your order', 'Total 0.00']), source: { intent: 'suspect' } });
+        await s.drain();
+        expect(s.source().emptyStatement).not.toBe(true);
     });
 });
 

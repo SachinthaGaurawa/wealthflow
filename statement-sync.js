@@ -8,7 +8,7 @@ import { policyFrom, matchSender, normalizeList, approvedClauses, relatedApprova
 import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf } from './statement-coverage.mjs';
 import { REJECT_TEXT, REJECT } from './wealthflow-mail-ingest.mjs';
 import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
-import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless } from './statement-emptiness.mjs';
+import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped } from './statement-emptiness.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { settleStatement, resolveReview, transferEvidence, isZeroAmountLine } from './statement-ledger.mjs';
@@ -31,7 +31,7 @@ const PASSWORD_BATCH = 6;
 /* Bumped when the reader or the AI behind it has changed so that a statement it could not read earlier deserves another look. Version 4: the
  * AI roster was repaired (reasoning-model empties, retired models) and the model-free reader added — thirty-four HNB statements had used up
  * their three adaptive tries (and the six-hour wait between them) during the outage and sat in review as "not waiting to be processed again". */
-const WHOLE_REPLAY_VERSION = 5;
+const WHOLE_REPLAY_VERSION = 6;
 const SAFE_WHOLE_REPLAY = new Set([
     'statement-layout-identity-needs-review',
     'statement-layout-or-reconciliation-needs-review',
@@ -262,6 +262,8 @@ async function decideEmptiness({ text, parsed, board }) {
     if (assessment.decision !== 'empty') return assessment;
     const witness = await witnessEmpty({ text, board });
     if (witness.available && !witness.agrees) return { decision: 'has-transactions', why: 'the-ai-board-counted-transaction-lines' };
+    // an `empty` that rests on the page alone (every amount on it is zero) is closed only with the board's independent count; without it, later
+    if (assessment.strength === 'zero' && !witness.available) return { decision: 'retry', why: 'the-ai-board-is-needed-to-confirm-a-zero-page' };
     return { decision: 'empty', evidence: { ...assessment.evidence, balances: assessment.evidence.balances, how: witness.available ? 'rules+ai' : 'rules', witness: witness.available ? 'agrees' : 'unavailable', strength: assessment.strength } };
 }
 
@@ -878,9 +880,14 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
              * a statement" before anything was asked about their emptiness. When the mail itself says statement (its subject or its file
              * name, from an approved sender — `intent: stated`) the question moves on to the one that matters, whether the month was
              * really empty, which is still decided only on every signal at once (statement-emptiness.mjs) and is never closed on this alone. */
-            if (identity.verdict !== VERDICT.STATEMENT && claimed.intent !== 'stated') throw new Error('statement-layout-identity-needs-review');
+            /* …AND SO IS ITS SHAPE. Most of the 34 carried no `intent` at all (queued before it was recorded: `diag.intent` is ""), and their
+             * short pages — "B/F 0.00", a dated line "0.00", the account's address and a footer — said nothing the identity vocabulary knew. A
+             * page with a labelled opening balance and a dated line that carries an amount is a ledger whatever it calls itself; the
+             * question that follows (was the month empty?) is still the strict one. */
+            if (identity.verdict !== VERDICT.STATEMENT && claimed.intent !== 'stated' && !ledgerShaped(text)) throw new Error('statement-layout-identity-needs-review');
             if (claimed.emptyOverride === 'owner') throw new Error('statement-layout-or-reconciliation-needs-review');
             const verdict = await decideEmptiness({ text, parsed, board });
+            if (verdict.decision === 'retry') throw new Error('statement-worker-retry-required');
             if (verdict.decision === 'empty') outcome = await fileEmptyStatement(db, uid, sourceRef, claimed.leaseToken, mailRef, { balances: verdict.evidence.balances, dataRows: 0, pdf: 'text', ...verdict.evidence });
             // "Empty, please confirm" is only said of a statement the reader did read as having no lines that move
             // money; one it could not read at all keeps the layout question it always had.
@@ -1198,7 +1205,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         const frontRoom = () => { if (Date.now() - start < frontBudgetMs) return true; frontSkipped = true; return false; };
         const vault = frontRoom() ? await db.collection(VAULT_ROOT).doc(uid).get() : null;
         recovered = vault && vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
-        const recoveryLimit = heavy ? 25 : 5;
+        const recoveryLimit = heavy ? 25 : 10;
         if (frontRoom()) { const whole = await recoverWholeStatementFailures({ db, uid, limit: recoveryLimit }); wholeRecovered = whole.recovered; wholeMore = whole.more; }
         if (frontRoom()) categoriesRepaired = (await repairStatementCategories({ db, uid })).total;
         if (frontRoom()) { const consensus = await recoverConsensusFailures({ db, uid, limit: recoveryLimit }); consensusRecovered = consensus.recovered; consensusMore = consensus.more; }

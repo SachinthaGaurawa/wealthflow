@@ -61,7 +61,7 @@ const amountsIn = line => (line.match(AMOUNT_RE) || []).map(token => ({ token, c
  * out first (so 30.04.2024 is not read as an amount of 30.04).
  */
 export function scanStatementText(text) {
-    const out = { lines: 0, suspect: 0, suspectSample: [], zeroLines: 0, openings: [], closings: [], period: false, noActivity: false };
+    const out = { lines: 0, suspect: 0, suspectSample: [], zeroLines: 0, openings: [], closings: [], period: false, noActivity: false, amounts: 0, positive: 0, datedMoney: 0 };
     for (const raw of norm(text).split('\n')) {
         const line = raw.replace(/\s+/g, ' ').trim();
         if (!line) continue;
@@ -72,6 +72,8 @@ export function scanStatementText(text) {
         const body = line.replace(DATE_RE, ' ').replace(/\s+/g, ' ').trim();
         const amounts = amountsIn(body);
         if (!amounts.length) continue;
+        // every amount the page prints, headings and labels included: a page on which none is positive has no money on it at all
+        out.amounts += amounts.length; out.positive += amounts.filter(a => a.cents !== 0).length; if (hadDate) out.datedMoney += 1;
         const label = body.replace(/^[\s\-:*•]+/, '');
         const words = label.replace(AMOUNT_RE, ' ').replace(/[^A-Za-z]+/g, ' ').trim().split(' ').filter(Boolean);
         const labelOnly = words.every(word => LABEL_WORDS.has(word.toLowerCase()));
@@ -88,6 +90,12 @@ export function scanStatementText(text) {
 }
 
 const finite = v => typeof v === 'number' && Number.isFinite(v);
+
+/** A page with a labelled opening / brought-forward balance and a dated line that carries an amount: the shape of a ledger, whatever it says about itself. */
+export function ledgerShaped(text) {
+    const scan = scanStatementText(text);
+    return scan.openings.length > 0 && scan.datedMoney > 0;
+}
 
 /**
  * @returns {{decision:'empty', strength:'strong'|'weak', evidence:object}
@@ -108,6 +116,14 @@ export function assessEmptiness({ text, parsed } = {}) {
     // A balance stated twice that disagrees with itself is not evidence of anything.
     if (new Set(scan.openings).size > 1 || new Set(scan.closings).size > 1) return { decision: 'unsure', why: 'balances-disagree-with-themselves' };
     const agree = both;
+    /* A DORMANT ACCOUNT'S STATEMENT: a labelled opening ("B/F") and a dated line, and EVERY amount the page prints — in rows, labels and
+     * headings alike — is zero. 34 HNB months were exactly this (balance 0.00, nothing moved): no closing label, no "statement" in the
+     * words, nothing the other signals could call evidence. Nothing on the page can be a movement because nothing on it is money. It is
+     * the one `empty` that rests on the page alone, so the caller must also have the AI board's independent count before it closes. */
+    const zeroLedger = scan.amounts > 0 && scan.positive === 0 && scan.openings.length > 0 && scan.openings.every(c => c === 0) && scan.zeroLines > 0;
+    if (!agree && !scan.noActivity && zeroLedger) {
+        return { decision: 'empty', strength: 'zero', evidence: { balances: 'zero', noActivityStated: false, zeroLines: scan.zeroLines, phantomRows: rows.length, period: scan.period, textLines: Math.min(scan.lines, 9999) } };
+    }
     const strong = agree || scan.noActivity;
     const weak = !strong && scan.period && (scan.zeroLines > 0 || rows.length > 0);
     if (!strong && !weak) return { decision: 'unsure', why: 'nothing-shows-the-period-was-empty' };
