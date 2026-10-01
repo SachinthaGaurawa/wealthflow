@@ -48,8 +48,9 @@ describe('the cloud payload is safe for Firestore', () => {
     it('the payload is built through it, and a synchronous throw from set() cannot escape', () => {
         const at = html.indexOf('function syncToCloud() {');
         const body = html.slice(at, at + 5200);
-        expect(body).toMatch(/Object\.assign\(\{\}, _wfCloudSafe\(appData\)/);
-        expect(body).toMatch(/try \{ _push = userDocRef\.set\(syncPayload, \{ merge: true \}\); \} catch \(err\) \{ _push = Promise\.reject\(err\); \}/);
+        // the push is a transaction, and a synchronous throw while it is started still becomes a rejection, not an escape
+        expect(body).toMatch(/tx\.set\(userDocRef, Object\.assign\(\{\}, _wfCloudSafe\(appData\)/);
+        expect(body).toMatch(/try \{\s*_push = userDocRef\.firestore\.runTransaction\([\s\S]*?\} catch \(err\) \{ _push = Promise\.reject\(err\); \}/);
     });
     it('the card page no longer writes undefined into a charge', () => {
         expect(html).not.toMatch(/paidAt\s*=\s*undefined/);
