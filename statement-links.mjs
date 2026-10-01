@@ -134,4 +134,53 @@ export function cardSettlementDebit(row, { cardRegistry = {}, cards = [] } = {})
         || bankWords(card.bank).some((w) => text.split(' ').includes(w)));
 }
 
-export default { manualTwin, markTwin, subscriptionCountedIn, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit };
+/* ── 5. A CARD INSTALLMENT CHARGE FOR A PLAN THE OWNER ALREADY HAS ────────────────────────────────────────────────────────────────────────── */
+const addMonths = (iso, n) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); if (!m) return NaN; return Date.UTC(+m[1], +m[2] - 1 + n, +m[3]); };
+/** Is this installment plan counted by the monthly totals in `ym`? (the same rule getMonthlyData uses: it has started by the month's first day and not yet ended) */
+export function planCountedIn(plan, ym) {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(ym || ''));
+    if (!plan || plan.completed || !m || !plan.date || !(num(plan.duration) > 0)) return false;
+    const first = Date.UTC(+m[1], +m[2] - 1, 1), start = addMonths(plan.date, 0), end = addMonths(plan.date, Math.floor(num(plan.duration)));
+    return Number.isFinite(start) && Number.isFinite(end) && start <= first && end > first;
+}
+/** The one plan whose product is named in the narration, whose monthly amount is this charge (to 2%), and which the totals count this month. */
+export function matchInstallmentPlan(row, plans) {
+    const amount = num(row && row.amount), text = words(row && (row.description || row.narration)), ym = ymOf(row && row.date);
+    if (!(amount > 0) || !text || !ym) return null;
+    const hits = [];
+    for (const plan of arr(plans)) {
+        if (!plan || !plan.id || !planCountedIn(plan, ym) || !(num(plan.monthly) > 0)) continue;
+        if (Math.abs(amount - num(plan.monthly)) > num(plan.monthly) * 0.02) continue;
+        if (arr(plan.payments).some((p) => p && p.month === ym && p.paid && p.source === 'statement')) continue;     // that month already has its charge: this one is another
+        const product = tokens(plan.product);
+        if (product.length && product.some((t) => text.includes(t))) hits.push(plan);
+    }
+    return hits.length === 1 ? hits[0] : null;
+}
+/** The plan's payment for the month, from the statement: the plan counts it (its monthly amount), the statement row does not become a second record. */
+export function applyPlanPayment(plan, row, sourcePath, index, now) {
+    const month = ymOf(row.date);
+    plan.payments = arr(plan.payments).filter((p) => !(p && p.month === month));
+    plan.payments.push({ month, paid: true, amount: num(row.amount), paidAt: Date.parse(`${row.date}T00:00:00Z`) || now, source: 'statement', statementKey: sourcePath, statementRow: index });
+    plan._ut = now;
+}
+/**
+ * A card installment record the statement worker filed in its own shape (description, startDate, months — no product, date or duration) is invisible to the
+ * monthly totals, so a real card charge was missing from them. This gives such a record the plan's shape so it counts in its month — unless a plan the owner
+ * already has is that charge, in which case the record stays out and the plan's month says it was paid. Returns what it did, per record.
+ */
+export function repairInstallmentRecords(user, now) {
+    const done = [];
+    const plans = arr(user && user.ccinstall);
+    for (const r of plans) {
+        if (!r || r.date || !r.startDate || r.source !== 'statement') continue;
+        const row = { amount: r.monthly || r.total, description: r.desc || r.product, date: r.startDate };
+        const plan = matchInstallmentPlan(row, plans.filter((p) => p !== r && p.date));
+        if (plan) { applyPlanPayment(plan, row, r.statementKey || '', r.statementRow, now); r.planLink = plan.id; r.completed = true; r._ut = now; done.push({ id: r.id, kind: 'plan-link' }); continue; }
+        Object.assign(r, { product: r.product || String(r.desc || '').slice(0, 60), bank: r.bank || '', buyer: r.buyer || 'Self', rate: r.rate || 0, duration: 1, date: `${String(r.startDate).slice(0, 7)}-01`, completed: false, skipped: r.skipped || [], _ut: now });
+        done.push({ id: r.id, kind: 'shape' });
+    }
+    return done;
+}
+
+export default { manualTwin, markTwin, planCountedIn, matchInstallmentPlan, applyPlanPayment, repairInstallmentRecords, subscriptionCountedIn, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit };
