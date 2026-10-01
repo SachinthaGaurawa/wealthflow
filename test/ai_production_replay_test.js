@@ -126,6 +126,18 @@ describe('a cooldown is an optimisation, never a reason to refuse', () => {
         expect(r.asked).toHaveLength(2);                                    // nobody available: every busy provider is asked rather than none
     });
 
+    it('a provider that keeps missing the deadline is left alone longer each time — a minute, three, five — and never as long as a dead one', () => {
+        const slow = new Error('Provider response deadline exceeded');
+        coolProvider('Slow', slow, NOW);
+        expect(providerAvailable('Slow', NOW + 59_000)).toBe(false); expect(providerAvailable('Slow', NOW + 61_000)).toBe(true);
+        coolProvider('Slow', slow, NOW + 61_000);                                          // second miss within fifteen minutes
+        expect(providerAvailable('Slow', NOW + 61_000 + 179_000)).toBe(false); expect(providerAvailable('Slow', NOW + 61_000 + 181_000)).toBe(true);
+        coolProvider('Slow', slow, NOW + 250_000); coolProvider('Slow', slow, NOW + 560_000);   // third and fourth: five minutes, no more
+        expect(providerAvailable('Slow', NOW + 560_000 + 299_000)).toBe(false); expect(providerAvailable('Slow', NOW + 560_000 + 301_000)).toBe(true);
+        expect(providerIsDead('Slow', NOW + 561_000)).toBe(false);                         // still asked when the board is short of voters
+        coolProvider('Slow', slow, NOW + 3_000_000);                                       // an hour-long gap forgives: back to one minute
+        expect(providerAvailable('Slow', NOW + 3_000_000 + 61_000)).toBe(true);
+    });
     it('through the endpoint: a burst of ordinary failures has cooled most of the roster, and the board STILL reaches five (it was refused in 3 s)', async () => {
         for (const key of KEYS) vi.stubEnv(key, 'test');
         const w = world(); vi.stubGlobal('fetch', w.fetch);
