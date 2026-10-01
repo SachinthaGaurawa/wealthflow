@@ -624,6 +624,42 @@ export async function closeSettledReviews({ db, uid, limit = 20 }) {
     return { closed };
 }
 
+/* A STATEMENT STOPPED FOR A QUESTION NOBODY IS ASKING. `needs_review` means "the owner is asked something about this statement"; it was set when a row or
+ * the whole statement went to review, and — when the review was later closed another way (rows put right by the recovery passes, a review closed by a
+ * replay, a review that no longer exists) — nothing set it back. Production, 2026-10-01: two NTB statements with EVERY row settled (45 of 45, 151 of 151)
+ * and a DFCC one, all `needs_review` with no review pending at all: counted as "to review" beside the sender, never "filed", and the DFCC one never read
+ * again because only a pending review makes the recovery passes look at a statement. With every row settled and nothing pending the statement IS filed;
+ * with rows left and nothing pending it goes back in the queue (at most three times: if it is truly unreadable the worker raises a proper review). */
+const MAX_ORPHAN_HEALS = 3;
+export async function healOrphanedStatements({ db, mailRef, uid, limit = 10, now = Date.now(), log = console.info }) {
+    const found = await mailRef.collection('items').where('status', '==', 'needs_review').limit(100).get();
+    const userRef = db.collection('users').doc(uid);
+    let filed = 0, requeued = 0, more = false;
+    const banks = {};
+    for (const doc of found.docs) {
+        if ((doc.data() || {}).uid !== uid) continue;
+        if (filed + requeued >= limit) { more = true; break; }
+        const result = await db.runTransaction(async tx => {
+            const snap = await tx.get(doc.ref), source = snap.data();
+            if (!snap.exists || source.uid !== uid || source.status !== 'needs_review' || (Number(source.leaseUntil) || 0) > now) return '';
+            const reviews = await tx.get(userRef.collection('statementReview').where('sourcePath', '==', doc.ref.path));
+            if (reviews.docs.some(entry => entry.data().status === 'pending')) return '';          // a question is open: not an orphan
+            const rows = Number(source.totalRows) || 0, cursor = Number(source.cursor) || 0;
+            if (rows > 0 && cursor === rows) { tx.set(doc.ref, { status: 'filed', filed: true, hasReview: false, healedAt: now, updatedAt: now }, { merge: true }); return 'filed'; }
+            const heals = Number(source.orphanHeals) || 0;
+            if (heals >= MAX_ORPHAN_HEALS) return '';
+            tx.set(doc.ref, { status: 'pending', hasReview: false, leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0, orphanHeals: heals + 1, healedAt: now, updatedAt: now }, { merge: true });
+            return 'requeued';
+        });
+        if (!result) continue;
+        if (result === 'filed') filed += 1; else requeued += 1;
+        const bank = String((doc.data() || {}).bank || '?').slice(0, 24);
+        banks[bank] = banks[bank] || { filed: 0, requeued: 0 }; banks[bank][result] += 1;
+    }
+    if (filed || requeued) log(JSON.stringify({ evt: 'statement-heal', filed, requeued, banks }));
+    return { filed, requeued, more };
+}
+
 /* WHERE EVERY STATEMENT IS, IN ONE LINE OF THE PLATFORM LOG: per bank, how many are waiting, stopped or part-way, and why. It exists because
  * "the owner has to tap Map statement layout on NTB and AMEX" could only be guessed at from outside: the reason codes are the evidence. Bank
  * names, status words, reason codes and counts only — no amount, no merchant, no account number, no file name. Every few hours, never more. */
@@ -1476,7 +1512,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     if (extract === invokeExtractor) extract = tieredAsk({ call: (prompt, options) => invokeExtractor(prompt, aiHandler, options), accept: reply => Array.isArray(jsonOf(reply)?.accounts), deadlineAt: start + INVOCATION_MS });
     board = breaker.guard('board', board, { minRoomMs: BOARD_ROOM_MS, unavailable: 'ai-consensus-unavailable' });
     extract = breaker.guard('extract', extract, { minRoomMs: 18000, unavailable: 'ai-extractor-unavailable' });
-    let ranWhole = false, ranResume = false, ranConsensus = false, frontIncomplete = false, migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
+    let ranWhole = false, ranResume = false, ranConsensus = false, ranHeal = false, orphansHealed = 0, frontIncomplete = false, migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
     /* The housekeeping in front of the queue (find new mail, audit the mailbox, recover and repair) is a full pass over the
      * mailbox; run once for every statement an interactive caller asks for, it left almost none of the 60 seconds for the
      * statements. An interactive call repeats it at most every minute and a half — unless a collection is part-way, when
@@ -1522,6 +1558,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (frontRoom()) await closeSettledReviews({ db, uid, limit: 20 });
         if (frontRoom()) categoriesRepaired = (await repairStatementCategories({ db, uid })).total;
         if (frontRoom()) { const consensus = await recoverConsensusFailures({ db, uid, limit: recoveryLimit }); ranConsensus = true; consensusRecovered = consensus.recovered; consensusMore = consensus.more; }
+        if (frontRoom()) { const healed = await healOrphanedStatements({ db, mailRef, uid, limit: recoveryLimit }); ranHeal = true; orphansHealed = healed.filed + healed.requeued; }
         if (frontRoom()) { const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit }); revokedRecovered = revoked.recovered; revokedMore = revoked.more; }
         if (frontRoom()) reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
         if (frontRoom()) zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
@@ -1549,11 +1586,12 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
      * 2026-10-01 every interactive run said `frontIncomplete` — so the statements and reviews they put right (rows the AI could not agree on, an unclear
      * month, a currency hold made by an old rule) waited for the daily 03:30 run. A run that attempted nothing has, by definition, quarantined nothing
      * a moment ago, so nothing fresh is re-queued by it; at most once every ninety seconds. */
-    if (attempted === 0 && Date.now() - start < budgetMs - 12000 && start - Number(mail.lastRecoveryMs || 0) >= 90000 && !(ranWhole && ranResume && ranConsensus)) {
+    if (attempted === 0 && Date.now() - start < budgetMs - 12000 && start - Number(mail.lastRecoveryMs || 0) >= 90000 && !(ranWhole && ranResume && ranConsensus && ranHeal)) {
         try {
             if (!ranWhole) { const whole = await recoverWholeStatementFailures({ db, uid, limit: 10 }); wholeRecovered += whole.recovered; wholeMore = wholeMore || whole.more; }
             if (!ranResume && Date.now() - start < budgetMs - 8000) { const resumed = await resumePartialStatements({ db, uid, limit: 10 }); wholeRecovered += resumed.resumed; wholeMore = wholeMore || resumed.more; }
             if (!ranConsensus && Date.now() - start < budgetMs - 6000) { const consensus = await recoverConsensusFailures({ db, uid, limit: 10 }); consensusRecovered += consensus.recovered; consensusMore = consensusMore || consensus.more; }
+            if (!ranHeal && Date.now() - start < budgetMs - 5000) { const healed = await healOrphanedStatements({ db, mailRef, uid, limit: 10 }); orphansHealed += healed.filed + healed.requeued; }
             await mailRef.set({ lastRecoveryMs: Date.now() }, { merge: true });
         } catch (_) { /* advice only: the next run tries again */ }
     }
@@ -1590,7 +1628,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         console.info(JSON.stringify({ evt: 'statement-sync-run', ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', ...(frontIncomplete ? { frontIncomplete: true } : {}), redriven: redrive.redriven, deadLettered: redrive.waiting,
             pending: pending.docs.length, processing: processing.docs.length, byBank, collectionMore, aiDown: Object.entries(breaker.health).filter(([, v]) => Number(v?.downUntil) > Date.now()).map(([k, v]) => `${k}:${String(v.reason || '').slice(0, 40)}`) }));
     } catch (_) { /* a log line never stops a sync */ }
-    return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, ...(coverage ? { coverage } : {}),
+    return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, orphansHealed, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, ...(coverage ? { coverage } : {}),
         pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending, retrying,
         ...(morePending ? { retryAfterMs } : {}) };
 }
