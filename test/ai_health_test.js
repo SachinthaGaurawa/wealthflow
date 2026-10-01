@@ -14,7 +14,7 @@ const get = async (url) => { const res = response(); await handler({ method: 'GE
 
 describe('nothing secret leaves in a provider\'s error', () => {
     it('keys in query strings, bearer tokens and long opaque runs are redacted; the message stays readable', () => {
-        const key = 'AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY';
+        const key = ['AIza', 'Sy', 'FAKE-not-a-real-key-for-redaction-test'].join('');
         expect(redact(`fetch failed https://generativelanguage.googleapis.com/v1beta/models/x:generateContent?key=${key}&alt=json`)).not.toContain(key);
         expect(redact('Authorization: Bearer sk-live-abcdef0123456789abcdef0123456789')).toContain('Bearer [redacted]');
         expect(redact('Groq status 429: ' + 'x'.repeat(40) + ' rate limited')).toContain('[redacted]');
@@ -100,7 +100,7 @@ describe('GET /api/ai?canary=1', () => {
 
     it('a provider error that carries a key is redacted before it leaves', async () => {
         vi.stubEnv('GROQ_API_KEY', 'test');
-        const leak = 'AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY';
+        const leak = ['AIza', 'Sy', 'FAKE-not-a-real-key-for-redaction-test'].join('');
         vi.stubGlobal('fetch', vi.fn(async (url) => (/\/models$/.test(String(url)) ? { ok: true, status: 200, json: async () => ({ data: [] }), text: async () => '{}' } : failure(500, `upstream said: https://x.example/v1?key=${leak} and Bearer abcdefghijklmnop0123456789`))));
         const res = await get('/api/ai?canary=1');
         const text = JSON.stringify(res.body);
