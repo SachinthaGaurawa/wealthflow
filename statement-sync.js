@@ -349,18 +349,24 @@ async function decideEmptiness({ text, parsed, board }) {
 // there are no ledger rows, and any whole-statement review it had is resolved.
 async function fileEmptyStatement(db, uid, ref, leaseToken, mailRef, evidence = {}, now = Date.now()) {
     const userRef = db.collection('users').doc(uid);
+    let bank = '', resolved = 0;
     await db.runTransaction(async tx => {
         const snap = await tx.get(ref), source = snap.data();
         if (!snap.exists || source.uid !== uid || source.leaseToken !== leaseToken) throw new Error('statement-lease-lost');
+        bank = String(source.bank || '');
         if (mailRef) {
             const mail = await tx.get(mailRef), data = mail.data() || {};
             if (!mail.exists || data.uid !== uid || data.autonomous !== true) throw new Error('autonomous-mailbox-disabled-during-processing');
         }
         const reviews = await tx.get(userRef.collection('statementReview').where('sourcePath', '==', ref.path));
-        for (const doc of reviews.docs) if (doc.data().uid === uid && doc.data().status === 'pending') tx.set(doc.ref, { status: 'resolved', resolvedAt: now, replayStatus: 'filed', emptyStatement: true }, { merge: true });
+        resolved = 0;
+        for (const doc of reviews.docs) if (doc.data().uid === uid && doc.data().status === 'pending') { tx.set(doc.ref, { status: 'resolved', resolvedAt: now, replayStatus: 'filed', emptyStatement: true }, { merge: true }); resolved += 1; }
         tx.set(ref, { status: 'filed', filed: true, emptyStatement: true, emptyEvidence: { balances: String(evidence.balances || '').slice(0, 20), dataRows: Number(evidence.dataRows) || 0, pdf: String(evidence.pdf || 'absent').slice(0, 24),
             ...(evidence.how ? { how: String(evidence.how).slice(0, 16), witness: String(evidence.witness || '').slice(0, 16), zeroLines: Number(evidence.zeroLines) || 0, phantomRows: Number(evidence.phantomRows) || 0, noActivityStated: evidence.noActivityStated === true } : {}), at: now }, cursor: 0, totalRows: 0, hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
     });
+    // a closed month leaves a line in the log like any other statement does (fixed words only, never a figure): without it
+    // "processed 1, filed" cannot be told from a statement that was filed with rows
+    logItem({ bank, status: 'closed_empty', how: String(evidence.how || 'rules').slice(0, 16), witness: String(evidence.witness || '').slice(0, 16), strength: String(evidence.strength || '').slice(0, 16), reviewsResolved: resolved });
     return { status: 'filed', filed: 0, review: 0, empty: 1 };
 }
 async function quarantineSource(db, uid, ref, leaseToken, reason, evidence = {}) {

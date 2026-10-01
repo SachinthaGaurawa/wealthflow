@@ -113,6 +113,15 @@ describe('a statement with no transactions is closed when — and only when — 
         expect(s.reviews()).toEqual([]);
         expect(s.board).toHaveBeenCalledTimes(1);
     });
+    it('a month closed as empty leaves a log line of its own (fixed words, no figure), so "processed 1, filed" can be told from a filing with rows', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+            const s = setup('x', { bytes: unclear });
+            await s.drain();
+            const items = info.mock.calls.map(call => { try { return JSON.parse(String(call[0])); } catch (_) { return null; } }).filter(line => line && line.evt === 'statement-sync-item');
+            expect(items).toEqual([{ evt: 'statement-sync-item', bank: 'HNB', status: 'closed_empty', how: 'rules+ai', witness: 'agrees', strength: 'witnessed', reviewsResolved: 0 }]);
+        } finally { info.mockRestore(); }
+    });
     it('…waits for the board when it cannot be heard (no question to the owner), and is a statement the rules could not read when the board counts lines', async () => {
         const waiting = setup('x', { bytes: unclear, withBoard: down() });
         await waiting.drain();
