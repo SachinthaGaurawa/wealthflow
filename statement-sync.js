@@ -28,7 +28,10 @@ export const config = { maxDuration: 60 };
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const RETRY_MAX_MS = 180000;
 const PASSWORD_BATCH = 6;
-const WHOLE_REPLAY_VERSION = 3;
+/* Bumped when the reader or the AI behind it has changed so that a statement it could not read earlier deserves another look. Version 4: the
+ * AI roster was repaired (reasoning-model empties, retired models) and the model-free reader added — thirty-four HNB statements had used up
+ * their three adaptive tries (and the six-hour wait between them) during the outage and sat in review as "not waiting to be processed again". */
+const WHOLE_REPLAY_VERSION = 4;
 const SAFE_WHOLE_REPLAY = new Set([
     'statement-layout-identity-needs-review',
     'statement-layout-or-reconciliation-needs-review',
@@ -77,6 +80,21 @@ export function merchantNameFor(row) {
  * bank, the outcome and the reason code. The run line (statement-sync-run) counts; this one explains. */
 function logItem(fields) {
     try { console.info(JSON.stringify({ evt: 'statement-sync-item', ...fields, ...(fields.reason ? { reason: String(fields.reason).replace(/\d{6,}/g, '#').slice(0, 80) } : {}) })); } catch (_) { /* a log line never stops a sync */ }
+}
+/* What a statement's text looks like, as COUNTS and yes/no only — no word of it, no figure — so that a log can say why a bank's statement is
+ * not being read (an empty extraction? no dates? no balances?) without carrying anything about the owner. */
+export function shapeOf(text) {
+    const body = String(text || '');
+    const lines = body.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const has = re => re.test(body);
+    return {
+        chars: body.length, lines: lines.length,
+        dated: lines.filter(line => /\b\d{1,2}[-/. ](?:\d{1,2}|[A-Za-z]{3,9})[-/. ]\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b/.test(line)).length,
+        money: (body.match(/\d{1,3}(?:,\d{3})*\.\d{2}\b/g) || []).length,
+        open: has(/opening|brought forward|b\/f\b/i), close: has(/closing|carried forward|c\/f\b/i), bal: has(/balance/i),
+        dr: has(/\bdebit|\bdr\b|withdraw/i), cr: has(/\bcredit|\bcr\b|deposit/i), stmt: has(/statement/i),
+        letters: (body.match(/[A-Za-z]/g) || []).length, odd: (body.match(/[^\x09\x0A\x0D\x20-\x7E]/g) || []).length,
+    };
 }
 const permanentFailure = error => /^(?:PASSWORD_FAILED|NO_VAULT_KEYS|PDF_UNREADABLE|ATTACHMENT_TYPE_UNSUPPORTED|ATTACHMENT_SIZE_LIMIT|INVALID_ATTACHMENT|HTML_[A-Z_]+|STATEMENT_[A-Z_]+)$/.test(error?.message || '') || new Set([
     'statement-layout-identity-needs-review', 'statement-layout-or-reconciliation-needs-review', 'statement-empty-needs-confirmation', 'statement-cursor-or-content-changed',
@@ -404,8 +422,9 @@ export async function recoverWholeStatementFailures({ db, uid, limit = 25 }) {
                 || ledger.docs.some(entry => ['filed', 'duplicate'].includes(entry.data().status))) return 0;
             const now = Date.now();
             tx.set(doc.ref, { status: 'retried', retriedAt: now }, { merge: true });
+            // a fresh look is a fresh set of adaptive tries: the ones it had were spent while the AI was down
             tx.set(sourceRef, { status: 'pending', hasReview: false, leaseToken: '', leaseUntil: 0, retryAt: 0,
-                wholeReplayVersion: WHOLE_REPLAY_VERSION, updatedAt: now }, { merge: true });
+                adaptiveTries: 0, adaptiveAt: 0, wholeReplayVersion: WHOLE_REPLAY_VERSION, updatedAt: now }, { merge: true });
             return 1;
         });
     }
@@ -717,6 +736,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
     }
     if (!claimed) return null;
     let outcome;
+    const diag = {};                 // what the reading saw, as counts, for the log line if the statement goes to review
     let entries = [], passwords = [], reviewEvidence = {};
     try {
         const vaultRef = db.collection(VAULT_ROOT).doc(uid);
@@ -774,6 +794,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         let { parsed } = result;
         const { text } = result;
         reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '', rendered: result.renderedOverride === true, embedded: parsed?.embeddedProblems };
+        Object.assign(diag, { shape: shapeOf(text), rows: Array.isArray(parsed?.rows) ? parsed.rows.length : 0, parsed: String(parsed?.verdict || ''), understood: parsed?.understood === true, tries: Number(claimed.adaptiveTries) || 0 });
         /* A STATEMENT THE RULES COULD NOT READ is read by a model, and believed only when the document agrees with every
          * word of it and the books balance to the cent (statement-adaptive.mjs). Anything less goes where it always went. */
         const adaptiveNow = Date.now();
@@ -796,6 +817,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         
         // --- Added Cryptographic Identity verification bound to the extracted raw source ---
         const identity = textVerdict(text || '');
+        diag.identity = { verdict: String(identity.verdict || ''), evidence: Array.isArray(identity.evidence) ? identity.evidence.length : 0 };
         const confirmedBypass = Boolean(parsed?.layout?.reconciliationBypassed) && !!claimed.learnedTemplate && parsed.layout?.learnedTemplate === claimed.learnedTemplate;
         const parserProof = (confirmedBypass || (parsed?.understood === true && parsed.verdict === 'parsed'
             && parsed.reconciliation?.ok !== false)) && Array.isArray(parsed.rows) && parsed.rows.length > 0;
@@ -886,7 +908,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const reason = error.message;
             await quarantineSource(db, uid, sourceRef, claimed.leaseToken, reason, reviewEvidence);
             outcome = { status: 'needs_review', review: 1 };
-            logItem({ bank: claimed.bank || '?', status: outcome.status, reason, ...(error?.detail ? { detail: error.detail } : {}) });
+            logItem({ bank: claimed.bank || '?', status: outcome.status, reason, ...(error?.detail ? { detail: error.detail } : {}), ...(Object.keys(diag).length ? { diag } : {}) });
         }
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }
     return outcome;

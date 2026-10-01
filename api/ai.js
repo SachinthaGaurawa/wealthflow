@@ -19,12 +19,14 @@ import * as Matrix from './ai-matrix.mjs';
 import { isModelGone, loadModels } from '../ai-models.mjs';
 import { geminiBook, geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
 import { askChat, chatError } from '../ai-chat.mjs';
+import { getAdminDb, withDeadline } from '../admin-db.mjs';
+import { resetHealthMemory, serveHealth } from '../ai-health.mjs';
 
 /* What each provider serves NOW, remembered for hours: a retired model is replaced by one the provider itself lists (ai-models.mjs).
  * One book for the whole process: Gemini's slots are shared with every other endpoint that asks Gemini (gemini-client.mjs). */
 export const modelBook = geminiBook;
 
-const providerCooldownUntil = new Map();
+const providerCooldown = new Map();   // name → { until, ms, rank }
 function providerCooldownMs(error) {
     const message = String(error?.message || error || '');
     if (/credit balance|billing|insufficient[_\s-]*(?:credit|quota)|payment required|status 402/i.test(message)) return 6 * 60 * 60 * 1000;
@@ -40,12 +42,40 @@ function providerCooldownMs(error) {
     return 15 * 1000;
 }
 export function providerAvailable(name, now = Date.now()) {
-    return (providerCooldownUntil.get(name) || 0) <= now;
+    const cooling = providerCooldown.get(name);
+    return !cooling || cooling.until <= now;
 }
+/* A cooldown that is an hour or six hours long is a provider that is DEAD (billing, a retired model, a bad key, a reply that is not JSON):
+ * it stays out. One of a minute or two is a provider that was BUSY (a rate limit, a deadline, an empty reply): it is out only while the
+ * board has spare — see boardRoster. */
+export const HARD_COOLDOWN_MS = 10 * 60 * 1000;
 export function coolProvider(name, error, now = Date.now()) {
-    providerCooldownUntil.set(name, now + providerCooldownMs(error));
+    const ms = providerCooldownMs(error), message = String(error?.message || error || '');
+    // when a busy provider is asked again it is the quick failers first: a rate limit says so at once, a deadline keeps the board waiting
+    providerCooldown.set(name, { until: now + ms, ms, rank: /deadline|timed?\s*out|abort/i.test(message) ? 2 : /rate.?limit|quota|status 429/i.test(message) ? 0 : 1 });
 }
-export function resetProviderCooldowns() { providerCooldownUntil.clear(); }
+export function providerIsDead(name, now = Date.now()) {
+    const cooling = providerCooldown.get(name);
+    return Boolean(cooling && cooling.until > now && cooling.ms >= HARD_COOLDOWN_MS);
+}
+/**
+ * WHO IS ASKED. Every eligible configured provider that is not resting. But a cooldown is an optimisation, never a reason to refuse: the
+ * production log of 2026-10-01 shows requests refused (422) in under four seconds with no provider failure logged — a burst of
+ * ordinary failures had put so many providers into a one-to-two-minute cooldown that fewer than five were left to ask, although most of
+ * them would have answered. So a cooldown is honoured only while at least `needed` providers remain available (five voters plus spare);
+ * below that, EVERY provider that was only BUSY (a rate limit, a deadline, an empty reply) is asked too — quick failers listed first —
+ * and the ones that are DEAD (billing, a retired model, a bad key, a reply that is not JSON) never are.
+ */
+export function boardRoster(eligible, { needed = 1, now = Date.now() } = {}) {
+    const asked = eligible.filter(name => providerAvailable(name, now));
+    const resting = eligible.filter(name => !providerAvailable(name, now));
+    let probation = [];
+    if (asked.length < needed) {
+        probation = resting.filter(name => !providerIsDead(name, now)).sort((a, b) => providerCooldown.get(a).rank - providerCooldown.get(b).rank || providerCooldown.get(a).until - providerCooldown.get(b).until);
+    }
+    return { asked: [...asked, ...probation], probation, resting: resting.filter(name => !probation.includes(name)) };
+}
+export function resetProviderCooldowns() { providerCooldown.clear(); }
 
 /* Every eligible configured engine is started before any result is awaited.
  * A response is reduced only after all members settle or hit their individual
@@ -89,13 +119,17 @@ function isFinancialTask(task) {
     return typeof task === 'string' && /^(financial|extraction|categorization|routing|verification|vision)$/i.test(task);
 }
 
+export { resetHealthMemory };
+
 export default async function handler(req, res) {
     // CORS — allow the public Vercel deployment to be called from anywhere
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') return res.status(200).end();
+    // the AI asked on demand: GET ?canary=1 / ?health=1 (ai-health.mjs); anything else is not a GET this endpoint answers
+    if (req.method === 'GET') return serveHealth(req, res, { run: handler, getDb: getAdminDb, withDeadline });
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
     const { prompt, image, temperature, maxTokens, preferredProvider } = req.body || {};
@@ -430,9 +464,13 @@ export default async function handler(req, res) {
         Fireworks: fireworksKey, OpenRouterFinance: openrouterKey, OpenRouterQwen: openrouterKey, OpenRouterNemotron: openrouterKey, Cerebras: cerebrasKey,
         NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey,
         CloudflareAI: cloudflareToken && cloudflareAccount };
-    // providers that are configured but resting in a cooldown are not asked; they are named in the board's log line below
-    const resting = engines.filter(engine => Boolean(configured[engine.name]) && !providerAvailable(engine.name)).map(engine => engine.name);
-    engines = engines.filter(engine => Boolean(configured[engine.name]) && providerAvailable(engine.name));
+    // Providers resting in a cooldown are not asked while the board has spare; below five voters plus three spare, every provider that
+    // was only busy is asked anyway (boardRoster). Resting and probation are named in the board's log line below.
+    const configuredNames = engines.filter(engine => Boolean(configured[engine.name])).map(engine => engine.name);
+    // a canary run (ai-health.mjs) asks everyone configured, cooldowns ignored: it exists to find out what each provider does NOW
+    const roster = req.__probe ? { asked: configuredNames, probation: [], resting: [] } : boardRoster(configuredNames, { needed: financialDecision ? 8 : 1 });
+    const resting = roster.resting, probation = roster.probation;
+    engines = engines.filter(engine => roster.asked.includes(engine.name));
     /* A caller that wants ONE answer it will check itself (the statement reader: nothing a model says is believed until it balances
      * to the unit) may name which providers to ask. It asks the strongest few first and widens only if they fail — instead of every
      * provider at once, which spent every quota on every call. Never honoured for a financial decision: that board is the whole
@@ -491,13 +529,14 @@ export default async function handler(req, res) {
          * and failed (and how), who was resting, and the reason. (Before this the answer had to be inferred from scattered warnings.) */
         try {
             console.info(JSON.stringify({ evt: 'ai-board', ok: decision.unanimous, reason: decision.reason || '', answered: decision.answered, invalid: decision.invalid,
-                failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, ms: Date.now() - boardStarted }));
+                failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, probation, ms: Date.now() - boardStarted }));
         } catch (_) { /* a log line never decides a financial question */ }
         // Preserve a machine-readable quarantine outcome; no partial answer is
         // released to consumers that might otherwise file a majority guess.
         return res.status(decision.unanimous ? 200 : 422).json({
             ...decision, trustworthy: Matrix.trustworthy(decision),
             engines: engines.map(e => e.name), financialDecision: true, advisoryOnly: false, consensusOf: decision.answered.length,
+            ...(req.__probe ? { probe: results.map(r => ({ name: r.name, ok: r.ok === true, ms: r.ms, provider: r.provider, reply: r.reply, error: r.error })) } : {}),
             consensusConfidence: decision.unanimous ? 1 : 0,
             error: decision.unanimous ? null : 'AI consensus requires review.'
         });
