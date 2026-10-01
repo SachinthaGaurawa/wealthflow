@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow } from './wealthflow-statement-router.js';
 import { canonicalBank } from './wealthflow-institutions.js';
+import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -60,6 +61,16 @@ export function crossSourceMatches(records, row, context) {
         const actual = rowIdentity({ ...record, amount: record.amount, description: record.desc || record.name || record.description, direction: record.direction || row.direction }, {});
         return wanted.slice(0, 6).every((value, index) => value === actual[index]);
     });
+}
+
+/* A bank debit that IS a loan installment is linked to that loan's month (loan-link.mjs), so the installment is counted once: by the
+ * debit, not again by the loan's schedule. Evidence only; anything the rules cannot tie to one loan is an ordinary expense. `loans` is the working copy. */
+function linkInstallment(loans, expenses, record, now) {
+    if (!Array.isArray(loans) || !loans.length || record.direction !== 'debit') return false;
+    const hit = matchLoanForDebit({ description: record.desc, amount: record.amount, date: record.date }, loans);
+    if (!hit) return false;
+    linkExpenseToLoan({ expenses }, record, hit.loan, hit.month, now);
+    return true;
 }
 
 function makeRecord(row, decision, context, id, now) {
@@ -227,6 +238,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                     user[module] = user[module] || [];
                     const record = makeRecord(row, decision, context, id, now);
                     user[module].push(record); allRecords.push(record); changes[module] = user[module];
+                    if (module === 'expenses' && linkInstallment(user.loans, user.expenses, record, now)) changes.loans = user.loans;
                 }
             }
             if (reason) {
@@ -302,7 +314,11 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
                 if ((sub.history || []).some(payment => payment.date === corrected.date && amountCents(payment.amount) === amountCents(corrected.amount))) throw new Error('matching-existing-entry-dismiss-or-edit');
                 sub.history = [...(sub.history || []), { date: corrected.date, month, amount: corrected.amount, source: 'statement', statementKey: context.sourcePath, statementRow: context.index, bank: context.bank, card_last4: context.last4, ref: String(corrected.ref || '') }];
                 sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: corrected.amount }; sub.amount = corrected.amount; sub._ut = now; changes.subscriptions = subs;
-            } else changes[module] = [...(user[module] || []), makeRecord(corrected, verified, context, id, now)];
+            } else {
+                const record = makeRecord(corrected, verified, context, id, now);
+                changes[module] = [...(user[module] || []), record];
+                if (module === 'expenses' && Array.isArray(user.loans)) { const loans = structuredClone(user.loans); if (linkInstallment(loans, changes.expenses, record, now)) changes.loans = loans; }
+            }
         }
         const unresolved = siblings.docs.some(doc => doc.id !== id && doc.data().status === 'pending');
         const complete = Number.isSafeInteger(source.totalRows) && source.cursor === source.totalRows;

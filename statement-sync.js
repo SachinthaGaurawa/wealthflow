@@ -23,6 +23,7 @@ import { tieredAsk } from './statement-llm-router.mjs';
 import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
+import { healLoanLinks } from './loan-link.mjs';
 
 export const config = { maxDuration: 60 };
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -658,6 +659,26 @@ export async function healOrphanedStatements({ db, mailRef, uid, limit = 10, now
     }
     if (filed || requeued) log(JSON.stringify({ evt: 'statement-heal', filed, requeued, banks }));
     return { filed, requeued, more };
+}
+
+/* THE LOAN INSTALLMENTS ALREADY IN THE BOOKS. A bank debit that is a loan's installment is linked to it as it is filed (statement-ledger.mjs); the ones
+ * imported before that existed, and a "loan payment" typed by hand, were counted twice — once as the expense, once by the loan's schedule. This links them,
+ * on the same evidence and no other, and says how many in one log line. Idempotent; nothing is deleted and nothing is guessed. */
+const LOAN_HEAL_EVERY_MS = 30 * 60 * 1000;
+export async function healLoanInstallments({ db, uid, now = Date.now(), log = console.info }) {
+    const userRef = db.collection('users').doc(uid);
+    const result = await db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), data = snap.data() || {};
+        if (!Array.isArray(data.loans) || !data.loans.length || !Array.isArray(data.expenses) || !data.expenses.length) return { linked: 0 };
+        const user = structuredClone({ loans: data.loans, expenses: data.expenses });
+        const done = healLoanLinks(user, now);
+        if (!done.length) return { linked: 0 };
+        tx.set(userRef, { expenses: user.expenses, loans: user.loans, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        const why = {}; for (const entry of done) why[entry.why] = (why[entry.why] || 0) + 1;
+        return { linked: done.length, why };
+    });
+    if (result.linked) log(JSON.stringify({ evt: 'loan-link-heal', linked: result.linked, why: result.why }));
+    return result;
 }
 
 /* WHERE EVERY STATEMENT IS, IN ONE LINE OF THE PLATFORM LOG: per bank, how many are waiting, stopped or part-way, and why. It exists because
@@ -1617,6 +1638,9 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     }
     if (Date.now() - start < budgetMs - 8000 && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
         try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
+    }
+    if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
+        try { await healLoanInstallments({ db, uid }); await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     const [pending, processing] = await Promise.all([
         mailRef.collection('items').where('status', '==', 'pending').limit(200).get(),
