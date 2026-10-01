@@ -217,11 +217,11 @@ const BALANCE = [
     'opening balance', 'closing balance', 'balance b/f', 'balance bf',
     'brought forward', 'carried forward', 'previous balance', 'closing bal',
     'opening bal', 'balance forward', 'available balance', 'running balance',
-    'ledger balance', 'book balance',
+    'ledger balance', 'book balance', 'account balance', 'b/f',
 ];
 const ACCOUNT = [
     'account no', 'account number', 'a/c no', 'ac no', 'acct no',
-    'card number', 'card no', 'account name', 'iban', 'sort code',
+    'card number', 'card no', 'account name', 'iban', 'sort code', 'a/c',
 ];
 const CARD_STATEMENT = [
     'credit limit', 'minimum payment', 'minimum amount due', 'payment due date',
@@ -255,7 +255,12 @@ export function movementLines(text) {
     return n;
 }
 
-const found = (h, list) => list.filter((t) => h.includes(t));
+/* THE VOCABULARY IS READ THROUGH THE SAME NORMALISER AS THE DOCUMENT. hay() turns every slash, dot and dash into a space, so the document's
+ * "B/F" is " b f " and its "A/C No" is " a c no " — while a list entry written 'balance b/f' or 'a/c no' still carried its slash and could
+ * never be found in it: those entries were dead. (HNB's zero-activity statements, which say only "B/F" and "A/C", were "nothing in it proves
+ * either way" for that reason.) A short term is matched as whole words, so " b f " is not found inside "web fonts". */
+const termOf = (t) => lower(t).replace(/[_\-.,;:()[\]{}/\\|]+/g, ' ').replace(/\s+/g, ' ').trim();
+const found = (h, list) => list.filter((t) => { const n = termOf(t); return n.length <= 5 ? h.includes(' ' + n + ' ') : h.includes(n); });
 
 /**
  * Judge the document by what it contains.

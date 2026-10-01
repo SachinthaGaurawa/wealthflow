@@ -67,6 +67,10 @@ describe('a dissent that repeats keeps its veto — the safety rule is not weake
         expect(res.body.reply).toBeNull(); expect(res.body.fields).toBeNull(); expect(res.body.trustworthy).toBe(false);
         expect(s.calls.DeepSeek).toBe(2);
         expect(log.reasked).toEqual([{ name: 'DeepSeek', agreed: false }]);
+        // the log says WHO differed and how the rest grouped, so a refusal is a finding and not just a reason string
+        expect(log.differing).toMatchObject({ clear: true });
+        expect(log.differing.groups[0].length).toBeGreaterThanOrEqual(5); expect(log.differing.groups[1]).toEqual(['DeepSeek']);
+        expect(log.differing.sample[0]).toContain('Transport');
     });
     it('a refusal in a shape of its own, every time: refused', async () => {
         scripted('DeepSeek', () => '{"error":"I cannot verify this transaction"}');

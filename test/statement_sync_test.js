@@ -281,7 +281,7 @@ describe('private source inspection and durable layout replay', () => {
         });
         const result = await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 10 });
         expect(result).toEqual({ recovered: 3, more: false });
-        reasons.forEach((_, i) => expect(args.data.get(`wf-mail/owner_example_com/items/item${i}`)).toMatchObject({ status: 'pending', wholeReplayVersion: 5, adaptiveTries: 0, adaptiveAt: 0 }));
+        reasons.forEach((_, i) => expect(args.data.get(`wf-mail/owner_example_com/items/item${i}`)).toMatchObject({ status: 'pending', wholeReplayVersion: 6, adaptiveTries: 0, adaptiveAt: 0 }));
         expect((await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 10 })).recovered).toBe(0);
     });
     it('bounds whole replay and keeps content mismatches or settled data fail-closed', async () => {

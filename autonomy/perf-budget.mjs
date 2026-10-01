@@ -533,7 +533,10 @@ export const BUDGETS = {
     // 2026-10-01 (false crashes, module self-heal): 1,985,000 -> 1,990_000 (measured 1,987,718): wealthflow-stability.js only. The crash
     // detector no longer re-arms its marker after the app is backgrounded (iOS was being counted as 27 "crashes, survived 0s"), a one-time
     // reset of the first generation's counts, and the page clears the app's own code caches once when a module will not link.
-    totalJsBytes: 1_990_000,
+    // 2026-10-01 (HNB, identity vocabulary): 1,990,000 -> 1,993_000 (measured 1,990,090 + headroom): wealthflow-statement-identity.js reads its
+    // vocabulary through the same normaliser as the document (entries written with a slash — 'balance b/f', 'a/c no' — could never match) and
+    // gains 'account balance', 'b/f' and 'a/c'; wealthflow-merchants.js paces its AI board calls two at a time. ~0.15% headroom.
+    totalJsBytes: 1_993_000,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

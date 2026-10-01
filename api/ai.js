@@ -569,8 +569,15 @@ export default async function handler(req, res) {
         /* ONE LINE PER FINANCIAL DECISION, so the log says why a board of sixteen did or did not reach five: who answered, who was asked
          * and failed (and how), who was resting, and the reason. (Before this the answer had to be inferred from scattered warnings.) */
         try {
+            // when it refused over a disagreement, WHO differed and what the rest said is the finding — not "provider_disagreement"
+            const differing = decision.unanimous || decision.reason !== 'provider_disagreement' ? null : (() => {
+                const reading = Matrix.boardReading(results.filter(r => r && r.ok).map(r => ({ name: r.name, reply: r.reply })), 5);
+                const key = (name) => { const a = reading.answers.find(x => x.name === name); return a ? String(a.key).slice(0, 90) : ''; };
+                const groups = {}; for (const a of reading.answers) (groups[a.key.slice(0, 60)] = groups[a.key.slice(0, 60)] || []).push(a.name);
+                return { clear: reading.clear, groups: Object.values(groups).sort((x, y) => y.length - x.length).slice(0, 4), sample: reading.dissent.slice(0, 2).map(key) };
+            })();
             console.info(JSON.stringify({ evt: 'ai-board', ok: decision.unanimous, reason: decision.reason || '', answered: decision.answered, invalid: decision.invalid,
-                failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, probation, ...(reasked.length ? { reasked } : {}), ms: Date.now() - boardStarted }));
+                failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, probation, ...(reasked.length ? { reasked } : {}), ...(differing ? { differing } : {}), ms: Date.now() - boardStarted }));
         } catch (_) { /* a log line never decides a financial question */ }
         // Preserve a machine-readable quarantine outcome; no partial answer is
         // released to consumers that might otherwise file a majority guess.
