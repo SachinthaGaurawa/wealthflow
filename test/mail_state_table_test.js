@@ -351,3 +351,22 @@ describe('under timeouts, rate limits and database aborts injected at random, ev
         expect((st.security || []).map(x => x.messageId).sort()).toEqual(noise.filter(n => /^f/.test(n.id)).map(n => n.id).sort());
     });
 });
+
+describe('the table is reconciled at most every ten minutes, and the gap search stops at the invocation deadline', () => {
+    it('does not read the whole table again within ten minutes, and keeps the last summary', async () => {
+        const w = world({ inbox: [statement(1)] });
+        await w.run();
+        const { refreshCoverage } = await import('../statement-sync.js');
+        const f = async () => ({ ok: true, json: async () => ({}) });
+        const now = Date.now();
+        const first = await refreshCoverage({ db: w.db, mailRef: w.ref, mail: await w.state(), token: 't', f, now, search: false });
+        expect(first.table.total).toBe(1);
+        const reads = () => w.fake.ops.filter(o => o.op === 'query' && o.path.endsWith('/emails')).length;
+        const before = reads();
+        const second = await refreshCoverage({ db: w.db, mailRef: w.ref, mail: await w.state(), token: 't', f, now: now + 60000, search: false });
+        expect(reads()).toBe(before);                         // the table was not read again
+        expect(second.table.total).toBe(1);                   // and the summary stands
+        await refreshCoverage({ db: w.db, mailRef: w.ref, mail: await w.state(), token: 't', f, now: now + 11 * 60000, search: false });
+        expect(reads()).toBeGreaterThan(before);              // ten minutes on, it is read again
+    });
+});
