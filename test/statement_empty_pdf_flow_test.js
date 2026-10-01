@@ -104,11 +104,29 @@ describe('a statement with no transactions is closed when — and only when — 
         await s.drain();
         expect(s.source()).toMatchObject({ status: 'needs_review' }); expect(s.source().emptyStatement).not.toBe(true);
     });
-    it('asks once, plainly, when nothing shows the period was empty and nothing shows it was not', async () => {
-        const s = setup('x', { bytes: textPdf(['HATTON NATIONAL BANK PLC', 'Account Statement', 'Account No 074-02-XXXXX-88', 'Date Description Debit Credit Balance', '30/04/2024 Nil']) });
+    const unclear = textPdf(['HATTON NATIONAL BANK PLC', 'Account Statement', 'Account No 074-02-XXXXX-88', 'Date Description Debit Credit Balance', '30/04/2024 Nil']);
+    it('an unclear month (nothing shows it was empty, nothing shows it was not) is closed on the rules\' finding plus the AI board\'s independent count of zero — not put to the owner', async () => {
+        const s = setup('x', { bytes: unclear });
         await s.drain();
-        expect(s.source()).toMatchObject({ status: 'needs_review', reviewReason: 'statement-empty-needs-confirmation' });
-        expect(s.reviews()).toHaveLength(1); expect(s.reviews()[0]).toMatchObject({ index: -1, reason: 'statement-empty-needs-confirmation' });
+        expect(s.source()).toMatchObject({ status: 'filed', filed: true, emptyStatement: true, hasReview: false });
+        expect(s.source().emptyEvidence).toMatchObject({ how: 'rules+ai', witness: 'agrees', balances: 'absent' });
+        expect(s.reviews()).toEqual([]);
+        expect(s.board).toHaveBeenCalledTimes(1);
+    });
+    it('…waits for the board when it cannot be heard (no question to the owner), and is a statement the rules could not read when the board counts lines', async () => {
+        const waiting = setup('x', { bytes: unclear, withBoard: down() });
+        await waiting.drain();
+        expect(waiting.source().emptyStatement).not.toBe(true); expect(waiting.source().status).not.toBe('needs_review'); expect(waiting.reviews()).toEqual([]);
+        const counted = setup('x', { bytes: unclear, withBoard: board(2) });
+        await counted.drain();
+        expect(counted.source()).toMatchObject({ status: 'needs_review', reviewReason: 'statement-layout-or-reconciliation-needs-review' });
+    });
+    it('asks the owner, once and plainly, only when the page itself shows money moving in totals but no row could be read', async () => {
+        const s = setup('x', { bytes: textPdf(['HATTON NATIONAL BANK PLC', 'Account Statement', 'Account No 074-02-XXXXX-88', 'Date Description Debit Credit Balance', 'Total credits 5,000.00']) });
+        await s.drain();
+        expect(s.source().emptyStatement).not.toBe(true);
+        expect(s.source().status).toBe('needs_review');
+        expect(s.reviews()).toHaveLength(1);
     });
 });
 
@@ -266,8 +284,12 @@ describe('a phantom row among real ones is skipped without disturbing the number
 
 describe('the one question the system may ask about an empty month', () => {
     const asked = async () => {
-        const s = setup('x', { bytes: textPdf(['HATTON NATIONAL BANK PLC', 'Account Statement', 'Account No 074-02-XXXXX-88', 'Date Description Debit Credit Balance', '30/04/2024 Nil']) });
+        // a question is still put to the owner when the page shows money moving in a total and no row could be read; the review is the one the old rule raised
+        const s = setup('x', { bytes: textPdf(['HATTON NATIONAL BANK PLC', 'Account Statement', 'Account No 074-02-XXXXX-88', 'Date Description Debit Credit Balance', '30/04/2024 Nil']), withBoard: down() });
         await s.drain();
+        const id = createHash('sha256').update(s.sourcePath).digest('hex');
+        s.data.set(s.sourcePath, { ...s.source(), status: 'needs_review', reviewReason: 'statement-empty-needs-confirmation', hasReview: true, filed: false, leaseToken: '', leaseUntil: 0 });
+        s.data.set('users/u/statementReview/' + id, { uid: 'u', sourcePath: s.sourcePath, index: -1, status: 'pending', reason: 'statement-empty-needs-confirmation', bank: 'HNB', filename: 'x.pdf' });
         return { s, review: s.reviews()[0] };
     };
     it('is answered with one tap: closed empty on the owner\'s word, recorded as such, and reversible', async () => {

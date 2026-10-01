@@ -61,7 +61,7 @@ const amountsIn = line => (line.match(AMOUNT_RE) || []).map(token => ({ token, c
  * out first (so 30.04.2024 is not read as an amount of 30.04).
  */
 export function scanStatementText(text) {
-    const out = { lines: 0, suspect: 0, suspectSample: [], zeroLines: 0, openings: [], closings: [], period: false, noActivity: false, amounts: 0, positive: 0, datedMoney: 0 };
+    const out = { lines: 0, suspect: 0, suspectSample: [], zeroLines: 0, openings: [], closings: [], period: false, noActivity: false, amounts: 0, positive: 0, datedMoney: 0, totalsMoney: 0 };
     for (const raw of norm(text).split('\n')) {
         const line = raw.replace(/\s+/g, ' ').trim();
         if (!line) continue;
@@ -79,7 +79,8 @@ export function scanStatementText(text) {
         const labelOnly = words.every(word => LABEL_WORDS.has(word.toLowerCase()));
         if (labelOnly && OPENING_RE.test(label)) { out.openings.push(amounts[0].cents); continue; }
         if (labelOnly && CLOSING_RE.test(label)) { out.closings.push(amounts[amounts.length - 1].cents); continue; }
-        if (labelOnly && BALANCE_LABEL_RE.test(label)) continue;
+        // a TOTAL with money on it ("Total credits 5,000.00") says something moved even though no row was read
+        if (labelOnly && BALANCE_LABEL_RE.test(label)) { if (/^(?:total|sub\s*total)/i.test(label) && amounts.some(a => a.cents !== 0)) out.totalsMoney += 1; continue; }
         if (HEADING_RE.test(label) || PERIOD_RE.test(line)) continue;
         if (amounts.every(a => a.cents === 0)) { if (hadDate) out.zeroLines += 1; continue; }
         // Positive money on a line that is neither a balance nor a heading: something moved, or something is unread.
@@ -113,8 +114,13 @@ export function assessEmptiness({ text, parsed } = {}) {
     const closing = finite(rec?.closing) ? Math.round(rec.closing * 100) : scan.closings[scan.closings.length - 1];
     const both = Number.isFinite(opening) && Number.isFinite(closing);
     if (both && opening !== closing) return { decision: 'moved', why: 'opening-and-closing-balance-differ' };
+    /* NO ROW, NO MONEY ON ANY LINE THAT IS NOT A BALANCE OR A HEADING, NO TOTAL WITH MONEY: what the page does not say is whether the month was empty, not
+     * that something moved. That is the AI board's to witness (the caller counts the transaction lines independently); only when the board cannot be
+     * heard, or counts lines the rules did not see, is it anything but empty. `witnessable` marks exactly this case. */
+    const witnessable = scan.totalsMoney === 0;
+    const unclear = why => ({ decision: 'unsure', why, witnessable, evidence: { balances: 'absent', noActivityStated: scan.noActivity, zeroLines: scan.zeroLines, phantomRows: rows.length, period: scan.period, textLines: Math.min(scan.lines, 9999) } });
     // A balance stated twice that disagrees with itself is not evidence of anything.
-    if (new Set(scan.openings).size > 1 || new Set(scan.closings).size > 1) return { decision: 'unsure', why: 'balances-disagree-with-themselves' };
+    if (new Set(scan.openings).size > 1 || new Set(scan.closings).size > 1) return unclear('balances-disagree-with-themselves');
     const agree = both;
     /* A DORMANT ACCOUNT'S STATEMENT: a labelled opening ("B/F") and a dated line, and EVERY amount the page prints — in rows, labels and
      * headings alike — is zero. 34 HNB months were exactly this (balance 0.00, nothing moved): no closing label, no "statement" in the
@@ -126,7 +132,7 @@ export function assessEmptiness({ text, parsed } = {}) {
     }
     const strong = agree || scan.noActivity;
     const weak = !strong && scan.period && (scan.zeroLines > 0 || rows.length > 0);
-    if (!strong && !weak) return { decision: 'unsure', why: 'nothing-shows-the-period-was-empty' };
+    if (!strong && !weak) return unclear('nothing-shows-the-period-was-empty');
     return {
         decision: 'empty', strength: strong ? 'strong' : 'weak',
         evidence: { balances: agree ? 'agree' : 'absent', noActivityStated: scan.noActivity, zeroLines: scan.zeroLines, phantomRows: rows.length, period: scan.period, textLines: Math.min(scan.lines, 9999) },

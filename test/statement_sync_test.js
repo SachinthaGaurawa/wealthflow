@@ -41,12 +41,17 @@ describe('statement worker authorization and board', () => {
         expect(row.amount).toBe(42);
         expect(JSON.stringify(board.mock.calls[0][0])).toContain('MERCHANT');
     });
-    it('quarantines veto, roster changes and malformed index mappings', async () => {
+    it('a veto, a changed roster or a malformed index mapping discards what the board proposed: the row keeps the rules\' own answer, marked (it is no longer put to the owner)', async () => {
         for (const peer of [good({ approved: false }), { ...good({ approved: true }), expected: [...roster, 'new-engine'] }]) {
             const board = vi.fn().mockResolvedValueOnce(good({ decisions: [decision] })).mockResolvedValueOnce(peer);
-            expect((await classifySlice([row], {}, { board }))[0].verified).toBe(false);
+            const [out] = await classifySlice([row], {}, { board });
+            expect(out).toMatchObject({ verified: true, module: 'expenses', category: 'Other', autoDecided: 'rules' });      // never the board's rejected "Groceries"
         }
-        expect((await classifySlice([row], {}, { board: async () => good({ decisions: [{ ...decision, index: 1 }] }) }))[0].verified).toBe(false);
+        const [malformed] = await classifySlice([row], {}, { board: async () => good({ decisions: [{ ...decision, index: 1 }] }) });
+        expect(malformed).toMatchObject({ verified: true, category: 'Other', autoDecided: 'rules' });
+        // a row the rules themselves doubt (an assumed direction) is the one thing still left unverified
+        const [doubted] = await classifySlice([{ ...row, needsReview: true }], {}, { board: async () => good({ decisions: [{ ...decision, index: 1 }] }) });
+        expect(doubted.verified).toBe(false);
     });
     it('falls back only to deterministic generic routes when the board is unavailable', async () => {
         const unavailable = async () => { throw new Error('provider deadline'); };
@@ -281,7 +286,7 @@ describe('private source inspection and durable layout replay', () => {
         });
         const result = await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 10 });
         expect(result).toEqual({ recovered: 3, more: false });
-        reasons.forEach((_, i) => expect(args.data.get(`wf-mail/owner_example_com/items/item${i}`)).toMatchObject({ status: 'pending', wholeReplayVersion: 8, adaptiveTries: 0, adaptiveAt: 0 }));
+        reasons.forEach((_, i) => expect(args.data.get(`wf-mail/owner_example_com/items/item${i}`)).toMatchObject({ status: 'pending', wholeReplayVersion: 9, adaptiveTries: 0, adaptiveAt: 0 }));
         expect((await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 10 })).recovered).toBe(0);
     });
     it('bounds whole replay and keeps content mismatches or settled data fail-closed', async () => {

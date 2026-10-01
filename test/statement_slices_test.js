@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createFirestore } from './helpers/fake-firestore.js';
-import { runStatementSync, classifySlice, sliceRows, resumePartialStatements, resumeReview, closeSettledReviews, statementCensus, checkpointRows } from '../statement-sync.js';
+import { runStatementSync, classifySlice, sliceRows, resumePartialStatements, resumeReview, closeSettledReviews, statementCensus, checkpointRows, recoverConsensusFailures } from '../statement-sync.js';
 import { readStatement } from '../statement-reader.mjs';
-import { settleStatement } from '../statement-ledger.mjs';
+import { settleStatement, sourceOccurrenceId } from '../statement-ledger.mjs';
 
 /* NTB AND AMEX STATEMENTS TOOK MINUTES TO OPEN.
  * Ten rows per step, two sequential AI-board calls per step, and — for every ten rows — the vault, the mailbox, the attachment and the whole
@@ -64,6 +64,18 @@ describe('what the AI board is asked', () => {
         expect(board).not.toHaveBeenCalled();
     });
 
+    it('a row the board cannot refine keeps the rules\' own answer, marked — and only a row the rules themselves doubt is still put to the owner', async () => {
+        const weak = cardRow(1, 'ZZYX QWERTY HOLDINGS'), doubted = { ...cardRow(2, 'QQQ UNKNOWN TRADERS'), needsReview: true };
+        // the peer review says "not every decision is supported": it used to send BOTH rows to the owner ("the AI could not reach agreement")
+        const rejected = vi.fn().mockResolvedValueOnce(answer(2, 'expenses', 'Shopping')).mockResolvedValueOnce({ ...answer(0), fields: { approved: false } });
+        const decisions = await classifySlice([weak, doubted], bankAccount, { board: rejected });
+        expect(decisions[0]).toMatchObject({ module: 'expenses', category: 'Other', verified: true, autoDecided: 'rules' });
+        expect(decisions[1]).toMatchObject({ verified: false, reason: 'ai-consensus-unavailable' });
+        // and when the board answers "review" (it is not sure) about a row the rules can place
+        const unsure = vi.fn().mockResolvedValueOnce(answer(1, 'review', 'Needs Review')).mockResolvedValueOnce({ ...answer(0), fields: { approved: true } });
+        expect((await classifySlice([weak], bankAccount, { board: unsure }))[0]).toMatchObject({ module: 'expenses', category: 'Other', verified: true, autoDecided: 'rules' });
+    });
+
     it('a dead board changes nothing for the rows the rules settled, and leaves the rest as the rules would have them', async () => {
         const board = vi.fn(async () => { throw new Error('ai-consensus-unavailable'); });
         const decisions = await classifySlice([cardRow(1, 'POS TRANSACTION KEELLS SUPER'), cardRow(2, 'ZZYX QWERTY HOLDINGS')], bankAccount, { board });
@@ -109,6 +121,57 @@ function world({ rows = 70, name, subscriptions = [] } = {}) {
     return { ...fs, base, loadAttachment, read, board };
 }
 const logs = () => { const lines = []; vi.spyOn(console, 'info').mockImplementation(line => { lines.push(String(line)); }); return () => lines.map(l => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean); };
+
+describe('reviews the owner already has, "the AI could not agree", are settled by the rules and flagged', () => {
+    const row = { date: '2026-03-04', narration: 'CEFTS/6056/MR SOMEONE', amount: 500000, direction: 'credit', directionSource: 'balance', needsReview: false, valid: true };
+    const setup = reason => {
+        const id = sourceOccurrenceId(sourcePath, 3);
+        return createFirestore({
+            [sourcePath]: { uid: 'u', bank: 'NTB', statementType: 'bank_account', last4: '' },
+            'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [] },
+            ['users/u/statementReview/' + id]: { uid: 'u', sourcePath, index: 3, status: 'pending', reason, row },
+            ['users/u/statementLedger/' + id]: { uid: 'u', sourcePath, index: 3, status: 'review', fingerprint: 'x' },
+        });
+    };
+    it.each(['ai-consensus-unavailable', 'unanimous-decision-required'])('%s: filed with the rules\' answer and says so', async reason => {
+        const fs = setup(reason);
+        expect((await recoverConsensusFailures({ db: fs.db, uid: 'u' })).recovered).toBe(1);
+        const records = fs.data.get('users/u').incomeRecv;
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({ amount: 500000, direction: 'credit', autoDecided: 'rules' });
+        expect(records[0].notes).toMatch(/Filed automatically/);
+        expect(fs.data.get('users/u/statementReview/' + sourceOccurrenceId(sourcePath, 3)).status).not.toBe('pending');
+    });
+    it('a row the parser itself doubts (a direction it had to assume) is still the owner\'s to decide', async () => {
+        const fs = setup('unanimous-decision-required');
+        const id = sourceOccurrenceId(sourcePath, 3);
+        fs.data.set('users/u/statementReview/' + id, { ...fs.data.get('users/u/statementReview/' + id), row: { ...row, needsReview: true } });
+        expect((await recoverConsensusFailures({ db: fs.db, uid: 'u' })).recovered).toBe(0);
+        expect(fs.data.get('users/u').incomeRecv).toHaveLength(0);
+    });
+});
+
+describe('the recovery steps run on an idle invocation too (the front pass is skipped whenever the mailbox scan is slow)', () => {
+    it('an old "AI could not agree" row review and an old "please confirm this month" review are put right by a run that had nothing to process', async () => {
+        const w = world({ rows: 12 });
+        await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });          // the statement is filed: the queue is empty
+        expect(w.data.get(sourcePath)).toMatchObject({ status: 'filed' });
+        const row = { date: '2026-03-04', narration: 'CEFTS/6056/MR SOMEONE', amount: 500000, direction: 'credit', directionSource: 'balance', needsReview: false, valid: true };
+        const rowId = sourceOccurrenceId(sourcePath, 40);
+        const other = `${mailPath}/items/item1`, otherId = createHash('sha256').update(other).digest('hex');
+        w.data.set(sourcePath, { ...w.data.get(sourcePath), statementType: 'bank_account', last4: '' });
+        w.data.set('users/u/statementReview/' + rowId, { uid: 'u', sourcePath, index: 40, status: 'pending', reason: 'unanimous-decision-required', row });
+        w.data.set('users/u/statementLedger/' + rowId, { uid: 'u', sourcePath, index: 40, status: 'review', fingerprint: 'x' });
+        w.data.set(other, { uid: 'u', bank: 'HNB', status: 'needs_review', reviewReason: 'statement-empty-needs-confirmation', cursor: 0, filed: false, hasReview: true });
+        w.data.set('users/u/statementReview/' + otherId, { uid: 'u', sourcePath: other, index: -1, status: 'pending', reason: 'statement-empty-needs-confirmation' });
+        const idle = await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
+        expect(idle.attempted).toBe(0);
+        expect(w.data.get('users/u').incomeRecv.find(record => record.amount === 500000)).toMatchObject({ direction: 'credit', autoDecided: 'rules' });
+        expect(w.data.get('users/u/statementReview/' + rowId).status).not.toBe('pending');
+        expect(w.data.get(other)).toMatchObject({ status: 'pending', wholeReplayVersion: 9 });             // read again, now witnessed by the board instead of asked
+        expect(w.data.get('users/u/statementReview/' + otherId).status).toBe('retried');
+    });
+});
 
 describe('the census says what the owner is asked, not only which statements are open', () => {
     it('counts the pending reviews per bank and reason, whole-statement and row-level apart (codes and counts only)', async () => {

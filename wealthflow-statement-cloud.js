@@ -265,10 +265,10 @@ async function renderAndSubmit(entry) {
 const RESUME_FIRST = new Set(['statement-cursor-or-content-changed', 'statement-retries-exhausted']);
 async function resumeStatement(entry, { quiet = false } = {}) {
     try {
-        // `auto`: the silent attempt the app makes by itself is allowed once per version of the replay on the server; the owner's tap always is.
+        // `auto`: the app's silent attempt (once per replay version, server side); the owner's tap always goes.
         const r = await request('/api/statement-sync', 'POST', { action: 'resume-review', id: entry.id, ...(quiet ? { auto: true } : {}) });
         if (!quiet) {
-            // It is said only as far as it is true: a replay that stopped again is not "being finished".
+            // a replay that stopped again is not "being finished"
             const stopped = r.resumed && (r.replayStatus === 'needs_review' || r.replayStatus === 'dead_letter');
             if (stopped) say(`${r.filed > 0 ? `${r.filed} more transaction${r.filed === 1 ? '' : 's'} filed, but the statement` : 'The statement'} stopped again. ${WHOLE_TEXT[r.replayReason] || 'It still needs a look.'} Nothing was lost and nothing is filed twice.`, 'warn');
             else if (r.resumed) say(r.filed > 0 ? `${r.filed} more transaction${r.filed === 1 ? '' : 's'} filed. The rest of this statement is being finished from where it stopped; nothing is filed twice.` : 'This statement is being finished from where it stopped; nothing is filed twice.', 'success');
@@ -520,10 +520,10 @@ function drawReview() {
         item.appendChild(text);
         const rowLevel = Boolean(entry.row) && entry.index >= 0;
         const why = document.createElement('p'); why.textContent = rowLevel ? reviewReasonText(entry.reason) : (WHOLE_TEXT[entry.reason] || String(entry.reason || 'Verification required')); item.appendChild(why);
-        const button = document.createElement('button'); button.className = 'btn btn-primary btn-sm'; button.textContent = !entry.row || entry.index < 0 ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } catch { say('This review could not be opened. It remains pending.', 'error'); } finally { button.disabled = false; } }; item.appendChild(button);
+        const button = document.createElement('button'); button.className = entry.reason === 'statement-empty-needs-confirmation' ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'; button.textContent = !entry.row || entry.index < 0 ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } catch { say('This review could not be opened. It remains pending.', 'error'); } finally { button.disabled = false; } }; item.appendChild(button);
         const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw); box.appendChild(item);
         if (entry.index === -1 && entry.reason === 'statement-empty-needs-confirmation') {
-            const empty = document.createElement('button'); empty.className = 'btn btn-secondary btn-sm'; empty.textContent = 'Yes, nothing happened that month'; empty.style.marginLeft = '8px';
+            const empty = document.createElement('button'); empty.className = 'btn btn-primary btn-sm'; empty.textContent = 'Yes, nothing happened that month'; empty.style.marginLeft = '8px';
             empty.onclick = async () => { empty.disabled = true; try { await request('/api/statement-sync', 'POST', { action: 'close-empty', id: entry.id }); say('Closed as an empty month. You can reopen it from the list of closed months.', 'info'); await sync(); } catch { empty.disabled = false; say('That month could not be closed.', 'error'); } };
             item.appendChild(empty);
         }
