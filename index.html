@@ -25546,12 +25546,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                     seen.add(b.toLowerCase());
                     out.push(b);
                 }
-                /* A bank the owner has approved a statement address for is theirs too: HNB, NTB and DFCC had no card or account on record, only a sender,
-                 * so "Your banks" listed American Express alone ("1 of your 1 bank") and the other three never showed as verified. */
-                for (const e of (Array.isArray(_senders.approved) ? _senders.approved : [])) {
-                    const n = String((e && e.name) || '').trim();
-                    if (n && _exactStatementAddress(e.id) && !out.some((b) => A.bankNamesMatch(b, n))) out.push(n);
-                }
                 return out;
             } catch (_) { return []; }
         }
