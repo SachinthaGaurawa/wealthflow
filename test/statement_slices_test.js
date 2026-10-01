@@ -171,7 +171,7 @@ describe('a statement that stopped part-way is resumed, not re-mapped', () => {
     it('the automatic pass puts it back; the replay checks the filed rows by fingerprint and files only the rest — once each', async () => {
         const w = await stopped();
         expect(await resumePartialStatements({ db: w.db, uid: 'u' })).toEqual({ resumed: 1, more: false });
-        expect(w.data.get(sourcePath)).toMatchObject({ status: 'pending', cursor: 0, totalRows: null, retryCount: 0, resumeVersion: 2 });
+        expect(w.data.get(sourcePath)).toMatchObject({ status: 'pending', cursor: 0, totalRows: null, retryCount: 0, resumeVersion: 3 });
         expect(w.data.get('users/u/statementReview/' + reviewId).status).toBe('retried');
         await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
         expect(w.data.get(sourcePath)).toMatchObject({ status: 'filed', filed: true, cursor: 70 });
@@ -244,6 +244,60 @@ describe('a replay does not stop on rows the ledger holds worded differently (th
         expect(events().find(e => e.evt === 'statement-sync-item' && e.status === 'needs_review')).toMatchObject({ reason: 'statement-cursor-or-content-changed', detail: { index: 4, ledger: 'filed', differs: 'amount' } });
     });
 
+    it('AMEX: a row the ledger calls filed that the books no longer hold is filed again by the replay — the whole statement is no longer refused over it', async () => {
+        const w = await partFiled();
+        const lostIds = new Set(w.data.get('users/u').cconetime.filter(record => record.statementRow < 20).map(record => record.id));
+        const user = structuredClone(w.data.get('users/u'));
+        user.cconetime = user.cconetime.filter(record => !lostIds.has(record.id));                      // a device pushed its own copy of the list over them
+        w.data.set('users/u', user);
+        const some = ledgerKeys(w).find(key => w.data.get(key).index === 12);
+        w.data.set(some, { ...w.data.get(some), fingerprint: 'worded-by-an-earlier-reader' });          // and one of them was worded differently too
+        expect(w.data.get('users/u').cconetime).toHaveLength(10);
+        await resumePartialStatements({ db: w.db, uid: 'u' });
+        const events = logs();
+        await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
+        expect(w.data.get(sourcePath)).toMatchObject({ status: 'filed', filed: true, cursor: 70 });
+        const records = w.data.get('users/u').cconetime;
+        expect(records).toHaveLength(70);
+        expect(new Set(records.map(r => r.statementRow)).size).toBe(70);                                // every row once, the lost ones included
+        expect(events().find(e => e.evt === 'statement-sync-item' && e.status === 'filed')).toMatchObject({ rows: 70, healed: 20 });
+    });
+
+    it('a row the owner DELETED (a tombstone) is never brought back, and does not stop the statement either', async () => {
+        const w = await partFiled();
+        const doomed = w.data.get('users/u').cconetime.find(record => record.statementRow === 12);
+        const user = structuredClone(w.data.get('users/u'));
+        user.cconetime = user.cconetime.filter(record => record.id !== doomed.id);
+        user._tomb = { cconetime: { [doomed.id]: Date.now() } };
+        w.data.set('users/u', user);
+        const key = ledgerKeys(w).find(entry => w.data.get(entry).index === 12);
+        w.data.set(key, { ...w.data.get(key), fingerprint: 'worded-by-an-earlier-reader' });
+        await resumePartialStatements({ db: w.db, uid: 'u' });
+        await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
+        expect(w.data.get(sourcePath)).toMatchObject({ status: 'filed', filed: true, cursor: 70 });
+        const records = w.data.get('users/u').cconetime;
+        expect(records).toHaveLength(69);
+        expect(records.some(record => record.statementRow === 12)).toBe(false);
+    });
+
+    it('NTB: the same amount and direction at the same place on another date is the same row — not a changed statement, and the owner\'s record is not rewritten', async () => {
+        const w = await partFiled();
+        const record = w.data.get('users/u').cconetime.find(r => r.statementRow === 7);
+        const user = structuredClone(w.data.get('users/u'));
+        const kept = user.cconetime.find(r => r.id === record.id);
+        kept.date = '2026-09-02'; kept.month = '2026-09';
+        w.data.set('users/u', user);
+        const key = ledgerKeys(w).find(entry => w.data.get(entry).index === 7);
+        w.data.set(key, { ...w.data.get(key), fingerprint: 'an-earlier-date' });
+        await resumePartialStatements({ db: w.db, uid: 'u' });
+        const events = logs();
+        await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
+        expect(w.data.get(sourcePath)).toMatchObject({ status: 'filed', filed: true, cursor: 70 });
+        expect(w.data.get('users/u').cconetime).toHaveLength(70);
+        expect(w.data.get('users/u').cconetime.find(r => r.id === record.id).date).toBe('2026-09-02');
+        expect(events().find(e => e.evt === 'statement-sync-item' && e.status === 'filed')).toMatchObject({ dateShifted: 1 });
+    });
+
     it('a ledger row that was skipped, or sent to review, is compared by what it held', async () => {
         const w = await partFiled();
         const [key] = ledgerKeys(w);
@@ -273,7 +327,7 @@ describe('the app\'s silent resume goes once per version; the owner\'s own tap a
         const w = world({ rows: 70 });
         let calls = 0;
         await runStatementSync({ ...w.base, settle: async args => { calls += 1; if (calls === 2) throw new Error('statement-cursor-or-content-changed'); return settleStatement(args); }, maxSteps: 1, budgetMs: 40000 });
-        w.data.set(sourcePath, { ...w.data.get(sourcePath), resumeVersion: 2 });                // already tried with this version of the replay
+        w.data.set(sourcePath, { ...w.data.get(sourcePath), resumeVersion: 3 });                // already tried with this version of the replay
         const enqueue = vi.fn(async () => ({ status: 'needs_review', review: 1, filed: 0, reason: 'statement-cursor-or-content-changed' }));
         expect(await resumeReview({ db: w.db, owner, id: reviewId, auto: true, enqueue })).toMatchObject({ ok: true, resumed: false, state: 'skipped' });
         expect(enqueue).not.toHaveBeenCalled();
@@ -283,7 +337,7 @@ describe('the app\'s silent resume goes once per version; the owner\'s own tap a
         const w = world({ rows: 70 });
         let calls = 0;
         await runStatementSync({ ...w.base, settle: async args => { calls += 1; if (calls === 2) throw new Error('statement-cursor-or-content-changed'); return settleStatement(args); }, maxSteps: 1, budgetMs: 40000 });
-        w.data.set(sourcePath, { ...w.data.get(sourcePath), resumeVersion: 1 });
+        w.data.set(sourcePath, { ...w.data.get(sourcePath), resumeVersion: 2 });
         expect(await resumeReview({ db: w.db, owner, id: reviewId, auto: true, enqueue: vi.fn(async () => ({ status: 'pending' })) })).toMatchObject({ resumed: true });
     });
 });
