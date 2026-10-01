@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createCipheriv, pbkdf2Sync } from 'node:crypto';
 import { runStatementSync } from '../statement-sync.js';
+import { settleStatement } from '../statement-ledger.mjs';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
 
@@ -38,7 +39,7 @@ function database(initial) {
         return result;
     } };
 }
-function simulation({ disagree = false, unavailable = false, items = 1, noVault = false, unencrypted = false } = {}) {
+function simulation({ disagree = false, unavailable = false, items = 1, noVault = false, unencrypted = false, subscriptions = [] } = {}) {
     const owner = { uid: 'u', email: 'owner@example.com' }, sender = 'statements@nationstrust.com';
     const senders = [{ id: sender, kind: 'address', status: 'approved' }];
     const messageFor = id => ({ id, internalDate: '1789000000000', snippet: 'Your monthly card statement', payload: {
@@ -53,7 +54,7 @@ function simulation({ disagree = false, unavailable = false, items = 1, noVault 
         return 'wf-mail/owner_example_com/items/' + plan.items[0].key;
     });
     const initial = {
-        'users/u': { expenses: [], cconetime: [], ccPayments: [], incomeRecv: [], subscriptions: [] },
+        'users/u': { expenses: [], cconetime: [], ccPayments: [], incomeRecv: [], subscriptions },
         'wf-mail/owner_example_com': { uid: 'u', email: owner.email, refresh_token: 'synthetic-refresh', autonomous: true, senders },
         ...Object.fromEntries(sourcePaths.map((path, i) => [path, { uid: 'u', bank: 'NTB', from: sender, filename: 'AMEX_Statement_2026Sep.html', messageId: messageIds[i], status: 'pending', cursor: 0, filed: false }])),
     };
@@ -73,13 +74,14 @@ function simulation({ disagree = false, unavailable = false, items = 1, noVault 
     });
     let round = 0;
     const roster = Array.from({ length: 10 }, (_, i) => 'synthetic-engine-' + i);
-    const board = vi.fn(async () => {
+    // answers for the rows it is actually sent (the board is asked only about rows the rules did not settle)
+    const board = vi.fn(async prompt => {
         round++;
         if (disagree) throw Error('synthetic engine disagreement');
-        return { unanimous: true, trustworthy: true, expected: roster, fields: round % 2 ? { decisions: [
-            { index: 0, module: 'cconetime', category: 'Groceries', allocationId: '' },
-            { index: 1, module: 'ccPayments', category: 'Card Payment', allocationId: '' }
-        ] } : { approved: true } };
+        const sent = String(prompt).includes('Transactions: ') ? JSON.parse(String(prompt).slice(String(prompt).indexOf('Transactions: ') + 14)) : [];
+        return { unanimous: true, trustworthy: true, expected: roster, fields: round % 2 ? { decisions: sent.map(row => (/PAYMENT/i.test(row.description)
+            ? { index: row.index, module: 'ccPayments', category: 'Card Payment', allocationId: '' }
+            : { index: row.index, module: 'cconetime', category: 'Groceries', allocationId: '' })) } : { approved: true } };
     });
     const open = vi.fn(async () => [{ bank: 'NTB', password: '01/02/1990', kind: 'birthday', format: 'DDMMYYYY' }]);
     const sourcePath = sourcePaths[0];
@@ -87,17 +89,27 @@ function simulation({ disagree = false, unavailable = false, items = 1, noVault 
 }
 
 describe('cold-server composed statement pipeline simulation', () => {
-    it('decrypts NTB HTML using vault DOB formatting, cross-checks ten engines, atomically files and ignores redelivery', async () => {
+    it('decrypts NTB HTML using vault DOB formatting, settles what the rules settle without the board, atomically files and ignores redelivery', async () => {
         const setup = simulation();
         expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 1, status: 'filed', filed: 2 });
         const user = setup.db.docs.get('users/u');
         expect(user.cconetime).toHaveLength(1); expect(user.ccPayments).toHaveLength(1);
         expect(user.cconetime[0]).toMatchObject({ amount: 123.45, card_last4: '0276', paid: false, serviceFee: 0 });
         expect(user.ccPayments[0].amount).toBe(50);
-        expect(user.incomeRecv).toEqual([]); expect(setup.board).toHaveBeenCalledTimes(2);
+        // a grocery purchase and a card payment are settled by the rules on strong evidence: the board's answer for them was always thrown away,
+        // so it is not asked (this is what made NTB and AMEX statements slow: two sequential board calls for every ten rows)
+        expect(user.incomeRecv).toEqual([]); expect(setup.board).not.toHaveBeenCalled();
         expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ filed: true, cursor: 2, vaultSavedAt: 100 });
         expect(await runStatementSync(setup.args)).toMatchObject({ processed: 0 });
         expect(setup.db.docs.get('users/u').cconetime).toHaveLength(1);
+    });
+    it('cross-checks ten engines for the one row that could be one of the owner\'s subscriptions, and the rules still settle the other', async () => {
+        const setup = simulation({ subscriptions: [{ id: 's1', name: 'Keells Supermarket', category: 'Groceries' }] });
+        expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 1, status: 'filed', filed: 2 });
+        const user = setup.db.docs.get('users/u');
+        expect(user.cconetime).toHaveLength(1); expect(user.ccPayments).toHaveLength(1);
+        expect(setup.board).toHaveBeenCalledTimes(2);                  // the classification and its independent peer review
+        expect(JSON.stringify(setup.board.mock.calls[0][0])).toContain('KEELLS'); expect(JSON.stringify(setup.board.mock.calls[0][0])).not.toContain('PAYMENT THANK YOU');
     });
     it('uses deterministic routing when the external board is unavailable', async () => {
         const setup = simulation({ disagree: true });
@@ -228,12 +240,12 @@ describe('in-process draining replaces the external task queue', () => {
         expect(result.retryAfterMs).toBeGreaterThan(110000);
         expect(result.retryAfterMs).toBeLessThanOrEqual(120250);
     });
-    it('does not commit rows decrypted under a vault generation that changed during AI review', async () => {
+    it('does not commit rows decrypted under a vault generation that changed before they were committed', async () => {
         const setup = simulation();
-        const originalBoard = setup.args.board;
-        setup.args.board = vi.fn(async (...args) => {
+        // the vault changes after the rows were decrypted and classified, right before they are committed (whether or not the board was asked)
+        setup.args.settle = vi.fn(async (...args) => {
             setup.db.docs.set('wf-statement-vault/u', { uid: 'u', savedAt: 200 });
-            return originalBoard(...args);
+            return settleStatement(...args);
         });
         expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, status: 'retry_pending', processed: 0 });
         expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', filed: false, leaseToken: '', lastRetryReason: 'statement-vault-changed-during-processing' });
@@ -242,10 +254,9 @@ describe('in-process draining replaces the external task queue', () => {
     });
     it('does not commit after autonomous processing is revoked in flight', async () => {
         const setup = simulation();
-        const originalBoard = setup.args.board;
-        setup.args.board = vi.fn(async (...args) => {
+        setup.args.settle = vi.fn(async (...args) => {
             setup.db.docs.set('wf-mail/owner_example_com', { ...setup.db.docs.get('wf-mail/owner_example_com'), autonomous: false });
-            return originalBoard(...args);
+            return settleStatement(...args);
         });
         expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, status: 'retry_pending', processed: 0 });
         expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', filed: false, lastRetryReason: 'autonomous-mailbox-disabled-during-processing' });

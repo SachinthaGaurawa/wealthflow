@@ -128,7 +128,9 @@ describe('a long card statement in one invocation', () => {
         const w = world({ rows: 14, name: 'NETFLIX.COM', subscriptions: [{ id: 's1', name: 'Netflix', category: 'Entertainment' }] });
         const ok = n => ({ unanimous: true, trustworthy: true, expected: Array.from({ length: 10 }, (_, i) => 'e' + i), fields: { decisions: Array.from({ length: n }, (_, index) => ({ index, module: 'cconetime', category: 'Card Purchase', allocationId: '' })) } });
         w.board.mockReset();
-        w.board.mockImplementation(async prompt => (prompt.startsWith('Return only JSON. Independently') ? { ...ok(0), fields: { approved: true } } : ok(10)));
+        // answers exactly the rows it is sent
+        w.board.mockImplementation(async prompt => (prompt.startsWith('Return only JSON. Independently') ? { ...ok(0), fields: { approved: true } }
+            : ok(JSON.parse(prompt.slice(prompt.indexOf('Transactions: ') + 14)).length)));
         const result = await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000, startedAt: Date.now() - 20000 });
         expect(result.attempted).toBe(1);
         expect(w.data.get(sourcePath)).toMatchObject({ status: 'pending', cursor: 10, filed: false });     // ten rows settled; the next ten need the board and there was no room for it
