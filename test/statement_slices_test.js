@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createFirestore } from './helpers/fake-firestore.js';
-import { runStatementSync, classifySlice, sliceRows, resumePartialStatements, resumeReview, closeSettledReviews, statementCensus } from '../statement-sync.js';
+import { runStatementSync, classifySlice, sliceRows, resumePartialStatements, resumeReview, closeSettledReviews, statementCensus, checkpointRows } from '../statement-sync.js';
 import { readStatement } from '../statement-reader.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
 
@@ -171,7 +171,7 @@ describe('a statement that stopped part-way is resumed, not re-mapped', () => {
     it('the automatic pass puts it back; the replay checks the filed rows by fingerprint and files only the rest — once each', async () => {
         const w = await stopped();
         expect(await resumePartialStatements({ db: w.db, uid: 'u' })).toEqual({ resumed: 1, more: false });
-        expect(w.data.get(sourcePath)).toMatchObject({ status: 'pending', cursor: 0, totalRows: null, retryCount: 0, resumeVersion: 1 });
+        expect(w.data.get(sourcePath)).toMatchObject({ status: 'pending', cursor: 0, totalRows: null, retryCount: 0, resumeVersion: 2 });
         expect(w.data.get('users/u/statementReview/' + reviewId).status).toBe('retried');
         await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
         expect(w.data.get(sourcePath)).toMatchObject({ status: 'filed', filed: true, cursor: 70 });
@@ -206,6 +206,85 @@ describe('a statement that stopped part-way is resumed, not re-mapped', () => {
         w.data.set('users/u/statementReview/row5', { uid: 'u', sourcePath, index: 5, status: 'pending', reason: 'invalid-transaction' });
         await resumePartialStatements({ db: w.db, uid: 'u' });
         expect(w.data.get(sourcePath).hasReview).toBe(true);
+    });
+});
+
+describe('a replay does not stop on rows the ledger holds worded differently (the AMEX/NTB statements that never finished)', () => {
+    async function partFiled() {
+        const w = world({ rows: 70 });
+        let calls = 0;
+        await runStatementSync({ ...w.base, settle: async args => { calls += 1; if (calls === 2) throw new Error('statement-cursor-or-content-changed'); return settleStatement(args); }, maxSteps: 1, budgetMs: 40000 });
+        return w;
+    }
+    const ledgerKeys = w => [...w.data.keys()].filter(key => key.startsWith('users/u/statementLedger/'));
+
+    it('the same dates, amounts and directions are the same transactions: the filed rows are counted as duplicates and the rest is filed — once each', async () => {
+        const w = await partFiled();
+        expect(ledgerKeys(w)).toHaveLength(30);
+        for (const key of ledgerKeys(w)) w.data.set(key, { ...w.data.get(key), fingerprint: 'worded-by-an-earlier-reader' });     // an earlier reading worded every filed row differently
+        expect((await resumePartialStatements({ db: w.db, uid: 'u' })).resumed).toBe(1);
+        await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
+        expect(w.data.get(sourcePath)).toMatchObject({ status: 'filed', filed: true, cursor: 70 });
+        const records = w.data.get('users/u').cconetime;
+        expect(records).toHaveLength(70);
+        expect(new Set(records.map(r => r.statementRow)).size).toBe(70);
+    });
+
+    it('different money at the same place is a statement that really changed: still refused, and the log says where and what differed', async () => {
+        const w = await partFiled();
+        for (const key of ledgerKeys(w)) w.data.set(key, { ...w.data.get(key), fingerprint: 'worded-by-an-earlier-reader' });
+        const user = structuredClone(w.data.get('users/u'));
+        user.cconetime.find(record => record.statementRow === 4).amount += 1;
+        w.data.set('users/u', user);
+        await resumePartialStatements({ db: w.db, uid: 'u' });
+        const events = logs();
+        await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
+        expect(w.data.get(sourcePath)).toMatchObject({ status: 'needs_review', reviewReason: 'statement-cursor-or-content-changed' });
+        expect(w.data.get('users/u').cconetime).toHaveLength(30);                  // nothing was filed on top of a statement that moved
+        expect(events().find(e => e.evt === 'statement-sync-item' && e.status === 'needs_review')).toMatchObject({ reason: 'statement-cursor-or-content-changed', detail: { index: 4, ledger: 'filed', differs: 'amount' } });
+    });
+
+    it('a ledger row that was skipped, or sent to review, is compared by what it held', async () => {
+        const w = await partFiled();
+        const [key] = ledgerKeys(w);
+        // the row at that place was once a line that moves no money; the new reading finds a real transaction there
+        w.data.set(key, { ...w.data.get(key), status: 'skipped', reason: 'zero-amount', fingerprint: 'old' });
+        await resumePartialStatements({ db: w.db, uid: 'u' });
+        await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
+        expect(w.data.get(sourcePath)).toMatchObject({ status: 'needs_review', reviewReason: 'statement-cursor-or-content-changed' });
+    });
+
+    it('a statement checkpointed by a reading that only worded rows differently continues; one whose money moved does not', async () => {
+        const rows = [{ date: '2026-09-01', amount: 100, direction: 'debit', narration: 'KEELLS 1' }, { date: '2026-09-02', amount: 200, direction: 'debit', narration: 'KEELLS 2' }];
+        const moneyHash = createHash('sha256').update(JSON.stringify(rows.map(row => [row.date, row.amount, row.direction]))).digest('hex');
+        const fs = createFirestore({ [sourcePath]: { uid: 'u', leaseToken: 't', rowSetHash: 'an-older-wording', moneyHash, totalRows: 2, cursor: 1 } });
+        await expect(checkpointRows(fs.db, fs.db.doc(sourcePath), 'u', 't', rows)).resolves.toMatch(/^[a-f0-9]{64}$/);
+        expect(fs.data.get(sourcePath).rowSetHash).not.toBe('an-older-wording');
+        const moved = createFirestore({ [sourcePath]: { uid: 'u', leaseToken: 't', rowSetHash: 'an-older-wording', moneyHash, totalRows: 2, cursor: 1 } });
+        await expect(checkpointRows(moved.db, moved.db.doc(sourcePath), 'u', 't', [rows[0], { ...rows[1], amount: 201 }])).rejects.toMatchObject({ message: 'statement-cursor-or-content-changed', detail: { rows: 2, saved: 2, cursor: 1, money: false } });
+        // a statement checkpointed before the money hash existed is held to the strict rule it always had
+        const old = createFirestore({ [sourcePath]: { uid: 'u', leaseToken: 't', rowSetHash: 'an-older-wording', totalRows: 2, cursor: 1 } });
+        await expect(checkpointRows(old.db, old.db.doc(sourcePath), 'u', 't', rows)).rejects.toThrow('statement-cursor-or-content-changed');
+    });
+});
+
+describe('the app\'s silent resume goes once per version; the owner\'s own tap always works', () => {
+    it('refuses a second automatic attempt, never the owner\'s', async () => {
+        const w = world({ rows: 70 });
+        let calls = 0;
+        await runStatementSync({ ...w.base, settle: async args => { calls += 1; if (calls === 2) throw new Error('statement-cursor-or-content-changed'); return settleStatement(args); }, maxSteps: 1, budgetMs: 40000 });
+        w.data.set(sourcePath, { ...w.data.get(sourcePath), resumeVersion: 2 });                // already tried with this version of the replay
+        const enqueue = vi.fn(async () => ({ status: 'needs_review', review: 1, filed: 0, reason: 'statement-cursor-or-content-changed' }));
+        expect(await resumeReview({ db: w.db, owner, id: reviewId, auto: true, enqueue })).toMatchObject({ ok: true, resumed: false, state: 'skipped' });
+        expect(enqueue).not.toHaveBeenCalled();
+        expect(await resumeReview({ db: w.db, owner, id: reviewId, enqueue })).toMatchObject({ resumed: true, replayStatus: 'needs_review', replayReason: 'statement-cursor-or-content-changed' });
+    });
+    it('an earlier version\'s attempt does not use up this one', async () => {
+        const w = world({ rows: 70 });
+        let calls = 0;
+        await runStatementSync({ ...w.base, settle: async args => { calls += 1; if (calls === 2) throw new Error('statement-cursor-or-content-changed'); return settleStatement(args); }, maxSteps: 1, budgetMs: 40000 });
+        w.data.set(sourcePath, { ...w.data.get(sourcePath), resumeVersion: 1 });
+        expect(await resumeReview({ db: w.db, owner, id: reviewId, auto: true, enqueue: vi.fn(async () => ({ status: 'pending' })) })).toMatchObject({ resumed: true });
     });
 });
 

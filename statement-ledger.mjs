@@ -75,6 +75,37 @@ function makeRecord(row, decision, context, id, now) {
     return { ...base, desc, type: row.type || 'purchase', category: decision.category, serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
 }
 
+/* A ROW THE LEDGER ALREADY HOLDS IS THE SAME TRANSACTION IF THE MONEY IS THE SAME. A statement that stopped part-way was filed by an earlier
+ * reading; a later one (a better reader, a different account-number guess, a description cleaned up) words some rows differently, and a
+ * fingerprint over the words alone called that "the statement changed" and refused to go on — for ever, since the rows already filed
+ * could never be re-read the old way. What a filed row IS is its date, its amount and its direction (what the owner's books carry); when
+ * those agree at the same place in the same statement it is the same transaction, counted as the duplicate it is, and nothing is
+ * filed twice. When they do not agree, the statement really changed and is still refused — now with the reason named. */
+const moneyOf = item => (item ? { date: String(item.date || ''), cents: amountCents(Number(item.amount)), direction: String(item.direction || '') } : null);
+function compareMoney(was, now) {
+    if (!was || was.cents == null || !was.date) return 'no-record';
+    const differs = [was.date !== now.date && 'date', was.cents !== now.cents && 'amount', was.direction && now.direction && was.direction !== now.direction && 'direction'].filter(Boolean);
+    return differs.length ? differs.join('+') : 'same';
+}
+function filedRecord(user, sourcePath, index, id, matchedId) {
+    for (const key of ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments']) {
+        const hit = (Array.isArray(user[key]) ? user[key] : []).find(record => record && (record.id === id || (matchedId && record.id === matchedId)));
+        if (hit) return hit;
+    }
+    for (const sub of Array.isArray(user.subscriptions) ? user.subscriptions : []) {
+        const hit = (Array.isArray(sub?.history) ? sub.history : []).find(entry => entry && entry.statementKey === sourcePath && entry.statementRow === index);
+        if (hit) return { ...hit, direction: 'debit' };
+    }
+    return null;
+}
+async function settledRowVerdict({ entry, row, user, sourcePath, index, id, readReview }) {
+    const now = { date: String(row?.date || ''), cents: amountCents(row?.amount), direction: String(row?.direction || '') };
+    if (entry.status === 'filed' || entry.status === 'duplicate') return compareMoney(moneyOf(filedRecord(user, sourcePath, index, id, entry.matchedId)), now);
+    if (entry.status === 'skipped') return isPhantomRow(row) || isZeroAmountLine(row) || transferEvidence(row) ? 'same' : 'skipped-then-a-transaction';
+    if (entry.status === 'review') return compareMoney(moneyOf((await readReview())?.row), now);
+    return 'unknown-status';
+}
+
 export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', cardRegistry = {}, mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false }) {
     if (!db || !uid || !sourceRef?.path || !leaseToken || !Array.isArray(rows) || rows.length > 30 || !rows.length || !Array.isArray(decisions) || decisions.length !== rows.length || !Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(totalRows) || totalRows < cursor + rows.length || !Number.isSafeInteger(now)) throw new Error('invalid-settlement-request');
     const userRef = db.collection('users').doc(uid);
@@ -104,28 +135,33 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         const outcome = { filed: 0, duplicates: 0, skipped: 0, review: 0, cursor: cursor + rows.length };
         const writes = [];
         
-        rows.forEach((row, offset) => {
+        for (let offset = 0; offset < rows.length; offset++) {
+            const row = rows[offset];
             const index = cursor + offset, id = ledgerRefs[offset].id;
             // A consolidated statement carries several accounts: a row knows which one it belongs to.
             const rowLast4 = String(row?.card_last4 || last4 || '');
             const context = { bank, last4: rowLast4, card_last4: rowLast4, statementType, cardRegistry, sourcePath: sourceRef.path, index };
             const fingerprint = hash(rowIdentity(row, context));
             if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
-                if (ledgerSnaps[offset].data()?.fingerprint !== fingerprint) throw new Error('statement-cursor-or-content-changed');
-                outcome.duplicates++; return;
+                const entry = ledgerSnaps[offset].data() || {};
+                if (entry.fingerprint !== fingerprint) {
+                    const verdict = await settledRowVerdict({ entry, row, user, sourcePath: sourceRef.path, index, id, readReview: async () => (await tx.get(reviewRefs[offset])).data() });
+                    if (verdict !== 'same') throw Object.assign(new Error('statement-cursor-or-content-changed'), { detail: { index, ledger: String(entry.status || ''), differs: verdict } });
+                }
+                outcome.duplicates++; continue;
             }
             // A row with no money AND no words (a month-end date and nothing else) is not on the statement at
             // all. It keeps its place in the statement's row numbering, so a replay lines up, and raises nothing.
             // Whether a statement made of nothing else is really empty is decided before it gets here.
             if (isPhantomRow(row)) {
                 writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'skipped', module: '', reason: 'empty-line', fingerprint, settledAt: now }]);
-                outcome.skipped++; return;
+                outcome.skipped++; continue;
             }
             // A line that moves no money ("Int.Pd 0.00") is not a transaction to file
             // or to ask the owner about: it is recorded as skipped and nothing else.
             if (isZeroAmountLine(row)) {
                 writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'skipped', module: '', reason: 'zero-amount', fingerprint, settledAt: now }]);
-                outcome.skipped++; return;
+                outcome.skipped++; continue;
             }
             let reason = validateSettlementRow(row, decisions[offset], context);
             const decision = decisions[offset] || {};
@@ -135,7 +171,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             
             if (exact.length === 1 && matching.length === 1) {
                 writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', fingerprint, matchedId: String(exact[0].id || ''), settledAt: now }]);
-                outcome.duplicates++; return;
+                outcome.duplicates++; continue;
             }
             if (matching.length) reason = 'ambiguous-cross-source-match';
             
@@ -177,7 +213,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             } else if (module !== 'skip') outcome.filed++;
             
             writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: reason ? 'review' : module === 'skip' ? 'skipped' : 'filed', module: module || '', fingerprint: hash(rowIdentity(row, context)), settledAt: now }]);
-        });
+        }
         
         const hasReview = source.hasReview === true || outcome.review > 0;
         const final = outcome.cursor === totalRows;

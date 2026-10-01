@@ -265,9 +265,13 @@ async function renderAndSubmit(entry) {
 const RESUME_FIRST = new Set(['statement-cursor-or-content-changed', 'statement-retries-exhausted']);
 async function resumeStatement(entry, { quiet = false } = {}) {
     try {
-        const r = await request('/api/statement-sync', 'POST', { action: 'resume-review', id: entry.id });
+        // `auto`: the silent attempt the app makes by itself is allowed once per version of the replay on the server; the owner's tap always is.
+        const r = await request('/api/statement-sync', 'POST', { action: 'resume-review', id: entry.id, ...(quiet ? { auto: true } : {}) });
         if (!quiet) {
-            if (r.resumed) say(r.filed > 0 ? `${r.filed} more transaction${r.filed === 1 ? '' : 's'} filed. The rest of this statement is being finished from where it stopped; nothing is filed twice.` : 'This statement is being finished from where it stopped; nothing is filed twice.', 'success');
+            // It is said only as far as it is true: a replay that stopped again is not "being finished".
+            const stopped = r.resumed && (r.replayStatus === 'needs_review' || r.replayStatus === 'dead_letter');
+            if (stopped) say(`${r.filed > 0 ? `${r.filed} more transaction${r.filed === 1 ? '' : 's'} filed, but the statement` : 'The statement'} stopped again. ${WHOLE_TEXT[r.replayReason] || 'It still needs a look.'} Nothing was lost and nothing is filed twice.`, 'warn');
+            else if (r.resumed) say(r.filed > 0 ? `${r.filed} more transaction${r.filed === 1 ? '' : 's'} filed. The rest of this statement is being finished from where it stopped; nothing is filed twice.` : 'This statement is being finished from where it stopped; nothing is filed twice.', 'success');
             else say(r.state === 'filed' ? 'This statement is already filed, so its review is closed.' : r.state === 'busy' ? 'WealthFlow is working on this statement right now.' : 'This review was already handled.', 'info');
             overlay?.remove(); overlay = null;
         }
