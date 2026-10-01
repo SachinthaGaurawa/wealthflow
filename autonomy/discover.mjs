@@ -265,7 +265,10 @@ export function findUnguardedJsonParse(source, file) {
         // Guarded if a try appears in the preceding window and the line itself
         // is not already defended by a catch-expression or optional fallback.
         const before = lines.slice(Math.max(0, i - 12), i).join('\n');
-        const guarded = /\btry\s*\{/.test(before) || /\bcatch\b/.test(line);
+        // A one-line `try { … JSON.parse(…) … } catch` has its try on the SAME line, before the parse — api/ai.js's reply reader was
+        // reported as unguarded (#280) for exactly that, though its catch sits on the next line and it has always been defended.
+        const parseAt = line.search(/JSON\.parse\s*\(/);
+        const guarded = /\btry\s*\{/.test(before) || /\bcatch\b/.test(line) || /\btry\s*\{/.test(line.slice(0, Math.max(0, parseAt)));
         if (guarded) continue;
         out.push({
             kind: 'unguarded-json-parse',

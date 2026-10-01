@@ -195,6 +195,21 @@ describe('discover: unguarded JSON.parse of external data', () => {
     it('does NOT flag a parse of a local literal', () => {
         expect(findUnguardedJsonParse('const o = JSON.parse(\'{"a":1}\');', 'a.js')).toHaveLength(0);
     });
+
+    it('does NOT flag a one-line try whose catch is on the next line (#280: api/ai.js readReply)', () => {
+        const src = 'const read = async (r) => {\n    try { return { ok: true, data: JSON.parse(await r.text()) }; }\n    catch (_) { return { ok: true, nonJson: true }; }\n};';
+        expect(findUnguardedJsonParse(src, 'a.js')).toHaveLength(0);
+    });
+
+    it('still flags a parse that comes BEFORE the try on its line', () => {
+        const f = findUnguardedJsonParse('const c = JSON.parse(process.env.X); try { go(); } finally { done(); }', 'a.js');
+        expect(f).toHaveLength(1);
+    });
+
+    it('api/ai.js, as shipped, has nothing unguarded', async () => {
+        const { readFileSync } = await import('node:fs');
+        expect(findUnguardedJsonParse(readFileSync(new URL('../api/ai.js', import.meta.url), 'utf8'), 'api/ai.js')).toHaveLength(0);
+    });
 });
 
 // ── accessibility ────────────────────────────────────────────────────────────

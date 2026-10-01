@@ -191,7 +191,11 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         }, { merge: true });
         
         for (const [ref, data] of writes) tx.set(ref, data);
-        tx.set(sourceRef, { cursor: outcome.cursor, totalRows, hasReview, bank, last4, statementType, filed: final && !hasReview, status: final ? (hasReview ? 'needs_review' : 'filed') : 'pending', leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
+        tx.set(sourceRef, { cursor: outcome.cursor, totalRows, hasReview, bank, last4, statementType, filed: final && !hasReview, status: final ? (hasReview ? 'needs_review' : 'filed') : 'pending', leaseToken: '', leaseUntil: 0,
+            // A slice that settled is progress, and "five failures IN A ROW" (statement-queue.mjs) means in a row: failures were counted on the
+            // statement for its whole life, so a long statement (ten slices, a provider hiccup in each of five of them) was parked as
+            // dead-letter and then put in front of the owner as "retries exhausted" though it had been filing all along.
+            retryCount: 0, retryAt: 0, updatedAt: now }, { merge: true });
         
         return { ...outcome, status: final ? (hasReview ? 'needs_review' : 'filed') : 'pending' };
     });
