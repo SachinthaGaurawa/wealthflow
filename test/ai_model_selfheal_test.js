@@ -10,7 +10,7 @@ import { createModelBook, choose, isModelGone, modelsOf, loadModels, TTL_MS } fr
  * asks the provider what it serves today, chooses by rule, retries once, and remembers.
  * ===========================================================================*/
 
-afterEach(() => { resetProviderCooldowns(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); for (const slot of ['Gemini:any', 'DeepSeek:text', 'Ollama:text', 'Ollama:vision', 'NVIDIA:text', 'NVIDIA:vision', 'Mistral:text', 'Mistral:vision', 'OpenRouterQwen:text', 'OpenRouterFinance:text', 'OpenRouterNemotron:text']) { modelBook.forget(slot); } });
+afterEach(() => { modelBook.reset(); resetProviderCooldowns(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); for (const slot of ['Gemini:any', 'DeepSeek:text', 'Ollama:text', 'Ollama:vision', 'NVIDIA:text', 'NVIDIA:vision', 'Mistral:text', 'Mistral:vision', 'OpenRouterQwen:text', 'OpenRouterFinance:text', 'OpenRouterNemotron:text']) { modelBook.forget(slot); } });
 
 describe('isModelGone', () => {
     it.each([[410, ''], [404, ''], [404, '{"error":{"message":"Model not found, inaccessible, and/or not deployed"}}'], [410, '{"detail":"The model has reached its end of life"}'],
@@ -30,11 +30,17 @@ describe('modelsOf', () => {
 
 describe('choose', () => {
     const ids = (...list) => list.map((id) => ({ id }));
-    it('NVIDIA: the strongest live instruct model, never the retired one, never an embedding or a guard model', () => {
-        const models = ids('meta/llama-3.1-8b-instruct', 'nvidia/nv-embedqa-e5-v5', 'meta/llama-guard-4-12b', 'nvidia/llama-3.1-nemotron-70b-instruct', 'meta/llama-3.3-70b-instruct', 'meta/llama-3.2-90b-vision-instruct');
-        expect(choose({ provider: 'NVIDIA', models, exclude: ['meta/llama-3.1-8b-instruct'] })).toBe('meta/llama-3.3-70b-instruct');
-        expect(choose({ provider: 'NVIDIA', models, exclude: ['meta/llama-3.1-8b-instruct', 'meta/llama-3.3-70b-instruct'] })).toBe('nvidia/llama-3.1-nemotron-70b-instruct');
+    it('NVIDIA: the newest live instruct family first, the generation a provider has retired LAST (it is still listed after its end of life), never an embedding or a guard model', () => {
+        const models = ids('meta/llama-3.1-8b-instruct', 'nvidia/nv-embedqa-e5-v5', 'meta/llama-guard-4-12b', 'nvidia/llama-3.1-nemotron-70b-instruct', 'meta/llama-3.3-70b-instruct', 'meta/llama-3.2-90b-vision-instruct', 'meta/llama-4-maverick-17b-128e-instruct');
+        expect(choose({ provider: 'NVIDIA', models, exclude: ['meta/llama-3.1-8b-instruct'] })).toBe('meta/llama-4-maverick-17b-128e-instruct');
+        expect(choose({ provider: 'NVIDIA', models, exclude: ['meta/llama-3.1-8b-instruct', 'meta/llama-4-maverick-17b-128e-instruct'] })).toBe('nvidia/llama-3.1-nemotron-70b-instruct');
+        expect(choose({ provider: 'NVIDIA', models, exclude: ['meta/llama-4-maverick-17b-128e-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct'] })).toBe('meta/llama-3.3-70b-instruct');
         expect(choose({ provider: 'NVIDIA', models, vision: true })).toBe('meta/llama-3.2-90b-vision-instruct');
+    });
+    it('a thinking-only model is the last of its provider\'s models for a text role', () => {
+        const models = ids('accounts/fireworks/models/deepseek-r1', 'accounts/fireworks/models/qwen3-235b-a22b-thinking-2507', 'accounts/fireworks/models/llama-v3p3-70b-instruct');
+        expect(choose({ provider: 'Fireworks', models })).toBe('accounts/fireworks/models/llama-v3p3-70b-instruct');
+        expect(choose({ provider: 'Fireworks', models, exclude: ['accounts/fireworks/models/llama-v3p3-70b-instruct'] })).toMatch(/deepseek-r1|thinking/);
     });
     it('Mistral: small, then medium; vision picks pixtral', () => {
         const models = ids('mistral-large-latest', 'mistral-small-latest', 'mistral-embed', 'mistral-moderation-latest', 'pixtral-large-latest', 'open-mistral-nemo');
@@ -192,15 +198,21 @@ describe('the endpoint heals itself', () => {
             resetProviderCooldowns();
         }
     });
-    it('one replacement per call, never a loop: a replacement that is also gone ends in the provider\'s own error', async () => {
+    it('a bounded number of replacements per call, never a loop: replacements that are also gone end in the provider\'s own error, with what each said', async () => {
         vi.stubEnv('NVIDIA_API_KEY', 'test');
         const calls = [];
         vi.stubGlobal('fetch', vi.fn(async (url) => { calls.push(String(url)); if (String(url).endsWith('/v1/models')) return { ok: true, json: async () => ({ data: [{ id: 'meta/llama-3.3-70b-instruct' }, { id: 'meta/llama-3.1-70b-instruct' }] }) }; return fail(410, 'end of life'); }));
         const res = response(); await handler(adviceReq({ engines: ['NVIDIA'] }), res);
         expect(res.code).toBe(503);
-        expect(calls.filter((u) => u.includes('chat/completions'))).toHaveLength(2);       // the original and ONE replacement
+        const chats = calls.filter((u) => u.includes('chat/completions'));
+        expect(chats).toHaveLength(3);                                                   // the original and the TWO the provider lists — then it stops
+        expect(res.body.details).toMatch(/NVIDIA status 410: end of life \[tried meta\/llama-3\.1-8b-instruct→410, meta\/llama-3\.3-70b-instruct→410, meta\/llama-3\.1-70b-instruct→410\]/);
         expect(modelBook.current('NVIDIA:text')).toBe('');
         expect(modelBook.isBad('NVIDIA:text', 'meta/llama-3.3-70b-instruct')).toBe(true);
+        // and the next call does not ask the dead default again, nor either replacement
+        calls.length = 0; resetProviderCooldowns();
+        const again = response(); await handler(adviceReq({ engines: ['NVIDIA'] }), again);
+        expect(calls.filter((u) => u.includes('chat/completions'))).toHaveLength(0);
     });
     it('a list that cannot be fetched leaves the provider\'s own error, as before', async () => {
         vi.stubEnv('MISTRAL_API_KEY', 'test');

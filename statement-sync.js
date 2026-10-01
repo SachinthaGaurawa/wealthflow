@@ -629,7 +629,11 @@ export async function recoverRevokedSenderReviews({ db, uid, limit = 25 }) {
 // Tried only for a statement the rules could not read and that visibly carries movements; at most three times, and not
 // again within six hours of the last try. What a verified reading produced is stored beside the statement, so every
 // later slice (and every retry after a crash) uses the SAME rows — the model is never asked twice for one statement.
-const ADAPTIVE_MAX_TRIES = 3, ADAPTIVE_COOLDOWN_MS = 6 * 3600 * 1000, ADAPTIVE_PART = 100, ADAPTIVE_MIN_ROOM_MS = 28000, INVOCATION_MS = 55000;
+/* THE SIXTY SECONDS ARE THE REQUEST'S, NOT THE RUN'S. The platform counts from the moment the request arrived — cold start, imports, the
+ * database handshake and the mailbox read come before `start` — and a link that answers 202 and works on in the background is cut at
+ * the same sixty. The production log of 2026-10-01 showed runs of 48–55 s ending in "Task timed out after 60 seconds" (three links, eleven
+ * vault saves). The last statement is allowed to finish, so the run's own deadline is 48 s and the budgets leave it room to. */
+const ADAPTIVE_MAX_TRIES = 3, ADAPTIVE_COOLDOWN_MS = 6 * 3600 * 1000, ADAPTIVE_PART = 100, ADAPTIVE_MIN_ROOM_MS = 28000, INVOCATION_MS = 48000;
 function adaptiveWanted({ parsed, result, claimed, text, now }) {
     if (parsed.verdict === 'parsed' && parsed.understood === true && parsed.reconciliation?.ok !== false && Array.isArray(parsed.rows) && parsed.rows.length) return false;
     if (parsed.layout?.reconciliationBypassed || result.zeroActivity === true || claimed.emptyOverride === 'owner') return false;
@@ -847,7 +851,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
             const cursor = claimed.cursor || 0;
             if (cursor === 0) await recordProof(sourceRef, parsed, confirmedBypass, uid);
-            if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor >= parsed.rows.length || (claimed.totalRows != null && claimed.totalRows !== parsed.rows.length)) throw new Error('statement-cursor-or-content-changed');
+            if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor >= parsed.rows.length || (claimed.totalRows != null && claimed.totalRows !== parsed.rows.length)) throw Object.assign(new Error('statement-cursor-or-content-changed'), { detail: { rows: parsed.rows.length, saved: claimed.totalRows ?? null, cursor, how: parsed.adaptive ? 'adaptive' : 'rules' } });
             const statementType = parsed.layout?.statementType || '';
             const rows = parsed.rows.slice(cursor, cursor + 10);
             
@@ -877,12 +881,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 outcome = { status: 'needs_review', review: 1, deadLettered: 1 };
             } else if (result.outcome === 'dead-letter') outcome = { status: 'dead_letter', retry: 0, deadLetter: 1, retryAfterMs: result.retryAfterMs };
             else outcome = { status: 'retry_pending', retry: 1, retryAfterMs: result.retryAfterMs };
-            logItem({ bank: claimed.bank || '?', status: outcome.status, reason: error?.message, retryAfterMs: result.retryAfterMs });
+            logItem({ bank: claimed.bank || '?', status: outcome.status, reason: error?.message, retryAfterMs: result.retryAfterMs, ...(error?.detail ? { detail: error.detail } : {}) });
         } else {
             const reason = error.message;
             await quarantineSource(db, uid, sourceRef, claimed.leaseToken, reason, reviewEvidence);
             outcome = { status: 'needs_review', review: 1 };
-            logItem({ bank: claimed.bank || '?', status: outcome.status, reason });
+            logItem({ bank: claimed.bank || '?', status: outcome.status, reason, ...(error?.detail ? { detail: error.detail } : {}) });
         }
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }
     return outcome;
@@ -1402,7 +1406,7 @@ export async function serveSync({ db, owner, scheduled, body = {}, headers = {},
     // only the schedule's own secret can present a chain header: an interactive caller cannot pose as a link
     const link = scheduled ? parseHeader(headers[CHAIN_HEADER] ?? headers[CHAIN_HEADER.toUpperCase()]) : null;
     const job = (async () => {
-        const result = await run({ db, owner, action: body.action === 'drain' ? 'drain' : 'collect', maxSteps: Infinity, interactive: !scheduled, budgetMs: scheduled ? 45000 : 36000 });
+        const result = await run({ db, owner, action: body.action === 'drain' ? 'drain' : 'collect', maxSteps: Infinity, interactive: !scheduled, budgetMs: scheduled ? 38000 : 30000 });
         let chain = { next: false, reason: 'error' };
         try { chain = await continueChain({ db, mailRef, result, link, env, f, waitUntil }); } catch (_) { /* the schedule or the app starts it again */ }
         try { log(JSON.stringify({ evt: 'statement-sync-chain', link: link ? link.depth : 0, next: chain.next, reason: chain.reason })); } catch (_) { /* a log line never stops a sync */ }

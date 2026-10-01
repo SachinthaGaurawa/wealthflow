@@ -58,15 +58,18 @@ const VISION = /vision|\bvl\b|-vl-|pixtral|llava|4o|gemini|llama-3\.2-(?:11|90)b
 /** A version number out of an id, for "newest first": gemini-3.8-flash → 3.8; qwen3.8-27b → 3.8. */
 const versionOf = (id) => { const m = /(\d+(?:\.\d+)?)/.exec(String(id)); return m ? Number(m[1]) : 0; };
 
+/* Newest families first. A model a provider has retired is still LISTED for a while (NVIDIA lists llama-3.3-70b-instruct after its
+ * 2026-08-26 end of life; Cerebras listed llama-3.3-70b to a key that had no access), so the retired generation is the LAST resort,
+ * not the first choice — and a choice that fails is marked bad and the next one tried (ai-chat.mjs). */
 const PREFER = {
-    NVIDIA: [/llama-3\.3-70b-instruct/, /llama-3\.1-70b-instruct/, /llama-3\.1-nemotron-70b/, /nemotron.*(?:ultra|super|49b|70b)/, /llama-4-(?:maverick|scout)/, /mistral-large|mixtral-8x22b/, /qwen.*(?:72b|32b|instruct)/, /gpt-oss/, /deepseek/, /llama-3\.1-8b-instruct/, /instruct|chat/],
+    NVIDIA: [/llama-4-(?:maverick|scout)/, /nemotron.*(?:ultra|super|49b|70b)/, /mistral-(?:large|medium|small)|mixtral-8x22b/, /qwen-?3|qwen2\.5.*(?:72b|32b|instruct)/, /gpt-oss/, /deepseek-v3/, /llama-3\.3-70b-instruct/, /llama-3\.1-70b-instruct/, /llama-3\.1-8b-instruct/, /instruct|chat/],
     Mistral: [/^mistral-small-latest$/, /^mistral-medium-latest$/, /^open-mistral-nemo/, /^ministral-8b-latest$/, /^mistral-large-latest$/, /small|medium|nemo|ministral/, /mistral/],
     DeepSeek: [/^deepseek-chat$/, /deepseek-v\d/, /chat/, /deepseek/],
     Ollama: [/^gpt-oss:120b/, /gpt-oss/, /llama3\.3/, /qwen3/, /deepseek/, /llama/, /./],
-    Groq: [/gpt-oss-120b/, /llama-3\.3-70b/, /llama-4/, /70b/, /instruct|chat|versatile/],
+    Groq: [/gpt-oss-120b/, /llama-4/, /gpt-oss-20b/, /qwen/, /llama-3\.3-70b/, /70b/, /instruct|chat|versatile/],
     Together: [/llama-3\.3-70b/, /llama-4/, /70b/, /instruct|chat/],
-    Fireworks: [/llama-v3p3-70b/, /llama4/, /70b/, /instruct|chat/],
-    Cerebras: [/llama-3\.3-70b/, /llama3\.1-70b/, /gpt-oss/, /llama/, /./],
+    Fireworks: [/gpt-oss-120b/, /llama4|llama-4/, /qwen-?3.*instruct/, /deepseek-v3/, /kimi.*instruct/, /llama-v3p3-70b/, /70b/, /instruct|chat/],
+    Cerebras: [/gpt-oss/, /qwen-?3.*(?:235b|32b)/, /glm/, /llama-?3\.3-70b/, /llama/, /./],
 };
 const OPENROUTER_ROLE = { Finance: [/ling|fin/, /deepseek/, /gpt-oss/, /llama-3\.3/, /gemma/, /mistral/], Qwen: [/qwen/, /deepseek/, /llama/], Nemotron: [/nemotron/, /llama/, /gpt-oss/] };
 const VISION_PREFER = { Mistral: [/pixtral/, /mistral-(?:small|medium)/], NVIDIA: [/llama-3\.2-90b-vision/, /llama-3\.2-11b-vision/, /llama-4/, /vision|vl/], Ollama: [/llama3\.2-vision/, /qwen.*vl/, /gemma3/, /llava/, /vision/], OpenRouter: [/qwen.*vl|qwen3/, /gemma-3/, /llama-4|llama-3\.2/, /gemini/, /vision|vl/] };
@@ -102,7 +105,9 @@ export function choose({ provider, vision = false, models = [], exclude = [] }) 
     const key = isOpenRouter ? 'OpenRouter' : provider;
     const prefs = vision ? (VISION_PREFER[key] || []) : isOpenRouter ? (OPENROUTER_ROLE[provider.replace(/^OpenRouter/, '')] || []) : (PREFER[key] || []);
     const score = (m) => { const at = prefs.findIndex((re) => re.test(m.id)); return at < 0 ? prefs.length : at; };
-    pool.sort((a, b) => score(a) - score(b) || versionOf(b.id) - versionOf(a.id) || a.id.localeCompare(b.id));
+    // a model that thinks and has no setting to think less is the last of its provider's models for a text role (it spends the budget thinking)
+    const thinks = (m) => (!isOpenRouter && !vision && /-r1\b|r1-|thinking|reasoning|qwq|magistral/i.test(m.id) ? 1 : 0);
+    pool.sort((a, b) => thinks(a) - thinks(b) || score(a) - score(b) || versionOf(b.id) - versionOf(a.id) || a.id.localeCompare(b.id));
     // a model nothing in the preference list names is only a last resort, and only if the provider has nothing better
     return pool[0].id;
 }
@@ -126,6 +131,8 @@ export function createModelBook({ now = Date.now } = {}) {
         forget(slot) { chosen.delete(slot); },
         markBad(slot, id, ms = TTL_MS) { if (!id) return; if (!bad.has(slot)) bad.set(slot, new Map()); bad.get(slot).set(id, now() + ms); const c = chosen.get(slot); if (c && c.id === id) chosen.delete(slot); },
         isBad(slot, id) { return badIds(slot).includes(id); },
+        /** Forget everything (a deployment's cold start, and the tests). */
+        reset() { chosen.clear(); bad.clear(); lists.clear(); },
         badList: badIds,
         /**
          * The model to try instead of `failed`: ask the provider what it serves (cached, one request at a time per provider),

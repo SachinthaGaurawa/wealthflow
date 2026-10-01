@@ -18,6 +18,7 @@
 import * as Matrix from './ai-matrix.mjs';
 import { isModelGone, loadModels } from '../ai-models.mjs';
 import { geminiBook, geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
+import { askChat, chatError } from '../ai-chat.mjs';
 
 /* What each provider serves NOW, remembered for hours: a retired model is replaced by one the provider itself lists (ai-models.mjs).
  * One book for the whole process: Gemini's slots are shared with every other endpoint that asks Gemini (gemini-client.mjs). */
@@ -30,6 +31,8 @@ function providerCooldownMs(error) {
     // a model that no longer exists (404 "model not found", 410 "end of life") does not come back until the code names another:
     // asking again every fifteen seconds only spends the deadline of every call on a certain failure
     if (/status (?:404|410)\b|model (?:not found|does not exist)|not deployed|end of life|no longer available|unavailable for free/i.test(message)) return 6 * 60 * 60 * 1000;
+    // a provider that answers 200 with something that is not JSON is misbehaving, not busy: half an hour, not fifteen seconds
+    if (/returned non-JSON/i.test(message)) return 30 * 60 * 1000;
     if (/unauthori[sz]ed|forbidden|invalid api key|status 401|status 403/i.test(message)) return 60 * 60 * 1000;
     if (/rate.?limit|quota|status 429/i.test(message)) return 2 * 60 * 1000;
     if (/deadline|timed?\s*out|abort/i.test(message)) return 60 * 1000;
@@ -192,54 +195,42 @@ export default async function handler(req, res) {
         return { reply: text, provider: model === 'deepseek-chat' ? 'deepseek' : `deepseek:${model}` };
     }
 
+    /* A reply's body, whatever the provider sent: { ok, data } for JSON, { ok, nonJson } for a 200 that is not JSON (said plainly in the
+     * error, with its first words), { ok:false, status, text } for a refusal. */
+    const readReply = async (r) => {
+        if (!r.ok) return { ok: false, status: r.status, text: await r.text().catch(() => '') };
+        try { return { ok: true, data: typeof r.json === 'function' ? await (typeof r.clone === 'function' ? r.clone() : r).json() : JSON.parse(await r.text()) }; }
+        catch (_) { return { ok: true, nonJson: (typeof r.text === 'function' ? await r.text().catch(() => '') : '') || '(unreadable)' }; }
+    };
+
     // ---------- ENGINE 3: GROQ (ultra-fast text + vision via Llava) ----------
     async function fetchGroq() {
         if (!groqKey) throw new Error('Groq key not configured');
-
-        // Build payload — text-only vs vision differ
-        let payload;
-        if (image) {
-            payload = {
-                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-                messages: [{
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: prompt },
-                        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } }
-                    ]
-                }],
-                temperature: temp,
-                max_tokens: Math.min(tokens, 2048)
-            };
-        } else {
-            payload = {
-                // llama-3.3-70b-versatile was decommissioned by Groq on 2026-08-16
-                // (confirmed live: 404). gpt-oss-120b is Groq's own recommended
-                // replacement for that migration.
-                model: 'openai/gpt-oss-120b',
-                messages: [{ role: 'user', content: prompt }],
-                temperature: temp,
-                max_tokens: tokens
-            };
-        }
-
-        const response = await fetchWithTimeout('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
-            body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) throw new Error(`Groq status ${response.status}`);
-        const data = await response.json();
-        const text = data.choices?.[0]?.message?.content;
-        if (!text) throw new Error('Groq returned empty');
-        return { reply: text, provider: image ? 'groq:llama-4-scout' : 'groq:gpt-oss-120b' };
+        // llama-3.3-70b-versatile was decommissioned by Groq on 2026-08-16 (confirmed live: 404). gpt-oss-120b is Groq's own
+        // recommended replacement — a REASONING model: its thinking shares the completion budget with the answer, so it is asked
+        // for little reasoning (reasoning_effort: low) and, if it still answers nothing, given room (ai-chat.mjs).
+        const slot = image ? 'Groq:vision' : 'Groq:text';
+        const send = async (model, extra, maxTokens) => {
+            const payload = image
+                ? { model, messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } }] }], temperature: temp, max_tokens: Math.min(maxTokens, 2048) }
+                : { model, messages: [{ role: 'user', content: prompt }], temperature: temp, max_tokens: maxTokens };
+            return readReply(await fetchWithTimeout('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` }, body: JSON.stringify({ ...payload, ...extra })
+            }));
+        };
+        const dflt = image ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'openai/gpt-oss-120b';
+        try {
+            const out = await askChat({ name: 'Groq', slot, book: modelBook, defaultModel: dflt, tokens, cap: image ? 2048 : 4096, send, vision: !!image, log: console.info,
+                load: () => loadModels({ kind: 'openai', url: 'https://api.groq.com/openai/v1/models', key: groqKey, fetcher: fetchWithTimeout }) });
+            return { reply: out.text, provider: out.model === dflt ? (image ? 'groq:llama-4-scout' : 'groq:gpt-oss-120b') : `groq:${out.model}` };
+        } catch (e) { throw chatError('Groq', e); }
     }
 
     // ---------- ENGINE 4: OLLAMA CLOUD (vision + text, hosted) ----------
     // Correct endpoint for the *hosted* ollama.com API:
     //   POST https://ollama.com/api/chat   (Authorization: Bearer ...)
-    // Note: model names like "gpt-oss:120b" or "llama3.2-vision:11b" work directly here.
+    // Note: model names like "gpt-oss:120b" or "llama3.2-vision:11b" work directly here. gpt-oss THINKS: its thinking shares the
+    // num_predict budget with the answer (`message.thinking` beside an empty `message.content`), so it is asked to think "low".
     async function fetchOllama() {
         if (!ollamaKey) throw new Error('Ollama key not configured');
 
@@ -248,37 +239,25 @@ export default async function handler(req, res) {
 
         // Pick the right model: vision-capable for images, text-only otherwise
         const slot = image ? 'Ollama:vision' : 'Ollama:text';
-        const send = async (model) => {
-            const response = await fetchWithTimeout('https://ollama.com/api/chat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${ollamaKey}`
-                },
-                body: JSON.stringify({
-                    model,
-                    messages: [message],
-                    stream: false,
-                    // Suggest JSON output if the prompt hints at it
-                    ...(/return only.*json|extract.*json/i.test(prompt) ? { format: 'json' } : {}),
-                    options: { temperature: temp, num_predict: Math.min(tokens, 4096) }
-                })
-            });
-            if (response.ok) return { ok: true, response };
-            return { ok: false, status: response.status, text: await response.text().catch(() => '') };
-        };
-        let model = modelBook.current(slot) || (image ? 'llama3.2-vision' : 'gpt-oss:120b');
-        let out = await send(model);
-        if (!out.ok && isModelGone(out.status, out.text)) {
-            modelBook.markBad(slot, model);
-            const next = await modelBook.replacement({ slot, provider: 'Ollama', vision: !!image, failed: model, load: () => loadModels({ kind: 'ollama', url: 'https://ollama.com/api/tags', key: ollamaKey, fetcher: fetchWithTimeout }) });
-            if (next) { const retry = await send(next); if (retry.ok) { modelBook.remember(slot, next); model = next; out = retry; } else modelBook.markBad(slot, next); }
-        }
-        if (!out.ok) throw new Error(`Ollama status ${out.status}: ${out.text.substring(0, 200)}`);
-        const data = await out.response.json();
-        const text = data.message?.content;
-        if (!text) throw new Error('Ollama returned empty');
-        return { reply: text, provider: `ollama:${model}` };
+        const send = async (model, extra, maxTokens) => readReply(await fetchWithTimeout('https://ollama.com/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ollamaKey}` },
+            body: JSON.stringify({
+                model,
+                messages: [message],
+                stream: false,
+                // Suggest JSON output if the prompt hints at it
+                ...(/return only.*json|extract.*json/i.test(prompt) ? { format: 'json' } : {}),
+                options: { temperature: temp, num_predict: maxTokens },
+                ...extra
+            })
+        }));
+        const dflt = image ? 'llama3.2-vision' : 'gpt-oss:120b';
+        try {
+            const out = await askChat({ name: 'Ollama', slot, book: modelBook, defaultModel: dflt, tokens, cap: 4096, kind: 'ollama', send, vision: !!image, log: console.info,
+                load: () => loadModels({ kind: 'ollama', url: 'https://ollama.com/api/tags', key: ollamaKey, fetcher: fetchWithTimeout }) });
+            return { reply: out.text, provider: `ollama:${out.model}` };
+        } catch (e) { throw chatError('Ollama', e); }
     }
 
     // ---------- ENGINE 5: HuggingFace Inference (optional, last resort) ----------
@@ -322,40 +301,22 @@ export default async function handler(req, res) {
                 { 'Content-Type': 'application/json', 'Authorization': `Bearer ${opts.key}` },
                 opts.extraHeaders || {}
             );
-            const send = async (model) => {
-                const body = {
-                    model,
-                    messages: [{ role: 'user', content }],
-                    temperature: temp,
-                    max_tokens: Math.min(tokens, opts.maxTokens || 4096)
-                };
+            const send = async (model, extra, maxTokens) => {
+                const body = { model, messages: [{ role: 'user', content }], temperature: temp, max_tokens: maxTokens, ...extra };
                 if (!image && opts.jsonMode && /return only.*json|extract.*json|\{[^}]*"vendor"[^}]*\}/i.test(prompt)) {
                     body.response_format = { type: 'json_object' };
                 }
-                const r = await fetchWithTimeout(opts.url, { method: 'POST', headers, body: JSON.stringify(body) }, opts.timeout || 22000);
-                if (r.ok) return { ok: true, r };
-                return { ok: false, status: r.status, text: await r.text().catch(() => '') };
+                return readReply(await fetchWithTimeout(opts.url, { method: 'POST', headers, body: JSON.stringify(body) }, opts.timeout || 22000));
             };
-            let model = modelBook.current(slot) || (image ? opts.visionModel : opts.textModel);
-            let out = await send(model);
-            /* THE MODEL IS GONE, NOT THE PROVIDER: ask the provider what it serves now, choose the best live model for this
-             * role, try it once, and remember it (api/ai-models.mjs). The next call goes straight there. */
-            if (!out.ok && opts.list && isModelGone(out.status, out.text)) {
-                modelBook.markBad(slot, model);
-                const next = await modelBook.replacement({ slot, provider: opts.name, listKey: opts.list, vision: !!image, failed: model,
-                    load: () => loadModels({ kind: 'openai', url: opts.list, key: opts.key, headers: opts.extraHeaders, fetcher: fetchWithTimeout }) });
-                if (next) {
-                    const retry = await send(next);
-                    if (retry.ok) { modelBook.remember(slot, next); model = next; out = retry; }
-                    else modelBook.markBad(slot, next);
-                }
-            }
-            if (!out.ok) throw new Error(`${opts.name} status ${out.status}: ${out.text.substring(0, 160)}`);
-            const data = await out.r.json();
-            let text = data.choices?.[0]?.message?.content;
-            if (Array.isArray(text)) text = text.map(p => (p && (p.text || p.content)) || '').join('');
-            if (!text || !String(text).trim()) throw new Error(opts.name + ' returned empty');
-            return { reply: String(text), provider: model === (image ? opts.visionModel : opts.textModel) ? opts.provider : `${opts.provider}:${model}` };
+            /* THE MODEL IS GONE, NOT THE PROVIDER: ask the provider what it serves now, choose the best live model for this role,
+             * try up to three, and remember the one that answers (ai-chat.mjs, ai-models.mjs). A model that answers NOTHING (a
+             * thinking model that spent its budget) is asked for little reasoning, then given room, then left for the next one. */
+            const dflt = image ? opts.visionModel : opts.textModel;
+            try {
+                const out = await askChat({ name: opts.name, slot, book: modelBook, defaultModel: dflt, tokens, cap: opts.maxTokens || 4096, send, vision: !!image, listKey: opts.list, log: console.info,
+                    load: opts.list ? () => loadModels({ kind: 'openai', url: opts.list, key: opts.key, headers: opts.extraHeaders, fetcher: fetchWithTimeout }) : undefined });
+                return { reply: out.text, provider: out.model === dflt ? opts.provider : `${opts.provider}:${out.model}` };
+            } catch (e) { throw chatError(opts.name, e); }
         };
     }
 
@@ -381,7 +342,7 @@ export default async function handler(req, res) {
     // "Llama-3.3-70B-Instruct") are retired (confirmed live: fetch failed — the host no
     // longer resolves for this traffic). Current: models.github.ai/inference, with every
     // model namespaced "<publisher>/<model>".
-    const fetchGitHub = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.github.ai/inference/chat/completions', textModel: 'openai/gpt-4o-mini', visionModel: 'openai/gpt-4o', jsonMode: true });
+    const fetchGitHub = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.github.ai/inference/chat/completions', textModel: 'openai/gpt-4o-mini', visionModel: 'openai/gpt-4o', jsonMode: true, extraHeaders: { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } });
     const fetchCloudflare = makeOAI({
         name: 'CloudflareAI',
         provider: 'cloudflare:llama-4-scout',
