@@ -12,7 +12,7 @@ import { ANSWER, KEYS, response, chat, world, boardRequest } from './helpers/ai-
 
 afterEach(() => { modelBook.reset(); resetProviderCooldowns(); resetReasoningLearning(); resetGeminiLearning(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-const GARBLE = '{"decisions [{": 0, "module": "expenses", "category": "Groceries", "allocationId": ""}';
+const GARBLE = '{"decisions [{": 0, "module": "expenses", "category": "Groceries", "allocationId": ""}';     // keys torn: mangled, not a judgement
 const OTHER = '{"decisions":[{"index":0,"module":"expenses","category":"Transport","allocationId":""}]}';
 
 /** The production roster, with `who` answering through `script(callNumber)` instead of the agreed answer. */
@@ -37,9 +37,9 @@ async function board() {
     return { res, log };
 }
 
-describe('a provider that glitches once does not refuse what the others agree on', () => {
-    it('garbles the first time, answers right the second: the board is unanimous, it was asked twice, and the log says so', async () => {
-        const s = scripted('DeepSeek', (n) => (n === 1 ? GARBLE : ANSWER));
+describe('a provider that judges differently once does not refuse what the others agree on', () => {
+    it('says another category the first time, the agreed answer the second: unanimous, asked twice, and the log says so', async () => {
+        const s = scripted('DeepSeek', (n) => (n === 1 ? OTHER : ANSWER));
         const { res, log } = await board();
         expect(res.code).toBe(200); expect(res.body.unanimous).toBe(true);
         expect(res.body.answered).toContain('DeepSeek');
@@ -48,22 +48,33 @@ describe('a provider that glitches once does not refuse what the others agree on
     });
 });
 
-describe('a dissent that repeats keeps its veto — the safety rule is not weakened', () => {
-    it('the same garble twice: refused as a disagreement, asked exactly twice, nothing is released', async () => {
+describe('a mangled answer is garbage, not a vote', () => {
+    it('keys torn every time: set aside as invalid, NOT asked again, the eight that agree decide', async () => {
         const s = scripted('DeepSeek', () => GARBLE);
+        const { res, log } = await board();
+        expect(res.code).toBe(200); expect(res.body.unanimous).toBe(true);
+        expect(res.body.invalid).toEqual(['DeepSeek']); expect(res.body.answered).not.toContain('DeepSeek');
+        expect(s.calls.DeepSeek).toBe(1); expect(log.reasked).toBeUndefined();
+        expect(log.invalid).toEqual(['DeepSeek']);
+    });
+});
+
+describe('a dissent that repeats keeps its veto — the safety rule is not weakened', () => {
+    it('the same different category twice: refused as a disagreement, asked exactly twice, nothing is released', async () => {
+        const s = scripted('DeepSeek', () => OTHER);
         const { res, log } = await board();
         expect(res.code).toBe(422); expect(res.body.reason).toBe('provider_disagreement');
         expect(res.body.reply).toBeNull(); expect(res.body.fields).toBeNull(); expect(res.body.trustworthy).toBe(false);
         expect(s.calls.DeepSeek).toBe(2);
         expect(log.reasked).toEqual([{ name: 'DeepSeek', agreed: false }]);
     });
-    it('a real different judgement (another category) twice: refused', async () => {
-        scripted('DeepSeek', () => OTHER);
+    it('a refusal in a shape of its own, every time: refused', async () => {
+        scripted('DeepSeek', () => '{"error":"I cannot verify this transaction"}');
         const { res } = await board();
         expect(res.code).toBe(422); expect(res.body.reason).toBe('provider_disagreement');
     });
-    it('garbled the first time and a DIFFERENT wrong answer the second: still a veto — only agreeing with the majority clears it', async () => {
-        scripted('DeepSeek', (n) => (n === 1 ? GARBLE : OTHER));
+    it('a different answer the first time and ANOTHER different answer the second: still a veto — only agreeing with the majority clears it', async () => {
+        scripted('DeepSeek', (n) => (n === 1 ? OTHER : '{"decisions":[{"index":0,"module":"expenses","category":"Utilities","allocationId":""}]}'));
         const { res } = await board();
         expect(res.code).toBe(422);
     });
@@ -71,7 +82,7 @@ describe('a dissent that repeats keeps its veto — the safety rule is not weake
         for (const key of KEYS) vi.stubEnv(key, 'test');
         const w = world(); let n = 0;
         vi.stubGlobal('fetch', vi.fn(async (url, init) => {
-            if (/deepseek/.test(String(url))) { n++; return n === 1 ? chat(GARBLE) : { ok: false, status: 500, json: async () => ({}), text: async () => 'upstream error' }; }
+            if (/deepseek/.test(String(url))) { n++; return n === 1 ? chat(OTHER) : { ok: false, status: 500, json: async () => ({}), text: async () => 'upstream error' }; }
             return w.fetch(url, init);
         }));
         const { res } = await board();

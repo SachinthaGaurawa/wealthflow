@@ -129,26 +129,32 @@ describe('GET /api/ai?canary=1', () => {
 describe('who agrees with whom — "they disagree" is not a finding until it names the dissenter', () => {
     const good = '{"decisions":[{"index":0,"module":"expenses","category":"Groceries","allocationId":""}]}';
     const odd = '{"decisions [{": 0, "module": "expenses", "category": "Groceries"}';
-    it('groups answers the way the board does (key order ignored, a fenced block read), largest first, and lists the dissent and the unreadable', () => {
+    const other = '{"decisions":[{"index":0,"module":"expenses","category":"Transport","allocationId":""}]}';
+    const named = (names, reply) => names.map((name) => ({ name, ok: true, ms: 1, provider: name, reply }));
+    it('groups answers the way the board does (key order ignored, a fenced block read), largest first; the unreadable and the mangled are listed apart', () => {
         const probe = [
-            { name: 'A', ok: true, reply: good }, { name: 'B', ok: true, reply: '```json\n' + good + '\n```' },
+            ...named(['A', 'B'], good), { name: 'B2', ok: true, reply: '```json\n' + good + '\n```' },
             { name: 'C', ok: true, reply: '{"decisions":[{"category":"Groceries","index":0,"allocationId":"","module":"expenses"}]}' },
-            { name: 'D', ok: true, reply: odd }, { name: 'E', ok: true, reply: 'Sure! Here you go' }, { name: 'F', ok: false, error: 'x' },
+            ...named(['C2', 'C3'], good),
+            { name: 'D', ok: true, reply: odd }, { name: 'E', ok: true, reply: 'Sure! Here you go' }, { name: 'F', ok: false, error: 'x' }, ...named(['T'], other),
         ];
         const a = agreementOf(probe);
-        expect(a.groups.map((g) => g.members)).toEqual([['A', 'B', 'C'], ['D']]);
-        expect(a.dissent).toEqual(['D']);
+        expect(a.groups[0].members).toEqual(['A', 'B', 'B2', 'C', 'C2', 'C3']);
+        expect(a.groups.map((g) => g.members.length)).toEqual([6, 1, 1]);
+        expect(a.mangled.map((m) => m.name)).toEqual(['D']);
+        expect(a.dissent).toEqual(['T']);
         expect(a.invalid).toEqual([{ name: 'E', sample: 'Sure! Here you go' }]);
-        expect(a.groups[1].sample).toContain('decisions [{');
+        expect(a.mangled[0].sample).toContain('decisions [{');
     });
-    it('the verdict names who differs', () => {
-        const probe = ['A', 'B', 'C', 'D', 'E'].map((name) => ({ name, ok: true, ms: 1, provider: name, reply: good })).concat([{ name: 'Z', ok: true, ms: 1, provider: 'z', reply: odd }]);
+    it('the verdict names who differs, and who was not counted', () => {
+        const probe = [...named(['A', 'B', 'C', 'D', 'E'], good), ...named(['Z'], other)];
         const r = reportOf({ decision: { unanimous: false, reason: 'provider_disagreement', answered: ['A', 'B', 'C', 'D', 'E', 'Z'], minimumProviders: 5 }, probe });
         expect(verdictOf(r)).toMatch(/THEY DISAGREE — 6 answered; reason provider_disagreement; a different answer from: Z/);
-        expect(r.agreement.dissent).toEqual(['Z']);
+        const g = reportOf({ decision: { unanimous: true, answered: ['A', 'B', 'C', 'D', 'E'], minimumProviders: 5, invalid: ['Q'] }, probe: [...named(['A', 'B', 'C', 'D', 'E'], good), ...named(['Q'], odd)] });
+        expect(verdictOf(g)).toMatch(/^GOOD — 5 of 6 providers answered and agreed \(floor 5\); not counted, answer was malformed: Q/);
     });
     it('an agreeing board has no dissent and a report that carries nothing secret', () => {
-        const r = reportOf({ decision: { unanimous: true, answered: ['A', 'B'], minimumProviders: 5 }, probe: [{ name: 'A', ok: true, reply: good }, { name: 'B', ok: true, reply: good }] });
-        expect(r.agreement.dissent).toEqual([]); expect(r.agreement.groups).toHaveLength(1);
+        const r = reportOf({ decision: { unanimous: true, answered: ['A', 'B'], minimumProviders: 5 }, probe: named(['A', 'B'], good) });
+        expect(r.agreement.dissent).toEqual([]); expect(r.agreement.groups).toHaveLength(1); expect(r.agreement.mangled).toEqual([]);
     });
 });

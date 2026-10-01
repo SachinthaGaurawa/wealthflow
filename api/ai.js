@@ -367,7 +367,7 @@ export default async function handler(req, res) {
     const fetchFireworks = makeOAI({ name: 'Fireworks', provider: 'fireworks', key: fireworksKey, url: 'https://api.fireworks.ai/inference/v1/chat/completions', list: 'https://api.fireworks.ai/inference/v1/models', textModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct', visionModel: 'accounts/fireworks/models/llama-v3p2-90b-vision-instruct' });
     const openRouterHeaders = { 'HTTP-Referer': 'https://wealthflow-personal.vercel.app', 'X-Title': 'WealthFlow' };
     const fetchOpenRouterFinance = makeOAI({ name: 'OpenRouterFinance', provider: 'openrouter:ling-fin-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Finance', textModel: 'inclusionai/ling-3.0-flash-fin:free', visionModel: null, extraHeaders: openRouterHeaders });
-    const fetchOpenRouterQwen = makeOAI({ name: 'OpenRouterQwen', provider: 'openrouter:qwen-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Qwen', textModel: 'qwen/qwen3.8-27b:free', visionModel: 'qwen/qwen3.8-27b:free', jsonMode: true, extraHeaders: openRouterHeaders });
+    const fetchOpenRouterQwen = makeOAI({ name: 'OpenRouterQwen', provider: 'openrouter:qwen-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Qwen', textModel: 'qwen/qwen3.8-27b:free', visionModel: 'qwen/qwen3.8-27b:free', jsonMode: false, extraHeaders: openRouterHeaders });
     const fetchOpenRouterNemotron = makeOAI({ name: 'OpenRouterNemotron', provider: 'openrouter:nemotron-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Nemotron', textModel: 'nvidia/nemotron-3-ultra-550b-a55b:free', visionModel: null, extraHeaders: openRouterHeaders });
     // llama-3.3-70b is a real Cerebras model name but returned 404 "does not exist
     // or you do not have access to it" live -- an access/tier gap, not a spelling
@@ -526,27 +526,24 @@ export default async function handler(req, res) {
     const results = await Promise.all(engines.map(run));
     const reasked = [];
     if (mode === 'unanimous') {
-        /* A DISSENT HAS TO BE REPRODUCIBLE TO VETO. Free-tier models glitch: on 2026-10-01 one provider of nine answered the canary with
-         * `{"decisions [{": 0, …}` — valid JSON, wrong in every field — and, because any valid dissent vetoes, that one garble refused
-         * the decision the other eight agreed on. So when a clear majority (at least the quorum, and more than half of those who
-         * answered) agree and a few providers (at most three) said something else, those providers are asked ONCE MORE. A provider that
-         * now agrees with the majority had a glitch and counts as agreeing; one that still says something else — or cannot be reached
-         * — keeps its veto. A real disagreement, or an answer a hijacked description produced, is reproducible and stays a veto;
-         * the quorum, the unanimity rule and `needsReview` are untouched. */
+        /* A DISSENT HAS TO BE REPRODUCIBLE TO VETO. Free-tier models glitch, and any valid dissent vetoes. So when a clear majority (at
+         * least the quorum, two thirds of those who answered) agree and a few providers (at most three) JUDGED differently, those
+         * providers are asked ONCE MORE. One that now agrees with the majority had a glitch and counts as agreeing; one that still says
+         * something else — or cannot be reached — keeps its veto. A real disagreement, or an answer a hijacked description produced,
+         * is reproducible and stays a veto. (An answer whose keys are a mangled version of the majority's — ai-matrix.mjs boardReading —
+         * is repeatable garbage, not a judgement: it is not asked again and the board lists it as invalid.) The quorum, the unanimity
+         * rule and `needsReview` are untouched. */
         try {
-            const answers = results.filter(r => r && r.ok).map(r => ({ r, value: Matrix.boardAnswer(r.reply) })).filter(a => a.value !== null)
-                .map(a => ({ ...a, key: Matrix.canonicalAnswer(a.value) }));
-            const tally = new Map(); for (const a of answers) tally.set(a.key, (tally.get(a.key) || 0) + 1);
-            const [topKey, topCount] = [...tally.entries()].sort((a, b) => b[1] - a[1])[0] || [null, 0];
-            const dissent = answers.filter(a => a.key !== topKey);
-            if (topKey !== null && topCount >= 5 && topCount * 2 > answers.length && dissent.length > 0 && dissent.length <= 3) {
-                const again = await Promise.all(dissent.map(a => runWithin(engines.find(e => e.name === a.r.name), Math.min(deadlineMs, 6000))));
+            const reading = Matrix.boardReading(results.filter(r => r && r.ok).map(r => ({ name: r.name, reply: r.reply })), 5);
+            // a MANGLED answer (keys torn) is repeatable garbage, not a glitch to ask again; only a differing judgement is re-asked
+            if (reading.clear && reading.dissent.length > 0 && reading.dissent.length <= 3) {
+                const again = await Promise.all(reading.dissent.map(name => runWithin(engines.find(e => e.name === name), Math.min(deadlineMs, 6000))));
                 again.forEach((second, i) => {
-                    const first = dissent[i].r, name = first.name;
+                    const name = reading.dissent[i];
                     const value = second.ok ? Matrix.boardAnswer(second.reply) : null;
-                    const agreed = value !== null && Matrix.canonicalAnswer(value) === topKey;
+                    const agreed = value !== null && Matrix.canonicalAnswer(value) === reading.topKey;
                     reasked.push({ name, agreed });
-                    if (agreed) results[results.indexOf(first)] = second;
+                    if (agreed) results[results.findIndex(r => r && r.name === name)] = second;
                 });
             }
         } catch (_) { /* advice: the board decides on what it already has */ }

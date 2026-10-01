@@ -15,7 +15,7 @@
  * hex/base64 runs). Pure but for the injected store.
  * ===========================================================================*/
 
-import { boardAnswer, canonicalAnswer } from './api/ai-matrix.mjs';
+import { boardAnswer, boardReading } from './api/ai-matrix.mjs';
 
 export const CANARY_GAP_MS = 90 * 1000;
 export const DOC = { collection: 'wf-ai', id: 'canary' };
@@ -39,17 +39,20 @@ export function redact(text, max = 140) {
  * fixed and carries nothing of the owner's, so showing what a dissenter said is safe and is the point: "they disagree" is not a finding.
  */
 export function agreementOf(probe = []) {
-    const groups = new Map(), invalid = [];
-    for (const p of probe) {
-        if (!p || p.ok !== true) continue;
-        const value = boardAnswer(p.reply);
-        if (value === null) { invalid.push({ name: String(p.name), sample: redact(p.reply, 240) }); continue; }
-        const key = canonicalAnswer(value);
-        const group = groups.get(key) || { members: [], sample: redact(JSON.stringify(value), 300) };
-        group.members.push(String(p.name)); groups.set(key, group);
+    const live = (Array.isArray(probe) ? probe : []).filter((p) => p && p.ok === true);
+    const reading = boardReading(live.map((p) => ({ name: p.name, reply: p.reply })));
+    const byName = new Map(live.map((p) => [String(p.name), p]));
+    const groups = new Map();
+    const invalid = live.filter((p) => boardAnswer(p.reply) === null).map((p) => ({ name: String(p.name), sample: redact(p.reply, 240) }));
+    for (const a of reading.answers) {
+        const group = groups.get(a.key) || { members: [], sample: redact(JSON.stringify(a.value), 300) };
+        group.members.push(String(a.name)); groups.set(a.key, group);
     }
-    const ordered = [...groups.values()].sort((a, b) => b.members.length - a.members.length);
-    return { groups: ordered, invalid, dissent: ordered.slice(1).flatMap((g) => g.members) };
+    const ordered = [...groups.values()].sort((x, y) => y.members.length - x.members.length);
+    // without a clear majority every group but the largest is a dissent; with one, mangled answers are listed apart from real dissent
+    const dissent = reading.clear ? reading.dissent : ordered.slice(1).flatMap((g) => g.members);
+    const mangled = reading.mangled.map((name) => ({ name: String(name), sample: redact(byName.get(name) && byName.get(name).reply, 240) }));
+    return { groups: ordered, invalid, mangled, dissent };
 }
 
 /**
@@ -85,8 +88,9 @@ export function reportOf({ decision, probe = [], ms = 0, at = Date.now() }) {
 export function verdictOf(report) {
     if (!report || !report.board) return 'no report yet';
     const b = report.board;
-    if (b.unanimous) return `GOOD — ${b.answered} of ${b.asked} providers answered and agreed (floor ${b.floor})`;
     const dissent = (report.agreement && report.agreement.dissent) || [];
+    const mangled = ((report.agreement && report.agreement.mangled) || []).map((m) => m.name);
+    if (b.unanimous) return `GOOD — ${b.answered} of ${b.asked} providers answered and agreed (floor ${b.floor})${mangled.length ? `; not counted, answer was malformed: ${mangled.join(', ')}` : ''}`;
     if (b.answered >= b.floor) return `PROVIDERS FINE, BUT THEY DISAGREE — ${b.answered} answered; reason ${b.reason}${dissent.length ? `; a different answer from: ${dissent.join(', ')}` : ''}`;
     return `BELOW THE FLOOR — only ${b.answered} of ${b.asked} answered (need ${b.floor}); reason ${b.reason}`;
 }

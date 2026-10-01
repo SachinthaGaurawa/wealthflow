@@ -62,9 +62,31 @@ describe('the reason a board gives is the true one (production 2026-10-01: nine 
         const d = ask([...live(six.slice(0, 5), answer), reply('F', { decisions: [{ index: 0, module: 'expenses', category: 'Transport', allocationId: '' }] }), { name: 'G', ok: false, error: 'y' }], seven);
         expect(d.unanimous).toBe(false); expect(d.fields).toBeNull(); expect(d.reason).toBe('provider_disagreement');
     });
-    it('a structurally different JSON object that still parses is a dissent too (it vetoes; nothing is filed on a majority)', () => {
-        const d = ask([...live(six.slice(0, 5), answer), reply('F', { 'decisions [{': 0, module: 'expenses' }), { name: 'G', ok: false, error: 'y' }], seven);
-        expect(d.unanimous).toBe(false); expect(d.reason).toBe('provider_disagreement');
+    it('an answer whose keys are a MANGLED version of the majority\'s is invalid — it is not a vote, and it does not veto the eight that agree', () => {
+        const d = ask([...live(six.slice(0, 5), answer), reply('F', { 'decisions [{': 0, module: 'expenses', category: 'Groceries' }), { name: 'G', ok: false, error: 'y' }], seven);
+        expect(d.unanimous).toBe(true); expect(d.invalid).toEqual(['F']); expect(d.answered).not.toContain('F'); expect(d.fields).toEqual(answer);
+    });
+    it('but any OTHER difference is a dissent that vetoes — another shape, a rejection, a refusal, another value', () => {
+        for (const odd of [{ verdict: 'reject' }, { error: 'I cannot verify this' }, { decisions: [], approved: false }, { decision: [{ index: 0 }] }, { decisions: 'x' }]) {
+            const d = ask([...live(six.slice(0, 5), answer), reply('F', odd), { name: 'G', ok: false, error: 'y' }], seven);
+            expect(d.unanimous, JSON.stringify(odd)).toBe(false); expect(d.reason).toBe('provider_disagreement'); expect(d.reply).toBeNull();
+        }
+    });
+    it('a peer review: {"approved":false} vetoes, {"verdict":"reject"} vetoes, only a mangled key is set aside', () => {
+        const yes = { approved: true };
+        const run = (odd) => ask([...live(six.slice(0, 5), yes), reply('F', odd), { name: 'G', ok: false, error: 'y' }], seven);
+        expect(run({ approved: false }).unanimous).toBe(false);
+        expect(run({ verdict: 'reject' }).unanimous).toBe(false);
+        expect(run({ 'approved: tr': 1 }).unanimous).toBe(true);
+    });
+    it('without a clear majority nothing is called mangled: a split board is split', () => {
+        const four = live(['A', 'B', 'C', 'D'], answer), others = live(['E', 'F', 'G'], { 'decisions [{': 0 });
+        const d = ask([...four, ...others], seven);
+        expect(d.unanimous).toBe(false);
+    });
+    it('the rule belongs to the financial board only: without allowUnavailable a mangled answer is a dissent as before', () => {
+        const d = unanimousDecision([...live(six.slice(0, 5), answer), reply('F', { 'decisions [{': 0 })], { expected: six, minimumProviders: 5 });
+        expect(d.unanimous).toBe(false);
     });
     it('below the quorum the reason is still unavailability (or invalid answers), as before', () => {
         expect(ask([...live(['A', 'B', 'C'], answer), { name: 'D', ok: false, error: 'x' }], ['A', 'B', 'C', 'D']).reason).toBe('insufficient_or_invalid_roster');
