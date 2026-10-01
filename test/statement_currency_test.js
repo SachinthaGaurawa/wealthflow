@@ -340,7 +340,7 @@ function world({ stmt, settings, extract }) {
     const f = async () => ({ ok: true, json: async () => ({ access_token: 'token' }) });
     const loadAttachment = async () => ({ bytes: Buffer.from(html), filename: 'statement_march.html', contentSha256: 'x' });
     const drain = async () => { let last; for (let i = 0; i < 8; i++) { last = await runStatementSync({ action: 'drain', db, owner, env: {}, f, read: readStatement, open: async () => [{ password: 'x', bank: 'First Heritage' }], settle: settleStatement, board: async () => { throw new Error('ai-consensus-unavailable'); }, extract, loadAttachment, maxSteps: 1 }); if (['filed', 'needs_review', 'rejected_non_statement'].includes(last.status)) break; } return last; };
-    return { db, drain, source: () => data.get(sourcePath), user: () => data.get('users/u'), reviews: () => [...data.entries()].filter(([k]) => k.startsWith('users/u/statementReview/')).map(([, v]) => v) };
+    return { db, data, drain, source: () => data.get(sourcePath), user: () => data.get('users/u'), reviews: () => [...data.entries()].filter(([k]) => k.startsWith('users/u/statementReview/')).map(([, v]) => v) };
 }
 
 describe('the worker never files a statement in another currency into the account', () => {
@@ -391,6 +391,17 @@ describe('a rule-based reader names no currency, so the page is asked', () => {
     it('the same statement in rupees is filed', async () => {
         const stmt = statement(61, { code: 'LKR', n: 8 });
         const w = world({ stmt, extract: none });
+        expect((await w.drain()).status).toBe('filed');
+    });
+    it('a statement held back as "another currency" before the rule was made stricter is read again by the automatic pass, and filed', async () => {
+        const stmt = statement(68, { code: 'LKR', head: '', n: 8, extraHead: ['ALL transactions are subject to the bank\'s terms and conditions'] });
+        const w = world({ stmt, extract: none });
+        // how the old rule left it: a whole-statement review, nothing filed
+        const reviewPath = 'users/u/statementReview/old';
+        w.data.set(sourcePath, { ...w.source(), status: 'needs_review', reviewReason: 'statement-currency-differs', hasReview: true });
+        w.data.set(reviewPath, { uid: 'u', sourcePath, index: -1, status: 'pending', reason: 'statement-currency-differs' });
+        const { recoverWholeStatementFailures } = await import('../statement-sync.js');
+        expect(await recoverWholeStatementFailures({ db: w.db, uid: 'u' })).toEqual({ recovered: 1, more: false });
         expect((await w.drain()).status).toBe('filed');
     });
     it('a currency code that is an ordinary English word in the small print ("ALL …") is a word, not a currency (NTB consolidated FEB, 2026-10-01)', async () => {

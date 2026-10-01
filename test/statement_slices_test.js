@@ -161,11 +161,28 @@ describe('a statement that stopped part-way is resumed, not re-mapped', () => {
         expect(w.data.get(sourcePath)).toMatchObject({ status: 'needs_review', reviewReason: 'statement-cursor-or-content-changed', cursor: 30 });
         expect(w.data.get('users/u/statementReview/' + reviewId)).toMatchObject({ status: 'pending', index: -1 });
         expect(w.data.get('users/u').cconetime).toHaveLength(30);
-        // the layout route refuses, as it must: a new layout could file the same rows twice
+        // a layout the owner TAUGHT is refused over filed rows, as it must be: a new layout could file the same rows twice (mapReviewLayout keeps that rule)
         const { submitRenderedStatement } = await import('../statement-sync.js');
         const html = (await import('node:zlib')).gzipSync(Buffer.from(statementHtml(70))).toString('base64');
-        await expect(submitRenderedStatement({ db: w.db, owner, id: reviewId, htmlGz: html, readRendered: async () => ({ text: 'x', parsed: { rows: [{ date: '2026-09-01', amount: 1 }], verdict: 'parsed', understood: true } }) }))
-            .rejects.toMatchObject({ message: 'layout-replay-would-overlap-settled-data', why: 'ledger-filed:30' });
+        // …but the device's rendering of the SAME document is replayed over them (idempotent: each filed row is checked, never filed twice), not refused
+        const enqueue = vi.fn(async () => { await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000, preferredSourcePath: sourcePath }); return { status: 'filed', filed: 40, review: 0 }; });
+        const result = await submitRenderedStatement({ db: w.db, owner, id: reviewId, htmlGz: html, enqueue,
+            readRendered: async page => readStatement({ bytes: Buffer.from(page), filename: 'statement.html', passwords: [], bank: 'AMEX', layouts: [] }) });
+        expect(result).toMatchObject({ ok: true, mapped: true, replayStatus: 'filed' });
+        expect(enqueue).toHaveBeenCalledTimes(1);
+        expect(w.data.get(sourcePath)).toMatchObject({ status: 'filed', filed: true, cursor: 70 });
+        const records = w.data.get('users/u').cconetime;
+        expect(records).toHaveLength(70);
+        expect(new Set(records.map(r => r.statementRow)).size).toBe(70);
+    });
+
+    it('a statement that is already filed, or being worked on, still refuses the device\'s rendering', async () => {
+        const w = await stopped();
+        const { submitRenderedStatement } = await import('../statement-sync.js');
+        const html = (await import('node:zlib')).gzipSync(Buffer.from(statementHtml(70))).toString('base64');
+        w.data.set(sourcePath, { ...w.data.get(sourcePath), leaseUntil: Date.now() + 60000 });
+        await expect(submitRenderedStatement({ db: w.db, owner, id: reviewId, htmlGz: html, enqueue: vi.fn(), readRendered: async () => ({ text: 'x', parsed: { rows: [{ date: '2026-09-01', amount: 1 }], verdict: 'parsed', understood: true } }) }))
+            .rejects.toMatchObject({ message: 'layout-replay-would-overlap-settled-data', why: expect.stringContaining('source-leased') });
     });
 
     it('the automatic pass puts it back; the replay checks the filed rows by fingerprint and files only the rest — once each', async () => {
@@ -196,8 +213,8 @@ describe('a statement that stopped part-way is resumed, not re-mapped', () => {
         leased.data.set(sourcePath, { ...leased.data.get(sourcePath), leaseUntil: Date.now() + 60000 });
         expect((await resumePartialStatements({ db: leased.db, uid: 'u' })).resumed).toBe(0);
         const owners = await stopped();
-        owners.data.set('users/u/statementReview/' + reviewId, { ...owners.data.get('users/u/statementReview/' + reviewId), reason: 'statement-currency-differs' });
-        owners.data.set(sourcePath, { ...owners.data.get(sourcePath), reviewReason: 'statement-currency-differs' });
+        owners.data.set('users/u/statementReview/' + reviewId, { ...owners.data.get('users/u/statementReview/' + reviewId), reason: 'statement-sender-no-longer-approved' });
+        owners.data.set(sourcePath, { ...owners.data.get(sourcePath), reviewReason: 'statement-sender-no-longer-approved' });
         expect((await resumePartialStatements({ db: owners.db, uid: 'u' })).resumed).toBe(0);
     });
 

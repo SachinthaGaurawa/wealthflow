@@ -375,10 +375,22 @@ describe('private source inspection and durable layout replay', () => {
             await expect(submitRenderedStatement({ ...args, htmlGz: Buffer.from('not gzip').toString('base64'), enqueue })).rejects.toThrow('rendered-statement-invalid');
             await expect(submitRenderedStatement({ ...args, htmlGz: rendered('<html><body>nothing</body></html>'), enqueue, readRendered: async () => ({ text: 'x', parsed: { rows: [] } }) })).rejects.toThrow('rendered-statement-has-no-rows');
             await expect(submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue, readRendered, owner: { uid: 'other', email: args.owner.email } })).rejects.toThrow('whole-statement-review-required');
-            args.data.set('users/u/statementLedger/existing', { sourcePath: args.sourcePath, status: 'filed' });
+            // a statement another worker is working on is refused before anything changes
+            args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), leaseUntil: Date.now() + 60000 });
+            const leased = structuredClone(args.data.get(args.sourcePath));
             await expect(submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue, readRendered })).rejects.toThrow('layout-replay-would-overlap-settled-data');
-            expect(args.data.get(args.sourcePath)).toEqual(before);
+            expect(args.data.get(args.sourcePath)).toEqual(leased);
             expect(enqueue).not.toHaveBeenCalled();
+            void before;
+        });
+        it('rows already in the ledger do not refuse the device\'s rendering of the same document: it is queued as a RESUMED replay (checked row by row, never filed twice)', async () => {
+            const args = setup(), enqueue = vi.fn(async () => ({ status: 'pending' }));
+            args.data.set('users/u/statementLedger/existing', { sourcePath: args.sourcePath, status: 'filed', index: 0 });
+            const result = await submitRenderedStatement({ ...args, htmlGz: rendered(renderedDoc), enqueue, readRendered });
+            expect(result).toMatchObject({ ok: true, mapped: true });
+            expect(enqueue).toHaveBeenCalledTimes(1);
+            expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', cursor: 0, resumed: expect.any(Number), renderedVersion: expect.anything() });
+            expect(args.data.get('users/u/statementLedger/existing').status).toBe('filed');     // the filed row is untouched
         });
         it('flags rows the layer scan recovered as unverified for the reprocessing pass', async () => {
             const args = setup();

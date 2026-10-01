@@ -42,6 +42,8 @@ const SAFE_WHOLE_REPLAY = new Set([
     'statement-layout-identity-needs-review',
     'statement-layout-or-reconciliation-needs-review',
     'statement-attachment-identity-mismatch',
+    // re-read once per version: the rule that held a statement back as "another currency" was made stricter (a code beside amounts, or a currency label)
+    'statement-currency-differs',
 ]);
 const PUBLIC_SYNC_REASONS = new Set([
     'autonomous-mailbox-not-enabled', 'gmail-profile-unavailable', 'gmail-profile-owner-mismatch',
@@ -1612,8 +1614,15 @@ export async function submitRenderedStatement({ db, owner, id, htmlGz, env = pro
         const review = current.data(), source = sourceSnap.data();
         const ledger = await tx.get(userRef.collection('statementLedger').where('sourcePath', '==', sourceRef.path));
         const siblings = await tx.get(userRef.collection('statementReview').where('sourcePath', '==', sourceRef.path));
-        if (!current.exists || review.uid !== owner.uid || review.status !== 'pending' || !sourceSnap.exists || source.uid !== owner.uid || source.filed === true || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(doc => doc.data().status === 'filed' || doc.data().status === 'duplicate')) throw Object.assign(new Error('layout-replay-would-overlap-settled-data'), { why: overlapWhy({ review, source, ledger, uid: owner.uid }) });
+        /* ROWS ALREADY IN THE LEDGER DO NOT REFUSE THE DEVICE'S RENDERING. This route stores the SAME document read by the device (not a layout the owner
+         * taught), and the replay it queues is the idempotent one: every row the ledger holds is checked against it — by fingerprint, then by the money of the
+         * record it points to — and never filed twice; a row that really differs stops the statement with the reason named. Refusing here instead sent the
+         * owner's NTB Consolidated statement (one row filed by an earlier reading, its other rows drawn by the statement's own script) round and round, every
+         * minute: the device rendered it, the server said "may overlap", the app tried to resume it, and nothing was filed. A filed or leased statement is
+         * still refused. (A layout the owner maps — mapReviewLayout — keeps the stricter rule: a new layout is not the same reading.) */
+        if (!current.exists || review.uid !== owner.uid || review.status !== 'pending' || !sourceSnap.exists || source.uid !== owner.uid || source.filed === true || (source.leaseUntil || 0) > Date.now()) throw Object.assign(new Error('layout-replay-would-overlap-settled-data'), { why: overlapWhy({ review, source, ledger, uid: owner.uid }) });
         const now = Date.now();
+        const held = ledger.docs.some(doc => doc.data().status === 'filed' || doc.data().status === 'duplicate');
         for (const doc of siblings.docs) {
             const sibling = doc.data();
             if (sibling.uid === owner.uid && sibling.status === 'pending') tx.set(doc.ref, { status: doc.id === id ? 'mapped' : 'superseded_by_layout', mappedAt: now }, { merge: true });
@@ -1621,7 +1630,7 @@ export async function submitRenderedStatement({ db, owner, id, htmlGz, env = pro
         for (const doc of ledger.docs) {
             if (doc.data().status === 'review') tx.set(doc.ref, { status: 'superseded_by_layout', supersededAt: now }, { merge: true });
         }
-        tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0,
+        tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', moneyHash: '', totalRows: rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0, ...(held ? { resumed: now } : {}),
             renderedText: read.text, renderedIncompleteRows: Number(read.parsed?.htmlIncompleteRows) || 0,
             renderedVerified: idle || (read.parsed?.verdict === 'parsed' && read.parsed?.understood === true && !read.parsed?.htmlIncompleteRows), renderedConfirmed: false, renderedVersion: RENDERED_VERSION, renderedAt: now, updatedAt: now }, { merge: true });
     });
