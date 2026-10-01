@@ -1205,7 +1205,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         const frontRoom = () => { if (Date.now() - start < frontBudgetMs) return true; frontSkipped = true; return false; };
         const vault = frontRoom() ? await db.collection(VAULT_ROOT).doc(uid).get() : null;
         recovered = vault && vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
-        const recoveryLimit = heavy ? 25 : 5;
+        const recoveryLimit = heavy ? 25 : 10;
         if (frontRoom()) { const whole = await recoverWholeStatementFailures({ db, uid, limit: recoveryLimit }); wholeRecovered = whole.recovered; wholeMore = whole.more; }
         if (frontRoom()) categoriesRepaired = (await repairStatementCategories({ db, uid })).total;
         if (frontRoom()) { const consensus = await recoverConsensusFailures({ db, uid, limit: recoveryLimit }); consensusRecovered = consensus.recovered; consensusMore = consensus.more; }
