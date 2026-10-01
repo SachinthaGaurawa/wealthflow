@@ -145,6 +145,34 @@ describe('a retired model', () => {
     });
 });
 
+describe('every model set aside', () => {
+    it('says so plainly instead of "status undefined", and asks nothing', async () => {
+        for (const m of ['dflt', 'm-new-instruct', 'm-newer-instruct', 'm-third-instruct']) book.markBad('Groq:text', m, 30 * 60 * 1000);
+        const p = provider([answer('never')], { load: async () => LIST });
+        const error = await p.run().catch((e) => chatError('Groq', e));
+        expect(error.message).toBe('Groq has no usable model right now (every model it lists is set aside)');
+        expect(p.calls).toHaveLength(0);
+    });
+    it('the endpoint leaves such a provider alone for ten minutes', async () => {
+        const { coolProvider } = await import('../api/ai.js');
+        coolProvider('Groq', new Error('Groq has no usable model right now (every model it lists is set aside)'), 1000);
+        expect(providerAvailable('Groq', 1000 + 9 * 60 * 1000)).toBe(false);
+        expect(providerAvailable('Groq', 1000 + 11 * 60 * 1000)).toBe(true);
+        resetProviderCooldowns();
+    });
+});
+
+describe('a failure that is not the provider\'s answer', () => {
+    it('the network, an abort or a deadline is passed on with its own message (the cooldown reads it)', async () => {
+        const p = provider(() => { throw new Error('This operation was aborted'); }, { load: async () => LIST });
+        const error = await p.run().catch((e) => chatError('Groq', e));
+        expect(error.message).toBe('This operation was aborted');
+        expect(p.calls).toHaveLength(1);
+        expect(chatError('X', 'plain string').message).toBe('plain string');
+        expect(chatError('X', undefined)).toBeInstanceOf(Error);
+    });
+});
+
 describe('a 200 that is not JSON', () => {
     it('is said plainly, with its first words, and is not mistaken for a retired model', async () => {
         const p = provider([{ ok: true, nonJson: 'OK\r\n' }], { name: 'GitHubModels', slot: 'GitHubModels:text', load: async () => LIST });

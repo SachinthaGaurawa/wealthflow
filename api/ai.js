@@ -33,6 +33,7 @@ function providerCooldownMs(error) {
     if (/status (?:404|410)\b|model (?:not found|does not exist)|not deployed|end of life|no longer available|unavailable for free/i.test(message)) return 6 * 60 * 60 * 1000;
     // a provider that answers 200 with something that is not JSON is misbehaving, not busy: half an hour, not fifteen seconds
     if (/returned non-JSON/i.test(message)) return 30 * 60 * 1000;
+    if (/has no usable model right now/i.test(message)) return 10 * 60 * 1000;
     if (/unauthori[sz]ed|forbidden|invalid api key|status 401|status 403/i.test(message)) return 60 * 60 * 1000;
     if (/rate.?limit|quota|status 429/i.test(message)) return 2 * 60 * 1000;
     if (/deadline|timed?\s*out|abort/i.test(message)) return 60 * 1000;
@@ -429,6 +430,8 @@ export default async function handler(req, res) {
         Fireworks: fireworksKey, OpenRouterFinance: openrouterKey, OpenRouterQwen: openrouterKey, OpenRouterNemotron: openrouterKey, Cerebras: cerebrasKey,
         NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey,
         CloudflareAI: cloudflareToken && cloudflareAccount };
+    // providers that are configured but resting in a cooldown are not asked; they are named in the board's log line below
+    const resting = engines.filter(engine => Boolean(configured[engine.name]) && !providerAvailable(engine.name)).map(engine => engine.name);
     engines = engines.filter(engine => Boolean(configured[engine.name]) && providerAvailable(engine.name));
     /* A caller that wants ONE answer it will check itself (the statement reader: nothing a model says is believed until it balances
      * to the unit) may name which providers to ask. It asks the strongest few first and widens only if they fail — instead of every
@@ -474,6 +477,7 @@ export default async function handler(req, res) {
 
     // Start the entire eligible board before awaiting any member, then retain
     // every success, failure and timeout in the decision record.
+    const boardStarted = Date.now();
     const results = await Promise.all(engines.map(run));
     if (mode === 'unanimous') {
         // Five independent engines already gives real cross-checking (chance
@@ -483,6 +487,12 @@ export default async function handler(req, res) {
         // failed every unanimous vote whenever fewer than ten were up at once
         // — which is the normal case, not the exception, for free-tier keys.
         const decision = Matrix.unanimousDecision(results, { task, expected: expectedNames, minimumProviders: 5, allowUnavailable: true });
+        /* ONE LINE PER FINANCIAL DECISION, so the log says why a board of sixteen did or did not reach five: who answered, who was asked
+         * and failed (and how), who was resting, and the reason. (Before this the answer had to be inferred from scattered warnings.) */
+        try {
+            console.info(JSON.stringify({ evt: 'ai-board', ok: decision.unanimous, reason: decision.reason || '', answered: decision.answered, invalid: decision.invalid,
+                failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, ms: Date.now() - boardStarted }));
+        } catch (_) { /* a log line never decides a financial question */ }
         // Preserve a machine-readable quarantine outcome; no partial answer is
         // released to consumers that might otherwise file a majority guess.
         return res.status(decision.unanimous ? 200 : 422).json({

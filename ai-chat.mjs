@@ -81,7 +81,7 @@ const EMPTY_BAD_MS = 30 * 60 * 1000;
  */
 export async function askChat({ name, slot, book, defaultModel, tokens, cap = 4096, kind = 'openai', send, load, listKey = name, vision = false, log = () => {} }) {
     const trace = [];
-    const budget = Math.max(256, Math.min(Number(tokens) || 2500, cap));
+    const budget = Math.max(64, Math.min(Number(tokens) || 2500, cap));
     // a provider that cannot be healed has one model: it is asked whatever the book thinks of it; one that can is moved off a bad default
     let model = book.current(slot) || (load && book.isBad(slot, defaultModel) ? '' : defaultModel);
     let last = null;                                                  // the failure the provider itself gave, for the caller
@@ -138,11 +138,15 @@ export async function askChat({ name, slot, book, defaultModel, tokens, cap = 40
     const error = new Error('');
     error.trace = trace;
     error.last = last;
+    error.noModel = !last;              // every model of this provider is set aside right now: nothing was asked
     throw error;
 }
 
 /** The error a caller throws for a failed askChat, in the shapes the rest of the endpoint reads (cooldown regexes, logs, tests). */
 export function chatError(name, error, firstFail) {
+    // a failure that is not askChat's own (the network, an abort, a deadline) is passed on as it is: its message is what the cooldown reads
+    if (!error || (error.trace === undefined && error.last === undefined)) return error instanceof Error ? error : new Error(String(error));
+    if (error.noModel) return new Error(`${name} has no usable model right now (every model it lists is set aside)`);
     const trace = (error && error.trace) || [];
     const last = (error && error.last) || firstFail || {};
     const words = (v) => String(v).replace(/\s+/g, ' ').trim().slice(0, 40);

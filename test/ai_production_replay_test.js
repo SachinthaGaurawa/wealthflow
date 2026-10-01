@@ -75,6 +75,23 @@ describe('the production roster of 2026-10-01', () => {
         for (const name of ['GitHubModels', 'Mistral', 'Cohere', 'HF', 'OpenRouterQwen']) expect(res.body.answered, name).not.toContain(name);   // quota / not JSON: honestly unavailable
     });
 
+    it('says in ONE log line why the board did or did not reach five: who answered, who failed and how, who was resting', async () => {
+        for (const key of KEYS) vi.stubEnv(key, 'test');
+        const w = world(); vi.stubGlobal('fetch', w.fetch);
+        const lines = [];
+        const info = vi.spyOn(console, 'info').mockImplementation((line) => { lines.push(String(line)); });
+        try {
+            await handler(boardRequest(), response());
+        } finally { info.mockRestore(); }
+        const board = lines.map((l) => { try { return JSON.parse(l); } catch (_) { return null; } }).filter((l) => l && l.evt === 'ai-board');
+        expect(board).toHaveLength(1);
+        expect(board[0].ok).toBe(true);
+        expect(board[0].answered.length).toBeGreaterThanOrEqual(5);
+        expect(board[0].failed.join(' ')).toMatch(/GitHubModels:GitHubModels returned non-JSON/);
+        expect(board[0].failed.join(' ')).toMatch(/Mistral:Mistral status 429/);
+        expect(typeof board[0].ms).toBe('number');
+    });
+
     it('every healed provider did it the documented way', async () => {
         for (const key of KEYS) vi.stubEnv(key, 'test');
         const w = world(); vi.stubGlobal('fetch', w.fetch);

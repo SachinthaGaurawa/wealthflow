@@ -51,6 +51,9 @@ export default async function handler(req, res) {
             const { continueChain, platformWaitUntil } = await import('./statement-chain.mjs');
             const mailRef = db.collection('wf-mail').doc(userKeyFor(who.email));
             const job = (async () => {
+                // a chain is already draining the queue (every unlock of the app re-saves the vault): a second drain beside it would only
+                // compete with it for the same providers' quotas
+                try { const alive = ((await mailRef.get()).data() || {}).chain; if (alive && Number(alive.until) > Date.now()) return { ok: true, skipped: 'chain-running' }; } catch (_) { /* then drain */ }
                 const result = await runStatementSync({ db, owner: { uid: who.uid, email: who.email }, action: 'drain', budgetMs: 30000 });
                 try { await continueChain({ db, mailRef, result, link: null }); } catch (_) { /* the schedule or the app starts it again */ }
                 return result;
