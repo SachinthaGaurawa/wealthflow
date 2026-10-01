@@ -355,7 +355,7 @@ export function discoveryReport(list) {
  * "we could not tell which bank this is" rather than guessing on a screen where
  * one tap files money under the answer.
  */
-export function bankHunt(banks, list) {
+export function bankHunt(banks, list, approved = []) {
     /* GROUPED BY MAILBOX IDENTITY, NOT BY PICKER ENTRY.
      *
      * NTB is two picker entries because its AMEX and Visa cards carry different
@@ -381,6 +381,18 @@ export function bankHunt(banks, list) {
         .map((e) => ({ entry: e, scored: scoreSender(e) }))
         .filter((x) => x.scored.id);
 
+    /* WHAT THE OWNER HAS ALREADY ACCEPTED COUNTS AS MATCHED. This used to look at the pending list only, so a bank whose
+     * address was approved long ago — AMEX, with hundreds of messages behind it — was reported "not found in the months
+     * searched so far" and the screen said "0 of your 1 banks matched": the screen's own answer was wrong about the one thing
+     * it exists to answer. A bank is matched when an address is approved for it (by the institution its domain or name
+     * identifies, or by the name the owner gave it) or when one is waiting to be accepted. */
+    const accepted = arr(approved).filter((e) => e && typeof e === 'object' && e.status === 'approved' && s(e.id));
+    const acceptedFor = (name, inst) => accepted.filter((e) => {
+        const hit = institutionForSender({ domain: e.domain || e.id, displayName: e.name });
+        if (hit && inst && hit.id === inst.id) return true;
+        return !!s(e.name) && lower(e.name) === lower(name);
+    });
+
     const claimed = new Set();
     const rows = wanted.map(({ name, inst }) => {
         const found = scored.filter(({ entry }) => {
@@ -392,8 +404,11 @@ export function bankHunt(banks, list) {
         });
         found.sort((a, b) => b.scored.score - a.scored.score || a.scored.id.localeCompare(b.scored.id));
         for (const f of found) claimed.add(f.scored.id);
+        const has = acceptedFor(name, inst);
         return {
             bank: name,
+            /* Addresses the owner already approved for this bank: the bank is matched, and this is how. */
+            approved: has.map((e) => ({ address: s(e.id), name: s(e.name), seenCount: Number(e.seenCount) || 0 })),
             /* The address to offer, or null. Named `best` rather than `match`
              * because it is a suggestion the owner confirms, not a decision
              * already taken. */
@@ -416,9 +431,9 @@ export function bankHunt(banks, list) {
         unattributed,
         /* Counted here so no surface has to re-derive it and get a different
          * number from the one beside it. */
-        matched: rows.filter((r) => r.best).length,
+        matched: rows.filter((r) => r.best || r.approved.length).length,
         of: rows.length,
-        missing: rows.filter((r) => !r.best).map((r) => r.bank),
+        missing: rows.filter((r) => !r.best && !r.approved.length).map((r) => r.bank),
     };
 }
 

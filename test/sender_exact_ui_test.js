@@ -53,7 +53,7 @@ describe('exact statement sender settings', () => {
         expect(result.covered).toBe(1); expect(Array.from(result.uncovered)).toEqual(['HNB']);
     });
     it('offers domain blocking while permitting approval only for exact address discoveries', () => {
-        const p = page(['_senderRow', '_senderBtn', 'renderSenderList']);
+        const p = page(['_senderFunnelOf', '_senderFunnelText', '_senderRow', '_senderBtn', 'renderSenderList']);
         p._senders.pending = [{ id: 'hnb.lk', name: 'HNB' }, { id: 'statements@dfccbank.com', name: 'DFCC' }];
         p.renderSenderList();
         const host = p.document.getElementById('_sl_body');
@@ -107,3 +107,28 @@ describe('exact statement sender settings', () => {
         expect(p.notify).toHaveBeenCalledWith('Could not verify background statement processing. No competing device import was started; retry while signed in.', 'warn');
     });
 });
+
+describe('a sender row says how many EMAILS it sent and where they are, not how many times a scan walked past', () => {
+    const rowText = (p, entry) => { p._senders.approved = [entry]; return p._senderRow(entry, '', null); };
+    it('uses the state table when it has reported', () => {
+        const p = page(['_senderFunnelOf', '_senderFunnelText', '_senderRow']);
+        p.window.WFStatementCloud = { senderFunnel: () => [{ address: 'statements@dfccbank.com', total: 14, INGESTED: 12, PENDING: 1, PROCESSED: 0, REVIEW: 0, HELD: 0, REFUSED: 1, FAILED_VERIFICATION: 0 }] };
+        const html = rowText(p, { id: 'statements@dfccbank.com', name: 'DFCC Bank', seenCount: 555 });
+        expect(html).toContain('14 emails'); expect(html).toContain('12 filed'); expect(html).toContain('1 waiting'); expect(html).toContain('1 not statements');
+        expect(html).not.toContain('555'); expect(html).not.toContain('seen');
+    });
+    it('a domain entry adds up every address under it', () => {
+        const p = page(['_senderFunnelOf', '_senderFunnelText', '_senderRow']);
+        p.window.WFStatementCloud = { senderFunnel: () => [{ address: 'a@dfccbank.com', total: 2, INGESTED: 2 }, { address: 'b@mail.dfccbank.com', total: 3, INGESTED: 1, FAILED_VERIFICATION: 2 }, { address: 'c@dfccbank.com.evil.example', total: 9, INGESTED: 9 }] };
+        const html = rowText(p, { id: 'dfccbank.com', name: 'DFCC', seenCount: 99 });
+        expect(html).toContain('5 emails'); expect(html).toContain('3 filed'); expect(html).toContain('2 blocked as unauthenticated');
+    });
+    it('before the first sync has reported, the old counter is kept but called what it is', () => {
+        const p = page(['_senderFunnelOf', '_senderFunnelText', '_senderRow']);
+        p.window.WFStatementCloud = { senderFunnel: () => [] };
+        expect(rowText(p, { id: 'statements@dfccbank.com', name: 'DFCC Bank', seenCount: 555 })).toContain('scanned 555 times');
+        p.window.WFStatementCloud = undefined;
+        expect(rowText(p, { id: 'statements@dfccbank.com', name: 'DFCC Bank', seenCount: 1 })).toContain('scanned 1 time');
+    });
+});
+

@@ -48,6 +48,7 @@ const stateOf = item => {
     if (item?.emptyStatement === true) return 'empty';
     if (item?.filed === true || status === 'filed') return 'filed';
     if (status === 'needs_review') return 'review';
+    if (status === 'dead_letter') return 'pending';       // parked after repeated failures and re-driven on a schedule: still queued, never dropped
     if (status === 'pending' || status === 'processing') return 'pending';
     if (status === 'dismissed') return 'dismissed';
     if (status.startsWith('rejected')) return 'rejected';
