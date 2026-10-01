@@ -42,7 +42,7 @@ function world({ extract, intent = 'stated' }) {
     const f = async () => ({ ok: true, json: async () => ({ access_token: 'token' }) });
     const loadAttachment = async () => ({ bytes: Buffer.from(html), filename: 'extracto_abril.html', contentSha256: 'x' });
     const drain = async () => { let last; for (let i = 0; i < 8; i++) { last = await runStatementSync({ action: 'drain', db, owner, env: {}, f, read: readStatement, open: async () => [{ password: 'x', bank: 'Banco del Sur' }], settle: settleStatement, board: async () => { throw new Error('ai-consensus-unavailable'); }, extract, loadAttachment, maxSteps: 1 }); if (['filed', 'needs_review', 'rejected_non_statement'].includes(last.status)) break; } return last; };
-    return { drain, data, source: () => data.get(sourcePath), user: () => data.get('users/u'), parts: () => [...data.keys()].filter(k => k.startsWith(`${sourcePath}/adaptive/`)) };
+    return { db, drain, data, source: () => data.get(sourcePath), user: () => data.get('users/u'), parts: () => [...data.keys()].filter(k => k.startsWith(`${sourcePath}/adaptive/`)) };
 }
 
 describe('a statement in a layout nobody wrote a template for', () => {
@@ -80,5 +80,18 @@ describe('a statement in a layout nobody wrote a template for', () => {
         expect(['needs_review', 'rejected_non_statement']).toContain(out.status);
         expect(w.user().expenses).toEqual([]);
         expect(w.source().adaptiveTries).toBeUndefined();          // an outage is not a failed reading: nothing is counted against the statement
+    });
+});
+
+describe('one serverless invocation has sixty seconds', () => {
+    it('does not start a reading it cannot finish: the statement waits for the next invocation and nothing is counted against it', async () => {
+        const m = honestModel();
+        const w = world({ extract: m.ask });
+        // an invocation that is nearly out of time
+        const out = await runStatementSync({ action: 'drain', db: w.db, owner, env: {}, f: async () => ({ ok: true, json: async () => ({ access_token: 'token' }) }), read: readStatement, open: async () => [{ password: 'x', bank: 'Banco del Sur' }], settle: settleStatement, board: async () => { throw new Error('x'); }, extract: m.ask,
+            loadAttachment: async () => ({ bytes: Buffer.from(html), filename: 'extracto_abril.html', contentSha256: 'x' }), maxSteps: 1, budgetMs: 45000, startedAt: Date.now() - 40000 });
+        expect(m.calls.length).toBe(0);
+        expect(out.status).toBe('retry_pending');
+        expect(w.source().adaptiveTries).toBeUndefined();
     });
 });

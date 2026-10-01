@@ -117,7 +117,7 @@ export async function invokeBoard(prompt, handler = aiHandler) {
  * against the document and balances to the cent (statement-adaptive.mjs). One answer, advisory, no temperature. */
 export async function invokeExtractor(prompt, handler = aiHandler) {
     let status = 200, result;
-    await handler({ method: 'POST', body: { prompt, task: 'advice', temperature: 0, maxTokens: 4000, deadlineMs: 24000 } }, {
+    await handler({ method: 'POST', body: { prompt, task: 'advice', temperature: 0, maxTokens: 4000, deadlineMs: 12000 } }, {
         setHeader() {}, status(code) { status = code; return this; }, json(value) { result = value; return this; }, end() {}
     });
     if (status !== 200 || typeof result?.reply !== 'string' || !result.reply.trim()) throw new Error('ai-extractor-unavailable');
@@ -614,7 +614,7 @@ export async function recoverRevokedSenderReviews({ db, uid, limit = 25 }) {
 // Tried only for a statement the rules could not read and that visibly carries movements; at most three times, and not
 // again within six hours of the last try. What a verified reading produced is stored beside the statement, so every
 // later slice (and every retry after a crash) uses the SAME rows — the model is never asked twice for one statement.
-const ADAPTIVE_MAX_TRIES = 3, ADAPTIVE_COOLDOWN_MS = 6 * 3600 * 1000, ADAPTIVE_PART = 100;
+const ADAPTIVE_MAX_TRIES = 3, ADAPTIVE_COOLDOWN_MS = 6 * 3600 * 1000, ADAPTIVE_PART = 100, ADAPTIVE_MIN_ROOM_MS = 28000, INVOCATION_MS = 55000;
 function adaptiveWanted({ parsed, result, claimed, text, now }) {
     if (parsed.verdict === 'parsed' && parsed.understood === true && parsed.reconciliation?.ok !== false && Array.isArray(parsed.rows) && parsed.rows.length) return false;
     if (parsed.layout?.reconciliationBypassed || result.zeroActivity === true || claimed.emptyOverride === 'owner') return false;
@@ -658,7 +658,7 @@ async function rememberLayout(db, uid, bank, text, parsed) {
     } catch (_) { return false; }
 }
 
-async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract = invokeExtractor, preferredSourcePath = '', loadAttachment = attachmentBytes }) {
+async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract = invokeExtractor, preferredSourcePath = '', loadAttachment = attachmentBytes, deadlineAt = Infinity }) {
     let claimed = null, sourceRef;
     if (preferredSourcePath) {
         const prefix = `${mailRef.path}/items/`;
@@ -736,7 +736,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const saved = await loadAdaptive(sourceRef, claimed.adaptive);
             if (saved) parsed = saved;
         } else if (adaptiveWanted({ parsed, result, claimed, text, now: adaptiveNow })) {
-            const ai = await adaptiveRead({ text, ask: prompt => extract(prompt), uid, budgetMs: 30000 });
+            /* ONE SERVERLESS INVOCATION HAS SIXTY SECONDS. A reading asks the model for up to ~12 s per attempt; it is started only
+             * when there is room for two of them, and given the room that is left — otherwise the statement waits for the next
+             * invocation (nothing is lost or counted against it) instead of being cut off half-way. */
+            const room = deadlineAt - adaptiveNow;
+            if (room < ADAPTIVE_MIN_ROOM_MS) throw new Error('statement-worker-retry-required');
+            const ai = await adaptiveRead({ text, ask: prompt => extract(prompt), uid, budgetMs: Math.min(22000, room - 14000) });
             if (ai.ok) {
                 parsed = ai.parsed;
                 try { await saveAdaptive(sourceRef, parsed, adaptiveNow); } catch (_) { throw new Error('statement-worker-retry-required'); }
@@ -937,9 +942,13 @@ async function reconcileMailTable(mailRef, items, now) {
     } catch (_) { return null; }
 }
 
-export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.now(), search = true }) {
+const TABLE_EVERY_MS = 10 * 60 * 1000;
+export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.now(), search = true, deadlineAt = Infinity }) {
     const items = await storedItems(mailRef);
-    const table = await reconcileMailTable(mailRef, items, now);
+    /* The table is read and reconciled at most every ten minutes (every message in it is a read); in between the last summary
+     * stands. Anything that is stuck is found at the next reconcile — it is retried then, not lost. */
+    const tableDue = !mail.coverage?.table || now - (Number(mail.lastTableMs) || 0) >= TABLE_EVERY_MS;
+    const table = tableDue ? await reconcileMailTable(mailRef, items, now) : mail.coverage.table;
     const coverage = coverageOf(items, { now });
     // What the mailbox document says NOW (the collection that just ran has written to it), and what the
     // last search found: a month that is still missing keeps its answer until the search is due again.
@@ -962,6 +971,7 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
             series.gaps = [];
             for (const month of [...series.missing].reverse()) {
                 if (searched >= GAP_MONTHS_PER_RUN || failed) break;
+                if (Date.now() > deadlineAt) { failed = true; break; }   // out of time: what is left is searched next run, and is not recorded as searched
                 const domains = domainsOf(series.froms).length ? domainsOf(series.froms) : fallbackDomains;
                 const query = gapQuery(month, domains);
                 if (!query) { series.gaps.push({ month, mail: [], note: 'no-sender-known' }); continue; }
@@ -971,6 +981,7 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
                     const listed = await f(`${GMAIL}/messages?maxResults=${GAP_MESSAGES_PER_MONTH}&includeSpamTrash=true&q=${encodeURIComponent(query)}`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
                     if (!listed.ok) { failed = true; break; }
                     for (const ref of ((await listed.json()).messages || []).slice(0, GAP_MESSAGES_PER_MONTH)) {
+                        if (Date.now() > deadlineAt) { failed = true; break; }
                         const response = await f(`${GMAIL}/messages/${encodeURIComponent(ref.id)}?format=full`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
                         if (response.status === 404) continue;
                         if (!response.ok) { failed = true; break; }
@@ -1010,13 +1021,13 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
     const h = live.historyAudit && typeof live.historyAudit === 'object' ? live.historyAudit : null;
     const audit = h ? { at: Number(h.at) || 0, listed: Number(h.listed) || 0, accounted: Number(h.accounted) || 0, examined: Number(h.examined) || 0, taken: Number(h.taken) || 0, refused: Number(h.refused) || 0, held: Number(h.held) || 0, complete: h.complete === true } : null;
     const summary = { at: now, missing: coverage.missing, staged, empties, refused, ...(table ? { table } : {}), security, securityCount: Array.isArray(live.security) ? live.security.length : 0, log: auditLogOf(items), ...(audit ? { audit } : {}), series: coverage.series.slice(0, 20).map(s => ({ label: s.label, bank: s.bank, first: s.first, last: s.last, months: s.months, missing: s.missing, ...(s.gaps ? { gaps: s.gaps } : {}) })) };
-    const patch = { coverage: summary, ...(due && !failed ? { lastGapSearchMs: now, gapMissingKey: missingKey } : {}) };
+    const patch = { coverage: summary, ...(tableDue && table ? { lastTableMs: now } : {}), ...(due && !failed ? { lastGapSearchMs: now, gapMissingKey: missingKey } : {}) };
     try { await mailRef.set(patch, { merge: true }); } catch (_) { /* the report is advice; failing to store it must not stop a sync */ }
     return summary;
 }
 
-export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, extract = invokeExtractor, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '', loadAttachment = attachmentBytes }) {
-    const start = Date.now();
+export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, extract = invokeExtractor, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '', loadAttachment = attachmentBytes, startedAt = Date.now() }) {
+    const start = startedAt;
     const uid = owner.uid, email = String(owner.email || '').toLowerCase();
     const mailRef = db.collection('wf-mail').doc(userKeyFor(email));
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
@@ -1042,7 +1053,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         };
         await collect();
         try {
-            coverage = await refreshCoverage({ db, mailRef, mail, token, f, search: Date.now() - start < 20000 });
+            coverage = await refreshCoverage({ db, mailRef, mail, token, f, search: Date.now() - start < 20000, deadlineAt: start + 38000 });
             if (coverage.staged > 0) await collect();
         } catch (_) { coverage = null; }
         migrationMore = await migrateItems(db, mailRef, mail, uid);
@@ -1066,7 +1077,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     let processed = 0, attempted = 0, last = null;
     for (;;) {
         if (attempted >= maxSteps || Date.now() - start > budgetMs) break;
-        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract, preferredSourcePath, loadAttachment });
+        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract, preferredSourcePath, loadAttachment, deadlineAt: start + INVOCATION_MS });
         if (!step) break;
         attempted += 1;
         if (step.status !== 'retry_pending') processed += 1;
