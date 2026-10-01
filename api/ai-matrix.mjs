@@ -483,6 +483,56 @@ function finiteDecision(value) {
     return true;
 }
 
+/** What a provider's reply is as a board answer: a non-empty JSON object with finite numbers, or null. Strict JSON only: accepting prose
+ *  surrounding an object can hide a refusal or qualification that must prevent automatic filing. The one place the rule lives, so the
+ *  board and the health report (ai-health.mjs) can never read an answer differently. */
+export function boardAnswer(reply) {
+    try {
+        const raw = String(reply || '').trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+        if (raw.length > 262144) return null;
+        const value = JSON.parse(raw);
+        if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.keys(value).length || !finiteDecision(value)) return null;
+        return value;
+    } catch (_) { return null; }
+}
+
+export function canonicalAnswer(value) { return canonical(value); }
+
+/**
+ * HOW A BOARD'S VALID ANSWERS FALL: the largest group that says the same thing, who differs from it, and — apart from those — who
+ * answered in a MANGLED version of the same shape.
+ *
+ * Production canary, 2026-10-01: eight providers answered {"decisions":[…]} and OpenRouterQwen answered {"decisions [{": 0, "module": …}
+ * every time it was asked — valid JSON, but with the key `decisions` torn into `decisions [{`. That is not a judgement about the
+ * transaction; it is a model that could not write the shape it was asked for. Such an answer is `mangled`: every key the clear majority's
+ * answer carries that it lacks is found INSIDE one of its own keys. Anything else that differs — another value, another category,
+ * `{"approved":false}`, `{"verdict":"reject"}`, a refusal in a shape of its own — is a `dissent`, and dissent vetoes.
+ *
+ * A majority is `clear` when it is at least `minimumProviders` strong and two thirds of the valid answers; without a clear majority
+ * nothing is called mangled (a split board is split).
+ */
+export function boardReading(entries, minimumProviders = 5) {
+    const answers = [];
+    for (const e of Array.isArray(entries) ? entries : []) {
+        const value = e ? boardAnswer(e.reply) : null;
+        if (value !== null) answers.push({ name: e.name, value, key: canonical(value) });
+    }
+    const tally = new Map();
+    for (const a of answers) tally.set(a.key, (tally.get(a.key) || 0) + 1);
+    const [topKey, topCount] = [...tally.entries()].sort((a, b) => b[1] - a[1])[0] || [null, 0];
+    const clear = topKey !== null && topCount >= minimumProviders && topCount * 3 >= answers.length * 2;
+    const required = clear ? Object.keys(answers.find(a => a.key === topKey).value) : [];
+    const mangled = [], dissent = [];
+    if (clear) {
+        for (const a of answers) {
+            if (a.key === topKey) continue;
+            const keys = Object.keys(a.value), missing = required.filter(k => !(k in a.value));
+            (missing.length && missing.every(k => keys.some(x => x !== k && x.includes(k))) ? mangled : dissent).push(a.name);
+        }
+    }
+    return { answers, topKey, topCount, clear, mangled, dissent };
+}
+
 export function unanimousDecision(results, opts = {}) {
     const all = Array.isArray(results) ? results : [];
     const expected = Array.isArray(opts.expected) ? opts.expected : [];
@@ -494,19 +544,21 @@ export function unanimousDecision(results, opts = {}) {
         const matches = all.filter(r => r && r.name === name);
         if (matches.length !== 1 || !matches[0].ok) { failed.push(name); continue; }
         const r = matches[0];
-        let value = null;
-        try {
-            // Strict JSON only: accepting prose surrounding an object can hide
-            // a refusal or qualification that must prevent automatic filing.
-            const raw = String(r.reply || '').trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
-            if (raw.length > 262144) throw new Error('oversized decision');
-            value = JSON.parse(raw);
-            if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.keys(value).length || !finiteDecision(value)) throw new Error('invalid decision');
-        } catch (_) { invalid.push(name); continue; }
+        const value = boardAnswer(r.reply);
+        if (value === null) { invalid.push(name); continue; }
         answered.push(name);
         values.push({ result: r, value, key: canonical(value) });
     }
     const unexpected = all.some(r => !r || !roster.includes(r.name));
+    /* On the financial board (the one that tolerates unavailable members) an answer whose keys are a mangled version of the clear
+     * majority's is not a vote either way — it is listed as invalid, like an answer that is not JSON. See boardReading. */
+    if (opts.allowUnavailable === true) {
+        const { mangled } = boardReading(values.map(v => ({ name: v.result.name, reply: v.result.reply })), minimumProviders);
+        for (const name of mangled) {
+            const at = values.findIndex(v => v.result.name === name);
+            if (at >= 0) { values.splice(at, 1); answered.splice(answered.indexOf(name), 1); invalid.push(name); }
+        }
+    }
     const agrees = values.length > 0 && values.every(v => v.key === values[0].key);
     /* Availability is not a vote. A timed-out provider must not veto ten other
      * independent engines that returned the exact same typed decision. Failed
@@ -522,7 +574,7 @@ export function unanimousDecision(results, opts = {}) {
         provider: unanimous ? 'parallel-unanimous-board' : null,
         mode: unanimous ? 'unanimous' : 'needs_review', task: opts.task || TASK.EXTRACTION,
         unanimous, needsReview: !unanimous, minimumProviders, expected: roster, answered, failed, invalid,
-        reason: unanimous ? null : !rosterValid ? 'insufficient_or_invalid_roster' : unexpected ? 'unexpected_provider' : failed.length ? 'provider_unavailable' : invalid.length ? 'invalid_response' : 'provider_disagreement',
+        reason: unanimous ? null : !rosterValid ? 'insufficient_or_invalid_roster' : unexpected ? 'unexpected_provider' : (allowUnavailable && quorumReady) ? 'provider_disagreement' : failed.length ? 'provider_unavailable' : invalid.length ? 'invalid_response' : 'provider_disagreement',
         fields: unanimous ? values[0].value : null,
         corroboration: { agreed: unanimous ? values.length : 0, of: roster.length, score: unanimous ? values.length / roster.length : 0,
             dissent: agrees ? [] : values.map(v => ({ name: v.result.name })), nearMisses: [], numericConflict: !agrees },

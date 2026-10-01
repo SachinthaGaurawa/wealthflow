@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import handler, { modelBook, resetProviderCooldowns, coolProvider, resetHealthMemory } from '../api/ai.js';
 import { resetReasoningLearning } from '../ai-chat.mjs';
 import { resetGeminiLearning } from '../gemini-client.mjs';
-import { CANARY_GAP_MS, CANARY_PROMPT, redact, reportOf, verdictOf } from '../ai-health.mjs';
+import { CANARY_GAP_MS, CANARY_PROMPT, redact, reportOf, verdictOf, agreementOf } from '../ai-health.mjs';
 import { KEYS, response, failure, world } from './helpers/ai-world.js';
 
 /* THE AI, ASKED ON DEMAND. Reading production logs after the fact is how 101 log LINES were once taken for 101 calls (they were 19). A canary
@@ -14,7 +14,7 @@ const get = async (url) => { const res = response(); await handler({ method: 'GE
 
 describe('nothing secret leaves in a provider\'s error', () => {
     it('keys in query strings, bearer tokens and long opaque runs are redacted; the message stays readable', () => {
-        const key = 'AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY';
+        const key = ['AIza', 'Sy', 'FAKE-not-a-real-key-for-redaction-test'].join('');
         expect(redact(`fetch failed https://generativelanguage.googleapis.com/v1beta/models/x:generateContent?key=${key}&alt=json`)).not.toContain(key);
         expect(redact('Authorization: Bearer sk-live-abcdef0123456789abcdef0123456789')).toContain('Bearer [redacted]');
         expect(redact('Groq status 429: ' + 'x'.repeat(40) + ' rate limited')).toContain('[redacted]');
@@ -100,7 +100,7 @@ describe('GET /api/ai?canary=1', () => {
 
     it('a provider error that carries a key is redacted before it leaves', async () => {
         vi.stubEnv('GROQ_API_KEY', 'test');
-        const leak = 'AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY';
+        const leak = ['AIza', 'Sy', 'FAKE-not-a-real-key-for-redaction-test'].join('');
         vi.stubGlobal('fetch', vi.fn(async (url) => (/\/models$/.test(String(url)) ? { ok: true, status: 200, json: async () => ({ data: [] }), text: async () => '{}' } : failure(500, `upstream said: https://x.example/v1?key=${leak} and Bearer abcdefghijklmnop0123456789`))));
         const res = await get('/api/ai?canary=1');
         const text = JSON.stringify(res.body);
@@ -123,5 +123,38 @@ describe('GET /api/ai?canary=1', () => {
         const res = response();
         await handler({ method: 'GET', url: '/api/router?path=ai&canary=1', query: { path: 'ai', canary: '1' }, headers: {} }, res);
         expect(res.code).toBe(200); expect(res.body.report.providers.length).toBeGreaterThan(5);
+    });
+});
+
+describe('who agrees with whom — "they disagree" is not a finding until it names the dissenter', () => {
+    const good = '{"decisions":[{"index":0,"module":"expenses","category":"Groceries","allocationId":""}]}';
+    const odd = '{"decisions [{": 0, "module": "expenses", "category": "Groceries"}';
+    const other = '{"decisions":[{"index":0,"module":"expenses","category":"Transport","allocationId":""}]}';
+    const named = (names, reply) => names.map((name) => ({ name, ok: true, ms: 1, provider: name, reply }));
+    it('groups answers the way the board does (key order ignored, a fenced block read), largest first; the unreadable and the mangled are listed apart', () => {
+        const probe = [
+            ...named(['A', 'B'], good), { name: 'B2', ok: true, reply: '```json\n' + good + '\n```' },
+            { name: 'C', ok: true, reply: '{"decisions":[{"category":"Groceries","index":0,"allocationId":"","module":"expenses"}]}' },
+            ...named(['C2', 'C3'], good),
+            { name: 'D', ok: true, reply: odd }, { name: 'E', ok: true, reply: 'Sure! Here you go' }, { name: 'F', ok: false, error: 'x' }, ...named(['T'], other),
+        ];
+        const a = agreementOf(probe);
+        expect(a.groups[0].members).toEqual(['A', 'B', 'B2', 'C', 'C2', 'C3']);
+        expect(a.groups.map((g) => g.members.length)).toEqual([6, 1, 1]);
+        expect(a.mangled.map((m) => m.name)).toEqual(['D']);
+        expect(a.dissent).toEqual(['T']);
+        expect(a.invalid).toEqual([{ name: 'E', sample: 'Sure! Here you go' }]);
+        expect(a.mangled[0].sample).toContain('decisions [{');
+    });
+    it('the verdict names who differs, and who was not counted', () => {
+        const probe = [...named(['A', 'B', 'C', 'D', 'E'], good), ...named(['Z'], other)];
+        const r = reportOf({ decision: { unanimous: false, reason: 'provider_disagreement', answered: ['A', 'B', 'C', 'D', 'E', 'Z'], minimumProviders: 5 }, probe });
+        expect(verdictOf(r)).toMatch(/THEY DISAGREE — 6 answered; reason provider_disagreement; a different answer from: Z/);
+        const g = reportOf({ decision: { unanimous: true, answered: ['A', 'B', 'C', 'D', 'E'], minimumProviders: 5, invalid: ['Q'] }, probe: [...named(['A', 'B', 'C', 'D', 'E'], good), ...named(['Q'], odd)] });
+        expect(verdictOf(g)).toMatch(/^GOOD — 5 of 6 providers answered and agreed \(floor 5\); not counted, answer was malformed: Q/);
+    });
+    it('an agreeing board has no dissent and a report that carries nothing secret', () => {
+        const r = reportOf({ decision: { unanimous: true, answered: ['A', 'B'], minimumProviders: 5 }, probe: named(['A', 'B'], good) });
+        expect(r.agreement.dissent).toEqual([]); expect(r.agreement.groups).toHaveLength(1); expect(r.agreement.mangled).toEqual([]);
     });
 });

@@ -97,7 +97,7 @@ export async function askChat({ name, slot, book, defaultModel, tokens, cap = 40
                 if (out.status === 400 && Object.keys(extra).length && /reason|effort|think/i.test(String(out.text || '')) && !retried) { refused.add(`${name}:${String(id).toLowerCase()}`); extra = {}; retried = true; continue; }
                 return { fail: out };
             }
-            if (out.nonJson !== undefined) return { fail: { status: 200, text: '', nonJson: out.nonJson } };
+            if (out.nonJson !== undefined) return { fail: { status: 200, text: '', nonJson: out.nonJson, meta: out.meta } };
             const read = readChat(out.data);
             if (read.text.trim()) return { text: read.text, grew };
             // answered nothing. If the budget was the problem (it ran out, or it thought a lot), ask again with room — once
@@ -152,7 +152,7 @@ export function chatError(name, error, firstFail) {
     const words = (v) => String(v).replace(/\s+/g, ' ').trim().slice(0, 40);
     const steps = trace.length > 1
         ? ` [tried ${trace.map((t) => `${t.model}→${t.nonJson !== undefined ? `non-JSON "${words(t.nonJson)}"` : t.empty !== undefined ? `empty(${t.empty}${t.thinking ? `,thought ${t.thinking}` : ''})` : t.status}`).join(', ')}]` : '';
-    if (last.nonJson !== undefined) return new Error(`${name} returned non-JSON (HTTP 200): "${words(last.nonJson)}"${steps}`);
+    if (last.nonJson !== undefined) return new Error(`${name} returned non-JSON (HTTP 200): "${words(last.nonJson)}"${last.meta ? ` {${last.meta}}` : ''}${steps}`);
     if (last.empty) return new Error(`${name} returned empty (finish ${last.empty.finish}${last.empty.reasoningChars ? `, it thought ${last.empty.reasoningChars} chars` : ''})${steps}`);
     return new Error(`${name} status ${last.status}: ${String(last.text || '').substring(0, 160)}${steps}`);
 }
