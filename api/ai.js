@@ -235,7 +235,12 @@ export default async function handler(req, res) {
     const readReply = async (r) => {
         if (!r.ok) return { ok: false, status: r.status, text: await r.text().catch(() => '') };
         try { return { ok: true, data: typeof r.json === 'function' ? await (typeof r.clone === 'function' ? r.clone() : r).json() : JSON.parse(await r.text()) }; }
-        catch (_) { return { ok: true, nonJson: (typeof r.text === 'function' ? await r.text().catch(() => '') : '') || '(unreadable)' }; }
+        catch (_) {
+            // what the 200 was, besides its words: the content type, who answered, whether we were sent somewhere else (a proxy's "OK", an HTML page)
+            let meta = '';
+            try { const h = r.headers && typeof r.headers.get === 'function' ? r.headers : null; meta = [h && h.get('content-type'), h && h.get('server'), r.redirected ? 'redirected' : '', r.url ? new URL(r.url).host : ''].filter(Boolean).join('; ').slice(0, 80); } catch (_) { /* advice */ }
+            return { ok: true, nonJson: (typeof r.text === 'function' ? await r.text().catch(() => '') : '') || '(unreadable)', meta };
+        }
     };
 
     // ---------- ENGINE 3: GROQ (ultra-fast text + vision via Llava) ----------
@@ -494,11 +499,11 @@ export default async function handler(req, res) {
     const task = advisory ? Matrix.TASK.PROSE : isVision ? Matrix.TASK.VISION : wantsJSON ? Matrix.TASK.EXTRACTION : Matrix.TASK.PROSE;
 
     // Wrap each engine call so a rejection becomes a tagged result, never throws.
-    function run(engine) {
+    function runWithin(engine, limitMs) {
         const started = Date.now();
         let timer;
         const deadline = new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error('Provider response deadline exceeded')), deadlineMs);
+            timer = setTimeout(() => reject(new Error('Provider response deadline exceeded')), limitMs);
         });
         return Promise.race([Promise.resolve()
             .then(() => engine.fn())
@@ -511,13 +516,40 @@ export default async function handler(req, res) {
             }).finally(() => clearTimeout(timer));
     }
 
+    const run = (engine) => runWithin(engine, deadlineMs);
+
     const isValid = (txt) => typeof txt === 'string' && txt.trim().length > 1;
 
     // Start the entire eligible board before awaiting any member, then retain
     // every success, failure and timeout in the decision record.
     const boardStarted = Date.now();
     const results = await Promise.all(engines.map(run));
+    const reasked = [];
     if (mode === 'unanimous') {
+        /* A DISSENT HAS TO BE REPRODUCIBLE TO VETO. Free-tier models glitch: on 2026-10-01 one provider of nine answered the canary with
+         * `{"decisions [{": 0, …}` — valid JSON, wrong in every field — and, because any valid dissent vetoes, that one garble refused
+         * the decision the other eight agreed on. So when a clear majority (at least the quorum, and more than half of those who
+         * answered) agree and a few providers (at most three) said something else, those providers are asked ONCE MORE. A provider that
+         * now agrees with the majority had a glitch and counts as agreeing; one that still says something else — or cannot be reached
+         * — keeps its veto. A real disagreement, or an answer a hijacked description produced, is reproducible and stays a veto;
+         * the quorum, the unanimity rule and `needsReview` are untouched. */
+        try {
+            const answers = results.filter(r => r && r.ok).map(r => ({ r, value: Matrix.boardAnswer(r.reply) })).filter(a => a.value !== null)
+                .map(a => ({ ...a, key: Matrix.canonicalAnswer(a.value) }));
+            const tally = new Map(); for (const a of answers) tally.set(a.key, (tally.get(a.key) || 0) + 1);
+            const [topKey, topCount] = [...tally.entries()].sort((a, b) => b[1] - a[1])[0] || [null, 0];
+            const dissent = answers.filter(a => a.key !== topKey);
+            if (topKey !== null && topCount >= 5 && topCount * 2 > answers.length && dissent.length > 0 && dissent.length <= 3) {
+                const again = await Promise.all(dissent.map(a => runWithin(engines.find(e => e.name === a.r.name), Math.min(deadlineMs, 6000))));
+                again.forEach((second, i) => {
+                    const first = dissent[i].r, name = first.name;
+                    const value = second.ok ? Matrix.boardAnswer(second.reply) : null;
+                    const agreed = value !== null && Matrix.canonicalAnswer(value) === topKey;
+                    reasked.push({ name, agreed });
+                    if (agreed) results[results.indexOf(first)] = second;
+                });
+            }
+        } catch (_) { /* advice: the board decides on what it already has */ }
         // Five independent engines already gives real cross-checking (chance
         // agreement on a categorical answer collapses fast per extra voter);
         // ten was set once, never checked against how many of the configured
@@ -529,14 +561,14 @@ export default async function handler(req, res) {
          * and failed (and how), who was resting, and the reason. (Before this the answer had to be inferred from scattered warnings.) */
         try {
             console.info(JSON.stringify({ evt: 'ai-board', ok: decision.unanimous, reason: decision.reason || '', answered: decision.answered, invalid: decision.invalid,
-                failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, probation, ms: Date.now() - boardStarted }));
+                failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, probation, ...(reasked.length ? { reasked } : {}), ms: Date.now() - boardStarted }));
         } catch (_) { /* a log line never decides a financial question */ }
         // Preserve a machine-readable quarantine outcome; no partial answer is
         // released to consumers that might otherwise file a majority guess.
         return res.status(decision.unanimous ? 200 : 422).json({
             ...decision, trustworthy: Matrix.trustworthy(decision),
             engines: engines.map(e => e.name), financialDecision: true, advisoryOnly: false, consensusOf: decision.answered.length,
-            ...(req.__probe ? { probe: results.map(r => ({ name: r.name, ok: r.ok === true, ms: r.ms, provider: r.provider, reply: r.reply, error: r.error })) } : {}),
+            ...(req.__probe ? { probe: results.map(r => ({ name: r.name, ok: r.ok === true, ms: r.ms, provider: r.provider, reply: r.reply, error: r.error })), reasked } : {}),
             consensusConfidence: decision.unanimous ? 1 : 0,
             error: decision.unanimous ? null : 'AI consensus requires review.'
         });

@@ -70,6 +70,7 @@ export function reportOf({ decision, probe = [], ms = 0, at = Date.now() }) {
             unanimous: Boolean(decision && decision.unanimous), reason: (decision && decision.reason) || null,
             asked: providers.length, answered: answered.length, floor: (decision && decision.minimumProviders) || 5,
             invalid: Array.isArray(decision && decision.invalid) ? decision.invalid : [],
+            reasked: Array.isArray(decision && decision.reasked) ? decision.reasked.map((r) => ({ name: String(r.name), agreed: r.agreed === true })) : [],
         },
         providers,
         agreement: agreementOf(probe),

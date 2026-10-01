@@ -180,6 +180,12 @@ describe('a 200 that is not JSON', () => {
         expect(error.message).toBe('GitHubModels returned non-JSON (HTTP 200): "OK"');
         expect(p.calls).toHaveLength(1);
     });
+    it('says what the 200 was besides its words — content type, who answered, where it was sent — so the next log names the cause', async () => {
+        const p = provider([{ ok: true, nonJson: 'OK', meta: 'text/plain; GitHub.com; models.github.ai' }], { name: 'GitHubModels', slot: 'GitHubModels:text', load: async () => LIST });
+        const error = await p.run().catch((e) => chatError('GitHubModels', e));
+        expect(error.message).toBe('GitHubModels returned non-JSON (HTTP 200): "OK" {text/plain; GitHub.com; models.github.ai}');
+        expect(error.message).toMatch(/returned non-JSON/);         // the cooldown still reads it
+    });
 });
 
 /* ── through the endpoint ─────────────────────────────────────────────────────────────────────────────────────────── */
