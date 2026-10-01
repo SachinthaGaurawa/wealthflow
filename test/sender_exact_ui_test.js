@@ -132,3 +132,20 @@ describe('a sender row says how many EMAILS it sent and where they are, not how 
     });
 });
 
+
+describe('"Your banks, and where they write from" lists every bank the owner has an approved address for', () => {
+    it('HNB, NTB and DFCC (a sender and no card on record) appear beside American Express (a card)', async () => {
+        const { bankNamesMatch } = await import('../wealthflow-accounts.js');
+        const p = page(['_ownedBanks']);
+        p._ownedBanks = undefined; vm.runInContext(source('_ownedBanks'), p);
+        p.appData = {};
+        p.window.WFAccounts = { derive: () => [{ bank: 'American Express (AMEX)' }, { bank: 'American Express (AMEX)' }], bankNamesMatch };
+        p._senders.approved = [
+            { id: 'e-statements@hnb.lk', name: 'HNB' }, { id: 'estatement@info.nationstrust.com', name: 'NTB' },
+            { id: 'statements@dfccbank.com', name: 'DFCC Bank' }, { id: 'nationstrust@estmt.nationstrust.com', name: 'AMEX' },
+            { id: 'hnb.lk', name: 'HNB legacy domain' },                      // a domain is not an address: never a bank row of its own
+        ];
+        const banks = Array.from(p._ownedBanks());
+        expect(banks).toEqual(['American Express (AMEX)', 'HNB', 'NTB', 'DFCC Bank']);   // AMEX is not listed twice
+    });
+});
