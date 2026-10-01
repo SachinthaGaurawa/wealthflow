@@ -511,6 +511,10 @@ export function canonicalAnswer(value) { return canonical(value); }
  * A majority is `clear` when it is at least `minimumProviders` strong and two thirds of the valid answers; without a clear majority
  * nothing is called mangled (a split board is split).
  */
+// `x` is the key `k` with nothing but punctuation and spaces added: "decisions [{" is a torn "decisions"; "decisions_rejected" and
+// "not_approved" are words of their own — an answer in them is a dissent, never garbage.
+const torn = (x, k) => x !== k && x.includes(k) && x.replace(k, '').replace(/[^A-Za-z0-9_]/g, '') === '';
+
 export function boardReading(entries, minimumProviders = 5) {
     const answers = [];
     for (const e of Array.isArray(entries) ? entries : []) {
@@ -527,7 +531,7 @@ export function boardReading(entries, minimumProviders = 5) {
         for (const a of answers) {
             if (a.key === topKey) continue;
             const keys = Object.keys(a.value), missing = required.filter(k => !(k in a.value));
-            (missing.length && missing.every(k => keys.some(x => x !== k && x.includes(k))) ? mangled : dissent).push(a.name);
+            (missing.length && missing.every(k => keys.some(x => torn(x, k))) ? mangled : dissent).push(a.name);
         }
     }
     return { answers, topKey, topCount, clear, mangled, dissent };
