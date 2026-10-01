@@ -139,6 +139,23 @@ export function assessEmptiness({ text, parsed } = {}) {
     };
 }
 
+/**
+ * (c) THE ACCOUNT'S OWN TIMELINE. A month in which nothing happened opens at the balance the month before closed at (and closes at the same).
+ * `statedBalanceCents` is the balance this page states, in cents — its opening, else its closing, else null; `continuityOf` compares it
+ * with the previous statement's closing balance: 'agrees' (the chain holds), 'breaks' (money moved between the two statements, or one is
+ * missing: the page is not called empty without the AI board's independent count), or 'none' (nothing to compare — never a reason to refuse).
+ */
+export function statedBalanceCents({ text, parsed } = {}) {
+    const rec = parsed?.reconciliation, scan = scanStatementText(text);
+    const opening = finite(rec?.opening) ? Math.round(rec.opening * 100) : scan.openings[0];
+    const closing = finite(rec?.closing) ? Math.round(rec.closing * 100) : scan.closings[scan.closings.length - 1];
+    return Number.isFinite(opening) ? opening : Number.isFinite(closing) ? closing : null;
+}
+export function continuityOf(balanceCents, previousCents) {
+    if (!Number.isFinite(balanceCents) || !Number.isFinite(previousCents)) return 'none';
+    return balanceCents === previousCents ? 'agrees' : 'breaks';
+}
+
 /** The statement as an AI sees it: heading and lines only, long numbers masked to their last four digits. */
 export function redactForWitness(text, { maxLines = 120, maxChars = 7000 } = {}) {
     const masked = norm(text).split('\n').map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean)

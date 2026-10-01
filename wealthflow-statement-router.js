@@ -17,7 +17,7 @@ const EXPENSE_CATEGORY_RULES = [
   ['Bank Charges', /\b(ceft\w*\s+charges?|slips?\s+charges?|bank\s+charges?|atm\s+(?:withdrawal\s+)?(?:fee|charge)|withdrawal\s+(?:fee|charge)|service\s+(?:fee|charge)|stamp\s+duty|debit\s+tax|annual\s+fee|late\s+(?:payment\s+)?fee|finance\s+charge|sms\s+(?:alert|charge)|maintenance\s+fee|ledger\s+fee)\b/i],
   ['Cash Withdrawal', /\b(atm\s+(?:withdrawal|wtd|cash)|cash\s+(?:withdrawal|withdraw|wd))\b/i],
   ['Groceries', /\b(keells?|cargills|food\s*city|arpico|glomark|laugfs\s+super|sathosa|spar|super\s*market|supermarket|grocery|mini\s*mart|provision)\b/i],
-  ['Dining', /\b(restaurant|cafe|coffee|bakery|pizza|burger|kfc|mcdonald|dominos|dinemore|barista|spicy\s+food|food\s+court|canteen|grill|ice\s+cream)\b/i],
+  ['Dining', /\b(restaurant|cafe|coffee|bakery|pizza|burger|kfc|mc\s*donalds?|dominos?|dinemore|barista|spicy\s+food|food\s+court|canteen|grill|ice\s+cream|uber\s*eats|food\s*panda|pick\s*me\s+food|taco\s+bell|subway|java\s+lounge|kottu)\b/i],
   ['Telecom', /\b(dialog(?:\s+axiata)?|mobitel|slt(?:\s+mobitel)?|hutch|airtel|lanka\s*bell|reload|recharge|airtime|phone\s+bill)\b/i],
   ['Utilities', /\b(ceb|leco|ceylon\s+electricity|electricity|water\s+board|nwsdb|water\s+bill|litro|laugfs\s+gas|gas\s+bill)\b/i],
   ['Fuel', /\b(fuel|petrol|diesel|filling\s+station|ceypetco|lanka\s+ioc|sinopec|petroleum)\b/i],
@@ -32,7 +32,7 @@ const EXPENSE_CATEGORY_RULES = [
 ];
 
 export function expenseCategoryFor(row) {
-  const desc = descOf(row);
+  const desc = descOf(row).replace(/[*_/]+|(?<=[a-z])-(?=[a-z])/gi, ' ');   // a gateway's "*", "-" and "/" separate words
   for (const [category, pattern] of EXPENSE_CATEGORY_RULES) if (pattern.test(desc)) return category;
   return 'Other';
 }
@@ -80,12 +80,7 @@ function descOf(row) {
 
 // credit (money in) vs debit (money out)
 function direction(row) {
-  // The parser's own conclusion comes first: it is derived from the statement's
-  // running balance (opening + amount = closing), which is stronger evidence than
-  // any wording match below. Ignoring it — as this function did — threw away the
-  // one signal that is actually verified and fell through to `row.type`, which
-  // the parser does not emit, so every row defaulted to 'debit'. A salary credit
-  // would have been filed as an expense.
+  // The parser's own conclusion (from the running balance) outranks any wording match below.
   if (row.direction) return /^cr/i.test(row.direction) ? 'credit' : 'debit';
   if (row.drcr) return /cr/i.test(row.drcr) ? 'credit' : 'debit';
   if (typeof row.amount === 'number' && row.amount < 0) return 'credit'; // some statements sign CR negative
@@ -121,11 +116,7 @@ export function isCreditCardRow(row, ctx) {
   const last4 = row.card_last4 || ctx.card_last4;
   const entry = last4 && ctx.cardRegistry ? ctx.cardRegistry[last4] : null;
   if (!entry) return false;
-  // Last-4 alone is not a unique key across the owner's own accounts — two of
-  // their own cards, at two different banks, can share the same last four
-  // digits. When both the registry entry and this statement's own detected
-  // bank are known, require them to agree before trusting the match; a last-4
-  // hit against the wrong bank is exactly the collision this guards against.
+  // Last-4 alone is not unique across the owner's banks: when both banks are known they must agree.
   if (entry.bank && ctx.bank && !sameBank(entry.bank, ctx.bank) && norm(entry.bank) !== norm(ctx.bank)) return false;
   return entry.type === 'credit_card';
 }
@@ -176,10 +167,7 @@ export function routeRow(row, ctx = {}) {
   if (!desc || desc === 'unreadable vendor' || desc.length < 3) confidence = Math.min(confidence, 0.4);
 
   const threshold = typeof ctx.reviewThreshold === 'number' ? ctx.reviewThreshold : 0.75;
-  // An upstream doubt must survive routing. The parser flags a row whose
-  // direction it had to assume (a statement printing no running balance) or read
-  // from wording; the router's own confidence is about the CATEGORY and knows
-  // nothing of that, so without this an unverified row could route with 0.9.
+  // An upstream doubt (a direction the parser assumed or read from wording) must survive routing.
   const upstreamDoubt = row.needsReview === true || (row.direction !== undefined && !row.direction);
   return {
     module, tabLabel, subtype, allocation, category,
