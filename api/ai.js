@@ -49,8 +49,20 @@ export function providerAvailable(name, now = Date.now()) {
  * it stays out. One of a minute or two is a provider that was BUSY (a rate limit, a deadline, an empty reply): it is out only while the
  * board has spare — see boardRoster. */
 export const HARD_COOLDOWN_MS = 10 * 60 * 1000;
+/* A PROVIDER THAT KEEPS MISSING THE DEADLINE IS LEFT ALONE LONGER EACH TIME. One minute after the first miss, three after the second, five
+ * after the third and every one after (inside fifteen minutes) — and a success wipes the slate. A provider that is only slow (OpenRouter's
+ * Nemotron answers in 8–15 s) otherwise costs every board call the whole deadline once a minute for as long as it is configured. Never
+ * long enough to count as dead (that is ten minutes): when the board is short of voters it is still asked. */
+const deadlineStrikes = new Map();
 export function coolProvider(name, error, now = Date.now()) {
-    const ms = providerCooldownMs(error), message = String(error?.message || error || '');
+    let ms = providerCooldownMs(error);
+    const message = String(error?.message || error || '');
+    if (ms < HARD_COOLDOWN_MS && /deadline|timed?\s*out|abort/i.test(message)) {
+        const before = deadlineStrikes.get(name);
+        const strikes = before && now - before.at < 15 * 60 * 1000 ? before.strikes + 1 : 1;
+        deadlineStrikes.set(name, { strikes, at: now });
+        ms = [60 * 1000, 180 * 1000, 300 * 1000][Math.min(strikes - 1, 2)];
+    }
     // when a busy provider is asked again it is the quick failers first: a rate limit says so at once, a deadline keeps the board waiting
     providerCooldown.set(name, { until: now + ms, ms, rank: /deadline|timed?\s*out|abort/i.test(message) ? 2 : /rate.?limit|quota|status 429/i.test(message) ? 0 : 1 });
 }
@@ -75,7 +87,7 @@ export function boardRoster(eligible, { needed = 1, now = Date.now() } = {}) {
     }
     return { asked: [...asked, ...probation], probation, resting: resting.filter(name => !probation.includes(name)) };
 }
-export function resetProviderCooldowns() { providerCooldown.clear(); }
+export function resetProviderCooldowns() { providerCooldown.clear(); deadlineStrikes.clear(); }
 
 /* Every eligible configured engine is started before any result is awaited.
  * A response is reduced only after all members settle or hit their individual
@@ -507,7 +519,7 @@ export default async function handler(req, res) {
         });
         return Promise.race([Promise.resolve()
             .then(() => engine.fn())
-            .then(r => ({ ok: true, name: engine.name, reply: r.reply, provider: r.provider, ms: Date.now() - started })), deadline])
+            .then(r => { deadlineStrikes.delete(engine.name); return { ok: true, name: engine.name, reply: r.reply, provider: r.provider, ms: Date.now() - started }; }), deadline])
             .catch(e => {
                 coolProvider(engine.name, e);
                 console.warn(`[AI] ${engine.name} failed:`, e.message);

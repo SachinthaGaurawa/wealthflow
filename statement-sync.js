@@ -149,7 +149,7 @@ export function validateLuhnChecksum(numericSequence) {
 
 export async function invokeBoard(prompt, handler = aiHandler) {
     let status = 200, result;
-    await handler({ method: 'POST', body: { prompt, financialDecision: true, mode: 'unanimous', temperature: 0, maxTokens: 3500, deadlineMs: 10000 } }, {
+    await handler({ method: 'POST', body: { prompt, financialDecision: true, mode: 'unanimous', temperature: 0, maxTokens: 3500, deadlineMs: 13000 } }, {
         setHeader() {}, status(code) { status = code; return this; }, json(value) { result = value; return this; }, end() {}
     });
     if (status !== 200 || !result?.unanimous || !result.trustworthy || !Array.isArray(result.expected) || result.expected.length < 5 || new Set(result.expected).size !== result.expected.length || !result.fields) {
@@ -1156,7 +1156,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     // The default extractor asks in tiers — the strongest providers first, the next tier only if they fail (statement-llm-router.mjs).
     // An injected one (a test, a different transport) is used as given.
     if (extract === invokeExtractor) extract = tieredAsk({ call: (prompt, options) => invokeExtractor(prompt, aiHandler, options), accept: reply => Array.isArray(jsonOf(reply)?.accounts), deadlineAt: start + INVOCATION_MS });
-    board = breaker.guard('board', board, { minRoomMs: 14000, unavailable: 'ai-consensus-unavailable' });
+    board = breaker.guard('board', board, { minRoomMs: 17000, unavailable: 'ai-consensus-unavailable' });
     extract = breaker.guard('extract', extract, { minRoomMs: 18000, unavailable: 'ai-extractor-unavailable' });
     let frontIncomplete = false, migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
     /* The housekeeping in front of the queue (find new mail, audit the mailbox, recover and repair) is a full pass over the
