@@ -122,6 +122,16 @@ describe('INGESTED is derived from the stored statements, and from nothing else'
         expect(r([item({ emptyStatement: true, filed: true })]).state).toBe('INGESTED');
         expect(r([item({ status: 'processing' })]).state).toBe('PROCESSED');
     });
+    it('a retired or dismissed item is DONE, never "waiting": a sender\'s line must not say "4 waiting" when nothing is', () => {
+        const r = (items) => rollupItems(items).get('m1');
+        expect(r([item({ status: 'dismissed' })])).toMatchObject({ state: 'REFUSED', reason: 'dismissed-by-the-owner' });
+        expect(r([item({ status: 'rejected_unapproved_sender' })])).toMatchObject({ state: 'REFUSED', reason: 'the-sender-is-no-longer-approved' });
+        // a message that carried a statement and a leaflet: the statement is in, the leaflet was retired
+        expect(r([item({ filed: true, status: 'filed' }), item({ id: 'j', status: 'rejected_non_statement' })]).state).toBe('INGESTED');
+        // but one still being worked on, or in review, keeps its state
+        expect(r([item({ status: 'dismissed' }), item({ id: 'j', status: 'pending' })]).state).toBe('PROCESSED');
+        expect(r([item({ status: 'rejected_non_statement' }), item({ id: 'j', status: 'needs_review' })]).state).toBe('REVIEW');
+    });
     it('a message whose record says INGESTED but whose item is not filed is brought back to what the item says', () => {
         const out = reconcile({ table: [{ messageId: 'm1', state: 'INGESTED', updatedMs: 1 }], items: [item({ status: 'pending' })], now: 100 });
         expect(out.writes).toEqual([expect.objectContaining({ messageId: 'm1', state: 'PROCESSED' })]);

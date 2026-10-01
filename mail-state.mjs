@@ -151,12 +151,20 @@ export function rollupItems(items) {
     }
     const out = new Map();
     for (const [id, list] of by) {
-        const settled = list.every((i) => i.filed === true || i.emptyStatement === true);
-        const rejected = list.every((i) => i.status === 'rejected_non_statement');
+        const settledItem = (i) => i.filed === true || i.emptyStatement === true;
+        /* RETIRED is an outcome too. An item retired as not a statement, retired because its sender is no longer approved, or dismissed by the owner is DONE: left
+         * as "stored, waiting to be read" it made a sender's line say "4 waiting" for ever (HNB, 2026-10-02) when nothing at all was waiting. */
+        const retiredItem = (i) => i.status === 'rejected_non_statement' || i.status === 'rejected_unapproved_sender' || i.status === 'dismissed';
+        const settled = list.every(settledItem);
+        const closed = list.every((i) => settledItem(i) || retiredItem(i));
+        const rejected = list.every(retiredItem);
         const review = list.some((i) => i.status === 'needs_review' || i.status === 'dead_letter' || i.hasReview === true);
         let state = MAIL_STATE.PROCESSED, reason = '';
-        if (settled) state = MAIL_STATE.INGESTED;
-        else if (rejected) { state = MAIL_STATE.REFUSED; reason = 'the-document-is-not-a-bank-statement'; }
+        if (settled || (closed && list.some(settledItem))) state = MAIL_STATE.INGESTED;       // what it carried that is a statement is in; the rest was retired
+        else if (rejected) {
+            state = MAIL_STATE.REFUSED;
+            reason = list.every((i) => i.status === 'dismissed') ? 'dismissed-by-the-owner' : list.some((i) => i.status === 'rejected_unapproved_sender') ? 'the-sender-is-no-longer-approved' : 'the-document-is-not-a-bank-statement';
+        }
         else if (review) { state = MAIL_STATE.REVIEW; reason = clean(list.find((i) => i.reviewReason)?.reviewReason || (list.some((i) => i.status === 'dead_letter') ? 'retrying-after-repeated-failures' : 'needs-review'), 80); }
         out.set(id, { state, reason, items: list.map((i) => String(i.id || '')).filter(Boolean), sha: list.map((i) => String(i.contentSha256 || '')).filter(Boolean), from: list[0].from, receivedMs: list[0].receivedMs });
     }
