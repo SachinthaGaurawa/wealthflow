@@ -276,28 +276,28 @@ describe('a bank that writes from a second address', () => {
         expect(stored).toMatchObject({ status: 'pending', via: 'sibling', known: true, intent: 'suspect' });
         expect((await s.ref.get()).data().held).toEqual([]);
     });
-    it('is taken by series when the subject is plain but the attachment is named like a statement already filed', async () => {
+    it('is taken when the subject is plain but the attachment is named like a statement already filed (a sibling on evidence; the series is the stronger case of the same rule)', async () => {
         const plainFiled = { 'jan.x.1': { uid: 'owner', messageId: 'jan', filename: 'Consolidated_Account_2026JAN_458290.html', filed: true, status: 'filed' } };
         const s = setup({ items: plainFiled, history: ['sib1b'], inbox: [message('sib1b', { from: 'NTB Desk <desk@nationstrust.com>', subject: 'Your documents', filename: 'Consolidated_Account_2026MAR_458290.html' })] });
         await s.run();
-        expect(Object.values(await itemsOf(s)).find(i => i.messageId === 'sib1b')).toMatchObject({ status: 'pending', via: 'series', known: true });
+        expect(Object.values(await itemsOf(s)).find(i => i.messageId === 'sib1b')).toMatchObject({ status: 'pending', via: 'sibling', known: true, intent: 'suspect' });
     });
-    it('is still held when what it sends is not named like any filed statement', async () => {
+    it('a promotion from the bank\'s other address is refused as not a statement (its file name says promotion) — not stored, and nothing is held for the owner', async () => {
         const s = setup({ items: filed, history: ['sib2'], inbox: [message('sib2', { from: 'NTB Offers <offers@nationstrust.com>', filename: 'Weekend_Promotion.html', subject: 'Offers' })] });
         await s.run();
         expect(Object.values(await itemsOf(s)).filter(i => i.messageId === 'sib2')).toHaveLength(0);
-        expect((await s.ref.get()).data().held.map(h => h.messageId)).toEqual(['sib2']);
+        expect((await s.ref.get()).data().held || []).toEqual([]);
     });
     it('is taken even when nothing has been filed yet, because its subject says statement — and it must prove itself before anything is filed', async () => {
         const s = setup({ history: ['sib3'], inbox: [message('sib3', { from: 'NTB E-Statements <estatements@nationstrust.com>' })] });
         await s.run();
         expect(Object.values(await itemsOf(s)).find(i => i.messageId === 'sib3')).toMatchObject({ via: 'sibling', intent: 'suspect' });
     });
-    it('is held when nothing has been filed and nothing in the mail says statement', async () => {
+    it('is taken when nothing has been filed and nothing in the mail says statement — nothing is held for a decision', async () => {
         const s = setup({ history: ['sib3b'], inbox: [message('sib3b', { from: 'NTB Friends <friends@nationstrust.com>', filename: 'Weekend_Offer.html', subject: 'Offers for you' })] });
         await s.run();
-        expect(Object.values(await itemsOf(s))).toHaveLength(0);
-        expect((await s.ref.get()).data().held.map(h => h.messageId)).toEqual(['sib3b']);
+        expect(Object.values(await itemsOf(s)).find(i => i.messageId === 'sib3b')).toMatchObject({ via: 'sibling', intent: 'suspect' });
+        expect((await s.ref.get()).data().held || []).toEqual([]);
     });
     it('still needs a passing signature from the bank’s own domain', async () => {
         const s = setup({ items: filed, history: ['sib4'], inbox: [message('sib4', { from: 'NTB E-Statements <estatements@nationstrust.com>', dkim: false })] });

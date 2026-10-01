@@ -3,6 +3,7 @@ import { createFirestore } from './helpers/fake-firestore.js';
 import { syncMailbox } from '../gmail-hook.js';
 import { runStatementSync, refreshCoverage } from '../statement-sync.js';
 import { approvedClauses } from '../wealthflow-mail-senders.mjs';
+import { INTAKE_VERSION } from '../wealthflow-mail-ingest.mjs';
 import { readTable, summarize, MAIL_STATE } from '../mail-state.mjs';
 import { readStatement } from '../statement-reader.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
@@ -207,7 +208,7 @@ describe('the statements the version-3 rules turned away are judged again under 
         await intakeAll(w);
         const taken = [...w.data.entries()].filter(([k]) => k.startsWith(MAIL + '/items/')).map(([, v]) => v.messageId);
         for (const id of OLD) expect(taken, id).toContain(id);
-        expect(w.data.get(MAIL).auditVersion).toBe(4);
+        expect(w.data.get(MAIL).auditVersion).toBe(INTAKE_VERSION);
         // the forgeries are still not
         for (const bad of [...FORGED, ...REFUSED]) expect(taken, bad).not.toContain(bad);
     });

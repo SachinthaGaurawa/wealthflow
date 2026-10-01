@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createFirestore } from './helpers/fake-firestore.js';
-import { ntbDoc } from './helpers/embedded-statements.js';
+import { ntbDoc, textPdf } from './helpers/embedded-statements.js';
 import { runStatementSync, takeRefusedMessage } from '../statement-sync.js';
 import { readStatement } from '../statement-reader.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
@@ -35,13 +35,14 @@ const message = (id, mm, { from = 'Statements <statements@nationstrust.com>', dk
 const filed = mm => [`${mailPath}/items/j${mm}.${fileName(mm)}.2000`, { uid: 'u', bank: 'NTB', filename: fileName(mm), messageId: `j${mm}`, from: 'Statements <statements@nationstrust.com>',
     status: 'filed', filed: true, hasReview: false, cursor: 4, totalRows: 4, receivedMs: Date.parse(`2026-${mm}-28T05:00:00Z`) + 5 * 86400000, storedMs: NOW - 40 * 86400000 }];
 
-function mailbox() {
+function mailbox({ more = [], moreBodies = {} } = {}) {
     const inbox = [
         message('mMAR', '03', { from: 'NTB E-Statements <estatements@nationstrust.com>' }),
         message('mAPR', '04', { dkim: false }),
         message('mMAY', '05'),
         message('mJUN', '06'),
         message('mINV', '06', { from: 'NTB Billing <billing@nationstrust.com>', filename: 'Invoice-0042.pdf', subject: 'Invoice', mime: 'application/pdf' }),
+        ...more,
     ];
     const spam = new Set(['mMAY']);
     const { db, data } = createFirestore({
@@ -51,7 +52,7 @@ function mailbox() {
         ...Object.fromEntries(['01', '02'].map(filed)),
     });
     const calls = [];
-    const bodies = { mMAR: html('03'), mAPR: html('04'), mMAY: html('05'), mJUN: html('06') };
+    const bodies = { mMAR: html('03'), mAPR: html('04'), mMAY: html('05'), mJUN: html('06'), ...moreBodies };
     const f = vi.fn(async url => {
         const u = decodeURIComponent(String(url)); calls.push(u);
         if (u.includes('oauth2.googleapis.com')) return { ok: true, status: 200, json: async () => ({ access_token: 'token' }) };
@@ -94,9 +95,9 @@ describe('a mailbox where every old way of losing a statement is present', () =>
         // APR arrived without a verifiable signature: on record with its reason, not stored, not lost
         expect(by.mAPR).toBeUndefined();
         expect(s.mail().refused).toMatchObject([{ messageId: 'mAPR', reason: 'dkim-did-not-pass' }]);
-        // the invoice from another address is never filed, and is held for the owner's decision about the sender
+        // the invoice from another address is never filed — refused as not a statement on what it says it is, with nothing held for the owner
         expect(by.mINV).toBeUndefined();
-        expect(s.mail().held.map(h => h.messageId)).toEqual(['mINV']);
+        expect(s.mail().held || []).toEqual([]);
         // the books hold exactly the three months that were filed now
         const user = s.data.get('users/u');
         expect(user.expenses.map(r => r.date).sort()).toEqual(['2026-03-05', '2026-05-05', '2026-06-05']);
@@ -162,5 +163,40 @@ describe('a statement taken from the bank\'s other address', () => {
         const s = mailbox(); seed(s, { via: undefined });
         await drainAll(s);
         expect(s.data.get(`${mailPath}/items/mMAR.${fileName('03')}.2000`).status).toBe('rejected_unapproved_sender');
+    });
+});
+
+describe('the bank\'s other desks are decided on evidence — nothing waits for the owner to decide whether an email is real', () => {
+    const at = (m, day) => ({ ...m, internalDate: String(Date.parse(`2026-07-${day}T05:00:00Z`)) });
+    const more = [
+        // a marketing mail with a PDF, from a mail host of the bank's own organisation, signed by it (the "Colombo Fashion Week" mail the owner was asked about)
+        at(message('mFASH', '07', { from: 'NTB Customer Service <news@customerservice.nationstrust.com>', subject: 'Here\'s what took shape on Day 01 of Colombo Fashion Week', filename: 'FashionWeek_Day01.pdf', mime: 'application/pdf' }), '08'),
+        // a genuine statement from another desk, with a plain subject and a plain file name: nothing in the mail says statement
+        at(message('mSIB', '07', { from: 'NTB Desk <desk@nationstrust.com>', subject: 'Your documents', filename: '5996631318_455.html' }), '10'),
+        // the same desk without a signature Gmail could verify: never taken
+        at(message('mFORGE', '07', { from: 'NTB Desk <desk@nationstrust.com>', subject: 'Your documents', filename: '5996631318_456.html', dkim: false }), '11'),
+    ];
+    const moreBodies = { mFASH: textPdf(['Colombo Fashion Week presented by Nations Trust Bank', 'Day 01 highlights from the runway', 'Tickets from Rs. 2,500.00 at the door']), mSIB: html('07'), mFORGE: html('07') };
+    it('a brochure is taken on who sent it, read, found not to be a statement and retired — no question, nothing filed, nothing held', async () => {
+        const s = mailbox({ more, moreBodies });
+        await drainAll(s);
+        const by = Object.fromEntries(Object.values(s.items()).map(i => [i.messageId, i]));
+        expect(by.mFASH, 'taken and stored on the evidence of who sent it').toMatchObject({ via: 'sibling', intent: 'suspect' });
+        expect(by.mFASH.status).toBe('rejected_non_statement');
+        expect(by.mFASH.filed).not.toBe(true);
+        expect([...s.data.keys()].filter(k => k.startsWith('users/u/statementReview/'))).toEqual([]);      // the owner is asked nothing
+        expect(s.mail().held || []).toEqual([]);
+    });
+    it('a genuine statement from another desk with nothing in the mail saying statement is read, reconciled and filed', async () => {
+        const s = mailbox({ more, moreBodies });
+        await drainAll(s);
+        const sib = Object.values(s.items()).find(i => i.messageId === 'mSIB');
+        expect(sib).toMatchObject({ via: 'sibling', status: 'filed', filed: true });
+        expect(s.data.get('users/u').expenses.map(r => r.date)).toContain('2026-07-05');
+    });
+    it('the same desk with no verifiable signature is never taken', async () => {
+        const s = mailbox({ more, moreBodies });
+        await drainAll(s);
+        expect(Object.values(s.items()).find(i => i.messageId === 'mFORGE')).toBeUndefined();
     });
 });

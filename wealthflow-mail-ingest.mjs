@@ -955,14 +955,11 @@ function planCore(message, policy = {}) {
     const rel0 = typeof policy.related === 'function' ? policy.related(seenFrom) : null;
     const releasedBySeries = who.approved !== true && !!rel0 && policy.siblingSeries instanceof Set && policy.siblingSeries.size > 0
         && what.take.length > 0 && what.take.every((a) => policy.siblingSeries.has(filenameStem(a && a.filename)));
-    /* A BANK WRITING FROM ANOTHER OF ITS OWN ADDRESSES, AND SAYING SO. The owner approved `e-statements@hnb.lk`; the
-     * bank's account statements come from a second address, and 104 of them sat held because nothing named like a
-     * statement had been filed from the approved one. The owner's approval already said WHICH BANK; the rest is
-     * decided on the message itself — the signature held (above), the subject or a file name calls it a statement
-     * (here), and the document must show the shape of one and reconcile before anything is filed (the worker). A
-     * bank's marketing from that same address says no such thing and stays held. */
-    const releasedBySibling = who.approved !== true && !releasedBySeries && !!rel0 && what.take.length > 0
-        && intentVerdict({ subject: headers.subject || '', filenames: what.take.map((a) => a && a.filename).filter(Boolean), body: '' }).intent === 'stated';
+    /* ANOTHER DESK OF A BANK THE OWNER APPROVED IS DECIDED ON EVIDENCE, NOT HELD FOR A TAP. By here Google's own SPF/DKIM/DMARC verdict says the message
+     * IS from that domain, which is the same organisation as an approved address and no lookalike of it, and the file is a PDF or HTML document: that is
+     * who sent it. What it IS is decided next — an invoice or a receipt is refused below; anything else is taken as a document that must prove itself a
+     * statement and reconcile to the cent before a row is filed, and a brochure is retired by the worker, never put to the owner. */
+    const releasedBySibling = who.approved !== true && !releasedBySeries && !!rel0 && what.take.length > 0;
     const ownerApproved = who.approved === true || releasedBySeries || releasedBySibling;
     const released = releasedBySeries || releasedBySibling;
     const releasedVia = releasedBySeries ? 'series' : 'sibling';
@@ -1209,7 +1206,7 @@ export function worthSighting(plan) {
  *      with SPF + DMARC and no DKIM, or signed by a sub-domain of the same organisation, is no longer turned away); one
  *      From naming several mailboxes is forged. Every genuine statement the version-3 rules refused is judged again.
  */
-export const INTAKE_VERSION = 4;
+export const INTAKE_VERSION = 5;
 
 /**
  * Is this refusal one the owner would call a MISSED STATEMENT? Only mail from an

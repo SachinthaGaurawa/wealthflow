@@ -240,12 +240,22 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         expect(calls).toEqual([]);
     });
 
-    it('a sibling mailbox on an approved domain cannot fetch an attachment when nothing in the mail says statement', async () => {
+    it('a sibling mailbox on an approved domain is taken on the evidence of who sent it even when nothing in the mail says statement — its document must then prove itself', async () => {
         connect();
         const other = bankMessage('m2', { filename: 'rewards.pdf' });
         other.payload.headers.find((h) => h.name === 'From').value = 'HNB <billing@hnb.lk>';
         other.payload.headers.find((h) => h.name === 'Subject').value = 'Your rewards offer';
         const seen = await call({ body: WINDOW, gmail: { messages: ['m2'], byId: { m2: other } } });
+        expect(seen.status).toBe(200);
+        expect(calls.some((c) => c.url.includes('/attachments/'))).toBe(true);
+    });
+
+    it('a sibling mailbox\'s invoice or receipt is still never fetched', async () => {
+        connect();
+        const other = bankMessage('m3', { filename: 'Invoice-0042.pdf' });
+        other.payload.headers.find((h) => h.name === 'From').value = 'HNB <billing@hnb.lk>';
+        other.payload.headers.find((h) => h.name === 'Subject').value = 'Invoice 0042';
+        const seen = await call({ body: WINDOW, gmail: { messages: ['m3'], byId: { m3: other } } });
         expect(seen.status).toBe(200);
         expect(seen.body.statements).toBe(0);
         expect(calls.some((c) => c.url.includes('/attachments/'))).toBe(false);
