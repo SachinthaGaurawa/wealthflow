@@ -23,7 +23,8 @@ function world() {
     });
     const f = async () => ({ ok: true, json: async () => ({ access_token: 'token' }) });
     const run = () => runStatementSync({ action: 'drain', db, owner, env: {}, f, read: readStatement, open: async () => [{ password: 'x', bank: 'HNB' }], settle: settleStatement,
-        board: async () => { throw new Error('ai-consensus-unavailable'); }, extract: async () => { throw new Error('ai-extractor-unavailable'); },
+        // the board counts the money the rules skipped (it sits on a heading line): the statement is one the rules could not read, and goes to review
+        board: async () => ({ fields: { transactionLines: 1 }, unanimous: true }), extract: async () => { throw new Error('ai-extractor-unavailable'); },
         loadAttachment: async () => ({ bytes: Buffer.from(html), filename: 'statement.html', contentSha256: 'x' }), maxSteps: 1 });
     return { run, data };
 }

@@ -35,7 +35,7 @@ function honestModel({ lie = false } = {}) {
     return { ask, calls };
 }
 
-function world({ extract, intent = 'stated', doc = DOC }) {
+function world({ extract, intent = 'stated', doc = DOC, board = async () => { throw new Error('ai-consensus-unavailable'); } }) {
     const { db, data } = createFirestore({
         [mailPath]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders: [{ id: 'statements@bancosur.example', kind: 'address', status: 'approved' }] },
         'wf-statement-vault/u': { uid: 'u' },
@@ -44,9 +44,12 @@ function world({ extract, intent = 'stated', doc = DOC }) {
     });
     const f = async () => ({ ok: true, json: async () => ({ access_token: 'token' }) });
     const loadAttachment = async () => ({ bytes: Buffer.from(htmlOf(doc)), filename: 'extracto_abril.html', contentSha256: 'x' });
-    const drain = async () => { let last; for (let i = 0; i < 8; i++) { last = await runStatementSync({ action: 'drain', db, owner, env: {}, f, read: readStatement, open: async () => [{ password: 'x', bank: 'Banco del Sur' }], settle: settleStatement, board: async () => { throw new Error('ai-consensus-unavailable'); }, extract, loadAttachment, maxSteps: 1 }); if (['filed', 'needs_review', 'rejected_non_statement'].includes(last.status)) break; } return last; };
+    const drain = async () => { let last; for (let i = 0; i < 8; i++) { last = await runStatementSync({ action: 'drain', db, owner, env: {}, f, read: readStatement, open: async () => [{ password: 'x', bank: 'Banco del Sur' }], settle: settleStatement, board, extract, loadAttachment, maxSteps: 1 }); if (['filed', 'needs_review', 'rejected_non_statement'].includes(last.status)) break; } return last; };
     return { db, drain, data, source: () => data.get(sourcePath), user: () => data.get('users/u'), parts: () => [...data.keys()].filter(k => k.startsWith(`${sourcePath}/adaptive/`)) };
 }
+
+// the AI board's independent count: it sees the transaction lines the rules could not read (a month is closed as empty only when it counts none)
+const seesLines = async () => ({ fields: { transactionLines: 4 }, unanimous: true });
 
 describe('a statement in a layout nobody wrote a template for', () => {
     it('is first called empty by the rules — which is why it must be read, not assumed', async () => {
@@ -78,7 +81,7 @@ describe('a statement in a layout nobody wrote a template for', () => {
         expect(w.source().adaptive).toMatchObject({ strategy: 'programmatic' });
     });
     it('is NOT filed when the model\'s reading does not balance and the rules cannot read it either: nothing reaches the ledger and the owner is asked', async () => {
-        const w = world({ extract: honestModel({ lie: true }).ask, doc: DOC_NO_BALANCES });
+        const w = world({ extract: honestModel({ lie: true }).ask, doc: DOC_NO_BALANCES, board: seesLines });
         const out = await w.drain();
         expect(['needs_review', 'retry_pending']).toContain(out.status);
         expect(w.user().expenses).toEqual([]);
@@ -87,7 +90,7 @@ describe('a statement in a layout nobody wrote a template for', () => {
         expect(w.source()).toMatchObject({ adaptiveTries: 1, adaptiveResult: { reason: 'did-not-balance' } });
     });
     it('goes to the owner exactly as before when no model is reachable and the rules cannot read it, and is tried again later', async () => {
-        const w = world({ extract: async () => { throw new Error('down'); }, doc: DOC_NO_BALANCES });
+        const w = world({ extract: async () => { throw new Error('down'); }, doc: DOC_NO_BALANCES, board: seesLines });
         const out = await w.drain();
         expect(['needs_review', 'rejected_non_statement']).toContain(out.status);
         expect(w.user().expenses).toEqual([]);

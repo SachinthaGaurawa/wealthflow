@@ -65,7 +65,9 @@ export function crossSourceMatches(records, row, context) {
 function makeRecord(row, decision, context, id, now) {
     const desc = String(row.description || row.narration).trim();
     const provenance = { statementKey: context.sourcePath, statementRow: context.index, bank: canonicalBank(context.bank || ''), card_last4: context.last4 || '', ref: String(row.ref || ''), direction: row.direction };
-    const base = { id, ...provenance, amount: row.amount, date: row.date, source: 'statement', createdAt: new Date(now).toISOString(), _ut: now, notes: '' };
+    // a row the AI board could not refine is filed with the rules' own answer and says so, so it can be found and changed
+    const base = { id, ...provenance, amount: row.amount, date: row.date, source: 'statement', createdAt: new Date(now).toISOString(), _ut: now,
+        notes: decision.autoDecided ? 'Filed automatically; the AI could not pick a more specific category. Change it if it is wrong.' : '', ...(decision.autoDecided ? { autoDecided: String(decision.autoDecided) } : {}) };
     const module = modules[decision.module];
     if (module === 'expenses') return { ...base, desc, cat: decision.category, month: row.date.slice(0, 7), recurring: false, recurringType: '0', completed: true };
     if (module === 'incomeRecv') return { ...base, name: desc, type: decision.category, month: row.date.slice(0, 7), received: true };
