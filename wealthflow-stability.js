@@ -35,6 +35,10 @@
     var K_ALIVE = 'wf_session_alive';
     var K_CRASH = 'wf_crash_log';
     var K_CRASH_TOTAL = 'wf_crash_total_count';
+    var K_DETECTOR = 'wf_crash_detector';     // which generation of the detector wrote the crash log
+    var K_CRASH_LEGACY = 'wf_crash_legacy';   // what the first generation had counted before it was reset
+    var K_MODHEAL = 'wf_module_heal';         // when a module that would not link last had its code caches purged
+    var DETECTOR_V = 2;
     var HEARTBEAT_MS = 5000;             // was 10000 — halves how stale the last-known state can be
     var CRASH_LOG_CAP = 30;              // was a bare 20 baked into slice(-20); named so it reads as a choice
     var CRUMB_CAP = 15;
@@ -139,7 +143,17 @@
         return rec;
     }
 
+    /* THE MARKER IS ONLY EVER WRITTEN BY A PAGE THAT IS ALIVE AND IN FRONT. The first generation of this detector cleared the marker on
+     * pagehide / visibilitychange→hidden — and then its own one-second and five-second heartbeats, which keep firing for a few seconds
+     * after an iPhone sends the app to the background, simply wrote it again, with start = now. iOS then froze the page and, later,
+     * evicted it, as it does to every background web app; the next launch found the marker and recorded "a crash, survived 0s". The
+     * owner's diagnostics said 27 of those, 19 of them "on the dashboard" — the page an app is most often left on. A page that has said it
+     * is leaving (`_exited`) or is hidden writes nothing; it re-arms only when it is shown again. */
+    var _exited = false;
+    function hidden() { try { return document.visibilityState === 'hidden'; } catch (_) { return false; } }
+
     function beat() {
+        if (_exited || hidden()) return;
         var s = snapshot();
         var a = rd(K_ALIVE, null) || { start: Date.now(), build: build() };
         a.last = Date.now(); a.build = build();
@@ -159,9 +173,13 @@
     var FAST_BEAT_MS = 1000;
     var FAST_BEAT_TICKS = 12;   // 12s of dense coverage, then the normal (now 5s) cadence
 
-    function armSession() {
+    function mark() {
         wr(K_ALIVE, { start: Date.now(), last: Date.now(), build: build(), page: '?', dom: 0, charts: 0, res: {}, crumbs: [], heapMB: null });
         beat();   // real numbers from the first paint, not the boot placeholder
+    }
+    function armSession() {
+        // a page that is opened while hidden (a background launch, a prerender) is not yet a session; it starts when it is shown
+        if (hidden()) _exited = true; else mark();
         var ticks = 0;
         var fast = null;
         try {
@@ -174,13 +192,76 @@
                 }
             }, FAST_BEAT_MS);
         } catch (_) {}
-        // pagehide is THE reliable "clean exit" signal on iOS (beforeunload is not).
-        var clean = function () { del(K_ALIVE); };
+        // pagehide is THE reliable "clean exit" signal on iOS (beforeunload is not — and a cancelled navigation fires it on a page that stays).
+        var clean = function () { _exited = true; del(K_ALIVE); };
+        // shown again (switched back to the app, restored from the back/forward cache): a new stretch of life begins
+        var resume = function () { if (!_exited) { beat(); return; } _exited = false; mark(); };
         try { W.addEventListener('pagehide', clean); } catch (_) {}
-        try { W.addEventListener('beforeunload', clean); } catch (_) {}
+        try { W.addEventListener('pageshow', resume); } catch (_) {}
         try {
             document.addEventListener('visibilitychange', function () {
-                if (document.visibilityState === 'hidden') clean(); else beat();
+                if (hidden()) clean(); else resume();
+            });
+        } catch (_) {}
+    }
+
+    /* A DETECTOR THAT WAS WRONG SHOULD NOT KEEP ITS COUNT. Everything the first generation recorded is the artefact above (or cannot be told
+     * from it): the log and the total start again, and what was there is kept in one line so the history is not erased, only not believed. */
+    function migrateDetector() {
+        if (rd(K_DETECTOR, 0) >= DETECTOR_V) return;
+        var old = crashes(), total = totalCrashCount();
+        if (total || old.length) wr(K_CRASH_LEGACY, { at: Date.now(), count: total || old.length, shortLived: old.filter(function (r) { return (r && r.aliveSec || 0) <= 1; }).length, kept: old.length, detector: 1 });
+        del(K_CRASH); del(K_CRASH_TOTAL); del(K_ALIVE);
+        wr(K_DETECTOR, DETECTOR_V);
+    }
+    function legacyCrashes() { return rd(K_CRASH_LEGACY, null); }
+
+    /* A MODULE THAT WILL NOT LINK IS A STALE COPY, NOT A BUG IN THE PAGE. "Importing binding name 'CONSUMER_MAIL' is not found" is what a
+     * browser says when one module of the app was cached from one release and the module it imports from another; the Senders screen
+     * then quietly does not work until something clears the old copy. (The shipped files carry content hashes and the build refuses a
+     * dangling import — test/import_bindings_test.js — so this is the device holding on to something old.) The first time it happens in
+     * six hours the app's own code caches and service workers are cleared — never the owner's data — and the page is reloaded unless
+     * someone is typing; either way the next start is clean. */
+    var MODULE_FAIL = /Importing binding name .* is not found|does not provide an export named|dynamically imported module|Importing a module script failed|error loading module/i;
+    function healModuleGraph(reason) {
+        try {
+            var last = rd(K_MODHEAL, null);
+            if (last && last.at && Date.now() - last.at < 6 * 3600 * 1000) return false;
+            wr(K_MODHEAL, { at: Date.now(), reason: String(reason == null ? '' : reason).slice(0, 140), build: build() });
+            var pending = 2, finished = false;
+            var done = function () {
+                if (--pending > 0 || finished) return;
+                finished = true;
+                try {
+                    var el = document.activeElement, typing = el && /^(?:INPUT|TEXTAREA|SELECT)$/.test(el.tagName || '') || (el && el.isContentEditable);
+                    if (!typing && W.location && typeof W.location.reload === 'function') W.location.reload();
+                } catch (_) {}
+            };
+            try {
+                if (W.caches && W.caches.keys) W.caches.keys().then(function (keys) {
+                    return Promise.all(keys.filter(function (k) { return k.indexOf('wealthflow-') === 0; }).map(function (k) { return W.caches.delete(k); }));
+                }).then(done, done); else done();
+            } catch (_) { done(); }
+            try {
+                if (W.navigator && W.navigator.serviceWorker && W.navigator.serviceWorker.getRegistrations) W.navigator.serviceWorker.getRegistrations().then(function (regs) {
+                    return Promise.all(regs.map(function (r) { return r.unregister(); }));
+                }).then(done, done); else done();
+            } catch (_) { done(); }
+            return true;
+        } catch (_) { return false; }
+    }
+    function watchModules() {
+        try {
+            W.addEventListener('error', function (e) {
+                try {
+                    var msg = e && (e.message || (e.error && e.error.message)) || '';
+                    var t = e && e.target;
+                    if (MODULE_FAIL.test(msg)) healModuleGraph(msg);
+                    else if (t && t.tagName === 'SCRIPT' && t.type === 'module') healModuleGraph('a module script did not load: ' + String(t.src || '').split('/').pop());
+                } catch (_) {}
+            }, true);
+            W.addEventListener('unhandledrejection', function (e) {
+                try { var msg = e && e.reason && (e.reason.message || String(e.reason)) || ''; if (MODULE_FAIL.test(msg)) healModuleGraph(msg); } catch (_) {}
             });
         } catch (_) {}
     }
@@ -331,8 +412,10 @@
 
     /* ── boot ────────────────────────────────────────────────────────────────── */
     var lastCrash = null;
+    try { migrateDetector(); } catch (_) {}
     try { lastCrash = detectPreviousCrash(); } catch (_) {}
     try { armSession(); } catch (_) {}
+    try { watchModules(); } catch (_) {}
 
     // Heal AFTER the app's own data has loaded (and after any first cloud merge).
     function healSoon() {
@@ -347,12 +430,12 @@
 
     W.WFStability = {
         crashes: crashes, clearCrashes: clearCrashes, lastCrash: function () { return lastCrash; },
-        totalCrashCount: totalCrashCount, crumb: crumb,
+        totalCrashCount: totalCrashCount, legacyCrashes: legacyCrashes, healModuleGraph: healModuleGraph, crumb: crumb,
         resourceInc: resourceInc, resourceDec: resourceDec, resourceCounts: resourceCounts,
         track: track, destroyGroup: destroyGroup, destroyAll: destroyAll, chartCount: chartCount,
         healStamps: healStamps, pruneTombstones: pruneTombstones, healOrphanTombstones: healOrphanTombstones,
         integrity: integrity,
-        snapshot: snapshot, legacyUt: legacyUt, LEGACY_EPOCH: LEGACY_EPOCH, VERSION: '1.1'
+        snapshot: snapshot, legacyUt: legacyUt, LEGACY_EPOCH: LEGACY_EPOCH, VERSION: '1.2'
     };
-    try { console.log('[WFStability] v1.1 loaded' + (lastCrash ? ' — PREVIOUS SESSION CRASHED (' + lastCrash.page + ', ' + lastCrash.charts + ' charts, ' + lastCrash.dom + ' DOM nodes)' : '')); } catch (_) {}
+    try { console.log('[WFStability] v1.2 loaded' + (lastCrash ? ' — PREVIOUS SESSION CRASHED (' + lastCrash.page + ', ' + lastCrash.charts + ' charts, ' + lastCrash.dom + ' DOM nodes)' : '')); } catch (_) {}
 })();

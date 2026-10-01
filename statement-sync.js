@@ -31,7 +31,7 @@ const PASSWORD_BATCH = 6;
 /* Bumped when the reader or the AI behind it has changed so that a statement it could not read earlier deserves another look. Version 4: the
  * AI roster was repaired (reasoning-model empties, retired models) and the model-free reader added — thirty-four HNB statements had used up
  * their three adaptive tries (and the six-hour wait between them) during the outage and sat in review as "not waiting to be processed again". */
-const WHOLE_REPLAY_VERSION = 4;
+const WHOLE_REPLAY_VERSION = 5;
 const SAFE_WHOLE_REPLAY = new Set([
     'statement-layout-identity-needs-review',
     'statement-layout-or-reconciliation-needs-review',
@@ -95,6 +95,22 @@ export function shapeOf(text) {
         dr: has(/\bdebit|\bdr\b|withdraw/i), cr: has(/\bcredit|\bcr\b|deposit/i), stmt: has(/statement/i),
         letters: (body.match(/[A-Za-z]/g) || []).length, odd: (body.match(/[^\x09\x0A\x0D\x20-\x7E]/g) || []).length,
     };
+}
+/* THE LAYOUT OF A DOCUMENT, WITHOUT ITS CONTENT. When a statement cannot be recognised the platform log must say what it looks like, or the next
+ * fix is a guess (34 HNB statements sat in review while the only evidence was "288 characters, 11 lines"). Every line is kept in order, every
+ * digit becomes 9, every word that is not a banking term becomes a run of a's — so "Opening Balance 12,345.67" survives as itself with its
+ * digits masked, while a name, an address or a merchant does not. Never a figure, a name or an account number. */
+const SKELETON_KEEP = new Set(['statement', 'account', 'balance', 'opening', 'closing', 'brought', 'forward', 'carried', 'date', 'description', 'particulars', 'details', 'debit', 'credit',
+    'debits', 'credits', 'withdrawal', 'withdrawals', 'deposit', 'deposits', 'interest', 'total', 'period', 'from', 'to', 'no', 'number', 'cheque', 'ref', 'reference', 'branch', 'currency',
+    'lkr', 'usd', 'page', 'of', 'tax', 'charges', 'fee', 'fees', 'transfer', 'cash', 'dr', 'cr', 'available', 'ledger', 'nil', 'transaction', 'transactions', 'activity', 'none', 'no',
+    'hatton', 'national', 'bank', 'plc', 'savings', 'current', 'type', 'name', 'value', 'amount', 'narration', 'summary', 'bf', 'cf', 'b/f', 'c/f', 'as', 'at', 'on', 'for', 'the']);
+export function skeletonOf(text, { maxLines = 28, maxChars = 900 } = {}) {
+    const lines = String(text || '').split(/\r?\n/).map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, maxLines);
+    const masked = lines.map(line => line
+        .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '\uE000')
+        .replace(/\p{L}+(?:\/\p{L}+)?/gu, word => (SKELETON_KEEP.has(word.toLowerCase()) ? word : (/^[A-Za-z]+$/.test(word) ? (word === word.toUpperCase() && word.length > 1 ? 'A' : 'a') + (word.length > 1 ? '+' : '') : 'x+')))
+        .replace(/\d/g, '9').replace(/\uE000/g, '<email>').slice(0, 110));
+    return masked.join(' ¦ ').slice(0, maxChars);
 }
 const permanentFailure = error => /^(?:PASSWORD_FAILED|NO_VAULT_KEYS|PDF_UNREADABLE|ATTACHMENT_TYPE_UNSUPPORTED|ATTACHMENT_SIZE_LIMIT|INVALID_ATTACHMENT|HTML_[A-Z_]+|STATEMENT_[A-Z_]+)$/.test(error?.message || '') || new Set([
     'statement-layout-identity-needs-review', 'statement-layout-or-reconciliation-needs-review', 'statement-empty-needs-confirmation', 'statement-cursor-or-content-changed',
@@ -794,7 +810,10 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         let { parsed } = result;
         const { text } = result;
         reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '', rendered: result.renderedOverride === true, embedded: parsed?.embeddedProblems };
-        Object.assign(diag, { shape: shapeOf(text), rows: Array.isArray(parsed?.rows) ? parsed.rows.length : 0, parsed: String(parsed?.verdict || ''), understood: parsed?.understood === true, tries: Number(claimed.adaptiveTries) || 0 });
+        Object.assign(diag, { shape: shapeOf(text), rows: Array.isArray(parsed?.rows) ? parsed.rows.length : 0, parsed: String(parsed?.verdict || ''), understood: parsed?.understood === true, tries: Number(claimed.adaptiveTries) || 0,
+            intent: String(claimed.intent || ''), rec: { open: Number.isFinite(parsed?.reconciliation?.opening), close: Number.isFinite(parsed?.reconciliation?.closing), ok: parsed?.reconciliation?.ok ?? null },
+            row0: Array.isArray(parsed?.rows) && parsed.rows[0] ? { amount: Number(parsed.rows[0].amount) > 0, text: Boolean(String(parsed.rows[0].narration || '').trim()), valid: parsed.rows[0].valid === true } : null,
+            skeleton: skeletonOf(text) });
         /* A STATEMENT THE RULES COULD NOT READ is read by a model, and believed only when the document agrees with every
          * word of it and the books balance to the cent (statement-adaptive.mjs). Anything less goes where it always went. */
         const adaptiveNow = Date.now();
@@ -853,7 +872,13 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             // No line that moves money was read. That is either a month in which nothing happened or a statement the
             // reader could not read; the two are told apart here, on the statement's own text, before anything is
             // filed or asked. A month the owner reopened is never closed automatically a second time.
-            if (identity.verdict !== VERDICT.STATEMENT) throw new Error('statement-layout-identity-needs-review');
+            /* A DOCUMENT THAT SAYS NOTHING ABOUT ITSELF IS STILL VOUCHED FOR BY ITS MAIL. A month with no movements is a short page
+             * — sometimes with no "statement", no "account no", no period in its words — and 34 HNB statements ("Your HNB Account
+             * Statement for 074-02-…", from the approved sender, attached as 074-02-XXXXX-88.pdf) sat in review as "cannot confirm it is
+             * a statement" before anything was asked about their emptiness. When the mail itself says statement (its subject or its file
+             * name, from an approved sender — `intent: stated`) the question moves on to the one that matters, whether the month was
+             * really empty, which is still decided only on every signal at once (statement-emptiness.mjs) and is never closed on this alone. */
+            if (identity.verdict !== VERDICT.STATEMENT && claimed.intent !== 'stated') throw new Error('statement-layout-identity-needs-review');
             if (claimed.emptyOverride === 'owner') throw new Error('statement-layout-or-reconciliation-needs-review');
             const verdict = await decideEmptiness({ text, parsed, board });
             if (verdict.decision === 'empty') outcome = await fileEmptyStatement(db, uid, sourceRef, claimed.leaseToken, mailRef, { balances: verdict.evidence.balances, dataRows: 0, pdf: 'text', ...verdict.evidence });
@@ -1133,7 +1158,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     if (extract === invokeExtractor) extract = tieredAsk({ call: (prompt, options) => invokeExtractor(prompt, aiHandler, options), accept: reply => Array.isArray(jsonOf(reply)?.accounts), deadlineAt: start + INVOCATION_MS });
     board = breaker.guard('board', board, { minRoomMs: 14000, unavailable: 'ai-consensus-unavailable' });
     extract = breaker.guard('extract', extract, { minRoomMs: 18000, unavailable: 'ai-extractor-unavailable' });
-    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
+    let frontIncomplete = false, migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
     /* The housekeeping in front of the queue (find new mail, audit the mailbox, recover and repair) is a full pass over the
      * mailbox; run once for every statement an interactive caller asks for, it left almost none of the 60 seconds for the
      * statements. An interactive call repeats it at most every minute and a half — unless a collection is part-way, when
@@ -1163,22 +1188,26 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
             if (coverage.staged > 0) await collect();
         } catch (_) { coverage = null; }
         migrationMore = await migrateItems(db, mailRef, mail, uid);
-        const vault = await db.collection(VAULT_ROOT).doc(uid).get();
-        recovered = vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
+        /* THE HOUSEKEEPING MAY NOT EAT THE WHOLE CALL. On 2026-10-01 an interactive run spent 42.5 s of its sixty here and processed NONE of
+         * the fifteen statements waiting (`statement-sync-run … processed:0 attempted:0`), and the owner's app asked again ninety
+         * seconds later to do the same. From the vault check onward each step is optional work that finds its own place again at the next
+         * pass (every step reports `more`), so it runs only while the front has time left — an interactive call keeps its first
+         * seconds for the queue; an unattended heavy run gets longer — and a step that is skipped says so, so the chain comes straight back. */
+        const frontBudgetMs = interactive ? 12000 : heavy ? 30000 : 20000;
+        let frontSkipped = false;
+        const frontRoom = () => { if (Date.now() - start < frontBudgetMs) return true; frontSkipped = true; return false; };
+        const vault = frontRoom() ? await db.collection(VAULT_ROOT).doc(uid).get() : null;
+        recovered = vault && vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
         const recoveryLimit = heavy ? 25 : 5;
-        const whole = await recoverWholeStatementFailures({ db, uid, limit: recoveryLimit });
-        wholeRecovered = whole.recovered; wholeMore = whole.more;
-        categoriesRepaired = (await repairStatementCategories({ db, uid })).total;
-        const consensus = await recoverConsensusFailures({ db, uid, limit: recoveryLimit });
-        consensusRecovered = consensus.recovered; consensusMore = consensus.more;
-        const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit });
-        revokedRecovered = revoked.recovered; revokedMore = revoked.more;
-        reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
-        zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
-        const phantom = await recheckPhantomStatements({ db, uid, limit: heavy ? 10 : 3 });
-        phantomRequeued = phantom.requeued; phantomMore = phantom.more;
-        const healed = await healMissingRows({ db, uid, limit: heavy ? 5 : 2 });
-        rowsHealed = healed.rows; healMore = healed.more;
+        if (frontRoom()) { const whole = await recoverWholeStatementFailures({ db, uid, limit: recoveryLimit }); wholeRecovered = whole.recovered; wholeMore = whole.more; }
+        if (frontRoom()) categoriesRepaired = (await repairStatementCategories({ db, uid })).total;
+        if (frontRoom()) { const consensus = await recoverConsensusFailures({ db, uid, limit: recoveryLimit }); consensusRecovered = consensus.recovered; consensusMore = consensus.more; }
+        if (frontRoom()) { const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit }); revokedRecovered = revoked.recovered; revokedMore = revoked.more; }
+        if (frontRoom()) reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
+        if (frontRoom()) zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
+        if (frontRoom()) { const phantom = await recheckPhantomStatements({ db, uid, limit: heavy ? 10 : 3 }); phantomRequeued = phantom.requeued; phantomMore = phantom.more; }
+        if (frontRoom()) { const healed = await healMissingRows({ db, uid, limit: heavy ? 5 : 2 }); rowsHealed = healed.rows; healMore = healed.more; }
+        if (frontSkipped) { wholeMore = true; frontIncomplete = true; }
         if (interactive) { try { await mailRef.set({ lastFrontMs: Date.now() }, { merge: true }); } catch (_) { /* the front pass simply runs again */ } }
     }
     /* Dead-lettered statements whose wait is over go back in the queue, from the place they stopped (statement-queue.mjs). */
@@ -1220,7 +1249,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     try {
         const byBank = {};
         for (const doc of pending.docs) { const bank = String(doc.data()?.bank || '?').slice(0, 24); byBank[bank] = (byBank[bank] || 0) + 1; }
-        console.info(JSON.stringify({ evt: 'statement-sync-run', ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', redriven: redrive.redriven, deadLettered: redrive.waiting,
+        console.info(JSON.stringify({ evt: 'statement-sync-run', ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', ...(frontIncomplete ? { frontIncomplete: true } : {}), redriven: redrive.redriven, deadLettered: redrive.waiting,
             pending: pending.docs.length, processing: processing.docs.length, byBank, collectionMore, aiDown: Object.entries(breaker.health).filter(([, v]) => Number(v?.downUntil) > Date.now()).map(([k, v]) => `${k}:${String(v.reason || '').slice(0, 40)}`) }));
     } catch (_) { /* a log line never stops a sync */ }
     return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, ...(coverage ? { coverage } : {}),
