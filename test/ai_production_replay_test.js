@@ -101,13 +101,24 @@ describe('a cooldown is an optimisation, never a reason to refuse', () => {
         coolProvider('OpenRouterFinance', new Error('OpenRouterFinance returned empty'), NOW);
         for (const n of ['Cerebras', 'NVIDIA', 'HF']) coolProvider(n, new Error(n + ' status 410: end of life'), NOW);                                // dead
         const r = boardRoster(names, { needed: 8, now: NOW + 1000 });     // available: Mistral, Cohere = 2
-        expect(r.asked).toHaveLength(9);                                    // 2 available + the 7 busy; the 3 dead stay out
+        expect(r.asked).toHaveLength(8);                                    // 2 available + the 2 quick failers + only as many slow ones as the target still needs; the 3 dead stay out
         expect(r.probation[0]).toBe('Fireworks');                           // a rate limit answers at once
         expect(r.probation[1]).toBe('OpenRouterFinance');
-        expect(r.probation.slice(2)).toHaveLength(5);
+        expect(r.probation.slice(2)).toHaveLength(4);
         expect(r.probation.slice(2).every((n) => ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together'].includes(n))).toBe(true);
         for (const dead of ['Cerebras', 'NVIDIA', 'HF']) { expect(r.asked, dead).not.toContain(dead); expect(providerIsDead(dead, NOW + 1000)).toBe(true); }
         expect(r.resting).toEqual(expect.arrayContaining(['Cerebras', 'NVIDIA', 'HF']));
+    });
+    it('providers that keep the board waiting are not asked once the quick ones already reach the target (the 13-second board of 2026-10-01)', () => {
+        for (const n of ['NVIDIA', 'Together']) coolProvider(n, new Error('Provider response deadline exceeded'), NOW);          // slow
+        for (const n of ['Mistral', 'Cohere', 'Fireworks']) coolProvider(n, new Error(n + ' status 429: rate limited'), NOW);    // quick
+        const r = boardRoster(names, { needed: 8, now: NOW + 1000 });     // available: Gemini, DeepSeek, Groq, Ollama, OpenRouterFinance, Cerebras, HF = 7
+        expect(r.asked).toEqual(expect.arrayContaining(['Mistral', 'Cohere', 'Fireworks']));   // quick failers: free to wait for
+        expect(r.asked).not.toContain('NVIDIA'); expect(r.asked).not.toContain('Together');      // slow ones: the target is met without them
+        expect(r.resting).toEqual(expect.arrayContaining(['NVIDIA', 'Together']));
+        // short of the target even with the quick ones, a slow one is asked rather than none (the 422 burst of that day must not return)
+        const short = boardRoster(['Gemini', 'NVIDIA', 'Together', 'Mistral'], { needed: 4, now: NOW + 1000 });
+        expect(short.asked).toHaveLength(4);
     });
     it('only the dead are resting: nobody is invented, the roster is what is left', () => {
         for (const n of names) coolProvider(n, new Error(n + ' status 402: credits'), NOW);

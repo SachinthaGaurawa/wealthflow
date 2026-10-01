@@ -591,6 +591,16 @@ describe('private statement cloud frontend transport', () => {
             expect(window._teachStatementLayout).not.toHaveBeenCalled();
             await authChanged(null);
         });
+        it('says so when the resumed statement stopped again — it is never told "being finished" over a replay that failed (the AMEX Sep statement)', async () => {
+            window._teachStatementLayout = vi.fn();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, resumed: true, state: 'resumed', filed: 0, review: 1, replayStatus: 'needs_review', replayReason: 'statement-cursor-or-content-changed' }));
+            await review({ ...entry, reason: 'statement-cursor-or-content-changed' });
+            expect(bodyOf(0)).toMatchObject({ action: 'resume-review' });
+            expect(bodyOf(0).auto).toBeUndefined();                    // the owner's own tap is never the silent kind
+            expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('stopped again'), 'warn');
+            expect(window.notify).not.toHaveBeenCalledWith(expect.stringContaining('being finished'), expect.anything());
+            await authChanged(null);
+        });
         it('never takes the render route for a PDF or when no renderer is loaded', async () => {
             window._teachStatementLayout = vi.fn();
             fetch.mockResolvedValue(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }));

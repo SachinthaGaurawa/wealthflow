@@ -124,6 +124,17 @@ describe('the owner\'s real HNB page: a zero balance, nothing moved, and a page 
         expect(s.source().status).not.toBe('needs_review');
         expect(s.reviews()).toEqual([]);
     });
+    it('waiting for ROOM is not a failed attempt; waiting because the board is down is (the 34 HNB statements took turns at the little room each run had)', async () => {
+        const noRoom = setup('real', { withBoard: down() });
+        await noRoom.drain({ startedAt: Date.now() - 40000 });                   // 8 s of the invocation left: no room for the board's two calls
+        expect(noRoom.source()).toMatchObject({ status: 'pending', filed: false, leaseToken: '' });
+        expect(Number(noRoom.source().retryCount) || 0).toBe(0);
+        expect(noRoom.source().retryAt).toBeGreaterThan(Date.now());
+        expect(noRoom.source().lastRetryReason).toBeUndefined();
+        const down30 = setup('real', { withBoard: down() });
+        await down30.drain();                                                    // plenty of room, board unreachable: an attempt that failed
+        expect(down30.source()).toMatchObject({ status: 'pending', retryCount: 1 });
+    });
     it('is NOT closed when the board counts transaction lines the rules did not see', async () => {
         const s = setup('real', { withBoard: board(2) });
         await s.drain();

@@ -83,7 +83,13 @@ export function boardRoster(eligible, { needed = 1, now = Date.now() } = {}) {
     const resting = eligible.filter(name => !providerAvailable(name, now));
     let probation = [];
     if (asked.length < needed) {
-        probation = resting.filter(name => !providerIsDead(name, now)).sort((a, b) => providerCooldown.get(a).rank - providerCooldown.get(b).rank || providerCooldown.get(a).until - providerCooldown.get(b).until);
+        const busy = resting.filter(name => !providerIsDead(name, now)).sort((a, b) => providerCooldown.get(a).rank - providerCooldown.get(b).rank || providerCooldown.get(a).until - providerCooldown.get(b).until);
+        // The ones that answer quickly — a rate limit, an empty reply — are all asked: they cost nothing to wait for. The ones that KEEP THE BOARD
+        // WAITING (a missed deadline, an aborted call: rank 2) are asked only as many as are still needed to reach the target. Production log,
+        // 2026-10-01: with six healthy voters and the target at eight, the two chronically slow providers were asked every time and every board
+        // lasted its full thirteen seconds — fourteen HNB statements and every NTB/AMEX slice that needed it paid that — for voters that never answered.
+        const quick = busy.filter(name => providerCooldown.get(name).rank < 2), slow = busy.filter(name => providerCooldown.get(name).rank >= 2);
+        probation = [...quick, ...slow.slice(0, Math.max(0, needed - asked.length - quick.length))];
     }
     return { asked: [...asked, ...probation], probation, resting: resting.filter(name => !probation.includes(name)) };
 }

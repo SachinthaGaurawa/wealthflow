@@ -36,7 +36,7 @@ const WHOLE_REPLAY_VERSION = 7;
  * and every row the ledger already holds is checked against the new reading by its fingerprint, so a row is never filed twice and a statement
  * whose reading really did change is refused at the first row that differs (statement-cursor-or-content-changed) — nothing is guessed.
  * Bumped when a new reason for stopping part-way becomes resumable, so that statements stopped for it get one more chance. */
-const RESUME_VERSION = 1;
+const RESUME_VERSION = 2;       // 2: a replay no longer stops on rows the ledger holds worded differently but with the same money (statement-ledger.mjs)
 const RESUMABLE_ANYTIME = new Set(['statement-cursor-or-content-changed', 'statement-retries-exhausted']);
 const SAFE_WHOLE_REPLAY = new Set([
     'statement-layout-identity-needs-review',
@@ -293,12 +293,16 @@ export async function checkpointRows(db, ref, uid, leaseToken, rows) {
         date: row.date, amount: row.amount, direction: row.direction,
         narration: row.narration || row.description || '', ref: row.ref || ''
     })))).digest('hex');
+    // the money alone: a reading that words a row differently (a cleaner description, an account number found) but finds the same dates,
+    // amounts and directions in the same places is the same statement — the places the cursor counts are unchanged
+    const moneyHash = createHash('sha256').update(JSON.stringify(rows.map(row => [row.date, row.amount, row.direction]))).digest('hex');
     await db.runTransaction(async tx => {
         const snap = await tx.get(ref), source = snap.data();
         if (!snap.exists || source.uid !== uid || source.leaseToken !== leaseToken) throw new Error('statement-lease-lost');
-        if ((source.rowSetHash && source.rowSetHash !== rowSetHash) || (source.totalRows != null && source.totalRows !== rows.length)) throw new Error('statement-cursor-or-content-changed');
-        if (!source.rowSetHash && (source.cursor || 0) !== 0) throw new Error('statement-cursor-or-content-changed');
-        tx.set(ref, { rowSetHash, totalRows: rows.length }, { merge: true });
+        const reworded = Boolean(source.rowSetHash) && source.rowSetHash !== rowSetHash && Boolean(source.moneyHash) && source.moneyHash === moneyHash && source.totalRows === rows.length;
+        const changed = (source.rowSetHash && source.rowSetHash !== rowSetHash && !reworded) || (source.totalRows != null && source.totalRows !== rows.length);
+        if (changed || (!source.rowSetHash && (source.cursor || 0) !== 0)) throw Object.assign(new Error('statement-cursor-or-content-changed'), { detail: { rows: rows.length, saved: source.totalRows ?? null, cursor: source.cursor || 0, money: source.moneyHash ? source.moneyHash === moneyHash : null } });
+        tx.set(ref, { rowSetHash, moneyHash, totalRows: rows.length }, { merge: true });
     });
     return rowSetHash;
 }
@@ -521,7 +525,7 @@ async function requeueStopped({ db, uid, reviewRef, sourceRef, guard, now = Date
         const others = siblings.docs.some(entry => entry.id !== reviewRef.id && entry.data().status === 'pending' && Number(entry.data().index) >= 0);
         if (!guard({ review, source, settled })) return { state: 'skipped' };
         tx.set(reviewRef, { status: 'retried', retriedAt: now, resumed: true }, { merge: true });
-        tx.set(sourceRef, { status: 'pending', hasReview: others, cursor: 0, totalRows: null, rowSetHash: '', leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0,
+        tx.set(sourceRef, { status: 'pending', hasReview: others, cursor: 0, totalRows: null, rowSetHash: '', moneyHash: '', leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0,
             adaptiveTries: 0, adaptiveAt: 0, resumed: now, resumeVersion: RESUME_VERSION, updatedAt: now }, { merge: true });
         return { state: 'resumed', settled };
     });
@@ -587,7 +591,7 @@ export async function statementCensus({ db, mailRef, log = console.info }) {
  * risking a second filing of the rows it already holds — and used to answer "this may already be read from an earlier attempt". What it does
  * now: a review that was already handled says so; a statement that is already filed has its review closed; anything else stopped is put back
  * in the queue from its first row (resume) and worked at once. Nothing is filed twice: the ledger is the guard. */
-export async function resumeReview({ db, owner, id, env = process.env, f = fetch, enqueue = enqueueStatementSync }) {
+export async function resumeReview({ db, owner, id, auto = false, env = process.env, f = fetch, enqueue = enqueueStatementSync }) {
     if (!/^[a-f\d]{64}$/.test(id || '') || !owner?.uid || !owner?.email) throw new Error('invalid-review-request');
     const reviewRef = db.collection('users').doc(owner.uid).collection('statementReview').doc(id);
     const first = (await reviewRef.get()).data();
@@ -595,12 +599,14 @@ export async function resumeReview({ db, owner, id, env = process.env, f = fetch
     const mailRef = db.collection('wf-mail').doc(userKeyFor(owner.email));
     if (first.index !== -1 || !String(first.sourcePath || '').startsWith(mailRef.path + '/items/') || String(first.sourcePath).split('/').length !== 4) throw new Error('review-source-owner-mismatch');
     const sourceRef = db.doc(first.sourcePath);
-    const result = await requeueStopped({ db, uid: owner.uid, reviewRef, sourceRef, guard: () => true });
+    // The owner's own tap always resumes. The app's silent attempt (`auto`) goes once per RESUME_VERSION: a statement that stops again the same
+    // way is not re-read, re-fetched and re-stopped every time the app opens.
+    const result = await requeueStopped({ db, uid: owner.uid, reviewRef, sourceRef, guard: auto ? ({ source }) => Number(source.resumeVersion || 0) < RESUME_VERSION : () => true });
     if (result.state !== 'resumed') return { ok: true, resumed: false, state: result.state, ...(result.status ? { status: result.status } : {}) };
     try {
         const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path, maxSteps: 1 });
         return { ok: true, resumed: true, state: 'resumed', settled: result.settled, filed: Math.max(0, Number(replay?.filed) || 0), review: Math.max(0, Number(replay?.review) || 0),
-            replayStatus: String(replay?.status || 'pending'), queued: replay?.morePending === true || String(replay?.status || 'pending') === 'pending' };
+            replayStatus: String(replay?.status || 'pending'), ...(replay?.reason ? { replayReason: String(replay.reason).slice(0, 80) } : {}), queued: replay?.morePending === true || String(replay?.status || 'pending') === 'pending' };
     } catch (_) { return { ok: true, resumed: true, state: 'resumed', settled: result.settled, queued: true, replayStatus: 'pending' }; }
 }
 
@@ -884,6 +890,10 @@ async function settledIndexes(db, uid, sourcePath) {
     return indexes;
 }
 const MAX_SLICES_PER_RUN = 40, SLICE_ROOM_MS = 6000, SLICE_AI_ROOM_MS = 33000;
+const BOARD_ROOM_MS = 17000;           // the board's own floor (breaker.guard 'board' minRoomMs)
+const DEFER_MS = 1500;
+/* A statement put back in the queue because THIS invocation had no room for it: no attempt is counted against it, nothing is frozen. */
+const deferral = (ms = DEFER_MS) => Object.assign(new Error('statement-worker-retry-required'), { defer: ms });
 
 async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, extract = invokeExtractor, preferredSourcePath = '', loadAttachment = attachmentBytes, deadlineAt = Infinity, rotate = 0 }) {
     let claimed = null, sourceRef;
@@ -991,7 +1001,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
              * when there is room for two of them, and given the room that is left — otherwise the statement waits for the next
              * invocation (nothing is lost or counted against it) instead of being cut off half-way. */
             const room = deadlineAt - adaptiveNow;
-            if (room < ADAPTIVE_MIN_ROOM_MS) throw new Error('statement-worker-retry-required');
+            if (room < ADAPTIVE_MIN_ROOM_MS) throw deferral();
             const ai = await adaptiveRead({ text, ask: prompt => extract(prompt), uid, budgetMs: Math.min(22000, room - 14000) });
             if (ai.ok) {
                 parsed = ai.parsed;
@@ -1050,8 +1060,13 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
              * question that follows (was the month empty?) is still the strict one. */
             if (identity.verdict !== VERDICT.STATEMENT && claimed.intent !== 'stated' && !ledgerShaped(text)) throw new Error('statement-layout-identity-needs-review');
             if (claimed.emptyOverride === 'owner') throw new Error('statement-layout-or-reconciliation-needs-review');
+            /* NO ROOM LEFT FOR THE BOARD IS NOT A FAILURE OF THE STATEMENT. A zero page is closed only with the board's independent count, which
+             * needs two calls' worth of time; with less than that left in this invocation the statement simply waits for the next one. It used to
+             * be counted as a failed attempt — thirty-four HNB statements took turns at the little room each run had, and every refusal for
+             * lack of room moved one of them a step toward the dead-letter queue. */
+            const boardRoom = deadlineAt - Date.now() >= BOARD_ROOM_MS;
             const verdict = await decideEmptiness({ text, parsed, board });
-            if (verdict.decision === 'retry') throw new Error('statement-worker-retry-required');
+            if (verdict.decision === 'retry') throw boardRoom ? new Error('statement-worker-retry-required') : deferral();
             if (verdict.decision === 'empty') outcome = await fileEmptyStatement(db, uid, sourceRef, claimed.leaseToken, mailRef, { balances: verdict.evidence.balances, dataRows: 0, pdf: 'text', ...verdict.evidence });
             // "Empty, please confirm" is only said of a statement the reader did read as having no lines that move
             // money; one it could not read at all keeps the layout question it always had.
@@ -1102,7 +1117,17 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules' });
         }
     } catch (error) {
-        if (!permanentFailure(error)) {
+        if (error?.defer) {
+            const wait = Math.max(0, Math.min(30000, Number(error.defer) || DEFER_MS));
+            const held = await db.runTransaction(async tx => {
+                const snap = await tx.get(sourceRef), source = snap.data();
+                if (!snap.exists || source.leaseToken !== claimed.leaseToken || source.uid !== uid) return false;
+                tx.set(sourceRef, { status: 'pending', leaseToken: '', leaseUntil: 0, retryAt: Date.now() + wait, updatedAt: Date.now() }, { merge: true });
+                return true;
+            });
+            outcome = { status: 'retry_pending', retry: 1, retryAfterMs: held ? wait : 750 };
+            logItem({ bank: claimed.bank || '?', status: outcome.status, reason: 'waiting-for-room', retryAfterMs: outcome.retryAfterMs });
+        } else if (!permanentFailure(error)) {
             /* The attempt is COUNTED before anything else, in one write, so a run the platform kills still counts. Five in a
              * row park the statement (dead_letter) with its place frozen; it is re-driven on a schedule and, after every round,
              * becomes one question for the owner. It is never dropped and never skipped (statement-queue.mjs). */
@@ -1122,7 +1147,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         } else {
             const reason = error.message;
             await quarantineSource(db, uid, sourceRef, claimed.leaseToken, reason, reviewEvidence);
-            outcome = { status: 'needs_review', review: 1 };
+            outcome = { status: 'needs_review', review: 1, reason };
             logItem({ bank: claimed.bank || '?', status: outcome.status, reason, ...(error?.detail ? { detail: error.detail } : {}), ...(Object.keys(diag).length ? { diag } : {}) });
         }
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }
@@ -1346,7 +1371,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     // The default extractor asks in tiers — the strongest providers first, the next tier only if they fail (statement-llm-router.mjs).
     // An injected one (a test, a different transport) is used as given.
     if (extract === invokeExtractor) extract = tieredAsk({ call: (prompt, options) => invokeExtractor(prompt, aiHandler, options), accept: reply => Array.isArray(jsonOf(reply)?.accounts), deadlineAt: start + INVOCATION_MS });
-    board = breaker.guard('board', board, { minRoomMs: 17000, unavailable: 'ai-consensus-unavailable' });
+    board = breaker.guard('board', board, { minRoomMs: BOARD_ROOM_MS, unavailable: 'ai-consensus-unavailable' });
     extract = breaker.guard('extract', extract, { minRoomMs: 18000, unavailable: 'ai-extractor-unavailable' });
     let frontIncomplete = false, migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
     /* The housekeeping in front of the queue (find new mail, audit the mailbox, recover and repair) is a full pass over the
@@ -1703,7 +1728,7 @@ export default async function handler(req, res) {
                     : body.action === 'render-source' ? await inspectRenderSource({ db, owner, id: body.id })
                     : body.action === 'rendered' ? await submitRenderedStatement({ db, owner, id: body.id, htmlGz: body.htmlGz })
                     : body.action === 'layout-continue' ? await continueMappedLayout({ db, owner, id: body.id })
-                    : body.action === 'resume-review' ? await resumeReview({ db, owner, id: body.id })
+                    : body.action === 'resume-review' ? await resumeReview({ db, owner, id: body.id, auto: body.auto === true })
                     : await mapReviewLayout({ db, owner, id: body.id, rows: body.rows });
                 return json(res, 200, result);
             } catch (error) {
