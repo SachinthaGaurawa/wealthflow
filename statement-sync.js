@@ -1396,6 +1396,24 @@ async function storedItems(mailRef) {
     return (await query.get()).docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
 
+/* WHAT "WAITING" MEANS, IN THE LOG. A sender's line says "4 waiting" for messages that are PENDING or PROCESSED; the line that explains it is `mail-table`: the counts, the
+ * waiting messages grouped by what their stored items say (`no-item`, or the item statuses), and the sender DOMAINS' funnels. States, statuses and counts only. */
+function logMailTable(summary, table, items) {
+    try {
+        const byMessage = new Map();
+        for (const item of items) { const id = String(item.messageId || ''); if (!id) continue; if (!byMessage.has(id)) byMessage.set(id, new Set()); byMessage.get(id).add(String(item.status || '?')); }
+        const waiting = {};
+        for (const row of table) {
+            if (row.state !== 'PENDING' && row.state !== 'PROCESSED') continue;
+            const statuses = byMessage.get(String(row.messageId));
+            const key = `${row.state}:${statuses ? [...statuses].sort().join('+') : 'no-item'}`;
+            waiting[key] = (waiting[key] || 0) + 1;
+        }
+        const senders = (summary.senders || []).slice(0, 8).map(entry => ({ domain: String(entry.address || '').split('@').pop().slice(0, 40), total: entry.total, filed: entry.INGESTED, waiting: (entry.PENDING || 0) + (entry.PROCESSED || 0), review: entry.REVIEW, held: entry.HELD, refused: entry.REFUSED }));
+        console.info(JSON.stringify({ evt: 'mail-table', total: summary.total, counts: summary.counts, waiting, senders, stuck: summary.stuckCount }));
+    } catch (_) { /* a log line never stops a sync */ }
+}
+
 /* THE STATE TABLE, KEPT HONEST. Every message the hook found is on record (mail-state.mjs); here the record is brought in
  * line with what the stored statements say — INGESTED only when every attachment of a message is filed — and whatever
  * is stuck is queued again. Advice: a failure here costs the screen a number, never a statement. */
@@ -1406,7 +1424,9 @@ async function reconcileMailTable(mailRef, items, now) {
         if (writes.length) await applyReconcile(mailRef, writes, table, { now });
         if (requeue.length) { try { await mailRef.set({ requeue }, { merge: true }); } catch (_) { /* found again next run */ } }
         const fresh = writes.length ? await readTable(mailRef) : table;
-        return { ...summarizeMailStates(fresh, { now }), requeued: requeue.length };
+        const summary = summarizeMailStates(fresh, { now });
+        logMailTable(summary, fresh, items);
+        return { ...summary, requeued: requeue.length };
     } catch (_) { return null; }
 }
 

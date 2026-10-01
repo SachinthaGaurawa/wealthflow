@@ -152,3 +152,21 @@ describe('an unattended collection does not stop after ten messages', () => {
         expect(one).toHaveBeenCalledTimes(1);   // a browser is there to follow it
     });
 });
+
+describe('the log says what "waiting" is made of', () => {
+    it('one mail-table line: counts, the waiting messages grouped by what their stored items say, and the sender domains — states and counts only', async () => {
+        const s = setup({ months: ['01', '02'] });
+        const emails = (id, state, extra = {}) => s.data.set(`${mailPath}/emails/${id}`, { messageId: id, state, reason: '', from: 'Statements <statements@nationstrust.com>', updatedMs: 1, v: 5, ...extra });
+        emails('msg01', 'INGESTED'); emails('msg02', 'PROCESSED');                     // msg02's item is filed: the table is behind
+        emails('ghost1', 'PROCESSED'); emails('ghost2', 'PENDING');                    // stored, waiting — and no item at all
+        s.data.set(`${mailPath}/items/m02`, { ...s.data.get(`${mailPath}/items/m02`), status: 'dismissed', filed: false });
+        const lines = [];
+        const spy = vi.spyOn(console, 'info').mockImplementation(line => lines.push(String(line)));
+        try { await run(s); } finally { spy.mockRestore(); }
+        const out = JSON.parse(lines.find(l => l.includes('"mail-table"')));
+        expect(out).toMatchObject({ evt: 'mail-table' });
+        expect(out.waiting['PROCESSED:no-item'] + out.waiting['PENDING:no-item']).toBeGreaterThanOrEqual(2);
+        expect(Array.isArray(out.senders) && out.senders.every(entry => !String(entry.domain).includes('@'))).toBe(true);
+        expect(lines.find(l => l.includes('"mail-table"'))).not.toMatch(/statements@|msg0|ghost/);
+    });
+});
