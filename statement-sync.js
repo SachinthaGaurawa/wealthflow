@@ -11,7 +11,7 @@ import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
 import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped } from './statement-emptiness.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
-import { settleStatement, resolveReview, transferEvidence, isZeroAmountLine } from './statement-ledger.mjs';
+import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine } from './statement-ledger.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT } from './wealthflow-statement-identity.js';
@@ -31,12 +31,12 @@ const PASSWORD_BATCH = 6;
 /* Bumped when the reader or the AI behind it has changed so that a statement it could not read earlier deserves another look. Version 4: the
  * AI roster was repaired (reasoning-model empties, retired models) and the model-free reader added — thirty-four HNB statements had used up
  * their three adaptive tries (and the six-hour wait between them) during the outage and sat in review as "not waiting to be processed again". */
-const WHOLE_REPLAY_VERSION = 7;
+const WHOLE_REPLAY_VERSION = 8;
 /* A statement that was PART-WAY through (some rows already filed) when it stopped is resumed, not re-mapped: it is read again from its first row
  * and every row the ledger already holds is checked against the new reading by its fingerprint, so a row is never filed twice and a statement
  * whose reading really did change is refused at the first row that differs (statement-cursor-or-content-changed) — nothing is guessed.
  * Bumped when a new reason for stopping part-way becomes resumable, so that statements stopped for it get one more chance. */
-const RESUME_VERSION = 2;       // 2: a replay no longer stops on rows the ledger holds worded differently but with the same money (statement-ledger.mjs)
+const RESUME_VERSION = 3;       // 2: a replay no longer stops on rows the ledger holds worded differently but with the same money; 3: rows the books lost are filed again by the replay, a date-only difference stands (statement-ledger.mjs)
 const RESUMABLE_ANYTIME = new Set(['statement-cursor-or-content-changed', 'statement-retries-exhausted']);
 const SAFE_WHOLE_REPLAY = new Set([
     'statement-layout-identity-needs-review',
@@ -571,7 +571,7 @@ export async function closeSettledReviews({ db, uid, limit = 20 }) {
 /* WHERE EVERY STATEMENT IS, IN ONE LINE OF THE PLATFORM LOG: per bank, how many are waiting, stopped or part-way, and why. It exists because
  * "the owner has to tap Map statement layout on NTB and AMEX" could only be guessed at from outside: the reason codes are the evidence. Bank
  * names, status words, reason codes and counts only — no amount, no merchant, no account number, no file name. Every few hours, never more. */
-const CENSUS_EVERY_MS = 3 * 3600 * 1000;
+const CENSUS_EVERY_MS = 30 * 60 * 1000;
 export async function statementCensus({ db, mailRef, log = console.info }) {
     const found = await mailRef.collection('items').where('status', 'in', ['needs_review', 'dead_letter', 'pending', 'processing']).limit(300).get();
     const byBank = {}, reasons = {}, partial = [];
@@ -842,9 +842,17 @@ function adaptiveWanted({ parsed, result, claimed, text, now }) {
 /* A rule-based reader names no currency, so the page is asked: the statement is held back only when it is clearly printed in
  * ANOTHER currency (printed at least twice and twice as often as any other) and never once in the account's own. A rupee
  * statement with a few foreign-purchase lines in dollars prints rupees too, and is not touched. */
+/* A STATEMENT IS IN ANOTHER CURRENCY ONLY IF IT SAYS SO WHERE IT COUNTS MONEY. discoverCurrency calls a lone three-letter word "high confidence" when it is
+ * the only code on the page, and several ISO codes are ordinary capitalised English — ALL, TOP, TRY, MAD, PEN, COP, GEL, RUB. A consolidated NTB statement
+ * (2026 FEB) with no currency printed beside its amounts and "ALL …" in its small print was held as "a different currency", and nothing from it was
+ * filed. Foreign money is printed beside the amounts (`USD 1,234.50`, `1,234.50 USD`) or against a currency label; a code that does neither, twice, is a word. */
 function currencyConflict(text, base) {
     const found = discoverCurrency(String(text || ''));
-    return Boolean(found.code) && found.confidence === 'high' && !sameCurrency(found.code, base) && !(found.counts && found.counts[String(base).toUpperCase()] > 0);
+    if (!found.code || found.confidence !== 'high' || sameCurrency(found.code, base) || (found.counts && found.counts[String(base).toUpperCase()] > 0)) return false;
+    const code = found.code.replace(/[^A-Z]/g, ''), body = String(text || '');
+    const labelled = new RegExp(`\\bcurrency\\b[^\\n]{0,24}\\b${code}\\b`, 'i').test(body);
+    const beside = (body.match(new RegExp(`\\b${code}\\s*[-:]?\\s*\\d[\\d,]*(?:\\.\\d+)?|\\d[\\d,]*(?:\\.\\d+)?\\s*${code}\\b`, 'g')) || []).length;
+    return labelled || beside >= 2;
 }
 const adaptiveHash = parsed => createHash('sha256').update(JSON.stringify([parsed.rows, parsed.reconciliation, parsed.layout?.accountLast4])).digest('hex');
 async function saveAdaptive(sourceRef, parsed, now) {
@@ -883,11 +891,19 @@ async function rememberLayout(db, uid, bank, text, parsed) {
 }
 
 /* The rows of a statement the ledger already holds (filed, skipped, duplicate or queued for the owner), by their place in the statement. */
-async function settledIndexes(db, uid, sourcePath) {
-    const found = await db.collection('users').doc(uid).collection('statementLedger').where('sourcePath', '==', sourcePath).get();
+/* WHAT THE LEDGER ALREADY HOLDS OF A STATEMENT BEING REPLAYED. A row it calls filed that the owner's books no longer hold — and nobody deleted — is
+ * not "held": it is superseded here, so the replay files it again like any new row (AMEX, 2026-10-01: ledger "filed" at row 12 and no record of it, the
+ * replay refused the whole statement on that row, over and over, while the transactions never reached the app). The ledger doc is overwritten by
+ * the new filing; a row the owner deleted (a tombstone) is never brought back. */
+async function replayLedger(db, uid, sourcePath, user, now = Date.now()) {
+    const ledger = db.collection('users').doc(uid).collection('statementLedger');
+    const found = await ledger.where('sourcePath', '==', sourcePath).get();
+    const entries = found.docs.map(doc => ({ id: doc.id, ...(doc.data() || {}) }));
+    const lost = new Set(lostFiledRows({ user, entries, now }));
+    for (const id of lost) await ledger.doc(id).set({ status: 'superseded_by_layout', supersededAt: now, supersededBy: 'row-heal' }, { merge: true });
     const indexes = new Set();
-    for (const doc of found.docs) { const entry = doc.data() || {}; if (Number.isSafeInteger(entry.index) && entry.status !== 'superseded_by_layout') indexes.add(entry.index); }
-    return indexes;
+    for (const entry of entries) if (Number.isSafeInteger(entry.index) && entry.status !== 'superseded_by_layout' && !lost.has(entry.id)) indexes.add(entry.index);
+    return { indexes, healed: lost.size };
 }
 const MAX_SLICES_PER_RUN = 40, SLICE_ROOM_MS = 6000, SLICE_AI_ROOM_MS = 33000;
 const BOARD_ROOM_MS = 17000;           // the board's own floor (breaker.guard 'board' minRoomMs)
@@ -1025,7 +1041,13 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
          * "needs review". A statement the parser itself proved (reconciled rows) is never retired by this. */
         const hasText = String(text || '').replace(/\s+/g, ' ').trim().length >= 40;
         const mailDidNotVouch = claimed.intent === 'suspect' || claimed.intent === 'unproven';
-        const selfProven = identity.verdict === VERDICT.STATEMENT || parserProof;
+        /* `suspect` MEANS THE DOCUMENT HAS TO PROVE ITSELF, and a vocabulary match (two words such as "account" and "period") is not proof: a bank's
+         * withholding-tax certificate has both, and three of them (NTB, 11823064_….pdf) sat in front of the owner as "rows could not be proven to add up". A
+         * document the mail did not vouch for is a statement only with a statement's own structure: the word, a balance, an opening or closing line, or
+         * movements read from it. Without any of those it is retired here, named, and never asked about. */
+        const structure = shapeOf(text);
+        const hasStatementStructure = structure.stmt || structure.bal || structure.open || structure.close || (Array.isArray(parsed?.rows) && parsed.rows.length > 0);
+        const selfProven = parserProof || (identity.verdict === VERDICT.STATEMENT && (claimed.intent !== 'suspect' || hasStatementStructure));
         const unvouched = mailDidNotVouch && !selfProven && hasText
             // `unproven` is retired only when the text has NO line with a date and an amount on it at all — a statement short enough
             // to have fewer than three movements, in a language the vocabulary does not know, still goes to the owner, never away
@@ -1087,12 +1109,13 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
             /* A STATEMENT BEING RESUMED (resumePartialStatements) is replayed from its first row: the rows the ledger already holds are
              * checked against this reading by fingerprint inside the settlement, and cost no classification here. */
-            const settledRows = (claimed.cursor || 0) === 0 && claimed.resumed ? await settledIndexes(db, uid, sourceRef.path) : null;
+            const replayed = (claimed.cursor || 0) === 0 && claimed.resumed ? await replayLedger(db, uid, sourceRef.path, user) : null;
+            const settledRows = replayed ? replayed.indexes : null;
             /* THE DOCUMENT IS READ ONCE PER INVOCATION, NOT ONCE PER TEN ROWS. Each slice used to release the statement and the next
              * invocation started again from the vault, the mailbox, the attachment and the PDF — for every ten rows. The rows are in hand:
              * the next slice is claimed again (the lease is the guard, exactly as before) and settled at once, for as long as the
              * invocation has room (a slice that needs the AI board needs room for its two calls). */
-            const total = { filed: 0, duplicates: 0, skipped: 0, review: 0 };
+            const total = { filed: 0, duplicates: 0, skipped: 0, review: 0, dateShifted: 0 };
             let slices = 0;
             for (;;) {
                 await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
@@ -1114,7 +1137,8 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 claimed = again;
             }
             outcome = { ...outcome, ...total };
-            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules' });
+            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules',
+                ...(replayed?.healed ? { healed: replayed.healed } : {}), ...(total.dateShifted ? { dateShifted: total.dateShifted } : {}) });
         }
     } catch (error) {
         if (error?.defer) {
@@ -1417,9 +1441,6 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (frontRoom()) { const whole = await recoverWholeStatementFailures({ db, uid, limit: recoveryLimit }); wholeRecovered = whole.recovered; wholeMore = whole.more; }
         if (frontRoom()) { const resumed = await resumePartialStatements({ db, uid, limit: recoveryLimit }); wholeRecovered += resumed.resumed; wholeMore = wholeMore || resumed.more; }
         if (frontRoom()) await closeSettledReviews({ db, uid, limit: 20 });
-        if (frontRoom() && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
-            try { await statementCensus({ db, mailRef }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
-        }
         if (frontRoom()) categoriesRepaired = (await repairStatementCategories({ db, uid })).total;
         if (frontRoom()) { const consensus = await recoverConsensusFailures({ db, uid, limit: recoveryLimit }); consensusRecovered = consensus.recovered; consensusMore = consensus.more; }
         if (frontRoom()) { const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit }); revokedRecovered = revoked.recovered; revokedMore = revoked.more; }
@@ -1441,6 +1462,12 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         attempted += 1;
         if (step.status !== 'retry_pending' && step.status !== 'dead_letter') processed += 1;
         last = step;
+    }
+    /* WHERE EVERY STATEMENT IS, once in a while, from the one place that always gets to run: the front pass is skipped for lack of room whenever the mailbox
+     * scan is slow (`frontIncomplete`, every time on 2026-10-01), so a census placed there never appeared in the log and the owner's twelve reviews could only
+     * be guessed at. Here it costs one query when the invocation has time to spare. */
+    if (Date.now() - start < budgetMs - 8000 && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
+        try { await statementCensus({ db, mailRef }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
     }
     const [pending, processing] = await Promise.all([
         mailRef.collection('items').where('status', '==', 'pending').limit(200).get(),

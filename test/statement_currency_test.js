@@ -393,6 +393,17 @@ describe('a rule-based reader names no currency, so the page is asked', () => {
         const w = world({ stmt, extract: none });
         expect((await w.drain()).status).toBe('filed');
     });
+    it('a currency code that is an ordinary English word in the small print ("ALL …") is a word, not a currency (NTB consolidated FEB, 2026-10-01)', async () => {
+        const stmt = statement(66, { code: 'LKR', head: '', n: 8, extraHead: ['ALL transactions are subject to the bank\'s terms and conditions'] });
+        const w = world({ stmt, extract: none });
+        expect((await w.drain()).status).toBe('filed');
+    });
+    it('…while a foreign code printed beside the amounts still holds the statement back, labelled or not', async () => {
+        const beside = world({ stmt: statement(67, { code: 'USD', head: '', symbol: 'USD ', n: 8 }), extract: none });
+        const out = await beside.drain();
+        expect(out.status).toBe('needs_review');
+        expect(beside.source()).toMatchObject({ reviewReason: 'statement-currency-differs', filed: false });
+    });
     it('a rupee statement that mentions a few dollar lines (foreign purchases) is a rupee statement', async () => {
         const stmt = statement(62, { code: 'LKR', n: 8, extraHead: ['Foreign purchases are shown in USD at the card rate'] });
         const w = world({ stmt, extract: none });

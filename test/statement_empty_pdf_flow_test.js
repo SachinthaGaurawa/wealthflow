@@ -26,6 +26,10 @@ const layouts = {
      * balance and nothing moved, for thirty-four months. */
     real: textPdf(['1', 'MRS. SILVA A B C', 'NO 12/3,TEMPLE ROAD,KANDY', 'A/C 074020123488', 'LKR', 'person@example.com HNB SMART ACCOUNT', '01.09.26 B/F 0.00', '0 0', '30-09-2026 0.00',
         'THE ACCOUNT BALANCE IS SHOWN ABOVE. REPORT ANY ERROR TO 0112 462 462', 'THIS IS A COMPUTER GENERATED DOCUMENT E&OE.']),
+    /* NTB's monthly withholding-tax certificate (11823064_….pdf), as the production log's layout skeleton of 2026-10-01 describes it: no "statement", no balance,
+     * no opening or closing line, no transaction — a certificate number, the bank, the depositor, an interest period, one interest line and a tax rate. */
+    taxCertificate: textPdf(['Certificate No: NTB/2026/09/12345678', 'Tax Deduction Certificate', 'Name and Address of the Bank: Nations Trust Bank PLC, No.242, Union Place, Colombo 02', 'Name of the Deposit Holder: A B PERERA', 'National Identity Card No: 123456789V', 'Tax Identification No:',
+        'Interest for Period : from 01-Sep-2026 to 30-Sep-2026', 'Total amount of Interest: LKR 1,234.56', 'Account Account Account Interest Tax', 'Type Number Rate Deducted', 'Savings 123456789012 5% 61.73 1,234.56']),
     realMoved: textPdf(['1', 'MRS. SILVA A B C', 'NO 12/3,TEMPLE ROAD,KANDY', 'A/C 074020123488', 'LKR', 'person@example.com HNB SMART ACCOUNT', '01.09.26 B/F 0.00', '0 0', '30-09-2026 1,250.00',
         'THE ACCOUNT BALANCE IS SHOWN ABOVE. REPORT ANY ERROR TO 0112 462 462', 'THIS IS A COMPUTER GENERATED DOCUMENT E&OE.']),
 };
@@ -105,6 +109,26 @@ describe('a statement with no transactions is closed when — and only when — 
         await s.drain();
         expect(s.source()).toMatchObject({ status: 'needs_review', reviewReason: 'statement-empty-needs-confirmation' });
         expect(s.reviews()).toHaveLength(1); expect(s.reviews()[0]).toMatchObject({ index: -1, reason: 'statement-empty-needs-confirmation' });
+    });
+});
+
+describe('a tax certificate the mail only "suspects" is retired, not put to the owner as a statement that could not be proven (three NTB PDFs, 2026-10-01)', () => {
+    it('is retired as a non-statement when the mail did not vouch for it and it has no statement structure', async () => {
+        const s = setup('taxCertificate', { source: { bank: 'NTB', intent: 'suspect' } });
+        await s.drain();
+        expect(s.source()).toMatchObject({ status: 'rejected_non_statement', filed: false });
+        expect(s.source().rejectionReason).toMatch(/does not prove itself a statement/);
+        expect(s.reviews()).toEqual([]);
+    });
+    it('is still never retired when the mail itself vouched for it (a statement with this shape stays the owner\'s to judge)', async () => {
+        const s = setup('taxCertificate', { source: { bank: 'NTB', intent: 'stated' } });
+        await s.drain();
+        expect(s.source().status).not.toBe('rejected_non_statement');
+    });
+    it('a real statement that the mail suspects is NOT retired: its own structure proves it', async () => {
+        const s = setup('agree', { source: { intent: 'suspect' } });
+        await s.drain();
+        expect(s.source().status).not.toBe('rejected_non_statement');
     });
 });
 

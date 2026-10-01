@@ -81,11 +81,28 @@ function makeRecord(row, decision, context, id, now) {
  * could never be re-read the old way. What a filed row IS is its date, its amount and its direction (what the owner's books carry); when
  * those agree at the same place in the same statement it is the same transaction, counted as the duplicate it is, and nothing is
  * filed twice. When they do not agree, the statement really changed and is still refused — now with the reason named. */
+export const LOST_ROW_WINDOW_MS = 45 * 86400000;
+const ROW_MODULES = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'];
+const outsideWindow = (entry, user, now) => { const settled = Number(entry.settledAt) || 0, wiped = Number(user?._wipedAt) || 0; return !settled || settled <= wiped || now - settled > LOST_ROW_WINDOW_MS; };
+const tombstoned = (user, module, id) => Boolean(user?._tomb && typeof user._tomb === 'object' && user._tomb[module]?.[id] != null);
+/* ROWS THE LEDGER CALLS FILED THAT THE OWNER'S DATA NO LONGER HOLDS, and nobody deleted: a device that had not yet seen them pushed its own copy of
+ * the list over them. (A row the owner deleted has a tombstone; rows filed before a factory reset, or older than the tombstones' life, cannot be told
+ * from a loss and are left alone.) A statement being replayed files these again — it is how "AMEX: ledger says filed, the app shows nothing" ends. */
+export function lostFiledRows({ user, entries, now = Date.now() }) {
+    const have = {}, lost = [];
+    for (const entry of entries) {
+        if (entry.status !== 'filed' || !ROW_MODULES.includes(entry.module) || outsideWindow(entry, user, now)) continue;
+        have[entry.module] ||= new Set((Array.isArray(user?.[entry.module]) ? user[entry.module] : []).map(record => record && record.id));
+        if (have[entry.module].has(entry.id) || tombstoned(user, entry.module, entry.id)) continue;
+        lost.push(entry.id);
+    }
+    return lost;
+}
 const moneyOf = item => (item ? { date: String(item.date || ''), cents: amountCents(Number(item.amount)), direction: String(item.direction || '') } : null);
 function compareMoney(was, now) {
     if (!was || was.cents == null || !was.date) return 'no-record';
     const differs = [was.date !== now.date && 'date', was.cents !== now.cents && 'amount', was.direction && now.direction && was.direction !== now.direction && 'direction'].filter(Boolean);
-    return differs.length ? differs.join('+') : 'same';
+    return differs.length ? differs.join('+') : 'same';     // 'date' alone: see settleStatement
 }
 function filedRecord(user, sourcePath, index, id, matchedId) {
     for (const key of ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments']) {
@@ -98,9 +115,14 @@ function filedRecord(user, sourcePath, index, id, matchedId) {
     }
     return null;
 }
-async function settledRowVerdict({ entry, row, user, sourcePath, index, id, readReview }) {
+async function settledRowVerdict({ entry, row, user, sourcePath, index, id, readReview, at = Date.now() }) {
     const now = { date: String(row?.date || ''), cents: amountCents(row?.amount), direction: String(row?.direction || '') };
-    if (entry.status === 'filed' || entry.status === 'duplicate') return compareMoney(moneyOf(filedRecord(user, sourcePath, index, id, entry.matchedId)), now);
+    if (entry.status === 'filed' || entry.status === 'duplicate') {
+        const found = filedRecord(user, sourcePath, index, id, entry.matchedId);
+        // no record to compare: the owner deleted it (a tombstone), or it is too old to tell a deletion from a loss — it stays as the ledger has it
+        if (!found) return entry.status === 'filed' && (tombstoned(user, entry.module, id) || outsideWindow(entry, user, at)) ? 'same' : 'no-record';
+        return compareMoney(moneyOf(found), now);
+    }
     if (entry.status === 'skipped') return isPhantomRow(row) || isZeroAmountLine(row) || transferEvidence(row) ? 'same' : 'skipped-then-a-transaction';
     if (entry.status === 'review') return compareMoney(moneyOf((await readReview())?.row), now);
     return 'unknown-status';
@@ -132,7 +154,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         const user = structuredClone(userSnap.data() || {});
         const changes = {};
         const allRecords = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
-        const outcome = { filed: 0, duplicates: 0, skipped: 0, review: 0, cursor: cursor + rows.length };
+        const outcome = { filed: 0, duplicates: 0, skipped: 0, review: 0, dateShifted: 0, cursor: cursor + rows.length };
         const writes = [];
         
         for (let offset = 0; offset < rows.length; offset++) {
@@ -145,8 +167,12 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
                 const entry = ledgerSnaps[offset].data() || {};
                 if (entry.fingerprint !== fingerprint) {
-                    const verdict = await settledRowVerdict({ entry, row, user, sourcePath: sourceRef.path, index, id, readReview: async () => (await tx.get(reviewRefs[offset])).data() });
-                    if (verdict !== 'same') throw Object.assign(new Error('statement-cursor-or-content-changed'), { detail: { index, ledger: String(entry.status || ''), differs: verdict } });
+                    const verdict = await settledRowVerdict({ entry, row, user, sourcePath: sourceRef.path, index, id, at: now, readReview: async () => (await tx.get(reviewRefs[offset])).data() });
+                    /* THE SAME AMOUNT, THE SAME WAY, AT THE SAME PLACE, ON ANOTHER DATE is the same row read with a different date (NTB, 2026-10-01: row 54 of 56,
+                     * the only difference between two readings of one statement whose books balance to the cent). It is not filed a second time and the owner's
+                     * record is not rewritten; it is counted so the log shows it. A different amount or direction is still a statement that changed. */
+                    if (verdict === 'date') outcome.dateShifted++;
+                    else if (verdict !== 'same') throw Object.assign(new Error('statement-cursor-or-content-changed'), { detail: { index, ledger: String(entry.status || ''), differs: verdict } });
                 }
                 outcome.duplicates++; continue;
             }
