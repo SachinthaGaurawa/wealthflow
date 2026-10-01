@@ -51,11 +51,12 @@
 
 import {
     planMessage, planWrite, planHold, repairManifest, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
-    refusalOf, INTAKE_VERSION, REJECT, HOLDABLE, filenameStem,
+    refusalOf, securityOf, INTAKE_VERSION, REJECT, HOLDABLE, filenameStem,
 } from './wealthflow-mail-ingest.mjs';
 import { normalizeList, policyFrom, recordSighting, approvedClauses, approvedDomainClauses } from './wealthflow-mail-senders.mjs';
 export { approvedDomainClauses as auditClauses };
-import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld, REFUSED_FIELD, mergeRefused, refusedOf } from './gmail-link.mjs';
+import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld, REFUSED_FIELD, mergeRefused, refusedOf, SECURITY_FIELD, mergeSecurity } from './gmail-link.mjs';
+import { MAIL_STATE, logStates, firstUnsettled, stateForPlan } from './mail-state.mjs';
 import { getInboxDb } from './inbox-store.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { createHash } from 'node:crypto';
@@ -254,15 +255,18 @@ export async function reconcileRecentMessages(token, f, clauses, {
 export const AUDIT_EVERY_MS = 3 * 60 * 60 * 1000;
 export const AUDIT_RETRY_MS = 5 * 60 * 1000;
 export const AUDIT_MAX_IDS = 1500;
-export async function listAllMessages(token, f, clauses, { pageSize = 500, maxPages = 40, budgetMs = 20000 } = {}) {
-    if (!Array.isArray(clauses) || !clauses.length) return { ok: true, ids: [], complete: true };
+export async function listAllMessages(token, f, clauses, { pageSize = 500, maxPages = 40, budgetMs = 20000, startToken = '' } = {}) {
+    if (!Array.isArray(clauses) || !clauses.length) return { ok: true, ids: [], complete: true, next: '' };
     const query = `has:attachment {${clauses.join(' ')}}${NOT_TRASH}`;
     const base = `${GMAIL}/messages?maxResults=${pageSize}&includeSpamTrash=true&q=${encodeURIComponent(query)}`;
     const ids = new Set(), seen = new Set(), deadline = Date.now() + budgetMs;
-    let pageToken = '';
+    let pageToken = typeof startToken === 'string' ? startToken : '';
+    /* RESUMABLE. `next` is the page token to carry on from when the budget or the page limit ends the run early, so a
+     * mailbox of any size is walked in bounded pieces — each run costs at most `maxPages` pages and `budgetMs` — and
+     * the walk is never restarted from the newest message, which is what used to starve everything behind page 40. */
     for (let page = 0; page < maxPages; page += 1) {
         // One serverless request has a minute; a slow Gmail must cost the audit its completeness, not the whole sync.
-        if (Date.now() > deadline) break;
+        if (Date.now() > deadline) return { ok: true, ids: [...ids], complete: false, next: pageToken };
         let out;
         try {
             const r = await f(base + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), { headers: authed(token) });
@@ -271,11 +275,11 @@ export async function listAllMessages(token, f, clauses, { pageSize = 500, maxPa
             for (const m of out.messages || []) if (m && m.id) ids.add(String(m.id));
         } catch (_) { return { ok: false, reason: 'audit-listing-unavailable' }; }
         pageToken = out.nextPageToken;
-        if (!pageToken) return { ok: true, ids: [...ids], complete: true };
-        if (typeof pageToken !== 'string' || seen.has(pageToken)) break;
+        if (!pageToken) return { ok: true, ids: [...ids], complete: true, next: '' };
+        if (typeof pageToken !== 'string' || seen.has(pageToken)) return { ok: true, ids: [...ids], complete: false, next: '' };
         seen.add(pageToken);
     }
-    return { ok: true, ids: [...ids], complete: false };
+    return { ok: true, ids: [...ids], complete: false, next: pageToken };
 }
 
 async function storedMessageIds(stateRef) {
@@ -415,6 +419,9 @@ async function ingestMailbox(db, note, env, f, res) {
             if (!overlap.ok) return j(res, 503, { ok: false, error: overlap.reason });
             listed.ids = [...new Set([...(listed.ids || []), ...(overlap.ids || [])])];
         }
+        /* WHAT THE STATE TABLE SAYS WAS LEFT UNFINISHED: a message that was found and logged but whose attempt died (a
+         * timeout, a lock, a crashed worker) comes back here, as ordinary mail — the same rules, nothing forced. */
+        if (Array.isArray(state.requeue) && state.requeue.length) listed.ids = [...new Set([...(listed.ids || []), ...state.requeue.map(String).filter(Boolean)])];
         /* THE WHOLE-HISTORY AUDIT. Every few hours, and once after every change to the
          * intake rules, the mailbox's entire history from the approved banks is
          * listed and compared with what is already accounted for — stored, or
@@ -422,11 +429,18 @@ async function ingestMailbox(db, note, env, f, res) {
          * It is added to the collection rather than replacing it, and a listing
          * that fails only postpones the audit: it never stops the mail from
          * arriving. */
+        /* RESUMABLE: `auditCursor` is where the last run stopped walking the listing. While it exists the audit is due
+         * at once, so a mailbox too large for one run is finished over several — each bounded — instead of restarting
+         * from the newest message every time and never reaching the rest. */
+        // `token` may be empty: that is "still walking, and the next window is the first one again" (a window with more new mail than one collection stages).
+        const cursor = state.auditCursor && state.auditCursor.v === INTAKE_VERSION && typeof state.auditCursor.token === 'string' ? state.auditCursor : null;
         const auditDue = senderClauses.length > 0
-            && (senderCatchup || Date.now() - (Number(state.lastAuditMs) || 0) >= (state.auditVersion === INTAKE_VERSION && state.historyAudit?.complete !== false ? AUDIT_EVERY_MS : AUDIT_RETRY_MS));
+            && (senderCatchup || !!cursor || Date.now() - (Number(state.lastAuditMs) || 0) >= (state.auditVersion === INTAKE_VERSION && state.historyAudit?.complete !== false ? AUDIT_EVERY_MS : AUDIT_RETRY_MS));
         let audit = null, viaFrom = 0;
         if (auditDue) {
-            const everything = await listAllMessages(token, f, approvedDomainClauses(senderList));
+            const everything = await listAllMessages(token, f, approvedDomainClauses(senderList), { startToken: cursor ? cursor.token || '' : '', pageSize: Math.max(1, Number(env.WF_AUDIT_PAGE_SIZE) || 500), maxPages: Math.max(1, Number(env.WF_AUDIT_MAX_PAGES) || 40) });
+            // A page token Gmail no longer honours: the walk starts again from the top (everything already settled is skipped cheaply).
+            if (!everything.ok && cursor && cursor.token && everything.status === 400) { try { await stateRef.set({ auditCursor: null }, { merge: true }); } catch (_) { /* tried again next run */ } }
             if (everything.ok) {
                 let known = new Set();
                 try { known = await storedMessageIds(stateRef); } catch (_) { known = null; }
@@ -436,13 +450,26 @@ async function ingestMailbox(db, note, env, f, res) {
                     // great deal of bank mail cannot keep the audit on the same newest messages for ever.
                     if (state.auditSeen && state.auditSeen.v === INTAKE_VERSION && Array.isArray(state.auditSeen.ids)) for (const id of state.auditSeen.ids) known.add(String(id));
                     const have = new Set(listed.ids || []);
-                    const fresh = everything.ids.filter(id => !known.has(id) && !have.has(id));
+                    let fresh = everything.ids.filter(id => !known.has(id) && !have.has(id));
                     const cap = Math.max(1, Number(env.WF_AUDIT_MAX_IDS) || AUDIT_MAX_IDS);
+                    /* THE STATE TABLE IS THE MEMORY. A message with a settled record under these rules has been judged, however
+                     * many there are and however old — no cap on a list inside one document stands between the audit and
+                     * the oldest mail. Only as many are looked up as it takes to fill one collection (plus one, to know
+                     * whether more remain), so the cost of a run does not grow with the size of the mailbox. A lookup that
+                     * fails only means the message is judged again. */
+                    const beforeTable = fresh.length;
+                    let settledSeen = 0;
+                    try { fresh = await firstUnsettled(stateRef, fresh, cap + 1, { version: INTAKE_VERSION }); settledSeen = fresh.settledSeen || 0; } catch (_) { /* judged again, never skipped */ }
                     const take = fresh.slice(0, cap);
                     viaFrom = (listed.ids || []).length;
                     listed.ids = [...(listed.ids || []), ...take];
-                    audit = { v: INTAKE_VERSION, listed: everything.ids.length, accounted: everything.ids.length - fresh.length, staged: take.length, taken: 0,
-                        complete: everything.complete && fresh.length <= cap };
+                    const windowDone = fresh.length <= cap;
+                    audit = { v: INTAKE_VERSION, listed: (cursor ? Number(cursor.listed) || 0 : 0) + everything.ids.length, accounted: (everything.ids.length - beforeTable) + settledSeen, staged: take.length, taken: 0,
+                        // where the NEXT run carries on: after this window once every fresh id in it is staged, else in this window again
+                        next: windowDone ? String(everything.next || '') : (cursor ? cursor.token || '' : ''),
+                        // another run is needed: there are more pages, or this window still has fresh mail left to stage
+                        again: !windowDone || (!everything.complete && !!everything.next),
+                        complete: everything.complete && windowDone };
                 }
             }
         }
@@ -463,7 +490,7 @@ async function ingestMailbox(db, note, env, f, res) {
                 const next = asked.length
                     ? { ...candidate, ids: [...new Set([...candidate.ids, ...asked])], forced: asked }
                     : candidate;
-                tx.set(stateRef, { pendingCollection: next, ...(asked.length ? { takeQueue: [] } : {}) }, { merge: true });
+                tx.set(stateRef, { pendingCollection: next, ...(asked.length ? { takeQueue: [] } : {}), ...(Array.isArray(current.data()?.requeue) && current.data().requeue.length ? { requeue: [] } : {}) }, { merge: true });
                 return next;
             });
         } catch (_) { return j(res, 503, { ok: false, error: 'collection staging failed' }); }
@@ -472,7 +499,12 @@ async function ingestMailbox(db, note, env, f, res) {
 
     const stored = [];
     const notable = [];
-    const refusedNow = [], takenIds = [], seenNow = [];
+    const refusedNow = [], takenIds = [], seenNow = [], securityNow = [], outcomesNow = [];
+    /* LOGGED BEFORE ANYTHING IS FETCHED OR READ. From here a crash, a timeout or a database lock cannot lose these
+     * messages: each has a record, and whatever never reaches PROCESSED is queued again from it (see mail-state.mjs). */
+    const logged = await logStates(db, stateRef, pending.ids.slice(pending.cursor, batchEnd).map(id => ({ messageId: String(id), state: MAIL_STATE.PENDING, v: INTAKE_VERSION })));
+    // Nothing is fetched or read that is not on record first. The cursor has not moved, so the same batch comes round again.
+    if (logged.ok === false) return j(res, 503, { ok: false, error: 'state log unavailable', collectionPending: true });
     const forcedIds = new Set(Array.isArray(pending.forced) ? pending.forced.map(String) : []);
     let stems = null;
     for (const [offset, id] of pending.ids.slice(pending.cursor, batchEnd).entries()) {
@@ -482,7 +514,7 @@ async function ingestMailbox(db, note, env, f, res) {
         try {
             const r = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?format=full`, { headers: authed(token) });
             // Deleted mail no longer exists, so nothing about it is outstanding any more.
-            if (r.status === 404) { takenIds.push(String(id)); continue; }
+            if (r.status === 404) { takenIds.push(String(id)); outcomesNow.push({ messageId: String(id), state: MAIL_STATE.REFUSED, reason: 'message-deleted', v: INTAKE_VERSION }); continue; }
             if (!r.ok) return j(res, 503, { ok: false, error: 'message fetch failed' });
             msg = await r.json();
         } catch (_) { return j(res, 503, { ok: false, error: 'message fetch failed' }); }
@@ -515,6 +547,11 @@ async function ingestMailbox(db, note, env, f, res) {
         if (!plan.ok) {
             const refusal = refusalOf(plan, msg, policy);
             if (refusal) refusedNow.push(refusal);
+            /* FORGERY IS LOGGED, NOT OFFERED BACK: what claimed to be the owner's bank and failed SPF / DKIM / DMARC. */
+            const breach = securityOf(plan, msg);
+            if (breach) securityNow.push(breach);
+            const verdictState = stateForPlan(plan);
+            if (verdictState) outcomesNow.push({ messageId: String(id), ...verdictState, from: plan.from, subject: plan.subject, receivedMs: Number(msg.internalDate) || null, v: INTAKE_VERSION });
             if (fromAudit && !HOLDABLE.has(plan.reason)) seenNow.push(String(id));
             if (isWorthTelling(plan)) {
                 notable.push({ bank: plan.bank || null, reason: plan.reason, text: REJECT_TEXT[plan.reason] });
@@ -531,6 +568,8 @@ async function ingestMailbox(db, note, env, f, res) {
         }
 
         takenIds.push(String(id));
+        const keptKeys = [], keptSha = [];
+        let refusedWrite = '';
         for (const item of plan.items) {
             const ref = db.collection(MAIL_ROOT).doc(userKey).collection('items').doc(item.key);
             try {
@@ -540,6 +579,7 @@ async function ingestMailbox(db, note, env, f, res) {
                     const patch = repairManifest(existing.data(), item, { uid: state.uid || '' });
                     if (Object.keys(patch).length) await ref.set(patch, { merge: true });
                     stored.push({ key: item.key, duplicate: true });
+                    keptKeys.push(item.key);
                     continue;
                 }
                 if (item.legacyKey && item.legacyKey !== item.key) {
@@ -549,6 +589,7 @@ async function ingestMailbox(db, note, env, f, res) {
                         const patch = repairManifest(old.data(), item, { uid: state.uid || '' });
                         if (Object.keys(patch).length) await oldRef.set(patch, { merge: true });
                         stored.push({ key: item.legacyKey, duplicate: true });
+                        keptKeys.push(item.legacyKey);
                         continue;
                     }
                 }
@@ -576,12 +617,15 @@ async function ingestMailbox(db, note, env, f, res) {
                     /* See gmail-scan.js: computed since the beginning, stored
                      * by nothing until now. */
                     known: item.known !== false,
+                    /* stated | unproven | suspect — what the mail said the attachment was; the worker holds the DOCUMENT to it. */
+                    intent: item.intent || 'stated',
                     from: item.from || '',
                 });
                 if (!write.ok) {
                     notable.push({ bank: item.bank, reason: write.reason, text: REJECT_TEXT[write.reason] });
                     const refusal = refusalOf({ ok: false, reason: write.reason, from: item.from, subject: item.subject, bank: item.bank }, msg, policy);
                     if (refusal) { refusedNow.push(refusal); takenIds.pop(); }
+                    refusedWrite = String(write.reason || 'refused');
                     continue;
                 }
 
@@ -606,13 +650,19 @@ async function ingestMailbox(db, note, env, f, res) {
                     return true;
                 });
                 stored.push({ key: item.key, bank: item.bank, chunked: write.chunked, duplicate: !created });
+                keptKeys.push(item.key);
+                if (write.manifest && write.manifest.contentSha256) keptSha.push(write.manifest.contentSha256);
             } catch (_) {
                 // A failure on ONE attachment is retryable; the manifest was not
                 // written, so the device will never see a partial statement.
                 return j(res, 500, { ok: false, error: 'store failed', stored: stored.length });
             }
         }
+        outcomesNow.push(refusedWrite && !keptKeys.length
+            ? { messageId: String(id), state: MAIL_STATE.REFUSED, reason: refusedWrite, from: plan.from, subject: plan.subject, receivedMs: Number(msg.internalDate) || null, v: INTAKE_VERSION }
+            : { messageId: String(id), state: MAIL_STATE.PROCESSED, items: keptKeys, sha: keptSha, from: plan.from, subject: plan.subject, receivedMs: Number(msg.internalDate) || null, via, v: INTAKE_VERSION });
     }
+    await logStates(db, stateRef, outcomesNow);
 
     try {
         const updates = {
@@ -648,6 +698,7 @@ async function ingestMailbox(db, note, env, f, res) {
                 const after = mergeRefused(before, refusedNow, takenIds);
                 if (JSON.stringify(after) !== JSON.stringify(Array.isArray(before) ? before : [])) updates[REFUSED_FIELD] = after;
             }
+            if (securityNow.length) updates[SECURITY_FIELD] = mergeSecurity(current.data()?.[SECURITY_FIELD], securityNow);
             if (seenNow.length) {
                 const prior = current.data()?.auditSeen;
                 const base = prior && prior.v === INTAKE_VERSION && Array.isArray(prior.ids) ? prior.ids : [];
@@ -665,6 +716,8 @@ async function ingestMailbox(db, note, env, f, res) {
                     refused: Array.isArray(finalRefused) ? finalRefused.length : 0, held: Array.isArray(finalHeld) ? finalHeld.length : 0, complete: audit.complete === true };
                 // An audit that could not finish is tried again soon, not daily, and is never recorded as done.
                 updates.lastAuditMs = Date.now();
+                // Carry on from the next page while there is one; done means the whole history was walked.
+                updates.auditCursor = audit.again ? { v: audit.v, token: audit.next || '', listed: audit.listed, at: Date.now() } : null;
                 if (audit.complete) updates.auditVersion = audit.v;
             }
             if (complete && Array.isArray(pending.senderClauses)) updates.collectedSenderClauses = pending.senderClauses;

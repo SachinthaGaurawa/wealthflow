@@ -18,7 +18,7 @@ export function reviewSummary(){
 export function coverageSummary(){
     if(!coverage)return null;
     const tally=(list,key)=>(list||[]).reduce((o,e)=>{o[e[key]]=(o[e[key]]||0)+1;return o},{});
-    return {missing:coverage.missing||0,closedEmpty:(coverage.empties||[]).length,at:coverage.at||0,audit:coverage.audit||null,refused:(coverage.refused||[]).map(r=>r.reason),log:{status:tally(coverage.log,'status'),math:tally(coverage.log,'math')},series:(coverage.series||[]).map(s=>({label:s.label||s.bank||'',first:s.first,last:s.last,missing:s.missing||[],gaps:(s.gaps||[]).map(g=>({month:g.month,outcomes:(g.mail||[]).map(m=>m.outcome)}))}))};
+    return {missing:coverage.missing||0,closedEmpty:(coverage.empties||[]).length,at:coverage.at||0,audit:coverage.audit||null,refused:(coverage.refused||[]).map(r=>r.reason),security:(coverage.security||[]).length,table:coverage.table?{total:coverage.table.total,counts:coverage.table.counts}:null,log:{status:tally(coverage.log,'status'),math:tally(coverage.log,'math')},series:(coverage.series||[]).map(s=>({label:s.label||s.bank||'',first:s.first,last:s.last,missing:s.missing||[],gaps:(s.gaps||[]).map(g=>({month:g.month,outcomes:(g.mail||[]).map(m=>m.outcome)}))}))};
 }
 const GAP_TEXT={missed:'found in Gmail — being filed now',stored:'already stored','a-new-address-at-a-bank-you-approved':'a new sender address — approve it in Settings → Statement senders','sender-not-on-your-list':'sender not on your list — approve it in Settings → Statement senders','dkim-did-not-pass':'the sender could not be verified','signed-by-a-different-domain':'the sender could not be verified','the-attachment-is-not-a-bank-statement':'the attachment looked like an invoice or receipt','no-pdf-attachment':'no statement attached','attachment-over-the-size-ceiling':'attachment too large'};
 
@@ -431,6 +431,14 @@ function drawReview() {
     const note = (parent, text) => { const p = document.createElement('p'); p.style.cssText = 'margin:6px 0 0;font-size:13px;'; p.textContent = text; parent.appendChild(p); return p; };
     const a = coverage?.audit;
     if (a?.at) note(panel('Mailbox history check'), `${new Date(a.at).toLocaleString()} · ${a.listed} bank email${a.listed === 1 ? '' : 's'} with attachments found · ${a.accounted} already accounted for · ${a.taken} added now · ${a.refused} refused · ${a.held} waiting on a sender decision${a.complete ? '' : ' · still checking'}`);
+    const table = coverage?.table;
+    if (table?.total) {
+        const C = table.counts || {};
+        const box = panel(`Every email from your banks · ${table.total}`);
+        note(box, `${C.INGESTED || 0} in your ledger · ${C.PROCESSED || 0} stored, being read · ${C.REVIEW || 0} in review · ${C.PENDING || 0} just found · ${C.HELD || 0} waiting on a sender decision · ${C.REFUSED || 0} not statements · ${C.FAILED_VERIFICATION || 0} forged`);
+        for (const r of table.senders || []) note(box, `${r.address}: ${r.total} email${r.total === 1 ? '' : 's'} — ${r.INGESTED} ingested${r.PROCESSED ? `, ${r.PROCESSED} being read` : ''}${r.REVIEW ? `, ${r.REVIEW} in review` : ''}${r.HELD ? `, ${r.HELD} held` : ''}${r.REFUSED ? `, ${r.REFUSED} not statements` : ''}${r.FAILED_VERIFICATION ? `, ${r.FAILED_VERIFICATION} forged` : ''}`);
+        if (table.stuckCount) note(box, `${table.stuckCount} not finished yet — each is retried automatically.`);
+    }
     if (coverage?.refused?.length) {
         const refusedBox = panel(`${coverage.refused.length} email${coverage.refused.length === 1 ? '' : 's'} from your banks that were not taken`);
         for (const r of coverage.refused) {
@@ -440,6 +448,11 @@ function drawReview() {
             take.onclick = async () => { take.disabled = true; try { await request('/api/statement-sync', 'POST', { action: 'take-refused', messageId: r.messageId }); r.asked = true; say('Queued — it will be read and must reconcile before it is filed.', 'info'); drawReview(); await sync(); } catch { take.disabled = false; say('That email could not be queued.', 'error'); } };
             line.appendChild(take);
         }
+    }
+    if (coverage?.security?.length) {
+        const box = panel(`${coverage.securityCount || coverage.security.length} email${(coverage.securityCount || coverage.security.length) === 1 ? '' : 's'} blocked as forged or unauthenticated`);
+        note(box, 'These claimed to come from your bank but failed the sender checks. They were dropped and nothing in them was read. They cannot be taken.');
+        for (const r of coverage.security) note(box, `${r.receivedMs ? new Date(r.receivedMs).toLocaleDateString() : ''} · ${r.from} · ${r.subject}: ${r.text}${r.checks?.why ? ' (' + r.checks.why + ')' : ''}`);
     }
     const holes = (coverage?.series || []).filter(s => s.missing?.length);
     if (holes.length) {

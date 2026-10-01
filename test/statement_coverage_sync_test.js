@@ -9,9 +9,9 @@ const NOW = Date.parse('2026-09-30T12:00:00Z');
 const mailPath = 'wf-mail/owner_example_com';
 const senders = [{ id: 'statements@nationstrust.com', kind: 'address', status: 'approved', name: 'NTB' }];
 const item = (month, extra = {}) => [`${mailPath}/items/m${month}`, { uid: 'u', bank: 'NTB', filename: `Consolidated_eStatement_2026${month}_458290.html`, from: 'Statements <statements@nationstrust.com>', messageId: `msg${month}`, status: 'filed', filed: true, ...extra }];
-const gmailMessage = (id, from, filename = 'Consolidated_eStatement_2026MAR_458290.html', receivedMs = Date.parse('2026-04-02T05:00:00Z')) => ({
+const gmailMessage = (id, from, filename = 'Consolidated_eStatement_2026MAR_458290.html', receivedMs = Date.parse('2026-04-02T05:00:00Z'), subject = 'Your e-Statement') => ({
     id, internalDate: String(receivedMs),
-    payload: { headers: [{ name: 'From', value: from }, { name: 'Subject', value: 'Your e-Statement' }, { name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@nationstrust.com' }],
+    payload: { headers: [{ name: 'From', value: from }, { name: 'Subject', value: subject }, { name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@nationstrust.com' }],
         mimeType: 'multipart/mixed', parts: [{ mimeType: 'text/plain', filename: '', body: { data: 'x' } }, { mimeType: 'text/html', filename, body: { attachmentId: 'att-' + id, size: 2_000_000 } }] },
 });
 function setup({ months = ['01', '02', '04', '05', '06', '07', '08'], mail = {}, inbox = [] } = {}) {
@@ -44,7 +44,7 @@ describe('coverage: which months did the mailbox not give us', () => {
         expect(s.calls[0]).not.toContain('has%3Aattachment');
     });
     it('names the reason when the bank wrote from an address the owner has not approved and sent something unlike its statements', async () => {
-        const s = setup({ inbox: [gmailMessage('msgMAR', 'NTB E-Statements <estatements@nationstrust.com>', 'Weekend_Offers.html')] });
+        const s = setup({ inbox: [gmailMessage('msgMAR', 'NTB E-Statements <estatements@nationstrust.com>', 'Weekend_Offers.html', Date.parse('2026-04-02T05:00:00Z'), 'Weekend offers')] });
         const out = await run(s);
         expect(out.series[0].gaps[0].mail).toMatchObject([{ messageId: 'msgMAR', from: 'estatements@nationstrust.com', outcome: 'a-new-address-at-a-bank-you-approved' }]);
         expect(out.staged).toBe(0);
@@ -83,7 +83,7 @@ describe('coverage: which months did the mailbox not give us', () => {
     it('offers a tap only for refusals the owner\'s word can lift', async () => {
         const reasons = ['dkim-did-not-pass', 'signed-by-a-different-domain', 'the-attachment-is-not-a-bank-statement', 'too-many-attachments', 'attachment-too-large', 'no-pdf-attachment'];
         const s = setup({ months: ['01', '02', '03', '04', '05', '06', '07', '08'], mail: { refused: reasons.map((reason, i) => ({ messageId: 'm' + i, reason, v: 2, at: 1 })) } });
-        expect((await run(s)).refused.map(r => [r.reason, r.takeable])).toEqual(reasons.map(r => [r, ['dkim-did-not-pass', 'signed-by-a-different-domain', 'the-attachment-is-not-a-bank-statement'].includes(r)]));
+        expect((await run(s)).refused.map(r => [r.reason, r.takeable])).toEqual(reasons.map(r => [r, ['dkim-did-not-pass', 'the-attachment-is-not-a-bank-statement'].includes(r)]));   // a signature by ANOTHER domain is forgery evidence, never the owner's to lift
     });
     it('marks a refused message the owner already tapped as asked', async () => {
         const s = setup({ months: ['01', '02', '03', '04', '05', '06', '07', '08'], mail: { refused: [{ messageId: 'bad1', reason: 'dkim-did-not-pass', v: 2, at: 1 }], takeQueue: ['bad1'] } });

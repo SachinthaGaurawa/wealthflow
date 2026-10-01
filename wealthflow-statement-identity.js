@@ -93,6 +93,11 @@ export const NOT_STATEMENT_NAMES = [
     'certificate', 'policy schedule', 'insurance policy',
     'newsletter', 'brochure', 'flyer', 'promotion', 'offer letter',
     'agreement', 'contract',
+    /* Named by the owner as what must never be mistaken for a statement: a purchase, a bill that is due, a
+     * subscription. Each is a PHRASE someone chose to put in a subject or a file name, and the statement words
+     * below still outrank them, so "Credit Card e-Statement — payment due 25th" is a statement. */
+    'order confirmed', 'order confirmation', 'order receipt', 'payment due', 'payment reminder', 'payment received',
+    'payment confirmation', 'subscription', 'thank you for your purchase',
 ];
 
 /**
@@ -106,6 +111,7 @@ export const STATEMENT_NAMES = [
     'statement', 'e statement', 'estatement', 'estmt', 'stmt',
     'account activity', 'account summary', 'transaction history',
     'passbook', 'account advice', 'credit card statement',
+    'monthly statement', 'account ledger', 'smart statement', 'consolidated statement',
 ];
 
 /**
@@ -141,6 +147,60 @@ export function nameVerdict(input) {
         };
     }
     return { verdict: VERDICT.UNSURE, reason: 'the name says neither', hits: [] };
+}
+
+/* ── INTENT: the subject, the file names AND the body ─────────────────────── */
+
+/* Words in the BODY that say the mail is about a purchase, a bill or a subscription. They are weaker evidence than a
+ * subject line or a file name, because a footer can say "manage your subscription preferences" on a mail that does
+ * carry a statement — so on their own they never throw a message away. They raise the bar instead: the attachment must
+ * then PROVE itself a statement from its own contents (see the worker), and an invoice never can. */
+export const BODY_PURCHASE_WORDS = [
+    'order confirmed', 'order confirmation', 'your order', 'receipt', 'invoice', 'subscription',
+    'purchase confirmation', 'payment received', 'thank you for your purchase', 'tax invoice',
+];
+
+/**
+ * What the mail itself says it is, read from its subject, its attachment names and its body.
+ *
+ *   block     the subject or a file name says invoice / receipt / order confirmed / payment due / subscription …
+ *             and nothing there says statement. Decided before a byte is downloaded.
+ *   stated    the subject or a file name says statement (it outranks a purchase word beside it), or the body does
+ *             and no purchase wording sits beside that.
+ *   suspect   the body talks about a purchase, a receipt or a subscription and never says statement: the attachment
+ *             must prove itself a statement from its contents.
+ *   unproven  nothing in the mail says either way (a bank that mails `5996631318_455.pdf` under a plain subject):
+ *             the attachment must show SOME statement structure — a period, a balance, an account, dated movements.
+ *
+ * Silence is still not evidence against a document — `unproven` documents are read, not refused — but from the
+ * moment the mail stops speaking for the attachment, the attachment has to speak for itself.
+ */
+export function intentVerdict(input) {
+    const { subject = '', filenames = [], body = '' } = (input && typeof input === 'object') ? input : {};
+    const meta = nameVerdict({ subject, filenames });
+    if (meta.verdict === VERDICT.STATEMENT) return { intent: 'stated', where: 'subject-or-file', reason: meta.reason, hits: meta.hits };
+    if (meta.verdict === VERDICT.NOT_STATEMENT) return { intent: 'block', where: 'subject-or-file', reason: meta.reason, hits: meta.hits };
+    const b = hay([String(body == null ? '' : body).slice(0, 40000)]);
+    const positive = STATEMENT_NAMES.filter((t) => b.includes(' ' + t) || b.includes(t + ' '));
+    const purchase = BODY_PURCHASE_WORDS.filter((t) => b.includes(' ' + t) || b.includes(t + ' '));
+    if (positive.length && !purchase.length) return { intent: 'stated', where: 'body', reason: 'the body says statement', hits: positive };
+    if (purchase.length) return { intent: 'suspect', where: 'body', reason: 'the body talks about ' + purchase[0] + (positive.length ? ' as well as a statement' : ' and never says statement'), hits: purchase };
+    return { intent: 'unproven', where: 'none', reason: 'nothing in the mail says what the attachment is', hits: [] };
+}
+
+/**
+ * What kind of file these bytes are, whatever the file is called or the mail claims.
+ * `%PDF-` near the start is a PDF; an HTML document opens with a tag. Anything else — an executable renamed
+ * `statement.pdf`, an archive, a script — is `other`, and is refused before any reader touches it.
+ */
+export function sniffKind(bytes) {
+    let head;
+    try { head = Buffer.from(bytes || []).subarray(0, 4096); } catch (_) { return 'other'; }
+    if (!head.length) return 'other';
+    if (head.subarray(0, 1024).includes('%PDF-')) return 'pdf';
+    const text = head.toString('latin1').replace(/^\uFEFF/, '').replace(/\u0000/g, '').trimStart().toLowerCase();
+    if (/^(<!doctype\s+html|<html|<head|<body|<table|<meta|<div|<\?xml)/.test(text) || /<html[\s>]/.test(text)) return 'html';
+    return 'other';
 }
 
 /* ── LAYER 2: the document ────────────────────────────────────────────────── */

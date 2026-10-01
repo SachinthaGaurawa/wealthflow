@@ -193,13 +193,20 @@ describe('a new desk at a bank they already approved', () => {
         expect(r.reason).toBe(REJECT.NOT_ON_YOUR_LIST);
     });
 
-    it('relatedApproval never claims a sibling of a DOMAIN entry', () => {
-        // A domain entry already covers every mailbox under it, so a message
-        // that reached the refusal at all means the domain was never approved.
+    it('a legacy DOMAIN approval is recognised as "your bank" for another address there — it authorises nothing by itself', () => {
         const list = [{ id: 'sampath.lk', kind: 'domain', domain: 'sampath.lk', status: 'approved', source: 'manual', addedMs: 1 }];
-        expect(relatedApproval(list, 'noreply@sampath.lk')).toBeNull();
+        expect(relatedApproval(list, 'noreply@sampath.lk')).toMatchObject({ approvedAddress: '', legacyDomain: 'sampath.lk' });
+        // and it still does not approve the mailbox: the verdict for the address itself is unchanged
+        expect(policyFrom(list).decide('noreply@sampath.lk').verdict).not.toBe('approved');
+        // a different bank is not claimed
+        expect(relatedApproval(list, 'statements@otherbank.lk')).toBeNull();
     });
-
+    it('another mail host of the same bank is a sibling (info.* and estmt.* are one bank), a different bank is not', () => {
+        const list = [{ id: 'estatement@info.nationstrust.com', kind: 'address', domain: 'info.nationstrust.com', status: 'approved', source: 'manual', addedMs: 1 }];
+        expect(relatedApproval(list, 'nationstrust@estmt.nationstrust.com')).toMatchObject({ approvedAddress: 'estatement@info.nationstrust.com' });
+        expect(relatedApproval(list, 'x@nationstrust.com.evil.net')).toBeNull();
+        expect(relatedApproval(list, 'x@othertrust.com')).toBeNull();
+    });
     it('and never on a blocked or undecided entry', () => {
         for (const status of ['blocked', 'new']) {
             const list = [{ id: 'estatement@sampath.lk', kind: 'address', domain: 'sampath.lk', status, source: 'manual', addedMs: 1 }];

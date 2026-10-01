@@ -39,17 +39,40 @@ describe('exact sender intake boundary', () => {
         }
         expect(approvedClauses([entry])).toEqual(['from:statement@hnb.lk']);
     });
-    it('refuses unknown senders before emitting attachment work even with passing DKIM', () => {
+    it('refuses an unknown sender at the bank before emitting attachment work, even with passing DKIM, when nothing in the mail says statement', () => {
         const message = { id: 'm', internalDate: '1788000000000', payload: {
             headers: [
                 { name: 'From', value: 'promo@hnb.lk' },
-                { name: 'Subject', value: 'Account statement' },
+                { name: 'Subject', value: 'Special rewards offer' },
                 { name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@hnb.lk' },
-            ], parts: [{ filename: 'statement.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a', size: 500 } }],
+            ], parts: [{ filename: 'offer.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a', size: 500 } }],
         } };
         const plan = planMessage(message, policyFrom([entry]));
         expect(plan.ok).toBe(false);
         expect(plan.items).toBeUndefined();
+    });
+    it('takes another address at the same bank only when its subject or file says statement, and then only as a document that must prove itself', () => {
+        const message = { id: 'm', internalDate: '1788000000000', payload: {
+            headers: [
+                { name: 'From', value: 'promo@hnb.lk' },
+                { name: 'Subject', value: 'Your HNB Account Statement for 074-02-XXXXX-88' },
+                { name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@hnb.lk' },
+            ], parts: [{ filename: 'statement.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a', size: 500 } }],
+        } };
+        const plan = planMessage(message, policyFrom([entry]));
+        expect(plan.ok).toBe(true);
+        expect(plan.via).toBe('sibling');
+        expect(plan.items[0]).toMatchObject({ via: 'sibling', intent: 'suspect', approved: true });
+    });
+    it('never takes another bank\'s address, however the mail is worded', () => {
+        const message = { id: 'm', internalDate: '1788000000000', payload: {
+            headers: [
+                { name: 'From', value: 'statements@otherbank.lk' },
+                { name: 'Subject', value: 'Your Account Statement' },
+                { name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@otherbank.lk' },
+            ], parts: [{ filename: 'statement.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a', size: 500 } }],
+        } };
+        expect(planMessage(message, policyFrom([entry])).ok).toBe(false);
     });
     it('rejects bills, receipts and invoices even from the exact approved address', () => {
         for (const [subject, filename] of [

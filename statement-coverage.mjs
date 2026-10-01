@@ -113,7 +113,7 @@ export function auditLogOf(items, { limit = 60 } = {}) {
     const out = [];
     for (const item of Array.isArray(items) ? items : []) {
         if (!item?.filename) continue;
-        const state = stateOf(item), added = ['audit', 'gap', 'owner', 'series'].includes(String(item.via || ''));
+        const state = stateOf(item), added = ['audit', 'gap', 'owner', 'series', 'sibling'].includes(String(item.via || ''));
         let status, math;
         if (state === 'filed' || state === 'empty') {
             status = added ? 'Missing-Added' : 'Synced';

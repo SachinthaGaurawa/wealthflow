@@ -599,22 +599,41 @@ export function senderCoverage(banks, list) {
  * widen a trust allowlist for financial documents without the owner saying so,
  * and that line does not move.
  */
+/**
+ * The organisation a mail domain belongs to: `info.nationstrust.com` and `estmt.nationstrust.com` are both
+ * `nationstrust.com`; `e.amex.com` is `amex.com`; a `.com.lk` or `.co.uk` name keeps its third label. Not a public-suffix
+ * list — the same small one this file already uses to refuse a bare `lk` — and used only to recognise a bank writing
+ * from another of its own mail hosts, never to authorise anything by itself.
+ */
+export function orgDomain(domain) {
+    const labels = lower(domain).split('.').filter(Boolean);
+    if (labels.length < 2) return labels.join('.');
+    const last2 = labels.slice(-2).join('.');
+    return PUBLIC_SUFFIXES.has(last2) && labels.length >= 3 ? labels.slice(-3).join('.') : last2;
+}
+
 export function relatedApproval(list, from) {
     const entries = normalizeList(list);
     const domain = domainOf(from);
     const address = addressOf(from);
     if (!domain) return null;
+    const org = orgDomain(domain);
+    let legacy = null;
     for (const e of entries) {
         if (e.status !== STATUS.APPROVED) continue;
-        /* Only an ADDRESS entry can have a sibling. A domain entry already
-         * covers every mailbox under it, so a message reaching here at all
-         * means the domain was never approved. */
-        if (e.kind !== 'address') continue;
-        if (e.domain !== domain) continue;
+        if (e.kind !== 'address') {
+            /* A domain the owner approved under the old rules. It authorises nothing by itself (see matchSender), but it
+             * says which bank they meant — so mail from that bank's other addresses is recognised as THEIR bank writing
+             * from another desk, and judged on what it says and what it contains. */
+            if (!legacy && e.kind === 'domain' && orgDomain(e.id) === org && e.id !== domain) legacy = { approvedAddress: '', domain, name: e.name || '', address, legacyDomain: e.id };
+            else if (!legacy && e.kind === 'domain' && isUnder(domain, e.id)) legacy = { approvedAddress: '', domain, name: e.name || '', address, legacyDomain: e.id };
+            continue;
+        }
+        if (orgDomain(e.domain) !== org) continue;   // another of the same bank's mail hosts counts: info.* and estmt.* are one bank
         if (e.id === address) continue;             // the same address is not a sibling
         return { approvedAddress: e.id, domain, name: e.name || '', address };
     }
-    return null;
+    return legacy;
 }
 
 export function policyFrom(list) {
@@ -646,7 +665,7 @@ const API = {
     STATUS, REASON, REASON_TEXT, MAX_DECIDED, MAX_NEW,
     normalizeSender, normalizeList, matchSender, addSender, setStatus, removeSender,
     senderCoverage, displayNameOf, relatedApproval,
-    recordSighting, approvedClauses, hasApproved, groupForDisplay, policyFrom,
+    recordSighting, approvedClauses, hasApproved, groupForDisplay, policyFrom, orgDomain,
 };
 
 /* The page reaches this through window, the same way every other wired module
