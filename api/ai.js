@@ -33,6 +33,7 @@ function providerCooldownMs(error) {
     if (/status (?:404|410)\b|model (?:not found|does not exist)|not deployed|end of life|no longer available|unavailable for free/i.test(message)) return 6 * 60 * 60 * 1000;
     // a provider that answers 200 with something that is not JSON is misbehaving, not busy: half an hour, not fifteen seconds
     if (/returned non-JSON/i.test(message)) return 30 * 60 * 1000;
+    if (/has no usable model right now/i.test(message)) return 10 * 60 * 1000;
     if (/unauthori[sz]ed|forbidden|invalid api key|status 401|status 403/i.test(message)) return 60 * 60 * 1000;
     if (/rate.?limit|quota|status 429/i.test(message)) return 2 * 60 * 1000;
     if (/deadline|timed?\s*out|abort/i.test(message)) return 60 * 1000;
