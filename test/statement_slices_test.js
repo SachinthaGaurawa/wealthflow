@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createFirestore } from './helpers/fake-firestore.js';
-import { runStatementSync, classifySlice, sliceRows, resumePartialStatements, resumeReview, closeSettledReviews, statementCensus, checkpointRows, recoverConsensusFailures } from '../statement-sync.js';
+import { runStatementSync, classifySlice, sliceRows, resumePartialStatements, resumeReview, closeSettledReviews, statementCensus, checkpointRows, recoverConsensusFailures, healOrphanedStatements } from '../statement-sync.js';
 import { readStatement } from '../statement-reader.mjs';
 import { settleStatement, sourceOccurrenceId } from '../statement-ledger.mjs';
 
@@ -500,5 +500,45 @@ describe('stale reviews and the census', () => {
         expect(out.reasons['HNB:dead_letter:provider #  failed'.replace('#  ', '# ')] ?? out.reasons['HNB:dead_letter:provider # failed']).toBe(1);
         expect(out.partial).toEqual([{ bank: 'NTB', status: 'needs_review', cursor: 30, rows: 70, why: 'statement-cursor-or-content-changed', retry: 0, resumed: 0 }]);
         expect(lines[0]).not.toMatch(/secret-name|private subject|a@b\.c/);
+    });
+});
+
+describe('a statement stopped for a question nobody is asking', () => {
+    // production 2026-10-01: NTB 45/45 and 151/151 rows settled, DFCC read once — all `needs_review`, no review pending at all
+    const put = (w, id, data) => w.data.set(`${mailPath}/items/${id}`, { uid: 'u', bank: 'NTB', status: 'needs_review', filed: false, hasReview: true, ...data });
+    const mailRef = w => w.db.collection('wf-mail').doc('owner_example_com');
+    it('every row settled and nothing pending: the statement IS filed; rows left and nothing pending: it goes back in the queue (three times at most)', async () => {
+        const w = world({ rows: 3 });
+        put(w, 'a45', { cursor: 45, totalRows: 45 });
+        put(w, 'a151', { cursor: 151, totalRows: 151 });
+        put(w, 'dfcc', { bank: 'Dfccbank', cursor: 0, totalRows: null, reviewReason: 'statement-layout-or-reconciliation-needs-review' });
+        const lines = [];
+        const out = await healOrphanedStatements({ db: w.db, mailRef: mailRef(w), uid: 'u', log: line => lines.push(line) });
+        expect(out).toMatchObject({ filed: 2, requeued: 1 });
+        for (const id of ['a45', 'a151']) expect(w.data.get(`${mailPath}/items/${id}`)).toMatchObject({ status: 'filed', filed: true, hasReview: false });
+        expect(w.data.get(`${mailPath}/items/dfcc`)).toMatchObject({ status: 'pending', hasReview: false, orphanHeals: 1, retryCount: 0 });
+        expect(JSON.parse(lines[0])).toMatchObject({ evt: 'statement-heal', filed: 2, requeued: 1, banks: { NTB: { filed: 2 }, Dfccbank: { requeued: 1 } } });
+        expect(lines[0]).not.toMatch(/\d{4,}/);                                    // counts and bank names only
+        // stopped again, three times: left alone (the worker raises a proper review when it is truly unreadable)
+        w.data.set(`${mailPath}/items/dfcc`, { ...w.data.get(`${mailPath}/items/dfcc`), status: 'needs_review', hasReview: true, orphanHeals: 3 });
+        expect(await healOrphanedStatements({ db: w.db, mailRef: mailRef(w), uid: 'u', log: () => {} })).toMatchObject({ filed: 0, requeued: 0 });
+    });
+    it('a statement with a question open, one being worked on, and another owner\'s are never touched', async () => {
+        const w = world({ rows: 3 });
+        put(w, 'asked', { cursor: 45, totalRows: 45 });
+        w.data.set('users/u/statementReview/' + createHash('sha256').update(`${mailPath}/items/asked`).digest('hex'), { uid: 'u', sourcePath: `${mailPath}/items/asked`, index: 3, status: 'pending', reason: 'invalid-transaction' });
+        put(w, 'busy', { cursor: 45, totalRows: 45, leaseUntil: Date.now() + 60000 });
+        put(w, 'theirs', { uid: 'someone-else', cursor: 45, totalRows: 45 });
+        expect(await healOrphanedStatements({ db: w.db, mailRef: mailRef(w), uid: 'u', log: () => {} })).toMatchObject({ filed: 0, requeued: 0 });
+        for (const id of ['asked', 'busy', 'theirs']) expect(w.data.get(`${mailPath}/items/${id}`).status).toBe('needs_review');
+    });
+    it('an idle invocation puts them right with no tap, and the run says how many', async () => {
+        const w = world({ rows: 3 });
+        await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
+        put(w, 'a45', { cursor: 45, totalRows: 45 });
+        const idle = await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
+        expect(idle.attempted).toBe(0);
+        expect(idle.orphansHealed).toBeGreaterThanOrEqual(1);
+        expect(w.data.get(`${mailPath}/items/a45`)).toMatchObject({ status: 'filed', filed: true });
     });
 });
