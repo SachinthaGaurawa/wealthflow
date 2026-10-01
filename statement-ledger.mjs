@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow } from './wealthflow-statement-router.js';
 import { canonicalBank } from './wealthflow-institutions.js';
+import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
+import { manualTwin, markTwin, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit } from './statement-links.mjs';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -60,6 +62,42 @@ export function crossSourceMatches(records, row, context) {
         const actual = rowIdentity({ ...record, amount: record.amount, description: record.desc || record.name || record.description, direction: record.direction || row.direction }, {});
         return wanted.slice(0, 6).every((value, index) => value === actual[index]);
     });
+}
+
+/* A bank debit that IS a loan installment is linked to that loan's month (loan-link.mjs), so the installment is counted once: by the
+ * debit, not again by the loan's schedule. Evidence only; anything the rules cannot tie to one loan is an ordinary expense. `loans` is the working copy. */
+function linkInstallment(loans, expenses, record, now) {
+    if (!Array.isArray(loans) || !loans.length || record.direction !== 'debit') return false;
+    const hit = matchLoanForDebit({ description: record.desc, amount: record.amount, date: record.date }, loans);
+    if (!hit) return false;
+    linkExpenseToLoan({ expenses }, record, hit.loan, hit.month, now);
+    return true;
+}
+
+/* THE PAYMENT IS ALREADY IN THE BOOKS UNDER ANOTHER NAME (statement-links.mjs). A row that the owner typed in by hand, tracks as a subscription, wrote as
+ * an issued cheque, or that is the bank settling a card whose purchases are already counted, is not filed as a second expense or income. Evidence only;
+ * no counterpart found means the row is filed exactly as before. */
+function findCounterpart({ row, module, user, cards, cardRegistry }) {
+    const records = module === 'expenses' ? user.expenses : module === 'incomeRecv' ? user.incomeRecv : module === 'cconetime' ? user.cconetime : null;
+    if (Array.isArray(records)) { const twin = manualTwin(records, row); if (twin) return { kind: 'twin', twin }; }
+    if (module === 'expenses' && row.direction === 'debit') {
+        const cheque = matchChequeForDebit(row, user.cheques);
+        if (cheque) return { kind: 'cheque', cheque };
+        if (cardSettlementDebit(row, { cardRegistry, cards })) return { kind: 'card-settlement' };
+    }
+    if (module === 'expenses' || module === 'cconetime') { const sub = matchSubscriptionForDebit(row, user.subscriptions); if (sub) return { kind: 'subscription', sub }; }
+    return null;
+}
+/* One statement debit as a payment of a subscription the owner tracks: the subscription's month says what was really charged. */
+function applySubscriptionPayment(sub, row, sourcePath, index, bank, last4, now) {
+    if (sub.history != null && !Array.isArray(sub.history)) return 'invalid-subscription-schema';
+    if ((sub.history || []).some(payment => payment.date === row.date && amountCents(payment.amount) === amountCents(row.amount))) return 'ambiguous-subscription-payment';
+    const month = row.date.slice(0, 7);
+    sub.history = sub.history || [];
+    sub.history.push({ month, amount: row.amount, date: row.date, source: 'statement', statementKey: sourcePath, statementRow: index, ref: String(row.ref || ''), bank, card_last4: last4 });
+    sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: row.amount };
+    sub.amount = row.amount; sub._ut = now;
+    return '';
 }
 
 function makeRecord(row, decision, context, id, now) {
@@ -156,6 +194,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         const user = structuredClone(userSnap.data() || {});
         const changes = {};
         const allRecords = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
+        const cards = [...(Array.isArray(user.cconetime) ? user.cconetime : []), ...(Array.isArray(user.ccPayments) ? user.ccPayments : [])].filter(record => record && (record.card_last4 || record.bank));
         const outcome = { filed: 0, duplicates: 0, skipped: 0, review: 0, dateShifted: 0, cursor: cursor + rows.length };
         const writes = [];
         
@@ -192,8 +231,8 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 outcome.skipped++; continue;
             }
             let reason = validateSettlementRow(row, decisions[offset], context);
-            const decision = decisions[offset] || {};
-            const module = modules[decision.module];
+            let decision = decisions[offset] || {};
+            let module = modules[decision.module];
             const matching = reason ? [] : crossSourceMatches(allRecords, row, context).filter(record => record.statementKey !== sourceRef.path || record.statementRow === index);
             const exact = matching.filter(record => record.statementKey === sourceRef.path && record.statementRow === index && record.direction === row.direction);
             
@@ -203,6 +242,25 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             }
             if (matching.length) reason = 'ambiguous-cross-source-match';
             
+            const counterpart = reason ? null : findCounterpart({ row, module, user, cards, cardRegistry });
+            let subscriptionOfCard = null;
+            if (counterpart && counterpart.kind === 'twin') {
+                markTwin(counterpart.twin, row.date.slice(0, 7), sourceRef.path, index, now); changes[module] = user[module];
+                writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', module, reason: 'entered-by-hand', fingerprint, matchedId: String(counterpart.twin.r.id || ''), settledAt: now }]);
+                outcome.duplicates++; continue;
+            }
+            if (counterpart && counterpart.kind === 'cheque') {
+                counterpart.cheque.status = 'cleared'; counterpart.cheque.clearedDate = row.date; counterpart.cheque.statementKey = sourceRef.path; counterpart.cheque.statementRow = index; counterpart.cheque._ut = now;
+                changes.cheques = user.cheques;
+                writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'filed', module: 'cheque', reason: 'clears-an-issued-cheque', fingerprint, settledAt: now }]);
+                outcome.filed++; continue;
+            }
+            if (counterpart && counterpart.kind === 'card-settlement') { module = 'skip'; decision = { ...decision, module: 'skip', category: 'Card Payment' }; }
+            if (counterpart && counterpart.kind === 'subscription') {
+                if (module === 'expenses') { module = 'subscriptions'; decision = { ...decision, module: 'subscriptions', allocationId: counterpart.sub.id }; }
+                else subscriptionOfCard = counterpart.sub;
+            }
+            
             if (!reason && module === 'skip') {
                 outcome.skipped++;
             } else if (!reason && module === 'subscriptions') {
@@ -210,16 +268,8 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 const subMatches = Array.isArray(subs) ? subs.filter(sub => sub.id === decision.allocationId) : [];
                 if (subMatches.length !== 1) reason = 'subscription-allocation-required';
                 else {
-                    const sub = subMatches[0];
-                    if (sub.history != null && !Array.isArray(sub.history)) reason = 'invalid-subscription-schema';
-                    else if ((sub.history || []).some(payment => payment.date === row.date && amountCents(payment.amount) === amountCents(row.amount))) reason = 'ambiguous-subscription-payment';
-                    else {
-                        const month = row.date.slice(0, 7);
-                        sub.history = sub.history || [];
-                        sub.history.push({ month, amount: row.amount, date: row.date, source: 'statement', statementKey: sourceRef.path, statementRow: index, ref: String(row.ref || ''), bank, card_last4: last4 });
-                        sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: row.amount };
-                        sub.amount = row.amount; sub._ut = now; changes.subscriptions = subs;
-                    }
+                    reason = applySubscriptionPayment(subMatches[0], row, sourceRef.path, index, bank, last4, now);
+                    if (!reason) changes.subscriptions = subs;
                 }
             } else if (!reason) {
                 if (user[module] != null && !Array.isArray(user[module])) reason = 'invalid-ledger-schema';
@@ -227,6 +277,9 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                     user[module] = user[module] || [];
                     const record = makeRecord(row, decision, context, id, now);
                     user[module].push(record); allRecords.push(record); changes[module] = user[module];
+                    if (module === 'expenses' && linkInstallment(user.loans, user.expenses, record, now)) changes.loans = user.loans;
+                    // a card charge for a subscription the owner tracks stays a card charge (what is owed to the card), and says which subscription counts it
+                    if (subscriptionOfCard && module === 'cconetime' && !applySubscriptionPayment(subscriptionOfCard, row, sourceRef.path, index, bank, last4, now)) { record.subscriptionLink = subscriptionOfCard.id; changes.subscriptions = user.subscriptions; }
                 }
             }
             if (reason) {
@@ -302,7 +355,11 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
                 if ((sub.history || []).some(payment => payment.date === corrected.date && amountCents(payment.amount) === amountCents(corrected.amount))) throw new Error('matching-existing-entry-dismiss-or-edit');
                 sub.history = [...(sub.history || []), { date: corrected.date, month, amount: corrected.amount, source: 'statement', statementKey: context.sourcePath, statementRow: context.index, bank: context.bank, card_last4: context.last4, ref: String(corrected.ref || '') }];
                 sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: corrected.amount }; sub.amount = corrected.amount; sub._ut = now; changes.subscriptions = subs;
-            } else changes[module] = [...(user[module] || []), makeRecord(corrected, verified, context, id, now)];
+            } else {
+                const record = makeRecord(corrected, verified, context, id, now);
+                changes[module] = [...(user[module] || []), record];
+                if (module === 'expenses' && Array.isArray(user.loans)) { const loans = structuredClone(user.loans); if (linkInstallment(loans, changes.expenses, record, now)) changes.loans = loans; }
+            }
         }
         const unresolved = siblings.docs.some(doc => doc.id !== id && doc.data().status === 'pending');
         const complete = Number.isSafeInteger(source.totalRows) && source.cursor === source.totalRows;

@@ -204,9 +204,17 @@ async function parseWhole(text, htmlForData = '') {
         const card = text.match(/(?:card|account)\s*(?:number|no\.?|#)?\s*[:\s]*([\dXx* -]{8,30})/i);
         parsed.layout ||= {};
         if (card) { const digits = card[1].replace(/\D/g, ''); if (digits.length >= 4) parsed.layout.accountLast4 = digits.slice(-4); }
-        if (/american express|amex|credit card|cardholder|credit limit/i.test(text)) parsed.layout.statementType = 'credit-card';
+        if (/american express|amex|credit card|cardholder|credit limit/i.test(headerText(text))) parsed.layout.statementType = 'credit-card';
         return { parsed, text };
     } finally { delete context.inputText; delete context.inputHtml; }
+}
+/* WHAT KIND OF STATEMENT IT IS is read from what the statement says about itself — never from a transaction line. A bank account's statement
+ * with "CREDIT CARD PAYMENT" in one narration, or a "PAYMENT TO AMEX", is still a bank account's: reading the whole page called it a card statement,
+ * and every debit became a card charge and every credit a card payment (the owner's income, gone). A transaction line carries a date AND an amount. */
+const DATE_IN_LINE = /\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b|\b\d{1,2}[\s-]+[A-Za-z]{3}[A-Za-z]*\.?(?:[\s-]+\d{2,4})?\b/;
+const AMOUNT_IN_LINE = /\d[\d,]*\.\d{2}\b/;
+export function headerText(text) {
+    return String(text || '').split('\n').filter(line => !(DATE_IN_LINE.test(line) && AMOUNT_IN_LINE.test(line))).join('\n');
 }
 const MONTH_INDEX = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 // "Statement Period: 11-Jul-2026 to 10-Aug-2026" — the only place a table that
