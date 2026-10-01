@@ -15,6 +15,8 @@
  * hex/base64 runs). Pure but for the injected store.
  * ===========================================================================*/
 
+import { boardAnswer, canonicalAnswer } from './api/ai-matrix.mjs';
+
 export const CANARY_GAP_MS = 90 * 1000;
 export const DOC = { collection: 'wf-ai', id: 'canary' };
 
@@ -29,6 +31,25 @@ export function redact(text, max = 140) {
         .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [redacted]')
         .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[redacted]')
         .replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+/**
+ * Who answered the same thing as whom — read with the board's own rule (ai-matrix.mjs boardAnswer), so the report cannot disagree with the
+ * decision. Largest group first; an answer that is not a usable JSON object is listed apart with its first words. The canary's question is
+ * fixed and carries nothing of the owner's, so showing what a dissenter said is safe and is the point: "they disagree" is not a finding.
+ */
+export function agreementOf(probe = []) {
+    const groups = new Map(), invalid = [];
+    for (const p of probe) {
+        if (!p || p.ok !== true) continue;
+        const value = boardAnswer(p.reply);
+        if (value === null) { invalid.push({ name: String(p.name), sample: redact(p.reply, 240) }); continue; }
+        const key = canonicalAnswer(value);
+        const group = groups.get(key) || { members: [], sample: redact(JSON.stringify(value), 300) };
+        group.members.push(String(p.name)); groups.set(key, group);
+    }
+    const ordered = [...groups.values()].sort((a, b) => b.members.length - a.members.length);
+    return { groups: ordered, invalid, dissent: ordered.slice(1).flatMap((g) => g.members) };
 }
 
 /**
@@ -51,6 +72,7 @@ export function reportOf({ decision, probe = [], ms = 0, at = Date.now() }) {
             invalid: Array.isArray(decision && decision.invalid) ? decision.invalid : [],
         },
         providers,
+        agreement: agreementOf(probe),
         summary: {
             working: providers.filter((p) => p.ok).map((p) => p.name),
             failing: providers.filter((p) => !p.ok).map((p) => `${p.name}: ${p.error}`),
@@ -63,7 +85,8 @@ export function verdictOf(report) {
     if (!report || !report.board) return 'no report yet';
     const b = report.board;
     if (b.unanimous) return `GOOD — ${b.answered} of ${b.asked} providers answered and agreed (floor ${b.floor})`;
-    if (b.answered >= b.floor) return `PROVIDERS FINE, BUT THEY DISAGREE — ${b.answered} answered; reason ${b.reason}`;
+    const dissent = (report.agreement && report.agreement.dissent) || [];
+    if (b.answered >= b.floor) return `PROVIDERS FINE, BUT THEY DISAGREE — ${b.answered} answered; reason ${b.reason}${dissent.length ? `; a different answer from: ${dissent.join(', ')}` : ''}`;
     return `BELOW THE FLOOR — only ${b.answered} of ${b.asked} answered (need ${b.floor}); reason ${b.reason}`;
 }
 

@@ -483,6 +483,21 @@ function finiteDecision(value) {
     return true;
 }
 
+/** What a provider's reply is as a board answer: a non-empty JSON object with finite numbers, or null. Strict JSON only: accepting prose
+ *  surrounding an object can hide a refusal or qualification that must prevent automatic filing. The one place the rule lives, so the
+ *  board and the health report (ai-health.mjs) can never read an answer differently. */
+export function boardAnswer(reply) {
+    try {
+        const raw = String(reply || '').trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+        if (raw.length > 262144) return null;
+        const value = JSON.parse(raw);
+        if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.keys(value).length || !finiteDecision(value)) return null;
+        return value;
+    } catch (_) { return null; }
+}
+
+export function canonicalAnswer(value) { return canonical(value); }
+
 export function unanimousDecision(results, opts = {}) {
     const all = Array.isArray(results) ? results : [];
     const expected = Array.isArray(opts.expected) ? opts.expected : [];
@@ -494,15 +509,8 @@ export function unanimousDecision(results, opts = {}) {
         const matches = all.filter(r => r && r.name === name);
         if (matches.length !== 1 || !matches[0].ok) { failed.push(name); continue; }
         const r = matches[0];
-        let value = null;
-        try {
-            // Strict JSON only: accepting prose surrounding an object can hide
-            // a refusal or qualification that must prevent automatic filing.
-            const raw = String(r.reply || '').trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
-            if (raw.length > 262144) throw new Error('oversized decision');
-            value = JSON.parse(raw);
-            if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.keys(value).length || !finiteDecision(value)) throw new Error('invalid decision');
-        } catch (_) { invalid.push(name); continue; }
+        const value = boardAnswer(r.reply);
+        if (value === null) { invalid.push(name); continue; }
         answered.push(name);
         values.push({ result: r, value, key: canonical(value) });
     }
@@ -522,7 +530,7 @@ export function unanimousDecision(results, opts = {}) {
         provider: unanimous ? 'parallel-unanimous-board' : null,
         mode: unanimous ? 'unanimous' : 'needs_review', task: opts.task || TASK.EXTRACTION,
         unanimous, needsReview: !unanimous, minimumProviders, expected: roster, answered, failed, invalid,
-        reason: unanimous ? null : !rosterValid ? 'insufficient_or_invalid_roster' : unexpected ? 'unexpected_provider' : failed.length ? 'provider_unavailable' : invalid.length ? 'invalid_response' : 'provider_disagreement',
+        reason: unanimous ? null : !rosterValid ? 'insufficient_or_invalid_roster' : unexpected ? 'unexpected_provider' : (allowUnavailable && quorumReady) ? 'provider_disagreement' : failed.length ? 'provider_unavailable' : invalid.length ? 'invalid_response' : 'provider_disagreement',
         fields: unanimous ? values[0].value : null,
         corroboration: { agreed: unanimous ? values.length : 0, of: roster.length, score: unanimous ? values.length / roster.length : 0,
             dissent: agrees ? [] : values.map(v => ({ name: v.result.name })), nearMisses: [], numericConflict: !agrees },

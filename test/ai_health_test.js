@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import handler, { modelBook, resetProviderCooldowns, coolProvider, resetHealthMemory } from '../api/ai.js';
 import { resetReasoningLearning } from '../ai-chat.mjs';
 import { resetGeminiLearning } from '../gemini-client.mjs';
-import { CANARY_GAP_MS, CANARY_PROMPT, redact, reportOf, verdictOf } from '../ai-health.mjs';
+import { CANARY_GAP_MS, CANARY_PROMPT, redact, reportOf, verdictOf, agreementOf } from '../ai-health.mjs';
 import { KEYS, response, failure, world } from './helpers/ai-world.js';
 
 /* THE AI, ASKED ON DEMAND. Reading production logs after the fact is how 101 log LINES were once taken for 101 calls (they were 19). A canary
@@ -123,5 +123,32 @@ describe('GET /api/ai?canary=1', () => {
         const res = response();
         await handler({ method: 'GET', url: '/api/router?path=ai&canary=1', query: { path: 'ai', canary: '1' }, headers: {} }, res);
         expect(res.code).toBe(200); expect(res.body.report.providers.length).toBeGreaterThan(5);
+    });
+});
+
+describe('who agrees with whom — "they disagree" is not a finding until it names the dissenter', () => {
+    const good = '{"decisions":[{"index":0,"module":"expenses","category":"Groceries","allocationId":""}]}';
+    const odd = '{"decisions [{": 0, "module": "expenses", "category": "Groceries"}';
+    it('groups answers the way the board does (key order ignored, a fenced block read), largest first, and lists the dissent and the unreadable', () => {
+        const probe = [
+            { name: 'A', ok: true, reply: good }, { name: 'B', ok: true, reply: '```json\n' + good + '\n```' },
+            { name: 'C', ok: true, reply: '{"decisions":[{"category":"Groceries","index":0,"allocationId":"","module":"expenses"}]}' },
+            { name: 'D', ok: true, reply: odd }, { name: 'E', ok: true, reply: 'Sure! Here you go' }, { name: 'F', ok: false, error: 'x' },
+        ];
+        const a = agreementOf(probe);
+        expect(a.groups.map((g) => g.members)).toEqual([['A', 'B', 'C'], ['D']]);
+        expect(a.dissent).toEqual(['D']);
+        expect(a.invalid).toEqual([{ name: 'E', sample: 'Sure! Here you go' }]);
+        expect(a.groups[1].sample).toContain('decisions [{');
+    });
+    it('the verdict names who differs', () => {
+        const probe = ['A', 'B', 'C', 'D', 'E'].map((name) => ({ name, ok: true, ms: 1, provider: name, reply: good })).concat([{ name: 'Z', ok: true, ms: 1, provider: 'z', reply: odd }]);
+        const r = reportOf({ decision: { unanimous: false, reason: 'provider_disagreement', answered: ['A', 'B', 'C', 'D', 'E', 'Z'], minimumProviders: 5 }, probe });
+        expect(verdictOf(r)).toMatch(/THEY DISAGREE — 6 answered; reason provider_disagreement; a different answer from: Z/);
+        expect(r.agreement.dissent).toEqual(['Z']);
+    });
+    it('an agreeing board has no dissent and a report that carries nothing secret', () => {
+        const r = reportOf({ decision: { unanimous: true, answered: ['A', 'B'], minimumProviders: 5 }, probe: [{ name: 'A', ok: true, reply: good }, { name: 'B', ok: true, reply: good }] });
+        expect(r.agreement.dissent).toEqual([]); expect(r.agreement.groups).toHaveLength(1);
     });
 });
