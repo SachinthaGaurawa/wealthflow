@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { makeFakeAdmin } from './fake-admin.mjs';
 import { syncMailbox } from '../gmail-hook.js';
 import { REJECT } from '../wealthflow-mail-ingest.mjs';
@@ -6,6 +6,7 @@ import { policyWithReach } from '../bank-reach.mjs';
 import { planWithEvidence, evidenceVerdict, evidenceContext, ownerBanks, bankWords, documentProof, knownLast4, bankStillOwned, sameBank } from '../statement-evidence.mjs';
 import { discoveryQueries, subjectSkeleton, fileWords, listDiscovery, discoveryCensus, newTally, tally, tallyLine, attachmentKinds } from '../statement-discovery.mjs';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
+import { attachmentBytes } from '../statement-sync.js';
 
 // THE GAP: every way of finding a bank's mail was keyed on who sent it. A statement from an address nobody listed — an older mailer, a card centre, a relay —
 // was a stranger's, held for a tap nobody makes years later. The evidence rule takes it on what the mail SAYS (a statement, of exactly one of the owner's banks),
@@ -271,5 +272,47 @@ describe('bank mail that carries no PDF or HTML', () => {
         expect(line).toMatchObject({ extensions: { csv: 1 } });
         expect(line.meaning).toMatch(/no PDF or HTML attachment/);
         expect(JSON.stringify(line)).not.toMatch(/statement\.csv|e-statements@/);        // kinds only: no file name, no address
+    });
+});
+
+describe('a statement the owner mailed to their own address', () => {
+    const ME = 'owner@example.com';
+    const mine = evidenceContext(OWNER, ME);
+    const selfMsg = (id, extra = {}) => message(id, { from: `Sachintha <${ME}>`, domain: 'example.com', subject: 'DFCC Bank Statement - Jan 26', filename: 'DFCC Bank Statement - Jan 26.pdf', ...extra });
+    it('before: turned away as "sender not on your list"; after: taken, the bank being the one the subject and file name name — and the document must still prove it (the worker)', () => {
+        const m = selfMsg('s1');
+        expect(planMessage(m, policy)).toMatchObject({ ok: false, reason: REJECT.NOT_ON_YOUR_LIST });
+        expect(planWithEvidence(m, policy, evidenceContext(OWNER))).toMatchObject({ ok: false });                      // a mailbox that does not know its own address is what it was
+        const plan = planWithEvidence(m, policy, mine);
+        expect(plan).toMatchObject({ ok: true, via: 'evidence', bank: 'DFCC Bank', intent: 'suspect', evidence: { ok: true, self: true } });
+        expect(plan.items.every((i) => i.via === 'evidence')).toBe(true);
+    });
+    it('the bank may be named in the body instead (a forwarded notice), and a bank in a different case or alias of the address is the same sender', () => {
+        expect(planWithEvidence(selfMsg('s2', { subject: 'Statement', filename: 'stmt.pdf', body: 'DFCC Bank e-statement for January' }), policy, mine)).toMatchObject({ ok: true, bank: 'DFCC Bank' });
+        expect(planWithEvidence(selfMsg('s3', { from: `"Me" <Owner@Example.com>` }), policy, mine).ok).toBe(true);
+    });
+    it('and not otherwise: someone else at the same provider, no statement word, no bank, two banks, a forgery, a blocked sender', () => {
+        expect(planWithEvidence(selfMsg('x1', { from: 'Friend <friend@example.com>' }), policy, mine).ok).toBe(false);
+        expect(planWithEvidence(selfMsg('x2', { from: 'Owner Impostor <owner@example.com.evil.example>', domain: 'example.com.evil.example' }), policy, mine).ok).toBe(false);
+        expect(planWithEvidence(selfMsg('x3', { subject: 'Holiday photos', filename: 'photos.pdf' }), policy, mine)).toMatchObject({ ok: false, evidence: { why: 'the-subject-and-file-names-do-not-say-statement' } });
+        expect(planWithEvidence(selfMsg('x4', { subject: 'My statement', filename: 'statement.pdf', body: 'Please find it attached.' }), policy, mine)).toMatchObject({ ok: false, evidence: { why: 'the-mail-does-not-name-a-bank' } });
+        expect(planWithEvidence(selfMsg('x5', { subject: 'HNB and DFCC Bank statement' }), policy, mine)).toMatchObject({ ok: false });
+        expect(planWithEvidence(selfMsg('x6', { auth: BAD('example.com') }), policy, mine)).toMatchObject({ ok: false, reason: REJECT.AUTH_FAILED });
+        const blocked = [...OWNER, { id: ME, kind: 'address', status: 'blocked' }];
+        expect(planWithEvidence(selfMsg('x7'), policyWithReach(blocked), evidenceContext(blocked, ME))).toMatchObject({ ok: false, reason: REJECT.SENDER_BLOCKED });
+        expect(planWithEvidence(selfMsg('x8', { subject: 'DFCC Bank Statement - Jan 26 invoice', filename: 'Invoice_10442.pdf' }), policy, mine).ok).toBe(false);
+    });
+    it('a self-sent mail with no attachment is never taken', () => {
+        const m = selfMsg('x9'); m.payload.parts = m.payload.parts.slice(0, 1);
+        expect(planWithEvidence(m, policy, mine).ok).toBe(false);
+    });
+    it('the worker, reading it again, knows the mailbox\'s own address — without it the item would be retired as "sender no longer approved"', async () => {
+        const m = selfMsg('w1');
+        const data = Buffer.from('%PDF-self').toString('base64url');
+        const f = () => vi.fn().mockResolvedValueOnce({ ok: true, json: async () => m }).mockResolvedValueOnce({ ok: true, json: async () => ({ data }) });
+        const source = { messageId: 'w1', via: 'evidence', filename: 'DFCC Bank Statement - Jan 26.pdf' };
+        const key = planWithEvidence(m, policy, mine).items[0].key;
+        expect((await attachmentBytes(source, { id: key }, 'token', OWNER, f(), ME)).bytes.toString()).toBe('%PDF-self');
+        await expect(attachmentBytes(source, { id: key }, 'token', OWNER, f())).rejects.toThrow('statement-sender-no-longer-approved');
     });
 });

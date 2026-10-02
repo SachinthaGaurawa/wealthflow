@@ -28,6 +28,8 @@ import { healLoanLinks } from './loan-link.mjs';
 import { policyWithReach } from './bank-reach.mjs';
 import { planWithEvidence, evidenceContext, bankStillOwned, documentProof, knownLast4 } from './statement-evidence.mjs';
 import { formKind } from './statement-document-kind.mjs';
+import { repairByArithmetic } from './statement-repair.mjs';
+import { buildHistory } from './statement-history.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
 
 export const config = { maxDuration: 60 };
@@ -37,7 +39,8 @@ const PASSWORD_BATCH = 6;
 /* Bumped when the reader or the AI behind it has changed so that a statement it could not read earlier deserves another look. Version 4: the
  * AI roster was repaired (reasoning-model empties, retired models) and the model-free reader added — thirty-four HNB statements had used up
  * their three adaptive tries (and the six-hour wait between them) during the outage and sat in review as "not waiting to be processed again". */
-const WHOLE_REPLAY_VERSION = 12;   // 12: read once more — the recovery pass was starved by the queue, so 11 never ran (a mandate is now retired, a legacy attachment is matched by its message)
+const WHOLE_REPLAY_VERSION = 13;   // 13: read once more — a statement that misses its closing balance by what ONE row explains is proven by that row (statement-repair.mjs)
+// 12: read once more — the recovery pass was starved by the queue, so 11 never ran (a mandate is now retired, a legacy attachment is matched by its message)
 // 11: read once more, with the reading's own diagnostics in the log (the DFCC Aug 26 statement was still stopped after 10)
 // 10: a statement with several accounts is now proven account by account (the DFCC Aug 26 one, stopped by the one-chain reading)
 /* A statement that was PART-WAY through (some rows already filed) when it stopped is resumed, not re-mapped: it is read again from its first row
@@ -236,7 +239,7 @@ export async function classifySlice(rows, allocations, { board = invokeBoard, se
 }
 
 async function askBoard(rows, rules, allocations, board) {
-    const evidence = rows.map((row, index) => ({ index, date: row.date, amount: row.amount, description: row.narration || row.description, merchant: merchantNameFor(row), direction: row.direction, directionSource: row.directionSource, needsReview: row.needsReview }));
+    const evidence = rows.map((row, index) => { const used = allocations.history && allocations.history.hint(row); return { index, date: row.date, amount: row.amount, description: row.narration || row.description, merchant: merchantNameFor(row), direction: row.direction, directionSource: row.directionSource, needsReview: row.needsReview, ...(used ? { categoryUsedBefore: used.category } : {}) }; });
     
     // Strict Tab Routing context enforcement injected directly into prompt
     const accountTypeStrict = validateLuhnChecksum(allocations.card_last4) ? "CREDIT_CARD_ACCOUNT" : "BANK_OR_DEBIT_ACCOUNT";
@@ -295,8 +298,15 @@ export function deterministicDecision(row, allocations = {}) {
         ccinstall: { module: 'ccinstall', category: 'Installment' },
     };
     const decision = decisions[routed.module];
-    return decision ? { ...decision, allocationId: '', verified: true, deterministic: true }
-        : { verified: false, reason: 'ai-consensus-unavailable' };
+    if (!decision) return { verified: false, reason: 'ai-consensus-unavailable' };
+    /* WHAT THE OWNER HAS ALREADY DECIDED IS THE BEST EVIDENCE: a merchant the books hold repeatedly under ONE category is that category (statement-history.mjs). It only ever replaces the
+     * rules' "Other" — never a named category, a transfer, a card line or an allocation — and it is marked so it can be found and changed. */
+    const memory = allocations.history;
+    if (memory && ((decision.module === 'expenses' && (!decision.category || decision.category === 'Other')) || (decision.module === 'incomeRecv' && (!decision.category || decision.category === 'Other')))) {
+        const known = decision.module === 'expenses' ? memory.expense(row) : memory.income(row);
+        if (known) return { ...decision, category: known.category, allocationId: '', verified: true, deterministic: true, autoDecided: 'history' };
+    }
+    return { ...decision, allocationId: '', verified: true, deterministic: true };
 }
 
 /* A ROW WHOSE DIRECTION IS PROVEN IS NEVER LEFT FOR THE OWNER TO PLACE. The rules could not name the merchant ("POS Transaction - MIRIGAMA") and the AI board could not agree,
@@ -485,13 +495,13 @@ async function retireUnapprovedSource(db, uid, mailRef, ref, now = Date.now()) {
     });
 }
 
-export async function attachmentBytes(source, ref, token, senders, f = fetch) {
+export async function attachmentBytes(source, ref, token, senders, f = fetch, ownerEmail = '') {
     if (!source.messageId) throw new Error('statement-message-missing');
     const response = await f(`${GMAIL}/messages/${encodeURIComponent(source.messageId)}?format=full`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
     if (response.status === 404) throw new Error('statement-message-deleted');
     if (!response.ok) throw new Error('gmail-fetch-unavailable');
     const message = await response.json();
-    const plan = source.via === 'evidence' ? planWithEvidence(message, intakeRules(senders, source), evidenceContext(senders)) : planMessage(message, intakeRules(senders, source));
+    const plan = source.via === 'evidence' ? planWithEvidence(message, intakeRules(senders, source), evidenceContext(senders, ownerEmail)) : planMessage(message, intakeRules(senders, source));
     if (!plan.ok) throw Object.assign(new Error('statement-sender-no-longer-approved'), { planReason: String(plan.reason || '').slice(0, 80) });
     let items = plan.items.filter(item => item.key === ref.id || item.legacyKey === ref.id);
     if (items.length === 0 && source.attachmentId) {
@@ -571,22 +581,27 @@ export async function recoverWholeStatementFailures({ db, uid, limit = 25 }) {
     const cap = Math.min(50, Math.max(1, limit));
     const page = await reviews.where('status', '==', 'pending').limit(100).get();
     let recovered = 0, more = false;
+    /* WHY A WAITING STATEMENT WAS NOT PUT BACK, by guard: the production log said `whole: 0` for a DFCC statement that had waited all day, and nothing said which of the nine
+     * conditions held it. Codes and counts only. */
+    const why = {};
     for (const doc of page.docs) {
         const review = doc.data();
         if (review.uid !== uid || review.index !== -1 || !SAFE_WHOLE_REPLAY.has(review.reason)
-            || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) continue;
+            || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) { if (review.index === -1) why[`reason:${String(review.reason || '?').slice(0, 40)}`] = (why[`reason:${String(review.reason || '?').slice(0, 40)}`] || 0) + 1; continue; }
         if (recovered >= cap) { more = true; continue; }
         const sourceRef = db.doc(review.sourcePath);
-        recovered += await db.runTransaction(async tx => {
+        const outcome = await db.runTransaction(async tx => {
             const sourceSnap = await tx.get(sourceRef), reviewSnap = await tx.get(doc.ref);
             const ledger = await tx.get(userRef.collection('statementLedger').where('sourcePath', '==', sourceRef.path));
             const source = sourceSnap.data(), current = reviewSnap.data();
-            if (!sourceSnap.exists || source.uid !== uid || source.status !== 'needs_review' || source.filed === true
-                || (source.cursor || 0) !== 0 || (source.leaseUntil || 0) > Date.now()
-                || Number(source.wholeReplayVersion || 0) >= WHOLE_REPLAY_VERSION
-                || !reviewSnap.exists || current.uid !== uid || current.status !== 'pending' || current.index !== -1
-                || current.reason !== review.reason || !SAFE_WHOLE_REPLAY.has(source.reviewReason)
-                || ledger.docs.some(entry => ['filed', 'duplicate'].includes(entry.data().status))) return 0;
+            if (!sourceSnap.exists || source.uid !== uid) return 'no-source';
+            if (source.status !== 'needs_review' || source.filed === true) return `status:${String(source.status || '?').slice(0, 24)}`;
+            if ((source.cursor || 0) !== 0) return 'part-filed';
+            if ((source.leaseUntil || 0) > Date.now()) return 'leased';
+            if (Number(source.wholeReplayVersion || 0) >= WHOLE_REPLAY_VERSION) return 'already-read-this-version';
+            if (!reviewSnap.exists || current.uid !== uid || current.status !== 'pending' || current.index !== -1 || current.reason !== review.reason) return 'review-changed';
+            if (!SAFE_WHOLE_REPLAY.has(source.reviewReason)) return `source-reason:${String(source.reviewReason || '?').slice(0, 40)}`;
+            if (ledger.docs.some(entry => ['filed', 'duplicate'].includes(entry.data().status))) return 'ledger-has-rows';
             const now = Date.now();
             tx.set(doc.ref, { status: 'retried', retriedAt: now }, { merge: true });
             // a fresh look is a fresh set of adaptive tries: the ones it had were spent while the AI was down
@@ -594,8 +609,9 @@ export async function recoverWholeStatementFailures({ db, uid, limit = 25 }) {
                 adaptiveTries: 0, adaptiveAt: 0, wholeReplayVersion: WHOLE_REPLAY_VERSION, updatedAt: now }, { merge: true });
             return 1;
         });
+        if (outcome === 1) recovered += 1; else why[outcome] = (why[outcome] || 0) + 1;
     }
-    return { recovered, more: more || page.docs.length === 100 };
+    return { recovered, more: more || page.docs.length === 100, ...(Object.keys(why).length ? { why } : {}) };
 }
 
 /* The one transaction that puts a stopped statement back in the queue from its first row, shared by the automatic pass and the owner's button.
@@ -916,7 +932,8 @@ export async function recoverConsensusFailures({ db, uid, limit = 25, until = In
     const found = [];
     for (const reason of RECOVERABLE_ROW_REASONS) found.push(...(await userRef.collection('statementReview').where('reason', '==', reason).limit(100).get()).docs);
     const page = { docs: found.slice(0, 150) };
-    const cardRegistry = page.docs.length ? ((await userRef.get()).data() || {}).settings?.cardRegistry || {} : {};
+    const userDoc = page.docs.length ? (await userRef.get()).data() || {} : {};
+    const cardRegistry = userDoc.settings?.cardRegistry || {}, history = buildHistory(userDoc, merchantNameFor);
     let recovered = 0, stopped = false;
     for (const doc of page.docs) {
         if (recovered >= cap) break;
@@ -925,7 +942,7 @@ export async function recoverConsensusFailures({ db, uid, limit = 25, until = In
         if (review.uid !== uid || review.status !== 'pending' || !RECOVERABLE_ROW_REASONS.includes(review.reason) || !Number.isSafeInteger(review.index) || review.index < 0 || !review.row || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) continue;
         const source = (await db.doc(review.sourcePath || '').get()).data() || {};
         if (source.uid !== uid) continue;
-        const context = { statementType: source.statementType || '', card_last4: source.last4 || '', bank: source.bank || '', cardRegistry };
+        const context = { statementType: source.statementType || '', card_last4: source.last4 || '', bank: source.bank || '', cardRegistry, history };
         const rule = deterministicDecision(review.row, context);
         // a row the rules could not name and the board could not settle is placed by its proven direction, never left for the owner (fallbackDecision)
         const settled = rule.verified ? rule : fallbackDecision(review.row, context);
@@ -1297,7 +1314,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
         const currentMail = (await mailRef.get()).data();
         if (!currentMail || currentMail.uid !== uid || currentMail.autonomous !== true) throw new Error('autonomous-mailbox-disabled-during-processing');
-        const attachment = await loadAttachment(claimed, sourceRef, token, sendersOf(currentMail), f);
+        const attachment = await loadAttachment(claimed, sourceRef, token, sendersOf(currentMail), f, currentMail.email);
         /* THE BYTES, NOT THE NAME. A file called statement.pdf that is not a PDF (or an HTML document) is refused before
          * any reader touches it: what the mail said about the file, and what the file is, are two different claims. */
         if (sniffKind(attachment.bytes) === 'other') {
@@ -1337,6 +1354,10 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
         let { parsed } = result;
         const { text } = result;
+        /* A STATEMENT THAT MISSES ITS CLOSING BALANCE BY WHAT ONE ROW COULD EXPLAIN IS PROVEN BY THAT ROW (statement-repair.mjs): when exactly one correction of one row makes the printed
+         * balances add up to the cent, it is the only reading the figures allow. DFCC Aug 26: "a difference of -80,735.16. A row may be missing" was a debit of 50,000.00 read as 30,735.16 in. */
+        const fixed = repairByArithmetic(parsed);
+        if (fixed.repaired) { parsed = fixed.parsed; diag.repaired = fixed.repaired.how; }
         reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '', rendered: result.renderedOverride === true, embedded: parsed?.embeddedProblems };
         Object.assign(diag, { shape: shapeOf(text), rows: Array.isArray(parsed?.rows) ? parsed.rows.length : 0, parsed: String(parsed?.verdict || ''), understood: parsed?.understood === true, tries: Number(claimed.adaptiveTries) || 0,
             intent: String(claimed.intent || ''), rec: { open: Number.isFinite(parsed?.reconciliation?.opening), close: Number.isFinite(parsed?.reconciliation?.closing), ok: parsed?.reconciliation?.ok ?? null },
@@ -1474,6 +1495,8 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             // --- Determine precise Tab Routing Identity Matrix ---
             const allocations = { statementType, card_last4: parsed.layout?.accountLast4 || '', bank: claimed.bank || '', cardRegistry: user.settings?.cardRegistry || {},
                 subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
+            // the owner's own past decisions, kept out of what is serialised into a prompt (not enumerable)
+            Object.defineProperty(allocations, 'history', { value: buildHistory(user, merchantNameFor), enumerable: false });
             /* A STATEMENT BEING RESUMED (resumePartialStatements) is replayed from its first row: the rows the ledger already holds are
              * checked against this reading by fingerprint inside the settlement, and cost no classification here. */
             const replayed = (claimed.cursor || 0) === 0 && claimed.resumed ? await replayLedger(db, uid, sourceRef.path, user) : null;
@@ -1504,7 +1527,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 claimed = again;
             }
             outcome = { ...outcome, ...total };
-            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules', ...(diag.directions ? { directions: diag.directions } : {}),
+            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules', ...(diag.directions ? { directions: diag.directions } : {}), ...(diag.repaired ? { repaired: diag.repaired } : {}),
                 ...(replayed?.healed ? { healed: replayed.healed } : {}), ...(total.dateShifted ? { dateShifted: total.dateShifted } : {}) });
         }
     } catch (error) {
@@ -1740,7 +1763,7 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
                         const response = await f(`${GMAIL}/messages/${encodeURIComponent(ref.id)}?format=full`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
                         if (response.status === 404) continue;
                         if (!response.ok) { failed = true; break; }
-                        const message = await response.json(), plan = planWithEvidence(message, policy, evidenceContext(list));
+                        const message = await response.json(), plan = planWithEvidence(message, policy, evidenceContext(list, mail.email));
                         const headers = Object.fromEntries((message.payload?.headers || []).map(h => [String(h.name || '').toLowerCase(), h.value]));
                         const outcome = plan.ok ? (stored.has(String(message.id || ref.id)) ? 'stored' : 'missed') : String(plan.reason || 'refused');
                         if (outcome === 'missed') stage.add(String(message.id || ref.id));
@@ -1800,7 +1823,7 @@ async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs
         async stepUntil => { const r = await recoverConsensusFailures({ db, uid, limit: 25, until: stepUntil }); done.rows = r.recovered; out.recovered += r.recovered; out.more = out.more || r.more; },
         async stepUntil => { const r = await recoverDuplicateRows({ db, uid, limit: 40, until: stepUntil, log: console.info }); done.duplicates = r.closed; out.more = out.more || r.more; },
         async stepUntil => { const r = await recoverRevokedSenderReviews({ db, uid, limit: 25, until: stepUntil }); done.revoked = r.recovered; out.recovered += r.recovered; out.more = out.more || r.more; },
-        async () => { const r = await recoverWholeStatementFailures({ db, uid, limit: 8 }); done.whole = r.recovered; out.recovered += r.recovered; out.more = out.more || r.more; },
+        async () => { const r = await recoverWholeStatementFailures({ db, uid, limit: 8 }); done.whole = r.recovered; if (r.why) done.wholeWhy = r.why; out.recovered += r.recovered; out.more = out.more || r.more; },
         async () => { const r = await resumePartialStatements({ db, uid, limit: 6 }); done.resumed = r.resumed; out.recovered += r.resumed; out.more = out.more || r.more; },
     ];
     if (now - Number(mail.lastReviveMs || 0) >= REVIVE_EVERY_MS) steps.push(async stepUntil => {
@@ -1816,7 +1839,7 @@ async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs
     }
     try { await mailRef.set({ lastSettleMs: Date.now(), settleMore: out.more }, { merge: true }); } catch (_) { /* the pass simply runs again */ }
     /* one line, and only when the pass did or left something: this is how the log shows the owner's waiting reviews being settled */
-    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
+    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0 || done.wholeWhy) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
     return out;
 }
 
@@ -1993,7 +2016,7 @@ async function withReviewAttachment({ db, owner, review, env, f, open, attachmen
             passwords = candidatesFor(source.bank || '', entries);
         }
         const token = await accessTokenFrom(mail.refresh_token, env, f);
-        const bytes = await attachment(source, sourceRef, token, sendersOf(mail), f);
+        const bytes = await attachment(source, sourceRef, token, sendersOf(mail), f, mail.email);
         return await use({ source, sourceRef, bytes, passwords });
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }
 }

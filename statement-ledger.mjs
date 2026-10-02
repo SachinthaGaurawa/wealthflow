@@ -110,7 +110,7 @@ function makeRecord(row, decision, context, id, now) {
     const provenance = { statementKey: context.sourcePath, statementRow: context.index, bank: canonicalBank(context.bank || ''), card_last4: context.last4 || '', ref: String(row.ref || ''), direction: row.direction };
     // a row the AI board could not refine is filed with the rules' own answer and says so, so it can be found and changed
     const base = { id, ...provenance, amount: row.amount, date: row.date, source: 'statement', createdAt: new Date(now).toISOString(), _ut: now,
-        notes: decision.autoDecided ? 'Filed automatically; the AI could not pick a more specific category. Change it if it is wrong.' : '', ...(decision.autoDecided ? { autoDecided: String(decision.autoDecided) } : {}),
+        notes: decision.autoDecided === 'history' ? 'Filed automatically with the category you have used for this merchant before. Change it if it is wrong.' : decision.autoDecided ? 'Filed automatically; the AI could not pick a more specific category. Change it if it is wrong.' : '', ...(decision.autoDecided ? { autoDecided: String(decision.autoDecided) } : {}),
         // a direction the page did not print, proven by the statement's own balances or by the row's words (statement-direction.mjs): said on the record, so it can be found
         ...(['statement', 'words'].includes(row.directionSource) ? { directionProof: row.directionSource } : {}) };
     const module = modules[decision.module];

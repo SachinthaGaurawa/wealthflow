@@ -1207,8 +1207,10 @@ export function worthSighting(plan) {
  *      From naming several mailboxes is forged. Every genuine statement the version-3 rules refused is judged again.
  *   6  a held message judged again and no longer a question about its sender leaves the held list.
  *   7  a bank's other registered domains are searched and recognised: its earlier statements are judged for the first time.
+ *   8  a statement the OWNER mailed to their own address (downloaded from the bank's portal) is taken when it says statement, names one of their banks and the document proves it: the
+ *      years of statements that sit in a portal and never in the mailbox, which were turned away as "sender not on your list", are judged for the first time.
  */
-export const INTAKE_VERSION = 7;
+export const INTAKE_VERSION = 8;
 
 /**
  * Is this refusal one the owner would call a MISSED STATEMENT? Only mail from an

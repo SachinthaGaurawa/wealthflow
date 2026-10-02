@@ -428,7 +428,7 @@ async function ingestMailbox(db, note, env, f, res) {
     const held = [];
     const policy = policyWithReach(senderList);
     // What the mail says and what the document proves can take a statement from an address nobody listed (statement-evidence.mjs).
-    const evidence = evidenceContext(senderList);
+    const evidence = evidenceContext(senderList, state.email);
     let seen = senderList;
     const sightings = [];
 
@@ -719,7 +719,7 @@ async function ingestMailbox(db, note, env, f, res) {
                     // new manifest. A later approval triggers historical replay.
                     const latest = normalizeList(sendersOf(currentState.data() || {}));
                     const replan = { ...policyWithReach(latest), ...(forcedIds.has(String(id)) ? { forced: true } : {}), ...(item.via === 'series' && stems ? { siblingSeries: stems } : {}) };
-                    if (!(item.via === 'evidence' ? planWithEvidence(msg, replan, evidenceContext(latest)) : planMessage(msg, replan)).ok) return false;
+                    if (!(item.via === 'evidence' ? planWithEvidence(msg, replan, evidenceContext(latest, (currentState.data() || {}).email)) : planMessage(msg, replan)).ok) return false;
                     tx.set(ref, { ...write.manifest, status: 'pending', filed: false,
                         ...((item.via || via) ? { via: item.via || via } : {}),
                         ...(currentState.data()?.uid ? { uid: currentState.data().uid } : {}) });

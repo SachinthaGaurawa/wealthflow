@@ -56,7 +56,8 @@ export function ownerBanks(list) {
     return out;
 }
 
-export const evidenceContext = (list) => ({ banks: ownerBanks(list) });
+/** `ownerEmail`: the address of the mailbox itself, so a statement the owner sent THEMSELVES (downloaded from the bank's portal and emailed to their own inbox, in bulk) is a source. */
+export const evidenceContext = (list, ownerEmail = '') => ({ banks: ownerBanks(list), ownerEmail: lower(ownerEmail).trim() });
 
 /** What the owner has approved, as one short key: a message dropped for naming none of their banks is judged again when this changes. */
 export const approvalKey = (list) => createHash('sha256').update(normalizeList(list).filter((e) => e.status === 'approved').map((e) => `${e.kind}:${e.id || e.domain}`).sort().join('|')).digest('hex').slice(0, 12);
@@ -76,20 +77,26 @@ export function evidenceVerdict(message, plan, ctx) {
     const subject = String(headers.subject || plan.subject || '');
     const intent = intentVerdict({ subject, filenames: files });
     if (intent.intent !== 'stated') return { ok: false, why: 'the-subject-and-file-names-do-not-say-statement' };
+    /* A STATEMENT THE OWNER SENT TO THEMSELVES. Years of statements sit in the bank's portal, not the mailbox: the owner downloads them and mails them to their own address, one message or
+     * fifty. The sender is then the mailbox's own address — authenticated by Google like any other (planCore has already refused a forgery before anything here runs: no one else can sign
+     * for it) — and it carries no bank name, so the bank is the one named in the subject, the file names or the body, exactly one of the owner's, and the DOCUMENT must name that bank,
+     * show one of the owner's accounts there and reconcile to the cent before a row is filed (documentProof, the worker). */
+    const sender = lower(addressOf(headers.from || plan.from || '')).trim();
+    const self = !!ctx.ownerEmail && sender === ctx.ownerEmail;
     // the bank's name in the sender's own domain: "hnbmail.example" carries "hnb" (compared without dots and dashes, so "nations-trust" is "nationstrust")
     const domain = lower(domainOf(headers.from || plan.from || '')).replace(/[^a-z0-9]+/g, '');
-    const inDomain = banks.filter((b) => b.words.some((w) => domain.includes(w.replace(/ /g, ''))));
+    const inDomain = self ? banks : banks.filter((b) => b.words.some((w) => domain.includes(w.replace(/ /g, ''))));
     if (!inDomain.length) return { ok: false, why: 'no-bank-name-in-the-sender-domain' };
     const primary = hayOf([subject, ...files].join(' ')), secondary = hayOf(bodyTextOf(payload).slice(0, 4000));
     const said = (hay) => inDomain.filter((b) => wordsIn(hay, b.words).length);
     let hit = said(primary), where = 'subject-or-file';
     if (!hit.length) { hit = said(secondary); where = 'body'; }
-    if (!hit.length) return { ok: false, why: 'the-mail-does-not-name-the-bank-of-its-domain' };
+    if (!hit.length) return { ok: false, why: self ? 'the-mail-does-not-name-a-bank' : 'the-mail-does-not-name-the-bank-of-its-domain' };
     if (hit.length > 1) return { ok: false, why: 'more-than-one-bank-is-named' };
     // a mail that names a DIFFERENT bank of the owner's in its subject or file is not what its domain says it is
     const others = banks.filter((b) => b !== hit[0] && wordsIn(primary, b.words).length);
     if (others.length) return { ok: false, why: 'another-bank-is-named-in-the-subject' };
-    return { ok: true, bank: hit[0].name, approvedAddress: hit[0].approvedAddress, hits: { statement: intent.hits.slice(0, 3), where } };
+    return { ok: true, bank: hit[0].name, approvedAddress: hit[0].approvedAddress, hits: { statement: intent.hits.slice(0, 3), where, ...(self ? { self: true } : {}) } };
 }
 
 /**
