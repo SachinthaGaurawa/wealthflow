@@ -173,7 +173,7 @@ describe('the other ways of asking Gmail', () => {
 
 // ── from the mailbox to the stored item ──────────────────────────────────────────────────────────────────────────────────────────────
 const NOTE = { emailAddress: 'owner@example.org', historyId: '1000' };
-function setup({ inbox, senders = OWNER, state = {} }) {
+function setup({ inbox, senders = OWNER, state = {}, audit = [] }) {
     const fake = makeFakeAdmin(), db = fake.admin.firestore();
     db.runTransaction = async (fn) => {
         const writes = [];
@@ -192,10 +192,10 @@ function setup({ inbox, senders = OWNER, state = {} }) {
             queries.push(u);
             // the sender-keyed audit finds nothing; the other ways of asking find the inbox
             const bySender = u.includes('from:');
-            return { ok: true, json: async () => ({ messages: bySender ? [] : inbox.map((m) => ({ id: m.id })), resultSizeEstimate: bySender ? 0 : inbox.length }) };
+            return { ok: true, json: async () => ({ messages: bySender ? audit.map((m) => ({ id: m.id })) : inbox.map((m) => ({ id: m.id })), resultSizeEstimate: bySender ? audit.length : inbox.length }) };
         }
         if (u.includes('/attachments/')) return { ok: true, json: async () => ({ data: Buffer.from('%PDF-1.4 statement').toString('base64url') }) };
-        const found = inbox.find((m) => m.id === u.split('/messages/')[1]?.split('?')[0]);
+        const found = [...inbox, ...audit].find((m) => m.id === u.split('/messages/')[1]?.split('?')[0]);
         return found ? { ok: true, json: async () => found } : { ok: false, status: 404, json: async () => ({}) };
     };
     const sync = async () => {
@@ -257,5 +257,19 @@ describe('the history audit, with the other ways of asking', () => {
         expect((await s.ref.collection('items').get()).docs).toHaveLength(1);
         expect(s.queries.length).toBeGreaterThan(calls);                  // it asked again …
         expect(s.fetches.length).toBe(before);                            // … and read nothing it had already judged
+    });
+});
+
+describe('bank mail that carries no PDF or HTML', () => {
+    it('is refused as before, and the platform log says which kinds of file it did carry (a bank mailing csv or xlsx statements shows up there)', async () => {
+        const csv = message('csv1', { from: 'HNB <e-statements@hnb.lk>', domain: 'hnb.lk', subject: 'Your statement', filename: 'statement.csv' });
+        csv.payload.parts[1].mimeType = 'text/csv';
+        const s = setup({ inbox: [], audit: [csv] });
+        await s.run();
+        expect((await s.ref.collection('items').get()).docs).toHaveLength(0);
+        const line = s.logs.filter((l) => l.startsWith('{')).map((l) => JSON.parse(l)).find((e) => e.evt === 'mail-refused-no-pdf-or-html');
+        expect(line).toMatchObject({ extensions: { csv: 1 } });
+        expect(line.meaning).toMatch(/no PDF or HTML attachment/);
+        expect(JSON.stringify(line)).not.toMatch(/statement\.csv|e-statements@/);        // kinds only: no file name, no address
     });
 });

@@ -738,7 +738,8 @@ async function ingestMailbox(db, note, env, f, res) {
     }
     await logStates(db, stateRef, outcomesNow);
     if (discovered.judged) console.info(JSON.stringify(tallyLine(discovered, { cursor: pending.cursor, of: pending.ids.length })));
-    if (Object.keys(refusedKinds).length) console.info(JSON.stringify({ evt: 'mail-no-statement-file', kinds: refusedKinds }));
+    // platform log only, never shown to the owner: bank mail refused for carrying no PDF/HTML file, counted by the file extension it did carry (e.g. csv, xlsx, zip)
+    if (Object.keys(refusedKinds).length) console.info(JSON.stringify({ evt: 'mail-refused-no-pdf-or-html', meaning: 'file extensions carried by bank mail that was refused for having no PDF or HTML attachment', extensions: refusedKinds }));
 
     try {
         const updates = {
