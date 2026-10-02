@@ -26,6 +26,7 @@ import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, i
 import { healLoanLinks } from './loan-link.mjs';
 import { policyWithReach } from './bank-reach.mjs';
 import { planWithEvidence, evidenceContext, bankStillOwned, documentProof, knownLast4 } from './statement-evidence.mjs';
+import { formKind } from './statement-document-kind.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
 
 export const config = { maxDuration: 60 };
@@ -35,7 +36,8 @@ const PASSWORD_BATCH = 6;
 /* Bumped when the reader or the AI behind it has changed so that a statement it could not read earlier deserves another look. Version 4: the
  * AI roster was repaired (reasoning-model empties, retired models) and the model-free reader added — thirty-four HNB statements had used up
  * their three adaptive tries (and the six-hour wait between them) during the outage and sat in review as "not waiting to be processed again". */
-const WHOLE_REPLAY_VERSION = 11;   // 11: read once more, with the reading's own diagnostics in the log (the DFCC Aug 26 statement was still stopped after 10)
+const WHOLE_REPLAY_VERSION = 12;   // 12: read once more — the recovery pass was starved by the queue, so 11 never ran (a mandate is now retired, a legacy attachment is matched by its message)
+// 11: read once more, with the reading's own diagnostics in the log (the DFCC Aug 26 statement was still stopped after 10)
 // 10: a statement with several accounts is now proven account by account (the DFCC Aug 26 one, stopped by the one-chain reading)
 /* A statement that was PART-WAY through (some rows already filed) when it stopped is resumed, not re-mapped: it is read again from its first row
  * and every row the ledger already holds is checked against the new reading by its fingerprint, so a row is never filed twice and a statement
@@ -488,6 +490,11 @@ export async function attachmentBytes(source, ref, token, senders, f = fetch) {
     if (items.length === 0 && source.filename && Number.isFinite(Number(source.size))) {
         items = plan.items.filter(item => item.filename === source.filename && Number(item.size) === Number(source.size));
     }
+    /* AN ITEM STORED BEFORE ITS ATTACHMENT WAS RECORDED (no size, an attachment id Gmail has since renumbered) IS STILL THE ATTACHMENT OF ITS OWN MESSAGE: a message that carries one
+     * statement attachment, or one with this file name, can only mean that one. Seventeen revived HNB items stopped at "identity mismatch" for lack of a size. The bytes are then pinned
+     * by their hash as always, and a file already filed under another key is closed as its copy. Two files with the same name and size stay ambiguous, as before. */
+    if (items.length === 0 && source.filename) { const named = plan.items.filter(item => item.filename === source.filename); if (named.length === 1) items = named; }
+    if (items.length === 0 && plan.items.length === 1 && !(Number(source.size) > 0)) items = plan.items;
     if (items.length !== 1) throw new Error('statement-attachment-identity-mismatch');
     const item = items[0];
     let payload;
@@ -1394,6 +1401,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 ? 'the mail talks about a purchase or subscription and the document does not prove itself a statement'
                 : 'nothing in the mail calls it a statement and nothing in the document is shaped like one (no period, balance, account or dated movements)';
         }
+        /* A DOCUMENT THAT NAMES ITSELF A FORM (a mandate, an application, a consent) AND WHOSE ROWS THE READER COULD NOT PROVE is not a statement, whatever the mail around it says
+         * (statement-document-kind.mjs). One whose rows reconcile is never touched. */
+        if (identity.verdict !== VERDICT.NOT_STATEMENT && !parserProof) {
+            const form = formKind({ text, filename: claimed.filename || attachment.filename || '' });
+            if (form) { identity.verdict = VERDICT.NOT_STATEMENT; identity.reason = `the document is a ${form.form} (named in its ${form.where}), not a statement`; }
+        }
         if (identity.verdict === VERDICT.NOT_STATEMENT) {
             await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, identity);
             outcome = { status: 'rejected_non_statement', rejected: 1 };
@@ -1754,23 +1767,31 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
  * (the sixty-eight "POS Transaction" rows to settle, the retired statements to look up and put back, the second copies to close): on 2026-10-02 the runs that reached them were cut at
  * sixty seconds ("Task timed out"), the chain stalled, and nothing they were meant to settle was settled — the owner kept seeing the same reviews. Each step here has a deadline, the
  * whole pass has six seconds, it is at most every thirty, and a step that did not finish says `more` so the chain comes straight back to it. */
-const SETTLE_EVERY_MS = 30 * 1000, SETTLE_STEP_MS = 6000;
+const SETTLE_EVERY_MS = 30 * 1000, SETTLE_STEP_MS = 7000, SETTLE_EACH_MS = 2500;
 async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs, now = Date.now() }) {
     const out = { ran: false, recovered: 0, more: false };
     if (now - Number(mail.lastSettleMs || 0) < SETTLE_EVERY_MS || now - start > budgetMs - 16000) return out;
     out.ran = true;
     const until = Math.min(now + SETTLE_STEP_MS, start + budgetMs - 12000);
-    const room = () => Date.now() < until;
-    const step = async work => { if (!room()) { out.more = true; return; } try { await work(); } catch (_) { /* advice only: the next pass tries again */ } };
-    await step(async () => { const r = await recoverConsensusFailures({ db, uid, limit: 25, until }); out.recovered += r.recovered; out.more = out.more || r.more; });
-    await step(async () => { const r = await recoverDuplicateRows({ db, uid, limit: 40, until }); out.more = out.more || r.more; });
-    await step(async () => { const r = await recoverRevokedSenderReviews({ db, uid, limit: 25, until }); out.recovered += r.recovered; out.more = out.more || r.more; });
-    if (now - Number(mail.lastReviveMs || 0) >= REVIVE_EVERY_MS) {
-        await step(async () => {
-            const r = await reviveRetiredSources({ db, mailRef, uid, senders: sendersOf(mail), token, f, until });
-            out.more = out.more || r.more;
-            if (!r.more) await mailRef.set({ lastReviveMs: Date.now() }, { merge: true });
-        });
+    /* EVERY STEP GETS ITS TURN. The whole-statement replay (the statements stopped for a reason a second reading can mend — "rows could not be proven to add up", an attachment that
+     * did not match) ran only in the front pass, which the mailbox scan leaves no time for on every interactive run: version 11 of it never ran, and the NTB and AMEX statements the owner
+     * kept being sent to "Map statement layout" for were never read again. Here each step has its own share of the pass, and the order turns with the clock so none is always last. */
+    const steps = [
+        async stepUntil => { const r = await recoverConsensusFailures({ db, uid, limit: 25, until: stepUntil }); out.recovered += r.recovered; out.more = out.more || r.more; },
+        async stepUntil => { const r = await recoverDuplicateRows({ db, uid, limit: 40, until: stepUntil, log: console.info }); out.more = out.more || r.more; },
+        async stepUntil => { const r = await recoverRevokedSenderReviews({ db, uid, limit: 25, until: stepUntil }); out.recovered += r.recovered; out.more = out.more || r.more; },
+        async () => { const r = await recoverWholeStatementFailures({ db, uid, limit: 8 }); out.recovered += r.recovered; out.more = out.more || r.more; },
+        async () => { const r = await resumePartialStatements({ db, uid, limit: 6 }); out.recovered += r.resumed; out.more = out.more || r.more; },
+    ];
+    if (now - Number(mail.lastReviveMs || 0) >= REVIVE_EVERY_MS) steps.push(async stepUntil => {
+        const r = await reviveRetiredSources({ db, mailRef, uid, senders: sendersOf(mail), token, f, until: stepUntil });
+        out.more = out.more || r.more;
+        if (!r.more) await mailRef.set({ lastReviveMs: Date.now() }, { merge: true });
+    });
+    const turn = Math.floor(now / SETTLE_EVERY_MS) % steps.length;
+    for (const work of [...steps.slice(turn), ...steps.slice(0, turn)]) {
+        if (Date.now() >= until) { out.more = true; continue; }
+        try { await work(Math.min(until, Date.now() + SETTLE_EACH_MS)); } catch (_) { /* advice only: the next pass tries again */ }
     }
     try { await mailRef.set({ lastSettleMs: Date.now() }, { merge: true }); } catch (_) { /* the pass simply runs again */ }
     return out;

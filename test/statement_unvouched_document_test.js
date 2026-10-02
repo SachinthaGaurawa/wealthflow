@@ -44,12 +44,17 @@ describe('a document the mail did not vouch for has to vouch for itself', () => 
         expect(w.user().expenses).toEqual([]);
         expect(w.data.has(`${sourcePath.replace('/items/item0', '')}/reviews`)).toBe(false);
     });
-    it('the same document is kept for review (as before) when the mail DID call it a statement', async () => {
+    it('a document that names itself a form (terms and conditions) is retired even when the mail DID call it a statement — the mail speaks for the mail, not for every attachment', async () => {
         const w = world({ intent: 'stated', bytes: terms(), filename: 'Smart_Saver_Terms.html' });
+        expect((await w.drain()).status).toBe('rejected_non_statement');
+        expect(w.source().rejectionReason).toMatch(/terms and conditions/);
+    });
+    it('a document that says nothing about itself is still kept for review (as before) when the mail DID call it a statement', async () => {
+        const w = world({ intent: 'stated', bytes: brochure(), filename: 'Rewards.html' });
         expect((await w.drain()).status).toBe('needs_review');
     });
     it('a legacy item written before the field existed is treated as stated', async () => {
-        const w = world({ intent: undefined, bytes: terms(), filename: 'Smart_Saver_Terms.html' });
+        const w = world({ intent: undefined, bytes: brochure(), filename: 'Rewards.html' });
         expect((await w.drain()).status).toBe('needs_review');
     });
     it('a mail that talked about a purchase needs PROOF, not merely the absence of proof against', async () => {

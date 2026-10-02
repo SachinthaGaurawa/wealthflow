@@ -144,7 +144,7 @@ describe('a two-account statement that stopped before the reader could prove it 
         const open = async () => [{ password: 'fixture-password', bank: 'DFCC Bank' }];
         const board = async () => { throw new Error('ai-consensus-unavailable'); };
         for (let run = 0; run < 3 && data.get(sourcePath).status !== 'filed'; run += 1) await runStatementSync({ action: 'drain', db, owner, env: {}, f, read: readStatement, open, settle: settleStatement, board, loadAttachment });
-        expect(data.get(sourcePath)).toMatchObject({ status: 'filed', filed: true, hasReview: false, wholeReplayVersion: 11 });
+        expect(data.get(sourcePath)).toMatchObject({ status: 'filed', filed: true, hasReview: false, wholeReplayVersion: 12 });
         expect(data.get('users/u/statementReview/' + reviewId).status).not.toBe('pending');
         const user = data.get('users/u');
         expect(user.expenses).toHaveLength(2); expect(user.incomeRecv).toHaveLength(2);
