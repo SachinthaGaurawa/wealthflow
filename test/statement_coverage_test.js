@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { monthOf, seriesOf, coverageOf, gapQuery, domainsOf, filenameStem, auditLogOf, _internal } from '../statement-coverage.mjs';
+import { monthOf, seriesOf, coverageOf, gapQuery, domainsOf, filenameStem, auditLogOf, gridOf, bankKeyOf, _internal } from '../statement-coverage.mjs';
 
 const at = iso => Date.parse(iso + 'T12:00:00Z');
 const ntb = (month, extra = {}) => ({ bank: 'NTB', filename: `Consolidated_eStatement_2026${month}_458290.html`, status: 'filed', filed: true, from: 'Statements <statements@nationstrust.com>', ...extra });
@@ -125,5 +125,75 @@ describe('auditLogOf: one line per statement, saying what became of it', () => {
         expect(JSON.stringify(log)).not.toContain('undefined');
         expect(JSON.parse(JSON.stringify(log))).toEqual(log);
         expect(auditLogOf(null)).toEqual([]);
+    });
+});
+
+describe('"DFCC Bank Statement - Aug 26.pdf" is August 2026, not the month it arrived', () => {
+    const pdf = (mon, received, extra = {}) => ({ bank: 'DFCC Bank', filename: `DFCC Bank Statement - ${mon}.pdf`, receivedMs: at(received), status: 'filed', filed: true, ...extra });
+    it('reads a month word and two digits as the month of that year, whichever month the mail arrived in', () => {
+        expect(monthOf(pdf('Aug 26', '2026-09-04'))).toBe('2026-08');        // arrived the month after: it said September before, and the owner looked for August
+        expect(monthOf(pdf('Jan 26', '2026-02-03'))).toBe('2026-01');
+        expect(monthOf(pdf('Dec 25', '2026-01-03'))).toBe('2025-12');
+        expect(monthOf(pdf('Aug 26', '2026-08-31'))).toBe('2026-08');
+    });
+    it('reads it as a day when the year would be a statement from the future, and never without a date of arrival', () => {
+        expect(monthOf(pdf('Mar 12', '2026-04-02'))).toBe('2026-03');
+        expect(monthOf(pdf('Nov 30', '2026-01-02'))).toBe('2025-11');
+        expect(monthOf({ bank: 'DFCC Bank', filename: 'DFCC Bank Statement - Aug 26.pdf' })).toBe('');
+    });
+    it('still takes a full year and a month in the name before anything else', () => {
+        expect(monthOf({ filename: 'DFCC_Statement_202605.html', receivedMs: at('2026-06-04') })).toBe('2026-05');
+    });
+    it('every month of such a file name is one series, not one per month', () => {
+        expect(seriesOf(pdf('Aug 26', '2026-09-04'))).toBe(seriesOf(pdf('Jan 26', '2026-02-03')));
+        const c = coverageOf([pdf('May 26', '2026-06-03'), pdf('Jun 26', '2026-07-03'), pdf('Aug 26', '2026-09-04')], { now: at('2026-09-30') });
+        expect(c.series).toHaveLength(1);
+        expect(c.series[0].missing).toEqual(['2026-07']);
+    });
+});
+
+describe('one bank under two labels is one bank', () => {
+    it('"DFCC Bank" and "Dfccbank", "HNB" and "Hnb" share a key; different banks do not', () => {
+        expect(bankKeyOf('Dfccbank')).toBe(bankKeyOf('DFCC Bank'));
+        expect(bankKeyOf('Hnb')).toBe(bankKeyOf('HNB'));
+        expect(bankKeyOf('NTB')).not.toBe(bankKeyOf('AMEX'));
+        expect(bankKeyOf('Some Unknown Bank')).toBe('someunknown');
+    });
+    it('a statement that came under the other label fills the month instead of leaving a hole in each', () => {
+        const a = m => ({ bank: 'Dfccbank', filename: `DFCC_Statement_2026${m}.html`, status: 'filed', filed: true });
+        const b = m => ({ bank: 'DFCC Bank', filename: `DFCC_Statement_2026${m}.html`, status: 'filed', filed: true });
+        const c = coverageOf([a('05'), b('06'), a('07')], { now: at('2026-07-30') });
+        expect(c.series).toHaveLength(1);
+        expect(c.series[0].missing).toEqual([]);
+    });
+});
+
+describe('gridOf: what the books hold, bank by bank and month by month', () => {
+    const f = (bank, filename, extra = {}) => ({ bank, filename, status: 'filed', filed: true, receivedMs: at('2026-09-04'), ...extra });
+    it('puts August where August is, counts the rows each month brought in, and counts a second copy of a statement once', () => {
+        const grid = gridOf([
+            f('DFCC Bank', 'DFCC Bank Statement - Aug 26.pdf', { proof: { rows: 77 } }),
+            f('Dfccbank', 'DFCC_Statement_202608.html', { proof: { rows: 119, math: 'duplicate-of' }, duplicateOf: 'x' }),
+            f('Dfccbank', 'DFCC_Statement_202607.html', { totalRows: 90, receivedMs: at('2026-08-04') }),
+            f('HNB', '074.pdf', { emptyStatement: true }),
+        ]);
+        const dfcc = grid.find(g => /dfcc/i.test(g.bank));
+        expect(dfcc.months['2026-08']).toEqual(['filed', 77]);
+        expect(dfcc.months['2026-07']).toEqual(['filed', 90]);
+        expect(Object.keys(dfcc.months)).toEqual(['2026-08', '2026-07']);      // newest first
+        expect(grid.find(g => /hnb/i.test(g.bank)).months['2026-09']).toEqual(['empty', 0]);
+    });
+    it('shows a statement that is waiting or in review as that, and is bounded and safe to store', () => {
+        const grid = gridOf([f('NTB', 'Consolidated_eStatement_2026MAR_1.html', { status: 'needs_review', filed: false }), ...Array.from({ length: 30 }, (_, i) => f('HNB', `s_${2020 + Math.floor(i / 12)}${['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'][i % 12]}.pdf`))]);
+        expect(grid.find(g => g.bank === 'NTB' || /nations/i.test(g.bank)).months['2026-03'][0]).toBe('review');
+        const hnb = grid.find(g => /hnb/i.test(g.bank));
+        expect(Object.keys(hnb.months)).toHaveLength(18);
+        expect(hnb.earlier).toBe(12);
+        expect(JSON.parse(JSON.stringify(grid))).toEqual(grid);
+        expect(gridOf(null)).toEqual([]);
+    });
+    it('the audit log carries the rows each statement brought in', () => {
+        expect(auditLogOf([f('DFCC Bank', 'DFCC Bank Statement - Aug 26.pdf', { proof: { rows: 77 } })])[0]).toMatchObject({ month: '2026-08', rows: 77 });
+        expect(auditLogOf([f('DFCC Bank', 'DFCC Bank Statement - Aug 26.pdf')])[0].rows).toBe(0);
     });
 });

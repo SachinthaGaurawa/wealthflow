@@ -517,8 +517,8 @@ describe('the coverage line says what the app really holds per bank', () => {
         ]), log: line => lines.push(line) });
         const out = JSON.parse(lines[0]);
         expect(out).toMatchObject({ evt: 'statement-coverage', filed: 4, more: false });
-        expect(out.banks.HNB).toEqual({ filed: 3, empty: 1, rows: 43, undated: 0, years: { 2023: 1, 2026: 2 }, oldest: '2023-04', newest: '2026-09' });
-        expect(out.banks.NTB).toEqual({ filed: 1, empty: 0, rows: 5, undated: 1, years: {} });
+        expect(out.banks.HNB).toEqual({ filed: 3, empty: 1, rows: 43, undated: 0, years: { 2023: 1, 2026: 2 }, months: { '2023-04': 1, '2026-08': 1, '2026-09': 1 }, oldest: '2023-04', newest: '2026-09' });
+        expect(out.banks.NTB).toEqual({ filed: 1, empty: 0, rows: 5, undated: 1, years: {}, months: {} });
         expect(lines[0]).not.toMatch(/secret-name|private subject/);
     });
     it('the census writes it right after its own line, and a failing coverage read never breaks the census', async () => {
