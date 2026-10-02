@@ -549,11 +549,12 @@ export const BUDGETS = {
     // 2026-10-02 (card payments, exact to the cent): 2,000,000 -> 2_004_000 (measured 2,000,067 + headroom): wealthflow-cc-reconcile.js only. The page's
     // oldest-first card walk reads every amount as whole cents from its decimal text (no float sum, no tolerance), carries what is left in the pool and says
     // what the first unpaid charge still needs — the same rule the worker applies to the document (cc-fifo.mjs, server-side, not shipped to the page).
+    // 2026-10-02 (historical sweep): no change to the ceiling above; the sweep's retry/backoff helper and padded window query (wealthflow-backfill.js) add ~1 KB inside its headroom.
     // Raised again, on top of the line above, by about 9 KB for the merchant engine in wealthflow-merchants.js: +9 KB, of which about 4 KB is
     // code (most-specific-name-wins with a declared ambiguity, the gateway/terminal wrappers stripped from a merchant's key, a line that names no shop going straight to
     // the owner without a web search or an AI call, and the email pipeline's question picked up from the filed row) and the rest is the comments recording WHY. No module
     // and no request were added: the 950-merchant list the email pipeline now uses lives in statement-merchants.mjs, which is server-only and never reaches the page.
-    totalJsBytes: 2_013_000,
+    totalJsBytes: 2_016_000,   // measured 2,014,276 after merging the historical sweep (main) with the merchant engine
     largestModuleBytes: 217_000, // measured 215,954
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

@@ -576,7 +576,8 @@ describe('the backfill engine is actually driven', () => {
         /* The endpoint holds a credential that can read the whole mailbox. The
          * client says WHICH WINDOW by index; the server rebuilds the query. */
         const body = functionBody('runBackfill');
-        expect(body).toContain('_gmailScan(');
+        expect(body).toContain('_gmailScanRetrying(');
+        expect(functionBody('_gmailScanRetrying')).toContain('_gmailScan(');
         const transport = functionBody('_gmailScan');
         expect(transport).toContain("'/api/gmail-scan'");
         expect(transport).toContain("method: 'POST'");

@@ -31,13 +31,18 @@ export async function accessTokenFrom(refreshToken, env, fetchImpl) {
         refresh_token: refreshToken,
         grant_type: 'refresh_token',
     });
-    const r = await f(TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString(),
-        signal: AbortSignal.timeout(8000),
-    });
-    if (!r.ok) throw new Error('token refresh rejected');  // never includes the token
+    /* `transient` tells a caller the exchange may succeed if repeated (timeout, lost connection, 429/5xx) from a refresh token Google has
+     * actually rejected (400/401/403: revoked or expired), which repeating cannot mend. */
+    let r;
+    try {
+        r = await f(TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString(),
+            signal: AbortSignal.timeout(8000),
+        });
+    } catch (_) { throw Object.assign(new Error('token refresh unreachable'), { transient: true }); }
+    if (!r.ok) throw Object.assign(new Error('token refresh rejected'), { transient: r.status === 429 || r.status >= 500 });  // never includes the token
     const out = await r.json();
     if (!out.access_token) throw new Error('token refresh returned no access token');
     return out.access_token;

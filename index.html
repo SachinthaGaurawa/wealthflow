@@ -25195,14 +25195,27 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (!currentUser || typeof currentUser.getIdToken !== 'function') return null;
             let token;
             try { token = await currentUser.getIdToken(); } catch (_) { return null; }
-            const r = await fetch('/api/gmail-scan', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
+            /* No answer is a status-0 result, not a throw that left the scan 'running' for good. */
+            let r;
+            try {
+                r = await fetch('/api/gmail-scan', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+            } catch (_) { return { status: 0, body: null }; }
             let out = null;
             try { out = await r.json(); } catch (_) { out = null; }
             return { status: r.status, body: out };
+        }
+
+        /* One page, repeated with backoff (sendWithRetry); a missing token is not retried. */
+        async function _gmailScanRetrying(payload, onWait) {
+            const out = await window.WFBackfill.sendWithRetry(async () => {
+                const r = await _gmailScan(payload);
+                return r || { status: 401, body: { ok: false, error: 'not signed in', retryable: false } };
+            }, { onRetry: onWait });
+            return { status: out.status, body: out.body, gaveUp: out.gaveUp, attempts: out.attempts, carried: out.carried || 0 };
         }
 
         /**
@@ -25273,17 +25286,19 @@ table.amort tbody tr { page-break-inside: avoid; }
                  * scan that sent a fresh Date.now() would have index 7 mean a
                  * different month on each side — silently re-reading one and
                  * skipping another. */
-                const r = await _gmailScan({
+                const r = await _gmailScanRetrying({
                     months: _scan.cursor.months,
                     now: _scan.cursor.now,
                     index: _scan.cursor.index,
                     pageToken: step.pageToken || undefined,
-                });
+                }, (w) => { _scan.label = step.window.label + ' — retrying in ' + Math.ceil(w.waitMs / 1000) + 's (attempt ' + (w.attempt + 1) + ')'; renderMailSync(); });
                 if (!r || r.status !== 200 || !r.body || r.body.ok !== true) {
-                    return stop((r && r.body && r.body.error) || 'the scan could not be completed');
+                    return stop(((r && r.body && r.body.error) || 'the scan could not be completed')
+                        + (r && r.gaveUp ? ' — gave up after ' + r.attempts + ' attempts; it resumes from this month' : ''));
                 }
                 _scan.cursor = window.WFBackfill.advance(_scan.cursor, r.body);
-                _scan.found += Number(r.body.statements) || 0;
+                /* + what failed attempts of this page stored before failing: the successful retry skips them as already held */
+                _scan.found += (Number(r.body.statements) || 0) + (Number(r.carried) || 0);
                 /* Written after every page, so an interruption at any point
                  * costs one page rather than the whole scan. */
                 _saveScanCursor(_scan.cursor);

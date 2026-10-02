@@ -399,7 +399,7 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         const seen = await call({ body: { months: 12, index: 3, now: NOW }, gmail: { messages: [] } });
         expect(seen.body.window.label).toBe('2026-05');
         const list = calls.find((c) => c.url.includes('/messages?'));
-        expect(decodeURIComponent(list.url)).toContain('after:2026/05/01');
+        expect(decodeURIComponent(list.url)).toContain('after:2026/04/30');
         expect(decodeURIComponent(list.url)).toContain('from:no-reply@hnb.lk');
     });
 });
