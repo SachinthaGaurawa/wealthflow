@@ -93,15 +93,15 @@ describe('a curated list decides for EVERYONE, built-in banks included', () => {
         expect(r.items).toHaveLength(1);
     });
 
-    it('legacy domain approval admits no mailbox as an approved address — it says WHICH bank, and the mail is judged on its document', () => {
+    it('legacy domain approval admits no mailbox as an approved address — it says WHICH bank, and nothing is taken on it', () => {
         const byDomain = policyFrom([
             { id: 'sampath.lk', kind: 'domain', domain: 'sampath.lk', name: 'Sampath Bank', status: 'approved', source: 'manual', addedMs: 1 },
         ]);
         expect(byDomain.decide('noreply@sampath.lk').verdict).not.toBe('approved');
         for (const from of ['noreply@sampath.lk', 'estatement@sampath.lk']) {
             const plan = planMessage(message(from, 'sampath.lk'), byDomain);
-            expect(plan.ok, from).toBe(true);
-            expect(plan.items[0], from).toMatchObject({ via: 'sibling', intent: 'suspect' });      // never as an approved address: the document must prove itself
+            expect(plan.ok, from).toBe(false);          // never as an approved address, and not released either: only an exact address on the owner's list is taken
+            expect(plan.items, from).toBeUndefined();
         }
     });
 
@@ -177,20 +177,18 @@ describe('a curated list decides for EVERYONE, built-in banks included', () => {
  * "I ADDED THE ADDRESS AND THE STATEMENT STILL DID NOT ARRIVE"
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('a new desk at a bank they already approved', () => {
-    it('is named as a sibling, not as a stranger — and taken on evidence, with no question to the owner', () => {
+    it('is named as a sibling, not as a stranger — and is NOT taken: only an address on the owner\'s list is, so the one tap to add it is the owner\'s', () => {
         const r = planMessage(message('noreply@sampath.lk', 'sampath.lk'), CURATED());
-        expect(r.ok).toBe(true);
-        expect(r.via).toBe('sibling');
+        expect(r.ok).toBe(false);
+        expect(r.reason).toBe(REJECT.SENDER_SIBLING);
         expect(r.bank).toBe('Sampath Bank');
-        expect(r.items[0]).toMatchObject({ via: 'sibling', intent: 'suspect', from: 'noreply@sampath.lk' });
+        expect(r.items).toBeUndefined();
     });
 
-    it('is taken only as a document that must prove itself — the address is still not approved', () => {
-        // Who sent it is settled by the evidence (Google's verdict that it is from that domain, the same organisation as an address the
-        // owner approved, no lookalike); what it IS is for the document to show. The owner's list is unchanged by it.
+    it('is never taken on what the mail says or what the document might prove — the address is still not approved', () => {
         const policy = CURATED();
         expect(policy.decide('noreply@sampath.lk').verdict).not.toBe('approved');
-        expect(planMessage(message('noreply@sampath.lk', 'sampath.lk'), policy).items[0].intent).toBe('suspect');
+        expect(planMessage(message('noreply@sampath.lk', 'sampath.lk', 'Your account statement'), policy)).toMatchObject({ ok: false, reason: REJECT.SENDER_SIBLING });
     });
 
     it('an invoice or a receipt from another desk of the bank is refused as not a statement — not held for a decision', () => {
@@ -240,7 +238,7 @@ describe('a new desk at a bank they already approved', () => {
  * NOTHING IS DROPPED
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('a refusal holds the message instead of losing it', () => {
-    it('holds an unlisted sender (a sibling of an approved bank is taken instead — nothing to hold)', () => {
+    it('holds an unlisted sender, a sibling of an approved bank included (the owner adds it with one tap)', () => {
         const from = 'noreply@seylan.lk';
         const msg = message(from, 'seylan.lk');
         const held = planHold(planMessage(msg, CURATED()), msg);
@@ -248,7 +246,7 @@ describe('a refusal holds the message instead of losing it', () => {
         expect(held.messageId).toBe('MSG1');
         expect(HOLDABLE.has(held.reason)).toBe(true);
         const sibling = message('noreply@sampath.lk', 'sampath.lk');
-        expect(planHold(planMessage(sibling, CURATED()), sibling)).toBeNull();
+        expect(planHold(planMessage(sibling, CURATED()), sibling)).toMatchObject({ messageId: 'MSG1', reason: REJECT.SENDER_SIBLING });
     });
 
     it('holds the REFERENCE only — no attachment is fetched on a refusal', () => {

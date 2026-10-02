@@ -51,7 +51,7 @@
 
 import {
     planMessage, planWrite, planHold, repairManifest, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
-    refusalOf, securityOf, INTAKE_VERSION, REJECT, HOLDABLE, filenameStem,
+    refusalOf, securityOf, INTAKE_VERSION, REJECT, HOLDABLE,
 } from './wealthflow-mail-ingest.mjs';
 import { normalizeList, policyFrom, recordSighting, approvedClauses, approvedDomainClauses } from './wealthflow-mail-senders.mjs';
 export { approvedDomainClauses as auditClauses };
@@ -290,20 +290,6 @@ async function storedMessageIds(stateRef) {
     if (typeof q.select === 'function') q = q.select('messageId');
     if (typeof q.limit === 'function') q = q.limit(2000);
     return new Set((await q.get()).docs.map(d => String((d.data() || {}).messageId || '')).filter(Boolean));
-}
-
-/** The file-name shapes of statements already FILED — what "the same kind of mail" means. */
-async function filedSeriesStems(stateRef) {
-    let q = stateRef.collection('items');
-    if (typeof q.select === 'function') q = q.select('filename', 'filed');
-    if (typeof q.limit === 'function') q = q.limit(1000);
-    const out = new Set();
-    for (const d of (await q.get()).docs) {
-        const x = d.data() || {};
-        const stem = x.filed === true && x.filename ? filenameStem(x.filename) : '';
-        if (stem.replace(/[^a-z]/g, '').length >= 6) out.add(stem);
-    }
-    return out;
 }
 
 /** What the filed statements look like — their subjects and file names — so discovery can ask for "the same kind of mail" from any address. */
@@ -562,7 +548,6 @@ async function ingestMailbox(db, note, env, f, res) {
     if (logged.ok === false) return j(res, 503, { ok: false, error: 'state log unavailable', collectionPending: true });
     const forcedIds = new Set(Array.isArray(pending.forced) ? pending.forced.map(String) : []);
     const freshIds = new Set(Array.isArray(logged.fresh) ? logged.fresh : []);
-    let stems = null;
     for (const [offset, id] of pending.ids.slice(pending.cursor, batchEnd).entries()) {
         const via = forcedIds.has(String(id)) ? 'owner' : ((pending.cursor + offset) >= (Number(pending.viaFrom) || 0) ? String(pending.via || '') : '');
         const rules = { ...policy, forced: forcedIds.has(String(id)) };
@@ -581,17 +566,6 @@ async function ingestMailbox(db, note, env, f, res) {
         const discoveryOnly = !forcedIds.has(String(id)) && Number.isInteger(pending.discoveryFrom) && at >= pending.discoveryFrom && at < pending.discoveryTo
             && !(Array.isArray(state[HELD_FIELD]) && state[HELD_FIELD].some(h => String(h && h.messageId) === String(id)));
         let plan = forcedIds.has(String(id)) ? planMessage(msg, rules) : planWithEvidence(msg, policy, evidence);
-        /* The bank wrote from another address than the one approved: if what it
-         * attached is named like a statement that was already filed from the
-         * approved one, it is the same series and is taken. Looked up only when
-         * there is a sibling to decide about. */
-        if (!plan.ok && plan.reason === REJECT.SENDER_SIBLING) {
-            try {
-                if (!stems) stems = await filedSeriesStems(stateRef);
-                if (stems.size) { const again = planMessage(msg, { ...rules, siblingSeries: stems }); if (again.ok) plan = again; }
-            } catch (_) { /* the sibling stays held, which is the old behaviour */ }
-        }
-
         /* Recorded only when this message could ever become a statement —
          * see worthSighting() in wealthflow-mail-ingest.mjs for why: the
          * Pub/Sub history this loop walks has no query, so before this gate
@@ -625,7 +599,7 @@ async function ingestMailbox(db, note, env, f, res) {
             if (breach) securityNow.push(breach);
             /* MAIL FROM AN UNLISTED SENDER THAT DOES NOT EVEN SAY IT IS A STATEMENT IS NOT HELD FOR A TAP. Whether to trust an address is a question only when something it sent could be a statement; an accounting
              * newsletter or a course notice ("3 waiting on a sender decision") is not, and nothing is lost by saying so: it is judged again when the owner's banks change (it is not marked as seen for good). */
-            const notStatement = plan.reason === REJECT.NOT_ON_YOUR_LIST && !!plan.evidence && plan.evidence.ok === false && plan.evidence.why === 'the-subject-and-file-names-do-not-say-statement';
+            const notStatement = (plan.reason === REJECT.NOT_ON_YOUR_LIST || plan.reason === REJECT.SENDER_SIBLING) && !!plan.evidence && plan.evidence.ok === false && plan.evidence.why === 'the-subject-and-file-names-do-not-say-statement';
             const verdictState = notStatement ? { state: MAIL_STATE.REFUSED, reason: 'not-a-statement-of-your-banks:the-subject-and-file-names-do-not-say-statement' } : stateForPlan(plan);
             if (verdictState) outcomesNow.push({ messageId: String(id), ...verdictState, from: plan.from, subject: plan.subject, receivedMs: Number(msg.internalDate) || null, v: INTAKE_VERSION });
             if (fromAudit && !HOLDABLE.has(plan.reason)) seenNow.push(String(id));
@@ -721,8 +695,8 @@ async function ingestMailbox(db, note, env, f, res) {
                     // Settings revocation during a download must not publish a
                     // new manifest. A later approval triggers historical replay.
                     const latest = normalizeList(sendersOf(currentState.data() || {}));
-                    const replan = { ...policyWithReach(latest), ...(forcedIds.has(String(id)) ? { forced: true } : {}), ...(item.via === 'series' && stems ? { siblingSeries: stems } : {}) };
-                    if (!(item.via === 'evidence' ? planWithEvidence(msg, replan, evidenceContext(latest, (currentState.data() || {}).email)) : planMessage(msg, replan)).ok) return false;
+                    const replan = { ...policyWithReach(latest), ...(forcedIds.has(String(id)) ? { forced: true } : {}) };
+                    if (!planMessage(msg, replan).ok) return false;
                     tx.set(ref, { ...write.manifest, status: 'pending', filed: false,
                         ...((item.via || via) ? { via: item.via || via } : {}),
                         ...(currentState.data()?.uid ? { uid: currentState.data().uid } : {}) });

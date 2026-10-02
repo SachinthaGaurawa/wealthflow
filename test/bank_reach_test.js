@@ -21,9 +21,11 @@ describe('which domains a bank the owner approved is searched under', () => {
         expect(reachDomains([])).toEqual([]);
         expect(reachDomains([{ ...approved('statements@dfccbank.com', 'DFCC Bank'), status: 'blocked' }])).toEqual([]);
     });
-    it('the history audit lists them, beside the approved domains; the recent-mail query is unchanged', () => {
+    it('the history audit lists the approved addresses\' domains only — the bank\'s other registered domains are known (reachDomains) but not searched, nothing from them would be taken', () => {
         const clauses = auditQuery(OWNER);
-        for (const c of ['from:hnb.lk', 'from:dfccbank.com', 'from:info.nationstrust.com', 'from:estmt.nationstrust.com', 'from:dfcc.lk', 'from:americanexpress.com']) expect(clauses).toContain(c);
+        for (const c of ['from:hnb.lk', 'from:dfccbank.com', 'from:info.nationstrust.com', 'from:estmt.nationstrust.com']) expect(clauses).toContain(c);
+        for (const c of reachDomains(OWNER)) expect(clauses).not.toContain('from:' + c);
+        expect(clauses).not.toContain('from:dfcc.lk');
         expect(approvedDomainClauses(OWNER)).not.toContain('from:dfcc.lk');         // the exact-approval clauses themselves are unchanged
         expect(approvedClauses(OWNER).every(c => c.includes('@'))).toBe(true);
     });
@@ -50,11 +52,11 @@ const message = (id, { from, filename, domain, subject = 'Your statement', recei
 });
 
 describe('planMessage', () => {
-    it('an old-domain statement of a bank they approved is taken (it was held, "waiting on a sender decision", for ever)', () => {
+    it('an old-domain statement of a bank they approved is recognised as that bank but NOT taken: only an exact address on the owner\'s list is', () => {
         const plan = planMessage(message('old1', { from: 'DFCC Bank <statements@dfcc.lk>', filename: 'DFCC_Statement_202106.pdf', domain: 'dfcc.lk' }), policyWithReach(OWNER));
-        expect(planMessage(message('old1', { from: 'DFCC Bank <statements@dfcc.lk>', filename: 'DFCC_Statement_202106.pdf', domain: 'dfcc.lk' }), policyFrom(OWNER)).ok).toBe(false);      // before
-        expect(plan.ok).toBe(true);
-        expect(plan.bank).toBe('DFCC Bank');
+        expect(planMessage(message('old1', { from: 'DFCC Bank <statements@dfcc.lk>', filename: 'DFCC_Statement_202106.pdf', domain: 'dfcc.lk' }), policyFrom(OWNER)).ok).toBe(false);
+        expect(plan).toMatchObject({ ok: false, reason: 'a-new-address-at-a-bank-you-approved', bank: 'DFCC Bank' });
+        expect(plan.items).toBeUndefined();
     });
     it('an invoice from the same old domain is still refused, a signature that fails is still refused, a stranger is still not on the list', () => {
         const policy = policyWithReach(OWNER);
@@ -89,14 +91,13 @@ function setup({ inbox }) {
 }
 
 describe('the history audit', () => {
-    it('lists the bank\'s other registered domains and stores a statement from one of them, which the owner would otherwise never have got', async () => {
+    it('does not search the bank\'s other registered domains and stores nothing from one of them: only an address on the owner\'s list is taken', async () => {
         const s = setup({ inbox: [message('old1', { from: 'DFCC Bank <statements@dfcc.lk>', filename: 'DFCC_Statement_202106.pdf', domain: 'dfcc.lk' }), message('old2', { from: 'Seylan <alerts@seylan.lk>', filename: 'Statement_202106.pdf', domain: 'seylan.lk' })] });
         const out = await s.run();
         expect(out.body).toMatchObject({ ok: true });
-        expect(s.queries.some(q => q.includes('from:dfcc.lk'))).toBe(true);
+        expect(s.queries.some(q => q.includes('from:dfcc.lk'))).toBe(false);
         const items = (await s.ref.collection('items').get()).docs.map(d => d.data());
-        expect(items.map(i => i.messageId)).toContain('old1');
-        expect(items.find(i => i.messageId === 'old1').bank).toBe('DFCC Bank');
+        expect(items.map(i => i.messageId)).not.toContain('old1');
         expect(items.map(i => i.messageId)).not.toContain('old2');          // a bank they never approved
     });
 });

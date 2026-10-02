@@ -5,7 +5,8 @@ import { readStatement } from '../statement-reader.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
 
 // Production, 2026-10-02: 14 NTB statements from another desk of the approved bank (info.* beside estmt.*) were stored, retired as "the sender is no longer approved" and
-// never looked at again — the owner's "years of statements that never arrive". A retired statement whose sender is right TODAY goes back in the queue.
+// never looked at again. A retired statement goes back in the queue when its sender is an EXACT address on the owner's list TODAY — and only then: another desk of the bank,
+// a registered domain of it and a mail that said statement are not (the owner's rule: only the addresses they listed bring a statement in).
 
 afterEach(() => vi.restoreAllMocks());
 const owner = { uid: 'u', email: 'owner@example.com' };
@@ -22,7 +23,7 @@ const world = (items, senders = SENDERS) => createFirestore({
 const run = (w, extra = {}) => { const lines = []; return reviveRetiredSources({ db: w.db, mailRef: w.db.collection('wf-mail').doc('owner_example_com'), uid: 'u', senders: SENDERS, log: l => lines.push(l), ...extra }).then(out => ({ ...out, lines })); };
 
 describe('a statement retired for its sender is judged again under today\'s list', () => {
-    it('another desk of an approved bank (no `via` was ever stored) and an exactly approved address go back in the queue; a stranger, a blocked address and a third retirement do not', async () => {
+    it('an exactly approved address goes back in the queue; another desk of an approved bank, a stranger, a blocked address and a third retirement do not', async () => {
         const w = world({
             desk: retired('NTB <statements@info.nationstrust.com>'),
             card: retired('NTB <nationstrust@estmt.nationstrust.com>'),
@@ -33,21 +34,20 @@ describe('a statement retired for its sender is judged again under today\'s list
             nofrom: { ...retired(''), from: '' },
         });
         const out = await run(w);
-        expect(out).toMatchObject({ revived: 3, kept: 3 });
+        expect(out).toMatchObject({ revived: 1, kept: 5 });
         const at = id => w.data.get(`${mailPath}/items/${id}`);
-        expect(at('desk')).toMatchObject({ status: 'pending', via: 'sibling', reviveCount: 1, filed: false, retryCount: 0, leaseToken: '' });
-        expect(at('card')).toMatchObject({ status: 'pending', via: 'sibling' });
-        expect(at('exact')).toMatchObject({ status: 'pending', reviveCount: 1 });
+        expect(at('exact')).toMatchObject({ status: 'pending', reviveCount: 1, filed: false, retryCount: 0, leaseToken: '' });
         expect(at('exact').via).toBeUndefined();
-        for (const id of ['stranger', 'blocked', 'third', 'nofrom']) expect(at(id).status, id).toBe('rejected_unapproved_sender');
-        expect(JSON.parse(out.lines[0])).toMatchObject({ evt: 'statement-revived', checked: 7, revived: 3, kept: 3, noSender: 1, banks: { NTB: 3 } });
+        for (const id of ['desk', 'card', 'stranger', 'blocked', 'third', 'nofrom']) expect(at(id).status, id).toBe('rejected_unapproved_sender');
+        expect(JSON.parse(out.lines[0])).toMatchObject({ evt: 'statement-revived', checked: 7, revived: 1, kept: 5, noSender: 1, banks: { NTB: 1 } });
         expect(out.lines[0]).not.toMatch(/statements@|evil|promo@/);        // counts and bank names only
     });
-    it('a bank taken on evidence is revived while the owner still approves an address at that bank, and not after', async () => {
+    it('a statement taken on evidence is never revived, whatever bank the owner approves — the address is not on the list', async () => {
         const w = world({ ev: retired('S <s@ntb-mailer.example>', { via: 'evidence' }) });
-        expect((await run(w)).revived).toBe(1);
-        const gone = world({ ev: retired('S <s@ntb-mailer.example>', { via: 'evidence' }) });
-        expect((await run(gone, { senders: [A('e-statements@hnb.lk', 'HNB')] })).revived).toBe(0);
+        expect((await run(w)).revived).toBe(0);
+        const listed = world({ ev: retired('S <s@ntb-mailer.example>', { via: 'evidence' }) });
+        expect((await run(listed, { senders: [...SENDERS, A('s@ntb-mailer.example', 'NTB')] })).revived).toBe(1);      // until the owner adds that address
+        expect(listed.data.get(`${mailPath}/items/ev`).via).toBe('');        // the release mark is cleared: it is taken as the listed address it is
     });
     it('revoked is revoked: with the owner\'s approval of the bank gone, nothing is revived', async () => {
         const w = world({ desk: retired('NTB <statements@info.nationstrust.com>') });
@@ -64,11 +64,11 @@ describe('a statement retired for its sender is judged again under today\'s list
 describe('and the worker then files it', () => {
     const html = `<html><body><h1>Nations Trust Bank American Express Credit Card Statement</h1><p>Card Number: 376657XXXXX0276</p><p>Statement Date: 30/09/2026 Payment Due Date: 20/10/2026</p><p>Credit Limit 500000.00 Available Credit 400000.00 Minimum Amount Due 10000.00</p><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr><tr><td>01/09/2026</td><td>KEELLS STORE 1</td><td>100.00 DR</td></tr></table></body></html>`;
     it('a drain run revives the retired statement, reads it and files it — in one pass', async () => {
-        const w = world({ item0: retired('NTB <statements@info.nationstrust.com>', { filename: 'statement.html' }) });
+        const w = world({ item0: retired('NTB <estatement@info.nationstrust.com>', { filename: 'statement.html' }) });
         const f = async (url) => (String(url).includes('/profile') ? { ok: true, json: async () => ({ emailAddress: owner.email, historyId: '1' }) } : { ok: true, json: async () => ({ access_token: 'token' }) });
         const loadAttachment = vi.fn(async () => ({ bytes: Buffer.from(html), filename: 'statement.html', contentSha256: 'x' }));
         await runStatementSync({ action: 'drain', db: w.db, owner, env: {}, f, intake: async () => ({ body: { ok: true } }), read: readStatement, open: async () => [{ password: 'x', bank: 'NTB' }], board: async () => { throw new Error('ai-consensus-unavailable'); }, extract: async () => { throw new Error('ai-extractor-unavailable'); }, loadAttachment, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
-        expect(w.data.get(`${mailPath}/items/item0`)).toMatchObject({ status: 'filed', filed: true, via: 'sibling', reviveCount: 1 });
+        expect(w.data.get(`${mailPath}/items/item0`)).toMatchObject({ status: 'filed', filed: true, reviveCount: 1 });
         expect(w.data.get('users/u').cconetime).toHaveLength(1);
         expect(w.data.get(mailPath).lastReviveMs).toBeGreaterThan(0);
     });
@@ -93,15 +93,15 @@ describe('an item stored before the sender was recorded on it', () => {
         const f = gmail({ m1: 'NTB <statements@info.nationstrust.com>', m2: 'Mallory <x@evil.example>', m3: 'NTB <estatement@info.nationstrust.com>' });
         const out = await run(w, { token: 't', f });
         const at = id => w.data.get(`${mailPath}/items/${id}`);
-        expect(out.revived).toBe(3);
-        expect(at('a')).toMatchObject({ status: 'pending', via: 'sibling', from: 'NTB <statements@info.nationstrust.com>' });
-        expect(at('b')).toMatchObject({ status: 'pending', via: 'sibling' });
+        expect(out.revived).toBe(1);
+        expect(at('a')).toMatchObject({ status: 'rejected_unapproved_sender', from: 'NTB <statements@info.nationstrust.com>' });      // another desk: judged, kept, and the sender remembered
+        expect(at('b').status).toBe('rejected_unapproved_sender');
         expect(at('d')).toMatchObject({ status: 'pending', from: 'NTB <estatement@info.nationstrust.com>' });
         expect(at('c')).toMatchObject({ status: 'rejected_unapproved_sender', from: 'Mallory <x@evil.example>' });      // judged, kept, and the sender remembered
         expect(at('e').status).toBe('rejected_unapproved_sender');
         expect(f).toHaveBeenCalledTimes(4);                                   // m1 once for two items, m2, m3, and the one that is gone
         expect(f.mock.calls.every(([url]) => String(url).includes('format=metadata&metadataHeaders=From'))).toBe(true);
-        expect(JSON.parse(out.lines[0])).toMatchObject({ checked: 6, revived: 3, kept: 1, noSender: 2, lookedUp: 4, messagesGone: 1 });
+        expect(JSON.parse(out.lines[0])).toMatchObject({ checked: 6, revived: 1, kept: 3, noSender: 2, lookedUp: 4, messagesGone: 1 });
     });
     it('what was written is not looked up again, and a run asks Gmail about at most `lookups` messages', async () => {
         const items = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`x${i}`, { ...retired(''), messageId: 'mm' + i }]));
