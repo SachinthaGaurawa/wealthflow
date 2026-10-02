@@ -541,17 +541,19 @@ export function backoffMs(attempt, { retryAfterMs = 0, random = Math.random } = 
 export async function sendWithRetry(send, { max = MAX_PAGE_ATTEMPTS, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), onRetry = null, random = Math.random } = {}) {
     const limit = Math.max(1, Math.floor(num(max)) || 1);
     let last = { status: 0, body: null };
+    let carried = 0;   // statements a FAILED attempt stored before it failed: the retry skips them as already held, so only this counts them
     for (let attempt = 1; attempt <= limit; attempt++) {
         try { last = (await send()) || { status: 0, body: null }; } catch (_) { last = { status: 0, body: null }; }
         const { status, body } = last;
-        if (status === 200 && body && body.ok === true) return { ok: true, status, body, attempts: attempt, gaveUp: false };
-        if (!isRetryable(status, body)) return { ok: false, status, body, attempts: attempt, gaveUp: false };
+        if (status === 200 && body && body.ok === true) return { ok: true, status, body, attempts: attempt, gaveUp: false, carried };
+        if (body && Number.isFinite(Number(body.stored)) && Number(body.stored) > 0) carried += Math.floor(Number(body.stored));
+        if (!isRetryable(status, body)) return { ok: false, status, body, attempts: attempt, gaveUp: false, carried };
         if (attempt === limit) break;
         const waitMs = backoffMs(attempt, { retryAfterMs: body && body.retryAfterMs, random });
         if (typeof onRetry === 'function') { try { onRetry({ attempt, waitMs, status }); } catch (_) { /* a progress line is advice */ } }
         await sleep(waitMs);
     }
-    return { ok: false, status: last.status, body: last.body, attempts: limit, gaveUp: true };
+    return { ok: false, status: last.status, body: last.body, attempts: limit, gaveUp: true, carried };
 }
 
 export const NOTIFY_REASONS = new Set(['routing-conflict', 'direction-unresolved']);

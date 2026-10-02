@@ -25215,7 +25215,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const r = await _gmailScan(payload);
                 return r || { status: 401, body: { ok: false, error: 'not signed in', retryable: false } };
             }, { onRetry: onWait });
-            return { status: out.status, body: out.body, gaveUp: out.gaveUp, attempts: out.attempts };
+            return { status: out.status, body: out.body, gaveUp: out.gaveUp, attempts: out.attempts, carried: out.carried || 0 };
         }
 
         /**
@@ -25297,7 +25297,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                         + (r && r.gaveUp ? ' — gave up after ' + r.attempts + ' attempts; it resumes from this month' : ''));
                 }
                 _scan.cursor = window.WFBackfill.advance(_scan.cursor, r.body);
-                _scan.found += Number(r.body.statements) || 0;
+                /* + what failed attempts of this page stored before failing: the successful retry skips them as already held */
+                _scan.found += (Number(r.body.statements) || 0) + (Number(r.carried) || 0);
                 /* Written after every page, so an interruption at any point
                  * costs one page rather than the whole scan. */
                 _saveScanCursor(_scan.cursor);

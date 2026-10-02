@@ -185,6 +185,15 @@ describe('retry policy', () => {
         }
     });
 
+    it('counts what a failed attempt stored, because the retry skips it as already held', async () => {
+        const answers = [{ status: 503, body: { ok: false, retryable: true, stored: 2 } }, { status: 503, body: { ok: false, retryable: true, stored: 1 } }, { status: 200, body: { ok: true, statements: 0 } }];
+        let calls = 0;
+        const out = await sendWithRetry(async () => answers[calls++], noSleep);
+        expect(out).toMatchObject({ ok: true, carried: 3, attempts: 3 });
+        const none = await sendWithRetry(async () => ({ status: 200, body: { ok: true, statements: 1 } }), noSleep);
+        expect(none.carried).toBe(0);
+    });
+
     it('tells the page about each wait', async () => {
         const told = [];
         await sendWithRetry(async () => ({ status: 503, body: null }), { ...noSleep, max: 3, onRetry: (i) => told.push(i) });
