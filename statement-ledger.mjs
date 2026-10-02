@@ -33,9 +33,13 @@ export function sourceOccurrenceId(sourcePath, absoluteIndex) {
     return hash(['statement-occurrence-v1', sourcePath, absoluteIndex]);
 }
 
+/* WHAT PROVES A ROW'S DIRECTION. The page itself (a running balance, a Dr/Cr marker, a Debit or Credit column, a sign) — or, for a row the page left unmarked, the statement as a whole
+ * ('statement': its opening and closing balances add up only with every row where it is) or the words of the row itself ('words': a charge, a POS purchase, a salary). */
+export const PROVEN_DIRECTION = ['balance', 'marker', 'column', 'sign', 'statement', 'words'];
+
 export function validateSettlementRow(row, decision, ctx = {}) {
     if (!row || !isStrictCalendarDate(row.date) || !amountCents(row.amount) || !norm(row.description || row.narration)) return 'invalid-transaction';
-    if (row.needsReview !== false || row.valid === false || !['balance', 'marker', 'column', 'sign'].includes(row.directionSource) || !['debit', 'credit'].includes(row.direction)) return 'unproven-direction';
+    if (row.needsReview !== false || row.valid === false || !PROVEN_DIRECTION.includes(row.directionSource) || !['debit', 'credit'].includes(row.direction)) return 'unproven-direction';
     if (!decision || decision.verified !== true || !modules[decision.module] || !norm(decision.category)) return decision?.reason || 'unanimous-decision-required';
     
     const module = modules[decision.module];
@@ -106,7 +110,9 @@ function makeRecord(row, decision, context, id, now) {
     const provenance = { statementKey: context.sourcePath, statementRow: context.index, bank: canonicalBank(context.bank || ''), card_last4: context.last4 || '', ref: String(row.ref || ''), direction: row.direction };
     // a row the AI board could not refine is filed with the rules' own answer and says so, so it can be found and changed
     const base = { id, ...provenance, amount: row.amount, date: row.date, source: 'statement', createdAt: new Date(now).toISOString(), _ut: now,
-        notes: decision.autoDecided ? 'Filed automatically; the AI could not pick a more specific category. Change it if it is wrong.' : '', ...(decision.autoDecided ? { autoDecided: String(decision.autoDecided) } : {}) };
+        notes: decision.autoDecided ? 'Filed automatically; the AI could not pick a more specific category. Change it if it is wrong.' : '', ...(decision.autoDecided ? { autoDecided: String(decision.autoDecided) } : {}),
+        // a direction the page did not print, proven by the statement's own balances or by the row's words (statement-direction.mjs): said on the record, so it can be found
+        ...(['statement', 'words'].includes(row.directionSource) ? { directionProof: row.directionSource } : {}) };
     const module = modules[decision.module];
     if (module === 'expenses') return { ...base, desc, cat: decision.category, month: row.date.slice(0, 7), recurring: false, recurringType: '0', completed: true };
     if (module === 'incomeRecv') return { ...base, name: desc, type: decision.category, month: row.date.slice(0, 7), received: true };
