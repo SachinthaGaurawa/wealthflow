@@ -101,11 +101,18 @@ describe('a statement stopped at "rows could not be proven to add up" is read ag
         expect(ledger.map(entry => entry.status).sort()).toEqual(['filed', 'filed', 'skipped']);
         expect([...w.data.keys()].filter(key => key.includes('/statementReview/'))).toEqual([]);
     });
-    it('a reading that no single row explains still stops, as before', async () => {
+    it('a reading that no single row explains still stops, as before — and the log says why in counts and shapes (no figure, no name)', async () => {
         const w = world();
+        const lines = [];
+        vi.spyOn(console, 'info').mockImplementation(line => { lines.push(String(line)); });
         const input = dfcc(); input.reconciliation.closing = 100000; input.reconciliation.difference = -126710.16;
         await run(w, input);
         expect(w.data.get(itemPath).status).toBe('needs_review');
+        const item = lines.map(line => { try { return JSON.parse(line); } catch (_) { return null; } }).find(entry => entry && entry.evt === 'statement-sync-item' && entry.status === 'needs_review');
+        expect(item.diag.recon).toMatchObject({ rows: 3, flagged: 1, mismatched: 0, balanceColumn: false });
+        expect(item.diag.recon.shapes).toHaveLength(1);
+        expect(JSON.stringify(item.diag.recon)).not.toMatch(/30,?735|376657|Ceft|50,?000/i);
+        expect(item.diag.recon.shapes[0]).toMatch(/9{2},9{3}\.9{2}|9+\.9{2}/);
     });
 });
 

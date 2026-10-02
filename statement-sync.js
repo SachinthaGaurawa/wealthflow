@@ -1363,6 +1363,15 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             intent: String(claimed.intent || ''), rec: { open: Number.isFinite(parsed?.reconciliation?.opening), close: Number.isFinite(parsed?.reconciliation?.closing), ok: parsed?.reconciliation?.ok ?? null },
             row0: Array.isArray(parsed?.rows) && parsed.rows[0] ? { amount: Number(parsed.rows[0].amount) > 0, text: Boolean(String(parsed.rows[0].narration || '').trim()), valid: parsed.rows[0].valid === true } : null,
             skeleton: skeletonOf(text) });
+        /* WHY A READING DOES NOT ADD UP, IN COUNTS AND SHAPES. The log said "rows could not be proven" and nothing about the arithmetic: how many rows the reader had to assume, how many whose own
+         * running balance disagreed, and the SHAPE (digits masked, unknown words reduced to a+) of the first few of them — enough to see what the line looks like without a figure or a name in it. */
+        try {
+            const reading = Array.isArray(parsed?.rows) ? parsed.rows : [];
+            const odd = reading.filter(row => row && (row.needsReview === true || row.directionSource === 'balance-mismatch'));
+            if (reading.length && parsed?.reconciliation?.ok !== true) diag.recon = { rows: reading.length, flagged: odd.length, mismatched: reading.filter(row => row && row.directionSource === 'balance-mismatch').length,
+                balanceColumn: parsed?.layout?.balanceColumn === true, sections: Number(parsed?.reconciliation?.sections) || 0,
+                shapes: odd.slice(0, 4).map(row => skeletonOf(`${row.narration || ''} ${Number(row.amount) > 0 ? Number(row.amount).toFixed(2) : ''} ${row.direction || ''} ${row.directionSource || ''}`, { maxLines: 1, maxChars: 90 })) };
+        } catch (_) { /* a log line never stops a sync */ }
         /* A STATEMENT THE RULES COULD NOT READ is read by a model, and believed only when the document agrees with every
          * word of it and the books balance to the cent (statement-adaptive.mjs). Anything less goes where it always went. */
         const adaptiveNow = Date.now();
