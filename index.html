@@ -18069,6 +18069,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 html.setAttribute('data-theme', next);
                 void html.offsetHeight;                          // force the no-transition style to apply now
                 try { var b = document.getElementById('themeBtn'); if (b) b.innerHTML = _wfThemeIcon(next); } catch (_) {}
+                try { if (window._wfDashChartTheme) window._wfDashChartTheme(); } catch (_) {}   // the dashboard line chart's legend text follows the theme
                 if (persist) { try { var stg = DB.getObj('settings', {}); stg.theme = next; DB.set('settings', stg); } catch (_) {} }
                 var _reenable = function () { try { html.classList.remove('wf-theme-switching'); } catch (_) {} };
                 if (window.requestAnimationFrame) window.requestAnimationFrame(function () { window.requestAnimationFrame(_reenable); });
@@ -27755,6 +27756,12 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         // ==================== DASHBOARD AUTOMATION ====================
         let dashChartInst = null, dashPieInst = null;
+        /* The line chart's legend text takes the theme's text colour. Chart.js keeps the colour it was given, so a theme switch has to hand it the new one (the ring's legend is HTML and follows the theme by itself). */
+        function _wfDashLegendColor() { return (getComputedStyle(document.documentElement).getPropertyValue('--text2') || '').trim() || '#94a3b8'; }
+        function _wfDashChartTheme() {
+            try { if (dashChartInst && dashChartInst.options) { dashChartInst.options.plugins.legend.labels.color = _wfDashLegendColor(); dashChartInst.update('none'); } } catch (_) { /* the chart is redrawn with the right colour on its next render */ }
+        }
+        window._wfDashChartTheme = _wfDashChartTheme;
 
         /* HOW THE DASHBOARD DRAWS ITS TWO CHARTS IS THE OWNER'S CHOICE, PER DEVICE: 'charts' (the line and the ring) or 'lists' (the same figures as bars). Until they choose, a device takes the
          * one it can carry — charts, except where the canvas path once crashed the page (iPhone, little memory, a small touch screen: _wfUseSafeDashboardCharts), which keeps the lists until the
@@ -28173,7 +28180,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             { label: 'Expenses', data: expData, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.4 }
                         ]
                     },
-                    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, hover: { mode: 'index', intersect: false }, plugins: { legend: { display: true, position: 'top', align: 'end', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, color: (getComputedStyle(document.documentElement).getPropertyValue('--text2') || '').trim() || '#94a3b8', font: { size: 11 } } }, tooltip: { mode: 'index', intersect: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmtS(v) } } } }
+                    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, hover: { mode: 'index', intersect: false }, plugins: { legend: { display: true, position: 'top', align: 'end', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, color: _wfDashLegendColor(), font: { size: 11 } } }, tooltip: { mode: 'index', intersect: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmtS(v) } } } }
                 });
             }
 

@@ -167,3 +167,28 @@ describe('Monthly Overview fills its card (no blank band under the line)', () =>
         expect(html).not.toContain('dash-line-key');
     });
 });
+
+describe('the line chart legend follows the theme', () => {
+    it('a theme switch hands the live chart the new text colour (Chart.js keeps the colour it was given)', () => {
+        let colour = '#475569'; let updated = null;
+        const chart = { options: { plugins: { legend: { labels: { color: '#475569' } } } }, update: (mode) => { updated = mode; } };
+        const context = vm.createContext({ document: { documentElement: {} }, getComputedStyle: () => ({ getPropertyValue: () => ' ' + colour + ' ' }), window: {}, dashChartInst: chart });
+        vm.runInContext(source('_wfDashLegendColor') + '\n' + source('_wfDashChartTheme'), context);
+        colour = '#cbd5e1';
+        context._wfDashChartTheme();
+        expect(chart.options.plugins.legend.labels.color).toBe('#cbd5e1');
+        expect(updated).toBe('none');
+    });
+    it('no chart (lists view, a phone, Chart.js not loaded) is a no-op, never an error', () => {
+        const context = vm.createContext({ document: { documentElement: {} }, getComputedStyle: () => ({ getPropertyValue: () => '' }), window: {}, dashChartInst: null });
+        vm.runInContext(source('_wfDashLegendColor') + '\n' + source('_wfDashChartTheme'), context);
+        expect(() => context._wfDashChartTheme()).not.toThrow();
+        expect(context._wfDashLegendColor()).toBe('#94a3b8');
+    });
+    it('the theme switch calls it, and the chart is created with the same colour helper', () => {
+        const apply = html.slice(html.indexOf('function _applyThemeSafe('), html.indexOf('function toggleTheme()'));
+        expect(apply).toContain('window._wfDashChartTheme()');
+        const dashFn = html.slice(html.indexOf('function renderDash()'), html.indexOf('function renderUpcoming()'));
+        expect(dashFn).toContain('color: _wfDashLegendColor()');
+    });
+});
