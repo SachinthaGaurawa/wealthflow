@@ -544,11 +544,13 @@ export const BUDGETS = {
     // 2026-10-01 (HNB, identity vocabulary): 1,990,000 -> 1,993_000 (measured 1,990,090 + headroom): wealthflow-statement-identity.js reads its
     // vocabulary through the same normaliser as the document (entries written with a slash — 'balance b/f', 'a/c no' — could never match) and
     // gains 'account balance', 'b/f' and 'a/c'; wealthflow-merchants.js paces its AI board calls two at a time. ~0.15% headroom.
-    // 2026-10-02 (card payments, exact to the cent): 1,993,000 -> 1,997_000 (measured 1,994,391 + headroom): wealthflow-cc-reconcile.js only. The page's
+    // Raised from 1_993_000 / 214_000 for the statement registry's two doors: the upload screen's check-and-claim calls (wealthflow-ai-v4.js, wealthflow-statement-cloud.js).
+    // Measured 1,997,673 total; largest module 215,954. No module or script tag added.
+    // 2026-10-02 (card payments, exact to the cent): 2,000,000 -> 2_004_000 (measured 2,000,067 + headroom): wealthflow-cc-reconcile.js only. The page's
     // oldest-first card walk reads every amount as whole cents from its decimal text (no float sum, no tolerance), carries what is left in the pool and says
     // what the first unpaid charge still needs — the same rule the worker applies to the document (cc-fifo.mjs, server-side, not shipped to the page).
-    totalJsBytes: 1_997_000,
-    largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
+    totalJsBytes: 2_004_000,
+    largestModuleBytes: 217_000, // measured 215,954
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely

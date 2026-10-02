@@ -22,6 +22,7 @@ import { readTable, reconcile as reconcileMailStates, applyReconcile, summarize 
 import { claimOrder, CLAIM_WINDOW, failurePatch, redriveDeadLetters, aiBreaker, DEAD_LETTER } from './statement-queue.mjs';
 import { tieredAsk } from './statement-llm-router.mjs';
 import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
+import { VIA, identityOf, claimStatement, peekStatement, releaseStatement, registryDuplicatePatch } from './statement-registry.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 import { healLoanLinks } from './loan-link.mjs';
@@ -1325,6 +1326,7 @@ export const EXACT_SENDER_VERSION = 1;
 const RELEASE_VIAS = ['sibling', 'series', 'evidence'];
 const BOOK_LISTS = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'];
 export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
+    await releaseStatement({ db, uid, ref: itemRef.path }).catch(() => 0);      // what it held in the statement registry goes back: the statement may be added again
     const userRef = db.collection('users').doc(uid), path = itemRef.path, CAP = 400;
     return db.runTransaction(async tx => {
         const [itemSnap, userSnap, ledger, reviews] = await Promise.all([
@@ -1663,6 +1665,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
          * filed (the bank's other address, a second message, a re-send) this one is recorded as a copy of it — finished, pointing at
          * the original — and is never read, classified or filed a second time. A statement part-way through is not touched. */
         if (attachment.contentSha256 && claimed.contentSha256 !== attachment.contentSha256) { try { await sourceRef.set({ contentSha256: attachment.contentSha256 }, { merge: true }); } catch (_) { /* recorded at the next look */ } }
+        /* THE OWNER ALREADY UPLOADED THIS FILE BY HAND. The statement registry (statement-registry.mjs) is asked, by the file's hash, before it is read:
+         * a statement the other door took is closed here as a copy of it and nothing is filed. A failed lookup costs only the shortcut. */
+        if (attachment.contentSha256 && !(Number(claimed.cursor) > 0)) {
+            const held = await peekStatement({ db, uid, sha: attachment.contentSha256, ref: sourceRef.path }).catch(() => null);
+            if (held?.duplicate) { await closeAsRegistryDuplicate(db, uid, sourceRef, claimed.leaseToken, held); return { status: 'filed', filed: 0, duplicate: 1, blockedBy: held.existing.via }; }
+        }
         if (attachment.contentSha256 && !(Number(claimed.cursor) > 0)) {
             const twin = await findFiledTwin({ mailRef, sha: attachment.contentSha256, selfId: sourceRef.id });
             if (twin) {
@@ -1861,6 +1869,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             Object.defineProperty(allocations, 'ownerWords', { value: ownerWords({ text, email: currentMail.email }), enumerable: false });
             /* A STATEMENT BEING RESUMED (resumePartialStatements) is replayed from its first row: the rows the ledger already holds are
              * checked against this reading by fingerprint inside the settlement, and cost no classification here. */
+            /* THE COMPOSITE KEY, TAKEN BEFORE A ROW IS FILED: bank + account + the statement's month (+ the file's bytes). If the owner's upload (or another
+             * copy of this statement) holds it, this one is closed as its copy; if not, it is held for this statement, atomically (statement-registry.mjs). */
+            if ((claimed.cursor || 0) === 0) {
+                const held = await claimInRegistry({ db, uid, sourceRef, claimed, parsed, sha: attachment.contentSha256 });
+                if (held?.duplicate) { await closeAsRegistryDuplicate(db, uid, sourceRef, claimed.leaseToken, held); return { status: 'filed', filed: 0, duplicate: 1, blockedBy: held.existing.via }; }
+            }
             const replayed = (claimed.cursor || 0) === 0 && claimed.resumed ? await replayLedger(db, uid, sourceRef.path, user) : null;
             const settledRows = replayed ? replayed.indexes : null;
             /* THE DOCUMENT IS READ ONCE PER INVOCATION, NOT ONCE PER TEN ROWS. Each slice used to release the statement and the next
@@ -1940,6 +1954,25 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }
     return outcome;
+}
+
+/* THE STATEMENT REGISTRY, EMAIL DOOR. A combined e-statement of several accounts has several identities and no single one to hold, so only its file is
+ * held; a lookup that fails lets the statement through (the transaction-level matcher, statement-copies.mjs, is still behind it). */
+async function claimInRegistry({ db, uid, sourceRef, claimed, parsed, sha }) {
+    try {
+        const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
+        const single = !(Array.isArray(parsed?.adaptive?.keys) && parsed.adaptive.keys.length > 1);
+        const identity = single ? identityOf({ bank: claimed.bank || '', account: parsed?.layout?.accountLast4 || '', dates: rows.map(row => row?.date) }) : null;
+        const result = await claimStatement({ db, uid, via: VIA.EMAIL, ref: sourceRef.path, identity, sha, meta: { filename: claimed.filename, size: claimed.size, rows: rows.length } });
+        return result.ok ? null : result;
+    } catch (_) { return null; }
+}
+async function closeAsRegistryDuplicate(db, uid, sourceRef, leaseToken, held) {
+    await db.runTransaction(async tx => {
+        const current = await tx.get(sourceRef), source = current.data();
+        if (!current.exists || source.uid !== uid || source.leaseToken !== leaseToken) throw new Error('statement-lease-lost');
+        tx.set(sourceRef, registryDuplicatePatch({ duplicate: held, now: Date.now() }), { merge: true });
+    });
 }
 
 // What the statement proved about itself, kept beside it: the audit log reads this
