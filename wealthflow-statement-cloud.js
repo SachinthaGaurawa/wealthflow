@@ -540,12 +540,53 @@ export function openReview() {
     document.body.appendChild(overlay); drawReview();
 }
 
+
+/* ── ONE STATEMENT, ADDED ONCE: the manual-upload door of the statement registry (statement-registry.mjs, /api/statement-guard) ──
+ * The server holds the lock and tells which door got there first; this only asks. A server that cannot be reached never stops the owner
+ * from adding their own statement — the transaction-level matcher is still behind it — so every call here fails OPEN and says nothing. */
+const hex=buf=>[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+async function guardCall(body){
+    try{const r=await request('/api/statement-guard','POST',body);return r}
+    catch(error){try{console.warn('[statement-guard] not checked:',error&&error.message)}catch(_){}return null}
+}
+/** SHA-256 of the file's bytes — the same hash the email sync records for the same file. '' when it cannot be made. */
+export async function fileSha256(file){
+    try{return hex(await crypto.subtle.digest('SHA-256',await file.arrayBuffer()))}catch(_){return ''}
+}
+/** The last four digits of the account a statement's text names ("Account No: 001-234-5678", "Card 4111 11XX XXXX 1234"); '' when it names none. */
+export function accountTailOf(text){
+    const t=String(text||'').slice(0,6000);
+    const m=/(?:a\/c|acct|account|card)\s*(?:no|number|num|#)?\.?\s*[:.\-]?\s*([\dxX*•\- ]{6,40}\d{4})(?!\d)/i.exec(t)||/\d{6}[xX*•]+(\d{4})(?!\d)/.exec(t);
+    return m?String(m[m.length-1]).replace(/\D+/g,'').slice(-4):'';
+}
+const noticeOf=r=>r&&r.duplicate===true?{duplicate:true,via:r.via||'',notice:r.notice||'Already Added'}:null;
+/** Before anything is read: is this exact file already in the books? -> {duplicate, via, notice, sha} or {sha}. */
+export async function guardFile(file){
+    const sha=await fileSha256(file);
+    if(!sha)return {sha:''};
+    const r=noticeOf(await guardCall({action:'check',sha256:sha}));
+    return r?{...r,sha}:{sha};
+}
+/** After the statement is read: is this bank + account + month already in the books? Returns {duplicate,...,info} or {info}; `info` goes to guardClaim at save. */
+export async function guardParsed({sha='',bank='',last4='',periodText='',dates=[],filename='',size=0,rows=0}){
+    const info={sha,bank:String(bank||''),last4:String(last4||''),periodText:String(periodText||''),dates:(dates||[]).slice(0,2000),filename:String(filename||'').slice(0,200),size:Number(size)||0,rows:Number(rows)||0,token:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g,'').slice(0,64).padEnd(8,'0')};
+    const r=noticeOf(await guardCall({action:'check',sha256:sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates}));
+    return r?{...r,info}:{info};
+}
+/** At save: take the statement. -> {duplicate, via, notice} when another door got there first, else null (go ahead). */
+export async function guardClaim(info){
+    if(!info)return null;
+    return noticeOf(await guardCall({action:'claim',sha256:info.sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,filename:info.filename,size:info.size,rows:info.rows,token:info.token}));
+}
+/** Give a statement back (e.g. its records were deleted) so the same file or month can be added again. */
+export async function guardRelease(id){const r=await guardCall({action:'release',id});return r?r.released||0:0}
+
 if (typeof window !== 'undefined') {
     window.addEventListener('wf-statement-cloud', () => {
         const text = document.getElementById('_statement_cloud_status');
         if (text) text.textContent = state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
     });
-    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, coverageSummary, retryAttemptsSummary, senderFunnel };
+    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, coverageSummary, retryAttemptsSummary, senderFunnel, guard: { file: guardFile, parsed: guardParsed, claim: guardClaim, release: guardRelease, accountTailOf } };
     const start=()=>{
         if (authBound) return;
         if (window.firebase?.apps?.length && typeof window.firebase.auth === 'function') {

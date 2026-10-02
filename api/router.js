@@ -129,6 +129,8 @@ const HANDLERS = {
     'send-otp': () => import('../send-otp.js'),
     'shorten': () => import('../shorten.js'),
     'sms-ingest': () => import('../sms-ingest.js'),
+    // One statement, filed once: the manual-upload door of the statement registry (statement-registry.mjs).
+    'statement-guard': () => import('../statement-guard.js'),
     'statement-store': () => import('../statement-store.js'),
     'statement-view': () => import('../statement-view.js'),
     'verify-otp': () => import('../verify-otp.js'),

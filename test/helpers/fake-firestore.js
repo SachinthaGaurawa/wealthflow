@@ -21,6 +21,7 @@ export function createFirestore(seed = {}) {
             path, id: idOf(path),
             get: async () => snapshot(path),
             set: async (value, options) => write(path, value, options),
+            delete: async () => { data.delete(path); notify(); },
             collection: name => collectionRef(`${path}/${name}`),
         };
     }

@@ -14,7 +14,7 @@ const password = '01021990';
 // review rather than filed, which would otherwise make a multi-statement
 // drain test look like the loop under-processed instead of the fixture
 // over-sharing content.
-const plainFor = (variant = 0) => `<html><body><h1>Nations Trust Bank American Express Credit Card Statement</h1><p>Card Number: 376657XXXXX0276</p><p>Statement Date: 16/09/2026 Payment Due Date: 10/10/2026</p><p>Credit Limit 500000.00 Available Credit 400000.00 Minimum Amount Due 10000.00</p><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr><tr><td>14/09/2026</td><td>KEELLS STORE</td><td>${(123.45 + variant).toFixed(2)} DR</td></tr><tr><td>15/09/2026</td><td>PAYMENT THANK YOU</td><td>${(50 + variant).toFixed(2)} CR</td></tr></table><script>throw Error("never execute attachment")</script></body></html>`;
+const plainFor = (variant = 0) => `<html><body><h1>Nations Trust Bank American Express Credit Card Statement</h1><p>Card Number: 376657XXXXX${String(276 + Math.round(variant)).padStart(4, '0')}</p><p>Statement Date: 16/09/2026 Payment Due Date: 10/10/2026</p><p>Credit Limit 500000.00 Available Credit 400000.00 Minimum Amount Due 10000.00</p><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr><tr><td>14/09/2026</td><td>KEELLS STORE</td><td>${(123.45 + variant).toFixed(2)} DR</td></tr><tr><td>15/09/2026</td><td>PAYMENT THANK YOU</td><td>${(50 + variant).toFixed(2)} CR</td></tr></table><script>throw Error("never execute attachment")</script></body></html>`;
 const plain = plainFor(0);
 function encryptedHtml(variant = 0) {
     const salt = '0123456789abcdef0123456789abcdef', iv = 'fedcba9876543210fedcba9876543210';
