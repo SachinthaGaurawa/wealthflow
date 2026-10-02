@@ -108,9 +108,9 @@ export function pairedTransfers(rows) {
  * WHAT THE BOOKS HOLD TWICE, in counts only (no amount, no description): rows that two statements both filed (the same transaction under two copies of one statement, or two bank labels), and
  * a debit and a credit of the same amount within three days in two different statements, one of them worded as a transfer (the two legs of the owner's own transfer, both counted). It is what
  * tells a double count from a coincidence, in the log, without anyone being asked.
- * @returns {{records:number, sameRow:{groups:number, banks:Object<string,number>}, legs:{pairs:number, banks:Object<string,number>}}}
+ * @returns {{records:number, sameRow:{groups:number, banks:Object<string,number>, pairs:Object<string,number>}, legs:{pairs:number, banks:Object<string,number>}}}
  */
-export function recordTwins(user) {
+export function recordTwins(user, { labelOf = () => '' } = {}) {
     const keys = ['expenses', 'incomeRecv', 'cconetime', 'ccPayments'];
     const list = keys.flatMap(key => (Array.isArray(user && user[key]) ? user[key] : []).filter(rec => rec && rec.statementKey && Number(rec.amount) > 0).map(rec => ({ rec, direction: rec.direction || (key === 'incomeRecv' || key === 'ccPayments' ? 'credit' : 'debit') })));
     const bump = (map, key) => { map[key] = (map[key] || 0) + 1; };
@@ -121,12 +121,14 @@ export function recordTwins(user) {
         if (!seen.has(key)) seen.set(key, []);
         seen.get(key).push(rec);
     }
-    const sameRow = { groups: 0, banks: {} };
+    const sameRow = { groups: 0, banks: {}, pairs: {} };
     for (const group of seen.values()) {
         const sources = new Set(group.map(rec => rec.statementKey));
         if (sources.size < 2) continue;
         sameRow.groups += 1;
         bump(sameRow.banks, [...new Set(group.map(rec => String(rec.bank || '?').slice(0, 20)))].sort().join('/'));
+        // which statements share it, by the label the caller gives each (its month and account): "2026-03:5187|2026-03:5187" says two copies of one statement
+        bump(sameRow.pairs, [...sources].map(key => String(labelOf(key) || '?').slice(0, 24)).sort().slice(0, 3).join('|'));
     }
     const legs = { pairs: 0, banks: {} }, used = new Set();
     const debits = list.filter(item => item.direction === 'debit'), credits = list.filter(item => item.direction === 'credit');

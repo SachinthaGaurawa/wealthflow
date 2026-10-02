@@ -883,7 +883,12 @@ export async function ledgerCensus({ db, mailRef, uid, log = console.info, limit
         if (status === 'filed' && row.module) bump(byModule, String(row.module).slice(0, 24));
     }
     log(JSON.stringify({ evt: 'statement-ledger-census', rows: page.docs.length, more: page.docs.length === limit, banks, skipped, byModule }));
-    try { log(JSON.stringify({ evt: 'statement-twins', ...recordTwins((await db.collection('users').doc(uid).get()).data() || {}) })); } catch (_) { /* advice only */ }
+    try {
+        // each filed statement by its month and account, so a twin says WHICH two statements share it
+        const labels = new Map();
+        for (const item of await storedItems(mailRef)) labels.set(`${mailRef.path}/items/${item.id}`, `${monthOf(item) || '?'}:${String(item.proof?.last4 || '-')}`);
+        log(JSON.stringify({ evt: 'statement-twins', ...recordTwins((await db.collection('users').doc(uid).get()).data() || {}, { labelOf: key => labels.get(key) }) }));
+    } catch (_) { /* advice only */ }
 }
 
 /* WHAT THE APP REALLY HOLDS, per bank: filed statements, how many carried no rows at all, the rows they brought in, the oldest and newest month,
