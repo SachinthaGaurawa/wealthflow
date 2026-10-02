@@ -146,10 +146,15 @@ export default async function handler(req, res, deps) {
     let token;
     try {
         token = await accessTokenFrom(state.refresh_token, env, f);
-    } catch (_) {
+    } catch (e) {
+        /* A timeout or a Google 5xx on the token exchange mends itself; a rejected refresh token does not. */
+        if (e && e.transient === true) {
+            return j(res, 502, { ok: false, error: 'Google did not answer the sign-in check. Trying again.', retryable: true });
+        }
         return j(res, 502, {
             ok: false,
             error: 'Gmail refused the saved token. Disconnect and connect the mailbox again.',
+            retryable: false,
         });
     }
 
@@ -160,10 +165,20 @@ export default async function handler(req, res, deps) {
             f(listUrl(GMAIL, window, body.pageToken, body.max), { headers: authed(token) }),
             10000, 'Gmail search',
         );
-        if (!r.ok) return j(res, 502, { ok: false, error: `Gmail search failed (HTTP ${r.status})` });
+        /* A quota or server-side refusal from Gmail mends itself; a 400/401/403 does not. Said plainly so the page repeats the first
+         * kind with backoff and does not hammer the second. */
+        if (!r.ok) {
+            /* Gmail answers its rate limits with 403 too (userRateLimitExceeded, rateLimitExceeded); only those 403 reasons are worth repeating. */
+            let reasons = [];
+            if (r.status === 403) {
+                try { const e = await r.json(); reasons = ((e && e.error && e.error.errors) || []).map((x) => x && x.reason); } catch (_) { /* unreadable: treat as a permanent 403 */ }
+            }
+            const limited = r.status === 429 || reasons.some((x) => x === 'userRateLimitExceeded' || x === 'rateLimitExceeded');
+            return j(res, 502, { ok: false, error: `Gmail search failed (HTTP ${r.status})`, retryable: limited || r.status >= 500, retryAfterMs: limited ? 5000 : 0 });
+        }
         listed = await r.json();
     } catch (_) {
-        return j(res, 504, { ok: false, error: 'Gmail did not answer in time' });
+        return j(res, 504, { ok: false, error: 'Gmail did not answer in time', retryable: true });
     }
 
     const ids = ((listed && listed.messages) || []).map((m) => m && m.id).filter(Boolean);
