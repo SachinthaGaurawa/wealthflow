@@ -9916,7 +9916,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
 
         setInterval(() => {
             if (!$('app').classList.contains('show')) return;
-            if (_canSkipEntryLock()) return;   // passcode-free installed-app mode → never auto-lock
+            if (_canSkipEntryLock()) return;   // passcode-free entry → never auto-lock
             // v7.5.6 — was `s.autoLock || 15` which treated 0 (Disabled) as
             // falsy and silently coerced it to 15. Now we read the raw value
             // and only fall back to 15 when it's actually undefined/null.
@@ -9938,14 +9938,12 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             notify('Session locked due to inactivity.', 'info');
         }
 
-        // ===== v7.31.0 — passcode-free entry for the INSTALLED app/APK only =====
-        // The local passcode/biometric is a second lock on top of the Google sign-in.
-        // When WealthFlow runs as the installed app (added to home screen / APK,
-        // i.e. standalone display mode) AND the user has explicitly opted in, we open
-        // straight to the dashboard. In a normal browser tab the lock ALWAYS applies —
-        // even with the option on — because a browser tab is far more exposed than a
-        // private installed app. Off by default (secure). The PIN system itself is
-        // untouched: turning this off (or opening in a browser) restores the lock.
+        // ===== passcode-free entry — signed in with Google, on ANY device =====
+        // The local passcode/biometric is a second lock on top of the Google sign-in. When the owner has opted in
+        // (Settings → Passcode-free entry) a signed-in user opens straight to the dashboard, installed app or browser tab.
+        // The choice lives on the ACCOUNT (auth.skipLock, which travels with the PIN to every device); a device that
+        // predates it keeps its own flag until the account says otherwise. Off by default. The PIN itself is untouched:
+        // it still guards the vault and Change PIN, and turning this off restores the lock everywhere.
         function _isStandaloneApp() {
             try {
                 if (window.navigator && window.navigator.standalone) return true;
@@ -9960,9 +9958,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             return false;
         }
         function _skipLockEnabled() {
+            try { const a = appData && appData.auth; if (a && typeof a.skipLock === 'boolean') return a.skipLock; } catch (_) {}
             try { return localStorage.getItem('wf2_skip_lock') === '1'; } catch (_) { return false; }
         }
-        function _canSkipEntryLock() { return _isStandaloneApp() && _skipLockEnabled(); }
+        function _canSkipEntryLock() { return _skipLockEnabled(); }
         // Single chokepoint used by every BOOT path that would otherwise show the PIN
         // screen for an already-signed-in user. Manual lock is deliberate, so it is NOT
         // routed through here. Returns true if it skipped straight into the app.
@@ -9974,14 +9973,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         }
         function toggleSkipLock(on) {
             try { if (on) localStorage.setItem('wf2_skip_lock', '1'); else localStorage.removeItem('wf2_skip_lock'); } catch (_) {}
+            try { const auth = DB.getObj('auth') || {}; auth.skipLock = !!on; DB.set('auth', auth); } catch (_) {}   // explicit false: a stale true on another device must lose
             try { if (typeof renderSettings === 'function') renderSettings(); } catch (_) {}
-            if (on) {
-                notify(_isStandaloneApp()
-                    ? 'Passcode-free entry ON — the installed app opens straight to your dashboard.'
-                    : 'Passcode-free entry ON — it activates when you open the INSTALLED app (a browser tab always stays locked).', 'success');
-            } else {
-                notify('Passcode-free entry OFF — your passcode / biometric is required to enter again.', 'info');
-            }
+            notify(on ? 'Passcode-free entry ON — signed in with Google, WealthFlow opens straight to your dashboard on every device.'
+                : 'Passcode-free entry OFF — your passcode / biometric is required to enter again.', on ? 'success' : 'info');
         }
 
         // ==================== AI ENGINE (Multi-Provider: Vercel → Gemini → Groq → DeepSeek) ====================
@@ -11603,7 +11598,7 @@ Be conversational and precise.`;
             const curExpenses = expenses.filter(e => e.month === curMonthStr);
             const totalExp = curExpenses.reduce((s, x) => s + (x.amount || 0), 0);
             const activeLoans = loans.filter(l => loanEndDate(l) > now);
-            const totalLoanPay = activeLoans.reduce((s, x) => s + (x.monthly || 0), 0);
+            const totalLoanPay = _wfLoanDueNow(activeLoans, curMonthStr);   // an installment a bank debit already counts is not added again
             const netCash = totalIncome - totalExp - totalLoanPay;
             const balTotal = balData.total || 0;
 
@@ -15309,7 +15304,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     // If the user already entered the app (or left the auth screen), stop —
                     // never yank them back or re-show anything.
                     try { if (!$('authScreen') || !$('authScreen').classList.contains('show')) { _wfPinRouting = false; return; } } catch (_) {}
-                    if (r === 'found') { _wfPinRouting = false; pinMode = 'login'; showAuthView('authLogin'); return; }
+                    if (r === 'found') { _wfPinRouting = false; _bootEnterWithPin(); return; }
                     if (r === 'none')  { _wfPinRouting = false; pinMode = 'setup'; showAuthView('authSetup'); return; }
                     // 'unknown' → cloud unreachable. NEVER force setup (that is what wrongly
                     // overwrote real PINs). Show login and keep resolving; the account
@@ -19104,6 +19099,44 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             renderLoans(); renderDash();
             notify(`Month ${month} skipped for Loan. Next month will show double payment.`, 'warn');
         }
+        /* One loan installment, one count (the rule lives in loan-link.mjs; test/loan_link_client_test.js holds this slice to it). An expense linked to
+         * (loan, month) IS that installment, so the loan's schedule does not add it again. Derived from the expenses that exist, so deleting one restores the loan's own count. */
+        function _wfLinkedLoanMonths() {
+            const out = new Set(), loans = DB.get('loans') || [];
+            (DB.get('expenses') || []).forEach(e => {
+                const k = e && e.loanLink; if (!k || !k.loanId || !k.month) return;
+                const em = String(e.month || e.date || '').slice(0, 7);
+                if (e.recurring) { const l = loans.find(x => x && x.id === k.loanId); (l ? _loanInstallmentMonths(l).map(m => m.key) : [k.month]).forEach(m => { if (m >= em) out.add(k.loanId + '|' + m); }); }
+                else if (em === k.month) out.add(k.loanId + '|' + k.month);
+            });
+            return out;
+        }
+        /* The loan's scheduled payments due now, less any installment a bank debit already counts this month. */
+        function _wfLoanDueNow(loans, ym) {
+            const linked = _wfLinkedLoanMonths();
+            return loans.reduce((s, l) => s + (linked.has(l.id + '|' + ym) ? 0 : (l.monthly || 0)), 0);
+        }
+        /* The one unlinked bank debit of this month that is this installment: about the paid amount, not a fee. Null when there is none or it is not clear. */
+        function _wfFindLoanDebit(l, monthKey, amount) {
+            const near = (DB.get('expenses') || []).filter(e => e && !e.loanLink && !e.recurring && String(e.month || e.date || '').slice(0, 7) === monthKey
+                && Math.abs((e.amount || 0) - amount) <= Math.max(1, amount * 0.02) && !/\b(fees?|charges?|penalty|penalties|stamp|duty|tax|insurance|premium|processing|commission|refund|reversal)\b/i.test(e.desc || ''));
+            return near.length === 1 ? near[0] : (near.find(e => /\b(loan|emi|instal|repay|lease)/i.test(e.desc || '')) || null);
+        }
+        /* Tie (or untie) the bank debits to this installment. via 'bank' links the debit the owner means, if it is there already — if not, the statement
+         * worker links it when it arrives; anything else frees every debit linked to it. Returns true when the expenses changed. */
+        function _wfSetLoanVia(l, monthKey, via, amount) {
+            const exp = DB.get('expenses') || [];
+            let changed = false;
+            exp.forEach(e => { if (e && e.loanLink && e.loanLink.loanId === l.id && e.loanLink.month === monthKey && via !== 'bank') { delete e.loanLink; changed = true; } });
+            const pay = (l.payments || []).find(p => p.month === monthKey);
+            if (via === 'bank' && pay && !exp.some(e => e && e.loanLink && e.loanLink.loanId === l.id && e.loanLink.month === monthKey)) {
+                const hit = _wfFindLoanDebit(l, monthKey, amount);
+                if (hit) { hit.loanLink = { loanId: l.id, month: monthKey }; hit.cat = 'Loan Repayment'; hit._ut = Date.now(); pay.expenseId = hit.id; changed = true; }
+            }
+            if (pay && via !== 'bank') delete pay.expenseId;
+            if (changed) DB.set('expenses', exp);
+            return changed;
+        }
         function getLoanMonthlyForDate(item, yearN, monthN) {
             const ym = `${yearN}-${p2(monthN + 1)}`;
             const prevYm = monthN === 0 ? `${yearN - 1}-12` : `${yearN}-${p2(monthN)}`;
@@ -19382,6 +19415,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 // Currently paid → unmark
                 l.payments[idx].paid = false;
                 l.payments[idx].unpaidAt = Date.now();
+                _wfSetLoanVia(l, monthKey, 'other', 0);   // not paid: no bank debit is this installment any more
                 DB.set('loans', arr);
                 renderLoans();
                 notify(`Payment for ${monthKey} reverted`, 'info');
@@ -19392,10 +19426,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             if (ans === null) return; // cancelled
             const amount = ans.amount;
             if (idx > -1) {
-                l.payments[idx] = { month: monthKey, paid: true, amount, paidAt: Date.now(), notes: ans.notes };
+                l.payments[idx] = { month: monthKey, paid: true, amount, paidAt: Date.now(), notes: ans.notes, via: ans.via };
             } else {
-                l.payments.push({ month: monthKey, paid: true, amount, paidAt: Date.now(), notes: ans.notes });
+                l.payments.push({ month: monthKey, paid: true, amount, paidAt: Date.now(), notes: ans.notes, via: ans.via });
             }
+            l.payVia = ans.via;                                   // the next installment starts from the same answer
+            _wfSetLoanVia(l, monthKey, ans.via, amount);
             DB.set('loans', arr);
             renderLoans();
             renderDash();
@@ -19656,6 +19692,14 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             <div id="_pp_proj_rows"></div>
                         </div>
                         <div class="fg" style="margin-top:10px;">
+                            <label class="fl">Paid from</label>
+                            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                                <button type="button" class="btn btn-sm _pp_via" data-via="bank">My bank account</button>
+                                <button type="button" class="btn btn-sm _pp_via" data-via="other">Cash / somewhere else</button>
+                            </div>
+                            <div id="_pp_via_hint" style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5;"></div>
+                        </div>
+                        <div class="fg" style="margin-top:10px;">
                             <label class="fl">Notes (optional)</label>
                             <input class="fi" id="_pp_notes" placeholder="e.g. Extra from bonus">
                         </div>
@@ -19750,6 +19794,21 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 // Initial projection
                 updateProjection();
 
+                /* WHERE THE MONEY CAME FROM decides whether it is counted here or by the bank statement — once either way. */
+                let via = opts.defaultVia || l.payVia || 'bank';
+                const hint = overlay.querySelector('#_pp_via_hint');
+                const showVia = () => {
+                    overlay.querySelectorAll('._pp_via').forEach(b => { b.classList.toggle('btn-primary', b.dataset.via === via); b.classList.toggle('btn-ghost', b.dataset.via !== via); });
+                    if (via !== 'bank') { hint.textContent = 'Not on your bank statements, so this loan counts it here — once.'; return; }
+                    const amt = parseMoney(inp.value), linked = (DB.get('expenses') || []).find(e => e && e.loanLink && e.loanLink.loanId === l.id && e.loanLink.month === monthKey), found = !linked && amt > 0 ? _wfFindLoanDebit(l, monthKey, amt) : null;
+                    hint.textContent = linked ? 'Tied to the bank debit of ' + fmt(linked.amount) + ' — counted once, from your statement.'
+                        : found ? 'Found the bank debit of ' + fmt(found.amount) + ' (' + (found.date || monthKey) + ') — it will be tied to this installment, counted once.'
+                        : 'It shows on your bank statement, so it is counted once from there — not again here. Tied to the debit as soon as the statement has it.';
+                };
+                overlay.querySelectorAll('._pp_via').forEach(b => { b.onclick = () => { via = b.dataset.via; showVia(); }; });
+                inp.addEventListener('input', showVia);
+                showVia();
+
                 const close = (val) => {
                     overlay.classList.remove('open');
                     setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
@@ -19760,7 +19819,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 overlay.querySelector('#_pp_save').onclick = () => {
                     const amt = parseMoney(inp.value);
                     if (!amt || amt <= 0) { notify('Enter a valid amount', 'error'); return; }
-                    close({ amount: amt, notes: overlay.querySelector('#_pp_notes').value.trim() });
+                    close({ amount: amt, notes: overlay.querySelector('#_pp_notes').value.trim(), via });
                 };
                 overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
                 setTimeout(() => inp.focus(), 250);
@@ -21480,6 +21539,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <span style="font-family:var(--mono);font-weight:700;color:${diff > 0 ? 'var(--green)' : 'var(--red)'};">${diff > 0 ? '+' : ''}${fmt(diff)}</span>
                         </div>` : ''}
                         <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+                            <span style="color:var(--text3);font-size:12px;">Paid From</span>
+                            <span style="font-size:12px;">${pay.via === 'bank' ? 'My bank account · ' + (pay.expenseId ? 'tied to the statement debit' : 'waiting for the statement') : pay.via === 'other' ? 'Cash / somewhere else' : '—'}</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
                             <span style="color:var(--text3);font-size:12px;">Recorded On</span>
                             <span style="font-family:var(--mono);">${fmtDatePretty(d.toISOString().slice(0, 10))}</span>
                         </div>
@@ -21525,7 +21588,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const ans = await promptPaymentAmount(l, monthKey, {
                     isEdit: true,
                     defaultAmount: pay.amount,
-                    defaultNotes: pay.notes || ''
+                    defaultNotes: pay.notes || '',
+                    defaultVia: pay.via
                 });
                 if (ans !== null) {
                     // User saved — update the existing payment in place
@@ -21538,8 +21602,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 ...ln.payments[idx],
                                 amount: ans.amount,
                                 notes: ans.notes,
+                                via: ans.via,
                                 editedAt: Date.now()
                             };
+                            ln.payVia = ans.via;
+                            _wfSetLoanVia(ln, monthKey, ans.via, ans.amount);
                             DB.set('loans', arr);
                         }
                     }
@@ -25546,6 +25613,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                     seen.add(b.toLowerCase());
                     out.push(b);
                 }
+                /* A bank the owner has approved a statement address for is theirs too: HNB, NTB and DFCC had no card or account on record, only a sender,
+                 * so "Your banks" listed American Express alone ("1 of your 1 bank") and the other three never showed as verified. */
+                for (const e of (Array.isArray(_senders.approved) ? _senders.approved : [])) {
+                    const n = String((e && e.name) || '').trim();
+                    if (n && _exactStatementAddress(e.id) && !out.some((b) => A.bankNamesMatch(b, n))) out.push(n);
+                }
                 return out;
             } catch (_) { return []; }
         }
@@ -27491,11 +27564,12 @@ table.amort tbody tr { page-break-inside: avoid; }
             // Not counted, not hidden: the dashboard names it under Year Income.
             const incomePending = _inc.pending;
             let loanTotal = 0, loanItems = [];
+            const _linkedLoans = _wfLinkedLoanMonths(), _lym = year + '-' + p2(month + 1);
             (DB.get('loans') || []).forEach(l => {
                 if (!l || !l.start) return;
                 const start = new Date(l.start + 'T00:00:00');
                 const end = loanEndDate(l);
-                if (start <= dt && end > dt) {
+                if (start <= dt && end > dt && !_linkedLoans.has(l.id + '|' + _lym)) {
                     const m = getLoanMonthlyForDate(l, year, month);
                     loanTotal += m; loanItems.push({ name: l.name, bank: l.bank, amount: m });
                 }
@@ -27525,7 +27599,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             // CC One-Time: the payment date's month
             let ccotTotal = 0, ccotItems = [];
             DB.get('cconetime').forEach(item => {
-                if (!item || !item.date) return;
+                if (!item || !item.date || item.subscriptionLink) return;   // a card charge for a tracked subscription: the subscription's month counts it
                 const itemDate = new Date(item.date + 'T00:00:00');
                 if (itemDate.getFullYear() === year && itemDate.getMonth() === month) {
                     ccotTotal += item.amount || 0;
@@ -28515,8 +28589,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info">
-                    <div class="setting-label">Passcode-free entry (installed app only)</div>
-                    <div class="setting-desc">When WealthFlow runs as the <b>installed app</b> (added to your home screen / APK), open straight to your dashboard — no passcode or biometric. For your security this <b>never</b> applies in a normal browser tab. ${_isStandaloneApp() ? '' : '<span style=\"color:var(--accent);\">You\'re in a browser now — it takes effect once you open the installed app.</span>'}</div>
+                    <div class="setting-label">Passcode-free entry</div>
+                    <div class="setting-desc">Signed in with Google? Open straight to your dashboard on <b>any device</b> — the installed app or a browser — with no passcode or biometric. It follows your account, so it applies on every device you sign in on. Turn it OFF to ask for the passcode again. <span style="color:var(--accent);">Anyone who can open WealthFlow on a device that is signed in to your Google account will see your data.</span> The passcode still protects the vault and Change PIN.</div>
                 </div>
                 <button class="btn btn-sm ${_skipLockEnabled() ? 'btn-success' : 'btn-secondary'}" style="min-width:64px;" onclick="toggleSkipLock(${!_skipLockEnabled()})">${_skipLockEnabled() ? 'ON' : 'OFF'}</button>
             </div>
@@ -31123,7 +31197,7 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
 
             const totalIncome = income.filter(s => { const st = new Date(s.start + 'T00:00:00'); const en = s.end ? new Date(s.end + 'T00:00:00') : null; return st <= now && (!en || en >= now); }).reduce((s, x) => s + (x.monthly || 0), 0);
             const totalExp = expenses.filter(e => e.month === curM).reduce((s, x) => s + (x.amount || 0), 0);
-            const totalLoan = loans.filter(l => loanEndDate(l) > now).reduce((s, x) => s + (x.monthly || 0), 0);
+            const totalLoan = _wfLoanDueNow(loans.filter(l => loanEndDate(l) > now), curM);
             const totalCC = ccinstall.filter(c => !c.completed).reduce((s, x) => s + (x.monthly || 0), 0);
             const totalDebt = totalExp + totalLoan + totalCC;
 
@@ -34997,7 +35071,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             if (!_ln.payments) _ln.payments = [];
                             const _pi = _ln.payments.findIndex(p => p.month === _mo);
                             const _prevPay = (_pi > -1) ? _ln.payments[_pi] : null;   // v7.43.0 — capture for exact undo
-                            const _prec = { month: _mo, paid: true, amount, paidAt: Date.now(), notes: 'Auto-allocated from ' + (bank || 'bank') + ' statement', source: 'statement', _batch: (_batch ? _batch.id : undefined) };
+                            const _prec = { month: _mo, paid: true, amount, paidAt: Date.now(), notes: 'Auto-allocated from ' + (bank || 'bank') + ' statement', source: 'statement', via: 'bank', _batch: (_batch ? _batch.id : undefined) };
                             if (_pi > -1) { _ln.payments[_pi] = _prec; loanRepl++; } else { _ln.payments.push(_prec); }
                             // v7.43.0 — record the loan-payment op so Undo removes/restores it.
                             if (_batch && WFBatch.recordLoan) { try { WFBatch.recordLoan(_batch, { loanId: _ln.id, month: _mo, prev: _prevPay }); } catch (_) {} }
