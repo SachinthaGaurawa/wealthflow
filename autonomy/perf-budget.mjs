@@ -556,6 +556,7 @@ export const BUDGETS = {
     // oldest-first card walk reads every amount as whole cents from its decimal text (no float sum, no tolerance), carries what is left in the pool and says
     // what the first unpaid charge still needs — the same rule the worker applies to the document (cc-fifo.mjs, server-side, not shipped to the page).
     totalJsBytes: 2_004_000,
+    // 2026-10-02 (historical sweep): no change to the ceiling above; the sweep's retry/backoff helper and padded window query (wealthflow-backfill.js) add ~1 KB inside its headroom.
     largestModuleBytes: 217_000, // measured 215,954
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
