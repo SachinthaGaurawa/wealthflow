@@ -15,12 +15,12 @@ function page({ auth = {}, local = {}, standalone = false } = {}) {
     const store = { ...local };
     const appData = { auth: { ...auth } };
     const context = vm.createContext({
-        appData, notify: vi.fn(), launchApp: vi.fn(), resetAutoLockTimer: vi.fn(), showAuthView: vi.fn(), renderSettings: vi.fn(), pinMode: '',
+        appData, notify: vi.fn(), showConfirm: vi.fn((icon, msg, det, cls, label, cb) => cb()), launchApp: vi.fn(), resetAutoLockTimer: vi.fn(), showAuthView: vi.fn(), renderSettings: vi.fn(), pinMode: '',
         localStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } },
         window: { navigator: { standalone }, matchMedia: () => ({ matches: standalone }) }, navigator: { standalone }, document: { referrer: '' },
         DB: { getObj: key => appData[key] || {}, set: vi.fn((key, value) => { appData[key] = value; }) },
     });
-    for (const name of ['_isStandaloneApp', '_skipLockEnabled', '_canSkipEntryLock', '_bootEnterWithPin', 'toggleSkipLock']) vm.runInContext(source(name), context);
+    for (const name of ['_isStandaloneApp', '_skipLockEnabled', '_canSkipEntryLock', '_bootEnterWithPin', 'toggleSkipLock', '_applySkipLock']) vm.runInContext(source(name), context);
     return { context, store, appData };
 }
 
@@ -85,5 +85,22 @@ describe('the settings row and the boot paths', () => {
         const route = source('_wfRouteToPinScreen');
         expect(route).toMatch(/r === 'found'\) \{ _wfPinRouting = false; _bootEnterWithPin\(\); return; \}/);
         expect(route).not.toMatch(/r === 'found'\) \{[^}]*showAuthView\('authLogin'\)/);
+    });
+});
+
+describe('turning it on asks first', () => {
+    it('ON says what it means and applies only when confirmed; OFF applies at once', () => {
+        const { context, appData } = page({ auth: { pin: 'hash' } });
+        context.showConfirm.mockImplementation(() => {});                        // the owner has not answered yet
+        context.toggleSkipLock(true);
+        expect(context.showConfirm).toHaveBeenCalledTimes(1);
+        expect(context.showConfirm.mock.calls[0][2]).toMatch(/without a passcode on every device[\s\S]*will see your data[\s\S]*still protects the vault and Change PIN/);
+        expect(appData.auth.skipLock).toBeUndefined();
+        context.showConfirm.mock.calls[0][5]();                                   // "Turn ON"
+        expect(appData.auth.skipLock).toBe(true);
+        context.showConfirm.mockClear();
+        context.toggleSkipLock(false);
+        expect(context.showConfirm).not.toHaveBeenCalled();
+        expect(appData.auth.skipLock).toBe(false);
     });
 });

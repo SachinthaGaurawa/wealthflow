@@ -9972,6 +9972,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             return false;
         }
         function toggleSkipLock(on) {
+            if (!on) return _applySkipLock(false);
+            showConfirm('', 'Turn on passcode-free entry?', 'Signed in with Google, WealthFlow will open without a passcode on every device. Anyone who can open it on a device signed in to your account will see your data. The passcode still protects the vault and Change PIN.', 'btn-primary', 'Turn ON', () => _applySkipLock(true));
+        }
+        function _applySkipLock(on) {
             try { if (on) localStorage.setItem('wf2_skip_lock', '1'); else localStorage.removeItem('wf2_skip_lock'); } catch (_) {}
             try { const auth = DB.getObj('auth') || {}; auth.skipLock = !!on; DB.set('auth', auth); } catch (_) {}   // explicit false: a stale true on another device must lose
             try { if (typeof renderSettings === 'function') renderSettings(); } catch (_) {}
@@ -19099,8 +19103,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             renderLoans(); renderDash();
             notify(`Month ${month} skipped for Loan. Next month will show double payment.`, 'warn');
         }
-        /* One loan installment, one count (the rule lives in loan-link.mjs; test/loan_link_client_test.js holds this slice to it). An expense linked to
-         * (loan, month) IS that installment, so the loan's schedule does not add it again. Derived from the expenses that exist, so deleting one restores the loan's own count. */
+        /* One installment, one count (rule: loan-link.mjs). An expense linked to (loan, month) IS that installment; derived from the expenses that exist. */
         function _wfLinkedLoanMonths() {
             const out = new Set(), loans = DB.get('loans') || [];
             (DB.get('expenses') || []).forEach(e => {
@@ -19116,14 +19119,13 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const linked = _wfLinkedLoanMonths();
             return loans.reduce((s, l) => s + (linked.has(l.id + '|' + ym) ? 0 : (l.monthly || 0)), 0);
         }
-        /* The one unlinked bank debit of this month that is this installment: about the paid amount, not a fee. Null when there is none or it is not clear. */
+        /* The one unlinked bank debit of this month about the paid amount, not a fee; null when none or unclear. */
         function _wfFindLoanDebit(l, monthKey, amount) {
             const near = (DB.get('expenses') || []).filter(e => e && !e.loanLink && !e.recurring && String(e.month || e.date || '').slice(0, 7) === monthKey
                 && Math.abs((e.amount || 0) - amount) <= Math.max(1, amount * 0.02) && !/\b(fees?|charges?|penalty|penalties|stamp|duty|tax|insurance|premium|processing|commission|refund|reversal)\b/i.test(e.desc || ''));
             return near.length === 1 ? near[0] : (near.find(e => /\b(loan|emi|instal|repay|lease)/i.test(e.desc || '')) || null);
         }
-        /* Tie (or untie) the bank debits to this installment. via 'bank' links the debit the owner means, if it is there already — if not, the statement
-         * worker links it when it arrives; anything else frees every debit linked to it. Returns true when the expenses changed. */
+        /* via 'bank' ties the debit already there (the worker ties it when it arrives); anything else frees every debit tied to this installment. */
         function _wfSetLoanVia(l, monthKey, via, amount) {
             const exp = DB.get('expenses') || [];
             let changed = false;
@@ -19692,12 +19694,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             <div id="_pp_proj_rows"></div>
                         </div>
                         <div class="fg" style="margin-top:10px;">
-                            <label class="fl">Paid from</label>
+                            <label class="fl">How did you pay this installment?</label>
                             <div style="display:flex;gap:6px;flex-wrap:wrap;">
                                 <button type="button" class="btn btn-sm _pp_via" data-via="bank">My bank account</button>
                                 <button type="button" class="btn btn-sm _pp_via" data-via="other">Cash / somewhere else</button>
                             </div>
-                            <div id="_pp_via_hint" style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5;"></div>
+                            <div id="_pp_via_hint" style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5;">Choose one so this installment is counted only once.</div>
                         </div>
                         <div class="fg" style="margin-top:10px;">
                             <label class="fl">Notes (optional)</label>
@@ -21539,7 +21541,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <span style="font-family:var(--mono);font-weight:700;color:${diff > 0 ? 'var(--green)' : 'var(--red)'};">${diff > 0 ? '+' : ''}${fmt(diff)}</span>
                         </div>` : ''}
                         <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
-                            <span style="color:var(--text3);font-size:12px;">Paid From</span>
+                            <span style="color:var(--text3);font-size:12px;">Paid from</span>
                             <span style="font-size:12px;">${pay.via === 'bank' ? 'My bank account · ' + (pay.expenseId ? 'tied to the statement debit' : 'waiting for the statement') : pay.via === 'other' ? 'Cash / somewhere else' : '—'}</span>
                         </div>
                         <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
