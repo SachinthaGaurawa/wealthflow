@@ -729,6 +729,33 @@ export async function statementCensus({ db, mailRef, uid = '', log = console.inf
         reviews = { pending: page.docs.length, more: page.docs.length === 500, rows, whole };
     }
     log(JSON.stringify({ evt: 'statement-census', items: found.docs.length, more: found.docs.length === 300, byBank, reasons, partial, ...(reviews ? { reviews } : {}) }));
+    try { await statementCoverage({ mailRef, log }); } catch (_) { /* advice only */ }
+}
+
+/* WHAT THE APP REALLY HOLDS, per bank: filed statements, how many carried no rows at all, the rows they brought in, the oldest and newest month,
+ * and the count per year. "Years of statements never arrived" can only be told apart from "arrived and filed with nothing in them" or "never
+ * listed" by this line next to `mail-audit` (what the mailbox lists). Bank names, years, months and counts only — no amount, no file name. */
+export async function statementCoverage({ mailRef, log = console.info }) {
+    let query = mailRef.collection('items').where('status', '==', 'filed').limit(1000);
+    if (typeof query.select === 'function') query = query.select('bank', 'receivedMs', 'totalRows', 'emptyStatement', 'status');
+    const found = await query.get();
+    const banks = {};
+    let seen = 0;
+    for (const doc of found.docs) {
+        const item = doc.data() || {};
+        if (item.status !== 'filed') continue;
+        seen += 1;
+        const bank = String(item.bank || '?').slice(0, 24), at = Number(item.receivedMs) || 0;
+        const entry = banks[bank] = banks[bank] || { filed: 0, empty: 0, rows: 0, undated: 0, years: {} };
+        entry.filed += 1; entry.rows += Number(item.totalRows) || 0;
+        if (item.emptyStatement === true || !(Number(item.totalRows) > 0)) entry.empty += 1;
+        if (!at) { entry.undated += 1; continue; }
+        const month = new Date(at).toISOString().slice(0, 7), year = month.slice(0, 4);
+        entry.years[year] = (entry.years[year] || 0) + 1;
+        if (!entry.oldest || month < entry.oldest) entry.oldest = month;
+        if (!entry.newest || month > entry.newest) entry.newest = month;
+    }
+    log(JSON.stringify({ evt: 'statement-coverage', filed: seen, more: found.docs.length === 1000, banks }));
 }
 
 /* THE OWNER'S BUTTON: "Map statement layout" on a statement that is already part-filed (or whose review is stale) cannot map a layout without
