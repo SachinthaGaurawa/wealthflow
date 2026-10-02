@@ -26,6 +26,7 @@ import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 import { healLoanLinks } from './loan-link.mjs';
 import { manualTwin, markTwin } from './statement-links.mjs';
+import { statementCopies } from './statement-copies.mjs';
 import { policyWithReach } from './bank-reach.mjs';
 import { planWithEvidence, evidenceContext, documentProof, knownLast4 } from './statement-evidence.mjs';
 import { formKind } from './statement-document-kind.mjs';
@@ -790,6 +791,40 @@ export async function healHandMadeTwins({ db, uid, now = Date.now(), log = conso
         return { merged: chosen.length, more: pairs.length > chosen.length && chosen.length >= limit };
     });
     if (result.merged) log(JSON.stringify({ evt: 'hand-twin-heal', merged: result.merged, ...(result.more ? { more: true } : {}) }));
+    return result;
+}
+
+/* THE SAME TRANSACTION FILED FROM TWO STATEMENTS IS ONE TRANSACTION (statement-copies.mjs). Production, 2026-10-02: 61 NTB transactions were in the books twice — a statement labelled March 2026 also carried rows of
+ * December, January and February, and rows another March statement holds. Of the records that are the same transaction the books keep as many as the most any one statement shows, from the statement of the
+ * record's own month first. The system's copies go (tombstone; the ledger row says why); a record the owner has touched is never taken out. Counts only are logged. */
+export async function healStatementCopies({ db, mailRef, uid, now = Date.now(), log = console.info, limit = 120 }) {
+    const userRef = db.collection('users').doc(uid), STORES = ['expenses', 'incomeRecv', 'cconetime', 'ccPayments'];
+    const peek = (await userRef.get()).data() || {};
+    const sources = new Set();
+    for (const store of STORES) for (const record of Array.isArray(peek[store]) ? peek[store] : []) if (record && record.source === 'statement' && record.statementKey) sources.add(record.statementKey);
+    if (sources.size < 2) return { removed: 0, more: false };
+    const labels = new Map();
+    for (const item of await storedItems(mailRef)) labels.set(`${mailRef.path}/items/${item.id}`, monthOf(item) || '');
+    const labelOf = key => labels.get(key) || '';
+    if (!statementCopies(peek, { labelOf }).remove.length) return { removed: 0, more: false };
+    const result = await db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), user = structuredClone(snap.data() || {});
+        const plan = statementCopies(user, { labelOf }), chosen = plan.remove.slice(0, limit);
+        if (!chosen.length) return { removed: 0, more: false, left: plan.left };
+        const ledgerSnaps = [];
+        for (const { record } of chosen) ledgerSnaps.push(await tx.get(userRef.collection('statementLedger').doc(String(record.id))));
+        const tomb = user._tomb && typeof user._tomb === 'object' ? { ...user._tomb } : {}, banks = {}, gone = new Set(chosen.map(({ record }) => record));
+        chosen.forEach(({ store, record, keep }, at) => {
+            tomb[store] = { ...(tomb[store] && typeof tomb[store] === 'object' ? tomb[store] : {}), [record.id]: now };
+            const bank = String(record.bank || '?').slice(0, 24); banks[bank] = (banks[bank] || 0) + 1;
+            if (ledgerSnaps[at].exists) tx.set(ledgerSnaps[at].ref, { status: 'duplicate', matchedId: String(keep.id || ''), reason: 'copy-of-another-statement', settledAt: now }, { merge: true });
+        });
+        const changes = {};
+        for (const store of STORES) if (Array.isArray(user[store]) && chosen.some(entry => entry.store === store)) changes[store] = user[store].filter(record => !gone.has(record));
+        tx.set(userRef, { ...changes, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        return { removed: chosen.length, more: plan.remove.length > chosen.length, left: plan.left, groups: plan.groups, banks };
+    });
+    if (result.removed || result.left) log(JSON.stringify({ evt: 'statement-copies-removed', removed: result.removed, groups: result.groups || 0, left: result.left || 0, ...(result.banks ? { banks: result.banks } : {}), ...(result.more ? { more: true } : {}) }));
     return result;
 }
 
@@ -2227,7 +2262,9 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
     }
     if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
-        try { await healLoanInstallments({ db, uid }); await healHandMadeTwins({ db, uid }); await repairCardInstallments({ db, uid }); await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
+        // each on its own: one that fails (a document in a shape it did not expect) must not stop the others from ever running
+        for (const heal of [() => healLoanInstallments({ db, uid }), () => healHandMadeTwins({ db, uid }), () => healStatementCopies({ db, mailRef, uid }), () => repairCardInstallments({ db, uid })]) { try { await heal(); } catch (_) { /* the next run tries again */ } }
+        try { await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     const [pending, processing] = await Promise.all([
         mailRef.collection('items').where('status', '==', 'pending').limit(200).get(),
