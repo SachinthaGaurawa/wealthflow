@@ -2113,7 +2113,7 @@
         .dash-pie-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; text-align: center; }
         .dash-pie-center b { font-family: var(--mono); font-size: 13px; color: var(--text); }
         .dash-pie-center span { font-size: 10px; color: var(--text3); }
-        .dash-pie-legend { flex: 1 1 170px; min-width: 0; max-height: 320px; overflow-y: auto; display: grid; gap: 6px; padding-right: 2px; }
+        .dash-pie-legend { flex: 1 1 170px; min-width: 0; max-height: 280px; overflow-y: auto; display: grid; gap: 6px; padding-right: 2px; }
         .dash-pie-item { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; font-size: 11px; color: var(--text2); }
         .dash-pie-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
         .dash-pie-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2133,6 +2133,14 @@
         .dash-pie-tip .dpt-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
         .dash-pie-tip .dpt-amt { font-family: var(--mono); font-size: 14px; margin-top: 3px; }
         .dash-pie-tip .dpt-pct { color: var(--text3); font-size: 11px; }
+
+        /* Monthly Overview takes the whole height of its row. The row is as tall as the taller card (the ring and its legend), so a chart of a fixed height left a blank band under the line.
+         * The plot area is the part that grows; the canvas is taken out of the flow so that drawing a taller chart can never make the card taller (the feedback loop of a responsive canvas in a flex box). */
+        .dash-card-fill { display: flex; flex-direction: column; }
+        .dash-line-wrap { flex: 1 1 0; min-height: 230px; min-width: 0; display: flex; flex-direction: column; }
+        .dash-line-key { margin: 0 0 6px; justify-content: flex-end; }
+        .dash-line-plot { position: relative; flex: 1 1 0; min-height: 200px; min-width: 0; }
+        .dash-line-plot > canvas { position: absolute; inset: 0; }
 
         /* ================== TABLE ================== */
         .tbl-wrap {
@@ -5995,7 +6003,7 @@
                         <button type="button" class="dvs-btn" id="dashViewLists" data-view="lists" aria-pressed="false" onclick="_wfSetDashView('lists')">Lists</button>
                     </div>
                     <div class="dash-chart-row">
-                        <div class="card">
+                        <div class="card dash-card-fill">
                             <div class="card-header">
                                 <div>
                                     <div class="card-title">Monthly Overview</div>
@@ -6004,7 +6012,10 @@
                                 <select class="fi" style="width:110px;padding:5px 8px;font-size:12px;" id="dashYear"
                                     onchange="renderDash()"></select>
                             </div>
-                            <div id="dashChartCanvas" style="height:210px;"><canvas id="dashChart"></canvas></div>
+                            <div id="dashChartCanvas" class="dash-line-wrap">
+                                <div class="dash-safe-legend dash-line-key"><span><i class="dash-safe-dot" style="background:#10b981"></i>Income</span><span><i class="dash-safe-dot" style="background:#ef4444"></i>Expenses</span></div>
+                                <div class="dash-line-plot"><canvas id="dashChart"></canvas></div>
+                            </div>
                             <div id="dashChartSafe" class="dash-safe-chart" role="img" aria-label="Monthly income and expense overview"></div>
                         </div>
                         <div class="card">

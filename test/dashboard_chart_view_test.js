@@ -147,3 +147,20 @@ describe('the amount under the pointer or finger', () => {
         expect(html).toContain('tabindex="0"');
     });
 });
+
+describe('Monthly Overview fills its card (no blank band under the line)', () => {
+    it('the line chart has no fixed height: it takes what is left of the card, and the canvas cannot make the card grow', () => {
+        expect(html).not.toMatch(/id="dashChartCanvas" style="height/);
+        expect(html).toMatch(/id="dashChartCanvas" class="dash-line-wrap"/);
+        expect(html).toMatch(/\.dash-card-fill \{[^}]*flex-direction: column/);
+        expect(html).toMatch(/\.dash-line-wrap \{[^}]*flex: 1 1 0[^}]*min-height: 230px/);
+        expect(html).toMatch(/\.dash-line-plot \{[^}]*position: relative[^}]*flex: 1 1 0/);
+        expect(html).toMatch(/\.dash-line-plot > canvas \{[^}]*position: absolute/);
+        expect(html).toMatch(/<div class="card dash-card-fill">\s*<div class="card-header">\s*<div>\s*<div class="card-title">Monthly Overview/);
+    });
+    it('the chart sizes itself to its box and names its two lines', () => {
+        const dashFn = html.slice(html.indexOf('function renderDash()'), html.indexOf('function renderUpcoming()'));
+        expect(dashFn).toMatch(/type: 'line'[\s\S]*maintainAspectRatio: false/);
+        expect(html).toMatch(/dash-line-key[^>]*>\s*<span><i class="dash-safe-dot" style="background:#10b981"><\/i>Income<\/span><span><i class="dash-safe-dot" style="background:#ef4444"><\/i>Expenses<\/span>/);
+    });
+});
