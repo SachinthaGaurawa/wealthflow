@@ -158,9 +158,12 @@ describe('Monthly Overview fills its card (no blank band under the line)', () =>
         expect(html).toMatch(/\.dash-line-plot > canvas \{[^}]*position: absolute/);
         expect(html).toMatch(/<div class="card dash-card-fill">\s*<div class="card-header">\s*<div>\s*<div class="card-title">Monthly Overview/);
     });
-    it('the chart sizes itself to its box and names its two lines', () => {
+    it('the chart sizes itself to its box and names its two lines with the chart\'s own legend (it belongs to the datasets, cannot overflow the card)', () => {
         const dashFn = html.slice(html.indexOf('function renderDash()'), html.indexOf('function renderUpcoming()'));
-        expect(dashFn).toMatch(/type: 'line'[\s\S]*maintainAspectRatio: false/);
-        expect(html).toMatch(/dash-line-key[^>]*>\s*<span><i class="dash-safe-dot" style="background:#10b981"><\/i>Income<\/span><span><i class="dash-safe-dot" style="background:#ef4444"><\/i>Expenses<\/span>/);
+        const line = dashFn.slice(dashFn.indexOf("type: 'line'"), dashFn.indexOf("const catMap = {}"));
+        expect(line).toContain('maintainAspectRatio: false');
+        expect(line).toMatch(/legend: \{ display: true, position: 'top', align: 'end'/);
+        expect(line).toContain("label: 'Income'"); expect(line).toContain("label: 'Expenses'");
+        expect(html).not.toContain('dash-line-key');
     });
 });

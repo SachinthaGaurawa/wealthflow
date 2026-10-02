@@ -2138,7 +2138,6 @@
          * The plot area is the part that grows; the canvas is taken out of the flow so that drawing a taller chart can never make the card taller (the feedback loop of a responsive canvas in a flex box). */
         .dash-card-fill { display: flex; flex-direction: column; }
         .dash-line-wrap { flex: 1 1 0; min-height: 230px; min-width: 0; display: flex; flex-direction: column; }
-        .dash-line-key { margin: 0 0 6px; justify-content: flex-end; }
         .dash-line-plot { position: relative; flex: 1 1 0; min-height: 200px; min-width: 0; }
         .dash-line-plot > canvas { position: absolute; inset: 0; }
 
@@ -6013,7 +6012,6 @@
                                     onchange="renderDash()"></select>
                             </div>
                             <div id="dashChartCanvas" class="dash-line-wrap">
-                                <div class="dash-safe-legend dash-line-key"><span><i class="dash-safe-dot" style="background:#10b981"></i>Income</span><span><i class="dash-safe-dot" style="background:#ef4444"></i>Expenses</span></div>
                                 <div class="dash-line-plot"><canvas id="dashChart"></canvas></div>
                             </div>
                             <div id="dashChartSafe" class="dash-safe-chart" role="img" aria-label="Monthly income and expense overview"></div>
@@ -28175,7 +28173,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             { label: 'Expenses', data: expData, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.4 }
                         ]
                     },
-                    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, hover: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmtS(v) } } } }
+                    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, hover: { mode: 'index', intersect: false }, plugins: { legend: { display: true, position: 'top', align: 'end', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, color: (getComputedStyle(document.documentElement).getPropertyValue('--text2') || '').trim() || '#94a3b8', font: { size: 11 } } }, tooltip: { mode: 'index', intersect: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmtS(v) } } } }
                 });
             }
 
