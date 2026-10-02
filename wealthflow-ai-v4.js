@@ -1116,6 +1116,25 @@
      *       Step F: Legacy /api/ai fallback
      *       Step G: Tesseract.js final fallback
      * ========================================================================= */
+    /* ONE STATEMENT, ADDED ONCE (statement-registry.mjs). The same bank statement can reach the books by email sync and by this screen; the server
+     * holds the lock and says which door was first. These two calls only ask it — fail OPEN, so an unreachable server never stops the owner. */
+    function _wfStatementGuard() { return window.WFStatementCloud && window.WFStatementCloud.guard ? window.WFStatementCloud.guard : null; }
+    function _wfSayDuplicate(r) {
+        if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+        if (typeof window.notify === 'function') window.notify((r.notice || 'Already Added') + ' — this statement is already in your books, so it was not added a second time.', 'warn');
+    }
+    /* After the statement is read: the same bank + account + month is the same statement, whatever the file is called. Returns true when it was blocked. */
+    async function _wfGuardParsed(parsed, ctx) {
+        var g = _wfStatementGuard(); if (!g) return false;
+        try {
+            var r = await g.parsed({ sha: ctx.sha, bank: ctx.bank, last4: ctx.last4 || g.accountTailOf(ctx.text), periodText: parsed.statement_period || '',
+                dates: parsed.transactions.map(function (t) { return t.date; }), filename: ctx.file.name, size: ctx.file.size, rows: parsed.transactions.length });
+            if (r.duplicate) { _wfSayDuplicate(r); return true; }
+            parsed._wfGuard = r.info;
+        } catch (_) { /* fail open */ }
+        return false;
+    }
+
     async function handleAIScanV4(e, type) {
         var file = e.target && e.target.files && e.target.files[0];
         if (!file) return;
@@ -1135,6 +1154,14 @@
         // off the heavy engine cascade. This gives us the right Sri-Lankan
         // service-fee schedule and helps the AI prompt focus the parse.
         var ccotBank = null;
+        var _wfSha = '';
+        if (isCCOT && _wfStatementGuard()) {
+            try {
+                var _gf = await _wfStatementGuard().file(file);
+                _wfSha = _gf.sha || '';
+                if (_gf.duplicate) { _wfSayDuplicate(_gf); inputEl.value = ''; return; }
+            } catch (_) { /* fail open */ }
+        }
         if (isCCOT) {
             try {
                 if (typeof window._ccotPickBankAsync === 'function') {
@@ -1175,6 +1202,7 @@
                         }),
                         card_last4: '', currency: 'LKR', statement_period: ''
                     };
+                    if (await _wfGuardParsed(_parsedH, { file: file, sha: _wfSha, bank: ccotBank, text: _hres && _hres.text })) { inputEl.value = ''; return; }
                     if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
                     if (typeof window.notify === 'function') window.notify('Imported ' + _htx.length + ' transactions from your e-statement.', 'success');
                     window._showCCReviewModal(_parsedH, ccotBank || 'Bank Statement');
@@ -1262,6 +1290,7 @@
                             currency: 'LKR',
                             statement_period: (_res.text.match(/Statement Period[:\s]*([\d/]+\s*-\s*[\d/]+)/i) || [])[1] || ''
                         };
+                        if (await _wfGuardParsed(_parsed, { file: file, sha: _wfSha, bank: ccotBank, last4: _parsed.card_last4, text: _res.text })) { inputEl.value = ''; return; }
                         if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
                         // Say what was actually verified. "High accuracy" was printed
                         // unconditionally before, including for statements the parser

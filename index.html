@@ -35162,6 +35162,13 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
             $ovl('#_ccr_save').onclick = async () => {
                 _captureRenderedRows();
+                /* ONE STATEMENT, ADDED ONCE: at the moment of saving, take the statement in the registry. If the email sync (or an earlier upload) got there
+                 * first nothing is added and the owner is told which. Rows of the cloud's own review (parsed.cloudReview) are the server's already. */
+                if (parsed._wfGuard && typeof parsed.cloudReview !== 'function' && window.WFStatementCloud && window.WFStatementCloud.guard) {
+                    const _dup = await window.WFStatementCloud.guard.claim(parsed._wfGuard);
+                    if (_dup) { notify((_dup.notice || 'Already Added') + ' — this statement is already in your books, so it was not added a second time.', 'warn'); closeOvl(); return; }
+                    parsed._wfGuard = null;           // taken: a second click on Save is not a second claim
+                }
                 if (typeof parsed.cloudReview === 'function') {
                     const button = $ovl('#_ccr_save'); button.disabled = true;
                     try {

@@ -59,7 +59,7 @@ describe('duplicatePatch', () => {
 /* ── through the real worker ───────────────────────────────────────────────────────────────────────────────────────── */
 const owner = { uid: 'u', email: 'owner@example.com' };
 const MAIL = 'wf-mail/owner_example_com';
-const html = (variant = 0) => `<html><body><h1>Nations Trust Bank American Express Credit Card Statement</h1><p>Card Number: 376657XXXXX0276</p><p>Statement Date: 16/09/2026 Payment Due Date: 10/10/2026</p><p>Credit Limit 500000.00 Available Credit 400000.00 Minimum Amount Due 10000.00</p><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr><tr><td>14/09/2026</td><td>KEELLS STORE</td><td>${(123.45 + variant).toFixed(2)} DR</td></tr><tr><td>15/09/2026</td><td>PAYMENT THANK YOU</td><td>${(50 + variant).toFixed(2)} CR</td></tr></table></body></html>`;
+const html = (variant = 0) => `<html><body><h1>Nations Trust Bank American Express Credit Card Statement</h1><p>Card Number: 376657XXXXX${String(276 + Math.round(variant)).padStart(4, '0')}</p><p>Statement Date: 16/09/2026 Payment Due Date: 10/10/2026</p><p>Credit Limit 500000.00 Available Credit 400000.00 Minimum Amount Due 10000.00</p><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr><tr><td>14/09/2026</td><td>KEELLS STORE</td><td>${(123.45 + variant).toFixed(2)} DR</td></tr><tr><td>15/09/2026</td><td>PAYMENT THANK YOU</td><td>${(50 + variant).toFixed(2)} CR</td></tr></table></body></html>`;
 
 function world(sources) {
     const seed = { [MAIL]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders: [{ id: 'statements@nationstrust.com', kind: 'address', status: 'approved' }] }, 'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [] } };
@@ -84,7 +84,7 @@ describe('the same file again, through the worker', () => {
         // one purchase and one payment in the ledger, however many times the bank sent it
         expect(w.user().cconetime).toHaveLength(1); expect(w.user().ccPayments).toHaveLength(1);
     });
-    it('different statements are all filed: a changed byte is a different statement', async () => {
+    it('different statements (another card) are all filed — the same card and month in other bytes is the registry\'s business, see statement_registry_test.js', async () => {
         const w = world([{ html: html(0) }, { html: html(1) }, { html: html(2) }]);
         await w.run();
         expect([0, 1, 2].every((i) => w.item(i).filed === true && !w.item(i).duplicateOf)).toBe(true);
