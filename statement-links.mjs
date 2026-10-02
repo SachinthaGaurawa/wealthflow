@@ -18,12 +18,17 @@ const dayNumber = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(is
 const ymOf = (iso) => { const m = /^(\d{4})-(\d{2})/.exec(String(iso || '')); return m ? `${m[1]}-${m[2]}` : ''; };
 const tokens = (v) => words(v).split(' ').filter((t) => t.length >= 4 && !STOP.has(t));
 const STOP = new Set(['payment', 'transfer', 'credit', 'debit', 'online', 'bank', 'card', 'pos', 'transaction', 'purchase', 'salary', 'monthly', 'ceft', 'cefts', 'slips', 'inward', 'outward']);
+/* Words too common in a narration to say two things are the same purchase ("salary" is not among them: salary, typed and credited, is the same salary). */
+const TOO_COMMON = new Set(['payment', 'transfer', 'credit', 'debit', 'online', 'bank', 'card', 'pos', 'transaction', 'purchase', 'monthly', 'ceft', 'cefts', 'slips', 'inward', 'outward', 'other', 'expense', 'income']);
+const sharesAWord = (typed, text) => words(typed).split(' ').some((w) => w.length >= 4 && !TOO_COMMON.has(w) && text.includes(w));
 
 /* ── 1. A THING THE OWNER TYPED IN BY HAND, THEN THE STATEMENT'S ROW FOR IT ────────────────────────────────────────────────────────────────
- * Same amount to the cent, on the same day or the day either side, in the same direction, and the hand-made entry has not already been matched to
- * another row. A hand-made entry that stands for every month (recurring) is matched only when its words and the statement's share one, and once
- * per month. Two candidates that fit equally are never guessed between: the row is filed as before. */
-export function manualTwin(records, row, { month = ymOf(row && row.date) } = {}) {
+ * Same amount to the cent, in the same direction, and the hand-made entry has not already been matched to another row. WHEN: the same day or a day either side — or, when the typed
+ * words and the statement's share a word ("Keells" and "KEELLS SUPER COLOMBO"), up to three days: a purchase is typed the day it is made and a bank or a card posts it days later, and
+ * the same amount to the cent with the same name in it is the same purchase, not a coincidence. (`strict`: with no word in common only the same day — used on what is already in the books.) A hand-made entry that stands for every month (recurring) is matched only when its words
+ * and the statement's share one, and once per month. Two candidates that fit equally are never guessed between: the row is filed as before. */
+export const TWIN_DAYS = 1, TWIN_DAYS_NAMED = 3;
+export function manualTwin(records, row, { month = ymOf(row && row.date), strict = false } = {}) {
     const want = cents(row && row.amount), day = dayNumber(row && row.date);
     if (!(want > 0) || !Number.isFinite(day)) return null;
     const text = words(row.description || row.narration);
@@ -31,10 +36,10 @@ export function manualTwin(records, row, { month = ymOf(row && row.date) } = {})
     for (const r of arr(records)) {
         if (!r || r.source === 'statement' || r.statementKey || cents(r.amount) !== want) continue;
         if (r.loanLink || r.subscriptionLink) continue;
+        const mine = tokens(r.desc || r.name), named = mine.some((t) => text.includes(t)) || sharesAWord(r.desc || r.name, text);
         if (r.recurring) {
             if (r.statementTwins && r.statementTwins[month]) continue;
-            const mine = tokens(r.desc || r.name);
-            if (!mine.length || !mine.some((t) => text.includes(t)) || String(r.month || '') > month) continue;
+            if (!mine.length || !named || String(r.month || '') > month) continue;
             fits.push({ r, gap: 0, recurring: true });
             continue;
         }
@@ -42,19 +47,41 @@ export function manualTwin(records, row, { month = ymOf(row && row.date) } = {})
         const at = dayNumber(r.date);
         if (!Number.isFinite(at)) continue;                 // a hand-made entry with no day cannot be told from another by its day
         const gap = Math.abs(at - day);
-        if (gap <= 1) fits.push({ r, gap, recurring: false });
+        if (gap <= (named ? TWIN_DAYS_NAMED : strict ? 0 : TWIN_DAYS)) fits.push({ r, gap, recurring: false });
     }
     if (!fits.length) return null;
     fits.sort((a, b) => a.gap - b.gap);
     if (fits.length > 1 && fits[0].gap === fits[1].gap) return null;
     return fits[0];
 }
-/** Remember which row a hand-made entry stands for, so it stands for no second row (a recurring one: no second row in that month). */
-export function markTwin(twin, month, sourcePath, index, now) {
-    const stamp = { sourcePath, index };
+/** Remember which row a hand-made entry stands for, so it stands for no second row (a recurring one: no second row in that month). The row's date, amount and direction are kept with it, so the
+ * same statement read a second time (another copy, another message) is known for what it is: the row this entry already stands for. */
+export function markTwin(twin, month, sourcePath, index, now, row = null) {
+    const stamp = { sourcePath, index, ...(row ? { date: String(row.date || ''), cents: cents(row.amount), direction: String(row.direction || '') } : {}) };
     if (twin.recurring) twin.r.statementTwins = { ...(twin.r.statementTwins || {}), [month]: stamp };
     else twin.r.statementTwin = stamp;
     twin.r._ut = now;
+}
+
+/**
+ * A ROW THAT IS ONLY A COPY OF ONE ALREADY ACCOUNTED FOR. A statement read a second time — another copy of the message, an overlapping statement — brings the same rows again. The first reading
+ * tied each of them to something that is already counted (an entry the owner typed, a subscription, an installment plan); that something stands for ONE row, so the copy found it taken and was
+ * filed as a new expense: counted twice. Same date, same amount to the cent, same direction, and the stamp names ANOTHER statement: the copy is a duplicate, whatever it was tied to.
+ * @returns {string} what holds the row ('entry' | 'subscription' | 'plan'), or '' when nothing does
+ */
+export function accountedCopy(user, row, sourcePath) {
+    const want = cents(row && row.amount), date = String((row && row.date) || ''), direction = String((row && row.direction) || 'debit');
+    if (!(want > 0) || !date) return '';
+    const copy = (stampSource, stampDate, stampCents, stampDirection) => !!stampSource && stampSource !== sourcePath && stampDate === date && stampCents === want && (stampDirection || 'debit') === direction;
+    for (const list of [user && user.expenses, user && user.incomeRecv, user && user.cconetime]) {
+        for (const r of arr(list)) {
+            if (!r || r.source === 'statement') continue;
+            for (const st of [r.statementTwin, ...Object.values(r.statementTwins || {})]) if (st && copy(st.sourcePath, st.date, st.cents, st.direction)) return 'entry';
+        }
+    }
+    for (const sub of arr(user && user.subscriptions)) if (arr(sub && sub.history).some((h) => h && h.source === 'statement' && copy(h.statementKey, h.date, cents(h.amount), 'debit'))) return 'subscription';
+    for (const plan of arr(user && user.ccinstall)) if (arr(plan && plan.payments).some((p) => p && p.source === 'statement' && copy(p.statementKey, new Date(num(p.paidAt)).toISOString().slice(0, 10), cents(p.amount), 'debit'))) return 'plan';
+    return '';
 }
 
 /* ── 2. A DEBIT THAT IS A SUBSCRIPTION THE OWNER ALREADY TRACKS ───────────────────────────────────────────────────────────────────────────── */
@@ -183,4 +210,4 @@ export function repairInstallmentRecords(user, now) {
     return done;
 }
 
-export default { manualTwin, markTwin, planCountedIn, matchInstallmentPlan, applyPlanPayment, repairInstallmentRecords, subscriptionCountedIn, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit };
+export default { manualTwin, markTwin, accountedCopy, planCountedIn, matchInstallmentPlan, applyPlanPayment, repairInstallmentRecords, subscriptionCountedIn, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit };

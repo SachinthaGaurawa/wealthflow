@@ -53,6 +53,10 @@ const GENERIC = new Set(['loan', 'loans', 'lease', 'leasing', 'emi', 'facility',
 const LOAN_WORDS = /\b(loan|emi|instal?ments?|instal?lments?|repayment|housing loan|home loan|personal loan|vehicle loan|leasing|lease rental|hire purchase|mortgage)\b/;
 /* Never the installment: what a lender charges around it. */
 const NOT_AN_INSTALLMENT = /\b(fees?|charges?|penalty|penalties|stamp|duty|tax|insurance|premium|processing|valuation|legal|commission|refund|reversal|disbursement|reversed)\b/;
+/* Nor is the bank paying a credit card, a cheque, or a cash withdrawal or a purchase (a round installment is the amount of a round withdrawal too): those are counted as what they are. */
+const NOT_A_LOAN = /\b(credit\s*card|card\s*(?:payment|settlement|bill)|visa|master\s*card|mastercard|amex|cheque|chq|chk|atm|cdm|cash\s*(?:withdrawal|wdl|deposit)|withdrawal|pos|purchase)\b/;
+/** The words of a narration with its numbers and punctuation taken out: "HNB LOAN INSTALMENT 0740123" and "HNB LOAN INSTALMENT 0740456" are one thing said twice. */
+const sayingOf = (v) => low(v).replace(/\d+/g, ' ').replace(/[^a-z]+/g, ' ').trim();
 
 const digitsOf = (text) => String(text || '').replace(/\D/g, '');
 function refNumbers(loan) {
@@ -64,12 +68,13 @@ function refNumbers(loan) {
  * Which of the owner's loans, and which of its months, is this bank debit the installment of? `null` when the evidence does not say.
  * `debit` is `{ description, amount, date }`. `expenses` (optional) lets the owner's own "paid from the bank" word find its debit.
  */
-export function matchLoanForDebit(debit, loans, { onlyOpenMonths = false } = {}) {
+export function matchLoanForDebit(debit, loans, { onlyOpenMonths = false, expenses = [] } = {}) {
     const amount = num(debit && debit.amount), month = ymOf(debit && debit.date);
     if (!(amount > 0) || !month) return null;
     const text = low(debit.description).replace(/[*_/]+/g, ' ');
-    if (!text.trim() || NOT_AN_INSTALLMENT.test(text)) return null;
+    if (!text.trim() || NOT_AN_INSTALLMENT.test(text) || NOT_A_LOAN.test(text)) return null;
     const digits = digitsOf(text);
+    const saying = sayingOf(debit.description), dayOfMonth = Number(String(debit.date || '').slice(8, 10)) || 0;
     const wording = LOAN_WORDS.test(text);
     const candidates = [];
     for (const loan of arr(loans)) {
@@ -87,24 +92,37 @@ export function matchLoanForDebit(debit, loans, { onlyOpenMonths = false } = {})
         let nameHit = false;
         if (name.length >= 4 && text.includes(name)) { score += 4; nameHit = true; }
         else if (name) for (const word of name.split(/\s+/)) if (word.length >= 4 && !GENERIC.has(word) && text.includes(word)) { score += 2; nameHit = true; }
-        if (bank && text.includes(bank)) score += 3;
-        else if (bank) { const token = bank.split(/\s+/)[0]; if (token.length >= 3 && text.includes(token)) score += 2; }
+        let bankHit = false;
+        if (bank && text.includes(bank)) { score += 3; bankHit = true; }
+        else if (bank) { const token = bank.split(/\s+/)[0]; if (token.length >= 3 && text.includes(token)) { score += 2; bankHit = true; } }
         if (wording) score += 1;
         // The owner said "paid from my bank account" for this month, for about this amount: the debit is found by what they said, whatever the narration
         const said = !!(pay && pay.paid && pay.via === VIA.BANK && !pay.expenseId && expected > 0 && Math.abs(amount - num(pay.amount || expected)) <= Math.max(1, num(pay.amount || expected)) * 0.02);
         if (said) score += 6;
-        if (expected > 0) { const r = Math.abs(amount - expected) / expected; if (r < 0.02) score += 3; else if (r < 0.1) score += 1; }
-        candidates.push({ loan, month, score, refHit, nameHit, said });
+        let exact = false;
+        if (expected > 0) { const r = Math.abs(amount - expected) / expected; if (r < 0.02) score += 3; else if (r < 0.1) score += 1; exact = r < 0.005; }
+        /* THREE MORE THINGS THAT SAY "THIS IS THE INSTALLMENT" WHEN THE NARRATION DOES NOT (a bare transfer, only the lender's name): the same words as a debit already tied to this loan in
+         * another month (the bank words this loan's payments the same way every time); the lender's name with the installment to the cent; the installment to the cent within three days of the
+         * loan's pay day. Each needs the amount to be the installment, and two loans that fit equally are still never guessed between. */
+        const seen = saying.length >= 6 && arr(expenses).some((e) => e && e.loanLink && e.loanLink.loanId === loan.id && ymOf(e.loanLink.month) !== month && sayingOf(e.desc) === saying);
+        const payDay = Math.floor(num(loan.payDay));
+        const onPayDay = payDay >= 1 && payDay <= 31 && dayOfMonth > 0 && Math.abs(dayOfMonth - payDay) <= 3;
+        const lenderAndAmount = bankHit && exact, payDayAndAmount = exact && onPayDay;
+        if (seen) score += 5; if (lenderAndAmount) score += 3; if (payDayAndAmount) score += 3;
+        // a month that already has its debit tied is not tied again by the weaker three: a second debit of the same amount near the pay day (the rent) is its own payment
+        const alreadyTied = arr(expenses).some((e) => e && e.loanLink && e.loanLink.loanId === loan.id && ymOf(e.loanLink.month) === month);
+        if (alreadyTied && !refHit && !nameHit && !said && !wording) continue;
+        candidates.push({ loan, month, score, refHit, nameHit, said, seen, lenderAndAmount, payDayAndAmount });
     }
     if (!candidates.length) return null;
     candidates.sort((a, b) => b.score - a.score);
     const best = candidates[0], second = candidates[1];
-    const strong = best.refHit || best.nameHit || best.said;
+    const strong = best.refHit || best.nameHit || best.said || best.seen || best.lenderAndAmount || best.payDayAndAmount;
     // no loan wording and no identifier: a bare bank name or a matching amount is a coincidence, never a loan payment
     if (!wording && !strong) return null;
     if (second && second.score === best.score) return null;               // two loans fit equally: ambiguous, never guessed
     if (!strong && best.score < 2 && candidates.length > 1) return null;
-    return { loan: best.loan, month, score: best.score, why: best.said ? 'owner-said-bank' : best.refHit ? 'account-number' : best.nameHit ? 'loan-name' : 'loan-wording' };
+    return { loan: best.loan, month, score: best.score, why: best.said ? 'owner-said-bank' : best.refHit ? 'account-number' : best.nameHit ? 'loan-name' : best.seen ? 'seen-before' : best.lenderAndAmount ? 'lender-and-amount' : best.payDayAndAmount ? 'pay-day-and-amount' : 'loan-wording' };
 }
 
 /** The expense's own month, the way the monthly totals place it. */
@@ -160,7 +178,7 @@ export function healLoanLinks(user, now = Date.now(), { limit = 200 } = {}) {
         if (done.length >= limit) break;
         if (!e || e.loanLink || e.recurring || !(num(e.amount) > 0)) continue;
         if (e.direction && e.direction !== 'debit') continue;
-        const hit = matchLoanForDebit({ description: e.desc || e.name || '', amount: e.amount, date: e.date || (e.month ? `${e.month}-15` : '') }, loans);
+        const hit = matchLoanForDebit({ description: e.desc || e.name || '', amount: e.amount, date: e.date || (e.month ? `${e.month}-15` : '') }, loans, { expenses: user && user.expenses });
         if (!hit) continue;
         // a month that already has a different debit linked is left to the first one unless the owner said which
         linkExpenseToLoan(user, e, hit.loan, hit.month, now);

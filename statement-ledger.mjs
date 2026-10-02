@@ -4,7 +4,7 @@ import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow } from './wealthflow-statement-router.js';
 import { canonicalBank } from './wealthflow-institutions.js';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
-import { manualTwin, markTwin, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment } from './statement-links.mjs';
+import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment } from './statement-links.mjs';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -72,7 +72,7 @@ export function crossSourceMatches(records, row, context) {
  * debit, not again by the loan's schedule. Evidence only; anything the rules cannot tie to one loan is an ordinary expense. `loans` is the working copy. */
 function linkInstallment(loans, expenses, record, now) {
     if (!Array.isArray(loans) || !loans.length || record.direction !== 'debit') return false;
-    const hit = matchLoanForDebit({ description: record.desc, amount: record.amount, date: record.date }, loans);
+    const hit = matchLoanForDebit({ description: record.desc, amount: record.amount, date: record.date }, loans, { expenses });
     if (!hit) return false;
     linkExpenseToLoan({ expenses }, record, hit.loan, hit.month, now);
     return true;
@@ -82,14 +82,22 @@ function linkInstallment(loans, expenses, record, now) {
  * an issued cheque, or that is the bank settling a card whose purchases are already counted, is not filed as a second expense or income. Evidence only;
  * no counterpart found means the row is filed exactly as before. */
 function findCounterpart({ row, module, user, cards, cardRegistry }) {
-    const records = module === 'expenses' ? user.expenses : module === 'incomeRecv' ? user.incomeRecv : module === 'cconetime' ? user.cconetime : null;
-    if (Array.isArray(records)) { const twin = manualTwin(records, row); if (twin) return { kind: 'twin', twin }; }
+    /* WHERE A HAND-MADE ENTRY FOR THIS ROW CAN BE: a card statement's purchase may have been typed as an ordinary expense (the Monthly Expenses tab) — it is the same purchase, and the
+     * entry stands for it; a bank row and a receipt are looked for in their own list. The nearest entry wins across lists, and two that fit equally are never guessed between. */
+    const lists = module === 'expenses' ? [['expenses', user.expenses]] : module === 'incomeRecv' ? [['incomeRecv', user.incomeRecv]] : module === 'cconetime' ? [['cconetime', user.cconetime], ['expenses', user.expenses]] : [];
+    const found = [];
+    for (const [store, records] of lists) if (Array.isArray(records)) { const twin = manualTwin(records, row); if (twin) found.push({ kind: 'twin', twin, store }); }
+    if (found.length) {
+        found.sort((a, b) => a.twin.gap - b.twin.gap);
+        if (!(found.length > 1 && found[0].twin.gap === found[1].twin.gap)) return found[0];
+    }
     if (module === 'expenses' && row.direction === 'debit') {
         const cheque = matchChequeForDebit(row, user.cheques);
         if (cheque) return { kind: 'cheque', cheque };
         if (cardSettlementDebit(row, { cardRegistry, cards })) return { kind: 'card-settlement' };
     }
-    if (module === 'ccinstall') { const plan = matchInstallmentPlan(row, user.ccinstall); if (plan) return { kind: 'plan', plan }; }
+    // a card charge for a plan the owner already has is that plan's month, whether or not the narration says installment
+    if (module === 'ccinstall' || module === 'cconetime') { const plan = matchInstallmentPlan(row, user.ccinstall); if (plan) return { kind: 'plan', plan }; }
     if (module === 'expenses' || module === 'cconetime') { const sub = matchSubscriptionForDebit(row, user.subscriptions); if (sub) return { kind: 'subscription', sub }; }
     return null;
 }
@@ -253,10 +261,16 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             }
             if (matching.length) reason = 'ambiguous-cross-source-match';
             
+            /* this row is a COPY of one the books already count under another name (typed entry, subscription, plan) — from another reading of the same statement: counted once, not again */
+            const held = reason ? '' : accountedCopy(user, row, sourceRef.path);
+            if (held) {
+                writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', module: modules[decision.module] || '', reason: `copy-of-a-row-counted-by-a-${held}`, fingerprint, settledAt: now }]);
+                outcome.duplicates++; continue;
+            }
             const counterpart = reason ? null : findCounterpart({ row, module, user, cards, cardRegistry });
             let subscriptionOfCard = null;
             if (counterpart && counterpart.kind === 'twin') {
-                markTwin(counterpart.twin, row.date.slice(0, 7), sourceRef.path, index, now); changes[module] = user[module];
+                markTwin(counterpart.twin, row.date.slice(0, 7), sourceRef.path, index, now, row); changes[counterpart.store || module] = user[counterpart.store || module];
                 writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', module, reason: 'entered-by-hand', fingerprint, matchedId: String(counterpart.twin.r.id || ''), settledAt: now }]);
                 outcome.duplicates++; continue;
             }

@@ -31,9 +31,23 @@ describe('which loan a bank debit is the installment of', () => {
         const a = loan({ id: 'A', name: 'Car', bank: 'X' }), b = loan({ id: 'B', name: 'House', bank: 'Y' });
         expect(matchLoanForDebit(debit('LOAN INSTALMENT'), [a, b])).toBeNull();
     });
-    it('a bank\'s name and a matching amount, with no loan wording and no identifier, is a coincidence: not linked', () => {
-        expect(matchLoanForDebit(debit('HNB CEFTS TRANSFER 4455', 45230.5), [loan({ name: 'Car' })])).toBeNull();
-        expect(matchLoanForDebit(debit('KEELLS SUPER', 45230.5), [loan()])).toBeNull();
+    it('a name that is not the lender\'s, or the lender\'s name with an amount that is not the installment, is a coincidence: not linked', () => {
+        expect(matchLoanForDebit(debit('HNB CEFTS TRANSFER 4455', 30000), [loan({ name: 'Car' })])).toBeNull();      // the lender, but not the installment
+        expect(matchLoanForDebit(debit('KEELLS SUPER', 45230.5), [loan()])).toBeNull();                          // the installment, but nothing says the lender, the loan or the pay day
+        expect(matchLoanForDebit(debit('HNB ATM WITHDRAWAL COLOMBO', 45230.5), [loan()])).toBeNull();            // a round installment is the amount of a round withdrawal too
+    });
+    it('the lender\'s name with the installment to the cent IS the installment — the bank rarely says "loan" on a transfer', () => {
+        expect(matchLoanForDebit(debit('HNB CEFTS TRANSFER 4455', 45230.5), [loan({ name: 'Car' })])).toMatchObject({ why: 'lender-and-amount' });
+    });
+    it('the installment to the cent within three days of the loan\'s pay day is the installment, however bare the narration', () => {
+        expect(matchLoanForDebit(debit('CEFT TRANSFER 0741234567', 45230.5), [loan({ payDay: 5 })])).toMatchObject({ why: 'pay-day-and-amount' });
+        expect(matchLoanForDebit(debit('CEFT TRANSFER 0741234567', 45230.5), [loan({ payDay: 20 })])).toBeNull();
+        expect(matchLoanForDebit(debit('CEFT TRANSFER 0741234567', 45000), [loan({ payDay: 5 })])).toBeNull();
+    });
+    it('the same words as a debit already tied to this loan in another month tie the installment, whatever its amount', () => {
+        const earlier = [{ id: 'E0', desc: 'CEFT TRANSFER TO ACME FINANCE 77', amount: 47000, loanLink: { loanId: 'L1', month: '2026-02' } }];
+        expect(matchLoanForDebit(debit('CEFT TRANSFER TO ACME FINANCE 88', 46500), [loan()], { expenses: earlier })).toMatchObject({ why: 'seen-before' });
+        expect(matchLoanForDebit(debit('CEFT TRANSFER TO SOMEONE ELSE 88', 46500), [loan()], { expenses: earlier })).toBeNull();
     });
     it('a fee, a premium, a penalty or a reversal around the loan is never the installment', () => {
         for (const text of ['LOAN PROCESSING FEE', 'HONDA VEZEL LOAN INSURANCE PREMIUM', 'LOAN PENALTY INTEREST', 'LOAN INSTALMENT REVERSAL', 'STAMP DUTY LOAN']) expect(matchLoanForDebit(debit(text), [loan()])).toBeNull();
