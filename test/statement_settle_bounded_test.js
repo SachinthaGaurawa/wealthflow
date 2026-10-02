@@ -223,3 +223,23 @@ describe('a document that calls itself a form is not a statement, whatever the m
         expect(w.data.get(itemPath).status).not.toBe('rejected_non_statement');
     });
 });
+
+describe('the owner\'s audit screen is built from the last report when this run made no new one', () => {
+    const stored = { at: 123, missing: 0, empties: [], refused: [], log: [{ month: '2026-08', bank: 'DFCC', file: 'DFCC Bank Statement - Aug 26.pdf', status: 'filed', math: 'ok' }], table: { total: 5, counts: { INGESTED: 5 }, senders: [] } };
+    const world = (extra = {}) => createFirestore({
+        [mail]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders: SENDERS, lastSettleMs: Date.now(), coverage: stored, ...extra },
+        'wf-statement-vault/u': { uid: 'u' },
+        'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], settings: {} },
+    });
+    const go = (w) => runStatementSync({ action: 'collect', interactive: true, db: w.db, owner, env: {}, f: gmailOk, intake: async () => ({ body: { ok: true } }), read: readStatement, open: async () => [], board: down, extract: async () => { throw new Error('ai-extractor-unavailable'); }, settle: settleStatement, maxSteps: 1, budgetMs: 40000 });
+    it('an interactive run inside the ninety seconds (no housekeeping) still returns the stored report, so the screen is never empty', async () => {
+        const out = await go(world({ lastFrontMs: Date.now() }));
+        expect(out.coverage).toEqual(stored);
+    });
+    it('nothing is invented when no report was ever made', async () => {
+        const w = world({ lastFrontMs: Date.now() });
+        const bare = createFirestore({ [mail]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders: SENDERS, lastSettleMs: Date.now(), lastFrontMs: Date.now() }, 'wf-statement-vault/u': { uid: 'u' }, 'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], settings: {} } });
+        expect((await go(bare)).coverage).toBeUndefined();
+        void w;
+    });
+});
