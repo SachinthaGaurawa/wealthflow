@@ -244,4 +244,31 @@ describe('the scan endpoint labels its failures', () => {
         expect(isRetryable(denied.status, denied.body)).toBe(false);
         expect(isRetryable(quota.status, quota.body)).toBe(true);
     });
+
+    it('a Gmail 403 that is a rate limit is retryable; any other 403 is not', async () => {
+        for (const reason of ['userRateLimitExceeded', 'rateLimitExceeded']) {
+            const limited = await scanWith(() => ({ ok: false, status: 403, async json() { return { error: { errors: [{ reason }] } }; } }));
+            expect(limited.body, reason).toMatchObject({ retryable: true, retryAfterMs: 5000 });
+        }
+        const forbidden = await scanWith(() => ({ ok: false, status: 403, async json() { return { error: { errors: [{ reason: 'insufficientPermissions' }] } }; } }));
+        expect(forbidden.body.retryable).toBe(false);
+        const garbled = await scanWith(() => ({ ok: false, status: 403, async json() { throw new Error('not json'); } }));
+        expect(garbled.body.retryable).toBe(false);
+    });
+
+    it('a token exchange that times out or answers 5xx is retryable; a rejected refresh token is not', async () => {
+        const { default: handler } = await import('../gmail-scan.js');
+        const run = async (tokenAnswer) => {
+            const seen = { body: null };
+            const res = { statusCode: 200, setHeader() { return res; }, end(o) { seen.body = JSON.parse(o); return res; } };
+            await handler(
+                { method: 'POST', url: '/api/gmail-scan', headers: { authorization: 'Bearer good-token' }, body: { months: 6, index: 0, now: NOW } },
+                res, { env: { GOOGLE_OAUTH_CLIENT_ID: 'id', GOOGLE_OAUTH_CLIENT_SECRET: 'secret' }, fetchImpl: async () => tokenAnswer() },
+            );
+            return seen.body;
+        };
+        expect((await run(() => { throw new Error('timeout'); })).retryable).toBe(true);
+        expect((await run(() => ({ ok: false, status: 503, async json() { return {}; } }))).retryable).toBe(true);
+        expect((await run(() => ({ ok: false, status: 400, async json() { return { error: 'invalid_grant' }; } }))).retryable).toBe(false);
+    });
 });
