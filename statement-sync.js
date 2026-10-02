@@ -1900,7 +1900,11 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         try {
             coverage = await refreshCoverage({ db, mailRef, mail, token, f, search: Date.now() - start < 20000, deadlineAt: start + 38000 });
             if (coverage.staged > 0) await collect();
-        } catch (_) { coverage = null; }
+        } catch (error) {
+            coverage = null;
+            // said, once: the owner's audit screen is built from this report, and "nothing there" was all the log knew about why
+            try { console.warn(JSON.stringify({ evt: 'statement-coverage-failed', error: String(error && error.message || error).replace(/\d{6,}/g, '#').slice(0, 100) })); } catch (_) { /* a log line never stops a sync */ }
+        }
         migrationMore = await migrateItems(db, mailRef, mail, uid);
         /* THE HOUSEKEEPING MAY NOT EAT THE WHOLE CALL. On 2026-10-01 an interactive run spent 42.5 s of its sixty here and processed NONE of
          * the fifteen statements waiting (`statement-sync-run … processed:0 attempted:0`), and the owner's app asked again ninety
@@ -1991,7 +1995,9 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         console.info(JSON.stringify({ evt: 'statement-sync-run', ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', ...(frontIncomplete ? { frontIncomplete: true } : {}), redriven: redrive.redriven, deadLettered: redrive.waiting,
             pending: pending.docs.length, processing: processing.docs.length, byBank, collectionMore, aiDown: Object.entries(breaker.health).filter(([, v]) => Number(v?.downUntil) > Date.now()).map(([k, v]) => `${k}:${String(v.reason || '').slice(0, 40)}`) }));
     } catch (_) { /* a log line never stops a sync */ }
-    return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, orphansHealed, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, ...(coverage ? { coverage } : {}),
+    return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, orphansHealed, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, /* THE LAST REPORT STANDS WHEN THIS RUN MADE NO NEW ONE. The report (statements checked in, emails refused, closed months, the audit log) was returned only by a run that did the mailbox
+         * housekeeping — and an interactive run repeats that at most every ninety seconds, so the owner's screen, built afresh each time the app opens, showed "0 review items" with every section gone. */
+        ...((coverage || mail.coverage) ? { coverage: coverage || mail.coverage } : {}),
         pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending, retrying,
         ...(morePending ? { retryAfterMs } : {}) };
 }
