@@ -70,7 +70,7 @@ const src = n => { const s = html.indexOf(`function ${n}(`); const from = html.s
 function monthly(user, year = 2026, month = 2) {
     const store = { loans: [], expenses: [], incomeRecv: [], ccinstall: [], cconetime: [], subscriptions: [], cheques: [], ...user };
     const ctx = vm.createContext({ DB: { get: k => store[k] || [] }, p2: n => String(n).padStart(2, '0'), window: { WFReactive: { incomeIn } }, Date });
-    for (const n of ['_loanMethod', '_loanInstallmentMonths', '_scheduledPaymentFor', '_loanBalanceBeforeMonth', 'loanEndDate', 'getLoanMonthlyForDate', '_wfLinkedLoanMonths', 'getCCIMonthlyForDate', 'getMonthlyData']) vm.runInContext(src(n), ctx);
+    for (const n of ['_loanMethod', '_loanInstallmentMonths', '_scheduledPaymentFor', '_loanBalanceBeforeMonth', 'loanEndDate', 'getLoanMonthlyForDate', '_wfLinkedLoanMonths', 'getCCIMonthlyForDate', '_wfFindLoanDebit', '_wfMonthIsFuture', 'getMonthlyData']) vm.runInContext(src(n), ctx);
     return ctx.getMonthlyData(year, month);
 }
 const STATEMENT = rows => `

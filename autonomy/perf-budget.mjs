@@ -272,7 +272,11 @@ export const BUDGETS = {
     // (the owner's switch, remembered per device), the Expense Breakdown ring's legend is an HTML legend that cannot be cut off by its card (the
     // canvas legend was drawn past the card's edge with a dozen categories), pointing at or touching a slice (or its legend row) shows its
     // amount in a card kept inside the screen, and the AI-insights context counts a loan installment once. No new script or request. ~0.2% headroom.
-    htmlBytes: 2_120_000,
+    // Raised 2026-10-03: 2,120,000 -> 2,130,000 (measured 2,124,185). The totals now follow what was PAID, not what was scheduled: an installment counts when it is marked paid (for the
+    // amount paid), future months and unpaid items count nothing and are listed as "due, not paid" instead; the Monthly Plan page shows what was paid, what is due and every group that is in its
+    // total; the Expense Breakdown is built from the same books so it adds up to Year Expenses; Upcoming Payments and Recent Activity leave out what is paid / not yet happened. No new
+    // script or request. ~0.3% headroom.
+    htmlBytes: 2_130_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

@@ -20,7 +20,7 @@ function source(name) {
 function screens(user) {
     const store = { loans: [], expenses: [], incomeRecv: [], ccinstall: [], cconetime: [], subscriptions: [], cheques: [], ...user };
     const context = vm.createContext({ DB: { get: key => store[key] || [], set: () => {} }, p2: n => String(n).padStart(2, '0'), window: { WFReactive: { incomeIn } }, notify: () => {}, Date });
-    for (const name of ['_loanMethod', '_loanInstallmentMonths', '_scheduledPaymentFor', '_loanBalanceBeforeMonth', 'loanEndDate', 'getLoanMonthlyForDate', 'getCCIMonthlyForDate', '_wfLinkedLoanMonths', 'getMonthlyData']) vm.runInContext(source(name), context);
+    for (const name of ['_loanMethod', '_loanInstallmentMonths', '_scheduledPaymentFor', '_loanBalanceBeforeMonth', 'loanEndDate', 'getLoanMonthlyForDate', 'getCCIMonthlyForDate', '_wfLinkedLoanMonths', '_wfFindLoanDebit', '_wfMonthIsFuture', 'getMonthlyData']) vm.runInContext(source(name), context);
     return context;
 }
 function fakeDb(initial) {

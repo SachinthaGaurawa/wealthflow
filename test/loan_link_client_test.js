@@ -22,39 +22,51 @@ function page(data = {}) {
         promptPaymentAmount: vi.fn(), Date,
     });
     for (const name of ['_loanMethod', '_loanInstallmentMonths', '_scheduledPaymentFor', '_loanBalanceBeforeMonth', 'loanEndDate', 'getLoanMonthlyForDate', '_wfLinkedLoanMonths', '_wfLoanDueNow',
-        '_wfFindLoanDebit', '_wfSetLoanVia', 'getMonthlyData', 'toggleLoanInstallment']) vm.runInContext(source(name), context);
+        '_wfFindLoanDebit', '_wfSetLoanVia', '_wfMonthIsFuture', 'getMonthlyData', 'toggleLoanInstallment']) vm.runInContext(source(name), context);
     return { context, store };
 }
 const loan = (extra = {}) => ({ id: 'L1', name: 'Honda Vezel Loan', bank: 'HNB', start: '2026-01-01', duration: 12, monthly: 45000, amount: 500000, rate: 0, payments: [], ...extra });
 const debit = (extra = {}) => ({ id: 'E1', desc: 'LOAN INSTALMENT', amount: 45000, date: '2026-03-05', month: '2026-03', cat: 'Other', ...extra });
 const yearTotal = ctx => Array.from({ length: 12 }, (_, m) => ctx.getMonthlyData(2026, m).totalExp).reduce((a, b) => a + b, 0);
 
-describe('the totals count an installment once', () => {
-    it('unlinked, the debit and the schedule both count (the bug); linked, March counts it once', () => {
-        const unlinked = page({ loans: [loan()], expenses: [debit()] }).context;
-        expect(unlinked.getMonthlyData(2026, 2).totalExp).toBe(90000);
-        const linked = page({ loans: [loan()], expenses: [debit({ loanLink: { loanId: 'L1', month: '2026-03' } })] }).context;
+const paid = (month, extra = {}) => ({ month, paid: true, amount: 45000, via: 'other', paidAt: 1, ...extra });
+const yearTotalOf = (ctx, year) => Array.from({ length: 12 }, (_, m) => ctx.getMonthlyData(year, m).totalExp).reduce((a, b) => a + b, 0);
+
+describe('the totals count an installment once — when it is paid', () => {
+    it('unpaid counts nothing (the bank debit alone is the money that left); linked counts once through the debit; paid by hand counts once through the payment', () => {
+        const unpaid = page({ loans: [loan()], expenses: [debit()] }).context.getMonthlyData(2026, 2);
+        expect(unpaid.totalExp).toBe(45000); expect(unpaid.loanTotal).toBe(0);
+        const linked = page({ loans: [loan({ payments: [paid('2026-03', { via: 'bank', expenseId: 'E1' })] })], expenses: [debit({ loanLink: { loanId: 'L1', month: '2026-03' } })] }).context;
         const march = linked.getMonthlyData(2026, 2);
         expect(march.totalExp).toBe(45000);
         expect(march.loanTotal).toBe(0); expect(march.expTotal).toBe(45000);
         expect(Array.from(march.loanItems)).toHaveLength(0);
-        expect(linked.getMonthlyData(2026, 3).loanTotal).toBe(45000);          // April has no debit: the loan's own count
+        expect(linked.getMonthlyData(2026, 3).loanTotal).toBe(0);              // April: not paid, nothing counted
+        const byHand = page({ loans: [loan({ payments: [paid('2026-03')] })] }).context.getMonthlyData(2026, 2);
+        expect(byHand.totalExp).toBe(45000); expect(byHand.loanTotal).toBe(45000);
+        expect(byHand.loanItems[0]).toMatchObject({ amount: 45000, paid: true, cat: 'Loan Repayment' });
     });
-    it('Year Expenses: twelve installments are twelve installments, paid from the bank, by cash or a mixture', () => {
-        const months = Array.from({ length: 12 }, (_, i) => `2026-${String(i + 1).padStart(2, '0')}`);
-        const expenses = months.filter((_, i) => i % 3 !== 0).map((m, i) => debit({ id: `E${i}`, date: `${m}-05`, month: m, loanLink: { loanId: 'L1', month: m } }));   // the first of every three months is paid in cash
-        expect(yearTotal(page({ loans: [loan()], expenses }).context)).toBe(12 * 45000);
+    it('the paid amount is what counts, not the schedule', () => {
+        const c = page({ loans: [loan({ payments: [paid('2026-03', { amount: 60000 })] })] }).context;
+        expect(c.getMonthlyData(2026, 2).loanTotal).toBe(60000);
     });
-    it('delete the debit and the loan counts the month again — nothing is ever lost', () => {
-        const withDebit = page({ loans: [loan()], expenses: [debit({ loanLink: { loanId: 'L1', month: '2026-03' } })] }).context;
-        const without = page({ loans: [loan()], expenses: [] }).context;
+    it('Year Expenses: twelve paid installments are twelve installments, paid from the bank, by cash or a mixture', () => {
+        const months = Array.from({ length: 12 }, (_, i) => `2025-${String(i + 1).padStart(2, '0')}`);
+        const l = loan({ start: '2025-01-01', payments: months.map((m, i) => paid(m, i % 3 === 0 ? {} : { via: 'bank', expenseId: `E${i}` })) });   // the first of every three months is paid in cash
+        const expenses = months.map((m, i) => i % 3 !== 0 ? debit({ id: `E${i}`, date: `${m}-05`, month: m, loanLink: { loanId: 'L1', month: m } }) : null).filter(Boolean);
+        expect(yearTotalOf(page({ loans: [l], expenses }).context, 2025)).toBe(12 * 45000);
+    });
+    it('delete the debit and the paid installment counts the month again — nothing is ever lost', () => {
+        const l = loan({ payments: [paid('2026-03', { via: 'bank', expenseId: 'E1' })] });
+        const withDebit = page({ loans: [l], expenses: [debit({ loanLink: { loanId: 'L1', month: '2026-03' } })] }).context;
+        const without = page({ loans: [l], expenses: [] }).context;
         expect(withDebit.getMonthlyData(2026, 2).totalExp).toBe(45000);
         expect(without.getMonthlyData(2026, 2).totalExp).toBe(45000);
     });
-    it('a link whose expense moved to another month no longer hides the loan', () => {
-        const c = page({ loans: [loan()], expenses: [debit({ loanLink: { loanId: 'L1', month: '2026-03' }, month: '2026-04', date: '2026-04-05' })] }).context;
-        expect(c.getMonthlyData(2026, 2).totalExp).toBe(45000);                 // March: the loan
-        expect(c.getMonthlyData(2026, 3).totalExp).toBe(90000);                 // April: the loan and the expense that now sits there
+    it('a link whose expense moved to another month no longer hides the paid installment', () => {
+        const c = page({ loans: [loan({ payments: [paid('2026-03', { via: 'bank', expenseId: 'E1' })] })], expenses: [debit({ loanLink: { loanId: 'L1', month: '2026-03' }, month: '2026-04', date: '2026-04-05' })] }).context;
+        expect(c.getMonthlyData(2026, 2).totalExp).toBe(45000);                 // March: the paid installment
+        expect(c.getMonthlyData(2026, 3).totalExp).toBe(45000);                 // April: the expense that now sits there (April's own installment is not paid)
     });
     it('the AI context and the score leave out an installment already counted this month', () => {
         const c = page({ loans: [loan()], expenses: [debit({ loanLink: { loanId: 'L1', month: '2026-03' } })] }).context;
