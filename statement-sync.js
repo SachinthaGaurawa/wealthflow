@@ -11,7 +11,7 @@ import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
 import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped, statedBalanceCents, continuityOf } from './statement-emptiness.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
-import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine } from './statement-ledger.mjs';
+import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity } from './statement-ledger.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT, intentVerdict } from './wealthflow-statement-identity.js';
@@ -727,15 +727,36 @@ export async function repairCardInstallments({ db, uid, now = Date.now(), log = 
  * Now: each retired item is judged again under TODAY's list (exact approval, another desk of an approved bank, a registered domain of one, or the bank an
  * evidence-taken item named), unless the owner BLOCKED that sender, and goes back in the queue with the reason it is taken written on it. The worker still fetches the
  * message, applies the intake rules to it and holds the document to what it is; if it is retired again it is not revived a third time. */
-export async function reviveRetiredSources({ db, mailRef, uid, senders, limit = 60, now = Date.now(), log = console.info }) {
+export async function reviveRetiredSources({ db, mailRef, uid, senders, token = '', f = null, limit = 150, lookups = 30, now = Date.now(), log = console.info }) {
     const found = await mailRef.collection('items').where('status', '==', 'rejected_unapproved_sender').limit(limit).get();
     const list = normalizeList(senders), policy = policyWithReach(list);
-    const banks = {};
-    let revived = 0, kept = 0, unknown = 0;
+    const banks = {}, fromOf = new Map();
+    let revived = 0, kept = 0, unknown = 0, looked = 0, gone = 0;
+    /* PRODUCTION, 2026-10-02: 57 retired items were looked at and 56 had NO `from` — stored before the sender was recorded on an item. The sender is on the MESSAGE: it is read
+     * (headers only, one request per message, at most `lookups` a run) and written back on the item, so it is asked for once. */
+    const senderOf = async source => {
+        if (source.from) return String(source.from);
+        const id = String(source.messageId || '');
+        if (!id || !token || typeof f !== 'function') return '';
+        if (fromOf.has(id)) return fromOf.get(id);
+        if (looked >= lookups) return '';
+        looked += 1;
+        let from = '';
+        try {
+            const response = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
+            if (response.status === 404) gone += 1;
+            else if (response.ok) from = String(((await response.json()).payload?.headers || []).find(h => String(h?.name || '').toLowerCase() === 'from')?.value || '');
+        } catch (_) { /* asked again at the next pass */ }
+        fromOf.set(id, from);
+        return from;
+    };
     for (const doc of found.docs) {
         const source = doc.data() || {};
         if (source.uid && source.uid !== uid) continue;
-        if (!source.from) { unknown += 1; continue; }
+        const from = await senderOf(source);
+        if (!from) { unknown += 1; continue; }
+        // written on the item at once, whatever is decided: the next pass (and the owner's audit log) has the sender without asking Gmail again
+        if (!source.from) { source.from = from; try { await doc.ref.set({ from }, { merge: true }); } catch (_) { /* looked up again next pass */ } }
         if (Number(source.reviveCount) >= 2) { kept += 1; continue; }
         const said = matchSender(list, source.from).verdict;
         const exact = said === 'approved';
@@ -752,7 +773,7 @@ export async function reviveRetiredSources({ db, mailRef, uid, senders, limit = 
         });
         if (done) { revived += 1; const bank = String(source.bank || '?').slice(0, 24); banks[bank] = (banks[bank] || 0) + 1; }
     }
-    if (found.docs.length) log(JSON.stringify({ evt: 'statement-revived', checked: found.docs.length, revived, kept, noSender: unknown, banks }));
+    if (found.docs.length) log(JSON.stringify({ evt: 'statement-revived', checked: found.docs.length, revived, kept, noSender: unknown, lookedUp: looked, messagesGone: gone, banks }));
     return { revived, kept };
 }
 
@@ -893,6 +914,34 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
         }
     }
     return { recovered, more: recovered >= cap || page.docs.length === 100 };
+}
+
+/* THE SAME TRANSACTION IN A SECOND COPY OF A STATEMENT IS NOT A QUESTION. A statement can reach the books twice (the bank's other address, a re-send, a copy that was retired and is
+ * read again): every row of the second copy is then one the books already hold from the first, and the ledger stops each of them as `ambiguous-cross-source-match` and puts it to the
+ * owner — sixty rows of "this may already be there". Here each one is closed as a duplicate, without asking, as long as the books hold at least as many identical entries from OTHER
+ * statements as there are such rows waiting (two identical bus fares on one day need two entries to explain both). A row the books do not account for stays for the owner. */
+export async function recoverDuplicateRows({ db, uid, limit = 60, log = console.info }) {
+    const userRef = db.collection('users').doc(uid);
+    const page = await userRef.collection('statementReview').where('reason', '==', 'ambiguous-cross-source-match').limit(150).get();
+    const waiting = page.docs.filter(doc => { const r = doc.data() || {}; return r.uid === uid && r.status === 'pending' && Number.isSafeInteger(r.index) && r.index >= 0 && r.row && /^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(r.sourcePath || ''); });
+    if (!waiting.length) return { closed: 0, more: false };
+    const user = (await userRef.get()).data() || {};
+    const records = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
+    const used = new Map();
+    let closed = 0, kept = 0;
+    for (const doc of waiting) {
+        if (closed >= limit) break;
+        const review = doc.data(), context = { bank: review.bank || '', last4: review.last4 || '', card_last4: review.last4 || '' };
+        const others = crossSourceMatches(records, review.row, context).filter(record => record.statementKey !== review.sourcePath);
+        const key = JSON.stringify(rowIdentity(review.row, context));
+        if (!others.length || (used.get(key) || 0) >= others.length) { kept += 1; continue; }
+        try {
+            const result = await resolveReview({ db, uid, id: doc.id, decision: { module: 'skip', category: 'Duplicate', allocationId: '', verified: true }, row: review.row });
+            if (result?.resolved && !result.alreadyResolved) { closed += 1; used.set(key, (used.get(key) || 0) + 1); }
+        } catch (_) { kept += 1; }
+    }
+    if (closed || kept) log(JSON.stringify({ evt: 'statement-duplicates-closed', closed, kept, waiting: waiting.length }));
+    return { closed, more: waiting.length > closed + kept };
 }
 
 export async function repairReviewMetadata({ db, uid, limit = 100 }) {
@@ -1735,6 +1784,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (frontRoom()) await closeSettledReviews({ db, uid, limit: 20 });
         if (frontRoom()) categoriesRepaired = (await repairStatementCategories({ db, uid })).total;
         if (frontRoom()) { const consensus = await recoverConsensusFailures({ db, uid, limit: recoveryLimit }); ranConsensus = true; consensusRecovered = consensus.recovered; consensusMore = consensus.more; }
+        if (frontRoom()) { try { await recoverDuplicateRows({ db, uid, limit: recoveryLimit * 2 }); } catch (_) { /* advice only: the next run tries again */ } }
         if (frontRoom()) { const healed = await healOrphanedStatements({ db, mailRef, uid, limit: recoveryLimit }); ranHeal = true; orphansHealed = healed.filed + healed.requeued; }
         if (frontRoom()) { const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit }); revokedRecovered = revoked.recovered; revokedMore = revoked.more; }
         if (frontRoom()) reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
@@ -1746,7 +1796,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     }
     /* A statement retired for a sender reason that no longer holds goes back in the queue BEFORE the queue is worked, so it is read in this very run. */
     if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastReviveMs || 0) >= REVIVE_EVERY_MS) {
-        try { await reviveRetiredSources({ db, mailRef, uid, senders: sendersOf(mail) }); await mailRef.set({ lastReviveMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
+        try { await reviveRetiredSources({ db, mailRef, uid, senders: sendersOf(mail), token, f }); await mailRef.set({ lastReviveMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     /* Dead-lettered statements whose wait is over go back in the queue, from the place they stopped (statement-queue.mjs). */
     const redrive = await redriveDeadLetters({ db, mailRef, now: Date.now(), limit: heavy ? 25 : 10 });
@@ -1780,7 +1830,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
      * statement is processed slice after slice on every run for as long as it takes — so three "POS Transaction" rows sat in front of the owner (2026-10-02) although the rules could
      * settle them the moment anyone looked. This step re-queues nothing (it files a row, or leaves it), so it has no reason to wait for a quiet run. */
     if (attempted > 0 && !ranConsensus && Date.now() - start < budgetMs - 8000 && start - Number(mail.lastConsensusMs || 0) >= 60000) {
-        try { const consensus = await recoverConsensusFailures({ db, uid, limit: 25 }); consensusRecovered += consensus.recovered; consensusMore = consensusMore || consensus.more; await mailRef.set({ lastConsensusMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
+        try { const consensus = await recoverConsensusFailures({ db, uid, limit: 25 }); consensusRecovered += consensus.recovered; consensusMore = consensusMore || consensus.more; await recoverDuplicateRows({ db, uid, limit: 40 }); await mailRef.set({ lastConsensusMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     if (Date.now() - start < budgetMs - 8000 && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
         try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }

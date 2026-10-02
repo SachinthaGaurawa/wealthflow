@@ -73,3 +73,47 @@ describe('and the worker then files it', () => {
         expect(w.data.get(mailPath).lastReviveMs).toBeGreaterThan(0);
     });
 });
+
+describe('an item stored before the sender was recorded on it', () => {
+    const gmail = (senders) => vi.fn(async (url) => {
+        const id = decodeURIComponent(String(url)).split('/messages/')[1].split('?')[0];
+        if (!(id in senders)) return { ok: false, status: 404, json: async () => ({}) };
+        return { ok: true, status: 200, json: async () => ({ payload: { headers: [{ name: 'Subject', value: 'x' }, { name: 'From', value: senders[id] }] } }) };
+    });
+    it('the sender is read from the message (headers only, once per message), written on the item, and the item judged on it', async () => {
+        const w = world({
+            a: { ...retired(''), from: undefined, messageId: 'm1' },
+            b: { ...retired(''), from: undefined, messageId: 'm1', filename: 'second.html' },
+            c: { ...retired(''), from: undefined, messageId: 'm2' },
+            d: { ...retired(''), from: undefined, messageId: 'm3' },
+            e: { ...retired(''), from: undefined, messageId: 'gone' },
+            f: { ...retired(''), from: undefined, messageId: '' },
+        });
+        for (const id of ['a', 'b', 'c', 'd', 'e', 'f']) delete w.data.get(`${mailPath}/items/${id}`).from;
+        const f = gmail({ m1: 'NTB <statements@info.nationstrust.com>', m2: 'Mallory <x@evil.example>', m3: 'NTB <estatement@info.nationstrust.com>' });
+        const out = await run(w, { token: 't', f });
+        const at = id => w.data.get(`${mailPath}/items/${id}`);
+        expect(out.revived).toBe(3);
+        expect(at('a')).toMatchObject({ status: 'pending', via: 'sibling', from: 'NTB <statements@info.nationstrust.com>' });
+        expect(at('b')).toMatchObject({ status: 'pending', via: 'sibling' });
+        expect(at('d')).toMatchObject({ status: 'pending', from: 'NTB <estatement@info.nationstrust.com>' });
+        expect(at('c')).toMatchObject({ status: 'rejected_unapproved_sender', from: 'Mallory <x@evil.example>' });      // judged, kept, and the sender remembered
+        expect(at('e').status).toBe('rejected_unapproved_sender');
+        expect(f).toHaveBeenCalledTimes(4);                                   // m1 once for two items, m2, m3, and the one that is gone
+        expect(f.mock.calls.every(([url]) => String(url).includes('format=metadata&metadataHeaders=From'))).toBe(true);
+        expect(JSON.parse(out.lines[0])).toMatchObject({ checked: 6, revived: 3, kept: 1, noSender: 2, lookedUp: 4, messagesGone: 1 });
+    });
+    it('what was written is not looked up again, and a run asks Gmail about at most `lookups` messages', async () => {
+        const items = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`x${i}`, { ...retired(''), messageId: 'mm' + i }]));
+        const w = world(items);
+        for (const id of Object.keys(items)) delete w.data.get(`${mailPath}/items/${id}`).from;
+        const f = gmail(Object.fromEntries(Array.from({ length: 8 }, (_, i) => ['mm' + i, 'Mallory <x@evil.example>'])));
+        expect(JSON.parse((await run(w, { token: 't', f, lookups: 5 })).lines[0])).toMatchObject({ lookedUp: 5, noSender: 3 });
+        expect(JSON.parse((await run(w, { token: 't', f, lookups: 5 })).lines[0])).toMatchObject({ lookedUp: 3, noSender: 0 });      // the five are remembered
+    });
+    it('without a token nothing is asked and nothing is guessed', async () => {
+        const w = world({ a: { ...retired(''), messageId: 'm1' } });
+        delete w.data.get(`${mailPath}/items/a`).from;
+        expect((await run(w)).revived).toBe(0);
+    });
+});
