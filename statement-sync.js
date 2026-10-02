@@ -704,10 +704,46 @@ export async function repairCardInstallments({ db, uid, now = Date.now(), log = 
     return result;
 }
 
+/* A STATEMENT THAT WAS TURNED AWAY FOR A REASON THAT NO LONGER HOLDS IS PUT BACK. `rejected_unapproved_sender` is final: once a stored statement's sender
+ * was not (or not yet) one the owner approves, the worker retired it and nothing ever looked again. Two things made that wrong for real mail: items stored by the
+ * client scan carried no `via`, so another desk of an approved bank (info.* beside estmt.*: one bank) read as a stranger; and a later approval — or a registered domain
+ * the audit now searches — made the sender right after the fact. 14 NTB statements sat retired like that, "refused", while the owner counted missing years.
+ * Now: each retired item is judged again under TODAY's list (exact approval, another desk of an approved bank, a registered domain of one, or the bank an
+ * evidence-taken item named), unless the owner BLOCKED that sender, and goes back in the queue with the reason it is taken written on it. The worker still fetches the
+ * message, applies the intake rules to it and holds the document to what it is; if it is retired again it is not revived a third time. */
+export async function reviveRetiredSources({ db, mailRef, uid, senders, limit = 60, now = Date.now(), log = console.info }) {
+    const found = await mailRef.collection('items').where('status', '==', 'rejected_unapproved_sender').limit(limit).get();
+    const list = normalizeList(senders), policy = policyWithReach(list);
+    const banks = {};
+    let revived = 0, kept = 0, unknown = 0;
+    for (const doc of found.docs) {
+        const source = doc.data() || {};
+        if (source.uid && source.uid !== uid) continue;
+        if (!source.from) { unknown += 1; continue; }
+        if (Number(source.reviveCount) >= 2) { kept += 1; continue; }
+        const said = matchSender(list, source.from).verdict;
+        const exact = said === 'approved';
+        const related = !exact && said !== 'blocked' && !!policy.related(source.from);
+        const evidence = !exact && !related && said !== 'blocked' && source.via === 'evidence' && bankStillOwned(list, source.bank || '');
+        if (!exact && !related && !evidence) { kept += 1; continue; }
+        const via = exact ? String(source.via || '') : evidence ? 'evidence' : (source.via === 'series' ? 'series' : 'sibling');
+        const done = await db.runTransaction(async tx => {
+            const snap = await tx.get(doc.ref), current = snap.data() || {};
+            if (!snap.exists || current.status !== 'rejected_unapproved_sender' || (current.uid && current.uid !== uid)) return false;
+            tx.set(doc.ref, { uid, status: 'pending', filed: false, hasReview: false, cursor: 0, totalRows: null, rowSetHash: '', moneyHash: '', leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0,
+                ...(via ? { via } : {}), reviveCount: (Number(current.reviveCount) || 0) + 1, revivedAt: now, updatedAt: now }, { merge: true });
+            return true;
+        });
+        if (done) { revived += 1; const bank = String(source.bank || '?').slice(0, 24); banks[bank] = (banks[bank] || 0) + 1; }
+    }
+    if (found.docs.length) log(JSON.stringify({ evt: 'statement-revived', checked: found.docs.length, revived, kept, noSender: unknown, banks }));
+    return { revived, kept };
+}
+
 /* WHERE EVERY STATEMENT IS, IN ONE LINE OF THE PLATFORM LOG: per bank, how many are waiting, stopped or part-way, and why. It exists because
  * "the owner has to tap Map statement layout on NTB and AMEX" could only be guessed at from outside: the reason codes are the evidence. Bank
  * names, status words, reason codes and counts only — no amount, no merchant, no account number, no file name. Every few hours, never more. */
-const CENSUS_EVERY_MS = 30 * 60 * 1000;
+const CENSUS_EVERY_MS = 30 * 60 * 1000, REVIVE_EVERY_MS = 10 * 60 * 1000;
 export async function statementCensus({ db, mailRef, uid = '', log = console.info }) {
     const found = await mailRef.collection('items').where('status', 'in', ['needs_review', 'dead_letter', 'pending', 'processing']).limit(300).get();
     const byBank = {}, reasons = {}, partial = [];
@@ -1688,6 +1724,10 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (frontRoom()) { const healed = await healMissingRows({ db, uid, limit: heavy ? 5 : 2 }); rowsHealed = healed.rows; healMore = healed.more; }
         if (frontSkipped) { wholeMore = true; frontIncomplete = true; }
         if (interactive) { try { await mailRef.set({ lastFrontMs: Date.now() }, { merge: true }); } catch (_) { /* the front pass simply runs again */ } }
+    }
+    /* A statement retired for a sender reason that no longer holds goes back in the queue BEFORE the queue is worked, so it is read in this very run. */
+    if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastReviveMs || 0) >= REVIVE_EVERY_MS) {
+        try { await reviveRetiredSources({ db, mailRef, uid, senders: sendersOf(mail) }); await mailRef.set({ lastReviveMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     /* Dead-lettered statements whose wait is over go back in the queue, from the place they stopped (statement-queue.mjs). */
     const redrive = await redriveDeadLetters({ db, mailRef, now: Date.now(), limit: heavy ? 25 : 10 });

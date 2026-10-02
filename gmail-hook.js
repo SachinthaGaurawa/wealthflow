@@ -475,8 +475,10 @@ async function ingestMailbox(db, note, env, f, res) {
          * from the newest message every time and never reaching the rest. */
         // `token` may be empty: that is "still walking, and the next window is the first one again" (a window with more new mail than one collection stages).
         const cursor = state.auditCursor && state.auditCursor.v === INTAKE_VERSION && typeof state.auditCursor.token === 'string' ? state.auditCursor : null;
+        // the other ways of asking (statement-discovery.mjs) have never run on this mailbox: the next audit is due as soon as the retry gap allows, not in three hours
+        const discoveryNever = !state.discovery || state.discovery.v !== DISCOVERY_VERSION;
         const auditDue = senderClauses.length > 0
-            && (senderCatchup || !!cursor || Date.now() - (Number(state.lastAuditMs) || 0) >= (state.auditVersion === INTAKE_VERSION && state.historyAudit?.complete !== false ? AUDIT_EVERY_MS : AUDIT_RETRY_MS));
+            && (senderCatchup || !!cursor || Date.now() - (Number(state.lastAuditMs) || 0) >= (state.auditVersion === INTAKE_VERSION && state.historyAudit?.complete !== false && !discoveryNever ? AUDIT_EVERY_MS : AUDIT_RETRY_MS));
         let audit = null, viaFrom = 0, discoveryFrom = -1, discoveryTo = -1, discoveryRecord = null;
         if (auditDue) {
             const everything = await listAllMessages(token, f, auditQuery(senderList), { startToken: cursor ? cursor.token || '' : '', pageSize: Math.max(1, Number(env.WF_AUDIT_PAGE_SIZE) || 500), maxPages: Math.max(1, Number(env.WF_AUDIT_MAX_PAGES) || 40) });

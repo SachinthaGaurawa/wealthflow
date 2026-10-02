@@ -82,12 +82,21 @@ describe('the whole-history audit', () => {
     });
 
     it('is not repeated inside a day once it has completed, and runs again after one', async () => {
-        const s = setup({ inbox: [], mail: { auditVersion: INTAKE_VERSION, lastAuditMs: Date.now() - 3600_000 } });
+        const s = setup({ inbox: [], mail: { auditVersion: INTAKE_VERSION, lastAuditMs: Date.now() - 3600_000, discovery: { v: 1, at: Date.now() } } });
         await s.run();
         expect(listingCalls(s)).toHaveLength(0);
-        const t = setup({ inbox: [], mail: { auditVersion: INTAKE_VERSION, lastAuditMs: Date.now() - AUDIT_EVERY_MS - 1000 } });
+        const t = setup({ inbox: [], mail: { auditVersion: INTAKE_VERSION, lastAuditMs: Date.now() - AUDIT_EVERY_MS - 1000, discovery: { v: 1, at: Date.now() } } });
         await t.run();
         expect(listingCalls(t)).toHaveLength(1);
+    });
+
+    it('runs again within minutes, not hours, while the other ways of asking have never run on this mailbox', async () => {
+        const s = setup({ inbox: [], mail: { auditVersion: INTAKE_VERSION, lastAuditMs: Date.now() - 10 * 60_000 } });
+        await s.run();
+        expect(listingCalls(s)).toHaveLength(1);
+        const quiet = setup({ inbox: [], mail: { auditVersion: INTAKE_VERSION, lastAuditMs: Date.now() - 60_000 } });
+        await quiet.run();
+        expect(listingCalls(quiet)).toHaveLength(0);                      // …but not every minute
     });
 
     it('runs again at once when the intake rules have a new version', async () => {
