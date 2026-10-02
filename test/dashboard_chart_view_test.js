@@ -147,3 +147,48 @@ describe('the amount under the pointer or finger', () => {
         expect(html).toContain('tabindex="0"');
     });
 });
+
+describe('Monthly Overview fills its card (no blank band under the line)', () => {
+    it('the line chart has no fixed height: it takes what is left of the card, and the canvas cannot make the card grow', () => {
+        expect(html).not.toMatch(/id="dashChartCanvas" style="height/);
+        expect(html).toMatch(/id="dashChartCanvas" class="dash-line-wrap"/);
+        expect(html).toMatch(/\.dash-card-fill \{[^}]*flex-direction: column/);
+        expect(html).toMatch(/\.dash-line-wrap \{[^}]*flex: 1 1 0[^}]*min-height: 230px/);
+        expect(html).toMatch(/\.dash-line-plot \{[^}]*position: relative[^}]*flex: 1 1 0/);
+        expect(html).toMatch(/\.dash-line-plot > canvas \{[^}]*position: absolute/);
+        expect(html).toMatch(/<div class="card dash-card-fill">\s*<div class="card-header">\s*<div>\s*<div class="card-title">Monthly Overview/);
+    });
+    it('the chart sizes itself to its box and names its two lines with the chart\'s own legend (it belongs to the datasets, cannot overflow the card)', () => {
+        const dashFn = html.slice(html.indexOf('function renderDash()'), html.indexOf('function renderUpcoming()'));
+        const line = dashFn.slice(dashFn.indexOf("type: 'line'"), dashFn.indexOf("const catMap = {}"));
+        expect(line).toContain('maintainAspectRatio: false');
+        expect(line).toMatch(/legend: \{ display: true, position: 'top', align: 'end'/);
+        expect(line).toContain("label: 'Income'"); expect(line).toContain("label: 'Expenses'");
+        expect(html).not.toContain('dash-line-key');
+    });
+});
+
+describe('the line chart legend follows the theme', () => {
+    it('a theme switch hands the live chart the new text colour (Chart.js keeps the colour it was given)', () => {
+        let colour = '#475569'; let updated = null;
+        const chart = { options: { plugins: { legend: { labels: { color: '#475569' } } } }, update: (mode) => { updated = mode; } };
+        const context = vm.createContext({ document: { documentElement: {} }, getComputedStyle: () => ({ getPropertyValue: () => ' ' + colour + ' ' }), window: {}, dashChartInst: chart });
+        vm.runInContext(source('_wfDashLegendColor') + '\n' + source('_wfDashChartTheme'), context);
+        colour = '#cbd5e1';
+        context._wfDashChartTheme();
+        expect(chart.options.plugins.legend.labels.color).toBe('#cbd5e1');
+        expect(updated).toBe('none');
+    });
+    it('no chart (lists view, a phone, Chart.js not loaded) is a no-op, never an error', () => {
+        const context = vm.createContext({ document: { documentElement: {} }, getComputedStyle: () => ({ getPropertyValue: () => '' }), window: {}, dashChartInst: null });
+        vm.runInContext(source('_wfDashLegendColor') + '\n' + source('_wfDashChartTheme'), context);
+        expect(() => context._wfDashChartTheme()).not.toThrow();
+        expect(context._wfDashLegendColor()).toBe('#94a3b8');
+    });
+    it('the theme switch calls it, and the chart is created with the same colour helper', () => {
+        const apply = html.slice(html.indexOf('function _applyThemeSafe('), html.indexOf('function toggleTheme()'));
+        expect(apply).toContain('window._wfDashChartTheme()');
+        const dashFn = html.slice(html.indexOf('function renderDash()'), html.indexOf('function renderUpcoming()'));
+        expect(dashFn).toContain('color: _wfDashLegendColor()');
+    });
+});
