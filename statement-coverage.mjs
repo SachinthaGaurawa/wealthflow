@@ -168,11 +168,12 @@ export function auditLogOf(items, { limit = 60 } = {}) {
 export function gridOf(items, { months = 18, banks = 12 } = {}) {
     const by = new Map();
     for (const item of Array.isArray(items) ? items : []) {
-        const month = monthOf(item);
-        if (!month || !item?.filename) continue;
+        const month = monthOf(item), state = stateOf(item);
+        if (!month || !item?.filename || state === 'rejected') continue;       // "not a statement" (a newsletter, an invoice) is not one of the owner's statements
         const id = bankIdentity(item.bank), entry = by.get(id.key) || { bank: id.name, months: new Map() };
         by.set(id.key, entry);
-        const state = stateOf(item), rows = item.duplicateOf || item.proof?.math === 'duplicate-of' ? 0 : Math.max(0, Number(item.proof?.rows ?? item.totalRows) || 0);
+        /* the larger of the two counts: a statement filed before proofs were kept has one, a replayed one may have recorded an empty reading in the other */
+        const rows = item.duplicateOf || item.proof?.math === 'duplicate-of' ? 0 : Math.max(0, Number(item.proof?.rows) || 0, Number(item.totalRows) || 0);
         const had = entry.months.get(month) || ['', 0];
         entry.months.set(month, [(BETTER[state] || 0) > (BETTER[had[0]] || 0) ? state : had[0], had[1] + (state === 'filed' ? rows : 0)]);
     }
@@ -184,7 +185,13 @@ export function gridOf(items, { months = 18, banks = 12 } = {}) {
 
 /** The grid as the lines the overlay shows, one per bank — formatted here so the browser carries a loop and nothing else: "DFCC Bank: 2026-08 filed (77 rows) · 2026-07 in review · 3 earlier". */
 const STATE_WORDS = { filed: 'filed', empty: 'nothing moved', review: 'in review', pending: 'being read', dismissed: 'dismissed', rejected: 'not a statement' };
-export const gridLines = grid => (Array.isArray(grid) ? grid : []).map(g => `${g.bank}: ` + Object.entries(g.months).map(([m, v]) => `${m} ${STATE_WORDS[v[0]] || v[0]}${v[1] ? ` (${v[1]} rows)` : ''}`).join(' · ') + (g.earlier ? ` · ${g.earlier} earlier` : ''));
+export const gridLines = grid => (Array.isArray(grid) ? grid : []).map(g => {
+    const all = Object.entries(g.months), moved = all.filter(([, v]) => v[0] !== 'empty'), quiet = all.filter(([, v]) => v[0] === 'empty').map(([m]) => m);
+    const parts = moved.map(([m, v]) => `${m} ${STATE_WORDS[v[0]] || v[0]}${v[1] ? ` (${v[1]} rows)` : ''}`);
+    // months where nothing moved are one phrase, not a screen of them (a dormant account has dozens)
+    if (quiet.length) parts.push(`nothing moved in ${quiet.length} month${quiet.length === 1 ? '' : 's'} (${quiet.at(-1)} to ${quiet[0]})`);
+    return `${g.bank}: ${parts.join(' · ')}${g.earlier ? ` · ${g.earlier} earlier` : ''}`;
+});
 
 const pad = n => String(n).padStart(2, '0');
 const ymd = t => `${t.getUTCFullYear()}/${pad(t.getUTCMonth() + 1)}/${pad(t.getUTCDate())}`;

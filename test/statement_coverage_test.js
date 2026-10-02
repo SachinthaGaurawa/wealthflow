@@ -192,10 +192,16 @@ describe('gridOf: what the books hold, bank by bank and month by month', () => {
         expect(JSON.parse(JSON.stringify(grid))).toEqual(grid);
         expect(gridOf(null)).toEqual([]);
     });
-    it('formats a bank as one line the overlay shows as it is', () => {
-        const lines = gridLines([{ bank: 'DFCC Bank', months: { '2026-08': ['filed', 119], '2026-07': ['review', 0], '2026-06': ['empty', 0] }, earlier: 3 }]);
-        expect(lines).toEqual(['DFCC Bank: 2026-08 filed (119 rows) · 2026-07 in review · 2026-06 nothing moved · 3 earlier']);
+    it('formats a bank as one line the overlay shows as it is, with the months nothing moved in as one phrase', () => {
+        const lines = gridLines([{ bank: 'DFCC Bank', months: { '2026-08': ['filed', 119], '2026-07': ['review', 0], '2026-06': ['empty', 0], '2026-05': ['empty', 0] }, earlier: 3 }]);
+        expect(lines).toEqual(['DFCC Bank: 2026-08 filed (119 rows) · 2026-07 in review · nothing moved in 2 months (2026-05 to 2026-06) · 3 earlier']);
+        expect(gridLines([{ bank: 'HNB', months: { '2026-10': ['empty', 0] }, earlier: 0 }])).toEqual(['HNB: nothing moved in 1 month (2026-10 to 2026-10)']);
         expect(gridLines(null)).toEqual([]);
+    });
+    it('does not list what is not a statement, and counts the rows of a statement whose proof recorded none', () => {
+        const grid = gridOf([f('Edi', 'invoice_2026JUL.pdf', { status: 'rejected_non_statement', filed: false }), f('Dfccbank', 'DFCC_Statement_202607.html', { proof: { math: 'passed', rows: 0 }, totalRows: 96 })]);
+        expect(grid).toHaveLength(1);
+        expect(grid[0].months['2026-07']).toEqual(['filed', 96]);
     });
     it('the audit log carries the rows each statement brought in', () => {
         expect(auditLogOf([f('DFCC Bank', 'DFCC Bank Statement - Aug 26.pdf', { proof: { rows: 77 } })])[0]).toMatchObject({ month: '2026-08', rows: 77 });
