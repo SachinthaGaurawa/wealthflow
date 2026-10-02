@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ownMoneyLegs } from '../statement-legs.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
+import { ledgerCensus } from '../statement-sync.js';
+import { createFirestore } from './helpers/fake-firestore.js';
 
 // Production, 2026-10-02 (`statement-twins` legs): two pairs of the owner's own money counted on both statements (NTB>DFCC, DFCC>AMEX). Simulated with the real worker: a card that is paid by a transfer whose
 // narration does not say so ("CEFT TRANSFER 0741234567") has its purchases counted by the card statement and the payment counted again as an expense — 6,000 for 3,000 of shopping. The other statement is the evidence.
@@ -109,4 +111,30 @@ describe('through the real worker, in either order the rule finds the transfer a
             expect(plan.remove[0].partner.desc).toBe('PAYMENT RECEIVED THANK YOU');
         });
     }
+});
+
+describe('the log says what the rule would take out, and takes nothing out', () => {
+    const run = async user => {
+        const w = createFirestore({ 'wf-mail/owner_example_com': { uid: 'u', email: 'owner@example.com' }, 'users/u': user });
+        const lines = [];
+        await ledgerCensus({ db: w.db, mailRef: w.db.collection('wf-mail').doc('owner_example_com'), uid: 'u', log: line => lines.push(line) });
+        return { lines, w };
+    };
+    it('counts only: pairs, records, what is left, the looser count and the banks; the books are untouched', async () => {
+        const user = {
+            expenses: [sys('d', 'expenses', '2026-03-20', 3000, 'CEFT TRANSFER 0741234567', { k: 'bankstmt' }), sys('o', 'expenses', '2026-03-10', 50000, 'Outward Ceft Transfer 0771234567', { bank: 'NTB', card_last4: '8057', k: 'ntb' })],
+            incomeRecv: [sys('i', 'incomeRecv', '2026-03-10', 50000, 'Inward Ceft Transfer', { bank: 'Dfccbank', k: 'dfcc' })],
+            ccPayments: [sys('cc', 'ccPayments', '2026-03-21', 3000, 'PAYMENT RECEIVED THANK YOU', { bank: 'AMEX', card_last4: '0276', k: 'cardstmt' })],
+        };
+        const before = structuredClone(user);
+        const { lines, w } = await run(user);
+        const line = lines.map(text => JSON.parse(text)).find(entry => entry.evt === 'statement-legs-plan');
+        expect(line).toEqual({ evt: 'statement-legs-plan', pairs: 2, records: 3, left: 0, looser: 2, kinds: { card: 1, bank: 2 }, banks: { DFCC: 1, NTB: 1, Dfccbank: 1 } });
+        expect(lines.join('\n')).not.toMatch(/CEFT|TRANSFER|PAYMENT|3000|50000|0741|0771/i);
+        expect(w.data.get('users/u')).toEqual(before);
+    });
+    it('a household with nothing to take out says so in zeros', async () => {
+        const { lines } = await run({ expenses: [sys('a', 'expenses', '2026-03-05', 800, 'KEELLS')] });
+        expect(lines.map(text => JSON.parse(text)).find(entry => entry.evt === 'statement-legs-plan')).toEqual({ evt: 'statement-legs-plan', pairs: 0, records: 0, left: 0, looser: 0, kinds: {}, banks: {} });
+    });
 });
