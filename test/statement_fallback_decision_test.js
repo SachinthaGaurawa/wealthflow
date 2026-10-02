@@ -110,3 +110,40 @@ describe('and they are settled while a long statement is still being worked', ()
         expect(fs.data.get('users/u').expenses.some(e => e.amount === 1234.5)).toBe(true);
     });
 });
+
+describe('a second copy of a statement does not put its rows to the owner one by one', () => {
+    const mail = 'wf-mail/owner_example_com', copy = `${mail}/items/copy`, first = `${mail}/items/first`;
+    const idOf = (n) => createHash('sha256').update(`${copy}:review:${n}`).digest('hex');
+    const record = (extra) => ({ id: 'r' + Math.random(), date: '2026-01-12', amount: 1234.5, desc: 'POS Transaction - MIRIGAMA', bank: 'NTB', direction: 'debit', statementKey: first, statementRow: 1, source: 'statement', ...extra });
+    const review = (n, extra = {}) => [`users/u/statementReview/${idOf(n)}`, { uid: 'u', sourcePath: copy, index: n, status: 'pending', reason: 'ambiguous-cross-source-match', bank: 'NTB', last4: '', row: row({ index: n, ...extra }) }];
+    const world = (reviews, records) => createFirestore({
+        'users/u': { expenses: records, incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], settings: {} },
+        [copy]: { uid: 'u', bank: 'NTB', status: 'needs_review', hasReview: true, cursor: 5, totalRows: 5 },
+        ...Object.fromEntries(reviews),
+        ...Object.fromEntries(reviews.map(([path]) => [path.replace('statementReview', 'statementLedger'), { uid: 'u', sourcePath: copy, status: 'review' }])),
+    });
+    it('each row the books already hold from another statement is closed as a duplicate; a row they do not account for, or an identical row beyond the entries that explain it, stays', async () => {
+        const w = world([review(0), review(1), review(2, { amount: 99.5 }), review(3, { narration: 'SOMETHING ELSE', description: 'SOMETHING ELSE' })], [record(), record({ amount: 99.5 })]);
+        const lines = [];
+        const { recoverDuplicateRows } = await import('../statement-sync.js');
+        const out = await recoverDuplicateRows({ db: w.db, uid: 'u', log: l => lines.push(l) });
+        const status = n => w.data.get(`users/u/statementReview/${idOf(n)}`).status;
+        expect([status(0), status(1)].sort()).toEqual(['dismissed', 'pending']);      // two identical rows, one entry: only one is explained
+        expect([status(2), status(3)]).toEqual(['dismissed', 'pending']);
+        expect(out.closed).toBe(2);
+        expect(w.data.get('users/u').expenses).toHaveLength(2);                 // nothing was filed, nothing removed
+        expect(JSON.parse(lines[0])).toMatchObject({ evt: 'statement-duplicates-closed', closed: 2, kept: 2, waiting: 4 });
+    });
+    it('a row whose only match is in its OWN statement is not a duplicate of another copy', async () => {
+        const w = world([review(0)], [record({ statementKey: copy, statementRow: 0 })]);
+        const { recoverDuplicateRows } = await import('../statement-sync.js');
+        expect((await recoverDuplicateRows({ db: w.db, uid: 'u' })).closed).toBe(0);
+    });
+    it('nothing waiting, nothing said', async () => {
+        const w = world([], []);
+        const lines = [];
+        const { recoverDuplicateRows } = await import('../statement-sync.js');
+        expect(await recoverDuplicateRows({ db: w.db, uid: 'u', log: l => lines.push(l) })).toEqual({ closed: 0, more: false });
+        expect(lines).toEqual([]);
+    });
+});
