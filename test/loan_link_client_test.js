@@ -149,3 +149,17 @@ describe('a card charge for a tracked subscription is counted by the subscriptio
         expect(unlinked.totalExp).toBe(7000);                                   // the old double count
     });
 });
+
+describe('no screen adds up raw loan installments any more', () => {
+    it('the AI insights context counts the loans through the same one-count rule as the dashboard', () => {
+        const start = html.indexOf('async function generateAIInsights()');
+        const body = html.slice(start, html.indexOf('\n        }\n', start));
+        expect(body).toContain('const loanTotal = _wfLoanDueNow(loans.filter(l => loanEndDate(l) > now), curMonthStr);');
+        expect(body).not.toMatch(/loans\.filter\(l => loanEndDate\(l\) > now\)\.reduce/);
+    });
+    it('the only place that still sums installments per loan skips the ones a bank debit counts', () => {
+        const sums = html.split('\n').filter(line => /loans[^;]*\.reduce\([^;]*\.monthly/.test(line));
+        expect(sums).toHaveLength(1);
+        expect(sums[0]).toContain('linked.has(');
+    });
+});
