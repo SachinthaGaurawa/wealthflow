@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createFirestore } from './helpers/fake-firestore.js';
-import { runStatementSync, classifySlice, sliceRows, resumePartialStatements, resumeReview, closeSettledReviews, statementCensus, checkpointRows, recoverConsensusFailures, healOrphanedStatements } from '../statement-sync.js';
+import { runStatementSync, classifySlice, sliceRows, resumePartialStatements, resumeReview, closeSettledReviews, statementCensus, statementCoverage, checkpointRows, recoverConsensusFailures, healOrphanedStatements } from '../statement-sync.js';
 import { readStatement } from '../statement-reader.mjs';
 import { settleStatement, sourceOccurrenceId } from '../statement-ledger.mjs';
 
@@ -500,6 +500,37 @@ describe('stale reviews and the census', () => {
         expect(out.reasons['HNB:dead_letter:provider #  failed'.replace('#  ', '# ')] ?? out.reasons['HNB:dead_letter:provider # failed']).toBe(1);
         expect(out.partial).toEqual([{ bank: 'NTB', status: 'needs_review', cursor: 30, rows: 70, why: 'statement-cursor-or-content-changed', retry: 0, resumed: 0 }]);
         expect(lines[0]).not.toMatch(/secret-name|private subject|a@b\.c/);
+    });
+});
+
+describe('the coverage line says what the app really holds per bank', () => {
+    const at = iso => Date.parse(iso + 'T10:00:00Z');
+    const mailOf = rows => ({ collection: () => ({ where: () => ({ limit: () => ({ get: async () => ({ docs: rows.map((data, i) => ({ id: 'f' + i, data: () => data })) }) }) }) }) });
+    it('per bank: filed, empty, rows, oldest and newest month, the count per year — and nothing about the owner', async () => {
+        const lines = [];
+        await statementCoverage({ mailRef: mailOf([
+            { status: 'filed', bank: 'HNB', receivedMs: at('2023-04-09'), totalRows: 31, filename: 'secret-name.pdf', subject: 'private subject' },
+            { status: 'filed', bank: 'HNB', receivedMs: at('2026-09-02'), totalRows: 0, emptyStatement: true },
+            { status: 'filed', bank: 'HNB', receivedMs: at('2026-08-02'), totalRows: 12 },
+            { status: 'filed', bank: 'NTB', totalRows: 5 },
+            { status: 'needs_review', bank: 'NTB', receivedMs: at('2020-01-01'), totalRows: 9 },
+        ]), log: line => lines.push(line) });
+        const out = JSON.parse(lines[0]);
+        expect(out).toMatchObject({ evt: 'statement-coverage', filed: 4, more: false });
+        expect(out.banks.HNB).toEqual({ filed: 3, empty: 1, rows: 43, undated: 0, years: { 2023: 1, 2026: 2 }, oldest: '2023-04', newest: '2026-09' });
+        expect(out.banks.NTB).toEqual({ filed: 1, empty: 0, rows: 5, undated: 1, years: {} });
+        expect(lines[0]).not.toMatch(/secret-name|private subject/);
+    });
+    it('the census writes it right after its own line, and a failing coverage read never breaks the census', async () => {
+        const lines = [];
+        const docs = [{ id: 'i0', data: () => ({ bank: 'DFCC', status: 'filed', receivedMs: at('2025-03-03'), totalRows: 4 }) }];
+        await statementCensus({ db: {}, mailRef: { collection: () => ({ where: () => ({ limit: () => ({ get: async () => ({ docs }) }) }) }) }, log: line => lines.push(line) });
+        expect(lines.map(line => JSON.parse(line).evt)).toEqual(['statement-census', 'statement-coverage']);
+        let calls = 0;
+        const broken = { collection: () => ({ where: () => ({ limit: () => ({ get: async () => { if (++calls > 1) throw new Error('boom'); return { docs: [] }; } }) }) }) };
+        const quiet = [];
+        await expect(statementCensus({ db: {}, mailRef: broken, log: line => quiet.push(line) })).resolves.toBeUndefined();
+        expect(quiet.map(line => JSON.parse(line).evt)).toEqual(['statement-census']);
     });
 });
 
