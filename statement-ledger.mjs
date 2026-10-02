@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow } from './wealthflow-statement-router.js';
 import { canonicalBank } from './wealthflow-institutions.js';
+import { bankKeyOf } from './statement-coverage.mjs';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
 import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment } from './statement-links.mjs';
 
@@ -60,11 +61,17 @@ export function validateSettlementRow(row, decision, ctx = {}) {
     return null;
 }
 
+/* THE SAME TRANSACTION IN ANOTHER STATEMENT. Date, amount and words and the account must agree to the letter; two things are allowed to differ because a bank (or a reader) writes them differently on two
+ * statements of one account: the bank's NAME ("Hnb" and "HNB", "Dfccbank" and "DFCC Bank" are one bank), and the reference column (a layout that prints one and a layout that does not: a reference is compared
+ * only when BOTH have one). Production, 2026-10-02: sixty-one NTB rows were filed twice because one statement carried a reference the other did not. */
 export function crossSourceMatches(records, row, context) {
     const wanted = rowIdentity(row, context);
+    const bankOf = value => bankKeyOf(value);
     return records.filter(record => {
         const actual = rowIdentity({ ...record, amount: record.amount, description: record.desc || record.name || record.description, direction: record.direction || row.direction }, {});
-        return wanted.slice(0, 6).every((value, index) => value === actual[index]);
+        for (const index of [0, 1, 2, 4]) if (wanted[index] !== actual[index]) return false;
+        if (wanted[3] !== actual[3] && bankOf(wanted[3]) !== bankOf(actual[3])) return false;
+        return !wanted[5] || !actual[5] || wanted[5] === actual[5];
     });
 }
 
