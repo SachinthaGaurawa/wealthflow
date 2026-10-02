@@ -21938,9 +21938,11 @@ table.amort tbody tr { page-break-inside: avoid; }
         //  charge blocks newer ones. Manually-paid charges are settled independently and
         //  are never touched. The result is persisted onto each charge (paid + autoPaid).
         function _ccKey(r) { return String(_canonBank(r && r.bank) || '').toLowerCase().trim() + '|' + String(r && (r.card_last4 || r.last4) || '').trim(); }
+        var _ccWalk = { cards: {}, byId: {} };   // what the last walk said per card (carried pool, the frozen charge) and per charge — read by the CC One-Time screen
         function reconcileCC() {
             try {
                 if (!window.WFReconcile || typeof window.WFReconcile.reconcileCard !== 'function') return false;
+                _ccWalk = { cards: {}, byId: {} };
                 const charges = DB.get('cconetime') || [];
                 const pays = DB.get('ccPayments') || [];
                 const groups = {};
@@ -21951,9 +21953,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const g = groups[k];
                     // Manually-settled charges are out of the FIFO pool entirely.
                     const fifo = g.d.filter(x => !x.paidManually);
-                    const debits = fifo.map(x => ({ id: x.id, amount: (x.combinedTotal != null ? x.combinedTotal : (x.amount || 0) + (x.serviceFee || 0)), date: x.date }));
+                    const WR = window.WFReconcile;
+                    // the amount a charge asks (purchase + fee) is added in whole cents, never as floats
+                    const debits = fifo.map(x => ({ id: x.id, amount: (x.combinedTotal != null ? x.combinedTotal : WR.fromCents(WR.toCents(x.amount) + WR.toCents(x.serviceFee))), date: x.date }));
                     const credits = g.c.map(p => ({ amount: p.amount, date: p.date }));
-                    const res = window.WFReconcile.reconcileCard(debits, credits);
+                    const res = WR.reconcileCard(debits, credits);
+                    _ccWalk.cards[k] = { carry: res.carry, blocked: res.blocked, charged: fifo.length, credits: g.c.length, bank: _canonBank((fifo[0] || g.c[0] || {}).bank) || '' };
+                    (res.detail || []).forEach(d => { _ccWalk.byId[d.id] = d; });
                     const settled = new Set(res.settledIds || []);
                     fifo.forEach(x => {
                         const want = settled.has(x.id);
@@ -22104,8 +22110,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             let pays = DB.get('ccPayments') || [];
             if (_ccotBankFilter !== 'all') pays = pays.filter(p => _canonBank(p.bank) === _ccotBankFilter);
             const scoped = _ccotBankFilter === 'all' ? charges : charges.filter(c => _canonBank(c.bank) === _ccotBankFilter);
-            const totalPaid = pays.reduce((s, p) => s + (p.amount || 0), 0);
-            const totalCharged = scoped.reduce((s, c) => s + (c.combinedTotal != null ? c.combinedTotal : (c.amount || 0) + (c.serviceFee || 0)), 0);
+            // the three figures are summed in whole cents (never as floats) and turned back to rupees once, so they agree with the walk to the cent
+            const _WR = window.WFReconcile, _c = v => (_WR && _WR.toCents ? _WR.toCents(v) : Math.round((parseFloat(v) || 0) * 100));
+            const totalPaid = pays.reduce((s, p) => s + _c(p.amount), 0) / 100;
+            const totalCharged = scoped.reduce((s, c) => s + (c.combinedTotal != null ? _c(c.combinedTotal) : _c(c.amount) + _c(c.serviceFee)), 0) / 100;
             const settledCount = scoped.filter(c => c.autoPaid).length;
             const addBtn = `<button class="btn btn-success" style="padding:7px 14px;font-size:12px;" onclick="openCCPaymentModal()"><i data-wfi="plus"></i> Record payment</button>`;
             if (!pays.length) {
@@ -22123,7 +22131,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <td class="td-a" style="color:var(--green,#16a34a);font-weight:700;">+${fmt(p.amount || 0)}</td>
                     <td class="td-m">${p.date || ''}</td>
                     <td><button class="ib d" onclick="deleteCCPayment('${_wfJsAttr(p.id)}')" title="Delete payment"><i data-wfi="trash"></i></button></td></tr>`).join('') + _capP.row;
-            const surplus = totalPaid - totalCharged;
+            const surplus = (Math.round(totalPaid * 100) - Math.round(totalCharged * 100)) / 100;
+            // the walk's own memory: what each card's payments have left over after the charges they cleared, and what the first charge they could not clear still needs
+            const walkLines = Object.keys(_ccWalk.cards || {}).map(k => ({ k, w: _ccWalk.cards[k] })).filter(x => (_ccotBankFilter === 'all' || x.w.bank === _ccotBankFilter) && (x.w.carry > 0 || x.w.blocked)).map(({ w }) => {
+                const first = w.blocked ? (DB.get('cconetime') || []).find(c => c.id === w.blocked.id) : null;
+                return `<div style="font-size:11.5px;color:var(--text2);line-height:1.6;"><b>${_wfEsc(w.bank || 'Card')}</b>: ${w.carry > 0 ? 'carried forward <b style="font-family:var(--mono);">' + fmt(w.carry) + '</b>' : 'nothing carried'}${w.blocked ? ' · next unpaid charge <b>' + _wfEsc(first ? first.desc : '') + '</b> needs <b style="font-family:var(--mono);color:var(--red);">' + fmt(w.blocked.needs) + '</b> more' : ''}</div>`;
+            }).join('');
             host.innerHTML = `
                 <div style="background:var(--card);border:1px solid var(--border2);border-radius:var(--r2);padding:14px 16px;margin-bottom:14px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;"><div style="font-weight:800;font-size:14px;">💚 Card payments / credits</div>${addBtn}</div>
@@ -22133,6 +22146,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <div style="background:var(--bg2);border-radius:10px;padding:8px 12px;"><div style="font-size:10px;color:var(--text3);">Auto-matched ✅</div><div style="font-family:var(--mono);font-weight:800;">${settledCount} charge${settledCount === 1 ? '' : 's'}</div></div>
                         <div style="background:var(--bg2);border-radius:10px;padding:8px 12px;"><div style="font-size:10px;color:var(--text3);">${surplus >= 0 ? 'Credit surplus' : 'Still owing'}</div><div style="font-family:var(--mono);font-weight:800;color:${surplus >= 0 ? 'var(--green,#16a34a)' : 'var(--red)'};">${fmt(Math.abs(surplus))}</div></div>
                     </div>
+                    ${walkLines ? `<div style="margin:-2px 0 12px;">${walkLines}</div>` : ''}
                     <div class="tbl-wrap"><table style="font-size:12px;"><thead><tr><th>Payment</th><th>Card</th><th style="text-align:right;">Amount</th><th>Date</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
                 </div>`;
         }
@@ -22237,7 +22251,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${item.date}</td>
             <td class="td-m">${item.deadline}</td>
             <td><span class="cd ${cdCls}">${cdTxt}</span></td>
-            <td>${item.autoPaid ? '<span class="badge bg-g" title="Auto-matched to a card payment (oldest charge first)">✅ Auto-paid</span>' : item.paid ? '<span class="badge bg-g">Paid</span>' : dl < 0 ? '<span class="badge bg-r">Overdue</span>' : '<span class="badge bg-a">Pending</span>'}</td>
+            <td>${item.autoPaid ? '<span class="badge bg-g" title="Auto-matched to a card payment (oldest charge first)">✅ Auto-paid</span>' : item.paid ? '<span class="badge bg-g">Paid</span>' : dl < 0 ? '<span class="badge bg-r">Overdue</span>' : '<span class="badge bg-a">Pending</span>'}${(() => { const d = !item.paid && _ccWalk.byId[item.id]; return d && d.state === 'blocked' ? `<div class="td-m" style="font-size:10px;margin-top:2px;">needs ${fmt(d.needs)} more</div>` : d && d.state === 'waiting' ? '<div class="td-m" style="font-size:10px;margin-top:2px;">after the older charge</div>' : ''; })()}</td>
             <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${_wfJsAttr(item.id)}')" title="Mark paid"><i data-wfi="check"></i></button>` : ''}
                 <button class="ib e" onclick="editCCOT('${_wfJsAttr(item.id)}')" title="Edit"><i data-wfi="edit"></i></button>
                 <button class="ib d" onclick="deleteCCOT('${_wfJsAttr(item.id)}')" title="Delete"><i data-wfi="trash"></i></button></div></td>
@@ -35181,8 +35195,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (parsed._wfGuard && typeof parsed.cloudReview !== 'function' && window.WFStatementCloud && window.WFStatementCloud.guard) {
                     const _dup = await window.WFStatementCloud.guard.claim(parsed._wfGuard);
                     if (_dup) { notify((_dup.notice || 'Already Added') + ' — this statement is already in your books, so it was not added a second time.', 'warn'); closeOvl(); return; }
-                    parsed._wfGuard = null;           // taken: a second click on Save is not a second claim
+                    parsed._wfClaimToken = parsed._wfGuard.token; parsed._wfGuard = null;           // taken: a second click on Save is not a second claim
                 }
+                const _uploadClaim = parsed._wfClaimToken || '';
                 if (typeof parsed.cloudReview === 'function') {
                     const button = $ovl('#_ccr_save'); button.disabled = true;
                     try {
@@ -35260,7 +35275,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     const past = _isPast(date);
                     const _sourceRow = t || {};
                     const _source = { statementKey: _sourceRow._statementKey || '', statementRow: _sourceRow._statementRow,
-                        bank: _sourceRow._bank || bank || '', card_last4: _sourceRow._ccLast4 || _last4 || '', ref: _sourceRow.ref || '' };
+                        bank: _sourceRow._bank || bank || '', card_last4: _sourceRow._ccLast4 || _last4 || '', ref: _sourceRow.ref || '',
+                        ...(_uploadClaim ? { uploadClaim: _uploadClaim } : {}) };      // names the upload that filed it: the registry gives the statement back once none of these remain
 
                     if (dest === 'cconetime') {
                         if (_dupIn(ccArr, date, amount, desc, 'amount', _source)) { dup++; return; }   // e.g. re-imported ATM/CEFT fee

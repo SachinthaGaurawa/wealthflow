@@ -546,8 +546,11 @@ export const BUDGETS = {
     // gains 'account balance', 'b/f' and 'a/c'; wealthflow-merchants.js paces its AI board calls two at a time. ~0.15% headroom.
     // Raised from 1_993_000 / 214_000 for the statement registry's two doors: the upload screen's check-and-claim calls (wealthflow-ai-v4.js, wealthflow-statement-cloud.js).
     // Measured 1,997,673 total; largest module 215,954. No module or script tag added.
-    // Raised from 2_000_000 for the sweep's retry/backoff helper and padded window query (wealthflow-backfill.js): measured 2,000,966. No module or script tag added.
-    totalJsBytes: 2_001_000,
+    // 2026-10-02 (card payments, exact to the cent): 2,000,000 -> 2_004_000 (measured 2,000,067 + headroom): wealthflow-cc-reconcile.js only. The page's
+    // oldest-first card walk reads every amount as whole cents from its decimal text (no float sum, no tolerance), carries what is left in the pool and says
+    // what the first unpaid charge still needs — the same rule the worker applies to the document (cc-fifo.mjs, server-side, not shipped to the page).
+    totalJsBytes: 2_004_000,
+    // 2026-10-02 (historical sweep): no change to the ceiling above; the sweep's retry/backoff helper and padded window query (wealthflow-backfill.js) add ~1 KB inside its headroom.
     largestModuleBytes: 217_000, // measured 215,954
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

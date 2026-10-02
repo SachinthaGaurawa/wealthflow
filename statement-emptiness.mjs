@@ -53,6 +53,18 @@ const LABEL_WORDS = new Set(['opening', 'closing', 'previous', 'balance', 'bal',
 const HEADING_RE = /\b(?:credit\s+limit|minimum\s+(?:payment|amount)|account\s+(?:no|number|type|name)|branch|iban|swift|cif|customer\s+(?:no|number|id)|page\s+\d|printed|generated|issued)\b/i;
 const NO_ACTIVITY_RE = /\b(?:no|nil)\s+(?:transactions?|activity|entries|movements?|debits?\s+or\s+credits?)\b|\bnil\s+statement\b|\bno\s+(?:transactions?|activity)\s+(?:for|during|in|this)\b/i;
 
+// Money the strict pattern above does not see: a decimal comma (5.000,50 · 500,50), one decimal place (12.5), and — on a DATED line only — a bare whole number
+// of three to seven digits ("05/04/2024 SALARY 5000"). Read as amounts, never ignored: a line whose money the scan cannot read is a line it cannot call empty.
+const COMMA_DECIMAL_RE = /(?<![\d,.])-?(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}(?![\d])/g;
+const ONE_DECIMAL_RE = /(?<![\d,.])-?\d+\.\d(?![\d.,])/g;
+const WHOLE_RE = /(?<![\d,.])\d{3,7}(?![\d,.])/g;
+const looseCents = (token, kind) => (kind === 'comma' ? Math.round(Number(token.replace(/\./g, '').replace(',', '.')) * 100) : kind === 'whole' ? Number(token) * 100 : Math.round(Number(token) * 100));
+const looseAmountsIn = (line, hadDate) => [
+    ...(line.match(COMMA_DECIMAL_RE) || []).map(token => ({ token, cents: looseCents(token, 'comma') })),
+    ...(line.match(ONE_DECIMAL_RE) || []).map(token => ({ token, cents: looseCents(token, 'one') })),
+    ...(hadDate ? (line.match(WHOLE_RE) || []).map(token => ({ token, cents: looseCents(token, 'whole') })) : []),
+].filter(a => Number.isFinite(a.cents));
+
 const cents = value => Math.round(Number(String(value).replace(/,/g, '')) * 100);
 const amountsIn = line => (line.match(AMOUNT_RE) || []).map(token => ({ token, cents: cents(token) })).filter(a => Number.isFinite(a.cents));
 
@@ -62,6 +74,7 @@ const amountsIn = line => (line.match(AMOUNT_RE) || []).map(token => ({ token, c
  */
 export function scanStatementText(text) {
     const out = { lines: 0, suspect: 0, suspectSample: [], zeroLines: 0, openings: [], closings: [], period: false, noActivity: false, amounts: 0, positive: 0, datedMoney: 0, totalsMoney: 0 };
+    let previousDated = false;
     for (const raw of norm(text).split('\n')) {
         const line = raw.replace(/\s+/g, ' ').trim();
         if (!line) continue;
@@ -70,7 +83,11 @@ export function scanStatementText(text) {
         if (NO_ACTIVITY_RE.test(line)) out.noActivity = true;
         const hadDate = new RegExp(DATE_RE.source, 'i').test(line);
         const body = line.replace(DATE_RE, ' ').replace(/\s+/g, ' ').trim();
-        const amounts = amountsIn(body);
+        // a whole number alone on the line under a dated line is that line's amount ("05/04/2024 SALARY" / "38630")
+        const continuation = previousDated && /^[\s\-]*(?:(?:rs|lkr)\.?\s*)?\d{3,7}\s*(?:cr|dr)?$/i.test(body);
+        previousDated = hadDate;
+        const strict = amountsIn(body);
+        const amounts = strict.length ? strict : looseAmountsIn(body, hadDate || continuation);
         if (!amounts.length) continue;
         // every amount the page prints, headings and labels included: a page on which none is positive has no money on it at all
         out.amounts += amounts.length; out.positive += amounts.filter(a => a.cents !== 0).length; if (hadDate) out.datedMoney += 1;

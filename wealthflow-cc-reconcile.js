@@ -1,21 +1,22 @@
-/*  wealthflow-cc-reconcile.js  —  Credit-card auto-✅ reconciliation (IMG_8884)
+/*  wealthflow-cc-reconcile.js  —  Credit-card auto-✅ reconciliation: card payments settle charges OLDEST FIRST, to the cent
  *
- *  Implements EXACTLY the behaviour described in the worked example:
- *    • Both debits (cash advances / charges) AND credits (payments) are tracked.
- *    • Credits accumulate. A debit is auto-settled (✅) ONLY when the running credit
- *      pool can FULLY cover it — never partially.
- *    • Order: oldest date first; within the SAME date, the smaller amount first.
- *    • An older debit that can't be covered BLOCKS newer ones (you can't clear a
- *      newer charge while an older one is still outstanding).
+ *  The rule (the same one the worker applies — cc-fifo.mjs; test/cc_fifo_test.js keeps the two equal):
+ *    • Every payment made to a card goes into ONE pool (the sum of the credits). Charges are walked from the oldest date to the newest
+ *      (the smaller amount first within the same date).
+ *    • A charge is auto-settled (✅) ONLY when the pool can FULLY cover it — never partially — and the pool shrinks by its amount.
+ *    • The first charge the pool cannot cover FREEZES the walk: it and every newer charge stay unpaid (Pending / Overdue). What is left in the
+ *      pool is CARRIED forward (`carry`), together with how much more the frozen charge needs (`blocked.needs`).
+ *    • It is recomputed from the whole timeline on every change, never patched, so the answer never depends on the order things arrived in.
+ *    • EXACT ARITHMETIC: amounts become integer cents from their decimal text (never through a binary float) and only integers are added and
+ *      compared — no 0.005 tolerance, no drift however many rows pass through the pool.
  *
  *  Worked example (verified in tests):
  *    Debits: Apr20 100k, Apr20 15k, Apr25 20k, May10 50k
- *    +50k credit  → only the 15k is ✅ (50k can't cover the 100k, which blocks the rest)
- *    +100k credit → 100k ✅, then 20k ✅ (150k total covers 15k+100k+20k = 135k)
+ *    +50k credit  → only the 15k is ✅ (50k can't cover the 100k, which blocks the rest); 35k is carried, the 100k needs 65k more
+ *    +100k credit → 100k ✅, then 20k ✅ (150k total covers 15k+100k+20k = 135k); 15k carried
  *
- *  Exposes window.WFReconcile = { reconcileCard, parseCardSms, _dateMs }.
- *  Pure + deterministic. Run it whenever a CC credit or debit is added/scanned,
- *  then persist the returned settled flags.
+ *  Exposes window.WFReconcile = { reconcileCard, parseCardSms, toCents, fromCents, _dateMs }.
+ *  Pure + deterministic. Run it whenever a CC credit or debit is added/scanned, then persist the returned settled flags.
  */
 (function () {
     'use strict';
@@ -38,44 +39,66 @@
         return isNaN(n) ? 0 : n;
     }
 
+    // A decimal amount (number or text) as whole cents, half a cent rounded up, read from the decimal text — never through float arithmetic.
+    function toCents(value) {
+        if (value == null || value === '') return 0;
+        var text = typeof value === 'number' ? (isFinite(value) ? String(value) : '') : String(value);
+        if (/e/i.test(text)) text = Number(text).toFixed(6);
+        text = text.replace(/,/g, '').trim();
+        var m = /^([+-]?)(\d*)(?:\.(\d*))?$/.exec(text);
+        if (!m || (m[2] === '' && (m[3] === undefined || m[3] === ''))) return 0;
+        var whole = m[2] === '' ? '0' : m[2], frac = (m[3] || '');
+        while (frac.length < 3) frac += '0';
+        var cents = Number(whole) * 100 + Number(frac.slice(0, 2));
+        if (Number(frac.charAt(2)) >= 5) cents += 1;
+        return m[1] === '-' ? -cents : cents;
+    }
+    function fromCents(cents) {
+        var n = Math.round(Number(cents) || 0), sign = n < 0 ? '-' : '', abs = Math.abs(n), r = String(abs % 100);
+        return sign + Math.floor(abs / 100) + '.' + (r.length < 2 ? '0' + r : r);
+    }
+
     /*  reconcileCard(debits, credits)
      *  debits/credits: [{ id, amount, date|dateMs|timestamp }]
-     *  returns { settledIds, unsettledIds, totalCredit, leftover, detail:[{id,amount,settled,coveredBy}] }
+     *  returns { settledIds, unsettledIds, totalCredit, leftover, carry, blocked:{id,amount,needs}|null, detail:[{id,amount,settled,state,coveredBy,needs}] }
+     *  (amounts as numbers with two decimals, derived from exact integer cents)
      */
     function reconcileCard(debits, credits) {
         debits = Array.isArray(debits) ? debits : [];
         credits = Array.isArray(credits) ? credits : [];
 
-        var totalCredit = credits.reduce(function (s, c) { return s + Math.max(0, _amt(c.amount)); }, 0);
+        var creditCents = credits.reduce(function (s, c) { return s + Math.max(0, toCents(c && c.amount)); }, 0);
 
         var sorted = debits
-            .filter(function (d) { return d && _amt(d.amount) > 0; })
-            .map(function (d) { return { ref: d, t: _dateMs(d.dateMs != null ? d.dateMs : (d.timestamp != null ? d.timestamp : d.date)), amt: _amt(d.amount) }; })
-            // oldest date first; smaller amount first within the same date
-            .sort(function (a, b) { return a.t - b.t || a.amt - b.amt; });
+            .map(function (d, order) { return { ref: d, order: order, t: _dateMs(d && (d.dateMs != null ? d.dateMs : (d.timestamp != null ? d.timestamp : d.date))), cents: toCents(d && d.amount) }; })
+            .filter(function (x) { return x.ref && x.cents > 0; })
+            // oldest date first; smaller amount first within the same date; then the order given
+            .sort(function (a, b) { return a.t - b.t || a.cents - b.cents || a.order - b.order; });
 
-        var pool = totalCredit;
-        var blocked = false;
+        var pool = creditCents;
+        var blocked = null;
         var detail = [], settledIds = [], unsettledIds = [];
 
         for (var i = 0; i < sorted.length; i++) {
             var d = sorted[i];
-            if (!blocked && pool >= d.amt - 0.005) {
-                pool -= d.amt;
+            if (!blocked && pool >= d.cents) {
+                pool -= d.cents;
                 settledIds.push(d.ref.id);
-                detail.push({ id: d.ref.id, amount: d.amt, settled: true, coveredBy: d.amt });
+                detail.push({ id: d.ref.id, amount: d.cents / 100, settled: true, state: 'paid', coveredBy: d.cents / 100, needs: 0 });
             } else {
-                // first uncoverable debit blocks everything newer than it
-                blocked = true;
+                // the first charge the pool cannot cover freezes the walk: it and everything newer wait
+                if (!blocked) blocked = { id: d.ref.id, cents: d.cents, needsCents: d.cents - pool };
                 unsettledIds.push(d.ref.id);
-                detail.push({ id: d.ref.id, amount: d.amt, settled: false, coveredBy: 0 });
+                detail.push({ id: d.ref.id, amount: d.cents / 100, settled: false, state: d.ref.id === blocked.id ? 'blocked' : 'waiting', coveredBy: 0, needs: d.ref.id === blocked.id ? blocked.needsCents / 100 : 0 });
             }
         }
         return {
             settledIds: settledIds,
             unsettledIds: unsettledIds,
-            totalCredit: Number(totalCredit.toFixed(2)),
-            leftover: Number(Math.max(0, pool).toFixed(2)),
+            totalCredit: creditCents / 100,
+            leftover: pool / 100,
+            carry: pool / 100,
+            blocked: blocked && { id: blocked.id, amount: blocked.cents / 100, needs: blocked.needsCents / 100 },
             detail: detail
         };
     }
@@ -146,6 +169,6 @@
         };
     }
 
-    window.WFReconcile = { reconcileCard: reconcileCard, parseCardSms: parseCardSms, _dateMs: _dateMs };
+    window.WFReconcile = { reconcileCard: reconcileCard, parseCardSms: parseCardSms, toCents: toCents, fromCents: fromCents, _dateMs: _dateMs };
     try { console.log('[WFReconcile] ✓ credit-card auto-✅ reconciliation ready'); } catch (_) {}
 })();
