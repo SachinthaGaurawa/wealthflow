@@ -358,7 +358,7 @@ describe('the worker never files a statement in another currency into the accoun
         const w = world({ stmt, settings: { currency: 'USD' }, extract: model(stmt).ask });
         const out = await w.drain();
         expect(out.status, JSON.stringify({ out, src: w.source() })).toBe('filed');
-        expect([...w.user().expenses, ...w.user().incomeRecv].length).toBe(stmt.rows.filter(r => !/TRANSFER/.test(r.description)).length);      // a transfer between own accounts is skipped by design
+        expect([...w.user().expenses, ...w.user().incomeRecv].length).toBe(stmt.rows.length);      // a transfer to or from someone else is spending or income like any other row
     });
     it('a rupee statement for a rupee account is filed, and one that names no currency is too', async () => {
         for (const head of ['LKR', '']) {
@@ -366,7 +366,7 @@ describe('the worker never files a statement in another currency into the accoun
             const w = world({ stmt, extract: model(stmt, { currency: head ? 'LKR' : null }).ask });
             const out = await w.drain();
             expect(out.status, head).toBe('filed');
-            expect([...w.user().expenses, ...w.user().incomeRecv].length).toBe(stmt.rows.filter(r => !/TRANSFER/.test(r.description)).length);      // a transfer between own accounts is skipped by design
+            expect([...w.user().expenses, ...w.user().incomeRecv].length).toBe(stmt.rows.length);      // a transfer to or from someone else is spending or income like any other row
         }
     });
     it('the statement\'s composite key is on the item, whichever reader produced it', async () => {

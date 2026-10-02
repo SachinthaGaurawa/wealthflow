@@ -63,8 +63,12 @@ describe('statement worker authorization and board', () => {
         expect(deterministicDecision({ ...row, direction: 'credit', narration: 'PAYMENT THANK YOU' }, { statementType: 'credit_card' })).toMatchObject({ module: 'ccPayments', verified: true });
         expect(deterministicDecision({ ...row, narration: 'POS TRANSACTION DIALOG AXIATA PLC' }, { statementType: 'bank_account' })).toMatchObject({ module: 'expenses', verified: true });
         expect(deterministicDecision({ ...row, narration: 'POS TRANSACTION DIALOG AXIATA PLC' }, { statementType: 'credit_card' })).toMatchObject({ module: 'cconetime', verified: true });
-        expect(deterministicDecision({ ...row, narration: 'OUTWARD CEFT TRANSFER SISTER' }, { statementType: 'bank_account' })).toMatchObject({ module: 'skip', category: 'Transfer', verified: true });
-        expect(deterministicDecision({ ...row, direction: 'credit', narration: 'TRANSFER CREDIT-MOBILEBANKING' }, { statementType: 'bank_account' })).toMatchObject({ module: 'skip', verified: true });
+        // money paid to, and received from, someone else is spending and income; only the owner's own money between their own accounts is left out
+        expect(deterministicDecision({ ...row, narration: 'OUTWARD CEFT TRANSFER SISTER' }, { statementType: 'bank_account' })).toMatchObject({ module: 'expenses', category: 'Other', verified: true, autoDecided: 'transfer-to-others' });
+        expect(deterministicDecision({ ...row, direction: 'credit', narration: 'INWARD CEFT TRANSFER DIP REFUND' }, { statementType: 'bank_account' })).toMatchObject({ module: 'incomeRecv', verified: true, autoDecided: 'transfer-from-others' });
+        expect(deterministicDecision({ ...row, direction: 'credit', narration: 'TRANSFER CREDIT-MOBILEBANKING MY DFCC' }, { statementType: 'bank_account' })).toMatchObject({ module: 'skip', category: 'Transfer', verified: true, ownTransfer: 'own-account-words' });
+        expect(deterministicDecision({ ...row, narration: 'OUTWARD CEFT TRANSFER 376657XXXXX0276' }, { statementType: 'bank_account', cardRegistry: { '0276': { bank: 'AMEX' } } })).toMatchObject({ module: 'skip', category: 'Transfer', ownTransfer: 'own-account-number' });
+        expect(deterministicDecision({ ...row, narration: 'OUTWARD CEFT TRANSFER 376657XXXXX0276' }, { statementType: 'bank_account', cardRegistry: {} })).toMatchObject({ module: 'expenses', autoDecided: 'transfer-to-others' });
         // processOneStatement wires the owner's Settings -> Manage cards & accounts
         // registry into allocations precisely so this same 'credit_card' verdict is
         // reachable when the parser itself could not read a statementType from the
@@ -94,13 +98,18 @@ describe('statement worker authorization and board', () => {
         expect(await classifySlice([{ ...row, narration: 'POS TRANSACTION KEELLS SUPER' }], { statementType: 'bank_account' }, { board }))
             .toEqual([{ module: 'expenses', category: 'Groceries', allocationId: '', verified: true, deterministic: true }]);
     });
-    it('never lets a unanimous board turn a transfer into income or spending', async () => {
+    it('never lets a unanimous board turn the owner\'s own transfer into income or spending, and does not ask it about a transfer the rules settle', async () => {
         for (const [direction, module] of [['credit', 'incomeRecv'], ['debit', 'expenses']]) {
             const wrong = { index: 0, module, category: direction === 'credit' ? 'Income' : 'Other', allocationId: '' };
             const board = vi.fn().mockResolvedValueOnce(good({ decisions: [wrong] })).mockResolvedValueOnce(good({ approved: true }));
-            expect(await classifySlice([{ ...row, direction, narration: direction === 'credit' ? 'TRANSFER CREDIT-MOBILEBANKING' : 'OUTWARD CEFT TRANSFER SISTER' }], { statementType: 'bank_account' }, { board }))
-                .toEqual([{ module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true }]);
+            expect(await classifySlice([{ ...row, direction, narration: direction === 'credit' ? 'TRANSFER CREDIT-MOBILEBANKING MY DFCC' : 'TRANSFER TO MY OWN ACCOUNT' }], { statementType: 'bank_account' }, { board }))
+                .toEqual([{ module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true, ownTransfer: 'own-account-words' }]);
+            expect(board).not.toHaveBeenCalled();
         }
+        const board = vi.fn();
+        expect(await classifySlice([{ ...row, narration: 'OUTWARD CEFT TRANSFER SISTER' }], { statementType: 'bank_account' }, { board }))
+            .toEqual([{ module: 'expenses', category: 'Other', allocationId: '', verified: true, deterministic: true, autoDecided: 'transfer-to-others' }]);
+        expect(board).not.toHaveBeenCalled();
     });
     it('self-heals only generic statement categories with strong evidence', () => {
         const original = { expenses: [

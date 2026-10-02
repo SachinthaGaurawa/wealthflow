@@ -45,9 +45,9 @@ export function validateSettlementRow(row, decision, ctx = {}) {
     const module = modules[decision.module];
     const card = isCreditCardRow(row, ctx);
     
-    // Strict Routing Logical Exceptions injected for flawless allocation
-    if (transferEvidence(row)) return module === 'skip' ? null : 'transfer-route-conflict';
-    if (module === 'skip') return 'skip-requires-transfer-evidence';
+    /* A transfer row is left out of the books only when it is the owner's own money moving between the owner's own accounts (statement-transfers.mjs decides that, before this);
+     * money to or from someone else is spending or income like any other row and takes the checks below. */
+    if (module === 'skip') return transferEvidence(row) ? null : 'skip-requires-transfer-evidence';
     if (module === 'incomeRecv' && (row.direction !== 'credit' || card)) return 'income-direction-conflict';
     if (module === 'ccPayments' && (row.direction !== 'credit' || !card)) return 'card-payment-context-required';
     if (['expenses', 'cconetime', 'subscriptions'].includes(module) && row.direction !== 'debit') return 'expense-direction-conflict';
