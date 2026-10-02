@@ -25,6 +25,7 @@ import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 import { healLoanLinks } from './loan-link.mjs';
+import { manualTwin, markTwin } from './statement-links.mjs';
 import { policyWithReach } from './bank-reach.mjs';
 import { planWithEvidence, evidenceContext, documentProof, knownLast4 } from './statement-evidence.mjs';
 import { formKind } from './statement-document-kind.mjs';
@@ -739,6 +740,56 @@ export async function healLoanInstallments({ db, uid, now = Date.now(), log = co
         return { linked: done.length, why };
     });
     if (result.linked) log(JSON.stringify({ evt: 'loan-link-heal', linked: result.linked, why: result.why }));
+    return result;
+}
+
+/* THE SAME PAYMENT, TYPED BY THE OWNER AND FILED FROM A STATEMENT, IS ONE PAYMENT. A statement row that arrives after the owner typed the payment is not filed (it is the entry's twin); but a payment typed AFTER the
+ * statement filed it — catching up on the month, a purchase typed up days late — or a card statement's purchase filed beside the same purchase typed as an ordinary expense, was counted twice. Here each statement
+ * record that a hand-made entry already stands for (same amount to the cent, in the same direction; the same day, or within three days when a word of what the owner typed is in the narration; a
+ * recurring entry for its month) is taken out: the OWNER'S entry stays — it carries their category and notes and is theirs to change — and the system's copy goes, with a tombstone, its ledger row saying why.
+ * Two that fit equally are never guessed between, nothing the owner typed is ever deleted, and a record tied to a loan or a subscription is never touched. Counts only are logged. */
+export async function healHandMadeTwins({ db, uid, now = Date.now(), log = console.info, limit = 60 }) {
+    const userRef = db.collection('users').doc(uid), STORES = ['expenses', 'incomeRecv', 'cconetime'];
+    const peek = (await userRef.get()).data() || {};
+    const isTyped = record => !!record && record.source !== 'statement' && !record.statementKey;
+    const isFiled = record => !!record && record.source === 'statement' && !!record.statementKey && !record.loanLink && !record.subscriptionLink;
+    if (!STORES.some(store => (Array.isArray(peek[store]) ? peek[store] : []).some(isTyped)) || !STORES.some(store => (Array.isArray(peek[store]) ? peek[store] : []).some(isFiled))) return { merged: 0, more: false };
+    const result = await db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), user = structuredClone(snap.data() || {});
+        const rowOf = (record, store) => ({ amount: record.amount, date: record.date, description: record.desc || record.name || '', direction: store === 'incomeRecv' ? 'credit' : 'debit' });
+        const claims = new Map();                       // a hand-made entry → the statement records that fit it
+        const pairs = [];
+        for (const store of STORES) {
+            for (const record of Array.isArray(user[store]) ? user[store] : []) {
+                if (!isFiled(record)) continue;
+                const row = rowOf(record, store);
+                const lists = store === 'cconetime' ? [['cconetime', user.cconetime], ['expenses', user.expenses]] : [[store, user[store]]];
+                const found = [];
+                for (const [home, list] of lists) { const twin = manualTwin(Array.isArray(list) ? list.filter(isTyped) : [], row, { strict: true }); if (twin) found.push({ twin, home }); }
+                found.sort((a, b) => a.twin.gap - b.twin.gap);
+                if (!found.length || (found.length > 1 && found[0].twin.gap === found[1].twin.gap)) continue;
+                const pair = { store, record, row, twin: found[0].twin, home: found[0].home };
+                pairs.push(pair);
+                const key = `${pair.home}|${pair.twin.r.id}|${pair.twin.recurring ? row.date.slice(0, 7) : ''}`;
+                claims.set(key, [...(claims.get(key) || []), pair]);
+            }
+        }
+        const chosen = pairs.filter(pair => claims.get(`${pair.home}|${pair.twin.r.id}|${pair.twin.recurring ? pair.row.date.slice(0, 7) : ''}`).length === 1).slice(0, limit);
+        if (!chosen.length) return { merged: 0, more: false };
+        const ledgerSnaps = [];
+        for (const pair of chosen) ledgerSnaps.push(await tx.get(userRef.collection('statementLedger').doc(String(pair.record.id))));
+        const tomb = user._tomb && typeof user._tomb === 'object' ? { ...user._tomb } : {};
+        chosen.forEach((pair, at) => {
+            markTwin(pair.twin, pair.row.date.slice(0, 7), pair.record.statementKey, pair.record.statementRow, now, { ...pair.row, direction: pair.row.direction });
+            user[pair.store] = user[pair.store].filter(record => record !== pair.record && record.id !== pair.record.id);
+            tomb[pair.store] = { ...(tomb[pair.store] && typeof tomb[pair.store] === 'object' ? tomb[pair.store] : {}), [pair.record.id]: now };
+            if (ledgerSnaps[at].exists) tx.set(ledgerSnaps[at].ref, { status: 'duplicate', matchedId: String(pair.twin.r.id || ''), reason: 'entered-by-hand', settledAt: now }, { merge: true });
+        });
+        const changes = {}; for (const store of STORES) if (Array.isArray(user[store])) changes[store] = user[store];
+        tx.set(userRef, { ...changes, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        return { merged: chosen.length, more: pairs.length > chosen.length && chosen.length >= limit };
+    });
+    if (result.merged) log(JSON.stringify({ evt: 'hand-twin-heal', merged: result.merged, ...(result.more ? { more: true } : {}) }));
     return result;
 }
 
@@ -2176,7 +2227,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
     }
     if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
-        try { await healLoanInstallments({ db, uid }); await repairCardInstallments({ db, uid }); await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
+        try { await healLoanInstallments({ db, uid }); await healHandMadeTwins({ db, uid }); await repairCardInstallments({ db, uid }); await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     const [pending, processing] = await Promise.all([
         mailRef.collection('items').where('status', '==', 'pending').limit(200).get(),
