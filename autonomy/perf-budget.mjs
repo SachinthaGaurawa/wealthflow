@@ -276,7 +276,10 @@ export const BUDGETS = {
     // amount paid), future months and unpaid items count nothing and are listed as "due, not paid" instead; the Monthly Plan page shows what was paid, what is due and every group that is in its
     // total; the Expense Breakdown is built from the same books so it adds up to Year Expenses; Upcoming Payments and Recent Activity leave out what is paid / not yet happened. No new
     // script or request. ~0.3% headroom.
-    htmlBytes: 2_130_000,
+    // Raised 2026-10-02 (the phone's own mailbox review): 2,130,000 -> 2,136,000 (measured 2,132,153). The review that opens a mailbox statement on the device asks the statement
+    // registry before it opens (a statement the email sync or an upload already holds is shown as "Already added" and not offered) and takes the statement at Save, one lock for all
+    // three doors; the server side is statement-guard.js and wealthflow-statement-cloud.js. No new script or request. ~0.2% headroom.
+    htmlBytes: 2_136_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
