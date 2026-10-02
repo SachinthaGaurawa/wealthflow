@@ -11,7 +11,8 @@ import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
 import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped, statedBalanceCents, continuityOf } from './statement-emptiness.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
-import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity } from './statement-ledger.mjs';
+import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
+import { semanticDirection, genericBankLine, proveDirections } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT, intentVerdict } from './wealthflow-statement-identity.js';
@@ -276,7 +277,10 @@ export function deterministicDecision(row, allocations = {}) {
     if (transferEvidence({ description })) {
         return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true };
     }
-    const routed = routeRow(row, { ...allocations, reviewThreshold: 0.7 });
+    /* A BANK'S OWN LINE TYPE IS NOT A DEPOSIT TO A SAVINGS TARGET. "CEFT Charges Mirigama" shared one word with a target called "Mirigama Plot" (half its words, which the router
+     * takes as a match) and was routed to that goal — a destination no rule can verify, so the AI board was asked, six models cannot all agree, and the owner was asked about a
+     * 25.00 bank charge. A charge, a fee, a POS purchase or an ATM withdrawal is spending whatever place name it carries; the router is asked without the owner's targets and loans. */
+    const routed = routeRow(row, { ...allocations, ...(genericBankLine(row) ? { targets: [], loans: [] } : {}), reviewThreshold: 0.7 });
     if (routed.needsReview) return { verified: false, reason: 'ai-consensus-unavailable' };
     if (routed.module === 'subscriptions' && !routed.allocation?.id) {
         return isCreditCardRow(row, allocations) || validateLuhnChecksum(allocations.card_last4)
@@ -302,10 +306,16 @@ export function deterministicDecision(row, allocations = {}) {
  * income (a card payment on a card) — in the category the words give or "Other", marked `autoDecided: 'rules-fallback'` so it can be found and changed in one tap. A row whose
  * direction had to be ASSUMED is still not filed: that is the one thing nobody can know from the page. */
 export function fallbackDecision(row, allocations = {}) {
-    if (!row || row.needsReview !== false || row.valid === false || !['balance', 'marker', 'column', 'sign'].includes(row.directionSource)) return null;
+    if (!row || row.valid === false) return null;
+    /* A direction the parser ASSUMED (no balance, no Dr/Cr mark on the page) is proven by the row's own words when they agree with it — a charge, a POS purchase, a salary
+     * (statement-direction.mjs). The words never turn a direction round, and a row they say nothing about keeps waiting. */
+    const proven = row.needsReview === false && PROVEN_DIRECTION.includes(row.directionSource);
+    const byWords = !proven && row.directionSource === 'assumed' && semanticDirection(row) === row.direction;
+    if (!proven && !byWords) return null;
+    const autoDecided = proven ? 'rules-fallback' : 'rules-words';
     const card = isCreditCardRow(row, allocations) || validateLuhnChecksum(allocations.card_last4);
-    if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? 'Card Purchase' : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided: 'rules-fallback' };
-    if (row.direction === 'credit') return { module: card ? 'ccPayments' : 'incomeRecv', category: card ? 'Card Payment' : (incomeCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided: 'rules-fallback' };
+    if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? (/\b(?:fees?|charges?|duty|tax)\b/i.test(String(row.narration || row.description || '')) ? 'Card Fee' : 'Card Purchase') : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
+    if (row.direction === 'credit') return { module: card ? 'ccPayments' : 'incomeRecv', category: card ? 'Card Payment' : (incomeCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
     return null;
 }
 
@@ -897,20 +907,22 @@ export async function resumeReview({ db, owner, id, auto = false, env = process.
     } catch (_) { return { ok: true, resumed: true, state: 'resumed', settled: result.settled, queued: true, replayStatus: 'pending' }; }
 }
 
+/* the two codes the owner reads as "the AI could not agree", and the row whose direction the page left unmarked (the words may prove it: fallbackDecision) */
+const RECOVERABLE_ROW_REASONS = ['ai-consensus-unavailable', 'unanimous-decision-required', 'unproven-direction'];
 export async function recoverConsensusFailures({ db, uid, limit = 25, until = Infinity }) {
     const userRef = db.collection('users').doc(uid);
     const cap = Math.min(50, Math.max(1, limit));
     // both codes the owner reads as "the AI could not agree": the board's refusal and its peer review's
     const found = [];
-    for (const reason of ['ai-consensus-unavailable', 'unanimous-decision-required']) found.push(...(await userRef.collection('statementReview').where('reason', '==', reason).limit(100).get()).docs);
-    const page = { docs: found.slice(0, 100) };
+    for (const reason of RECOVERABLE_ROW_REASONS) found.push(...(await userRef.collection('statementReview').where('reason', '==', reason).limit(100).get()).docs);
+    const page = { docs: found.slice(0, 150) };
     const cardRegistry = page.docs.length ? ((await userRef.get()).data() || {}).settings?.cardRegistry || {} : {};
     let recovered = 0, stopped = false;
     for (const doc of page.docs) {
         if (recovered >= cap) break;
         if (Date.now() > until) { stopped = true; break; }
         const review = doc.data();
-        if (review.uid !== uid || review.status !== 'pending' || !['ai-consensus-unavailable', 'unanimous-decision-required'].includes(review.reason) || !Number.isSafeInteger(review.index) || review.index < 0 || !review.row || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) continue;
+        if (review.uid !== uid || review.status !== 'pending' || !RECOVERABLE_ROW_REASONS.includes(review.reason) || !Number.isSafeInteger(review.index) || review.index < 0 || !review.row || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) continue;
         const source = (await db.doc(review.sourcePath || '').get()).data() || {};
         if (source.uid !== uid) continue;
         const context = { statementType: source.statementType || '', card_last4: source.last4 || '', bank: source.bank || '', cardRegistry };
@@ -933,7 +945,7 @@ export async function recoverConsensusFailures({ db, uid, limit = 25, until = In
             }
         }
     }
-    return { recovered, more: stopped || recovered >= cap || page.docs.length === 100 };
+    return { recovered, more: stopped || recovered >= cap || page.docs.length === 150 };
 }
 
 /* THE SAME TRANSACTION IN A SECOND COPY OF A STATEMENT IS NOT A QUESTION. A statement can reach the books twice (the bank's other address, a re-send, a copy that was retired and is
@@ -1350,6 +1362,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             } else if (ai.reason !== 'ai-unavailable') await noteAdaptiveFailure(sourceRef, claimed, ai, adaptiveNow);
         }
         
+        /* THE ROWS THE PAGE LEFT UNMARKED ARE PROVEN BY THE STATEMENT, OR BY THEIR WORDS, BEFORE ANYONE IS ASKED (statement-direction.mjs): when the printed opening and closing
+         * balances are reached to the cent the parser's "assumed debit" for every unmarked row cannot have been wrong anywhere, and a charge, a POS purchase or a salary says which way it went. */
+        if (parsed && Array.isArray(parsed.rows) && parsed.rows.some(row => row && row.needsReview === true)) {
+            const proof = proveDirections(parsed);
+            if (proof.byStatement + proof.byWords > 0) { parsed = { ...parsed, rows: proof.rows }; diag.directions = { statement: proof.byStatement, words: proof.byWords }; }
+        }
         // --- Added Cryptographic Identity verification bound to the extracted raw source ---
         const identity = textVerdict(text || '');
         diag.identity = { verdict: String(identity.verdict || ''), evidence: Array.isArray(identity.evidence) ? identity.evidence.length : 0 };
@@ -1486,7 +1504,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 claimed = again;
             }
             outcome = { ...outcome, ...total };
-            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules',
+            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules', ...(diag.directions ? { directions: diag.directions } : {}),
                 ...(replayed?.healed ? { healed: replayed.healed } : {}), ...(total.dateShifted ? { dateShifted: total.dateShifted } : {}) });
         }
     } catch (error) {
@@ -1767,33 +1785,38 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
  * (the sixty-eight "POS Transaction" rows to settle, the retired statements to look up and put back, the second copies to close): on 2026-10-02 the runs that reached them were cut at
  * sixty seconds ("Task timed out"), the chain stalled, and nothing they were meant to settle was settled — the owner kept seeing the same reviews. Each step here has a deadline, the
  * whole pass has six seconds, it is at most every thirty, and a step that did not finish says `more` so the chain comes straight back to it. */
-const SETTLE_EVERY_MS = 30 * 1000, SETTLE_STEP_MS = 7000, SETTLE_EACH_MS = 2500;
+const SETTLE_EVERY_MS = 30 * 1000, SETTLE_FAST_MS = 4000, SETTLE_STEP_MS = 8000, SETTLE_EACH_MS = 3500;
 async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs, now = Date.now() }) {
     const out = { ran: false, recovered: 0, more: false };
-    if (now - Number(mail.lastSettleMs || 0) < SETTLE_EVERY_MS || now - start > budgetMs - 16000) return out;
+    /* A PASS THAT LEFT WORK BEHIND (`settleMore`) IS FOLLOWED BY ANOTHER SOON, not thirty seconds later: sixty reviews to settle, ten to a pass, was five minutes of the owner looking at them. */
+    if (now - Number(mail.lastSettleMs || 0) < (mail.settleMore === true ? SETTLE_FAST_MS : SETTLE_EVERY_MS) || now - start > budgetMs - 16000) return out;
     out.ran = true;
     const until = Math.min(now + SETTLE_STEP_MS, start + budgetMs - 12000);
+    const done = {};
     /* EVERY STEP GETS ITS TURN. The whole-statement replay (the statements stopped for a reason a second reading can mend — "rows could not be proven to add up", an attachment that
      * did not match) ran only in the front pass, which the mailbox scan leaves no time for on every interactive run: version 11 of it never ran, and the NTB and AMEX statements the owner
      * kept being sent to "Map statement layout" for were never read again. Here each step has its own share of the pass, and the order turns with the clock so none is always last. */
     const steps = [
-        async stepUntil => { const r = await recoverConsensusFailures({ db, uid, limit: 25, until: stepUntil }); out.recovered += r.recovered; out.more = out.more || r.more; },
-        async stepUntil => { const r = await recoverDuplicateRows({ db, uid, limit: 40, until: stepUntil, log: console.info }); out.more = out.more || r.more; },
-        async stepUntil => { const r = await recoverRevokedSenderReviews({ db, uid, limit: 25, until: stepUntil }); out.recovered += r.recovered; out.more = out.more || r.more; },
-        async () => { const r = await recoverWholeStatementFailures({ db, uid, limit: 8 }); out.recovered += r.recovered; out.more = out.more || r.more; },
-        async () => { const r = await resumePartialStatements({ db, uid, limit: 6 }); out.recovered += r.resumed; out.more = out.more || r.more; },
+        async stepUntil => { const r = await recoverConsensusFailures({ db, uid, limit: 25, until: stepUntil }); done.rows = r.recovered; out.recovered += r.recovered; out.more = out.more || r.more; },
+        async stepUntil => { const r = await recoverDuplicateRows({ db, uid, limit: 40, until: stepUntil, log: console.info }); done.duplicates = r.closed; out.more = out.more || r.more; },
+        async stepUntil => { const r = await recoverRevokedSenderReviews({ db, uid, limit: 25, until: stepUntil }); done.revoked = r.recovered; out.recovered += r.recovered; out.more = out.more || r.more; },
+        async () => { const r = await recoverWholeStatementFailures({ db, uid, limit: 8 }); done.whole = r.recovered; out.recovered += r.recovered; out.more = out.more || r.more; },
+        async () => { const r = await resumePartialStatements({ db, uid, limit: 6 }); done.resumed = r.resumed; out.recovered += r.resumed; out.more = out.more || r.more; },
     ];
     if (now - Number(mail.lastReviveMs || 0) >= REVIVE_EVERY_MS) steps.push(async stepUntil => {
         const r = await reviveRetiredSources({ db, mailRef, uid, senders: sendersOf(mail), token, f, until: stepUntil });
-        out.more = out.more || r.more;
+        done.revived = r.revived; out.more = out.more || r.more;
         if (!r.more) await mailRef.set({ lastReviveMs: Date.now() }, { merge: true });
     });
     const turn = Math.floor(now / SETTLE_EVERY_MS) % steps.length;
+    let skipped = 0;
     for (const work of [...steps.slice(turn), ...steps.slice(0, turn)]) {
-        if (Date.now() >= until) { out.more = true; continue; }
+        if (Date.now() >= until) { out.more = true; skipped += 1; continue; }
         try { await work(Math.min(until, Date.now() + SETTLE_EACH_MS)); } catch (_) { /* advice only: the next pass tries again */ }
     }
-    try { await mailRef.set({ lastSettleMs: Date.now() }, { merge: true }); } catch (_) { /* the pass simply runs again */ }
+    try { await mailRef.set({ lastSettleMs: Date.now(), settleMore: out.more }, { merge: true }); } catch (_) { /* the pass simply runs again */ }
+    /* one line, and only when the pass did or left something: this is how the log shows the owner's waiting reviews being settled */
+    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
     return out;
 }
 

@@ -6,11 +6,12 @@ import { readStatement } from '../statement-reader.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
 import { validateSettlementRow } from '../statement-ledger.mjs';
 
+// (the narration here is a place name that shares a word with a savings target and says nothing about its type: a POS purchase or a charge is decided by the rules outright — statement_direction_test.js)
 // The owner, with a screenshot of a 289-row NTB statement held at "POS Transaction - MIRIGAMA ... the independent AI review could not reach agreement — confirm it yourself",
 // three times over: "I want bank statements, not transactions one by one". A savings target or loan named like the merchant made the rules doubt the row, the AI board was down, and
 // the row was put to the owner. What the page prints — amount, date, whether it left the account — is not in doubt, and files the row by direction.
 
-const row = (extra = {}) => ({ date: '2026-01-12', narration: 'POS Transaction - MIRIGAMA', description: 'POS Transaction - MIRIGAMA', amount: 1234.5, direction: 'debit', directionSource: 'column', needsReview: false, valid: true, ...extra });
+const row = (extra = {}) => ({ date: '2026-01-12', narration: 'MIRIGAMA STORES', description: 'MIRIGAMA STORES', amount: 1234.5, direction: 'debit', directionSource: 'column', needsReview: false, valid: true, ...extra });
 const bank = { statementType: 'bank_account', card_last4: '', bank: 'NTB', targets: [{ id: 't1', name: 'Mirigama Plot' }] };
 const card = { statementType: 'credit_card', card_last4: '3766570000000276', bank: 'NTB', targets: [{ id: 't1', name: 'Mirigama Plot' }] };
 const down = async () => { throw new Error('ai-consensus-unavailable'); };
@@ -114,7 +115,7 @@ describe('and they are settled while a long statement is still being worked', ()
 describe('a second copy of a statement does not put its rows to the owner one by one', () => {
     const mail = 'wf-mail/owner_example_com', copy = `${mail}/items/copy`, first = `${mail}/items/first`;
     const idOf = (n) => createHash('sha256').update(`${copy}:review:${n}`).digest('hex');
-    const record = (extra) => ({ id: 'r' + Math.random(), date: '2026-01-12', amount: 1234.5, desc: 'POS Transaction - MIRIGAMA', bank: 'NTB', direction: 'debit', statementKey: first, statementRow: 1, source: 'statement', ...extra });
+    const record = (extra) => ({ id: 'r' + Math.random(), date: '2026-01-12', amount: 1234.5, desc: 'MIRIGAMA STORES', bank: 'NTB', direction: 'debit', statementKey: first, statementRow: 1, source: 'statement', ...extra });
     const review = (n, extra = {}) => [`users/u/statementReview/${idOf(n)}`, { uid: 'u', sourcePath: copy, index: n, status: 'pending', reason: 'ambiguous-cross-source-match', bank: 'NTB', last4: '', row: row({ index: n, ...extra }) }];
     const world = (reviews, records) => createFirestore({
         'users/u': { expenses: records, incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], settings: {} },
