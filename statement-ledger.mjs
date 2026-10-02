@@ -1,4 +1,5 @@
 import { isPhantomRow } from './statement-emptiness.mjs';
+import { applyCardSettlement } from './cc-fifo.mjs';
 import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow } from './wealthflow-statement-router.js';
@@ -335,6 +336,10 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         
         const hasReview = source.hasReview === true || outcome.review > 0;
         const final = outcome.cursor === totalRows;
+        
+        /* THE MOMENT A CARD PAYMENT (OR A CARD CHARGE) IS FILED, THE CARD'S CHARGES ARE WALKED AGAIN (cc-fifo.mjs): the new money joins the pool, the charges it clears are paid oldest first, and the first one it
+         * cannot clear stays unpaid with what is left carried — in the same transaction, so the books are never between two answers and no device has to be opened for it to be true. */
+        if (changes.ccPayments || changes.cconetime) { const walked = applyCardSettlement(user, now); if (walked.changed) changes.cconetime = user.cconetime; }
         
         if (Object.keys(changes).length) tx.set(userRef, {
             ...changes,
