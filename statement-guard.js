@@ -16,7 +16,7 @@
 import { getAdminDb, withDeadline } from './admin-db.mjs';
 import { identify, userKeyFor } from './gmail-link.mjs';
 import { findFiledTwin } from './statement-index.mjs';
-import { VIA, identityOf, claimStatement, peekStatement, releaseStatement, noticeFor } from './statement-registry.mjs';
+import { VIA, identityOf, claimStatement, peekStatement, releaseStatement, uploadHoldIsStale, noticeFor } from './statement-registry.mjs';
 
 const json = (res, code, body) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(body)); };
 const HASH = /^[a-f\d]{64}$/;
@@ -57,10 +57,16 @@ export default async function handler(req, res) {
             const twin = await withDeadline(findFiledTwin({ mailRef: db.collection('wf-mail').doc(userKeyFor(who.email)), sha, selfId: '' }));
             if (twin) return json(res, 200, { ok: true, duplicate: true, via: VIA.EMAIL, kind: 'file', notice: noticeFor(VIA.EMAIL) });
         }
-        const found = action === 'check'
-            ? await withDeadline(peekStatement({ db, uid: who.uid, identity, sha, ref }))
-            : await withDeadline(claimStatement({ db, uid: who.uid, via: VIA.UPLOAD, ref, identity, sha, meta: { filename: body.filename, size: body.size, rows: body.rows } }));
-        if (found.duplicate) return json(res, 200, { ok: true, duplicate: true, via: found.existing.via, kind: found.kind, existing: found.existing, notice: noticeFor(found.existing.via) });
+        const attempt = () => (action === 'check'
+            ? withDeadline(peekStatement({ db, uid: who.uid, identity, sha, ref }))
+            : withDeadline(claimStatement({ db, uid: who.uid, via: VIA.UPLOAD, ref, identity, sha, meta: { filename: body.filename, size: body.size, rows: body.rows } })));
+        let found = await attempt();
+        /* A HAND UPLOAD WHOSE RECORDS THE OWNER HAS SINCE DELETED HOLDS NOTHING: its lock is given back and the statement may be added again. */
+        if (found.duplicate && await withDeadline(uploadHoldIsStale({ db, uid: who.uid, existing: found.existing }))) {
+            await withDeadline(releaseStatement({ db, uid: who.uid, ref: found.existing.ref }));
+            found = await attempt();
+        }
+        if (found.duplicate) return json(res, 200, { ok: true, duplicate: true, via: found.existing.via, kind: found.kind, existing: { ...found.existing, ref: undefined }, notice: noticeFor(found.existing.via) });
         return json(res, 200, { ok: true, duplicate: false, ...(ref ? { id: ref } : {}), identified: !!(identity && identity.ok) });
     } catch (_) { return json(res, 503, { ok: false, reason: 'registry-unavailable' }); }
 }

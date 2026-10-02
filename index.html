@@ -35167,8 +35167,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (parsed._wfGuard && typeof parsed.cloudReview !== 'function' && window.WFStatementCloud && window.WFStatementCloud.guard) {
                     const _dup = await window.WFStatementCloud.guard.claim(parsed._wfGuard);
                     if (_dup) { notify((_dup.notice || 'Already Added') + ' — this statement is already in your books, so it was not added a second time.', 'warn'); closeOvl(); return; }
-                    parsed._wfGuard = null;           // taken: a second click on Save is not a second claim
+                    parsed._wfClaimToken = parsed._wfGuard.token; parsed._wfGuard = null;           // taken: a second click on Save is not a second claim
                 }
+                const _uploadClaim = parsed._wfClaimToken || '';
                 if (typeof parsed.cloudReview === 'function') {
                     const button = $ovl('#_ccr_save'); button.disabled = true;
                     try {
@@ -35246,7 +35247,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     const past = _isPast(date);
                     const _sourceRow = t || {};
                     const _source = { statementKey: _sourceRow._statementKey || '', statementRow: _sourceRow._statementRow,
-                        bank: _sourceRow._bank || bank || '', card_last4: _sourceRow._ccLast4 || _last4 || '', ref: _sourceRow.ref || '' };
+                        bank: _sourceRow._bank || bank || '', card_last4: _sourceRow._ccLast4 || _last4 || '', ref: _sourceRow.ref || '',
+                        ...(_uploadClaim ? { uploadClaim: _uploadClaim } : {}) };      // names the upload that filed it: the registry gives the statement back once none of these remain
 
                     if (dest === 'cconetime') {
                         if (_dupIn(ccArr, date, amount, desc, 'amount', _source)) { dup++; return; }   // e.g. re-imported ATM/CEFT fee

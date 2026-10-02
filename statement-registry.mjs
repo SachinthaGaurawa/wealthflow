@@ -90,7 +90,7 @@ export const fileIdOf = sha => (HASH.test(String(sha || '')) ? `h-${sha}` : '');
 const registryOf = (db, uid) => db.collection('users').doc(uid).collection(REGISTRY);
 
 /** What a duplicate says about the one already there. Never the owner's data: bank, month, door and when. */
-const describe = (data = {}) => ({ via: data.via || '', bank: data.bank || '', account: data.account || '', year: data.year || 0, month: data.month || 0, filename: String(data.filename || '').slice(0, 120), at: data.createdAt || 0 });
+const describe = (data = {}) => ({ ref: String(data.ref || ''), via: data.via || '', bank: data.bank || '', account: data.account || '', year: data.year || 0, month: data.month || 0, filename: String(data.filename || '').slice(0, 120), at: data.createdAt || 0 });
 
 /** Is there already a different holder of this identity or this file? Read-only: used before anything is read or downloaded. */
 export async function peekStatement({ db, uid, identity = null, sha = '', ref = '' }) {
@@ -122,6 +122,21 @@ export async function claimStatement({ db, uid, via, ref, identity = null, sha =
         for (const { id, snap } of snaps) tx.set(reg.doc(id), snap.exists ? { ...snap.data(), updatedAt: now } : record);
         return { ok: true, claimed: keys.map(key => key.id) };
     });
+}
+
+/** The records of a hand upload carry its claim token (`uploadClaim`). */
+const BOOKS = ['expenses', 'incomeRecv', 'cconetime', 'ccPayments', 'ccinstall', 'loans', 'cheques', 'subscriptions'];
+export const STALE_UPLOAD_MS = 10 * 60 * 1000;
+/**
+ * Is this hand upload's hold dead — the owner deleted everything it filed (or filed nothing)? Judged from the books themselves: no record
+ * carries its token any more. A hold younger than STALE_UPLOAD_MS is never stale (the device may not have synced its records yet).
+ */
+export async function uploadHoldIsStale({ db, uid, existing, now = Date.now() }) {
+    const token = /^upload:([A-Za-z0-9_-]{8,64})$/.exec(String(existing?.ref || ''))?.[1];
+    if (existing?.via !== VIA.UPLOAD || !token || now - (Number(existing.at) || now) < STALE_UPLOAD_MS) return false;
+    const user = (await db.collection('users').doc(uid).get()).data() || {};
+    const carries = record => !!record && typeof record === 'object' && (record.uploadClaim === token || (Array.isArray(record.history) && record.history.some(entry => entry && entry.uploadClaim === token)));
+    return !BOOKS.some(key => (Array.isArray(user[key]) ? user[key] : []).some(carries));
 }
 
 /** Give the statement back (the record was deleted, the sender retired): the same file or month may be filed again. Only the holder's own keys go. */

@@ -155,6 +155,25 @@ describe('the upload door (POST /api/statement-guard)', () => {
         expect((await call({ action: 'release', id: 'upload:attempt-0001' })).body.released).toBe(2);
         expect((await call({ ...stmt, action: 'check' })).body.duplicate).toBe(false);
     });
+    it('a hand upload whose records the owner deleted gives its month back — but not while they exist, and not within ten minutes', async () => {
+        const claimed = async () => { await call({ ...stmt, action: 'claim', token: 'attempt-0001' }); return `users/u/${REGISTRY}/${identityOf({ bank: 'NTB', account: '0276', periodText: stmt.periodText }).id}`; };
+        const key = await claimed();
+        const old = (ms) => fs.data.set(key, { ...fs.data.get(key), createdAt: Date.now() - ms }), recent = Date.now() - 1000;
+        // records carrying the token exist: still held, however old the claim
+        old(3600_000); fs.data.set('users/u', { expenses: [{ id: 'e1', uploadClaim: 'attempt-0001' }] });
+        expect((await call({ ...stmt, sha256: sha('again'), action: 'check' })).body).toMatchObject({ duplicate: true, via: 'upload' });
+        // the owner deleted them, but the claim is fresh: the device may not have synced yet
+        fs.data.set('users/u', { expenses: [] }); fs.data.set(key, { ...fs.data.get(key), createdAt: recent });
+        expect((await call({ ...stmt, sha256: sha('again'), action: 'check' })).body.duplicate).toBe(true);
+        // deleted and old enough: given back, and the statement can be claimed again
+        old(3600_000);
+        expect((await call({ ...stmt, sha256: sha('again'), action: 'claim', token: 'attempt-0002' })).body).toMatchObject({ duplicate: false });
+        expect((await call({ ...stmt, sha256: sha('third'), action: 'check' })).body).toMatchObject({ duplicate: true, via: 'upload' });
+    });
+    it('a hold taken by the email door is never judged stale by this rule', async () => {
+        await claimStatement({ db: fs.db, uid: 'u', via: VIA.EMAIL, ref: `${MAIL}/items/s0`, identity: identityOf({ bank: 'NTB', account: '0276', dates: ['2026-09-14'] }), sha: sha('mailed'), now: 1 });
+        expect((await call({ ...stmt, action: 'check' })).body).toMatchObject({ duplicate: true, via: 'email' });
+    });
     it('answers 503 rather than a false "not a duplicate" when the registry cannot be read', async () => {
         fake.admin.firestore = () => ({ collection: () => { throw new Error('down'); } });
         expect((await call({ ...stmt, action: 'check' })).status).toBe(503);
@@ -238,7 +257,7 @@ describe('the wiring', () => {
         const { readFileSync } = await import('node:fs');
         const ai = readFileSync('wealthflow-ai-v4.js', 'utf8'), index = readFileSync('index.html', 'utf8'), cloud = readFileSync('wealthflow-statement-cloud.js', 'utf8');
         expect(ai).toContain('_wfStatementGuard().file(file)'); expect(ai).toContain('_wfGuardParsed(');
-        expect(index).toContain('window.WFStatementCloud.guard.claim(parsed._wfGuard)');
+        expect(index).toContain('window.WFStatementCloud.guard.claim(parsed._wfGuard)'); expect(index).toContain('uploadClaim: _uploadClaim');
         expect(cloud).toContain("request('/api/statement-guard','POST'");
     });
 });
