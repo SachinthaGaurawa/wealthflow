@@ -1,3 +1,4 @@
+import { inquiryFor } from './statement-merchants.mjs';
 import { isPhantomRow } from './statement-emptiness.mjs';
 import { applyCardSettlement } from './cc-fifo.mjs';
 import { createHash } from 'node:crypto';
@@ -130,7 +131,9 @@ function makeRecord(row, decision, context, id, now) {
         // a direction the page did not print, proven by the statement's own balances or by the row's words (statement-direction.mjs): said on the record, so it can be found
         ...(['statement', 'words'].includes(row.directionSource) ? { directionProof: row.directionSource } : {}) };
     const module = modules[decision.module];
-    if (module === 'expenses') return { ...base, desc, cat: decision.category, month: row.date.slice(0, 7), recurring: false, recurringType: '0', completed: true };
+    /* A merchant the rules could not place is filed WITH its question. The money is counted in the month it left (nothing is held back or dropped); only the label waits, and
+     * the app's Merchant review shows the owner the line, the candidates and how many rows one answer will settle. */
+    if (module === 'expenses') { const ask = decision.category === 'Other' ? inquiryFor(desc) : null; return { ...base, desc, cat: decision.category, month: row.date.slice(0, 7), recurring: false, recurringType: '0', completed: true, ...(ask ? { merchantReview: ask } : {}) }; }
     if (module === 'incomeRecv') return { ...base, name: desc, type: decision.category, month: row.date.slice(0, 7), received: true };
     if (module === 'ccPayments') return { ...base, desc };
     const deadline = new Date(row.date + 'T00:00:00Z'); deadline.setUTCDate(deadline.getUTCDate() + 50);

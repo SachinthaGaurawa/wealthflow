@@ -3296,8 +3296,8 @@
     },
     {
       "key": "sri lanka transport board",
-      "category": "Insurance",
-      "goesTo": "subscription",
+      "category": "Transport",
+      "goesTo": "expenses",
       "confidence": 0.95,
       "source": "ai-consensus"
     },
