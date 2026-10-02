@@ -34,6 +34,7 @@
     var LS_LEARN = 'wf_merchant_learned';
     var LS_UNKNOWN = 'wf_merchant_unknown';   // merchants seen in YOUR statements that nothing could identify
     var LS_PENDING = 'wf_merchant_pending';   // AI answers that did NOT clear the 0.95 gate — never written, shown for confirmation
+    var MAX_TRIES = 4;                        // a held merchant is asked again this many times, then it stays with the owner
     var AI_URL = '/api/ai';                   // your OWN endpoint — it already holds every AI key in Vercel
     var VERIFY_URL = '/api/verify';           // SEARCH-FIRST verification (Serper -> one fast LLM, cite-or-abstain)
     // TWO gates, deliberately different.
@@ -70,7 +71,12 @@
         /^crm\s+cash\s+deposit\s+/i, /^lanka\s+qr[\s-]+payment\s+(debit|credit)\s*/i, /^charge\s*-\s*(capitalise\s+)?/i,
         /^standing\s+order\s+/i, /^direct\s+debit\s+/i, /^online\s+(purchase|payment)\s+/i
     ];
-    function stripPrefix(desc) { var s = String(desc || '').trim(); for (var i = 0; i < PREFIXES.length; i++) s = s.replace(PREFIXES[i], ''); return s.trim(); }
+    /* A PAYMENT GATEWAY IS NOT A MERCHANT. "PAYME-VISA*KEELLS", "IPG*ARPICO", "PAYHERE*DARAZ", "PAYPAL *UBER", "SQ *BLUE BOTTLE" put the
+     * gateway's name where the shop's should be, with "*", "-", "/" or a space for a separator. The old prefix list knew banks'
+     * words only, so the gateway became part of the merchant's key and name ("payme visa keells"), the same shop learned a second
+     * time under a second key, and a line that carries ONLY a gateway ("PAYME-VISA*COLOMBO") came out as the merchant "Payme Visa". */
+    var RE_GATEWAY = /^(?:(?:payme|payhere|ipg|paypal|sq|square|stripe|2checkout|paddle|mpgs|ecom|ecommerce|visa|master|mastercard|txn|online)[\s*_\/.\-]+)+/i;
+    function stripPrefix(desc) { var s = String(desc || '').trim(); for (var i = 0; i < PREFIXES.length; i++) s = s.replace(PREFIXES[i], ''); return s.replace(RE_GATEWAY, '').trim(); }
 
     // ── FEE detector (must win before merchant matching) ───────────────────────
     var FEE_KWS = ['pos transaction fee', 'transaction fee', 'atm withdrawal fee', 'withdrawal fee', 'ceft charge', 'cefts charge', 'ceft charges', 'slips charge', 'slip charge', 'stamp duty', 'debit tax', 'service charge', 'maintenance fee', 'ledger fee', 'sms active fee', 'sms alert', 'sms charge', 'alert charge', 'active fee', 'fuel surcharge', 'card annual', 'annual fee', 'annual or maintenance', 'card fee', 'card replacement', 'over limit', 'overlimit', 'late fee', 'late payment', 'finance charge', 'interest charge', 'commission', 'processing fee', 'handling fee', 'e statement fee', 'estatement fee', 'statement fee', 'capitalise', 'capitalize', 'fallback fee', 'markup', 'mark up', 'conversion fee', 'cross border', 'reissue', 'pin reissue', 'joining fee', 'membership fee', 'cheque return', 'return fee', 'ledger', 'vat', 'nbt', 'sscl', 'cess', 'government levy', 'govt levy', 'levy', 'debit interest', 'credit interest',
@@ -185,10 +191,15 @@
         ['Utilities', ['water board', 'electricity', 'gas company']],
         ['Gym/Fitness', ['gym', 'fitness', 'health club', 'yoga']]
     ];
+    /* Words that say how a business TRADES, not what it SELLS. "ZXQ Traders", "Perera Enterprises", "Silva Stores" and "Lanka
+     * Distributors" can be a pharmacy, a hardware shop or a wholesaler; filing them as Shopping is a guess with a confident
+     * face, and the owner's rule is that a guess is never filed. They still give a SUGGESTION (the review card pre-selects it)
+     * but score below every gate, so the merchant is asked about rather than assumed. */
+    var WEAK_INDUSTRY = { traders: 1, enterprises: 1, stores: 1, distribut: 1, technolog: 1, communication: 1, cellular: 1, tex: 1, 'gift': 1, toy: 1, 'mart': 1, transport: 1, lounge: 1, hotel: 1, kitchen: 1, wine: 1, pub: 1, 'shoe': 1 };
     function industryOf(nd, gd) {
         for (var i = 0; i < INDUSTRY.length; i++) {
             var cat = INDUSTRY[i][0], toks = INDUSTRY[i][1];
-            for (var j = 0; j < toks.length; j++) { if (nd.indexOf(toks[j]) >= 0) return { category: cat, token: toks[j].trim() }; }
+            for (var j = 0; j < toks.length; j++) { if (nd.indexOf(toks[j]) >= 0) { var t = toks[j].trim(); return { category: cat, token: t, weak: !!WEAK_INDUSTRY[t] }; } }
         }
         return null;
     }
@@ -255,7 +266,10 @@
     // keep the first strong tokens.
     function merchantKey(desc) {
         var s = norm(stripPrefix(desc)).replace(/\b(colombo|kandy|kurunegala|kuliyapitiya|negombo|galle|matara|jaffna|gampaha|kaluthara|kalutara|dambulla|homagama|nugegoda|wellampitiya|ibbagamuwa|meerigama|mirigama|maharagama|moratuwa|panadura|ja ela|jaela|wattala|dehiwala|ratmalana|pvt|ltd|plc|private|limited|the|and)\b/g, ' ').replace(/\d{4,}/g, ' ').replace(/\s+/g, ' ').trim();
-        return s.split(' ').slice(0, 4).join(' ').trim();
+        var k = s.replace(/(?:^|\s+)\d{1,3}(?:\s+\d{1,3})*$/, '').split(' ').slice(0, 4).join(' ').trim();   // a trailing branch number is not part of the name
+        // nothing left but the gateway/city/number debris: key the line by what it literally says, so the SAME opaque line is one question, not none
+        if (!k) k = norm(desc).replace(/\b\d+\b/g, ' ').replace(/\s+/g, ' ').trim().split(' ').slice(0, 4).join(' ');
+        return k;
     }
 
     /* The owner's learned map, asked the way a person would ask it. Learned keys are the first four tokens of a
@@ -303,18 +317,46 @@
         return best;
     }
 
-    function _matchRegistry(nd, gd) {
+    /* Which keywords of the curated registry does this narration contain — ALL of them, not the first.
+     *
+     * The registry used to answer with the first category (in list order) that matched anything, and analyze() then
+     * called ambiguity() over the same list to say "ambiguous". The two disagreed in both directions:
+     *   · "Softlogic Life Insurance" matched 'softlogic' (Shopping) and 'insurance' (Insurance); the first-listed won
+     *     silently, and ambiguity() raised a false alarm because a SHORTER keyword sat inside a longer one;
+     *   · "Dialog Fibre" matched Telecom and Internet, two names for one recurring bill, and was queued for the web
+     *     and the AI board as if nobody knew what it was.
+     * The rule now is the one a person applies: the MOST SPECIFIC keyword wins; a rival is dismissed when its keyword is
+     * only part of the winner's ("softlogic" inside "softlogic life") or is the same family of bill (Telecom/Internet);
+     * what is left is a real conflict, and the answer says so instead of picking one. */
+    var FAMILY = { Telecom: 'net', Internet: 'net' };
+    function _famOf(cat) { return FAMILY[cat] || cat; }
+    function _registryHits(nd, gd) {
+        var hits = [];
         for (var i = 0; i < REGISTRY.length; i++) {
             var cat = REGISTRY[i][0], kws = REGISTRY[i][1];
             for (var j = 0; j < kws.length; j++) {
                 // hasKey applies the SAME rules everywhere: a short single word needs a
                 // word boundary (so "spar" can't fire inside "SPARe part" and "jewell"
                 // can't fire inside "JEWELLers"), long keys tolerate bank truncation.
-                if (hasKey(nd, gd, kws[j])) return { category: cat, keyword: kws[j] };
+                if (hasKey(nd, gd, kws[j])) { hits.push({ category: cat, keyword: kws[j], len: glue(kws[j]).length }); }
             }
         }
-        return null;
+        return hits;
     }
+    function _settle(hits) {
+        if (!hits.length) return null;
+        var win = hits[0];
+        for (var i = 1; i < hits.length; i++) if (hits[i].len > win.len) win = hits[i];
+        var wg = glue(win.keyword), rivals = {};
+        hits.forEach(function (h) {
+            if (_famOf(h.category) === _famOf(win.category)) return;
+            var hg = glue(h.keyword);
+            if (hg !== wg && wg.indexOf(hg) >= 0) return;          // a part of the winner's own name
+            rivals[h.category] = 1;
+        });
+        return { category: win.category, keyword: win.keyword, rivals: Object.keys(rivals) };
+    }
+    function _matchRegistry(nd, gd) { return _settle(_registryHits(nd, gd)); }
 
     // ── the classifier ─────────────────────────────────────────────────────────
     // ── what KIND of money-in is this? ───────────────────────────────────────
@@ -563,9 +605,18 @@
             out.reason = 'mobile number → Telecom (Subscriptions)'; return out;
         }
 
-        // 5) curated merchant registry
+        // 5) curated merchant registry — unless the auto-updated list holds a MORE SPECIFIC name for the same text
+        //    ("airtel wifi" is Internet; the registry only knows "airtel"), and never a silent pick between rivals
+        var remFirst = reg ? _matchFlat(nd, gd) : null;
+        if (remFirst && glue(remFirst.key).length > glue(reg.keyword).length && glue(remFirst.key).indexOf(glue(reg.keyword)) >= 0) reg = { category: remFirst.category, keyword: 'remote:' + remFirst.key, rivals: [], remote: remFirst };
         if (reg) {
             out.category = reg.category; out.matched = reg.keyword; out.confidence = 0.9;
+            if (reg.rivals && reg.rivals.length) {
+                // two different kinds of business fit equally well: say so, below every gate, and let analyze() ask
+                out.confidence = 0.6; out.ambiguous = [reg.category].concat(reg.rivals);
+                out.goesTo = SUB_CATS[reg.category] ? 'subscription' : 'expenses';
+                out.reason = 'fits ' + out.ambiguous.join(' / ') + ' equally — not guessed'; return out;
+            }
             if (SUB_CATS[reg.category]) {
                 out.goesTo = 'subscription'; out.subName = _subName(raw, reg.category, reg.keyword); out.subPhone = ph || '';
                 out.reason = reg.category + ' → Subscriptions (recurring)';
@@ -590,7 +641,8 @@
         //     what covers merchants that are on NO list anywhere.
         var ind = industryOf(nd, gd);
         if (ind) {
-            out.category = ind.category; out.matched = 'industry:' + ind.token; out.confidence = 0.95;
+            out.category = ind.category; out.matched = 'industry:' + ind.token; out.confidence = ind.weak ? 0.6 : 0.95;
+            if (ind.weak) { out.weak = true; out.goesTo = SUB_CATS[ind.category] ? 'subscription' : 'expenses'; out.reason = ind.category + '? "' + ind.token + '" says how it trades, not what it sells — not guessed'; return out; }
             if (SUB_CATS[ind.category]) { out.goesTo = 'subscription'; out.subName = _subName(raw, ind.category, null); out.subPhone = ph || ''; out.reason = ind.category + ' → Subscriptions (industry: ' + ind.token + ')'; }
             else { out.goesTo = 'expenses'; out.type = ind.category === 'Fuel' ? 'fuel' : 'purchase'; out.reason = ind.category + ' → Expenses (industry: ' + ind.token + ')'; }
             return out;
@@ -711,29 +763,29 @@
 
     // Stage 1 — ISOLATION PASS: strip transaction noise, POS/terminal codes, city
     // suffixes, customer ids and trailing reference numbers → the core entity only.
-    var CITIES = /\b(colombo|kandy|kurunegala|kuliyapitiya|kuliyapit|negombo|galle|matara|jaffna|gampaha|nugegoda|dehiwala|moratuwa|maharagama|kalutara|kaluthara|panadura|ratnapura|badulla|anuradhapura|dambulla|homagama|meerigama|mattegoda|wellampitiya|ibbagamuwa|kadawatha|malabe|piliyandala|singapore|london)\b/g;
+    var CITIES = /\b(colombo|kandy|kurunegala|kuliyapitiya|kuliyapit|negombo|galle|matara|jaffna|gampaha|nugegoda|dehiwala|moratuwa|maharagama|kalutara|kaluthara|panadura|ratnapura|badulla|anuradhapura|dambulla|homagama|meerigama|mirigama|wattala|ratmalana|jaela|mattegoda|wellampitiya|ibbagamuwa|kadawatha|malabe|piliyandala|singapore|london)\b/g;
     function isolate(raw) {
         var t = norm(raw);
         t = stripPrefix(t);
         t = t.replace(/\b(pos|ib|ceft|slips|crm|atm|dcc)\b/g, ' ');
+        t = t.replace(/\b(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{8,}\b/g, ' ');   // gateway reference blobs ("2k4ty1qr0", "ab12cd34")
         t = t.replace(/\b\d{4,}\b/g, ' ');            // terminal / customer / reference numbers
         t = t.replace(/\b\d{1,2}\b/g, ' ');           // "colombo 03"
         t = t.replace(CITIES, ' ');
         t = t.replace(/\b(pvt|pv|ltd|lt|plc|limited|private|company|co)\b/g, ' ');
         // the bank's own verbs are not part of anyone's name
         t = t.replace(/\b(charges?|payment|payments|transfer|bill|withdrawal|deposit|debit|credit|outward|inward|transaction|purchase|fee|fees)\b/g, ' ');
+        t = t.replace(/\b(lk|lka|sg|us|usa|gb|uk|ae|au)\s*$/, ' ');   // the country the terminal printed
         return t.replace(/\s+/g, ' ').trim();
     }
+    // A line that names a gateway, a city and a country but NO shop: nothing in it can be identified by anyone, so nothing is asked of the web or the AI.
+    function gatewayOnly(raw) { return !isolate(raw) && !phoneOf(raw); }
 
     // Stage 4 — SELF-CORRECTION AUDIT: could this string honestly belong to more than
     // one category? If yes we REFUSE to be confident and demand external verification.
     function ambiguity(nd, gd) {
-        var hits = {}, n = 0;
-        for (var i = 0; i < REGISTRY.length; i++) {
-            var cat = REGISTRY[i][0], kws = REGISTRY[i][1];
-            for (var j = 0; j < kws.length; j++) { if (hasKey(nd, gd, kws[j])) { if (!hits[cat]) { hits[cat] = 1; n++; } break; } }
-        }
-        return n > 1 ? Object.keys(hits) : null;
+        var r = _settle(_registryHits(nd, gd));
+        return r && r.rivals.length ? [r.category].concat(r.rivals) : null;
     }
 
     // The full four-stage analysis, in the exact contract the system spec defines.
@@ -745,10 +797,17 @@
         var amb = ambiguity(nd, gd);
         var conf = c.confidence || 0;
         var action;
-        if (amb && conf < 1) { conf = Math.min(conf, 0.6); action = ACTION.SEARCH; }
+        /* WHAT "NEEDS A SEARCH" MEANS. It used to mean "scored under the 0.95 write gate", and the curated registry scores 0.9 — so
+         * Keells, Cargills, Odel, every pharmacy and every bakery the app KNEW was reported AMBIGUOUS_REQUIRES_SEARCH, queued as an
+         * unknown merchant, sent to the web and to the AI board, and — whenever the providers were out of quota — put in front of
+         * the owner as a question. (Measured: 747 of the 950 merchants in merchants.json.) The 0.95 gate is about what may be WRITTEN
+         * to the learned map; deciding is a different matter. A name the rules identified, and that fits no rival, is matched. */
+        if ((amb || (c.ambiguous && c.ambiguous.length)) && conf < 1) { conf = Math.min(conf, 0.6); amb = amb || c.ambiguous; action = ACTION.SEARCH; }
         else if (!c.category) { conf = 0; action = ACTION.SEARCH; }
         else if (/^(learned|remote):/.test(c.matched || '')) action = ACTION.MATCHED;
+        else if (c.weak) action = ACTION.SEARCH;
         else if (conf >= WRITE_GATE) action = ACTION.NEW;
+        else if (conf >= 0.85) action = ACTION.MATCHED;
         else action = ACTION.SEARCH;
         return {
             raw_transaction_string: raw,
@@ -774,10 +833,20 @@
             var q = _loadQ(LS_UNKNOWN);
             if (q.some(function (x) { return x.key === key; })) return null;
             if (_loadQ(LS_PENDING).some(function (h) { return h.key === key; })) return null;   // already with the owner
+            if (gatewayOnly(desc)) return holdForOwner(key, desc, 'the line names only a payment gateway, not the shop, so no search can identify it — tell us what it was');
             q.push({ key: key, raw: String(desc || '').slice(0, 120), name: a.isolated_merchant_name, at: Date.now() });
             _saveQ(LS_UNKNOWN, q);
             return key;
         } catch (_) { return null; }
+    }
+    /* A merchant NOTHING can identify goes to the owner at once, with its raw line, and is never sent to the web or the AI board (those would
+     * be asked to identify "PAYME VISA" — and the quota they spend is the quota the real questions need). tries = MAX_TRIES so it is not retried. */
+    function holdForOwner(key, desc, reason, alts) {
+        var hold = _loadQ(LS_PENDING);
+        if (hold.some(function (h) { return h.key === key; })) return null;
+        hold.push({ key: key, raw: String(desc || '').slice(0, 120), merchant: _title(isolate(desc)) || key, type: alts && alts[0] ? alts[0].category : '', goesTo: 'expenses', confidence: 0, alternatives: alts || [], evidence: [], industry: '', why: 'no-evidence', reason: reason, tries: MAX_TRIES, nextAt: 0, at: Date.now() });
+        _saveQ(LS_PENDING, hold);
+        return key;
     }
     function unknowns() { return _loadQ(LS_UNKNOWN); }
     function pending() { return _loadQ(LS_PENDING); }
@@ -979,7 +1048,6 @@
     }
     // A held merchant whose next attempt is due is asked again (the web changes, engines come back, search gets
     // configured). Once it has been tried MAX_TRIES times it stays with the owner and is not asked again.
-    var MAX_TRIES = 4;
     function reconsider(limit) {
         try {
             var now = Date.now(), hold = _loadQ(LS_PENDING), due = hold.filter(function (h) { return (h.tries || 1) < MAX_TRIES && (+h.nextAt || 0) <= now; }).slice(0, Math.max(1, Math.min(6, limit || 4)));
@@ -1049,6 +1117,7 @@
      * applied at once; what is still unknown joins the queue and is settled by the web and the AI board; what stays
      * hard waits for the owner, is tried again later, and is applied to every matching row the moment it is answered.
      * It never touches a row the owner entered or one that already has a real category. */
+    var SERVER_TO_APP = { Entertainment: 'Streaming', Subscriptions: 'Software', 'Personal Care': 'Gym/Fitness' };   // the email pipeline's names for two of this module's categories
     var GENERIC = { '': 1, other: 1, others: 1, uncategorized: 1, uncategorised: 1, 'card purchase': 1 };
     var TARGETS = [{ key: 'expenses', field: 'cat', dest: 'expenses' }, { key: 'cconetime', field: 'category', dest: 'cc' }, { key: 'ccinstall', field: 'category', dest: 'cc' }];
     function _generic(c) { return !!GENERIC[String(c == null ? '' : c).trim().toLowerCase()]; }
@@ -1076,6 +1145,7 @@
                 if (!c.category || c.confidence < 0.85 || c.goesTo === 'cc_payment' || c.category === 'Card Payment' || _generic(c.category)) return;
                 if (c.goesTo === 'subscription' && t.key === 'expenses' && !VALID_CATS[c.category]) return;
                 rec[t.field] = c.category; rec.categorySource = 'merchant-engine'; dirty = true; changed++;
+                if (rec.merchantReview && rec.merchantReview.state === 'open') rec.merchantReview.state = 'resolved';
             });
             if (dirty) { try { _db().set(t.key, arr); } catch (_) {} }
         });
@@ -1089,6 +1159,14 @@
                 if (n >= (max || 40) || !_fromStatement(rec) || !_generic(rec[t.field])) return;
                 var desc = _descOf(rec), k = merchantKey(desc), c = _core(_tokens(desc)), id = c ? c.join(' ') : k;
                 if (!k || seen[id]) return; seen[id] = 1;   // one question per business, however many narrations it has
+                // The email pipeline already tried this line (statement-merchants.mjs) and filed it under "Other" WITH its question: a line that names no merchant,
+                // or fits two kinds of business, goes straight to the owner with the candidates — the web and the AI board cannot add to either.
+                var mr = rec.merchantReview;
+                if (mr && mr.state === 'open' && (mr.reason === 'no-merchant-name' || mr.reason === 'ambiguous')) {
+                    var alts = (mr.candidates || []).map(function (c) { return SERVER_TO_APP[c] || c; }).filter(function (c) { return VALID_CATS[c]; }).map(function (c) { return { source: 'rules', category: c, conf: 0.6 }; });
+                    if (holdForOwner(k, desc, mr.reason === 'ambiguous' ? 'the text fits more than one category and was not guessed' : 'the line names only a payment gateway or a place, not the shop — tell us what it was', alts)) n++;
+                    return;
+                }
                 if (discover(desc, 'debit')) n++;
             });
         });
@@ -1150,6 +1228,6 @@
     try { _setRemote(_loadRemoteCache()); } catch (_) {}   // hydrate last verified list immediately
     try { verify(); } catch (_) {}                          // heal any learned conflicts on load
     try { if (typeof fetch === 'function') syncRemote(); } catch (_) {}   // refresh in the background (throttled)
-    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, CATEGORIES: CATEGORIES, forgetLearned: _forgetLearned, reconsider: reconsider, autopilot: autopilot, applyLearned: applyLearned, impact: impact, autonomy: autonomy, _learnedHit: _learnedHit, SYS: SYS, _clsForget: _clsForget, _clsStats: _clsStats, epoch: epoch, VERSION: VERSION };
+    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, gatewayOnly: gatewayOnly, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, CATEGORIES: CATEGORIES, forgetLearned: _forgetLearned, reconsider: reconsider, autopilot: autopilot, applyLearned: applyLearned, impact: impact, autonomy: autonomy, _learnedHit: _learnedHit, SYS: SYS, _clsForget: _clsForget, _clsStats: _clsStats, epoch: epoch, VERSION: VERSION };
     try { root.console && root.console.log('[WFMerchants] ✓ v' + VERSION + ' — ' + stats().seedKeywords + ' merchant signals across ' + REGISTRY.length + ' categories'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);

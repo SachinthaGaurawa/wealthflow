@@ -546,7 +546,11 @@ export const BUDGETS = {
     // gains 'account balance', 'b/f' and 'a/c'; wealthflow-merchants.js paces its AI board calls two at a time. ~0.15% headroom.
     // Raised from 1_993_000 / 214_000 for the statement registry's two doors: the upload screen's check-and-claim calls (wealthflow-ai-v4.js, wealthflow-statement-cloud.js).
     // Measured 1,997,673 total; largest module 215,954. No module or script tag added.
-    totalJsBytes: 2_000_000,
+    // Raised from 2_000_000 (measured 1,998,852) to 2_010_000 (measured 2,007,884) for the merchant engine in wealthflow-merchants.js: +9 KB, of which about 4 KB is
+    // code (most-specific-name-wins with a declared ambiguity, the gateway/terminal wrappers stripped from a merchant's key, a line that names no shop going straight to
+    // the owner without a web search or an AI call, and the email pipeline's question picked up from the filed row) and the rest is the comments recording WHY. No module
+    // and no request were added: the 950-merchant list the email pipeline now uses lives in statement-merchants.mjs, which is server-only and never reaches the page.
+    totalJsBytes: 2_010_000,
     largestModuleBytes: 217_000, // measured 215,954
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
