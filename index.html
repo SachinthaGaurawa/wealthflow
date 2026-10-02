@@ -6356,6 +6356,7 @@
                                 <div class="card-title">📊 Your Financial Profile</div>
                                 <div class="card-sub">Income & Expenses Data</div>
                             </div>
+                            <div id="dscrBasis" style="font-size:11px;color:var(--text3);line-height:1.5;margin:-4px 0 12px;"></div>
 
                             <div
                                 style="background:var(--bg2);border-radius:var(--r2);padding:14px;margin-bottom:14px;border:1px solid var(--border);">
@@ -6371,7 +6372,7 @@
                                         data-val="0">
                                     <button class="btn btn-ghost btn-sm"
                                         style="color:var(--red);border-color:rgba(239,68,68,.3);padding:6px 10px;"
-                                        onclick="$('dscrSysIncome').value=''; $('dscrSysIncome').dataset.val='0'; calcDSCR();"
+                                        onclick="_dscrClearSystem('dscrSysIncome')"
                                         title="Clear system income">✕ Clear</button>
                                 </div>
                                 <input class="fi money-input" id="dscrCustIncome"
@@ -6383,7 +6384,7 @@
                                 style="background:var(--bg2);border-radius:var(--r2);padding:14px;margin-bottom:14px;border:1px solid var(--border);">
                                 <div
                                     style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">
-                                    📉 Monthly Operating Expenses (LKR)</div>
+                                    📉 Monthly Operating Expenses (LKR) <span style="text-transform:none;letter-spacing:0;font-weight:500;color:var(--text3);">· living costs only — loan and card instalments are in the box below</span></div>
                                 <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
                                     <button class="btn btn-secondary btn-sm" style="white-space:nowrap;"
                                         onclick="loadSystemOpexAvg()">🔄 System 1-Yr Avg</button>
@@ -6393,7 +6394,7 @@
                                         data-val="0">
                                     <button class="btn btn-ghost btn-sm"
                                         style="color:var(--red);border-color:rgba(239,68,68,.3);padding:6px 10px;"
-                                        onclick="$('dscrSysOpex').value=''; $('dscrSysOpex').dataset.val='0'; calcDSCR();"
+                                        onclick="_dscrClearSystem('dscrSysOpex')"
                                         title="Clear system opex">✕ Clear</button>
                                 </div>
                                 <input class="fi money-input" id="dscrCustOpex"
@@ -6536,7 +6537,7 @@
                 <div class="page" id="page-score">
                     <div class="sh">
                         <div class="sh-title">🏆 WealthFlow Score</div>
-                        <div class="sh-actions"><button class="btn btn-primary btn-sm" onclick="renderWFScore()">🔄
+                        <div class="sh-actions"><button class="btn btn-primary btn-sm" onclick="renderWFScore(true)">🔄
                                 Recalculate</button></div>
                     </div>
                     <div id="scoreContent"></div>
@@ -6608,8 +6609,12 @@
                                 <div class="fg"><label class="fl">Inflation Rate (%)</label><input class="fi"
                                         id="mcInflation" type="number" value="8" step="0.5"></div>
                             </div>
-                            <div class="fg"><label class="fl">Simulations</label><input class="fi" id="mcRuns"
-                                    type="number" value="500" min="100" max="2000"></div>
+                            <div class="fr">
+                                <div class="fg"><label class="fl">Starting Wealth (LKR)</label><input
+                                        class="fi money-input" id="mcStart" placeholder="Cash + investments, auto"></div>
+                                <div class="fg"><label class="fl">Simulations</label><input class="fi" id="mcRuns"
+                                        type="number" value="500" min="100" max="2000"></div>
+                            </div>
                         </div>
                         <div class="card">
                             <div class="card-header">
@@ -6691,6 +6696,12 @@
                                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><span
                                         style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f5a623;box-shadow:0 0 8px #f5a623;"></span>
                                     Living expenses</div>
+                                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><span
+                                        style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#a78bfa;box-shadow:0 0 8px #a78bfa;"></span>
+                                    Subscriptions / bills</div>
+                                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><span
+                                        style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#22d3ee;box-shadow:0 0 8px #22d3ee;"></span>
+                                    Cheques cleared</div>
                                 <div style="display:flex;align-items:center;gap:6px;"><span
                                         style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3b82f6;box-shadow:0 0 8px #3b82f6;"></span>
                                     Targets / savings</div>
@@ -11633,13 +11644,13 @@ Be conversational and precise.`;
         // Build rich user financial context for AI
         function buildFinancialContext() {
             const income = DB.get('income');
-            const expenses = DB.get('expenses');
             const loans = DB.get('loans');
             const targets = DB.get('targets');
-            const balData = DB.getObj('balance', { total: 0 });
             const now = new Date();
             const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
 
+            /* INCOME AND SPENDING ARE THE OWNER'S BOOKS (see _wfBooksProfile), not the Investments list and this month's hand-typed expenses: those left out the salary the statements and the Income
+             * page hold, and every card charge, subscription, cheque and installment. The Investments list is read only as a last resort, for a household whose only record of income is there. */
             const activeIncome = income.filter(s => {
                 // Missing/invalid start date → treat as active (don't silently
                 // drop the income, which made counts wrong & hid it from the AI).
@@ -11649,16 +11660,17 @@ Be conversational and precise.`;
                 const end = s.end ? new Date(s.end + 'T00:00:00') : null;
                 return start <= now && (!end || (end >= now));
             });
-            const totalIncome = activeIncome.reduce((s, x) => s + (x.monthly || 0), 0);
-            const curExpenses = expenses.filter(e => e.month === curMonthStr);
-            const totalExp = curExpenses.reduce((s, x) => s + (x.amount || 0), 0);
+            const investmentIncome = activeIncome.reduce((s, x) => s + (x.monthly || 0), 0);
+            const prof = _wfBooksProfile(now), pos = _wfPosition(now);
+            const fromBooks = prof.basis.kind !== 'none' && prof.avgIncome > 0;
+            const totalIncome = fromBooks ? prof.avgIncome : investmentIncome;
+            const totalExp = prof.thisMonth.living;                     // this month so far, without the debt payments (listed on their own line)
             const activeLoans = loans.filter(l => loanEndDate(l) > now);
-            const totalLoanPay = _wfLoanDueNow(activeLoans, curMonthStr);   // an installment a bank debit already counts is not added again
-            const netCash = totalIncome - totalExp - totalLoanPay;
-            const balTotal = balData.total || 0;
+            const totalLoanPay = pos.minimums;                          // what the loans and card installment plans ask every month
+            const netCash = prof.basis.kind !== 'none' ? _wfFreeCash(prof, pos, totalIncome) : totalIncome - totalExp - totalLoanPay;
+            const balTotal = pos.cash;
 
-            const expByCategory = {};
-            curExpenses.forEach(e => { expByCategory[e.category] = (expByCategory[e.category] || 0) + e.amount; });
+            const expByCategory = prof.basis.kind !== 'none' ? Object.fromEntries(Object.entries(prof.avgCats).map(([k, v]) => [k, Math.round(v)])) : {};
 
             // ── extra data so the advisor knows EVERYTHING the user has ──
             let cribSummary = '';
@@ -11676,19 +11688,18 @@ Be conversational and precise.`;
                 subsCount = subs.length;
                 subsMonthly = subs.reduce((s, x) => s + (x.amount || x.monthly || 0), 0);
             } catch (_) {}
-            try {
-                const cconetime = DB.get('cconetime') || [];
-                ccPending = cconetime.filter(c => !c.paid).reduce((s, x) => s + (x.amount || 0), 0);
-            } catch (_) {}
+            try { ccPending = pos.cardOwed; } catch (_) {}
 
             return {
                 userName: currentUser ? (currentUser.displayName || 'User') : 'User',
                 totalMonthlyIncome: totalIncome,
                 thisMonthExpenses: totalExp,
+                avgMonthlyExpenses: prof.avgLiving,                    // what living costs in a typical month (debt payments apart)
+                avgMonthlyOutgo: prof.avgOutgo,                        // everything that goes out in a typical month, debt payments included
                 monthlyLoanPayments: totalLoanPay,
                 netMonthlyCashFlow: netCash,
                 balanceOnHand: balTotal,
-                incomeSources: activeIncome.length,
+                incomeSources: fromBooks ? Object.keys(prof.incomeTypes).length : activeIncome.length,
                 activeLoans: activeLoans.length,
                 savingsTargets: targets.length,
                 expenseByCategory: expByCategory,
@@ -11697,7 +11708,7 @@ Be conversational and precise.`;
                 subscriptionsMonthly: subsMonthly,
                 ccOneTimePending: ccPending,
                 cribSummary: cribSummary,
-                incomeDetails: activeIncome.map(i => `${_wfEsc(i.name)}: LKR ${(i.monthly || 0).toLocaleString()}`).join(', '),
+                incomeDetails: fromBooks ? Object.entries(prof.incomeTypes).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${_wfEsc(k)}: LKR ${Math.round(v).toLocaleString()}`).join(', ') : activeIncome.map(i => `${_wfEsc(i.name)}: LKR ${(i.monthly || 0).toLocaleString()}`).join(', '),
                 loanDetails: activeLoans.map(l => `${_wfEsc(l.name)}: LKR ${(l.monthly || 0).toLocaleString()}/mo`).join(', '),
                 targetDetails: targets.map(t => {
                     const saved = t.savings ? t.savings.reduce((a, b) => a + b.amount, 0) : 0;
@@ -18149,6 +18160,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
         // ==================== MATH & LOGIC ====================
         function calcEMI(principal, annualRate, months) {
+            // no loan, or no term yet (an empty form): there is no installment — it was 0/0 = NaN, which made every ratio built on it NaN
+            if (!(principal > 0) || !(months > 0)) return 0;
             if (annualRate === 0) return principal / months;
             const r = annualRate / 100 / 12;
             return principal * r * Math.pow(1 + r, months) / (Math.pow(1 + r, months) - 1);
@@ -27692,10 +27705,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             });
             const ym = `${year}-${p2(month + 1)}`;
-            let expTotal = 0, expItems = [];
+            let expTotal = 0, expItems = [], expDebt = 0;   // expDebt: the part of the expenses that is a loan installment paid from the bank (a debit tied to a loan) — debt service, not living costs
             (DB.get('expenses') || []).forEach(e => {
                 if (!e || future) return;   // an expense of a month that has not come is a plan, not something spent
-                if (e.month === ym || (e.recurring && e.month <= ym)) { expTotal += (e.amount || 0); expItems.push({ name: e.desc, cat: e.cat, amount: (e.amount || 0) }); }
+                if (e.month === ym || (e.recurring && e.month <= ym)) { expTotal += (e.amount || 0); if (e.loanLink || e.cat === 'Loan Repayment') expDebt += (e.amount || 0); expItems.push({ name: e.desc, cat: e.cat, amount: (e.amount || 0), debt: !!(e.loanLink || e.cat === 'Loan Repayment') }); }
             });
 
             // ── v7.4.0: include CC One-Time payments, Subscriptions and
@@ -27760,13 +27773,113 @@ table.amort tbody tr { page-break-inside: avoid; }
             });
 
             const totalExp = loanTotal + ccTotal + expTotal + ccotTotal + subTotal + cheTotal;
+            // what went to repaying debt this month (loan installments, wherever they were paid from, and card installment plans) and what was left for living: the two the debt tools must not mix
+            const debtService = loanTotal + ccTotal + expDebt;
             return {
                 income, incomePending, loanTotal, loanUnpaid, loanDueItems, ccTotal, expTotal,
                 ccotTotal, subTotal, cheTotal,
+                expDebt, debtService, living: totalExp - debtService,
                 totalExp, balance: income - totalExp,
                 loanItems, ccItems2, expItems,
                 ccotItems, subItems, cheItems
             };
+        }
+
+        /* WHAT A TYPICAL MONTH LOOKS LIKE IN THE OWNER'S OWN BOOKS — the one place the analysis tools read it from.
+         *
+         * DSCR, the WealthFlow Score, the Debt Demolisher, the Wealth Simulator, the 3D Cash Flow and the AI advisor each used to take their own reading of "income" and "expenses":
+         * the Investments list (a different thing: the money an investment is expected to pay, which the books deliberately leave out), this month's hand-typed expenses only (no card
+         * charges, subscriptions, cheques, installments), and a balance typed once. The owner's salary and spending — what the statements and the Income page hold — never reached them.
+         *
+         * Here it is, from the same getMonthlyData the dashboard totals with (so no screen can disagree with another), over the twelve COMPLETE months before this one: a month in progress
+         * is not a month. Income is averaged over the months that have income in them and outgoings over the months that have outgoings, so a month whose statement has not arrived
+         * does not drag the other down. The debt service (loan installments wherever they were paid from, card installment plans) is kept apart from living costs, because a debt-coverage
+         * ratio divides one by the other and must not count the installments in both. With no complete month at all, this month so far is used and says so. */
+        function _wfBooksProfile(now) {
+            now = now || new Date();
+            const cy = now.getFullYear(), cm = now.getMonth();
+            const rows = [], typesBy = {};
+            (DB.get('incomeRecv') || []).forEach(r => {
+                if (!r || r.received === false) return;                 // money that has not arrived is not income yet (the same rule as getMonthlyData)
+                const k = r.month || String(r.date || '').slice(0, 7), t = String(r.type || r.source || 'Other').trim() || 'Other';
+                if (k) { typesBy[k] = typesBy[k] || {}; typesBy[k][t] = (typesBy[k][t] || 0) + (+r.amount || 0); }
+            });
+            for (let i = 12; i >= 1; i--) {
+                let y = cy, m = cm - i;
+                while (m < 0) { m += 12; y -= 1; }
+                const d = getMonthlyData(y, m);
+                const cats = {};
+                [d.expItems, d.ccotItems, d.subItems, d.cheItems].forEach(list => (list || []).forEach(x => { const c = x.cat || 'Other'; cats[c] = (cats[c] || 0) + (+x.amount || 0); }));
+                rows.push({ key: y + '-' + p2(m + 1), income: d.income, outgo: d.totalExp, debt: d.debtService, living: d.living, cats, types: typesBy[y + '-' + p2(m + 1)] || {} });
+            }
+            const mean = (list, pick) => (list.length ? list.reduce((a, r) => a + pick(r), 0) / list.length : 0);
+            const incMonths = rows.filter(r => r.income > 0), outMonths = rows.filter(r => r.outgo > 0);
+            let kind = incMonths.length || outMonths.length ? 'average' : 'none', thisKey = cy + '-' + p2(cm + 1);
+            const cur = getMonthlyData(cy, cm);
+            let avgIncome = mean(incMonths, r => r.income), avgOutgo = mean(outMonths, r => r.outgo);
+            let avgDebt = mean(outMonths, r => r.debt), avgLiving = mean(outMonths, r => r.living);
+            if (kind === 'none' && (cur.income > 0 || cur.totalExp > 0)) {
+                kind = 'this-month'; avgIncome = cur.income; avgOutgo = cur.totalExp; avgDebt = cur.debtService; avgLiving = cur.living;
+            }
+            const keys = rows.filter(r => r.income > 0 || r.outgo > 0).map(r => r.key);
+            const incomeTypes = {};                                      // each kind of income (Salary, Rental, …) and what it brings in a month, on average
+            (kind === 'this-month' ? [{ types: typesBy[thisKey] || {} }] : incMonths).forEach(r => Object.keys(r.types).forEach(t => { incomeTypes[t] = (incomeTypes[t] || 0) + r.types[t] / (kind === 'this-month' ? 1 : incMonths.length); }));
+            const avgCats = {}, spendMonths = kind === 'this-month' ? 1 : outMonths.length;
+            (kind === 'this-month' ? [{ cats: (() => { const c = {}; [cur.expItems, cur.ccotItems, cur.subItems, cur.cheItems].forEach(list => (list || []).forEach(x => { const k = x.cat || 'Other'; c[k] = (c[k] || 0) + (+x.amount || 0); })); return c; })() }] : outMonths).forEach(r => Object.keys(r.cats).forEach(k => { avgCats[k] = (avgCats[k] || 0) + r.cats[k] / spendMonths; }));
+            return {
+                basis: { kind, incomeMonths: kind === 'this-month' ? 1 : incMonths.length, outgoMonths: kind === 'this-month' ? 1 : outMonths.length, from: keys[0] || '', to: keys[keys.length - 1] || '' },
+                avgIncome, avgOutgo, avgDebtService: avgDebt, avgLiving, avgCats, incomeTypes, surplus: avgIncome - avgOutgo,
+                thisMonth: { key: thisKey, income: cur.income, outgo: cur.totalExp, debt: cur.debtService, living: cur.living },
+                months: rows
+            };
+        }
+
+        /* THE INSTALLMENT A LOAN ASKS THIS MONTH. For an EMI loan it is the monthly figure; for a reducing-balance loan it is the payment the schedule works out for this month from the balance
+         * (the static `monthly` is only the first payment) — the figure the bank's CRIB shows now, which is what a debt-coverage ratio and the monthly debt payments must use. */
+        function _wfLoanEmiNow(l, now) {
+            try {
+                if (_loanMethod(l) === 'reducing') {
+                    const key = (now || new Date()).getFullYear() + '-' + p2((now || new Date()).getMonth() + 1);
+                    const v = _scheduledPaymentFor(l, _loanBalanceBeforeMonth(l, key));
+                    if (v > 0) return v;
+                }
+            } catch (_) { /* fall back to the stored installment */ }
+            return +l.monthly || 0;
+        }
+
+        /* WHAT THE OWNER HAS AND OWES TODAY: cash on hand as the Balance page shows it (the total typed, less what went out and plus what came in), the money in investments, what is saved towards
+         * goals, and every debt — loan balances, what is left of the card installment plans, and card charges not yet paid. */
+        function _wfPosition(now) {
+            now = now || new Date();
+            const bal = DB.getObj('balance', { total: 0, flows: [] });
+            let cash = 0;
+            try { cash = (window.WFCashflow && window.WFCashflow.openingBalance) ? window.WFCashflow.openingBalance({ balance: bal }) : (+bal.total || 0); } catch (_) { cash = +bal.total || 0; }
+            const loansLeft = (DB.get('loans') || []).filter(l => l && loanEndDate(l) > now).reduce((a, l) => a + Math.max(0, loanCurrentBalance(l) || 0), 0);
+            const plans = (DB.get('ccinstall') || []).filter(c => c && !c.completed);
+            const planLeft = plans.reduce((a, c) => { const left = (c.duration || 0) - (cciProgress(c).paid || 0); return a + (left > 0 ? (c.monthly || 0) * left : 0); }, 0);
+            const cardOwed = (DB.get('cconetime') || []).filter(c => c && !c.paid).reduce((a, c) => a + (c.combinedTotal != null ? +c.combinedTotal || 0 : (+c.amount || 0) + (+c.serviceFee || 0)), 0);
+            const invested = (DB.get('income') || []).filter(i => i && (!i.end || new Date(i.end + 'T00:00:00') >= now)).reduce((a, i) => a + (+i.amount || 0), 0);
+            const goals = (DB.get('targets') || []).reduce((a, t) => a + (t.savings || []).reduce((b, x) => b + (+x.amount || 0), 0), 0);
+            // what the loans and card plans schedule each month: a FLOOR for the debt payments (used as max(paid, scheduled) — never added to the month's outgoings, which already hold what was paid)
+            let minimums = 0;
+            for (const l of (DB.get('loans') || [])) if (l && loanEndDate(l) > now) minimums += _wfLoanEmiNow(l, now);
+            for (const c of plans) minimums += +c.monthly || 0;
+            return { cash, invested, goals, loansLeft, planLeft, cardOwed, debt: loansLeft + planLeft + cardOwed, minimums };
+        }
+
+        /* WHAT IS REALLY LEFT EACH MONTH: the income, less what living costs, less what the debt asks every month — the larger of what the books show was paid and what the loans and card plans schedule
+         * (an installment nobody has paid yet will still fall due, so it is not "free" money). The Debt Demolisher's extra-payment pool, the Wealth Simulator's monthly saving and the advisor's cash flow are this. */
+        function _wfFreeCash(prof, pos, income) {
+            const inc = income == null ? prof.avgIncome : income;
+            return inc - prof.avgLiving - Math.max(prof.avgDebtService, pos.minimums);
+        }
+
+        /* "…from your books": the one sentence that says what a tool's figures are made of, so a figure is never a mystery. */
+        function _wfBasisLine(p) {
+            const b = p.basis, name = k => { const [y, m] = k.split('-'); return MONTHS_S[+m - 1] + ' ' + y; };
+            if (b.kind === 'none') return 'No income or spending is recorded yet — add some, or let a statement file, and this fills in by itself.';
+            if (b.kind === 'this-month') return 'From this month so far (' + MONTHS_S[new Date().getMonth()] + '): no complete month is recorded yet.';
+            return 'From your books: the average of ' + b.incomeMonths + ' month' + (b.incomeMonths === 1 ? '' : 's') + ' of income and ' + b.outgoMonths + ' of spending, ' + name(b.from) + ' – ' + name(b.to) + '.';
         }
 
         function renderMonthly() {
@@ -28398,48 +28511,58 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         // ==================== DSCR CALCULATOR ====================
 
+        /* The averages the DSCR form starts from: the owner's books (see _wfBooksProfile). Income is what was received; "operating expenses" is what it cost to LIVE — the loan and card
+         * installments are left out, because they are the debt service the ratio divides by and are listed in their own box below (counted in both, they were taken off the income twice). */
         function get12MonthAverages() {
-            let totalInc = 0, totalOpex = 0, monthsWithData = 0;
-            const now = new Date();
-
-            for (let i = 0; i < 12; i++) {
-                let y = now.getFullYear();
-                let m = now.getMonth() - i;
-                if (m < 0) { m += 12; y -= 1; }
-                let md = getMonthlyData(y, m);
-                if (md.income > 0 || md.totalExp > 0) {
-                    totalInc += md.income;
-                    totalOpex += md.totalExp;
-                    monthsWithData++;
-                }
-            }
-            if (monthsWithData === 0) monthsWithData = 1;
-            return { avgInc: totalInc / monthsWithData, avgOpex: totalOpex / monthsWithData };
+            const p = _wfBooksProfile();
+            return { avgInc: p.avgIncome, avgOpex: p.avgLiving, basis: _wfBasisLine(p), kind: p.basis.kind };
         }
 
+        function _dscrFill(id, value) {
+            const input = $(id);
+            if (!input) return;
+            input.value = value > 0 ? fmtN(value) : '';
+            input.dataset.val = value > 0 ? String(value) : '0';
+            input.dataset.userCleared = '';
+        }
+        // income and living costs arrive by themselves, from the books — nobody should have to press a button to get their own salary into the form
+        function _dscrFillSystem() {
+            const a = get12MonthAverages();
+            if ($('dscrSysIncome') && !$('dscrSysIncome').dataset.userCleared) _dscrFill('dscrSysIncome', a.avgInc);
+            if ($('dscrSysOpex') && !$('dscrSysOpex').dataset.userCleared) _dscrFill('dscrSysOpex', a.avgOpex);
+            _dscrBasis();
+        }
+        function _dscrBasis() {
+            const el = $('dscrBasis');
+            if (el) el.textContent = get12MonthAverages().basis;
+        }
         function loadSystemIncomeAvg() {
-            const avgs = get12MonthAverages();
-            const input = $('dscrSysIncome');
-            input.value = fmtN(avgs.avgInc);
-            input.dataset.val = avgs.avgInc;
+            _dscrFill('dscrSysIncome', get12MonthAverages().avgInc);
+            _dscrBasis();
             calcDSCR();
         }
 
         function loadSystemOpexAvg() {
-            const avgs = get12MonthAverages();
-            const input = $('dscrSysOpex');
-            input.value = fmtN(avgs.avgOpex);
-            input.dataset.val = avgs.avgOpex;
+            _dscrFill('dscrSysOpex', get12MonthAverages().avgOpex);
+            _dscrBasis();
+            calcDSCR();
+        }
+        // a box the owner emptied on purpose stays empty until they ask for the average again
+        function _dscrClearSystem(id) {
+            const input = $(id);
+            input.value = ''; input.dataset.val = '0'; input.dataset.userCleared = '1';
             calcDSCR();
         }
 
         function clearDSCR() {
             $('dscrSysIncome').value = '';
             $('dscrSysIncome').dataset.val = '0';
+            $('dscrSysIncome').dataset.userCleared = '1';
             $('dscrCustIncome').value = '';
 
             $('dscrSysOpex').value = '';
             $('dscrSysOpex').dataset.val = '0';
+            $('dscrSysOpex').dataset.userCleared = '1';
             $('dscrCustOpex').value = '';
 
             $('dscrNewAmt').value = '';
@@ -28461,7 +28584,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const active = loanEndDate(l) > new Date();
                 if (active) {
                     activeLoans.push(l);
-                    html += `<option value="${l.monthly}">${_wfEsc(l.name)} (${_wfEsc(l.bank)}) - ${fmt(l.monthly)}/mo</option>`;
+                    html += `<option value="${_wfLoanEmiNow(l)}">${_wfEsc(l.name)} (${_wfEsc(l.bank)}) - ${fmt(_wfLoanEmiNow(l))}/mo</option>`;
                 }
             });
             select.innerHTML = html;
@@ -28476,12 +28599,21 @@ table.amort tbody tr { page-break-inside: avoid; }
             // beside it, so the calculation is correct by default and the
             // user can still tweak / remove rows as needed.
             const wrap = $('dscrExistingLoans');
+            // the app repaints on every write: the rows are rebuilt only when the loans and plans that feed them changed, so what the owner has typed into them is not wiped under their fingers
+            const feed = JSON.stringify([activeLoans.map(l => [l.id, _wfLoanEmiNow(l)]), (DB.get('ccinstall') || []).filter(c => c && !c.completed).map(c => [c.id, c.monthly])]);
+            if (wrap && wrap.dataset.feed === feed && wrap.children.length) { setTimeout(calcDSCR, 100); return _dscrFillSystem(); }
+            if (wrap) wrap.dataset.feed = feed;
             if (wrap) {
                 wrap.innerHTML = '';
                 activeLoans.forEach(l => {
-                    addDscrLoanDOM(l.monthly, l.name + ' (' + l.bank + ')');
+                    addDscrLoanDOM(_wfLoanEmiNow(l), l.name + ' (' + l.bank + ')');
+                });
+                // a card installment plan is a monthly debt payment too (and is on the CRIB): the same row, so it is counted once, here, and not in the living costs above
+                (DB.get('ccinstall') || []).filter(c => c && !c.completed && (c.duration || 0) - (cciProgress(c).paid || 0) > 0 && (c.monthly || 0) > 0).forEach(c => {
+                    addDscrLoanDOM(c.monthly, (c.product || 'Card instalment') + ' (' + (c.bank || 'card') + ' instalment)');
                 });
             }
+            _dscrFillSystem();
             setTimeout(calcDSCR, 100);
         }
 
@@ -28583,7 +28715,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 ];
             }
 
-            const advice = advicePool[Math.floor(Math.random() * advicePool.length)];
+            const advice = advicePool[Math.round(dscr * 100) % advicePool.length];   // the same ratio always gets the same advice (it used to change on every keystroke)
 
             let rot = (dscr - 1.0) * 180;
             if (rot < -90) rot = -90;
@@ -31458,82 +31590,77 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
 
         // ==================== WEALTHFLOW SCORE (0-1000) ====================
         function calculateWFScore() {
-            // ISSUE 5 — Upgraded scoring with 7 factors, behavioral signals, and trend analysis
+            // 7 factors, every one read from the owner's books (see _wfBooksProfile / _wfPosition) — not from the Investments list and this month's hand-typed expenses, which never held the salary,
+            // the card charges or the statements' spending, and made every household score as if it earned nothing.
             const income = DB.get('income');
-            const expenses = DB.get('expenses');
-            const loans = DB.get('loans');
             const targets = DB.get('targets');
-            const ccinstall = DB.get('ccinstall') || [];
-            const cconetime = DB.get('cconetime') || [];
-            const balData = DB.getObj('balance', { total: 0 });
-            const incomeRecv = DB.getObj('incomeReceived', {});
             const now = new Date();
-            const curM = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+            const prof = _wfBooksProfile(now), pos = _wfPosition(now);
+            const hasBooks = prof.basis.kind !== 'none';
 
-            const totalIncome = income.filter(s => { const st = new Date(s.start + 'T00:00:00'); const en = s.end ? new Date(s.end + 'T00:00:00') : null; return st <= now && (!en || en >= now); }).reduce((s, x) => s + (x.monthly || 0), 0);
-            const totalExp = expenses.filter(e => e.month === curM).reduce((s, x) => s + (x.amount || 0), 0);
-            const totalLoan = _wfLoanDueNow(loans.filter(l => loanEndDate(l) > now), curM);
-            const totalCC = ccinstall.filter(c => !c.completed).reduce((s, x) => s + (x.monthly || 0), 0);
-            const totalDebt = totalExp + totalLoan + totalCC;
+            // the Investments list is the fallback for a household whose only record of income is there
+            const investmentIncome = income.filter(s => { if (!s) return false; const st = s.start ? new Date(s.start + 'T00:00:00') : null; const en = s.end ? new Date(s.end + 'T00:00:00') : null; return (!st || isNaN(st.getTime()) || st <= now) && (!en || en >= now); }).reduce((a, x) => a + (x.monthly || 0), 0);
+            const totalIncome = prof.avgIncome > 0 ? prof.avgIncome : investmentIncome;
+            const living = prof.avgLiving, debtService = Math.max(prof.avgDebtService, 0), outgoings = hasBooks ? prof.avgOutgo : pos.minimums;
+            const monthlyDebt = Math.max(debtService, pos.minimums);   // what the debt asks each month: the larger of what was paid and what is scheduled
 
-            // Factor 1 — DSCR (200 pts)
-            const dscr = totalDebt > 0 ? totalIncome / totalDebt : 3;
+            // Factor 1 — DSCR (200 pts): what is left of the income after living costs, over what the debt asks every month. No debt at all is the best case.
+            const dscr = monthlyDebt > 0 ? Math.max(0, totalIncome - living) / monthlyDebt : 3;
             const dscrScore = Math.min(200, Math.round(dscr >= 2 ? 200 : dscr >= 1.5 ? 170 : dscr >= 1.25 ? 130 : dscr >= 1 ? 90 : dscr * 90));
 
-            // Factor 2 — Savings Rate (180 pts)
-            const savingsRate = totalIncome > 0 ? (totalIncome - totalDebt) / totalIncome : 0;
+            // Factor 2 — Savings Rate (180 pts): the share of income that is not spent (everything out, debt payments included)
+            const savingsRate = totalIncome > 0 ? (totalIncome - outgoings) / totalIncome : 0;
             const savingsScore = Math.min(180, Math.round(savingsRate >= 0.3 ? 180 : savingsRate >= 0.2 ? 150 : savingsRate >= 0.1 ? 110 : savingsRate >= 0 ? 60 : 20));
 
-            // Factor 3 — Liquidity Buffer (150 pts)
-            const balance = balData.total || 0;
-            const monthsCover = totalDebt > 0 ? balance / totalDebt : 12;
+            // Factor 3 — Liquidity Buffer (150 pts): months of outgoings the cash on hand would cover
+            const balance = Math.max(0, pos.cash);
+            const monthsCover = outgoings > 0 ? balance / outgoings : (balance > 0 ? 12 : 0);
             const liquidityScore = Math.min(150, Math.round(monthsCover >= 6 ? 150 : monthsCover >= 3 ? 120 : monthsCover >= 1 ? 75 : monthsCover * 75));
 
             // Factor 4 — Target Progress (130 pts)
-            const targetTotal = targets.reduce((s, t) => s + (t.amount || 0), 0);
-            const targetSaved = targets.reduce((s, t) => s + (t.savings ? t.savings.reduce((a, b) => a + b.amount, 0) : 0), 0);
-            const targetPct = targetTotal > 0 ? targetSaved / targetTotal : 0;
+            const targetTotal = targets.reduce((a, t) => a + (t.amount || 0), 0);
+            const targetSaved = targets.reduce((a, t) => a + (t.savings ? t.savings.reduce((x, y) => x + y.amount, 0) : 0), 0);
+            const targetPct = targetTotal > 0 ? Math.min(1, targetSaved / targetTotal) : 0;
             const targetScore = Math.min(130, Math.round(targetPct * 130));
 
-            // Factor 5 — Debt-to-income (120 pts) — total outstanding balance vs annual income
-            let totalOutstanding = 0;
-            loans.forEach(l => totalOutstanding += loanCurrentBalance(l));
-            ccinstall.filter(c => !c.completed).forEach(c => {
-                const skipped = (c.skipped || []).length;
-                const paid = Math.max(0, Math.floor((now - new Date(c.date)) / 2628000000) - skipped);
-                totalOutstanding += Math.max(0, c.total - c.monthly * paid);
-            });
-            cconetime.filter(c => !c.paid).forEach(c => totalOutstanding += c.amount);
+            // Factor 5 — Debt-to-income (120 pts): everything still owed (loans, what is left of card installment plans, card charges not yet paid) against a year of income
             const annualIncome = totalIncome * 12;
-            const dti = annualIncome > 0 ? totalOutstanding / annualIncome : 0;
+            const dti = annualIncome > 0 ? pos.debt / annualIncome : (pos.debt > 0 ? 9 : 0);
             const dtiScore = dti === 0 ? 120 : dti < 0.25 ? 110 : dti < 0.5 ? 90 : dti < 1 ? 60 : dti < 2 ? 30 : 10;
 
-            // Factor 6 — Income confirmation discipline (110 pts) — % of months confirmed
-            const expectedConfs = income.filter(s => { const st = new Date(s.start + 'T00:00:00'); return st <= now; }).length;
-            const actualConfs = Object.keys(incomeRecv).filter(k => incomeRecv[k] && k.endsWith('_' + curM)).length;
-            const discipline = expectedConfs > 0 ? actualConfs / expectedConfs : 1;
+            // Factor 6 — Tracking discipline (110 pts): of the last three complete months, how many have BOTH income and spending recorded
+            const lastThree = prof.months.slice(-3);
+            const tracked = lastThree.filter(r => r.income > 0 && r.outgo > 0).length;
+            const discipline = lastThree.length ? tracked / lastThree.length : 0;
             const disciplineScore = Math.round(discipline * 110);
 
-            // Factor 7 — Income diversification (110 pts)
-            const diversificationFactor = income.length === 0 ? 0 : income.length === 1 ? 0.4 : income.length === 2 ? 0.7 : 0.95;
+            // Factor 7 — Income diversification (110 pts): how many different kinds of income actually arrived (Salary, Rental, …), falling back to the Investments list
+            const streams = Object.keys(prof.incomeTypes || {}).length || income.length;
+            const diversificationFactor = streams === 0 ? 0 : streams === 1 ? 0.4 : streams === 2 ? 0.7 : 0.95;
             const divScore = Math.round(diversificationFactor * 110);
 
             const total = dscrScore + savingsScore + liquidityScore + targetScore + dtiScore + disciplineScore + divScore;
 
             return {
                 total: Math.min(1000, total),
+                hasData: hasBooks || investmentIncome > 0,      // with nothing recorded there is nothing to score (an empty household scored 380 for having no debt and no income)
+                basis: _wfBasisLine(prof),
                 dscr: { score: dscrScore, max: 200, value: dscr, label: 'Debt Coverage (DSCR)' },
                 savings: { score: savingsScore, max: 180, value: savingsRate, label: 'Savings Rate' },
-                liquidity: { score: liquidityScore, max: 150, value: monthsCover, label: 'Liquidity Buffer' },
+                liquidity: { score: liquidityScore, max: 150, value: monthsCover, label: 'Liquidity Buffer', cashKnown: pos.cash > 0 },
                 targets: { score: targetScore, max: 130, value: targetPct, label: 'Goal Progress' },
                 dti: { score: dtiScore, max: 120, value: dti, label: 'Debt-to-Income Ratio' },
                 discipline: { score: disciplineScore, max: 110, value: discipline, label: 'Tracking Discipline' },
-                diversification: { score: divScore, max: 110, value: income.length, label: 'Income Diversification' }
+                diversification: { score: divScore, max: 110, value: streams, label: 'Income Diversification' }
             };
         }
 
-        function renderWFScore() {
+        function renderWFScore(byHand) {
             const sc = calculateWFScore();
+            if (!sc.hasData) {
+                $('scoreContent').innerHTML = `<div class="card" style="text-align:center;padding:30px;"><div style="font-size:15px;font-weight:700;margin-bottom:8px;">Not enough to score yet</div><div style="font-size:12px;color:var(--text3);line-height:1.6;max-width:420px;margin:0 auto;">${_wfEsc(sc.basis)} The score is worked out from your own income and spending, so it appears as soon as there are a few months of them.</div></div>`;
+                return;
+            }
             const total = sc.total;
             const color = total >= 800 ? 'var(--green)' : total >= 600 ? 'var(--accent)' : total >= 400 ? 'var(--accent2)' : 'var(--red)';
             const grade = total >= 800 ? 'ELITE' : total >= 600 ? 'STRONG' : total >= 400 ? 'GROWING' : total >= 200 ? 'AT RISK' : 'CRITICAL';
@@ -31547,10 +31674,10 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
             const factorTips = [
                 sc.dscr.value >= 2 ? 'Excellent — your income comfortably covers debt obligations.' : sc.dscr.value >= 1.25 ? 'Adequate — but room to improve. Aim for ratio above 2.' : 'Critical — debt payments are too close to your income. Prioritize debt reduction.',
                 sc.savings.value >= 0.3 ? 'Outstanding savings rate.' : sc.savings.value >= 0.1 ? 'Decent — try to bring this above 20%.' : 'Low savings rate. Identify expense categories to trim.',
-                sc.liquidity.value >= 6 ? '6+ months of runway — financially resilient.' : sc.liquidity.value >= 3 ? 'Solid emergency buffer.' : 'Build a 3-6 month emergency fund as priority.',
+                !sc.liquidity.cashKnown ? 'No cash balance is recorded, so this cannot be scored — set your cash on hand (the Balance card on the Dashboard).' : sc.liquidity.value >= 6 ? '6+ months of runway — financially resilient.' : sc.liquidity.value >= 3 ? 'Solid emergency buffer.' : 'Build a 3-6 month emergency fund as priority.',
                 sc.targets.value >= 0.5 ? 'On track with your goals.' : 'Review your targets and adjust monthly contributions.',
                 sc.dti.value < 0.5 ? 'Healthy debt-to-income ratio.' : sc.dti.value < 1 ? 'Manageable, but watch this number.' : 'High debt burden — refinancing or consolidation may help.',
-                sc.discipline.value >= 0.8 ? 'Excellent tracking habit.' : 'Confirm income receipts each month for higher score.',
+                sc.discipline.value >= 0.8 ? 'Excellent tracking habit.' : 'Income and spending are recorded in fewer of the last three months than they could be — a month with no statement filed (or no entries) lowers this.',
                 sc.diversification.value >= 3 ? 'Well-diversified income.' : sc.diversification.value === 2 ? 'Two streams — consider adding more.' : 'Single income stream is risky — diversify.'
             ];
 
@@ -31569,6 +31696,7 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                         </div>
                     </div>
                     <div style="margin-top:16px;font-size:13px;color:var(--text2);">Your WealthFlow Score is rated <strong style="color:${color};">${grade}</strong> · 7 factors analyzed</div>
+                    <div style="margin-top:6px;font-size:11px;color:var(--text3);line-height:1.5;">${_wfEsc(sc.basis || '')}</div>
                 </div>
                 <div class="card" style="margin-top:16px;">
                     <div class="card-header"><div class="card-title">📊 Score Breakdown — 7 Factors</div></div>
@@ -31592,7 +31720,7 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                     <div id="wfScoreAIInsight" style="margin-top:14px;"></div>
                 </div>
             `;
-            playUISound('click');
+            if (byHand === true) playUISound('click');   // not on every background repaint of the app
         }
 
         async function generateWFScoreAIInsight() {
@@ -31614,7 +31742,7 @@ ${weakestSummary}
 
 THEIR FINANCIAL CONTEXT:
 - Monthly income: LKR ${ctx.totalMonthlyIncome.toLocaleString()}
-- Monthly expenses: LKR ${ctx.thisMonthExpenses.toLocaleString()}
+- Monthly living expenses (typical month, debt payments apart): LKR ${Math.round(ctx.avgMonthlyExpenses || 0).toLocaleString()}
 - Net cashflow: LKR ${ctx.netMonthlyCashFlow.toLocaleString()}
 - Cash balance: LKR ${ctx.balanceOnHand.toLocaleString()}
 - Active loans: ${ctx.activeLoans}
@@ -31945,7 +32073,7 @@ Be direct and use real numbers. Avoid generic advice.`;
         // ==================== DEBT DEMOLISHER (UPGRADED — Issue 3) ====================
         // Now properly simulates each strategy month-by-month with amortization,
         // computes total interest paid, payoff date, and ranks strategies.
-        function _amortizeStrategy(loans, extraPayment, strategy) {
+        function _amortizeStrategy(loans, extraPayment, strategy, rollover = true) {
             // strategy: 'avalanche' (highest rate first) or 'snowball' (smallest balance first)
             // Returns { months, totalInterest, payoffDate, perLoanMonths, history }
             const work = loans.map(l => ({
@@ -31967,8 +32095,8 @@ Be direct and use real numbers. Avoid generic advice.`;
                 month++;
 
                 let pool = extraPayment;
-                // Add the minimums of already paid off loans to the pool
-                work.filter(w => w.paidOff).forEach(w => {
+                // Add the minimums of already paid off loans to the pool (the snowball effect) — not for the "minimums only" baseline
+                if (rollover) work.filter(w => w.paidOff).forEach(w => {
                     pool += w.monthly;
                 });
 
@@ -31985,7 +32113,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     if (w.bal <= 0.01) {
                         w.bal = 0; w.paidOff = true;
                         // Add the leftover part of the minimum payment to the pool
-                        pool += (w.monthly - pay);
+                        if (rollover) pool += (w.monthly - pay);
                     }
                 });
 
@@ -32117,13 +32245,16 @@ Be direct and use real numbers. Avoid generic advice.`;
                     },
                     scales: {
                         x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', maxTicksLimit: 12 } },
-                        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', callback: v => 'LKR ' + (v/1000) + 'k' } }
+                        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', callback: v => fmtS(v) } }
                     }
                 }
             });
         }
 
         function renderDebtDemolisher(customExtra = null) {
+            // the app repaints the open page on every write: the amount the owner slid to is theirs, and stays
+            const prior = $('debtDemoSlider');
+            if (customExtra === null && prior && prior.dataset.userSet === '1') customExtra = prior.value;
             const rawLoans = DB.get('loans').filter(l => loanEndDate(l) > new Date() && loanCurrentBalance(l) > 0);
             const ccInstalls = DB.get('ccinstall').filter(c => !c.completed);
 
@@ -32136,7 +32267,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     name: l.name,
                     bank: l.bank,
                     amount: bal, // use current balance
-                    monthly: l.monthly,
+                    monthly: _wfLoanEmiNow(l),   // what the loan asks this month
                     rate: l.rate || 0,
                     type: 'loan'
                 });
@@ -32167,48 +32298,21 @@ Be direct and use real numbers. Avoid generic advice.`;
             const totalDebt = debtItems.reduce((s, d) => s + d.amount, 0);
             const totalMonthly = debtItems.reduce((s, d) => s + d.monthly, 0);
 
-            // Find user's free cashflow that could go to extra payments
-            const ctx = buildFinancialContext();
-            let maxExtra = Math.max(10000, Math.round(ctx.netMonthlyCashFlow));
-
-            /* WHAT CAN ACTUALLY BE PAID EVERY MONTH, NOT HALF OF AN AVERAGE.
+            /* WHAT CAN GO TO EXTRA PAYMENTS EVERY MONTH IS WHAT IS LEFT OF THE INCOME AFTER EVERYTHING ELSE — from the owner's books.
              *
-             * The suggestion used to be netMonthlyCashFlow * 0.5 — a monthly
-             * average, halved, because half of an average is safer than all of
-             * it. That was the right instinct with no dates available, and it is
-             * wrong in both directions: it offers too much to somebody whose
-             * 180,000 cheque clears on the 15th, and too little to somebody
-             * whose commitments are already spread evenly. The 50% haircut was
-             * standing in for timing information the app already holds.
-             *
-             * WFCashflow.sustainableMonthly() searches for the largest recurring
-             * payment that never drives the projection below zero, testing each
-             * candidate against every loan EMI, card instalment, subscription
-             * renewal and post-dated cheque ON ITS OWN DATE.
-             *
-             * The old heuristic stays as the fallback. If the engine is not
-             * loaded, or throws, or the ledger is too thin to say anything, the
-             * page behaves exactly as it did before — this replaces a guess with
-             * a better number where one is available, and never with nothing. */
-            let suggestedExtra = Math.max(0, Math.round(ctx.netMonthlyCashFlow * 0.5));
-            let suggestBasis = null;
-            try {
-                if (window.WFCashflow) {
-                    const s = window.WFCashflow.sustainableMonthly(appData, _wfCashOpts({ horizon: 180 }));
-                    if (s && isFinite(s.amount)) {
-                        // Rounded DOWN to the slider's own step. The range input
-                        // snaps to its step, so an unrounded 308,698 rendered as
-                        // "LKR 3.09L" beside a slider silently sitting at
-                        // 308,000 — the headline and the control disagreeing,
-                        // with the control quietly winning. Down, never up:
-                        // the suggestion must not exceed what is sustainable.
-                        suggestedExtra = Math.max(0, Math.floor(s.amount / 1000) * 1000);
-                        suggestBasis = s.reason;
-                    }
-                }
-            } catch (e) {
-                try { console.warn('[WF] sustainable payment:', e && e.message); } catch (_) {}
-            }
+             * It was taken from the Investments list's "income" (not the salary the statements and the Income page hold) less this month's hand-typed expenses, and then handed to a
+             * timing engine that is blind to salary (it only projects investment payouts and dated receivables) and to card spending — so for a salaried household with no Balance page kept up,
+             * the answer was nearly always LKR 0, and the slider's ceiling a flat 10,000. Now: the average monthly income less living costs less what the debts ask every month (the larger of
+             * what was paid and what is scheduled), over the complete months recorded, rounded DOWN to the slider's step so the headline and the slider agree. */
+            const prof = _wfBooksProfile(), pos = _wfPosition();
+            const hasBooks = prof.basis.kind !== 'none' && prof.avgIncome > 0;
+            const surplus = hasBooks ? Math.max(0, _wfFreeCash(prof, pos)) : 0;
+            let suggestedExtra = Math.floor(surplus / 1000) * 1000;
+            let maxExtra = Math.max(50000, Math.ceil(Math.max(surplus * 2, suggestedExtra) / 10000) * 10000);
+            let suggestBasis = hasBooks
+                ? 'Average income ' + fmtS(prof.avgIncome) + ' less living costs ' + fmtS(prof.avgLiving) + ' less the ' + fmtS(Math.max(prof.avgDebtService, pos.minimums)) + ' the debts ask each month. ' + _wfBasisLine(prof)
+                : 'Add your income and spending (or let a statement file) and the pool is worked out from them.';
+            const cardOwed = pos.cardOwed;
             if (customExtra !== null) suggestedExtra = parseInt(customExtra);
             // The slider's ceiling was derived from the monthly average, so a
             // timing-aware suggestion can exceed it — and an <input type=range>
@@ -32254,18 +32358,19 @@ Be direct and use real numbers. Avoid generic advice.`;
                     <div class="g3" style="margin-bottom:16px;">
                         <div class="stat-card sc-red"><div class="stat-label">Total Debt</div><div class="stat-val">${fmtS(totalDebt)}</div><div class="stat-meta">${debtItems.length} accounts</div></div>
                         <div class="stat-card sc-gold"><div class="stat-label">Monthly Minimums</div><div class="stat-val">${fmtS(totalMonthly)}</div><div class="stat-meta">Required</div></div>
-                        <div class="stat-card sc-green"><div class="stat-label">Extra Payment Pool</div><div class="stat-val" id="ddExtraVal">${fmtS(suggestedExtra)}</div><div class="stat-meta">${suggestBasis ? _wfEsc(suggestBasis) : 'Available: ' + fmtS(ctx.netMonthlyCashFlow)}</div></div>
+                        <div class="stat-card sc-green"><div class="stat-label">Extra Payment Pool</div><div class="stat-val" id="ddExtraVal">${fmtS(suggestedExtra)}</div><div class="stat-meta">${_wfEsc(suggestBasis)}</div></div>
                     </div>
 
+                    ${cardOwed > 0 ? `<div style="margin:-4px 0 16px;padding:10px 14px;border-radius:10px;background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.25);font-size:12px;color:var(--text2);line-height:1.6;">${_ic('info')} <b>${fmt(cardOwed)}</b> of card charges are still waiting to be paid (CC One-Time). They are not in the plans below — clear them inside their 50 days and they cost nothing extra.</div>` : ''}
                     <div class="card" style="margin-bottom:16px;">
                         <div class="card-header">
                             <div class="card-title">${_ic('settings')} Interactive Payoff Simulator</div>
                             <div class="card-sub">Slide to see how extra monthly payments demolish your debt faster!</div>
                         </div>
                         <div style="padding:10px 0 20px;">
-                            <input type="range" id="debtDemoSlider" min="0" max="${maxExtra}" step="1000" value="${suggestedExtra}" 
+                            <input type="range" id="debtDemoSlider" min="0" max="${maxExtra}" step="1000" value="${suggestedExtra}" ${customExtra !== null && prior && prior.dataset.userSet === '1' ? 'data-user-set="1"' : ''} 
                                 style="width:100%; cursor:pointer; accent-color: var(--accent);"
-                                oninput="document.getElementById('ddExtraVal').innerText = fmtS(this.value); updateDebtDemoCards(this.value);"
+                                oninput="this.dataset.userSet = '1'; document.getElementById('ddExtraVal').innerText = fmtS(this.value); updateDebtDemoCards(this.value);"
                                 onchange="updateDebtDemoCards(this.value);">
                             <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text3); margin-top:4px;">
                                 <span>LKR 0</span>
@@ -32280,7 +32385,7 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             window.updateDebtDemoCards = function(newExtra) {
                 const ex = parseInt(newExtra);
-                const baseline = _amortizeStrategy(debtItems, 0, 'avalanche');
+                const baseline = _amortizeStrategy(debtItems, 0, 'avalanche', false);   // "minimums only" means each debt runs its own schedule: a freed-up minimum is NOT rolled onto another debt here
                 const avalanche = _amortizeStrategy(debtItems, ex, 'avalanche');
                 const snowball = _amortizeStrategy(debtItems, ex, 'snowball');
 
@@ -32402,7 +32507,7 @@ Be direct and use real numbers. Avoid generic advice.`;
 
 USER FINANCIAL CONTEXT:
 - Monthly income: LKR ${ctx.totalMonthlyIncome.toLocaleString()}
-- Monthly expenses: LKR ${ctx.thisMonthExpenses.toLocaleString()}
+- Monthly living expenses (typical month, debt payments apart): LKR ${Math.round(ctx.avgMonthlyExpenses || 0).toLocaleString()}
 - Net free cashflow: LKR ${ctx.netMonthlyCashFlow.toLocaleString()}
 - Cash on hand: LKR ${ctx.balanceOnHand.toLocaleString()}
 
@@ -32430,43 +32535,54 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
         let mcChartInst = null;
 
         // Box-Muller transform — produces a proper standard-normal random variate
-        function _normalRand() {
+        function _normalRand(rand) {
+            rand = rand || Math.random;
             let u = 0, v = 0;
-            while (u === 0) u = Math.random();
-            while (v === 0) v = Math.random();
+            while (u === 0) u = rand();
+            while (v === 0) v = rand();
             return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
         }
+        // A reproducible stream of numbers (mulberry32) seeded from the inputs: the same inputs give the same answer every time the page is opened — a plan whose result changes on its own is noise.
+        function _mcSeeded(seed) {
+            let a = seed >>> 0;
+            return function () {
+                a = (a + 0x6D2B79F5) >>> 0;
+                let t = Math.imul(a ^ (a >>> 15), 1 | a);
+                t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+                return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+            };
+        }
+        function _mcSeedOf(parts) {
+            let h = 2166136261;
+            String(parts.join('|')).split('').forEach(ch => { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); });
+            return h >>> 0;
+        }
 
-        function runMonteCarlo() {
-            const years = parseInt($('mcYears').value) || 10;
-            const ctx = buildFinancialContext();
-            const savings = parseMoney($('mcSavings').value) || Math.max(0, ctx.netMonthlyCashFlow);
-            const expectedReturn = (parseFloat($('mcReturn').value) || 12) / 100;   // annual μ
-            const inflation = (parseFloat($('mcInflation').value) || 8) / 100;      // annual π
-            const runs = parseInt($('mcRuns').value) || 1000;
+        /* The numbers of the simulation, with no page in it: the same inputs and the same stream of random numbers give the same answer. */
+        function _mcSimulate({ years, savings, expectedReturn, inflation, runs, startBal, sigma = 0.18 }, rand) {
             const months = years * 12;
-            const startBal = (DB.getObj('balance', {}).total || 0);
-
             // Volatility: scales with expected return (higher return → higher risk).
             // 18 % annual σ is typical for diversified equity-heavy portfolios.
-            const sigma = 0.18;
             const dt = 1 / 12; // monthly steps
             const drift = (expectedReturn - 0.5 * sigma * sigma) * dt;
             const diffusion = sigma * Math.sqrt(dt);
             const monthlyInflation = inflation / 12;
 
+            // what the owner puts in over the horizon, in the money of the day it is put in: a saving that keeps its buying power rises with prices (it used to FALL by the inflation rate
+            // every month while the balance grew in nominal rupees, which understated every figure)
+            let putIn = startBal, grown = savings;
+            for (let m = 1; m <= months; m++) { putIn += grown; grown *= (1 + monthlyInflation); }
             const allPaths = [];
             for (let r = 0; r < runs; r++) {
                 let bal = startBal;
-                let realSavings = savings;
+                let nominalSavings = savings;
                 const path = [bal];
                 for (let m = 1; m <= months; m++) {
                     // GBM step
-                    const z = _normalRand();
+                    const z = _normalRand(rand);
                     bal = bal * Math.exp(drift + diffusion * z);
-                    // Add monthly savings (real, inflation-adjusted)
-                    bal = bal + realSavings;
-                    realSavings = realSavings * (1 - monthlyInflation);
+                    bal = bal + nominalSavings;
+                    nominalSavings = nominalSavings * (1 + monthlyInflation);
                     if (m % 12 === 0) path.push(Math.max(0, bal));
                 }
                 allPaths.push(path);
@@ -32492,7 +32608,31 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
             const medianCase = pct.p50[pct.p50.length - 1];
             const bestCase = pct.p90[pct.p90.length - 1];
             const stdDev = Math.sqrt(finalVals.reduce((a, b) => a + (b - mean) ** 2, 0) / runs);
-            const probLoss = (finalVals.filter(v => v < startBal).length / runs * 100).toFixed(1);
+            // the chance of ending with less than was put in (the starting wealth and every saving), in rupees of the day
+            const probLoss = (finalVals.filter(v => v < putIn).length / runs * 100).toFixed(1);
+            const deflator = Math.pow(1 + inflation, years);       // to say a future figure in today's money
+
+            return { labels, pct, finalVals, putIn, mean, stdDev, worstCase, medianCase, bestCase, probLoss, deflator, sigma };
+        }
+
+        function _mcSignature() {
+            return ['mcYears', 'mcSavings', 'mcStart', 'mcReturn', 'mcInflation', 'mcRuns'].map(id => ($(id) ? $(id).value : '')).join('|');
+        }
+        function runMonteCarlo() {
+            if ($('mcResults')) $('mcResults').dataset.sig = _mcSignature();
+            const years = parseInt($('mcYears').value) || 10;
+            const ctx = buildFinancialContext();
+            const pos = _wfPosition();
+            const savings = parseMoney($('mcSavings').value) || Math.max(0, ctx.netMonthlyCashFlow);
+            const expectedReturn = (parseFloat($('mcReturn').value) || 12) / 100;   // annual μ
+            const inflation = (parseFloat($('mcInflation').value) || 8) / 100;      // annual π
+            const runs = parseInt($('mcRuns').value) || 1000;
+            // what the simulation starts with: the cash on hand and the money in investments (the Starting Wealth box, filled from them, can be changed)
+            const startBal = $('mcStart') && $('mcStart').value !== '' ? parseMoney($('mcStart').value) : Math.max(0, pos.cash + pos.invested);
+            const rand = _mcSeeded(_mcSeedOf([years, Math.round(savings), expectedReturn, inflation, runs, Math.round(startBal)]));
+
+            const sim = _mcSimulate({ years, savings, expectedReturn, inflation, runs, startBal }, rand);
+            const { labels, pct, putIn, mean, stdDev, worstCase, medianCase, bestCase, probLoss, deflator, sigma } = sim;
 
             $('mcResults').innerHTML = `
                 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
@@ -32523,9 +32663,13 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
                         <div style="font-size:13px;font-weight:700;font-family:var(--mono);color:${parseFloat(probLoss) > 25 ? 'var(--red)' : 'var(--green)'};">${probLoss}%</div>
                     </div>
                 </div>
-                <div style="margin-top:12px;font-size:11px;color:var(--text3);text-align:center;">
-                    ${runs.toLocaleString()} GBM simulations · ${years} year projection · μ=${(expectedReturn * 100).toFixed(1)}% σ=${(sigma * 100).toFixed(0)}% · Monthly savings: ${fmt(savings)}
+                <div style="margin-top:12px;font-size:12px;color:var(--text2);text-align:center;line-height:1.6;">
+                    The median in today's money (after ${(inflation * 100).toFixed(1)}% a year inflation): <b style="font-family:var(--mono);color:var(--accent);">${fmtS(medianCase / deflator)}</b> · you will have put in ${fmtS(putIn)}
                 </div>
+                <div style="margin-top:8px;font-size:11px;color:var(--text3);text-align:center;line-height:1.6;">
+                    ${runs.toLocaleString()} GBM simulations · ${years} year projection · μ=${(expectedReturn * 100).toFixed(1)}% σ=${(sigma * 100).toFixed(0)}% · Monthly savings: ${fmt(savings)} (rising with prices) · Starting wealth: ${fmt(startBal)}
+                </div>
+                ${savings <= 0 ? '<div style="margin-top:8px;font-size:11px;color:var(--accent);text-align:center;line-height:1.6;">Nothing is left each month after living costs and the debt payments, so this shows what your starting wealth alone would do. Enter a monthly saving above to see its effect.</div>' : ''}
             `;
 
             // Draw chart with confidence-cone bands
@@ -32587,8 +32731,13 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
         function renderMonteCarlo() {
             const ctx = buildFinancialContext();
             // ISSUE 7 — Auto-fill ALL parameters intelligently from user data
-            if ($('mcSavings') && !$('mcSavings').value) {
+            // from the books, and again whenever the books change — unless the owner typed their own figure
+            if ($('mcSavings') && !$('mcSavings').dataset.userSet) {
                 $('mcSavings').value = fmtN(Math.max(0, ctx.netMonthlyCashFlow));
+            }
+            if ($('mcStart') && !$('mcStart').dataset.userSet) {
+                const pos = _wfPosition();
+                $('mcStart').value = fmtN(Math.max(0, pos.cash + pos.invested));
             }
             if ($('mcReturn') && !$('mcReturn').dataset.userSet) {
                 // Compute weighted average annual return from active income sources
@@ -32607,7 +32756,7 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
                 $('mcInflation').value = '7';
             }
             // Mark fields once user manually changes them
-            ['mcSavings', 'mcReturn', 'mcInflation', 'mcYears', 'mcRuns'].forEach(id => {
+            ['mcSavings', 'mcStart', 'mcReturn', 'mcInflation', 'mcYears', 'mcRuns'].forEach(id => {
                 const el = $(id);
                 if (el && !el._mcWatched) {
                     el._mcWatched = true;
@@ -32616,8 +32765,8 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
             });
 
             // Auto-run on first load if values are present
-            if ($('mcSavings') && $('mcSavings').value && !$('mcResults').dataset.ran) {
-                $('mcResults').dataset.ran = '1';
+            // every repaint of the app calls this: run again only when what the result depends on has changed (the chart is rebuilt and a sound plays at the end of a run)
+            if ($('mcSavings') && $('mcSavings').value && $('mcResults').dataset.sig !== _mcSignature()) {
                 setTimeout(() => runMonteCarlo(), 200);
             }
         }
@@ -32641,7 +32790,7 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
                 const savings = parseMoney($('mcSavings').value) || 0;
                 const ret = parseFloat($('mcReturn').value) || 12;
                 const infl = parseFloat($('mcInflation').value) || 7;
-                const startBal = (DB.getObj('balance', {}).total || 0);
+                const startBal = $('mcStart') && $('mcStart').value !== '' ? parseMoney($('mcStart').value) : (() => { const p = _wfPosition(); return Math.max(0, p.cash + p.invested); })();
                 const prompt = `You are a senior wealth planner advising a Sri Lankan client. Interpret this Monte Carlo wealth simulation in plain language.
 
 SIMULATION INPUTS:
@@ -32696,7 +32845,9 @@ Be concrete and reference actual LKR figures. No generic advice.`;
             const now = new Date();
             const months = period === 'thisMonth' ? 1 : period === 'last3' ? 3 : period === 'thisYear' ? (now.getMonth() + 1) : 24;
 
-            const groups = { Income: 0, Loans: 0, CC: 0, Expenses: 0, Targets: 0 };
+            // EVERY rupee the books hold, in one of seven groups — the same getMonthlyData the dashboard totals with. The outflow used to be the hand-typed expenses and the card installments only: the
+            // card charges, the subscriptions and bills, the cleared cheques and the loan installments paid from the bank were all missing, so a household that spends mostly on its card showed almost no outflow.
+            const groups = { Income: 0, Loans: 0, CC: 0, Expenses: 0, Bills: 0, Cheques: 0, Targets: 0 };
             const expByCat = {};
             const incomeSources = [];
             const loanItems = [];
@@ -32706,10 +32857,12 @@ Be concrete and reference actual LKR figures. No generic advice.`;
                 const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
                 const md = getMonthlyData(dt.getFullYear(), dt.getMonth());
                 groups.Income += md.income;
-                groups.Loans += md.loanTotal;
-                groups.CC += md.ccTotal;
-                groups.Expenses += md.expTotal;
-                md.expItems.forEach(e => { expByCat[e.cat] = (expByCat[e.cat] || 0) + e.amount; });
+                groups.Loans += md.loanTotal + md.expDebt;            // installments marked paid, and the ones paid from the bank
+                groups.CC += md.ccTotal + md.ccotTotal;                // card installment plans and card charges
+                groups.Expenses += md.expTotal - md.expDebt;           // everyday spending, statement debits and typed entries
+                groups.Bills += md.subTotal;                           // subscriptions and bills
+                groups.Cheques += md.cheTotal;                         // cheques that cleared
+                [md.expItems.filter(e => !e.debt), md.ccotItems, md.subItems, md.cheItems].forEach(list => (list || []).forEach(e => { const k = e.cat || 'Other'; expByCat[k] = (expByCat[k] || 0) + (+e.amount || 0); }));
                 md.loanItems.forEach(l => loanItems.push(l));
             }
 
@@ -32729,14 +32882,14 @@ Be concrete and reference actual LKR figures. No generic advice.`;
             // the total and would re-introduce the double-count this release removes).
             const _cf3dIncByType = {};
             (DB.get('incomeRecv') || []).forEach(r => {
-                if (!r) return;
+                if (!r || r.received === false) return;                  // money that has not arrived is not inflow yet — the same rule as the total above
                 const rm = r.month || (r.date ? String(r.date).slice(0, 7) : '');
                 const parts = rm.split('-');
                 const ry = +parts[0], rmo = +parts[1];
                 if (!ry || !rmo) return;
                 const monthsAgo = (now.getFullYear() - ry) * 12 + (now.getMonth() - (rmo - 1));
                 if (monthsAgo < 0 || monthsAgo >= months) return;
-                const t = r.type || 'Other';
+                const t = r.type || r.source || 'Other';
                 _cf3dIncByType[t] = (_cf3dIncByType[t] || 0) + (+r.amount || 0);
             });
             Object.keys(_cf3dIncByType).forEach(t => incomeSources.push({ name: t, amount: _cf3dIncByType[t] }));
@@ -32765,7 +32918,7 @@ Be concrete and reference actual LKR figures. No generic advice.`;
             const sc = $('cf3dStats');
             if (sc) {
                 const totalIn = data.groups.Income;
-                const totalOut = data.groups.Loans + data.groups.CC + data.groups.Expenses + data.groups.Targets;
+                const totalOut = data.groups.Loans + data.groups.CC + data.groups.Expenses + data.groups.Bills + data.groups.Cheques + data.groups.Targets;
                 const net = totalIn - totalOut;
                 sc.innerHTML = `
                     <div class="stat-card sc-green"><div class="stat-label">Total Inflow</div><div class="stat-val">${fmtS(totalIn)}</div><div class="stat-meta">${data.months} month(s)</div></div>
@@ -32777,8 +32930,8 @@ Be concrete and reference actual LKR figures. No generic advice.`;
             // ISSUE 8 — Detailed breakdown including ALL expense categories
             const bd = $('cf3dBreakdown');
             if (bd) {
-                const groupTotal = data.groups.Income + data.groups.Loans + data.groups.CC + data.groups.Expenses + data.groups.Targets || 1;
-                const colors = { Income: '#10b981', Loans: '#ef4444', CC: '#f87171', Expenses: '#f5a623', Targets: '#3b82f6' };
+                const groupTotal = Object.values(data.groups).reduce((a, v) => a + v, 0) || 1;
+                const colors = { Income: '#10b981', Loans: '#ef4444', CC: '#f87171', Expenses: '#f5a623', Bills: '#a78bfa', Cheques: '#22d3ee', Targets: '#3b82f6' };
                 const expCatColors = ['#fbbf24', '#fb923c', '#f87171', '#a78bfa', '#60a5fa', '#34d399', '#f472b6', '#facc15', '#94a3b8'];
                 const groupRows = Object.entries(data.groups).map(([k, v]) => {
                     const pct = ((v / groupTotal) * 100).toFixed(1);
@@ -32793,7 +32946,7 @@ Be concrete and reference actual LKR figures. No generic advice.`;
                 const expTotal = expSorted.reduce((s, [_, v]) => s + v, 0) || 1;
                 const expRows = expSorted.length ? `
                     <div style="margin-top:18px;padding-top:14px;border-top:1px dashed var(--border2);">
-                        <div style="font-size:12px;color:var(--text2);margin-bottom:8px;font-weight:700;">📋 Expense Categories Breakdown</div>
+                        <div style="font-size:12px;color:var(--text2);margin-bottom:8px;font-weight:700;">📋 Where the spending went (debt repayments apart)</div>
                         ${expSorted.map(([cat, val], i) => {
                     const pct = ((val / expTotal) * 100).toFixed(1);
                     const c = expCatColors[i % expCatColors.length];
@@ -32813,7 +32966,7 @@ Be concrete and reference actual LKR figures. No generic advice.`;
             // Build the 3D scene: central node + group nodes + expense subcategory nodes
             _cf3dState.nodes = [];
             _cf3dState.particles = [];
-            const colors = { Income: '#10b981', Loans: '#ef4444', CC: '#f87171', Expenses: '#f5a623', Targets: '#3b82f6' };
+            const colors = { Income: '#10b981', Loans: '#ef4444', CC: '#f87171', Expenses: '#f5a623', Bills: '#a78bfa', Cheques: '#22d3ee', Targets: '#3b82f6' };
 
             _cf3dState.nodes.push({ x: 0, y: 0, z: 0, r: 30, color: '#d4af37', label: 'YOU', value: 0, glow: 1 });
 
@@ -32837,7 +32990,7 @@ Be concrete and reference actual LKR figures. No generic advice.`;
             });
 
             // ISSUE 6 FIX — Removed expense subcategory outer ring per user request.
-            // 3D scene now shows only the main 5 groups (Income, Loans, CC, Expenses, Targets).
+            // 3D scene now shows only the main groups (Income, Loans, CC, Expenses, Bills, Cheques, Targets).
             // The detailed category breakdown lives in the right-side panel only.
 
             _cf3dInitCanvas();
@@ -32860,11 +33013,13 @@ Be concrete and reference actual LKR figures. No generic advice.`;
 INFLOW: LKR ${data.groups.Income.toLocaleString()}
 OUTFLOW BREAKDOWN:
 - Loans: LKR ${data.groups.Loans.toLocaleString()}
-- Credit Cards: LKR ${data.groups.CC.toLocaleString()}
+- Credit Cards (installments and charges): LKR ${data.groups.CC.toLocaleString()}
 - Living Expenses: LKR ${data.groups.Expenses.toLocaleString()} (${expSummary})
+- Subscriptions and bills: LKR ${data.groups.Bills.toLocaleString()}
+- Cheques cleared: LKR ${data.groups.Cheques.toLocaleString()}
 - Targets/Savings: LKR ${data.groups.Targets.toLocaleString()}
 
-NET: LKR ${(data.groups.Income - data.groups.Loans - data.groups.CC - data.groups.Expenses - data.groups.Targets).toLocaleString()}
+NET: LKR ${(data.groups.Income - data.groups.Loans - data.groups.CC - data.groups.Expenses - data.groups.Bills - data.groups.Cheques - data.groups.Targets).toLocaleString()}
 
 Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. Use LKR.`;
                 const reply = await callAI(prompt);

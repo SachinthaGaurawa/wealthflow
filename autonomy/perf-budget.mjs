@@ -276,7 +276,13 @@ export const BUDGETS = {
     // amount paid), future months and unpaid items count nothing and are listed as "due, not paid" instead; the Monthly Plan page shows what was paid, what is due and every group that is in its
     // total; the Expense Breakdown is built from the same books so it adds up to Year Expenses; Upcoming Payments and Recent Activity leave out what is paid / not yet happened. No new
     // script or request. ~0.3% headroom.
-    htmlBytes: 2_130_000,
+    // Raised 2026-10-03: 2,130,000 -> 2,160,000 (measured 2,148,591 + headroom). DSCR, the WealthFlow Score, the Debt Demolisher, the Wealth Simulator, the 3D Cash Flow and the AI advisor's context now
+    // read ONE typical month from the owner's books (the same getMonthlyData the dashboard totals with, over the last twelve complete months; debt service kept apart from living costs) and one
+    // position (cash, investments, what is owed): they read the Investments list and this month's hand-typed expenses before, so the salary, the card charges, the subscriptions and the
+    // installments never reached them. The Score's seven factors, DSCR's starting figures, the Debt Demolisher's extra-payment pool, the Wealth Simulator's start and monthly saving (now
+    // reproducible and keeping the saving's buying power) and the 3D flow's seven groups are rebuilt on them; the pages no longer lose what the owner typed when the app repaints. No new
+    // script or request. ~0.5% headroom.
+    htmlBytes: 2_160_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
