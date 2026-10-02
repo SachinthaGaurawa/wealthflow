@@ -24,6 +24,8 @@ import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 import { healLoanLinks } from './loan-link.mjs';
+import { policyWithReach } from './bank-reach.mjs';
+import { repairInstallmentRecords } from './statement-links.mjs';
 
 export const config = { maxDuration: 60 };
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -436,7 +438,7 @@ function senderStillApproved(senders, source) {
 
 // The rules a stored message was taken under, so reading it again judges it the same way.
 function intakeRules(senders, source) {
-    return { ...policyFrom(senders), ...(source.via === 'owner' ? { forced: true } : {}), ...(source.via === 'series' ? { siblingSeries: new Set([filenameStem(source.filename)]) } : {}) };
+    return { ...policyWithReach(senders), ...(source.via === 'owner' ? { forced: true } : {}), ...(source.via === 'series' ? { siblingSeries: new Set([filenameStem(source.filename)]) } : {}) };
 }
 
 async function retireUnapprovedSource(db, uid, mailRef, ref, now = Date.now()) {
@@ -678,6 +680,24 @@ export async function healLoanInstallments({ db, uid, now = Date.now(), log = co
         return { linked: done.length, why };
     });
     if (result.linked) log(JSON.stringify({ evt: 'loan-link-heal', linked: result.linked, why: result.why }));
+    return result;
+}
+
+/* CARD INSTALLMENT CHARGES FILED IN THE WORKER'S OLD SHAPE (no product, date or duration) were invisible to the monthly totals. They are given the plan shape so they
+ * count — unless a plan the owner already has is that very charge, in which case the plan's month says it was paid and the record stays out. One log line. */
+export async function repairCardInstallments({ db, uid, now = Date.now(), log = console.info }) {
+    const userRef = db.collection('users').doc(uid);
+    const result = await db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), data = snap.data() || {};
+        if (!Array.isArray(data.ccinstall) || !data.ccinstall.some(r => r && !r.date && r.startDate && r.source === 'statement')) return { repaired: 0 };
+        const user = structuredClone({ ccinstall: data.ccinstall });
+        const done = repairInstallmentRecords(user, now);
+        if (!done.length) return { repaired: 0 };
+        tx.set(userRef, { ccinstall: user.ccinstall, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        const kinds = {}; for (const entry of done) kinds[entry.kind] = (kinds[entry.kind] || 0) + 1;
+        return { repaired: done.length, kinds };
+    });
+    if (result.repaired) log(JSON.stringify({ evt: 'card-installment-repair', repaired: result.repaired, kinds: result.kinds }));
     return result;
 }
 
@@ -1468,7 +1488,7 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
     // Judged exactly as intake will judge it: a message from the bank's other address that is named like a
     // statement already filed is one the intake takes, so the report must not call it "a new address".
     const stems = new Set(items.filter(i => i.filed === true && i.filename).map(i => filenameStem(i.filename)).filter(st => st.replace(/[^a-z]/g, '').length >= 6));
-    const policy = { ...policyFrom(list), siblingSeries: stems };
+    const policy = { ...policyWithReach(list), siblingSeries: stems };
     const stored = new Set(items.map(item => String(item.messageId || '')).filter(Boolean));
     const missingKey = coverage.series.map(s => `${s.key}:${s.missing.join(',')}`).join('|');
     const due = search && coverage.missing > 0 && (now - (Number(mail.lastGapSearchMs) || 0) >= GAP_SEARCH_EVERY_MS || mail.gapMissingKey !== missingKey);
@@ -1640,7 +1660,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
     }
     if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
-        try { await healLoanInstallments({ db, uid }); await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
+        try { await healLoanInstallments({ db, uid }); await repairCardInstallments({ db, uid }); await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     const [pending, processing] = await Promise.all([
         mailRef.collection('items').where('status', '==', 'pending').limit(200).get(),

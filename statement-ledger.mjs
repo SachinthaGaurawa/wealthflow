@@ -4,7 +4,7 @@ import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow } from './wealthflow-statement-router.js';
 import { canonicalBank } from './wealthflow-institutions.js';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
-import { manualTwin, markTwin, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit } from './statement-links.mjs';
+import { manualTwin, markTwin, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment } from './statement-links.mjs';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -85,6 +85,7 @@ function findCounterpart({ row, module, user, cards, cardRegistry }) {
         if (cheque) return { kind: 'cheque', cheque };
         if (cardSettlementDebit(row, { cardRegistry, cards })) return { kind: 'card-settlement' };
     }
+    if (module === 'ccinstall') { const plan = matchInstallmentPlan(row, user.ccinstall); if (plan) return { kind: 'plan', plan }; }
     if (module === 'expenses' || module === 'cconetime') { const sub = matchSubscriptionForDebit(row, user.subscriptions); if (sub) return { kind: 'subscription', sub }; }
     return null;
 }
@@ -111,7 +112,11 @@ function makeRecord(row, decision, context, id, now) {
     if (module === 'incomeRecv') return { ...base, name: desc, type: decision.category, month: row.date.slice(0, 7), received: true };
     if (module === 'ccPayments') return { ...base, desc };
     const deadline = new Date(row.date + 'T00:00:00Z'); deadline.setUTCDate(deadline.getUTCDate() + 50);
-    if (module === 'ccinstall') return { ...base, desc, total: row.amount, monthly: row.amount, months: 1, remaining: 1, paid: 0, startDate: row.date, category: decision.category };
+    /* A card installment charge is a one-month plan, in the plan shape the totals and the Installments tab read (product, bank, duration, date): in the worker's own
+     * shape (description, startDate) it was invisible to both, and a real card charge was missing from the month. Its `date` is the month's first day: the totals
+     * count a plan from the month after a mid-month date, which would put this charge a month late. */
+    if (module === 'ccinstall') return { ...base, desc, product: desc.slice(0, 60), bank: canonicalBank(context.bank || ''), buyer: 'Self', rate: 0, duration: 1, date: `${row.date.slice(0, 7)}-01`, completed: false, skipped: [], notes: `Card installment charge of ${row.date}`,
+        total: row.amount, monthly: row.amount, months: 1, remaining: 1, paid: 0, startDate: row.date, category: decision.category };
     return { ...base, desc, type: row.type || 'purchase', category: decision.category, serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
 }
 
@@ -254,6 +259,11 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 changes.cheques = user.cheques;
                 writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'filed', module: 'cheque', reason: 'clears-an-issued-cheque', fingerprint, settledAt: now }]);
                 outcome.filed++; continue;
+            }
+            if (counterpart && counterpart.kind === 'plan') {
+                applyPlanPayment(counterpart.plan, row, sourceRef.path, index, now); changes.ccinstall = user.ccinstall;
+                writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', module: 'ccinstall', reason: 'counted-by-installment-plan', fingerprint, matchedId: String(counterpart.plan.id || ''), settledAt: now }]);
+                outcome.duplicates++; continue;
             }
             if (counterpart && counterpart.kind === 'card-settlement') { module = 'skip'; decision = { ...decision, module: 'skip', category: 'Card Payment' }; }
             if (counterpart && counterpart.kind === 'subscription') {

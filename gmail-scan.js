@@ -41,6 +41,7 @@ import { identify, sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld } from './gma
 import {
     normalizeList, approvedClauses, policyFrom, recordSighting,
 } from './wealthflow-mail-senders.mjs';
+import { policyWithReach } from './bank-reach.mjs';
 import { monthKey } from './wealthflow-sender-discovery.js';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import {
@@ -106,7 +107,7 @@ export default async function handler(req, res, deps) {
 
     /* Read from the sealed document, never from the request. See windowFor. */
     const senderList = normalizeList(sendersOf(state));
-    const policy = policyFrom(senderList);
+    const policy = policyWithReach(senderList);
     /* Accumulates this page's sightings; written back once at the end rather
      * than per message, because a document write per mail is how a scan of a
      * busy month becomes a quota bill. */
