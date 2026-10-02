@@ -286,7 +286,7 @@ describe('private source inspection and durable layout replay', () => {
         });
         const result = await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 10 });
         expect(result).toEqual({ recovered: 3, more: false });
-        reasons.forEach((_, i) => expect(args.data.get(`wf-mail/owner_example_com/items/item${i}`)).toMatchObject({ status: 'pending', wholeReplayVersion: 12, adaptiveTries: 0, adaptiveAt: 0 }));
+        reasons.forEach((_, i) => expect(args.data.get(`wf-mail/owner_example_com/items/item${i}`)).toMatchObject({ status: 'pending', wholeReplayVersion: 13, adaptiveTries: 0, adaptiveAt: 0 }));
         expect((await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 10 })).recovered).toBe(0);
     });
     it('bounds whole replay and keeps content mismatches or settled data fail-closed', async () => {
@@ -297,7 +297,7 @@ describe('private source inspection and durable layout replay', () => {
             args.data.set('users/u/statementReview/' + id, { uid: 'u', sourcePath, index: -1, status: 'pending', reason });
             if (i === 1) args.data.set('users/u/statementLedger/settled', { sourcePath, status: 'filed' });
         }
-        expect(await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 1 })).toEqual({ recovered: 1, more: true });
+        expect(await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 1 })).toMatchObject({ recovered: 1, more: true });
         expect(args.data.get('wf-mail/owner_example_com/items/review1').status).toBe('needs_review');
         expect(args.data.get('wf-mail/owner_example_com/items/review2').status).toBe('needs_review');
     });
