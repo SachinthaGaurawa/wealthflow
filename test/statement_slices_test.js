@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createFirestore } from './helpers/fake-firestore.js';
-import { runStatementSync, classifySlice, sliceRows, resumePartialStatements, resumeReview, closeSettledReviews, statementCensus, statementCoverage, checkpointRows, recoverConsensusFailures, healOrphanedStatements } from '../statement-sync.js';
+import { runStatementSync, classifySlice, sliceRows, resumePartialStatements, resumeReview, closeSettledReviews, statementCensus, statementCoverage, ledgerCensus, checkpointRows, recoverConsensusFailures, healOrphanedStatements } from '../statement-sync.js';
 import { readStatement } from '../statement-reader.mjs';
 import { settleStatement, sourceOccurrenceId } from '../statement-ledger.mjs';
 
@@ -531,6 +531,29 @@ describe('the coverage line says what the app really holds per bank', () => {
         const quiet = [];
         await expect(statementCensus({ db: {}, mailRef: broken, log: line => quiet.push(line) })).resolves.toBeUndefined();
         expect(quiet.map(line => JSON.parse(line).evt)).toEqual(['statement-census']);
+    });
+});
+
+describe('the ledger census says where every statement row went', () => {
+    it('per bank: filed, skipped (and why), already there, waiting — with no amount, merchant or account anywhere', async () => {
+        const fs = createFirestore({
+            [`${mailPath}/items/a`]: { uid: 'u', bank: 'HNB', status: 'filed' },
+            [`${mailPath}/items/b`]: { uid: 'u', bank: 'NTB', status: 'filed' },
+            'users/u/statementLedger/r1': { uid: 'u', sourcePath: `${mailPath}/items/a`, index: 0, status: 'filed', module: 'expenses', fingerprint: 'SECRET-FP', amount: 1234.5 },
+            'users/u/statementLedger/r2': { uid: 'u', sourcePath: `${mailPath}/items/a`, index: 1, status: 'skipped', reason: 'zero-amount' },
+            'users/u/statementLedger/r3': { uid: 'u', sourcePath: `${mailPath}/items/b`, index: 0, status: 'duplicate', matchedId: 'x' },
+            'users/u/statementLedger/r4': { uid: 'u', sourcePath: `${mailPath}/items/b`, index: 1, status: 'review', reason: 'ai-consensus-unavailable' },
+            'users/u/statementLedger/r5': { uid: 'u', sourcePath: `${mailPath}/items/b`, index: 2, status: 'skipped', module: 'skip' },
+            'users/u/statementLedger/r6': { uid: 'u', sourcePath: `${mailPath}/items/gone`, index: 0, status: 'filed', module: 'cconetime' },
+        });
+        const lines = [];
+        await ledgerCensus({ db: fs.db, mailRef: fs.db.collection('wf-mail').doc('owner_example_com'), uid: 'u', log: line => lines.push(line) });
+        const out = JSON.parse(lines[0]);
+        expect(out).toMatchObject({ evt: 'statement-ledger-census', rows: 6, more: false });
+        expect(out.banks).toEqual({ HNB: { filed: 1, skipped: 1 }, NTB: { duplicate: 1, review: 1, skipped: 1 }, '?': { filed: 1 } });
+        expect(out.skipped).toEqual({ 'HNB:zero-amount': 1, 'NTB:decided-skip': 1 });
+        expect(out.byModule).toEqual({ expenses: 1, cconetime: 1 });
+        expect(lines[0]).not.toMatch(/SECRET-FP|1234/);
     });
 });
 

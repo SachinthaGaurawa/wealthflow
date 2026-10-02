@@ -53,7 +53,7 @@ function setup({ mail = {}, items = {}, inbox = [], listing, history = [] } = {}
     return { db, ref, f, calls, ready, run: async (note = NOTE, env = {}) => { await ready; return syncMailbox(db, note, { env, f }); } };
 }
 const itemsOf = async s => Object.fromEntries((await s.ref.collection('items').get()).docs.map(d => [d.id, d.data()]));
-const listingCalls = s => s.calls.filter(u => u.includes('/messages?'));
+const listingCalls = s => s.calls.filter(u => u.includes('/messages?') && decodeURIComponent(u).includes('from:') && !u.includes('maxResults=1&'));      // the audit's own listings (the other ways of asking, and their size estimates, are not)
 
 describe('the whole-history audit', () => {
     it('lists every message from the approved bank domains, Spam included and Trash not, and takes one the cursor had skipped', async () => {

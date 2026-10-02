@@ -25,6 +25,7 @@ import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 import { healLoanLinks } from './loan-link.mjs';
 import { policyWithReach } from './bank-reach.mjs';
+import { planWithEvidence, evidenceContext, bankStillOwned, documentProof, knownLast4 } from './statement-evidence.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
 
 export const config = { maxDuration: 60 };
@@ -433,6 +434,8 @@ async function rejectNonStatement(db, uid, ref, leaseToken, identity) {
 // while the owner still approves an address at that bank; revoke it and the statement is retired.
 function senderStillApproved(senders, source) {
     if (matchSender(senders, source.from || '').verdict === 'approved') return true;
+    // taken on evidence (statement-evidence.mjs): while the owner still approves an address at the bank it named
+    if (source.via === 'evidence') return bankStillOwned(senders, source.bank || '');
     return (source.via === 'series' || source.via === 'sibling') && !!relatedApproval(senders, source.from || '');
 }
 
@@ -460,7 +463,7 @@ export async function attachmentBytes(source, ref, token, senders, f = fetch) {
     if (response.status === 404) throw new Error('statement-message-deleted');
     if (!response.ok) throw new Error('gmail-fetch-unavailable');
     const message = await response.json();
-    const plan = planMessage(message, intakeRules(senders, source));
+    const plan = source.via === 'evidence' ? planWithEvidence(message, intakeRules(senders, source), evidenceContext(senders)) : planMessage(message, intakeRules(senders, source));
     if (!plan.ok) throw new Error('statement-sender-no-longer-approved');
     let items = plan.items.filter(item => item.key === ref.id || item.legacyKey === ref.id);
     if (items.length === 0 && source.attachmentId) {
@@ -730,6 +733,27 @@ export async function statementCensus({ db, mailRef, uid = '', log = console.inf
     }
     log(JSON.stringify({ evt: 'statement-census', items: found.docs.length, more: found.docs.length === 300, byBank, reasons, partial, ...(reviews ? { reviews } : {}) }));
     try { await statementCoverage({ mailRef, log }); } catch (_) { /* advice only */ }
+    if (uid) { try { await ledgerCensus({ db, mailRef, uid, log }); } catch (_) { /* advice only */ } }
+}
+
+/* WHERE EVERY STATEMENT ROW WENT, per bank: filed into the books, skipped (and why: a card settlement, a zero line, an empty line), recognised as already
+ * there (a duplicate), or waiting for a decision. "Transactions that are not integrated" is exactly the rows that are neither filed nor accounted for;
+ * this is the line that shows whether there are any. Bank names, status words, reason codes and counts only — no amount, no merchant, no account. */
+export async function ledgerCensus({ db, mailRef, uid, log = console.info, limit = 4000 }) {
+    let query = db.collection('users').doc(uid).collection('statementLedger');
+    if (typeof query.select === 'function') query = query.select('sourcePath', 'status', 'module', 'reason');
+    const page = await query.limit(limit).get();
+    const bankOf = new Map();
+    for (const item of await storedItems(mailRef)) bankOf.set(String(item.id), String(item.bank || '?').slice(0, 24));
+    const banks = {}, skipped = {}, byModule = {};
+    const bump = (map, key) => { map[key] = (map[key] || 0) + 1; };
+    for (const doc of page.docs) {
+        const row = doc.data() || {}, id = String(row.sourcePath || '').split('/').pop(), bank = bankOf.get(id) || '?', status = String(row.status || '?').slice(0, 24);
+        banks[bank] = banks[bank] || {}; bump(banks[bank], status);
+        if (status === 'skipped') bump(skipped, `${bank}:${String(row.reason || (row.module === 'skip' ? 'decided-skip' : '?')).slice(0, 40)}`);
+        if (status === 'filed' && row.module) bump(byModule, String(row.module).slice(0, 24));
+    }
+    log(JSON.stringify({ evt: 'statement-ledger-census', rows: page.docs.length, more: page.docs.length === limit, banks, skipped, byModule }));
 }
 
 /* WHAT THE APP REALLY HOLDS, per bank: filed statements, how many carried no rows at all, the rows they brought in, the oldest and newest month,
@@ -1235,6 +1259,13 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             // `unproven` is retired only when the text has NO line with a date and an amount on it at all — a statement short enough
             // to have fewer than three movements, in a language the vocabulary does not know, still goes to the owner, never away
             && (strict || ((identity.evidence || []).length === 0 && linesOf(text).filter(isMovementLine).length === 0));
+        /* TAKEN ON EVIDENCE (the mail said so and was authenticated): the DOCUMENT must name that bank and show one of the owner's accounts there. */
+        if (claimed.via === 'evidence' && identity.verdict !== VERDICT.NOT_STATEMENT) {
+            let known = [];
+            try { known = knownLast4(await storedItems(mailRef), claimed.bank || ''); } catch (_) { /* a bank with no known account is proven by its name and its arithmetic */ }
+            const proof = documentProof({ text: text || '', bank: claimed.bank || '', known });
+            if (!proof.ok) { identity.verdict = VERDICT.NOT_STATEMENT; identity.reason = proof.reason; }
+        }
         if (unvouched && identity.verdict !== VERDICT.NOT_STATEMENT) {
             identity.verdict = VERDICT.NOT_STATEMENT;
             identity.reason = claimed.intent === 'suspect'
@@ -1459,7 +1490,7 @@ const addressOnly = from => { const m = /<([^<>]+@[^<>]+)>|([^\s<>"]+@[^\s<>"]+)
 
 async function storedItems(mailRef) {
     let query = mailRef.collection('items');
-    if (typeof query.select === 'function') query = query.select('bank', 'filename', 'receivedMs', 'storedMs', 'status', 'filed', 'from', 'messageId', 'emptyStatement', 'via', 'proof', 'reviewReason', 'retryCount', 'contentSha256', 'emptyEvidence');
+    if (typeof query.select === 'function') query = query.select('bank', 'filename', 'receivedMs', 'storedMs', 'status', 'filed', 'from', 'messageId', 'emptyStatement', 'via', 'proof', 'reviewReason', 'retryCount', 'contentSha256', 'emptyEvidence', 'last4');
     if (typeof query.limit === 'function') query = query.limit(1000);
     return (await query.get()).docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
@@ -1477,8 +1508,11 @@ function logMailTable(summary, table, items) {
             const key = `${row.state}:${statuses ? [...statuses].sort().join('+') : 'no-item'}`;
             waiting[key] = (waiting[key] || 0) + 1;
         }
+        /* WHY EACH REFUSED MESSAGE WAS REFUSED, as counts of reason codes: what a "refused 22" is made of. */
+        const refusedWhy = {};
+        for (const row of table) if (row.state === 'REFUSED') { const why = String(row.reason || '?').replace(/\d{4,}/g, '#').slice(0, 60); refusedWhy[why] = (refusedWhy[why] || 0) + 1; }
         const senders = (summary.senders || []).slice(0, 8).map(entry => ({ domain: String(entry.address || '').split('@').pop().slice(0, 40), total: entry.total, filed: entry.INGESTED, waiting: (entry.PENDING || 0) + (entry.PROCESSED || 0), review: entry.REVIEW, held: entry.HELD, refused: entry.REFUSED }));
-        console.info(JSON.stringify({ evt: 'mail-table', total: summary.total, counts: summary.counts, waiting, senders, stuck: summary.stuckCount }));
+        console.info(JSON.stringify({ evt: 'mail-table', total: summary.total, counts: summary.counts, waiting, refusedWhy, senders, stuck: summary.stuckCount }));
     } catch (_) { /* a log line never stops a sync */ }
 }
 
@@ -1541,7 +1575,7 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
                         const response = await f(`${GMAIL}/messages/${encodeURIComponent(ref.id)}?format=full`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
                         if (response.status === 404) continue;
                         if (!response.ok) { failed = true; break; }
-                        const message = await response.json(), plan = planMessage(message, policy);
+                        const message = await response.json(), plan = planWithEvidence(message, policy, evidenceContext(list));
                         const headers = Object.fromEntries((message.payload?.headers || []).map(h => [String(h.name || '').toLowerCase(), h.value]));
                         const outcome = plan.ok ? (stored.has(String(message.id || ref.id)) ? 'stored' : 'missed') : String(plan.reason || 'refused');
                         if (outcome === 'missed') stage.add(String(message.id || ref.id));

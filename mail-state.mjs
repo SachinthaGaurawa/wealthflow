@@ -57,7 +57,7 @@ export function mayReplace(prev, next) {
     if (next.state === MAIL_STATE.PENDING) return prev.state === MAIL_STATE.PENDING;   // a retry is counted; nothing else is undone by one
     if (a >= RANK.PROCESSED && b <= RANK.HELD) return false;     // a stored statement is not un-stored by a stricter rule
     if (b > a) return true;
-    if (b === a) return prev.state !== next.state || prev.reason !== next.reason || (Number(next.v) || 0) > (Number(prev.v) || 0) || next.force === true;
+    if (b === a) return prev.state !== next.state || prev.reason !== next.reason || (Number(next.v) || 0) > (Number(prev.v) || 0) || next.force === true || (!!next.listKey && next.listKey !== prev.listKey);
     return false;
 }
 
@@ -83,6 +83,7 @@ export function entryOf(input, prev, now) {
     if (Array.isArray(sha) && sha.length) out.sha = sha.map((h) => clean(h, 64)).slice(0, 16);
     const via = input.via || p.via;
     if (via) out.via = clean(via, 16);
+    if (input.listKey) out.listKey = clean(input.listKey, 24);
     return out;
 }
 
@@ -116,7 +117,8 @@ export async function logStates(db, mailRef, inputs, { now = Date.now() } = {}) 
 }
 
 /** Which of these message ids already have a settled record under the current rules? (PENDING does not count.) */
-export async function settledIds(mailRef, ids, { version = 0, concurrency = 40 } = {}) {
+export const DISCOVERY_DROP = 'not-a-statement-of-your-banks';
+export async function settledIds(mailRef, ids, { version = 0, concurrency = 40, listKey = '' } = {}) {
     const out = new Set();
     const list = [...new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean))];
     for (let at = 0; at < list.length; at += concurrency) {
@@ -126,7 +128,10 @@ export async function settledIds(mailRef, ids, { version = 0, concurrency = 40 }
             const d = doc && doc.exists ? doc.data() : null;
             // HELD waits on a decision about the SENDER, and a mail refused because the sender was blocked is refused only
             // until the owner unblocks it: neither is "judged for good", so both come back to the audit.
-            const reopenable = d && (d.state === MAIL_STATE.HELD || d.reason === 'you-blocked-this-sender');
+            /* A message the other ways of asking judged "not a statement of your banks" was judged against the banks the owner had approved THEN: it stays
+             * settled for the discovery that dropped it (same `listKey`), and comes back to every other audit — approve a sender or a bank and it is judged again. */
+            const dropped = d && String(d.reason || '').startsWith(DISCOVERY_DROP) && !(listKey && d.listKey === listKey);
+            const reopenable = d && (d.state === MAIL_STATE.HELD || d.reason === 'you-blocked-this-sender' || dropped);
             if (d && d.state !== MAIL_STATE.PENDING && !reopenable && (Number(d.v) || 0) >= version) out.add(chunk[n]);
         });
     }
@@ -245,13 +250,13 @@ export async function applyReconcile(mailRef, writes, tableRows, { now = Date.no
  * The first `want` ids, in order, that are NOT settled — looking up only as many as it takes, so a mailbox with tens of
  * thousands of listed messages costs a bounded number of reads per run, not one per message.
  */
-export async function firstUnsettled(mailRef, ids, want, { version = 0, chunk = 200 } = {}) {
+export async function firstUnsettled(mailRef, ids, want, { version = 0, chunk = 200, listKey = '' } = {}) {
     const out = [];
     let settledSeen = 0;
     const list = [...new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean))];
     for (let at = 0; at < list.length && out.length < want; at += chunk) {
         const slice = list.slice(at, at + chunk);
-        const settled = await settledIds(mailRef, slice, { version });
+        const settled = await settledIds(mailRef, slice, { version, listKey });
         for (const id of slice) { if (!settled.has(id)) { out.push(id); if (out.length >= want) break; } else settledSeen += 1; }
     }
     out.settledSeen = settledSeen;
