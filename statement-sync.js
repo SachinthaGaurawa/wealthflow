@@ -480,7 +480,7 @@ export async function attachmentBytes(source, ref, token, senders, f = fetch) {
     if (!response.ok) throw new Error('gmail-fetch-unavailable');
     const message = await response.json();
     const plan = source.via === 'evidence' ? planWithEvidence(message, intakeRules(senders, source), evidenceContext(senders)) : planMessage(message, intakeRules(senders, source));
-    if (!plan.ok) throw new Error('statement-sender-no-longer-approved');
+    if (!plan.ok) throw Object.assign(new Error('statement-sender-no-longer-approved'), { planReason: String(plan.reason || '').slice(0, 80) });
     let items = plan.items.filter(item => item.key === ref.id || item.legacyKey === ref.id);
     if (items.length === 0 && source.attachmentId) {
         items = plan.items.filter(item => item.attachmentId === source.attachmentId);
@@ -727,33 +727,44 @@ export async function repairCardInstallments({ db, uid, now = Date.now(), log = 
  * Now: each retired item is judged again under TODAY's list (exact approval, another desk of an approved bank, a registered domain of one, or the bank an
  * evidence-taken item named), unless the owner BLOCKED that sender, and goes back in the queue with the reason it is taken written on it. The worker still fetches the
  * message, applies the intake rules to it and holds the document to what it is; if it is retired again it is not revived a third time. */
-export async function reviveRetiredSources({ db, mailRef, uid, senders, token = '', f = null, limit = 150, lookups = 30, now = Date.now(), log = console.info }) {
+export async function reviveRetiredSources({ db, mailRef, uid, senders, token = '', f = null, limit = 150, lookups = 24, now = Date.now(), until = Infinity, log = console.info }) {
     const found = await mailRef.collection('items').where('status', '==', 'rejected_unapproved_sender').limit(limit).get();
     const list = normalizeList(senders), policy = policyWithReach(list);
     const banks = {}, fromOf = new Map();
     let revived = 0, kept = 0, unknown = 0, looked = 0, gone = 0;
     /* PRODUCTION, 2026-10-02: 57 retired items were looked at and 56 had NO `from` — stored before the sender was recorded on an item. The sender is on the MESSAGE: it is read
      * (headers only, one request per message, at most `lookups` a run) and written back on the item, so it is asked for once. */
-    const senderOf = async source => {
-        if (source.from) return String(source.from);
+    /* THE LOOKUPS ARE MADE TOGETHER, SIX AT A TIME, AND STOP AT `until`: thirty of them one after another (8 s each when Gmail was slow) were the front of a run that never got to its queue
+     * and was cut at sixty seconds. What is not looked up now is looked up at the next pass (`more`). */
+    const wanted = [];
+    for (const doc of found.docs) {
+        const source = doc.data() || {};
         const id = String(source.messageId || '');
-        if (!id || !token || typeof f !== 'function') return '';
-        if (fromOf.has(id)) return fromOf.get(id);
-        if (looked >= lookups) return '';
-        looked += 1;
+        if (!source.from && !source.messageGone && id && !fromOf.has(id) && !wanted.includes(id)) wanted.push(id);
+    }
+    const goneIds = new Set();
+    const ask = async id => {
         let from = '';
         try {
-            const response = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
-            if (response.status === 404) gone += 1;
+            const response = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From`, { headers: authed(token), signal: AbortSignal.timeout(6000) });
+            if (response.status === 404) { gone += 1; goneIds.add(id); }
             else if (response.ok) from = String(((await response.json()).payload?.headers || []).find(h => String(h?.name || '').toLowerCase() === 'from')?.value || '');
         } catch (_) { /* asked again at the next pass */ }
         fromOf.set(id, from);
-        return from;
     };
+    if (token && typeof f === 'function') {
+        const todo = wanted.slice(0, lookups);
+        for (let at = 0; at < todo.length && Date.now() < until; at += 6) { const batch = todo.slice(at, at + 6); looked += batch.length; await Promise.all(batch.map(ask)); }
+    }
+    const senderOf = async source => (source.from ? String(source.from) : fromOf.get(String(source.messageId || '')) || '');
+    let stopped = false;
     for (const doc of found.docs) {
         const source = doc.data() || {};
         if (source.uid && source.uid !== uid) continue;
+        if (Date.now() > until) { stopped = true; break; }
         const from = await senderOf(source);
+        // a message Gmail no longer has can never be judged: said once on the item, so it takes no lookup again
+        if (!from && goneIds.has(String(source.messageId || ''))) { try { await doc.ref.set({ messageGone: true }, { merge: true }); } catch (_) { /* said again at the next pass */ } }
         if (!from) { unknown += 1; continue; }
         // written on the item at once, whatever is decided: the next pass (and the owner's audit log) has the sender without asking Gmail again
         if (!source.from) { source.from = from; try { await doc.ref.set({ from }, { merge: true }); } catch (_) { /* looked up again next pass */ } }
@@ -773,8 +784,9 @@ export async function reviveRetiredSources({ db, mailRef, uid, senders, token = 
         });
         if (done) { revived += 1; const bank = String(source.bank || '?').slice(0, 24); banks[bank] = (banks[bank] || 0) + 1; }
     }
-    if (found.docs.length) log(JSON.stringify({ evt: 'statement-revived', checked: found.docs.length, revived, kept, noSender: unknown, lookedUp: looked, messagesGone: gone, banks }));
-    return { revived, kept };
+    const more = stopped || wanted.length > looked;
+    if (found.docs.length) log(JSON.stringify({ evt: 'statement-revived', checked: found.docs.length, revived, kept, noSender: unknown, lookedUp: looked, messagesGone: gone, ...(more ? { more: true } : {}), banks }));
+    return { revived, kept, more };
 }
 
 /* WHERE EVERY STATEMENT IS, IN ONE LINE OF THE PLATFORM LOG: per bank, how many are waiting, stopped or part-way, and why. It exists because
@@ -878,7 +890,7 @@ export async function resumeReview({ db, owner, id, auto = false, env = process.
     } catch (_) { return { ok: true, resumed: true, state: 'resumed', settled: result.settled, queued: true, replayStatus: 'pending' }; }
 }
 
-export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
+export async function recoverConsensusFailures({ db, uid, limit = 25, until = Infinity }) {
     const userRef = db.collection('users').doc(uid);
     const cap = Math.min(50, Math.max(1, limit));
     // both codes the owner reads as "the AI could not agree": the board's refusal and its peer review's
@@ -886,9 +898,10 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
     for (const reason of ['ai-consensus-unavailable', 'unanimous-decision-required']) found.push(...(await userRef.collection('statementReview').where('reason', '==', reason).limit(100).get()).docs);
     const page = { docs: found.slice(0, 100) };
     const cardRegistry = page.docs.length ? ((await userRef.get()).data() || {}).settings?.cardRegistry || {} : {};
-    let recovered = 0;
+    let recovered = 0, stopped = false;
     for (const doc of page.docs) {
         if (recovered >= cap) break;
+        if (Date.now() > until) { stopped = true; break; }
         const review = doc.data();
         if (review.uid !== uid || review.status !== 'pending' || !['ai-consensus-unavailable', 'unanimous-decision-required'].includes(review.reason) || !Number.isSafeInteger(review.index) || review.index < 0 || !review.row || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) continue;
         const source = (await db.doc(review.sourcePath || '').get()).data() || {};
@@ -913,16 +926,16 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
             }
         }
     }
-    return { recovered, more: recovered >= cap || page.docs.length === 100 };
+    return { recovered, more: stopped || recovered >= cap || page.docs.length === 100 };
 }
 
 /* THE SAME TRANSACTION IN A SECOND COPY OF A STATEMENT IS NOT A QUESTION. A statement can reach the books twice (the bank's other address, a re-send, a copy that was retired and is
  * read again): every row of the second copy is then one the books already hold from the first, and the ledger stops each of them as `ambiguous-cross-source-match` and puts it to the
  * owner — sixty rows of "this may already be there". Here each one is closed as a duplicate, without asking, as long as the books hold at least as many identical entries from OTHER
  * statements as there are such rows waiting (two identical bus fares on one day need two entries to explain both). A row the books do not account for stays for the owner. */
-export async function recoverDuplicateRows({ db, uid, limit = 60, log = console.info }) {
+export async function recoverDuplicateRows({ db, uid, limit = 60, until = Infinity, log = console.info }) {
     const userRef = db.collection('users').doc(uid);
-    const page = await userRef.collection('statementReview').where('reason', '==', 'ambiguous-cross-source-match').limit(150).get();
+    const page = await userRef.collection('statementReview').where('reason', '==', 'ambiguous-cross-source-match').limit(300).get();
     const waiting = page.docs.filter(doc => { const r = doc.data() || {}; return r.uid === uid && r.status === 'pending' && Number.isSafeInteger(r.index) && r.index >= 0 && r.row && /^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(r.sourcePath || ''); });
     if (!waiting.length) return { closed: 0, more: false };
     const user = (await userRef.get()).data() || {};
@@ -930,7 +943,7 @@ export async function recoverDuplicateRows({ db, uid, limit = 60, log = console.
     const used = new Map();
     let closed = 0, kept = 0;
     for (const doc of waiting) {
-        if (closed >= limit) break;
+        if (closed >= limit || Date.now() > until) break;
         const review = doc.data(), context = { bank: review.bank || '', last4: review.last4 || '', card_last4: review.last4 || '' };
         const others = crossSourceMatches(records, review.row, context).filter(record => record.statementKey !== review.sourcePath);
         const key = JSON.stringify(rowIdentity(review.row, context));
@@ -1108,13 +1121,14 @@ export async function repairStatementCategories({ db, uid }) {
     });
 }
 
-export async function recoverRevokedSenderReviews({ db, uid, limit = 25 }) {
+export async function recoverRevokedSenderReviews({ db, uid, limit = 25, until = Infinity }) {
     const reviews = db.collection('users').doc(uid).collection('statementReview');
     const cap = Math.min(50, Math.max(1, limit));
     const page = await reviews.where('reason', '==', 'statement-sender-no-longer-approved').limit(100).get();
-    let recovered = 0;
+    let recovered = 0, stopped = false;
     for (const doc of page.docs) {
         if (recovered >= cap) break;
+        if (Date.now() > until) { stopped = true; break; }
         const review = doc.data();
         if (review.uid !== uid || review.status !== 'pending' || review.index !== -1) continue;
         try {
@@ -1123,7 +1137,7 @@ export async function recoverRevokedSenderReviews({ db, uid, limit = 25 }) {
             if (result?.resolved && !result.alreadyResolved) recovered += 1;
         } catch (_) {}
     }
-    return { recovered, more: recovered >= cap || page.docs.length === 100 };
+    return { recovered, more: stopped || recovered >= cap || page.docs.length === 100 };
 }
 
 // ── reading a layout nobody has a template for ─────────────────────────────
@@ -1359,10 +1373,14 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         const siblingSilent = claimed.via === 'sibling' && intentVerdict({ subject: claimed.subject || '', filenames: [claimed.filename || ''] }).intent !== 'stated';
         const strict = claimed.intent === 'suspect' && !(siblingSilent && htmlDoc);
         const selfProven = parserProof || (identity.verdict === VERDICT.STATEMENT && (!strict || hasStatementStructure));
+        /* A PDF THAT NEVER SAYS STATEMENT, BALANCE, OPENING OR CLOSING IS NOT ONE, however many dated figures it carries: a direct-debit MANDATE (NTB, "Mandate.pdf") has a date
+         * and an amount and was put to the owner as "rows could not be proven to add up". A statement always carries at least one of those four words, so a document that
+         * the mail did not vouch for, that the parser could not prove and that has none of them is retired. (An HTML document draws itself on the owner's device and keeps the lenient test.) */
+        const wordless = !htmlDoc && !structure.stmt && !structure.bal && !structure.open && !structure.close;
         const unvouched = mailDidNotVouch && !selfProven && (hasText || (siblingSilent && !htmlDoc))
             // `unproven` is retired only when the text has NO line with a date and an amount on it at all — a statement short enough
             // to have fewer than three movements, in a language the vocabulary does not know, still goes to the owner, never away
-            && (strict || ((identity.evidence || []).length === 0 && linesOf(text).filter(isMovementLine).length === 0));
+            && (strict || wordless || ((identity.evidence || []).length === 0 && linesOf(text).filter(isMovementLine).length === 0));
         /* TAKEN ON EVIDENCE (the mail said so and was authenticated): the DOCUMENT must name that bank and show one of the owner's accounts there. */
         if (claimed.via === 'evidence' && identity.verdict !== VERDICT.NOT_STATEMENT) {
             let known = [];
@@ -1486,6 +1504,18 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             } else if (result.outcome === 'dead-letter') outcome = { status: 'dead_letter', retry: 0, deadLetter: 1, retryAfterMs: result.retryAfterMs };
             else outcome = { status: 'retry_pending', retry: 1, retryAfterMs: result.retryAfterMs };
             logItem({ bank: claimed.bank || '?', status: outcome.status, reason: error?.message, retryAfterMs: result.retryAfterMs, ...(error?.detail ? { detail: error.detail } : {}) });
+        } else if (error?.message === 'statement-sender-no-longer-approved' && !(Number(claimed.cursor) > 0) && !claimed.hasReview) {
+            /* A MESSAGE THAT TODAY'S RULES DO NOT TAKE AS A STATEMENT IS RETIRED, NOT ASKED ABOUT. Read again under the owner's list it is no statement of one of the owner's
+             * banks (another desk's form, a notice, a document of a bank the owner never approved), and the owner cannot do anything about "the sender is no longer
+             * approved" — seven "Nations Trust" items sat in the audit log as exactly that. Nothing of it was filed (cursor 0), so nothing is lost: it is retired like any
+             * other turned-away mail, with the reason it was turned away, and is not revived a second time. */
+            await db.runTransaction(async tx => {
+                const snap = await tx.get(sourceRef), source = snap.data();
+                if (!snap.exists || source.uid !== uid || source.leaseToken !== claimed.leaseToken) throw new Error('statement-lease-lost');
+                tx.set(sourceRef, { status: 'rejected_unapproved_sender', filed: false, leaseToken: '', leaseUntil: 0, reviveCount: Math.max(2, Number(source.reviveCount) || 0), rejectionReason: String(error.planReason || 'not-a-statement-of-an-approved-bank').slice(0, 80), updatedAt: Date.now() }, { merge: true });
+            });
+            outcome = { status: 'rejected_unapproved_sender', rejected: 1 };
+            logItem({ bank: claimed.bank || '?', status: outcome.status, reason: error.planReason || error.message });
         } else {
             const reason = error.message;
             await quarantineSource(db, uid, sourceRef, claimed.leaseToken, reason, reviewEvidence);
@@ -1720,6 +1750,32 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
     return summary;
 }
 
+/* THE STEPS THAT SETTLE WHAT IS ALREADY WAITING RUN FIRST, SHORT, AND ONLY WHILE THE RUN HAS ROOM. They used to be placed after the mailbox scan and in front of the queue with no limit of their own
+ * (the sixty-eight "POS Transaction" rows to settle, the retired statements to look up and put back, the second copies to close): on 2026-10-02 the runs that reached them were cut at
+ * sixty seconds ("Task timed out"), the chain stalled, and nothing they were meant to settle was settled — the owner kept seeing the same reviews. Each step here has a deadline, the
+ * whole pass has six seconds, it is at most every thirty, and a step that did not finish says `more` so the chain comes straight back to it. */
+const SETTLE_EVERY_MS = 30 * 1000, SETTLE_STEP_MS = 6000;
+async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs, now = Date.now() }) {
+    const out = { ran: false, recovered: 0, more: false };
+    if (now - Number(mail.lastSettleMs || 0) < SETTLE_EVERY_MS || now - start > budgetMs - 16000) return out;
+    out.ran = true;
+    const until = Math.min(now + SETTLE_STEP_MS, start + budgetMs - 12000);
+    const room = () => Date.now() < until;
+    const step = async work => { if (!room()) { out.more = true; return; } try { await work(); } catch (_) { /* advice only: the next pass tries again */ } };
+    await step(async () => { const r = await recoverConsensusFailures({ db, uid, limit: 25, until }); out.recovered += r.recovered; out.more = out.more || r.more; });
+    await step(async () => { const r = await recoverDuplicateRows({ db, uid, limit: 40, until }); out.more = out.more || r.more; });
+    await step(async () => { const r = await recoverRevokedSenderReviews({ db, uid, limit: 25, until }); out.recovered += r.recovered; out.more = out.more || r.more; });
+    if (now - Number(mail.lastReviveMs || 0) >= REVIVE_EVERY_MS) {
+        await step(async () => {
+            const r = await reviveRetiredSources({ db, mailRef, uid, senders: sendersOf(mail), token, f, until });
+            out.more = out.more || r.more;
+            if (!r.more) await mailRef.set({ lastReviveMs: Date.now() }, { merge: true });
+        });
+    }
+    try { await mailRef.set({ lastSettleMs: Date.now() }, { merge: true }); } catch (_) { /* the pass simply runs again */ }
+    return out;
+}
+
 const FRONT_EVERY_MS = 90 * 1000;
 export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, extract = invokeExtractor, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '', loadAttachment = attachmentBytes, startedAt = Date.now(), interactive = false, frontEveryMs = FRONT_EVERY_MS }) {
     const start = startedAt;
@@ -1743,6 +1799,8 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
      * mailbox; run once for every statement an interactive caller asks for, it left almost none of the 60 seconds for the
      * statements. An interactive call repeats it at most every minute and a half — unless a collection is part-way, when
      * finishing it is the work — and then spends the rest of the invocation on the queue. */
+    const settled = await settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs });
+    if (settled.ran) { ranConsensus = true; consensusRecovered += settled.recovered; consensusMore = consensusMore || settled.more; }
     const frontDue = action !== 'drain' && (!interactive || !mail.lastFrontMs || start - Number(mail.lastFrontMs) >= frontEveryMs || Boolean(mail.pendingCollection && mail.pendingCollection.ids));
     const heavy = maxSteps === Infinity && !interactive;
     if (frontDue) {
@@ -1783,8 +1841,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (frontRoom()) { const resumed = await resumePartialStatements({ db, uid, limit: recoveryLimit }); ranResume = true; wholeRecovered += resumed.resumed; wholeMore = wholeMore || resumed.more; }
         if (frontRoom()) await closeSettledReviews({ db, uid, limit: 20 });
         if (frontRoom()) categoriesRepaired = (await repairStatementCategories({ db, uid })).total;
-        if (frontRoom()) { const consensus = await recoverConsensusFailures({ db, uid, limit: recoveryLimit }); ranConsensus = true; consensusRecovered = consensus.recovered; consensusMore = consensus.more; }
-        if (frontRoom()) { try { await recoverDuplicateRows({ db, uid, limit: recoveryLimit * 2 }); } catch (_) { /* advice only: the next run tries again */ } }
+        if (!ranConsensus && frontRoom()) { const consensus = await recoverConsensusFailures({ db, uid, limit: recoveryLimit, until: start + frontBudgetMs }); ranConsensus = true; consensusRecovered += consensus.recovered; consensusMore = consensusMore || consensus.more; }
         if (frontRoom()) { const healed = await healOrphanedStatements({ db, mailRef, uid, limit: recoveryLimit }); ranHeal = true; orphansHealed = healed.filed + healed.requeued; }
         if (frontRoom()) { const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit }); revokedRecovered = revoked.recovered; revokedMore = revoked.more; }
         if (frontRoom()) reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
@@ -1793,10 +1850,6 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (frontRoom()) { const healed = await healMissingRows({ db, uid, limit: heavy ? 5 : 2 }); rowsHealed = healed.rows; healMore = healed.more; }
         if (frontSkipped) { wholeMore = true; frontIncomplete = true; }
         if (interactive) { try { await mailRef.set({ lastFrontMs: Date.now() }, { merge: true }); } catch (_) { /* the front pass simply runs again */ } }
-    }
-    /* A statement retired for a sender reason that no longer holds goes back in the queue BEFORE the queue is worked, so it is read in this very run. */
-    if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastReviveMs || 0) >= REVIVE_EVERY_MS) {
-        try { await reviveRetiredSources({ db, mailRef, uid, senders: sendersOf(mail), token, f }); await mailRef.set({ lastReviveMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     /* Dead-lettered statements whose wait is over go back in the queue, from the place they stopped (statement-queue.mjs). */
     const redrive = await redriveDeadLetters({ db, mailRef, now: Date.now(), limit: heavy ? 25 : 10 });
@@ -1825,12 +1878,6 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
             if (!ranHeal && Date.now() - start < budgetMs - 5000) { const healed = await healOrphanedStatements({ db, mailRef, uid, limit: 10 }); orphansHealed += healed.filed + healed.requeued; }
             await mailRef.set({ lastRecoveryMs: Date.now() }, { merge: true });
         } catch (_) { /* advice only: the next run tries again */ }
-    }
-    /* THE ROWS THE AI COULD NOT AGREE ON ARE SETTLED EVEN WHILE A LONG STATEMENT IS BEING WORKED. The recovery steps above run only on a run that had nothing to process, and a 289-row
-     * statement is processed slice after slice on every run for as long as it takes — so three "POS Transaction" rows sat in front of the owner (2026-10-02) although the rules could
-     * settle them the moment anyone looked. This step re-queues nothing (it files a row, or leaves it), so it has no reason to wait for a quiet run. */
-    if (attempted > 0 && !ranConsensus && Date.now() - start < budgetMs - 8000 && start - Number(mail.lastConsensusMs || 0) >= 60000) {
-        try { const consensus = await recoverConsensusFailures({ db, uid, limit: 25 }); consensusRecovered += consensus.recovered; consensusMore = consensusMore || consensus.more; await recoverDuplicateRows({ db, uid, limit: 40 }); await mailRef.set({ lastConsensusMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     if (Date.now() - start < budgetMs - 8000 && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
         try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
