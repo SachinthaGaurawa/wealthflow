@@ -168,7 +168,7 @@ describe('the recovery steps run on an idle invocation too (the front pass is sk
         expect(idle.attempted).toBe(0);
         expect(w.data.get('users/u').incomeRecv.find(record => record.amount === 500000)).toMatchObject({ direction: 'credit', autoDecided: 'rules' });
         expect(w.data.get('users/u/statementReview/' + rowId).status).not.toBe('pending');
-        expect(w.data.get(other)).toMatchObject({ status: 'pending', wholeReplayVersion: 10 });             // read again, now witnessed by the board instead of asked
+        expect(w.data.get(other)).toMatchObject({ status: 'pending', wholeReplayVersion: 11 });             // read again, now witnessed by the board instead of asked
         expect(w.data.get('users/u/statementReview/' + otherId).status).toBe('retried');
     });
 });

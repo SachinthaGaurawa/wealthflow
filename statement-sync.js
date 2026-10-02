@@ -35,7 +35,8 @@ const PASSWORD_BATCH = 6;
 /* Bumped when the reader or the AI behind it has changed so that a statement it could not read earlier deserves another look. Version 4: the
  * AI roster was repaired (reasoning-model empties, retired models) and the model-free reader added — thirty-four HNB statements had used up
  * their three adaptive tries (and the six-hour wait between them) during the outage and sat in review as "not waiting to be processed again". */
-const WHOLE_REPLAY_VERSION = 10;   // 10: a statement with several accounts is now proven account by account (the DFCC Aug 26 one, stopped by the one-chain reading)
+const WHOLE_REPLAY_VERSION = 11;   // 11: read once more, with the reading's own diagnostics in the log (the DFCC Aug 26 statement was still stopped after 10)
+// 10: a statement with several accounts is now proven account by account (the DFCC Aug 26 one, stopped by the one-chain reading)
 /* A statement that was PART-WAY through (some rows already filed) when it stopped is resumed, not re-mapped: it is read again from its first row
  * and every row the ledger already holds is checked against the new reading by its fingerprint, so a row is never filed twice and a statement
  * whose reading really did change is refused at the first row that differs (statement-cursor-or-content-changed) — nothing is guessed.
@@ -227,7 +228,8 @@ export async function classifySlice(rows, allocations, { board = invokeBoard, se
     const answers = await askBoard(asked.map(index => rows[index]), asked.map(index => rules[index]), allocations, board);
     const out = rules.slice();
     asked.forEach((index, at) => { out[index] = answers[at]; });
-    return out;
+    // what neither the rules nor the board settled is placed by its direction (fallbackDecision) rather than put to the owner
+    return out.map((decision, index) => (decision && decision.verified === false && !(settled && settled.has(index)) ? (fallbackDecision(rows[index], allocations) || decision) : decision));
 }
 
 async function askBoard(rows, rules, allocations, board) {
@@ -289,6 +291,20 @@ export function deterministicDecision(row, allocations = {}) {
     const decision = decisions[routed.module];
     return decision ? { ...decision, allocationId: '', verified: true, deterministic: true }
         : { verified: false, reason: 'ai-consensus-unavailable' };
+}
+
+/* A ROW WHOSE DIRECTION IS PROVEN IS NEVER LEFT FOR THE OWNER TO PLACE. The rules could not name the merchant ("POS Transaction - MIRIGAMA") and the AI board could not agree,
+ * and three such rows kept a 289-row statement in front of the owner as "check it against the statement and confirm it yourself" — one transaction at a time, after the
+ * owner had said many times that a bank statement is to be filed, not asked about. What is NOT in doubt is what the statement itself prints: the amount, the date and
+ * whether it left the account or came in. That is enough to file it where it belongs by direction alone — a debit is an expense (a card purchase on a card), a credit is
+ * income (a card payment on a card) — in the category the words give or "Other", marked `autoDecided: 'rules-fallback'` so it can be found and changed in one tap. A row whose
+ * direction had to be ASSUMED is still not filed: that is the one thing nobody can know from the page. */
+export function fallbackDecision(row, allocations = {}) {
+    if (!row || row.needsReview !== false || row.valid === false || !['balance', 'marker', 'column', 'sign'].includes(row.directionSource)) return null;
+    const card = isCreditCardRow(row, allocations) || validateLuhnChecksum(allocations.card_last4);
+    if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? 'Card Purchase' : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided: 'rules-fallback' };
+    if (row.direction === 'credit') return { module: card ? 'ccPayments' : 'incomeRecv', category: card ? 'Card Payment' : (incomeCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided: 'rules-fallback' };
+    return null;
 }
 
 export async function claimSource(db, ref, uid, now = Date.now()) {
@@ -856,9 +872,12 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
         if (review.uid !== uid || review.status !== 'pending' || !['ai-consensus-unavailable', 'unanimous-decision-required'].includes(review.reason) || !Number.isSafeInteger(review.index) || review.index < 0 || !review.row || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) continue;
         const source = (await db.doc(review.sourcePath || '').get()).data() || {};
         if (source.uid !== uid) continue;
-        const rule = deterministicDecision(review.row, { statementType: source.statementType || '', card_last4: source.last4 || '', bank: source.bank || '', cardRegistry });
-        if (!rule.verified) continue;
-        const decision = rule.category === 'Other' || rule.category === 'Income' ? { ...rule, autoDecided: 'rules' } : rule;
+        const context = { statementType: source.statementType || '', card_last4: source.last4 || '', bank: source.bank || '', cardRegistry };
+        const rule = deterministicDecision(review.row, context);
+        // a row the rules could not name and the board could not settle is placed by its proven direction, never left for the owner (fallbackDecision)
+        const settled = rule.verified ? rule : fallbackDecision(review.row, context);
+        if (!settled) continue;
+        const decision = rule.verified && (rule.category === 'Other' || rule.category === 'Income') ? { ...rule, autoDecided: 'rules' } : settled;
         try {
             const result = await resolveReview({ db, uid, id: doc.id, decision, row: review.row });
             if (result?.resolved && !result.alreadyResolved) recovered += 1;
@@ -1756,6 +1775,12 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
             if (!ranHeal && Date.now() - start < budgetMs - 5000) { const healed = await healOrphanedStatements({ db, mailRef, uid, limit: 10 }); orphansHealed += healed.filed + healed.requeued; }
             await mailRef.set({ lastRecoveryMs: Date.now() }, { merge: true });
         } catch (_) { /* advice only: the next run tries again */ }
+    }
+    /* THE ROWS THE AI COULD NOT AGREE ON ARE SETTLED EVEN WHILE A LONG STATEMENT IS BEING WORKED. The recovery steps above run only on a run that had nothing to process, and a 289-row
+     * statement is processed slice after slice on every run for as long as it takes — so three "POS Transaction" rows sat in front of the owner (2026-10-02) although the rules could
+     * settle them the moment anyone looked. This step re-queues nothing (it files a row, or leaves it), so it has no reason to wait for a quiet run. */
+    if (attempted > 0 && !ranConsensus && Date.now() - start < budgetMs - 8000 && start - Number(mail.lastConsensusMs || 0) >= 60000) {
+        try { const consensus = await recoverConsensusFailures({ db, uid, limit: 25 }); consensusRecovered += consensus.recovered; consensusMore = consensusMore || consensus.more; await mailRef.set({ lastConsensusMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     if (Date.now() - start < budgetMs - 8000 && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
         try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
