@@ -33643,6 +33643,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
                 try { if (typeof opts.onClose === 'function') opts.onClose(); } catch (_) { /* the modal still closes */ }
             };
+            /* The hand-over of the unlocked passwords to the cloud vault runs behind the open modal (see attempt). What the caller wants after the vault — Check now — waits for it, because the server can
+             * only try the passwords it has been given; the modal itself never waits. */
+            let migrating = null;
+            if (typeof opts.onClose === 'function') { const caller = opts.onClose; opts = { ...opts, onClose: () => { if (migrating) migrating.then(caller, caller); else caller(); } }; }
             overlay.querySelector('#_bv_close').onclick = close;
             const body = overlay.querySelector('#_bv_body');
 
@@ -33673,37 +33677,52 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             body.querySelector('#_bv_cancel').onclick = close;
             setTimeout(() => { const el = body.querySelector('#_bv_pin'); if (el) el.focus(); }, 250);
 
+            let busy = false;
             const attempt = async () => {
+                if (busy) return;                                   // a second tap or Enter while the first is working
                 const el = body.querySelector('#_bv_pin');
                 const err = body.querySelector('#_bv_err');
+                const go = body.querySelector('#_bv_go');
                 const pin = el.value;
                 if (pin.length < 6) { err.textContent = 'PIN must be 6 digits'; return; }
-                /* The PIN is also checked against the app's own auth hash, so a
-                 * typo says "wrong PIN" instead of silently creating a SECOND
-                 * vault under the mistyped PIN that the right one can never
-                 * open. Without this, one slip makes an invisible orphan. */
-                const auth = DB.getObj('auth');
-                if (auth && auth.pin) {
-                    const h = await sha256(pin + 'wf_salt_sg2026');
-                    if (h !== auth.pin) { err.textContent = 'Incorrect PIN'; return; }
-                }
-                err.textContent = '';
-                const r = await window.WFVault.unlock(pin, { cloud: window._wfBankVaultCloud });
-                if (!r.ok) {
-                    err.textContent = r.reason === window.WFVault.VAULT.NO_CRYPTO
-                        ? 'Secure storage unavailable in this browser'
-                        : 'Could not unlock with that PIN';
-                    return;
-                }
-                const unlockedEntries = Array.isArray(r.entries) ? r.entries : [];
+                busy = true;
+                const idle = go ? go.innerHTML : '';
+                if (go) { go.disabled = true; go.textContent = 'Unlocking…'; }
                 try {
-                    const cloudEntries = await _statementCloudEntries(unlockedEntries);
-                    if (cloudEntries.length) await window.WFStatementCloud?.migrateUnlockedVault(cloudEntries);
+                    /* The PIN is also checked against the app's own auth hash, so a
+                     * typo says "wrong PIN" instead of silently creating a SECOND
+                     * vault under the mistyped PIN that the right one can never
+                     * open. Without this, one slip makes an invisible orphan. */
+                    const auth = DB.getObj('auth');
+                    if (auth && auth.pin) {
+                        const h = await sha256(pin + 'wf_salt_sg2026');
+                        if (h !== auth.pin) { err.textContent = 'Incorrect PIN'; return; }
+                    }
+                    err.textContent = '';
+                    const r = await window.WFVault.unlock(pin, { cloud: window._wfBankVaultCloud });
+                    if (!r.ok) {
+                        err.textContent = r.reason === window.WFVault.VAULT.NO_CRYPTO
+                            ? 'Secure storage unavailable in this browser'
+                            : 'Could not unlock with that PIN';
+                        return;
+                    }
+                    const unlockedEntries = Array.isArray(r.entries) ? r.entries : [];
+                    /* THE UNLOCK IS DONE: what follows is the cloud copy of the passwords being brought up to date (the security vault's own cloud read, then two server calls). It used to be
+                     * awaited here, so the modal sat on "Unlock" for as long as three network round trips took; now it runs behind the open vault and whatever should follow (Check now)
+                     * is held until it has finished (see close). */
+                    migrating = (async () => {
+                        try {
+                            const cloudEntries = await _statementCloudEntries(unlockedEntries);
+                            if (cloudEntries.length) await window.WFStatementCloud?.migrateUnlockedVault(cloudEntries);
+                        } catch (_) { notify('Vault unlocked; cloud migration will retry later.', 'warn'); }
+                    })();
+                    try { triggerHaptic('success'); } catch (_) {}
+                    if (opts.closeOnUnlock === true) { close(); return; }
+                    renderEntries(unlockedEntries);
+                } finally {
+                    busy = false;
+                    if (go && go.isConnected) { go.disabled = false; go.innerHTML = idle; }
                 }
-                catch (_) { notify('Vault unlocked; cloud migration will retry later.', 'warn'); }
-                try { triggerHaptic('success'); } catch (_) {}
-                if (opts.closeOnUnlock === true) { close(); return; }
-                renderEntries(unlockedEntries);
             };
             body.querySelector('#_bv_go').onclick = attempt;
             body.querySelector('#_bv_pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') attempt(); });
@@ -33831,7 +33850,11 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                          * of bank match; Bank only orders the trial there. */
                         const usable = rows.filter(r => r.password && r.password.trim());
                         const r = await window.WFVault.save(usable, { cloud: window._wfBankVaultCloud });
-                        if (!r.ok) { notify('Could not save — secure storage refused the write', 'error'); return; }
+                        if (!r.ok) {
+                            if (r.reason === window.WFVault.VAULT.CLOUD_NEWER) notify('These passwords were changed on another device. Close this window and open it again to load them, then make your change again.', 'warn');
+                            else notify('Could not save — secure storage refused the write', 'error');
+                            return;
+                        }
                         try { triggerHaptic('success'); } catch (_) {}
                         let cloud;
                         try {
