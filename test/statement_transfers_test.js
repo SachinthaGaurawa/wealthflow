@@ -185,7 +185,10 @@ describe('what the books hold twice is counted, in numbers only', () => {
     const rec = (extra = {}) => ({ id: Math.random().toString(36).slice(2), date: '2026-08-14', amount: 50000, desc: 'Outward Ceft Transfer Sister', cat: 'Other', statementKey: 'wf-mail/m/items/a', bank: 'Dfccbank', ...extra });
     it('one transaction filed from two copies of a statement is a twin; one statement\'s own repeated rows are not', () => {
         const twins = recordTwins({ expenses: [rec(), rec({ statementKey: 'wf-mail/m/items/b', bank: 'DFCC Bank' }), rec({ amount: 70, desc: 'POS BUS FARE' }), rec({ amount: 70, desc: 'POS BUS FARE' })] });
-        expect(twins.sameRow).toEqual({ groups: 1, banks: { 'DFCC Bank/Dfccbank': 1 } });
+        expect(twins.sameRow).toEqual({ groups: 1, banks: { 'DFCC Bank/Dfccbank': 1 }, pairs: { '?|?': 1 } });
+        // and which two statements share it, by the label the caller gives each
+        const labelled = recordTwins({ expenses: [rec(), rec({ statementKey: 'wf-mail/m/items/b' })] }, { labelOf: key => (key.endsWith('/a') ? '2026-03:5187' : '2026-03:5187') });
+        expect(labelled.sameRow.pairs).toEqual({ '2026-03:5187|2026-03:5187': 1 });
         expect(twins.records).toBe(4);
     });
     it('a debit in one statement and a credit of the same amount in another, one worded as a transfer, are the two legs of one transfer', () => {
@@ -199,7 +202,7 @@ describe('what the books hold twice is counted, in numbers only', () => {
         expect(recordTwins({ expenses: [rec({ desc: 'POS KEELLS' })], incomeRecv: [rec({ name: 'REFUND', desc: undefined, statementKey: 'wf-mail/m/items/c' })] }).legs.pairs).toBe(0);
         expect(recordTwins({ expenses: [rec()], incomeRecv: [rec({ name: 'Inward Ceft Transfer', desc: undefined })] }).legs.pairs).toBe(0);
         expect(recordTwins({ expenses: [{ amount: 5, date: '2026-01-01', desc: 'x' }] }).records).toBe(0);
-        expect(recordTwins(null)).toEqual({ records: 0, sameRow: { groups: 0, banks: {} }, legs: { pairs: 0, banks: {} } });
+        expect(recordTwins(null)).toEqual({ records: 0, sameRow: { groups: 0, banks: {}, pairs: {} }, legs: { pairs: 0, banks: {} } });
     });
     it('carries no amount and no description (it is written to a log)', () => {
         const twins = JSON.stringify(recordTwins({ expenses: [rec(), rec({ statementKey: 'wf-mail/m/items/b' })] }));
