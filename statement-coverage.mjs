@@ -193,6 +193,34 @@ export const gridLines = grid => (Array.isArray(grid) ? grid : []).map(g => {
     return `${g.bank}: ${parts.join(' · ')}${g.earlier ? ` · ${g.earlier} earlier` : ''}`;
 });
 
+/**
+ * DOES EACH STATEMENT OPEN WHERE THE ONE BEFORE IT CLOSED? The strongest proof that the books hold everything: a month's closing balance is the next month's opening balance, to the cent. A statement that
+ * is missing, a row that was lost or misread, or an account that changed shows as a link that does not join — and nothing else in the pipeline can see it, because each statement is proven alone.
+ * Per bank and account (the last four digits the statement proved), in month order. `proof` keeps its balances as the statement prints them (744413.37); they are compared in whole cents, and `apart` is in cents.
+ * @returns {Array<{bank:string, account:string, links:Array<{from:string,to:string,apart:number,months:number}>}>}
+ */
+export function chainOf(items, { accounts = 12 } = {}) {
+    const groups = new Map();
+    for (const item of Array.isArray(items) ? items : []) {
+        const month = monthOf(item), p = item && item.proof;
+        if (!month || !p || item.duplicateOf || p.math === 'duplicate-of' || stateOf(item) !== 'filed' || !Number.isFinite(p.opening) || !Number.isFinite(p.closing) || p.opening === null || p.closing === null || !/^\d{4}$/.test(String(p.last4 || ''))) continue;
+        const id = bankIdentity(item.bank), key = `${id.key}|${p.last4}`, group = groups.get(key) || { bank: id.name, account: String(p.last4), months: new Map() };
+        groups.set(key, group);
+        const had = group.months.get(month);
+        if (!had || (Number(p.rows) || 0) > had.rows) group.months.set(month, { opening: Math.round(p.opening * 100), closing: Math.round(p.closing * 100), rows: Number(p.rows) || 0 });
+    }
+    const monthIndex = key => { const [y, m] = key.split('-').map(Number); return y * 12 + m - 1; };
+    return [...groups.values()].filter(g => g.months.size >= 2).sort((a, b) => a.bank.localeCompare(b.bank) || a.account.localeCompare(b.account)).slice(0, accounts).map(g => {
+        const months = [...g.months.keys()].sort(), links = [];
+        for (let i = 1; i < months.length; i++) links.push({ from: months[i - 1], to: months[i], apart: g.months.get(months[i]).opening - g.months.get(months[i - 1]).closing, months: monthIndex(months[i]) - monthIndex(months[i - 1]) });
+        return { bank: g.bank, account: g.account, links };
+    });
+}
+
+const money = cents => (Math.abs(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** The chain as lines for the overlay, one per account: "DFCC Bank …5187, balances join: 2026-04 to 2026-05 yes · 2026-05 to 2026-06 yes · 2026-06 to 2026-07 1,200.00 apart". */
+export const chainLines = chains => (Array.isArray(chains) ? chains : []).map(c => `${c.bank} …${c.account}, each statement opens where the one before closed: ` + c.links.map(l => `${l.from} to ${l.to} ${l.apart === 0 ? (l.months === 1 ? 'yes' : `yes (${l.months - 1} month${l.months === 2 ? '' : 's'} between, no money moved)`) : `${money(l.apart)} apart${l.months > 1 ? ` over ${l.months - 1} missing month${l.months === 2 ? '' : 's'}` : ''}`}`).join(' · '));
+
 const pad = n => String(n).padStart(2, '0');
 const ymd = t => `${t.getUTCFullYear()}/${pad(t.getUTCMonth() + 1)}/${pad(t.getUTCDate())}`;
 

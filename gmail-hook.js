@@ -623,7 +623,10 @@ async function ingestMailbox(db, note, env, f, res) {
             /* FORGERY IS LOGGED, NOT OFFERED BACK: what claimed to be the owner's bank and failed SPF / DKIM / DMARC. */
             const breach = securityOf(plan, msg);
             if (breach) securityNow.push(breach);
-            const verdictState = stateForPlan(plan);
+            /* MAIL FROM AN UNLISTED SENDER THAT DOES NOT EVEN SAY IT IS A STATEMENT IS NOT HELD FOR A TAP. Whether to trust an address is a question only when something it sent could be a statement; an accounting
+             * newsletter or a course notice ("3 waiting on a sender decision") is not, and nothing is lost by saying so: it is judged again when the owner's banks change (it is not marked as seen for good). */
+            const notStatement = plan.reason === REJECT.NOT_ON_YOUR_LIST && !!plan.evidence && plan.evidence.ok === false && plan.evidence.why === 'the-subject-and-file-names-do-not-say-statement';
+            const verdictState = notStatement ? { state: MAIL_STATE.REFUSED, reason: 'not-a-statement-of-your-banks:the-subject-and-file-names-do-not-say-statement' } : stateForPlan(plan);
             if (verdictState) outcomesNow.push({ messageId: String(id), ...verdictState, from: plan.from, subject: plan.subject, receivedMs: Number(msg.internalDate) || null, v: INTAKE_VERSION });
             if (fromAudit && !HOLDABLE.has(plan.reason)) seenNow.push(String(id));
             if (isWorthTelling(plan)) {
@@ -635,7 +638,7 @@ async function ingestMailbox(db, note, env, f, res) {
              * statement itself was gone, and approving the sender afterwards
              * brought back nothing. A reference only: no attachment is fetched
              * on the strength of a refusal. */
-            const hold = planHold(plan, msg);
+            const hold = notStatement ? null : planHold(plan, msg);
             // judged again and no longer a question about who sent it (a promotion, a forgery, a non-statement): it leaves the held list
             if (hold) { held.push(hold); } else unheldNow.push(String(id));
             continue;

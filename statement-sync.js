@@ -5,7 +5,7 @@ import { identify, userKeyFor, sendersOf } from './gmail-link.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { syncMailbox } from './gmail-hook.js';
 import { policyFrom, matchSender, normalizeList, approvedClauses, relatedApproval } from './wealthflow-mail-senders.mjs';
-import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf, gridOf, gridLines } from './statement-coverage.mjs';
+import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf, gridOf, gridLines, chainOf, chainLines } from './statement-coverage.mjs';
 import { REJECT_TEXT, REJECT } from './wealthflow-mail-ingest.mjs';
 import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
 import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped, statedBalanceCents, continuityOf } from './statement-emptiness.mjs';
@@ -31,6 +31,7 @@ import { formKind } from './statement-document-kind.mjs';
 import { repairByArithmetic } from './statement-repair.mjs';
 import { buildHistory } from './statement-history.mjs';
 import { ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins } from './statement-transfers.mjs';
+import { totalsAgree } from './statement-totals.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
 
 export const config = { maxDuration: 60 };
@@ -890,7 +891,7 @@ export async function ledgerCensus({ db, mailRef, uid, log = console.info, limit
  * listed" by this line next to `mail-audit` (what the mailbox lists). Bank names, years, months and counts only — no amount, no file name. */
 export async function statementCoverage({ mailRef, log = console.info }) {
     let query = mailRef.collection('items').where('status', '==', 'filed').limit(1000);
-    if (typeof query.select === 'function') query = query.select('bank', 'receivedMs', 'totalRows', 'emptyStatement', 'status', 'filename');
+    if (typeof query.select === 'function') query = query.select('bank', 'receivedMs', 'totalRows', 'emptyStatement', 'status', 'filename', 'proof', 'duplicateOf');
     const found = await query.get();
     const banks = {};
     let seen = 0;
@@ -911,6 +912,11 @@ export async function statementCoverage({ mailRef, log = console.info }) {
         if (!entry.newest || month > entry.newest) entry.newest = month;
     }
     log(JSON.stringify({ evt: 'statement-coverage', filed: seen, more: found.docs.length === 1000, banks }));
+    // whether each statement opens where the one before it closed, per account: counts and months only, no figure
+    try {
+        const chains = chainOf(found.docs.map(doc => ({ ...(doc.data() || {}) })));
+        if (chains.length) log(JSON.stringify({ evt: 'statement-chain', accounts: Object.fromEntries(chains.map(c => [`${c.bank.slice(0, 24)}:${c.account}`, { links: c.links.length, joined: c.links.filter(l => l.apart === 0).length, apart: c.links.filter(l => l.apart !== 0).map(l => `${l.from}>${l.to}`) }])) }));
+    } catch (_) { /* advice only */ }
 }
 
 /* THE OWNER'S BUTTON: "Map statement layout" on a statement that is already part-filed (or whose review is stale) cannot map a layout without
@@ -1451,6 +1457,17 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const proof = proveDirections(parsed);
             if (proof.byStatement + proof.byWords > 0) { parsed = { ...parsed, rows: proof.rows }; diag.directions = { statement: proof.byStatement, words: proof.byWords }; }
         }
+        /* THE BANK'S OWN TOTALS ARE A SECOND, INDEPENDENT PROOF (statement-totals.mjs). A statement that prints its total withdrawals and total deposits (DFCC's "Transaction Summary") and whose rows reach both to
+         * the cent has every row, in the right direction, whatever a balance column did. When the balance chain does not close but these two do, the statement is proven by them — and the log says so. */
+        if (parsed && Array.isArray(parsed.rows) && parsed.rows.length) {
+            const totals = totalsAgree(parsed, text);
+            if (totals.present) diag.totals = totals.ok ? 'agree' : 'differ';
+            if (totals.ok) parsed = { ...parsed, printedTotals: true };
+            if (totals.ok && parsed.reconciliation && parsed.reconciliation.ok === false && !parsed.invalidDates && !parsed.balanceMismatches) {
+                parsed = { ...parsed, reconciliation: { ...parsed.reconciliation, ok: true, provenBy: 'printed-totals' }, verdict: 'parsed', understood: true, reason: '' };
+                diag.provenBy = 'printed-totals';
+            }
+        }
         // --- Added Cryptographic Identity verification bound to the extracted raw source ---
         const identity = textVerdict(text || '');
         diag.identity = { verdict: String(identity.verdict || ''), evidence: Array.isArray(identity.evidence) ? identity.evidence.length : 0 };
@@ -1663,6 +1680,7 @@ async function recordProof(sourceRef, parsed, bypassed, uid = '') {
     const r = parsed?.reconciliation || {};
     const key = parsed?.adaptive ? String((parsed.adaptive.keys || [])[0] || '') : compositeKeyOf(uid, parsed);
     const proof = { math: bypassed ? 'owner-confirmed' : r.ok === true ? 'passed' : 'unchecked', rows: Array.isArray(parsed?.rows) ? parsed.rows.length : 0, last4: String(parsed?.layout?.accountLast4 || '').slice(0, 4),
+        ...(r.provenBy ? { by: String(r.provenBy).slice(0, 24) } : {}), ...(parsed?.printedTotals === true ? { totals: 'agree' } : {}),
         ...(parsed?.adaptive ? { method: 'ai-checked', attempts: Number(parsed.adaptive.attempts) || 1 } : {}), ...(key ? { key: key.slice(0, 64) } : {}) };
     for (const field of ['opening', 'closing', 'credits', 'debits']) { const v = cents(r[field]); if (v !== null) proof[field] = v; }
     try { await sourceRef.set({ proof, transferRule: TRANSFER_REOPEN_VERSION, ...(key ? { statementKey: key.slice(0, 64) } : {}) }, { merge: true }); } catch (_) { /* see above */ }      // read under today's transfer rule: not looked at again by reopenSkippedTransfers
@@ -1864,7 +1882,7 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
         checks: { spf: String(r.checks?.spf || '').slice(0, 12), dmarc: String(r.checks?.dmarc || '').slice(0, 12), why: String(r.checks?.why || '').slice(0, 60) } }));
     const h = live.historyAudit && typeof live.historyAudit === 'object' ? live.historyAudit : null;
     const audit = h ? { at: Number(h.at) || 0, listed: Number(h.listed) || 0, accounted: Number(h.accounted) || 0, examined: Number(h.examined) || 0, taken: Number(h.taken) || 0, refused: Number(h.refused) || 0, held: Number(h.held) || 0, complete: h.complete === true } : null;
-    const summary = { at: now, missing: coverage.missing, staged, empties, refused, ...(table ? { table } : {}), security, securityCount: Array.isArray(live.security) ? live.security.length : 0, log: auditLogOf(items), grid: gridLines(gridOf(items)), ...(audit ? { audit } : {}), series: coverage.series.slice(0, 20).map(s => ({ label: s.label, bank: s.bank, first: s.first, last: s.last, months: s.months, missing: s.missing, ...(s.gaps ? { gaps: s.gaps } : {}) })) };
+    const summary = { at: now, missing: coverage.missing, staged, empties, refused, ...(table ? { table } : {}), security, securityCount: Array.isArray(live.security) ? live.security.length : 0, log: auditLogOf(items), grid: [...gridLines(gridOf(items)), ...chainLines(chainOf(items))], ...(audit ? { audit } : {}), series: coverage.series.slice(0, 20).map(s => ({ label: s.label, bank: s.bank, first: s.first, last: s.last, months: s.months, missing: s.missing, ...(s.gaps ? { gaps: s.gaps } : {}) })) };
     const patch = { coverage: summary, ...(tableDue && table ? { lastTableMs: now } : {}), ...(due && !failed ? { lastGapSearchMs: now, gapMissingKey: missingKey } : {}) };
     try { await mailRef.set(patch, { merge: true }); } catch (_) { /* the report is advice; failing to store it must not stop a sync */ }
     return summary;
