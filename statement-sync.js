@@ -5,7 +5,7 @@ import { identify, userKeyFor, sendersOf } from './gmail-link.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { syncMailbox } from './gmail-hook.js';
 import { policyFrom, matchSender, normalizeList, approvedClauses, relatedApproval } from './wealthflow-mail-senders.mjs';
-import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf } from './statement-coverage.mjs';
+import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf, gridOf, gridLines } from './statement-coverage.mjs';
 import { REJECT_TEXT, REJECT } from './wealthflow-mail-ingest.mjs';
 import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
 import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped, statedBalanceCents, continuityOf } from './statement-emptiness.mjs';
@@ -879,7 +879,7 @@ export async function ledgerCensus({ db, mailRef, uid, log = console.info, limit
  * listed" by this line next to `mail-audit` (what the mailbox lists). Bank names, years, months and counts only — no amount, no file name. */
 export async function statementCoverage({ mailRef, log = console.info }) {
     let query = mailRef.collection('items').where('status', '==', 'filed').limit(1000);
-    if (typeof query.select === 'function') query = query.select('bank', 'receivedMs', 'totalRows', 'emptyStatement', 'status');
+    if (typeof query.select === 'function') query = query.select('bank', 'receivedMs', 'totalRows', 'emptyStatement', 'status', 'filename');
     const found = await query.get();
     const banks = {};
     let seen = 0;
@@ -888,8 +888,10 @@ export async function statementCoverage({ mailRef, log = console.info }) {
         if (item.status !== 'filed') continue;
         seen += 1;
         const bank = String(item.bank || '?').slice(0, 24), at = Number(item.receivedMs) || 0;
-        const entry = banks[bank] = banks[bank] || { filed: 0, empty: 0, rows: 0, undated: 0, years: {} };
+        const entry = banks[bank] = banks[bank] || { filed: 0, empty: 0, rows: 0, undated: 0, years: {}, months: {} };
         entry.filed += 1; entry.rows += Number(item.totalRows) || 0;
+        const period = monthOf({ filename: item.filename, receivedMs: at });
+        if (period) entry.months[period] = (entry.months[period] || 0) + 1;     // the month each statement is FOR (its file name), not the month it arrived
         if (item.emptyStatement === true || !(Number(item.totalRows) > 0)) entry.empty += 1;
         if (!at) { entry.undated += 1; continue; }
         const month = new Date(at).toISOString().slice(0, 7), year = month.slice(0, 4);
@@ -1807,7 +1809,7 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
         checks: { spf: String(r.checks?.spf || '').slice(0, 12), dmarc: String(r.checks?.dmarc || '').slice(0, 12), why: String(r.checks?.why || '').slice(0, 60) } }));
     const h = live.historyAudit && typeof live.historyAudit === 'object' ? live.historyAudit : null;
     const audit = h ? { at: Number(h.at) || 0, listed: Number(h.listed) || 0, accounted: Number(h.accounted) || 0, examined: Number(h.examined) || 0, taken: Number(h.taken) || 0, refused: Number(h.refused) || 0, held: Number(h.held) || 0, complete: h.complete === true } : null;
-    const summary = { at: now, missing: coverage.missing, staged, empties, refused, ...(table ? { table } : {}), security, securityCount: Array.isArray(live.security) ? live.security.length : 0, log: auditLogOf(items), ...(audit ? { audit } : {}), series: coverage.series.slice(0, 20).map(s => ({ label: s.label, bank: s.bank, first: s.first, last: s.last, months: s.months, missing: s.missing, ...(s.gaps ? { gaps: s.gaps } : {}) })) };
+    const summary = { at: now, missing: coverage.missing, staged, empties, refused, ...(table ? { table } : {}), security, securityCount: Array.isArray(live.security) ? live.security.length : 0, log: auditLogOf(items), grid: gridLines(gridOf(items)), ...(audit ? { audit } : {}), series: coverage.series.slice(0, 20).map(s => ({ label: s.label, bank: s.bank, first: s.first, last: s.last, months: s.months, missing: s.missing, ...(s.gaps ? { gaps: s.gaps } : {}) })) };
     const patch = { coverage: summary, ...(tableDue && table ? { lastTableMs: now } : {}), ...(due && !failed ? { lastGapSearchMs: now, gapMissingKey: missingKey } : {}) };
     try { await mailRef.set(patch, { merge: true }); } catch (_) { /* the report is advice; failing to store it must not stop a sync */ }
     return summary;
