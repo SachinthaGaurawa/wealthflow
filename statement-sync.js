@@ -30,7 +30,7 @@ import { planWithEvidence, evidenceContext, bankStillOwned, documentProof, known
 import { formKind } from './statement-document-kind.mjs';
 import { repairByArithmetic } from './statement-repair.mjs';
 import { buildHistory } from './statement-history.mjs';
-import { ownTails, ownTransferEvidence, pairedTransfers, recordTwins } from './statement-transfers.mjs';
+import { ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins } from './statement-transfers.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
 
 export const config = { maxDuration: 60 };
@@ -284,7 +284,7 @@ export function deterministicDecision(row, allocations = {}) {
          * ("my DFCC"), or the other leg on the same statement. "Outward Ceft Transfer Car", "Inward Ceft Transfer Dip Refund" are money paid to and received from other people — spending and income. They were all
          * left out, and a statement that is half of those showed the owner a month with half of it missing. Where the direction is not proven, the row is not filed (the rows below ask for it as any row). */
         const tails = ownTails({ cardRegistry: allocations.cardRegistry, statementTails: allocations.own ? [...allocations.own] : [], thisTail: allocations.card_last4 });
-        const own = ownTransferEvidence(row, { tails, paired: allocations.pairedRows });
+        const own = ownTransferEvidence(row, { tails, paired: allocations.pairedRows, names: allocations.ownerWords?.names, local: allocations.ownerWords?.local });
         if (own || isCreditCardRow(row, allocations) || validateLuhnChecksum(allocations.card_last4)) return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true, ...(own ? { ownTransfer: own } : {}) };
         if (row.direction === 'debit') return { module: 'expenses', category: expenseCategoryFor(row) || 'Other', allocationId: '', verified: true, deterministic: true, autoDecided: 'transfer-to-others' };
         if (row.direction === 'credit') return { module: 'incomeRecv', category: incomeCategoryFor(row) || 'Other', allocationId: '', verified: true, deterministic: true, autoDecided: 'transfer-from-others' };
@@ -1562,6 +1562,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             // the owner's own accounts and cards (so a transfer to one of them is not counted as spending), and the rows of this statement that are two legs of one transfer
             Object.defineProperty(allocations, 'own', { value: await ownAccountTails({ mailRef, user }), enumerable: false });
             Object.defineProperty(allocations, 'pairedRows', { value: pairedTransfers(parsed.rows), enumerable: false });
+            Object.defineProperty(allocations, 'ownerWords', { value: ownerWords({ text, email: currentMail.email }), enumerable: false });
             /* A STATEMENT BEING RESUMED (resumePartialStatements) is replayed from its first row: the rows the ledger already holds are
              * checked against this reading by fingerprint inside the settlement, and cost no classification here. */
             const replayed = (claimed.cursor || 0) === 0 && claimed.resumed ? await replayLedger(db, uid, sourceRef.path, user) : null;

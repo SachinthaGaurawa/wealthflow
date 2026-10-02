@@ -496,15 +496,13 @@ function drawReview() {
         }
     }
     if (coverage?.empties?.length) {
-        const closed = document.createElement('div'); closed.style.cssText = 'margin:0 0 12px;padding:12px;border:1px solid var(--border);border-radius:12px;';
-        const head = document.createElement('strong'); head.textContent = 'Closed automatically — the bank\'s own figures show nothing moved'; closed.appendChild(head);
+        const closed = panel('Closed automatically — the bank\'s own figures show nothing moved');
         for (const e of coverage.empties) {
-            const line = document.createElement('p'); line.style.cssText = 'margin:6px 0 0;font-size:13px;'; line.textContent = `${e.month || ''} · ${e.label}${e.how ? ' — ' + e.how : ''} `;
+            const line = note(closed, `${e.month || ''} · ${e.label}${e.how ? ' — ' + e.how : ''} `);
             const reopen = document.createElement('button'); reopen.className = 'btn btn-ghost btn-sm'; reopen.textContent = 'Reopen';
             reopen.onclick = async () => { reopen.disabled = true; try { await request('/api/statement-sync', 'POST', { action: 'reopen-empty', id: e.id }); coverage.empties = coverage.empties.filter(x => x.id !== e.id); say('Reopened — it will be read again and sent to review.', 'info'); drawReview(); await sync(); } catch { reopen.disabled = false; say('That statement could not be reopened.', 'error'); } };
-            line.appendChild(reopen); closed.appendChild(line);
+            line.appendChild(reopen);
         }
-        box.appendChild(closed);
     }
     if (coverage?.log?.length) {
         const d = document.createElement('details'); d.style.cssText = 'margin:0 0 12px;'; const sm = document.createElement('summary'); sm.textContent = `Statement audit log (${coverage.log.length})`; d.appendChild(sm);

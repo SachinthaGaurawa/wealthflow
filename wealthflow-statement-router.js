@@ -14,7 +14,7 @@ const RE = {
 
 // Deterministic categories: unknown merchants remain Other.
 const EXPENSE_CATEGORY_RULES = [
-  ['Bank Charges', /\b(ceft\w*\s+charges?|slips?\s+charges?|bank\s+charges?|atm\s+(?:withdrawal\s+)?(?:fee|charge)|withdrawal\s+(?:fee|charge)|service\s+(?:fee|charge)|stamp\s+duty|debit\s+tax|annual\s+fee|late\s+(?:payment\s+)?fee|finance\s+charge|sms\s+(?:alert|charge)|maintenance\s+fee|ledger\s+fee)\b/i],
+  ['Bank Charges', /\b(ceft\w*\s+charges?|slips?\s+charges?|bank\s+charges?|atm\s+(?:withdrawal\s+)?(?:fee|charge)|withdrawal\s+(?:fee|charge)|service\s+(?:fee|charge)|stamp\s+duty|debit\s+tax|annual\s+fee|late\s+(?:payment\s+)?fee|finance\s+charge|sms\s+(?:alert|charge)|maintenance\s+fee|ledger\s+fee|(?:pos\s+transaction|lpopp)\s+(?:fee|charges?))\b/i],
   ['Cash Withdrawal', /\b(atm\s+(?:withdrawal|wtd|cash)|cash\s+(?:withdrawal|withdraw|wd))\b/i],
   ['Groceries', /\b(keells?|cargills|food\s*city|arpico|glomark|laugfs\s+super|sathosa|spar|super\s*market|supermarket|grocery|mini\s*mart|provision)\b/i],
   ['Dining', /\b(restaurant|cafe|coffee|bakery|pizza|burger|kfc|mc\s*donalds?|dominos?|dinemore|barista|spicy\s+food|food\s+court|canteen|grill|ice\s+cream|uber\s*eats|food\s*panda|pick\s*me\s+food|taco\s+bell|subway|java\s+lounge|kottu)\b/i],
@@ -24,7 +24,7 @@ const EXPENSE_CATEGORY_RULES = [
   ['Transport', /\b(uber|pick\s*me|taxi|railway|parking|toll|expressway|interchange|\brda\b|highway|car\s+wash|vehicle\s+service|transport)\b/i],
   ['Health', /\b(pharmacy|hospital|medical|clinic|channelling|doc990|nawaloka|asiri|hemas|durdans|healthguard|dental|laboratory)\b/i],
   ['Education', /\b(school|tuition|university|campus|course|institute|academy|college|book\s*(?:shop|store)|sarasavi|vijitha\s+yapa)\b/i],
-  ['Insurance', /\b(insurance|assurance|takaful|policy\s+premium|aia|ceylinco|allianz|janashakthi|fairfirst)\b/i],
+  ['Insurance', /\b(insur\w*|assurance|takaful|policy\s+premium|aia|ceylinco|allianz|janashakthi|fairfirst)\b/i],
   ['Government', /\b(inland\s+revenue|motor\s+traffic|immigration|passport|municipal\s+council|government|license\s+fee)\b/i],
   ['Shopping', /\b(daraz|amazon|aliexpress|odel|nolimit|fashion|clothing|textiles?|tex|singer|abans|softlogic|damro|electronics|furniture|hardware|gift\s+shop)\b/i],
   ['Subscriptions', /\b(github|openai|chatgpt|adobe|microsoft\s*365|office\s*365|notion|canva|dropbox|vercel|cloudflare)\b/i],

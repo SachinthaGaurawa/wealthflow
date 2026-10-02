@@ -209,8 +209,11 @@
             if (/[\d,]$/.test(before)) continue;
             var lead = (before.match(/[\s(\-]*(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)?[\s(\-]*$/i) || [''])[0];
             var mk = (after.match(/^\s*\)?\s*(CR|DR)\b/i) || [])[1] || '';
+            // a balance below zero is "-40,367.58" or "(40,367.58)"; a "-" with a space after it stands for an empty column
+            var below = /(?:^|[^\w.,\-])-(?:(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)\s?)?$/i.test(before) || /\(\s?(?:(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)\s?)?$/i.test(before) && /^\s*\)/.test(after);
             out.push({
                 v: _num(m[0]),
+                sv: below ? -_num(m[0]) : _num(m[0]),
                 raw: m[0],
                 start: start,
                 end: end,
@@ -232,7 +235,7 @@
         var block = [tokens[tokens.length - 1]];
         for (var k = tokens.length - 2; k >= 0 && block.length < MAX_BLOCK; k--) {
             var gap = text.slice(tokens[k].end, block[0].start);
-            if (!/^[\s()|,;:]*(?:(?:CR|DR)\b)?[\s()|,;:]*$/i.test(gap)) break;
+            if (!/^[\s()|,;:]*(?:(?:CR|DR)\b)?[\s()|,;:]*-?$/i.test(gap)) break;
             block.unshift(tokens[k]);
         }
         return block;
@@ -393,10 +396,10 @@
             var block = c.block;
             var lastTok = block[block.length - 1];
 
-            if (c.opening) { prevBal = lastTok.v; if (opening === null) opening = lastTok.v; endSec(); sec = { opening: lastTok.v, closing: null, last: null, n: 0, credits: 0, debits: 0, acct: acct }; continue; }
-            if (c.closing) { closing = lastTok.v; if (sec) sec.closing = lastTok.v; continue; }
+            if (c.opening) { prevBal = lastTok.sv; if (opening === null) opening = lastTok.sv; endSec(); sec = { opening: lastTok.sv, closing: null, last: null, n: 0, credits: 0, debits: 0, acct: acct }; continue; }
+            if (c.closing) { closing = lastTok.sv; if (sec) sec.closing = lastTok.sv; continue; }
 
-            var balance = layout.balanceColumn ? lastTok.v : null;
+            var balance = layout.balanceColumn ? lastTok.sv : null;
             var amountToks = layout.balanceColumn ? block.slice(0, -1) : block.slice();
 
             // Which money column is the amount, and what that column implies.
