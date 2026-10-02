@@ -457,10 +457,7 @@ function drawReview() {
     summary.style.cssText = 'margin:12px 0;color:var(--text2);'; box.appendChild(summary);
     const panel = head => { const d = document.createElement('div'); d.style.cssText = 'margin:0 0 12px;padding:12px;border:1px solid var(--border);border-radius:12px;'; const h = document.createElement('strong'); h.textContent = head; d.appendChild(h); box.appendChild(d); return d; };
     const note = (parent, text) => { const p = document.createElement('p'); p.style.cssText = 'margin:6px 0 0;font-size:13px;'; p.textContent = text; parent.appendChild(p); return p; };
-    if (coverage?.grid?.length) {
-        const held = panel('Statements in your books'), word = { filed: 'filed', empty: 'nothing moved', review: 'in review', pending: 'being read', dismissed: 'dismissed', rejected: 'not a statement' };
-        for (const g of coverage.grid) note(held, `${g.bank}: ` + Object.entries(g.months).map(([m, v]) => `${m} ${word[v[0]] || v[0]}${v[1] ? ' (' + v[1] + ' rows)' : ''}`).join(' · ') + (g.earlier ? ` · ${g.earlier} earlier` : ''));
-    }
+    if (coverage?.grid?.length) { const held = panel('Statements in your books'); for (const line of coverage.grid) note(held, line); }
     const a = coverage?.audit;
     if (a?.at) note(panel('Mailbox history check'), `${new Date(a.at).toLocaleString()} · ${a.listed} bank email${a.listed === 1 ? '' : 's'} with attachments found · ${a.accounted} already accounted for · ${a.taken} added now · ${a.refused} refused · ${a.held} waiting on a sender decision${a.complete ? '' : ' · still checking'}`);
     const table = coverage?.table;
@@ -511,7 +508,7 @@ function drawReview() {
     }
     if (coverage?.log?.length) {
         const d = document.createElement('details'); d.style.cssText = 'margin:0 0 12px;'; const sm = document.createElement('summary'); sm.textContent = `Statement audit log (${coverage.log.length})`; d.appendChild(sm);
-        for (const e of coverage.log) note(d, `${e.month || '?'} · ${e.bank} · ${e.file} · ${e.status}${e.rows ? ' · ' + e.rows + ' rows' : ''} · maths ${e.math}${e.last4 ? ' · …' + e.last4 : ''}${e.sha ? ' · ' + e.sha : ''}`);
+        for (const e of coverage.log) note(d, `${e.month || '?'} · ${e.bank} · ${e.file} · ${e.status} · maths ${e.math}${e.last4 ? ' · …' + e.last4 : ''}${e.sha ? ' · ' + e.sha : ''}`);
         box.appendChild(d);
     }
     if (!pending.length) { const p = document.createElement('p'); p.textContent = 'No transactions are awaiting review.'; box.appendChild(p); }

@@ -536,10 +536,7 @@ export const BUDGETS = {
     // 2026-10-01 (HNB, identity vocabulary): 1,990,000 -> 1,993_000 (measured 1,990,090 + headroom): wealthflow-statement-identity.js reads its
     // vocabulary through the same normaliser as the document (entries written with a slash — 'balance b/f', 'a/c no' — could never match) and
     // gains 'account balance', 'b/f' and 'a/c'; wealthflow-merchants.js paces its AI board calls two at a time. ~0.15% headroom.
-    // 2026-10-02 (the statements the books hold): 1,993,000 -> 1,994_000 (measured 1,993,090): wealthflow-statement-cloud.js only. The review
-    // overlay lists every bank's statements month by month with what became of each and the rows it brought in — a filed statement is no longer
-    // waiting for anything, so the review list stopped showing it, and the owner could not find August. ~0.05% headroom.
-    totalJsBytes: 1_994_000,
+    totalJsBytes: 1_993_000,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

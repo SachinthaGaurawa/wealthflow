@@ -74,7 +74,7 @@ describe('missing months are shown, and shared in diagnostics without an address
 
 describe('the mailbox audit is shown, and nothing refused is hidden', () => {
     const coverage = { at: 1, missing: 0, series: [],
-        grid: [{ bank: 'DFCC Bank', months: { '2026-08': ['filed', 119], '2026-07': ['review', 0] }, earlier: 3 }],
+        grid: ['DFCC Bank: 2026-08 filed (119 rows) · 2026-07 in review · 3 earlier'],
         audit: { at: Date.parse('2026-09-30T10:00:00Z'), listed: 61, accounted: 57, examined: 4, taken: 3, refused: 1, held: 2, complete: true },
         refused: [{ messageId: 'm9', reason: 'dkim-did-not-pass', text: 'it claims to be from your bank but carries no valid signature', from: 'statements@nationstrust.com', subject: 'Your e-Statement', filename: 'Consolidated_eStatement_2026MAR_458290.html', receivedMs: Date.parse('2026-04-02T05:00:00Z'), asked: false }],
         log: [{ id: 'a', at: 5, bank: 'NTB', file: 'Consolidated_eStatement_2026MAR_458290.html', month: '2026-03', status: 'Missing-Added', math: 'PASSED', via: 'audit', sha: 'abcdef012345', last4: '8057', closing: 10 },

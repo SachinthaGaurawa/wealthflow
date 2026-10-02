@@ -5,7 +5,7 @@ import { identify, userKeyFor, sendersOf } from './gmail-link.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { syncMailbox } from './gmail-hook.js';
 import { policyFrom, matchSender, normalizeList, approvedClauses, relatedApproval } from './wealthflow-mail-senders.mjs';
-import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf, gridOf } from './statement-coverage.mjs';
+import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf, gridOf, gridLines } from './statement-coverage.mjs';
 import { REJECT_TEXT, REJECT } from './wealthflow-mail-ingest.mjs';
 import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
 import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped, statedBalanceCents, continuityOf } from './statement-emptiness.mjs';
@@ -1809,7 +1809,7 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
         checks: { spf: String(r.checks?.spf || '').slice(0, 12), dmarc: String(r.checks?.dmarc || '').slice(0, 12), why: String(r.checks?.why || '').slice(0, 60) } }));
     const h = live.historyAudit && typeof live.historyAudit === 'object' ? live.historyAudit : null;
     const audit = h ? { at: Number(h.at) || 0, listed: Number(h.listed) || 0, accounted: Number(h.accounted) || 0, examined: Number(h.examined) || 0, taken: Number(h.taken) || 0, refused: Number(h.refused) || 0, held: Number(h.held) || 0, complete: h.complete === true } : null;
-    const summary = { at: now, missing: coverage.missing, staged, empties, refused, ...(table ? { table } : {}), security, securityCount: Array.isArray(live.security) ? live.security.length : 0, log: auditLogOf(items), grid: gridOf(items), ...(audit ? { audit } : {}), series: coverage.series.slice(0, 20).map(s => ({ label: s.label, bank: s.bank, first: s.first, last: s.last, months: s.months, missing: s.missing, ...(s.gaps ? { gaps: s.gaps } : {}) })) };
+    const summary = { at: now, missing: coverage.missing, staged, empties, refused, ...(table ? { table } : {}), security, securityCount: Array.isArray(live.security) ? live.security.length : 0, log: auditLogOf(items), grid: gridLines(gridOf(items)), ...(audit ? { audit } : {}), series: coverage.series.slice(0, 20).map(s => ({ label: s.label, bank: s.bank, first: s.first, last: s.last, months: s.months, missing: s.missing, ...(s.gaps ? { gaps: s.gaps } : {}) })) };
     const patch = { coverage: summary, ...(tableDue && table ? { lastTableMs: now } : {}), ...(due && !failed ? { lastGapSearchMs: now, gapMissingKey: missingKey } : {}) };
     try { await mailRef.set(patch, { merge: true }); } catch (_) { /* the report is advice; failing to store it must not stop a sync */ }
     return summary;

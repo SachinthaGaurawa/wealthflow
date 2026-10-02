@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { monthOf, seriesOf, coverageOf, gapQuery, domainsOf, filenameStem, auditLogOf, gridOf, bankKeyOf, _internal } from '../statement-coverage.mjs';
+import { monthOf, seriesOf, coverageOf, gapQuery, domainsOf, filenameStem, auditLogOf, gridOf, gridLines, bankKeyOf, _internal } from '../statement-coverage.mjs';
 
 const at = iso => Date.parse(iso + 'T12:00:00Z');
 const ntb = (month, extra = {}) => ({ bank: 'NTB', filename: `Consolidated_eStatement_2026${month}_458290.html`, status: 'filed', filed: true, from: 'Statements <statements@nationstrust.com>', ...extra });
@@ -191,6 +191,11 @@ describe('gridOf: what the books hold, bank by bank and month by month', () => {
         expect(hnb.earlier).toBe(12);
         expect(JSON.parse(JSON.stringify(grid))).toEqual(grid);
         expect(gridOf(null)).toEqual([]);
+    });
+    it('formats a bank as one line the overlay shows as it is', () => {
+        const lines = gridLines([{ bank: 'DFCC Bank', months: { '2026-08': ['filed', 119], '2026-07': ['review', 0], '2026-06': ['empty', 0] }, earlier: 3 }]);
+        expect(lines).toEqual(['DFCC Bank: 2026-08 filed (119 rows) · 2026-07 in review · 2026-06 nothing moved · 3 earlier']);
+        expect(gridLines(null)).toEqual([]);
     });
     it('the audit log carries the rows each statement brought in', () => {
         expect(auditLogOf([f('DFCC Bank', 'DFCC Bank Statement - Aug 26.pdf', { proof: { rows: 77 } })])[0]).toMatchObject({ month: '2026-08', rows: 77 });

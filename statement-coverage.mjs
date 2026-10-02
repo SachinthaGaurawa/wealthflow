@@ -182,6 +182,10 @@ export function gridOf(items, { months = 18, banks = 12 } = {}) {
     });
 }
 
+/** The grid as the lines the overlay shows, one per bank — formatted here so the browser carries a loop and nothing else: "DFCC Bank: 2026-08 filed (77 rows) · 2026-07 in review · 3 earlier". */
+const STATE_WORDS = { filed: 'filed', empty: 'nothing moved', review: 'in review', pending: 'being read', dismissed: 'dismissed', rejected: 'not a statement' };
+export const gridLines = grid => (Array.isArray(grid) ? grid : []).map(g => `${g.bank}: ` + Object.entries(g.months).map(([m, v]) => `${m} ${STATE_WORDS[v[0]] || v[0]}${v[1] ? ` (${v[1]} rows)` : ''}`).join(' · ') + (g.earlier ? ` · ${g.earlier} earlier` : ''));
+
 const pad = n => String(n).padStart(2, '0');
 const ymd = t => `${t.getUTCFullYear()}/${pad(t.getUTCMonth() + 1)}/${pad(t.getUTCDate())}`;
 
