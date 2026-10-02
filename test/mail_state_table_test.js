@@ -383,3 +383,18 @@ describe('the table is reconciled at most every ten minutes, and the gap search 
         expect(reads()).toBeGreaterThan(before);              // ten minutes on, it is read again
     });
 });
+
+describe('mail from an unlisted sender that does not even say it is a statement is not held for a tap', () => {
+    const ACC = { name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@accbuddy.example; spf=pass; dmarc=pass header.from=accbuddy.example' };
+    const notice = make('n0001', { from: 'Accounts <news@accbuddy.example>', subject: 'Course notice for October', filename: 'notice.html', auth: ACC });
+    const lookalike = make('n0002', { from: 'Accounts <billing@accbuddy.example>', subject: 'Your e-Statement', filename: 'Consolidated_eStatement_2026MAR.html', auth: ACC });
+    it('a notice is refused with its reason and leaves nothing waiting; a mail that does say statement still waits for the owner\'s decision', async () => {
+        const w = world({ inbox: [notice, lookalike] });
+        await w.run();
+        const emails = await w.emails(), held = ((await w.state()).held || []).map(h => h.messageId);
+        expect(emails[docIdOf('n0001')]).toMatchObject({ state: 'REFUSED', reason: 'not-a-statement-of-your-banks:the-subject-and-file-names-do-not-say-statement' });
+        expect(held).not.toContain('n0001');
+        expect(emails[docIdOf('n0002')].state).toBe('HELD');
+        expect(held).toContain('n0002');
+    });
+});

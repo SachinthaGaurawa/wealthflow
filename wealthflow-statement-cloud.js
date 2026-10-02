@@ -450,7 +450,7 @@ function drawReview() {
     if (!overlay) return;
     overlay.replaceChildren();
     const box = document.createElement('section'); box.className = 'md'; box.style.cssText = 'max-width:720px;width:94%;max-height:85vh;overflow:auto;padding:20px;background:var(--card);border-radius:16px;';
-    const title = document.createElement('h3'); title.textContent = 'Statements needing review'; box.appendChild(title);
+    const title = document.createElement('h3'); title.textContent = pending.length ? 'Statements needing review' : 'Your email bank statements'; box.appendChild(title);
     const close = document.createElement('button'); close.className = 'btn btn-secondary'; close.textContent = 'Close'; close.onclick = () => { overlay.remove(); overlay = null; }; box.appendChild(close);
     const summary = document.createElement('p');
     summary.textContent = `${pending.length} review item${pending.length === 1 ? '' : 's'} shown${state.queued ? ` · ${state.queued} statement${state.queued === 1 ? '' : 's'} still processing automatically` : ' · processing queue is clear'}.`;
