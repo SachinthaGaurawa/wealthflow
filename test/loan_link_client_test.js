@@ -149,3 +149,16 @@ describe('a card charge for a tracked subscription is counted by the subscriptio
         expect(unlinked.totalExp).toBe(7000);                                   // the old double count
     });
 });
+
+describe('every screen that adds up what is paid on loans leaves out an installment a bank debit already counts', () => {
+    it('the AI insights figure uses the same rule as Monthly Overview, the advisor and the score (it added every loan in full beside the bank debits)', () => {
+        const insights = source('generateAIInsights');
+        expect(insights).toContain('_wfLoanDueNow(');
+        expect(insights).not.toMatch(/loans\.filter\([^)]*\)[^;]*\.reduce\(\(s, x\) => s \+ \(x\.monthly \|\| 0\), 0\)/);
+    });
+    it('no other place adds loans\' scheduled monthly amounts for spending except the one function that skips linked months', () => {
+        const sums = html.split('\n').filter(line => /\bloans\b[^;]*\.reduce\(/.test(line) && /\.monthly/.test(line));
+        expect(sums.length, sums.join('\n')).toBe(1);
+        expect(sums[0]).toContain('linked.has(');
+    });
+});

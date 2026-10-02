@@ -10447,7 +10447,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
                 const inc = income.filter(s => { const start = new Date(s.start + 'T00:00:00'); const end = s.end ? new Date(s.end + 'T00:00:00') : null; return start <= now && (!end || end >= now); }).reduce((s, x) => s + (x.monthly || 0), 0);
                 const exp = expenses.filter(e => e.month === curMonthStr).reduce((s, x) => s + (x.amount || 0), 0);
-                const loanTotal = loans.filter(l => loanEndDate(l) > now).reduce((s, x) => s + (x.monthly || 0), 0);
+                const loanTotal = _wfLoanDueNow(loans.filter(l => loanEndDate(l) > now), curMonthStr);   // an installment a bank debit already counts (it is in `exp`) is not added again
                 const targetTotal = targets.reduce((s, x) => s + (x.amount || 0), 0);
                 const targetSaved = targets.reduce((s, x) => s + (x.savings ? x.savings.reduce((a, b) => a + b.amount, 0) : 0), 0);
                 const netCash = inc - exp - loanTotal;
