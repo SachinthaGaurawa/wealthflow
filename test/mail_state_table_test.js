@@ -43,7 +43,7 @@ function world({ inbox, mail = {}, fault = null, pageSize = 500 } = {}) {
     const byId = new Map(inbox.map(m => [m.id, m]));
     const order = inbox.map(m => m.id);
     const f = async url => {
-        const u = decodeURIComponent(String(url)); control.calls++;
+        const u = decodeURIComponent(String(url)); control.calls++; if (/\/messages\/[^?/]+\?format=full/.test(u)) control.fetched = (control.fetched || 0) + 1;
         if (control.fault && control.fault('http', u)) { control.failures++; if (/429/.test(String(control.fault('kind')))) return { ok: false, status: 429, json: async () => ({}) }; throw new Error('network timeout'); }
         if (u.includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'fake-access' }) };
         if (u.includes('/history?')) return { ok: true, json: async () => ({ historyId: '1000' }) };
@@ -210,7 +210,7 @@ describe('every message is on record before anything is fetched, and ends in the
         const out = await w.run();
         expect(out.status).toBe(503);
         expect(Object.keys(await w.items())).toHaveLength(0);
-        expect(w.control.calls).toBeLessThan(6);                                   // no message was fetched
+        expect(w.control.fetched || 0).toBe(0);                                    // no message was fetched (listing is only ids)
         w.fake.setFailOn(() => null);
         expect((await w.run()).status).toBe(200);
         expect(Object.keys(await w.items())).toHaveLength(1);

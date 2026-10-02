@@ -48,9 +48,9 @@ describe('the push hook and the scan endpoint apply ONE policy', () => {
             expect(src).toContain('policyWithReach(');   // policyFrom plus the same bank's other registered domains (bank-reach.mjs): still ONE policy for both
         });
 
-    it.each([['gmail-hook.js', hook], ['gmail-scan.js', scan]])(
-        '%s passes the policy to planMessage', (_name, src) => {
-            expect(src).toContain('planMessage(msg, policy)');
+    it.each([['gmail-hook.js', hook, 'planWithEvidence(msg, policy, evidence)'], ['gmail-scan.js', scan, 'planMessage(msg, policy)']])(
+        '%s passes the policy to the planner (the hook: the same planner plus the evidence release of statement-evidence.mjs)', (_name, src, call) => {
+            expect(src).toContain(call);
         });
 
     it.each([['gmail-hook.js', hook], ['gmail-scan.js', scan]])(

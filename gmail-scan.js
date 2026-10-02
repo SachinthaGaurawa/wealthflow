@@ -329,7 +329,8 @@ export default async function handler(req, res, deps) {
                 for (const p of write.parts) {
                     await itemRef.collection('parts').doc(String(p.i)).set({ i: p.i, d: p.d });
                 }
-                await itemRef.set(write.manifest);
+                // `via` is how the worker knows WHY this was taken (another desk of an approved bank, a series, the owner's tap): without it the item is retired as unapproved
+                await itemRef.set({ ...write.manifest, ...(item.via ? { via: item.via } : {}) });
                 stored.push({ key: item.key, bank: item.bank, filename: item.filename });
             } catch (_) {
                 // Fail the page closed; successful writes are safe to retry.

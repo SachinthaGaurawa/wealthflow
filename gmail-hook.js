@@ -56,8 +56,10 @@ import {
 import { normalizeList, policyFrom, recordSighting, approvedClauses, approvedDomainClauses } from './wealthflow-mail-senders.mjs';
 export { approvedDomainClauses as auditClauses };
 import { policyWithReach, auditQuery } from './bank-reach.mjs';
+import { planWithEvidence, evidenceContext, approvalKey } from './statement-evidence.mjs';
+import { DISCOVERY_VERSION, DISCOVERY_EVERY_MS, DISCOVERY_MAX_IDS, discoveryQueries, listDiscovery, discoveryCensus, attachmentKinds, newTally, tally, tallyLine } from './statement-discovery.mjs';
 import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld, REFUSED_FIELD, mergeRefused, refusedOf, SECURITY_FIELD, mergeSecurity } from './gmail-link.mjs';
-import { MAIL_STATE, logStates, firstUnsettled, stateForPlan } from './mail-state.mjs';
+import { MAIL_STATE, logStates, firstUnsettled, stateForPlan, DISCOVERY_DROP } from './mail-state.mjs';
 import { getInboxDb } from './inbox-store.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { createHash } from 'node:crypto';
@@ -304,6 +306,42 @@ async function filedSeriesStems(stateRef) {
     return out;
 }
 
+/** What the filed statements look like — their subjects and file names — so discovery can ask for "the same kind of mail" from any address. */
+async function filedSignatures(stateRef) {
+    let q = stateRef.collection('items');
+    if (typeof q.select === 'function') q = q.select('filename', 'subject', 'filed', 'status', 'bank');
+    if (typeof q.limit === 'function') q = q.limit(1000);
+    return (await q.get()).docs.map(d => d.data() || {});
+}
+
+export const DISCOVERY_RETRY_MS = 5 * 60 * 1000;
+/**
+ * THE OTHER WAYS OF ASKING (statement-discovery.mjs). Not by sender: by what the mail says — an attachment, a statement word and a bank of the
+ * owner's named — and by the wording of the statements already filed. Returns the ids not already judged, to be judged like every other message
+ * (planWithEvidence): one that is not a statement of the owner's banks is dropped without a trace, never held and never asked about.
+ */
+export async function discoverFresh({ token, f, stateRef, state, senderList, clauses = [], skip = new Set(), now = Date.now(), cap = DISCOVERY_MAX_IDS }) {
+    const d = state && state.discovery;
+    const wait = d && d.v === DISCOVERY_VERSION && d.more ? DISCOVERY_RETRY_MS : DISCOVERY_EVERY_MS;
+    if (d && d.v === DISCOVERY_VERSION && now - (Number(d.at) || 0) < wait) return null;
+    let items = [];
+    try { items = await filedSignatures(stateRef); } catch (_) { /* the keyword query alone still runs */ }
+    const queries = discoveryQueries({ list: senderList, items });
+    if (!queries.length) return null;
+    const found = await listDiscovery(token, f, queries, { pageSize: 100, maxPages: 2, budgetMs: 6000 });
+    const wanted = found.ids.filter(id => !skip.has(id));
+    let fresh = wanted;
+    try { fresh = await firstUnsettled(stateRef, wanted, cap + 1, { version: INTAKE_VERSION, listKey: approvalKey(senderList) }); } catch (_) { /* judged again, never skipped */ }
+    const more = fresh.length > cap;
+    const ids = fresh.slice(0, cap);
+    let census = {};
+    try { census = await discoveryCensus(token, f, { clauses, queries }); } catch (_) { /* advice only */ }
+    const methods = Object.fromEntries(Object.entries(found.methods).map(([k, v]) => [k, { listed: v.listed, failed: v.failed, complete: v.complete }]));
+    console.info(JSON.stringify({ evt: 'mail-discovery-listing', methods, listed: found.ids.length, fresh: wanted.length, staged: ids.length, more, census }));
+    // the record that it ran is written WITH the staging (see the handler), so a run that dies before the ids are staged is asked again, not forgotten for six hours
+    return { ids, more, record: { v: DISCOVERY_VERSION, at: now, listed: found.ids.length, staged: ids.length, more, methods, census } };
+}
+
 /* ── 4. the handler ───────────────────────────────────────────────────────── */
 
 export default async function handler(req, res) {
@@ -389,6 +427,8 @@ async function ingestMailbox(db, note, env, f, res) {
      * message. */
     const held = [];
     const policy = policyWithReach(senderList);
+    // What the mail says and what the document proves can take a statement from an address nobody listed (statement-evidence.mjs).
+    const evidence = evidenceContext(senderList);
     let seen = senderList;
     const sightings = [];
 
@@ -437,7 +477,7 @@ async function ingestMailbox(db, note, env, f, res) {
         const cursor = state.auditCursor && state.auditCursor.v === INTAKE_VERSION && typeof state.auditCursor.token === 'string' ? state.auditCursor : null;
         const auditDue = senderClauses.length > 0
             && (senderCatchup || !!cursor || Date.now() - (Number(state.lastAuditMs) || 0) >= (state.auditVersion === INTAKE_VERSION && state.historyAudit?.complete !== false ? AUDIT_EVERY_MS : AUDIT_RETRY_MS));
-        let audit = null, viaFrom = 0;
+        let audit = null, viaFrom = 0, discoveryFrom = -1, discoveryTo = -1, discoveryRecord = null;
         if (auditDue) {
             const everything = await listAllMessages(token, f, auditQuery(senderList), { startToken: cursor ? cursor.token || '' : '', pageSize: Math.max(1, Number(env.WF_AUDIT_PAGE_SIZE) || 500), maxPages: Math.max(1, Number(env.WF_AUDIT_MAX_PAGES) || 40) });
             // A page token Gmail no longer honours: the walk starts again from the top (everything already settled is skipped cheaply).
@@ -464,6 +504,16 @@ async function ingestMailbox(db, note, env, f, res) {
                     const take = fresh.slice(0, cap);
                     viaFrom = (listed.ids || []).length;
                     listed.ids = [...(listed.ids || []), ...take];
+                    /* THE OTHER WAYS OF ASKING, appended after the audit's own messages and marked, so that what they find is judged the same way
+                     * but never offered back to the owner as a question (see `discoveryOnly` below). */
+                    try {
+                        // what the sender-keyed audit lists is the audit's to judge (all of it, this window or a later one); a message already HELD stays held
+                        const heldAlready = (Array.isArray(state[HELD_FIELD]) ? state[HELD_FIELD] : []).map(h => String(h && h.messageId)).filter(Boolean);
+                        const have2 = new Set(listed.ids);
+                        const extra = await discoverFresh({ token, f, stateRef, state, senderList, clauses: auditQuery(senderList), skip: new Set([...known, ...have2, ...heldAlready, ...everything.ids]) });
+                        if (extra) discoveryRecord = extra.record;
+                        if (extra && extra.ids.length) { discoveryFrom = listed.ids.length; listed.ids = [...listed.ids, ...extra.ids]; discoveryTo = listed.ids.length; }
+                    } catch (_) { /* discovery is advice on top of the audit: it never stops the mail from arriving */ }
                     const windowDone = fresh.length <= cap;
                     audit = { v: INTAKE_VERSION, listed: (cursor ? Number(cursor.listed) || 0 : 0) + everything.ids.length, accounted: (everything.ids.length - beforeTable) + settledSeen, staged: take.length, taken: 0,
                         // where the NEXT run carries on: after this window once every fresh id in it is staged, else in this window again
@@ -479,7 +529,8 @@ async function ingestMailbox(db, note, env, f, res) {
         const candidate = { id: globalThis.crypto.randomUUID(), ids: listed.ids,
             cursor: 0, senderClauses, reconciled: Boolean(shouldReconcile),
             target: String(listed.historyId || note.historyId || ''),
-            ...(audit ? { audit, via: 'audit', viaFrom } : {}) };
+            ...(audit ? { audit, via: 'audit', viaFrom } : {}),
+            ...(discoveryFrom >= 0 ? { discoveryFrom, discoveryTo } : {}) };
         try {
             pending = await db.runTransaction(async tx => {
                 const current = await tx.get(stateRef);
@@ -491,7 +542,7 @@ async function ingestMailbox(db, note, env, f, res) {
                 const next = asked.length
                     ? { ...candidate, ids: [...new Set([...candidate.ids, ...asked])], forced: asked }
                     : candidate;
-                tx.set(stateRef, { pendingCollection: next, ...(asked.length ? { takeQueue: [] } : {}), ...(Array.isArray(current.data()?.requeue) && current.data().requeue.length ? { requeue: [] } : {}) }, { merge: true });
+                tx.set(stateRef, { pendingCollection: next, ...(discoveryRecord ? { discovery: discoveryRecord } : {}), ...(asked.length ? { takeQueue: [] } : {}), ...(Array.isArray(current.data()?.requeue) && current.data().requeue.length ? { requeue: [] } : {}) }, { merge: true });
                 return next;
             });
         } catch (_) { return j(res, 503, { ok: false, error: 'collection staging failed' }); }
@@ -501,6 +552,7 @@ async function ingestMailbox(db, note, env, f, res) {
     const stored = [];
     const notable = [];
     const refusedNow = [], takenIds = [], seenNow = [], securityNow = [], outcomesNow = [], unheldNow = [];
+    const discovered = newTally(), refusedKinds = {};
     /* LOGGED BEFORE ANYTHING IS FETCHED OR READ. From here a crash, a timeout or a database lock cannot lose these
      * messages: each has a record, and whatever never reaches PROCESSED is queued again from it (see mail-state.mjs). */
     const logged = await logStates(db, stateRef, pending.ids.slice(pending.cursor, batchEnd).map(id => ({ messageId: String(id), state: MAIL_STATE.PENDING, v: INTAKE_VERSION })));
@@ -521,7 +573,12 @@ async function ingestMailbox(db, note, env, f, res) {
             msg = await r.json();
         } catch (_) { return j(res, 503, { ok: false, error: 'message fetch failed' }); }
 
-        let plan = forcedIds.has(String(id)) ? planMessage(msg, rules) : planMessage(msg, policy);
+        /* FOUND BY WHAT IT SAYS, NOT BY WHO SENT IT: a message the other ways of asking brought in. Judged like all mail, but never offered back
+         * as a question and never added to the owner's sender list — what is not a statement of one of their banks is dropped and counted. */
+        const at = pending.cursor + offset;
+        const discoveryOnly = !forcedIds.has(String(id)) && Number.isInteger(pending.discoveryFrom) && at >= pending.discoveryFrom && at < pending.discoveryTo
+            && !(Array.isArray(state[HELD_FIELD]) && state[HELD_FIELD].some(h => String(h && h.messageId) === String(id)));
+        let plan = forcedIds.has(String(id)) ? planMessage(msg, rules) : planWithEvidence(msg, policy, evidence);
         /* The bank wrote from another address than the one approved: if what it
          * attached is named like a statement that was already filed from the
          * approved one, it is the same series and is taken. Looked up only when
@@ -539,7 +596,8 @@ async function ingestMailbox(db, note, env, f, res) {
          * every message the mailbox ever received, statement-shaped or not,
          * added a row to the owner's senders list. gmail-scan.js's routine
          * path applies the identical gate for the identical reason. */
-        if (worthSighting(plan)) {
+        if (discoveryOnly) tally(discovered, { plan, message: msg });
+        if (worthSighting(plan) && !(discoveryOnly && !plan.ok)) {
             /* A sender's count is of MESSAGES. Every scan walks the recent mail again, and counting each walk made a bank that
              * writes once a month "seen 555 times"; only a message the state table has never held adds to it. (If the table
              * could not say — an older store without `fresh` — the old behaviour stands: better a high count than none.) */
@@ -549,6 +607,14 @@ async function ingestMailbox(db, note, env, f, res) {
         }
 
         const fromAudit = pending.via === 'audit' && (pending.cursor + offset) >= (Number(pending.viaFrom) || 0);
+        if (!plan.ok && discoveryOnly && plan.security !== true) {
+            // not added to `auditSeen`: that memory is for good (until the rules change); this one is judged against the banks approved NOW (`listKey`) and comes back when they change
+            takenIds.push(String(id));
+            outcomesNow.push({ messageId: String(id), state: MAIL_STATE.REFUSED, reason: (DISCOVERY_DROP + ':' + String((plan.evidence && plan.evidence.why) || plan.reason || '')).slice(0, 80), listKey: approvalKey(senderList), from: plan.from, subject: plan.subject, receivedMs: Number(msg.internalDate) || null, v: INTAKE_VERSION });
+            continue;
+        }
+        // mail a bank sent that carries no PDF or HTML: which kinds of file it did carry (csv, xlsx, zip …), so a bank that mails its statements in one is seen
+        if (!plan.ok && plan.reason === REJECT.NO_ATTACHMENT) for (const [ext, n] of Object.entries(attachmentKinds(msg))) refusedKinds[ext] = (refusedKinds[ext] || 0) + n;
         if (!plan.ok) {
             const refusal = refusalOf(plan, msg, policy);
             if (refusal) refusedNow.push(refusal);
@@ -649,7 +715,9 @@ async function ingestMailbox(db, note, env, f, res) {
                     if (existing.exists) return false;
                     // Settings revocation during a download must not publish a
                     // new manifest. A later approval triggers historical replay.
-                    if (!planMessage(msg, { ...policyWithReach(normalizeList(sendersOf(currentState.data() || {}))), ...(forcedIds.has(String(id)) ? { forced: true } : {}), ...(item.via === 'series' && stems ? { siblingSeries: stems } : {}) }).ok) return false;
+                    const latest = normalizeList(sendersOf(currentState.data() || {}));
+                    const replan = { ...policyWithReach(latest), ...(forcedIds.has(String(id)) ? { forced: true } : {}), ...(item.via === 'series' && stems ? { siblingSeries: stems } : {}) };
+                    if (!(item.via === 'evidence' ? planWithEvidence(msg, replan, evidenceContext(latest)) : planMessage(msg, replan)).ok) return false;
                     tx.set(ref, { ...write.manifest, status: 'pending', filed: false,
                         ...((item.via || via) ? { via: item.via || via } : {}),
                         ...(currentState.data()?.uid ? { uid: currentState.data().uid } : {}) });
@@ -669,6 +737,8 @@ async function ingestMailbox(db, note, env, f, res) {
             : { messageId: String(id), state: MAIL_STATE.PROCESSED, items: keptKeys, sha: keptSha, from: plan.from, subject: plan.subject, receivedMs: Number(msg.internalDate) || null, via, v: INTAKE_VERSION });
     }
     await logStates(db, stateRef, outcomesNow);
+    if (discovered.judged) console.info(JSON.stringify(tallyLine(discovered, { cursor: pending.cursor, of: pending.ids.length })));
+    if (Object.keys(refusedKinds).length) console.info(JSON.stringify({ evt: 'mail-no-statement-file', kinds: refusedKinds }));
 
     try {
         const updates = {
