@@ -24,6 +24,7 @@ import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 import { healLoanLinks } from './loan-link.mjs';
+import { policyWithReach } from './bank-reach.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
 
 export const config = { maxDuration: 60 };
@@ -437,7 +438,7 @@ function senderStillApproved(senders, source) {
 
 // The rules a stored message was taken under, so reading it again judges it the same way.
 function intakeRules(senders, source) {
-    return { ...policyFrom(senders), ...(source.via === 'owner' ? { forced: true } : {}), ...(source.via === 'series' ? { siblingSeries: new Set([filenameStem(source.filename)]) } : {}) };
+    return { ...policyWithReach(senders), ...(source.via === 'owner' ? { forced: true } : {}), ...(source.via === 'series' ? { siblingSeries: new Set([filenameStem(source.filename)]) } : {}) };
 }
 
 async function retireUnapprovedSource(db, uid, mailRef, ref, now = Date.now()) {
@@ -1487,7 +1488,7 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
     // Judged exactly as intake will judge it: a message from the bank's other address that is named like a
     // statement already filed is one the intake takes, so the report must not call it "a new address".
     const stems = new Set(items.filter(i => i.filed === true && i.filename).map(i => filenameStem(i.filename)).filter(st => st.replace(/[^a-z]/g, '').length >= 6));
-    const policy = { ...policyFrom(list), siblingSeries: stems };
+    const policy = { ...policyWithReach(list), siblingSeries: stems };
     const stored = new Set(items.map(item => String(item.messageId || '')).filter(Boolean));
     const missingKey = coverage.series.map(s => `${s.key}:${s.missing.join(',')}`).join('|');
     const due = search && coverage.missing > 0 && (now - (Number(mail.lastGapSearchMs) || 0) >= GAP_SEARCH_EVERY_MS || mail.gapMissingKey !== missingKey);

@@ -45,7 +45,7 @@ describe('the push hook and the scan endpoint apply ONE policy', () => {
     it.each([['gmail-hook.js', hook], ['gmail-scan.js', scan]])(
         '%s reads the list from the sealed document', (_name, src) => {
             expect(src).toContain('sendersOf(state)');
-            expect(src).toContain('policyFrom(');
+            expect(src).toContain('policyWithReach(');   // policyFrom plus the same bank's other registered domains (bank-reach.mjs): still ONE policy for both
         });
 
     it.each([['gmail-hook.js', hook], ['gmail-scan.js', scan]])(

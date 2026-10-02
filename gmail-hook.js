@@ -55,6 +55,7 @@ import {
 } from './wealthflow-mail-ingest.mjs';
 import { normalizeList, policyFrom, recordSighting, approvedClauses, approvedDomainClauses } from './wealthflow-mail-senders.mjs';
 export { approvedDomainClauses as auditClauses };
+import { policyWithReach, auditQuery } from './bank-reach.mjs';
 import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld, REFUSED_FIELD, mergeRefused, refusedOf, SECURITY_FIELD, mergeSecurity } from './gmail-link.mjs';
 import { MAIL_STATE, logStates, firstUnsettled, stateForPlan } from './mail-state.mjs';
 import { getInboxDb } from './inbox-store.mjs';
@@ -387,7 +388,7 @@ async function ingestMailbox(db, note, env, f, res) {
      * the loop, for the same reason the sender list is: one write, not one per
      * message. */
     const held = [];
-    const policy = policyFrom(senderList);
+    const policy = policyWithReach(senderList);
     let seen = senderList;
     const sightings = [];
 
@@ -438,7 +439,7 @@ async function ingestMailbox(db, note, env, f, res) {
             && (senderCatchup || !!cursor || Date.now() - (Number(state.lastAuditMs) || 0) >= (state.auditVersion === INTAKE_VERSION && state.historyAudit?.complete !== false ? AUDIT_EVERY_MS : AUDIT_RETRY_MS));
         let audit = null, viaFrom = 0;
         if (auditDue) {
-            const everything = await listAllMessages(token, f, approvedDomainClauses(senderList), { startToken: cursor ? cursor.token || '' : '', pageSize: Math.max(1, Number(env.WF_AUDIT_PAGE_SIZE) || 500), maxPages: Math.max(1, Number(env.WF_AUDIT_MAX_PAGES) || 40) });
+            const everything = await listAllMessages(token, f, auditQuery(senderList), { startToken: cursor ? cursor.token || '' : '', pageSize: Math.max(1, Number(env.WF_AUDIT_PAGE_SIZE) || 500), maxPages: Math.max(1, Number(env.WF_AUDIT_MAX_PAGES) || 40) });
             // A page token Gmail no longer honours: the walk starts again from the top (everything already settled is skipped cheaply).
             if (!everything.ok && cursor && cursor.token && everything.status === 400) { try { await stateRef.set({ auditCursor: null }, { merge: true }); } catch (_) { /* tried again next run */ } }
             if (everything.ok) {
@@ -648,7 +649,7 @@ async function ingestMailbox(db, note, env, f, res) {
                     if (existing.exists) return false;
                     // Settings revocation during a download must not publish a
                     // new manifest. A later approval triggers historical replay.
-                    if (!planMessage(msg, { ...policyFrom(normalizeList(sendersOf(currentState.data() || {}))), ...(forcedIds.has(String(id)) ? { forced: true } : {}), ...(item.via === 'series' && stems ? { siblingSeries: stems } : {}) }).ok) return false;
+                    if (!planMessage(msg, { ...policyWithReach(normalizeList(sendersOf(currentState.data() || {}))), ...(forcedIds.has(String(id)) ? { forced: true } : {}), ...(item.via === 'series' && stems ? { siblingSeries: stems } : {}) }).ok) return false;
                     tx.set(ref, { ...write.manifest, status: 'pending', filed: false,
                         ...((item.via || via) ? { via: item.via || via } : {}),
                         ...(currentState.data()?.uid ? { uid: currentState.data().uid } : {}) });
