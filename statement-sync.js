@@ -27,6 +27,7 @@ import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, i
 import { healLoanLinks } from './loan-link.mjs';
 import { manualTwin, markTwin } from './statement-links.mjs';
 import { statementCopies } from './statement-copies.mjs';
+import { ownMoneyLegs } from './statement-legs.mjs';
 import { policyWithReach } from './bank-reach.mjs';
 import { planWithEvidence, evidenceContext, documentProof, knownLast4 } from './statement-evidence.mjs';
 import { formKind } from './statement-document-kind.mjs';
@@ -966,7 +967,14 @@ export async function ledgerCensus({ db, mailRef, uid, log = console.info, limit
         // each filed statement by its month and account, so a twin says WHICH two statements share it
         const labels = new Map();
         for (const item of await storedItems(mailRef)) labels.set(`${mailRef.path}/items/${item.id}`, `${monthOf(item) || '?'}:${String(item.proof?.last4 || '-')}`);
-        log(JSON.stringify({ evt: 'statement-twins', ...recordTwins((await db.collection('users').doc(uid).get()).data() || {}, { labelOf: key => labels.get(key) }) }));
+        const user = (await db.collection('users').doc(uid).get()).data() || {};
+        const twins = recordTwins(user, { labelOf: key => labels.get(key) });
+        log(JSON.stringify({ evt: 'statement-twins', ...twins }));
+        /* WHAT THE OTHER STATEMENT WOULD TAKE OUT, SAID BEFORE ANYTHING IS (statement-legs.mjs): the pairs of the owner's own money that sit on both statements and the one record of each that is the other's
+         * leg, in counts only. `looser` is `legs.pairs` above (any transfer wording, any day within three): the difference is what the strict rule leaves for the owner. Nothing is changed. */
+        const plan = ownMoneyLegs(user), kinds = {}, banks = {};
+        for (const { kind, record } of plan.remove) { kinds[kind] = (kinds[kind] || 0) + 1; const bank = String(record.bank || '?').slice(0, 24); banks[bank] = (banks[bank] || 0) + 1; }
+        log(JSON.stringify({ evt: 'statement-legs-plan', pairs: plan.pairs, records: plan.remove.length, left: plan.left, looser: twins.legs.pairs, kinds, banks }));
     } catch (_) { /* advice only */ }
 }
 
