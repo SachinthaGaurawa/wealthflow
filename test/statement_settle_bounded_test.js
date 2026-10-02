@@ -155,20 +155,71 @@ describe('a message today\'s rules do not take as a statement is retired, never 
 
     const mandate = ['DIRECT DEBIT MANDATE', 'Customer Name: A B Perera', 'Facility Reference 000123456789', 'Effective Date 25/03/2026   Maximum Amount 5,000.00', 'Signature: ____________'].join('\n');
     const readsAs = (text) => vi.fn(async () => ({ text, parsed: { verdict: 'parsed', understood: false, rows: [{ date: '2026-03-25', narration: 'Direct debit mandate', amount: 5000, direction: 'debit', directionSource: 'assumed', valid: true, needsReview: true }], reconciliation: { ok: false }, layout: {} } }));
-    it('a PDF the mail did not vouch for that never says statement, balance, opening or closing — a mandate — is retired as not a statement', async () => {
-        const w = world();
-        await go(w, { read: readsAs(mandate), loadAttachment: async () => ({ bytes: pdf, filename: 'Mandate.pdf', contentSha256: 'x' }) });
+    it('a PDF the mail did not vouch for that never says statement, balance, opening or closing — a notice of authority — is retired as not a statement', async () => {
+        const w = world({ filename: 'scan0001.pdf' });
+        await go(w, { read: readsAs(['NATIONS TRUST BANK PLC', 'Notice of authority', 'Facility Reference 000123456789', 'Effective Date 25/03/2026   Maximum Amount 5,000.00', 'Signature: ____________'].join('\n')), loadAttachment: async () => ({ bytes: pdf, filename: 'scan0001.pdf', contentSha256: 'x' }) });
         expect(w.data.get(itemPath)).toMatchObject({ status: 'rejected_non_statement', filed: false });
         expect([...w.data.keys()].filter(key => key.includes('/statementReview/'))).toEqual([]);
     });
+    const notice = ['NATIONS TRUST BANK PLC', 'Notice of authority', 'Facility Reference 000123456789', 'Effective Date 25/03/2026   Maximum Amount 5,000.00'].join('\n');
     it('the same page that says "balance" is a statement the reader could not prove: it goes where it always went, never retired for its words', async () => {
-        const w = world();
-        await go(w, { read: readsAs(`${mandate}\nBalance brought forward 0.00`), loadAttachment: async () => ({ bytes: pdf, filename: 'Mandate.pdf', contentSha256: 'x' }) });
+        const w = world({ filename: 'scan0001.pdf' });
+        await go(w, { read: readsAs(`${notice}\nBalance brought forward 0.00`), loadAttachment: async () => ({ bytes: pdf, filename: 'scan0001.pdf', contentSha256: 'x' }) });
         expect(w.data.get(itemPath).status).not.toBe('rejected_non_statement');
     });
-    it('a mail that says statement is never retired by the words of its document (only `unproven` mail is held to them)', async () => {
+    it('a mail that says statement is never retired by the plain words of its document (only `unproven` mail is held to them; a document that names itself a form is retired below)', async () => {
         const w = world({ intent: 'stated', filename: 'e-statement.pdf' });
-        await go(w, { read: readsAs(mandate), loadAttachment: async () => ({ bytes: pdf, filename: 'e-statement.pdf', contentSha256: 'x' }) });
+        await go(w, { read: readsAs(notice), loadAttachment: async () => ({ bytes: pdf, filename: 'e-statement.pdf', contentSha256: 'x' }) });
+        expect(w.data.get(itemPath).status).not.toBe('rejected_non_statement');
+    });
+});
+
+describe('the whole-statement replay is part of the settle pass (the queue starved it: the front pass is skipped on every interactive run)', () => {
+    const itemPath = `${mail}/items/ntb2`;
+    const reviewId = createHash('sha256').update(itemPath).digest('hex');
+    const world = () => createFirestore({
+        [mail]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders: SENDERS },
+        'wf-statement-vault/u': { uid: 'u' },
+        'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], settings: {} },
+        [itemPath]: { uid: 'u', bank: 'NTB', filename: 'Mandate.pdf', status: 'needs_review', hasReview: true, filed: false, cursor: 0, reviewReason: 'statement-layout-or-reconciliation-needs-review' },
+        [`users/u/statementReview/${reviewId}`]: { uid: 'u', sourcePath: itemPath, index: -1, status: 'pending', reason: 'statement-layout-or-reconciliation-needs-review', bank: 'NTB' },
+    });
+    it('a statement stopped at "rows could not be proven to add up" is put back in the queue by a run that is busy with something else', async () => {
+        const w = world();
+        const loadAttachment = async () => { throw Object.assign(new Error('x'), { defer: 1000 }); };
+        await runStatementSync({ action: 'drain', db: w.db, owner, env: {}, f: gmailOk, intake: async () => ({ body: { ok: true } }), read: readStatement, open: async () => [], board: down, extract: async () => { throw new Error('ai-extractor-unavailable'); }, settle: settleStatement, maxSteps: 0, budgetMs: 40000, loadAttachment });
+        expect(w.data.get(`users/u/statementReview/${reviewId}`).status).toBe('retried');
+        expect(w.data.get(itemPath)).toMatchObject({ status: 'pending', hasReview: false, wholeReplayVersion: expect.any(Number) });
+    });
+});
+
+describe('a document that calls itself a form is not a statement, whatever the mail around it says', () => {
+    const itemPath = `${mail}/items/item0`;
+    const pdf = Buffer.from('%PDF-1.4 form');
+    const world = (item = {}) => createFirestore({
+        [mail]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders: SENDERS, lastSettleMs: Date.now() },
+        'wf-statement-vault/u': { uid: 'u' },
+        'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], settings: {} },
+        [itemPath]: { uid: 'u', bank: 'NTB', filename: 'Mandate.pdf', from: 'NTB <estatement@info.nationstrust.com>', messageId: 'm0', status: 'pending', hasReview: false, filed: false, cursor: 0, intent: 'stated', ...item },
+    });
+    const go = (w, text, filename = 'Mandate.pdf') => runStatementSync({ action: 'drain', db: w.db, owner, env: {}, f: gmailOk, intake: async () => ({ body: { ok: true } }), open: async () => [], board: down, extract: async () => { throw new Error('ai-extractor-unavailable'); }, settle: settleStatement, maxSteps: 1, budgetMs: 40000,
+        read: async () => ({ text, parsed: { verdict: 'parsed', understood: true, rows: [{ date: '2026-03-25', narration: 'Mandate fee', amount: 5000, direction: 'debit', directionSource: 'assumed', valid: true, needsReview: true }], reconciliation: { ok: false, opening: 10, closing: 20 }, layout: {} } }),
+        loadAttachment: async () => ({ bytes: pdf, filename, contentSha256: 'x' }) });
+    const mandate = ['NATIONS TRUST BANK', 'DIRECT DEBIT MANDATE', 'Statement balance of my credit card account will be debited on the due date', 'Effective Date 25/03/2026   Maximum Amount 5,000.00', 'Opening balance 10.00  Closing balance 20.00'].join('\n');
+    it('the mail says statement, the document says MANDATE in its title and its rows do not reconcile: retired, with the reason (the mail\'s words and a "balance" in the small print do not save it)', async () => {
+        const w = world();
+        await go(w, ['NATIONS TRUST BANK PLC', 'DIRECT DEBIT MANDATE', 'Authority to debit the account named below', 'Effective Date 25/03/2026   Maximum Amount 5,000.00', 'Opening balance 10.00  Closing balance 20.00'].join('\n'));
+        expect(w.data.get(itemPath)).toMatchObject({ status: 'rejected_non_statement', rejectionReason: expect.stringContaining('mandate') });
+        expect([...w.data.keys()].filter(key => key.includes('/statementReview/'))).toEqual([]);
+    });
+    it('the file name alone is enough when the title is silent', async () => {
+        const w = world();
+        await go(w, ['Nations Trust Bank PLC', 'Authority to debit the account named below', 'Effective Date 25/03/2026   Maximum Amount 5,000.00'].join('\n'));
+        expect(w.data.get(itemPath)).toMatchObject({ status: 'rejected_non_statement' });
+    });
+    it('a title that says statement is never a form, even with "terms and conditions" beside it', async () => {
+        const w = world({ filename: 'e-statementPDF.pdf' });
+        await go(w, ['NATIONS TRUST BANK', 'Credit Card Statement - Terms and Conditions apply', mandate].join('\n'), 'e-statementPDF.pdf');
         expect(w.data.get(itemPath).status).not.toBe('rejected_non_statement');
     });
 });

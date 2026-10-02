@@ -286,7 +286,7 @@ describe('private source inspection and durable layout replay', () => {
         });
         const result = await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 10 });
         expect(result).toEqual({ recovered: 3, more: false });
-        reasons.forEach((_, i) => expect(args.data.get(`wf-mail/owner_example_com/items/item${i}`)).toMatchObject({ status: 'pending', wholeReplayVersion: 11, adaptiveTries: 0, adaptiveAt: 0 }));
+        reasons.forEach((_, i) => expect(args.data.get(`wf-mail/owner_example_com/items/item${i}`)).toMatchObject({ status: 'pending', wholeReplayVersion: 12, adaptiveTries: 0, adaptiveAt: 0 }));
         expect((await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 10 })).recovered).toBe(0);
     });
     it('bounds whole replay and keeps content mismatches or settled data fail-closed', async () => {
@@ -445,6 +445,18 @@ describe('statement worker attachment policy', () => {
         await expect(attachmentBytes({ messageId: 'm1', filename: 'statement.pdf', size: 100 }, { id: 'obsolete-key' }, 'token', senders, f))
             .rejects.toThrow('statement-attachment-identity-mismatch');
         expect(f).toHaveBeenCalledTimes(1);
+    });
+    it('an item stored before its attachment was recorded (no size) is the one attachment of its own message; with two files of the same name it is still ambiguous', async () => {
+        const data = Buffer.from('%PDF-old').toString('base64url');
+        const sole = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => message }).mockResolvedValueOnce({ ok: true, json: async () => ({ data }) });
+        const renamed = await attachmentBytes({ messageId: 'm1', filename: '074-02-XXXXX-88.pdf' }, { id: 'legacy-key' }, 'token', senders, sole);
+        expect(renamed.bytes.toString()).toBe('%PDF-old');
+        const two = structuredClone(message);
+        two.payload.parts.push({ filename: 'other.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a2', size: 90 } });
+        const byName = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => two }).mockResolvedValueOnce({ ok: true, json: async () => ({ data }) });
+        expect((await attachmentBytes({ messageId: 'm1', filename: 'statement.pdf', size: 1 }, { id: 'legacy-key' }, 'token', senders, byName)).bytes.toString()).toBe('%PDF-old');
+        const unknown = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => two });
+        await expect(attachmentBytes({ messageId: 'm1', filename: 'nothing.pdf' }, { id: 'legacy-key' }, 'token', senders, unknown)).rejects.toThrow('statement-attachment-identity-mismatch');
     });
     it('pins every attachment to SHA-256 and rejects changed ciphertext', async () => {
         const plan = planMessage(message, policyFrom(senders));
