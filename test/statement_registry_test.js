@@ -180,6 +180,105 @@ describe('the upload door (POST /api/statement-guard)', () => {
     });
 });
 
+/* ── the mailbox review door: the device opens a mailbox statement itself (the legacy path) ──────────────────────────── */
+describe('the mailbox review door (POST /api/statement-guard with itemId)', () => {
+    const fake = makeFakeAdmin(); let fs, saved;
+    const call = async (body, headers = { authorization: 'Bearer ok' }) => {
+        let out; const res = { statusCode: 200, setHeader() {}, end(t) { out = { status: this.statusCode, body: JSON.parse(t) }; } };
+        await handler({ method: 'POST', body, headers }, res); return out;
+    };
+    beforeEach(() => {
+        saved = process.env.FIREBASE_SERVICE_ACCOUNT; process.env.FIREBASE_SERVICE_ACCOUNT = FAKE_SERVICE_ACCOUNT;
+        fake.reset(); fake.setVerifier(async () => ({ uid: 'u', email: owner.email, email_verified: true }));
+        fs = createFirestore({ [MAIL]: { uid: 'u' } }); fake.admin.firestore = () => fs.db; _setAdminModule(fake.admin);
+    });
+    afterEach(() => { _setAdminModule(null); if (saved === undefined) delete process.env.FIREBASE_SERVICE_ACCOUNT; else process.env.FIREBASE_SERVICE_ACCOUNT = saved; });
+    const item = (id, extra = {}) => { fs.data.set(`${MAIL}/items/${id}`, { uid: 'u', bank: 'NTB', status: 'pending', filed: false, cursor: 0, ...extra }); fs.data.set(`${MAIL}/items/${id}/parts/0`, { d: 'base64' }); };
+    const september = { bank: 'NTB', last4: '376657XXXXX0276', dates: ['2026-09-14', '2026-09-15'] };
+
+    it('names a real item of this owner, and builds the path itself', async () => {
+        item('a');
+        expect((await call({ ...september, action: 'check', itemId: 'nope' })).status).toBe(404);
+        expect((await call({ ...september, action: 'check', itemId: '../../users/u' })).status).toBe(400);
+        fs.data.set(`${MAIL}/items/theirs`, { uid: 'someone-else', status: 'pending' });
+        expect((await call({ ...september, action: 'check', itemId: 'theirs' })).status).toBe(404);
+        expect((await call({ ...september, action: 'check', itemId: 'a' })).body).toMatchObject({ ok: true, duplicate: false, identified: true });
+    });
+    it('UPLOAD FIRST: a month the owner added by hand is not filed again from the mailbox — and the mailbox item is closed, its attachment kept', async () => {
+        await call({ bank: 'Nations Trust Bank', last4: 'XXXX0276', periodText: '17/08/2026 - 16/09/2026', sha256: sha('uploaded'), action: 'claim', token: 'attempt-0001' });
+        item('a', { contentSha256: sha('mailed') });
+        const r = await call({ ...september, action: 'check', itemId: 'a' });
+        expect(r.body).toMatchObject({ ok: true, duplicate: true, via: 'upload', kind: 'period', notice: 'Already Added via Manual Upload', closed: true });
+        expect(fs.data.get(`${MAIL}/items/a`)).toMatchObject({ status: 'filed', filed: true, duplicateOf: 'registry:upload', blockedVia: 'upload' });
+        expect(fs.data.has(`${MAIL}/items/a/parts/0`)).toBe(true);                                 // nothing the owner could not get back is deleted
+        // a claim at Save is turned away the same way
+        item('b');
+        expect((await call({ ...september, action: 'claim', itemId: 'b' })).body).toMatchObject({ duplicate: true, via: 'upload', closed: true });
+        expect(fs.data.get(`${MAIL}/items/b`)).toMatchObject({ filed: true, duplicateOf: 'registry:upload' });
+    });
+    it('MAILBOX FIRST: the claim holds the statement as the email door does, so a later upload is "Already Added via Email Sync" and the item may claim again', async () => {
+        item('a');
+        expect((await call({ ...september, action: 'claim', itemId: 'a' })).body).toMatchObject({ duplicate: false });
+        expect((await call({ ...september, action: 'claim', itemId: 'a' })).body).toMatchObject({ duplicate: false });        // the same item again: not a duplicate of itself
+        expect((await call({ bank: 'NTB', last4: 'XXXX0276', periodText: '17/08/2026 - 16/09/2026', sha256: sha('uploaded'), action: 'check' })).body).toMatchObject({ duplicate: true, via: 'email', notice: 'Already Added via Email Sync' });
+        // another mailbox copy of the same month (the bank sent it twice, other bytes) is turned away and closed
+        item('c');
+        expect((await call({ ...september, action: 'check', itemId: 'c' })).body).toMatchObject({ duplicate: true, via: 'email', closed: true });
+        expect(fs.data.get(`${MAIL}/items/c`)).toMatchObject({ filed: true, duplicateOf: 'registry:email' });
+        // the first item is untouched
+        expect(fs.data.get(`${MAIL}/items/a`)).toMatchObject({ filed: false, status: 'pending' });
+    });
+    it('a check holds nothing: after it, an upload of the same month is still welcome', async () => {
+        item('a');
+        await call({ ...september, action: 'check', itemId: 'a' });
+        expect((await call({ bank: 'NTB', last4: 'XXXX0276', periodText: '17/08/2026 - 16/09/2026', action: 'claim', token: 'attempt-0001' })).body.duplicate).toBe(false);
+    });
+    it('another month of the same card is not blocked', async () => {
+        item('a'); item('b');
+        await call({ ...september, action: 'claim', itemId: 'a' });
+        expect((await call({ ...september, dates: ['2026-10-14'], action: 'claim', itemId: 'b' })).body.duplicate).toBe(false);
+    });
+    it('the same FILE is found by the hash on the item: a copy of a statement already filed is closed pointing at the original', async () => {
+        fs.data.set(`${MAIL}/items/original`, { uid: 'u', filed: true, contentSha256: sha('same-bytes'), status: 'filed' });
+        item('resent', { contentSha256: sha('same-bytes') });
+        const r = await call({ action: 'check', itemId: 'resent' });                              // nothing read from the file yet: the item's own hash is enough
+        expect(r.body).toMatchObject({ duplicate: true, via: 'email', kind: 'file', closed: true });
+        expect(fs.data.get(`${MAIL}/items/resent`)).toMatchObject({ filed: true, duplicateOf: 'original' });
+    });
+    it('a statement the sync worker has already filed from this very item is not filed again from the phone, and nothing is rewritten', async () => {
+        item('a', { filed: true, status: 'filed', totalRows: 7 });
+        const r = await call({ ...september, action: 'claim', itemId: 'a' });
+        expect(r.body).toMatchObject({ duplicate: true, via: 'email', kind: 'item', closed: false });
+        expect(fs.data.get(`${MAIL}/items/a`)).toEqual({ uid: 'u', bank: 'NTB', status: 'filed', filed: true, cursor: 0, totalRows: 7 });
+        expect([...fs.data.keys()].filter(k => k.includes(REGISTRY))).toEqual([]);                // and it took no hold
+    });
+    it('an item the sync worker is working on right now is reported but left to it', async () => {
+        await call({ bank: 'Nations Trust Bank', last4: 'XXXX0276', periodText: '17/08/2026 - 16/09/2026', action: 'claim', token: 'attempt-0001' });
+        item('a', { leaseToken: 'worker', leaseUntil: Date.now() + 60_000 });
+        expect((await call({ ...september, action: 'check', itemId: 'a' })).body).toMatchObject({ duplicate: true, via: 'upload', closed: false });
+        expect(fs.data.get(`${MAIL}/items/a`)).toMatchObject({ filed: false, leaseToken: 'worker' });
+    });
+    it('the email worker taking the item the phone claimed is no duplicate (same holder), so nothing is lost either way', async () => {
+        item('a');
+        await call({ ...september, action: 'claim', itemId: 'a' });
+        const identity = identityOf({ bank: 'NTB', account: '0276', dates: ['2026-09-14'] });
+        expect(await claimStatement({ db: fs.db, uid: 'u', via: VIA.EMAIL, ref: `${MAIL}/items/a`, identity, sha: sha('whatever') })).toMatchObject({ ok: true });
+        expect(await peekStatement({ db: fs.db, uid: 'u', identity, sha: '', ref: `${MAIL}/items/a` })).toEqual({ duplicate: false });
+    });
+    it('un-filing the item through the sync gives the month back', async () => {
+        item('a');
+        await call({ ...september, action: 'claim', itemId: 'a' });
+        expect(await releaseStatement({ db: fs.db, uid: 'u', ref: `${MAIL}/items/a` })).toBe(1);
+        item('b');
+        expect((await call({ ...september, action: 'claim', itemId: 'b' })).body.duplicate).toBe(false);
+    });
+    it('answers 503 rather than a false "not a duplicate" when the registry cannot be read', async () => {
+        item('a');
+        fake.admin.firestore = () => ({ collection: () => { throw new Error('down'); } });
+        expect((await call({ ...september, action: 'check', itemId: 'a' })).status).toBe(503);
+    });
+});
+
 /* ── the email door: the real worker ─────────────────────────────────────────────────────────────────────────────── */
 const html = (variant = 0, day = '14/09/2026') => `<html><body><h1>Nations Trust Bank American Express Credit Card Statement</h1><p>Card Number: 376657XXXXX0276</p><p>Statement Date: 16/09/2026 Payment Due Date: 10/10/2026</p><p>Credit Limit 500000.00 Available Credit 400000.00 Minimum Amount Due 10000.00</p><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr><tr><td>${day}</td><td>KEELLS STORE</td><td>${(123.45 + variant).toFixed(2)} DR</td></tr><tr><td>15/09/2026</td><td>PAYMENT THANK YOU</td><td>${(50 + variant).toFixed(2)} CR</td></tr></table></body></html>`;
 function world(sources, seedExtra = {}) {
@@ -259,5 +358,16 @@ describe('the wiring', () => {
         expect(ai).toContain('_wfStatementGuard().file(file)'); expect(ai).toContain('_wfGuardParsed(');
         expect(index).toContain('window.WFStatementCloud.guard.claim(parsed._wfGuard)'); expect(index).toContain('uploadClaim: _uploadClaim');
         expect(cloud).toContain("request('/api/statement-guard','POST'");
+    });
+    it("the device's own review of mailbox statements asks before opening and claims at save", async () => {
+        const { readFileSync } = await import('node:fs');
+        const index = readFileSync('index.html', 'utf8'), cloud = readFileSync('wealthflow-statement-cloud.js', 'utf8');
+        expect(cloud).toContain('mail: guardMail');
+        const sync = index.slice(index.indexOf('async function runMailSync'), index.indexOf('window.runMailSync = runMailSync'));
+        expect(sync).toContain("_mailGuard('check'");
+        expect(sync.indexOf("_mailGuard('check'")).toBeLessThan(sync.indexOf('_ready.push({'));        // before the statement is offered for review
+        expect(index.slice(index.indexOf('function _reviewMailStatements'), index.indexOf('window._reviewMailStatements ='))).toContain('_wfMailGuard: first.guards');
+        const save = index.slice(index.indexOf("$ovl('#_ccr_save').onclick"));
+        expect(save).toContain("guard.mail(_g, 'claim')"); expect(save).toContain('_mailBlocked.has(t._statementKey)');
     });
 });
