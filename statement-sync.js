@@ -29,7 +29,8 @@ import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, i
 import { healLoanLinks } from './loan-link.mjs';
 import { manualTwin, markTwin } from './statement-links.mjs';
 import { statementCopies } from './statement-copies.mjs';
-import { looseLegsWhy, ownMoneyLegs } from './statement-legs.mjs';
+import { looseLegsWhy, ownMoneyLegs, OWN_TRANSFER_LABEL } from './statement-legs.mjs';
+import { applyCardSettlement } from './cc-fifo.mjs';
 import { policyWithReach } from './bank-reach.mjs';
 import { planWithEvidence, evidenceContext, documentProof, knownLast4 } from './statement-evidence.mjs';
 import { formKind } from './statement-document-kind.mjs';
@@ -831,6 +832,67 @@ export async function healStatementCopies({ db, mailRef, uid, now = Date.now(), 
     return result;
 }
 
+/* THE OWNER'S OWN MONEY MOVING BETWEEN TWO STATEMENTS IS ONE MOVEMENT, NOT TWO LINES OF THE BOOKS (statement-legs.mjs). A debit on one statement and the same amount, to the cent, arriving on another statement of the owner's
+ * within the rule's days — a bank to another bank, or a bank paying a card — was counted twice: once leaving, once arriving (or once as the bank's spending and again as the card's purchases). Each pair is locked under ONE
+ * internal hash ("ot_…", label "Own Transfer"): the leg that is only the other's echo goes (tombstone, so no device or heal brings it back), the card statement's payment stays, and both legs' ledger rows say so — the
+ * removed line is kept in its ledger row (amount, date, words, bank) so it can be put back by hand if the owner ever says the pair was a coincidence. A line the owner wrote a note on, one tied to a loan or a subscription,
+ * one a hand typed, and any debit that two credits (or a credit that two debits) could pair with are never taken out. The plan is recomputed from the document inside the transaction. Counts only are logged. */
+export async function healOwnTransfers({ db, uid, now = Date.now(), log = console.info, limit = 40 }) {
+    const userRef = db.collection('users').doc(uid), STORES = ['expenses', 'incomeRecv', 'ccPayments'];
+    const peek = (await userRef.get()).data() || {};
+    if (!ownMoneyLegs(peek).remove.length) return { pairs: 0, removed: 0, more: false };
+    const result = await db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), user = structuredClone(snap.data() || {});
+        const plan = ownMoneyLegs(user);
+        if (!plan.remove.length) return { pairs: 0, removed: 0, more: false, left: plan.left };
+        const hashes = [...new Set(plan.remove.map(entry => entry.hash))].slice(0, limit), take = new Set(hashes);
+        const chosen = plan.remove.filter(entry => take.has(entry.hash));
+        const kept = chosen.filter(entry => entry.kind === 'card').map(entry => ({ entry, record: entry.partner }));     // a card statement's payment stays: stamped, not removed
+        const ledgerOf = new Map();
+        for (const record of [...chosen.map(entry => entry.record), ...kept.map(item => item.record)]) if (!ledgerOf.has(record)) ledgerOf.set(record, await tx.get(userRef.collection('statementLedger').doc(String(record.id))));
+        const tomb = user._tomb && typeof user._tomb === 'object' ? { ...user._tomb } : {}, gone = new Set(chosen.map(entry => entry.record)), kinds = {};
+        const snapshot = (store, record) => ({ store, id: String(record.id), amount: record.amount, date: record.date, words: String(record.desc || record.name || '').slice(0, 120), bank: record.bank || '', account: record.card_last4 || '', statementKey: record.statementKey || '', statementRow: record.statementRow == null ? null : record.statementRow, category: record.cat || record.type || '' });
+        for (const entry of chosen) {
+            const { store, record, partner, kind, hash } = entry;
+            tomb[store] = { ...(tomb[store] && typeof tomb[store] === 'object' ? tomb[store] : {}), [record.id]: now };
+            kinds[kind] = (kinds[kind] || 0) + 1;
+            const ledger = ledgerOf.get(record);
+            if (ledger.exists) tx.set(ledger.ref, { status: 'skipped', module: 'skip', reason: 'own-account-pair', label: OWN_TRANSFER_LABEL, ownTransfer: hash, pairedWith: String(partner.id), supersededBy: 'own-transfer-pair', removed: snapshot(store, record), settledAt: now }, { merge: true });
+        }
+        for (const { entry, record } of kept) {
+            record.ownTransfer = entry.hash; record.ownTransferLabel = OWN_TRANSFER_LABEL; record.ownTransferOf = String(entry.record.id); record._ut = now;
+            const ledger = ledgerOf.get(record);
+            if (ledger && ledger.exists) tx.set(ledger.ref, { label: OWN_TRANSFER_LABEL, ownTransfer: entry.hash, pairedWith: String(entry.record.id) }, { merge: true });
+        }
+        const changes = {};
+        for (const store of STORES) if (Array.isArray(user[store]) && (chosen.some(entry => entry.store === store) || kept.some(item => user[store].includes(item.record)))) changes[store] = user[store].filter(record => !gone.has(record));
+        tx.set(userRef, { ...changes, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        return { pairs: hashes.length, removed: chosen.length, kinds, more: plan.pairs > hashes.length, left: plan.left, unworded: plan.unworded };
+    });
+    if (result.removed || result.left || result.unworded) log(JSON.stringify({ evt: 'own-transfer-heal', pairs: result.pairs, removed: result.removed, kinds: result.kinds || {}, left: result.left || 0, unworded: result.unworded || 0, ...(result.more ? { more: true } : {}) }));
+    return result;
+}
+
+/* THE CARD'S PAYMENTS SETTLE ITS CHARGES OLDEST FIRST, WHETHER OR NOT AN APP IS OPEN (cc-fifo.mjs). Filing a card payment walks the card's charges in the same transaction; this is the pass that catches the rest — charges typed or
+ * imported another way, a payment deleted, an older charge that arrived later — by walking every card's whole timeline again: all payments in one pool, charges from the oldest, each paid when the pool covers it in full, the first
+ * one it cannot cover freezing the rest, what is left carried. Exact to the cent; a charge the owner marked paid by hand is outside the pool. Idempotent. Counts only are logged. */
+export async function healCardSettlement({ db, uid, now = Date.now(), log = console.info }) {
+    const userRef = db.collection('users').doc(uid);
+    const peek = (await userRef.get()).data() || {};
+    if (!Array.isArray(peek.cconetime) || !peek.cconetime.length) return { changed: 0 };
+    const result = await db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), data = snap.data() || {};
+        if (!Array.isArray(data.cconetime) || !data.cconetime.length) return { changed: 0 };
+        const user = structuredClone({ cconetime: data.cconetime, ccPayments: Array.isArray(data.ccPayments) ? data.ccPayments : [] });
+        const walked = applyCardSettlement(user, now);
+        if (!walked.changed) return { changed: 0 };
+        tx.set(userRef, { cconetime: user.cconetime, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        return { changed: walked.changed, settled: walked.settled, pending: walked.pending, cards: walked.cards.length, carried: walked.cards.filter(card => card.carryCents > 0).length };
+    });
+    if (result.changed) log(JSON.stringify({ evt: 'card-settlement-heal', changed: result.changed, settled: result.settled, pending: result.pending, cards: result.cards, carried: result.carried }));
+    return result;
+}
+
 /* CARD INSTALLMENT CHARGES FILED IN THE WORKER'S OLD SHAPE (no product, date or duration) were invisible to the monthly totals. They are given the plan shape so they
  * count — unless a plan the owner already has is that very charge, in which case the plan's month says it was paid and the record stays out. One log line. */
 export async function repairCardInstallments({ db, uid, now = Date.now(), log = console.info }) {
@@ -976,7 +1038,7 @@ export async function ledgerCensus({ db, mailRef, uid, log = console.info, limit
          * leg, in counts only. `looser` is `legs.pairs` above (any transfer wording, any day within three): the difference is what the strict rule leaves for the owner. Nothing is changed. */
         const plan = ownMoneyLegs(user), kinds = {}, banks = {};
         for (const { kind, record } of plan.remove) { kinds[kind] = (kinds[kind] || 0) + 1; const bank = String(record.bank || '?').slice(0, 24); banks[bank] = (banks[bank] || 0) + 1; }
-        log(JSON.stringify({ evt: 'statement-legs-plan', pairs: plan.pairs, records: plan.remove.length, left: plan.left, looser: twins.legs.pairs, kinds, banks, why: looseLegsWhy(user).reasons }));
+        log(JSON.stringify({ evt: 'statement-legs-plan', pairs: plan.pairs, records: plan.remove.length, left: plan.left, unworded: plan.unworded, looser: twins.legs.pairs, kinds, banks, why: looseLegsWhy(user).reasons }));
     } catch (_) { /* advice only */ }
 }
 
@@ -2316,7 +2378,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     }
     if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
         // each on its own: one that fails (a document in a shape it did not expect) must not stop the others from ever running
-        for (const heal of [() => healLoanInstallments({ db, uid }), () => healHandMadeTwins({ db, uid }), () => healStatementCopies({ db, mailRef, uid }), () => repairCardInstallments({ db, uid })]) { try { await heal(); } catch (_) { /* the next run tries again */ } }
+        for (const heal of [() => healLoanInstallments({ db, uid }), () => healHandMadeTwins({ db, uid }), () => healStatementCopies({ db, mailRef, uid }), () => healOwnTransfers({ db, uid }), () => healCardSettlement({ db, uid }), () => repairCardInstallments({ db, uid })]) { try { await heal(); } catch (_) { /* the next run tries again */ } }
         try { await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     const [pending, processing] = await Promise.all([
