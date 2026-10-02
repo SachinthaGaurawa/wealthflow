@@ -107,7 +107,13 @@ export const VAULT = {
     EMPTY: 'no-vault',
     NO_CRYPTO: 'no-web-crypto',
     BAD_PIN: 'pin-too-short',
+    CLOUD_NEWER: 'cloud-newer',
 };
+
+/** The longest a cloud read may hold an UNLOCK when this device already has its own copy to open: past it the device's copy opens, exactly as it does offline. */
+export const CLOUD_UNLOCK_BUDGET_MS = 1500;
+/** The longest a SAVE waits to learn whether the cloud holds something newer, when the unlock could not find out. */
+export const CLOUD_SAVE_BUDGET_MS = 3000;
 
 /** The shortest PIN the app itself accepts. Below this, refuse to derive. */
 export const MIN_PIN = 6;
@@ -390,6 +396,8 @@ export function newSalt(deps = {}) {
  */
 let _sessionKey = null;
 let _sessionSalt = null;
+let _openedSavedAt = 0;          // the `savedAt` of the copy this session opened (0 for a vault created now)
+let _cloudAnswered = true;       // false when the unlock opened the device's copy without hearing from the cloud
 
 /**
  * The newer of a local and a cloud copy, by the plaintext `savedAt` each
@@ -417,6 +425,18 @@ async function _cloudPull(deps) {
         if (deps && deps.cloud && typeof deps.cloud.pull === 'function') return (await deps.cloud.pull()) || null;
     } catch (_) {}
     return null;
+}
+
+/**
+ * The same read, with a budget: `{ answered, blob }`. `answered` is false when the cloud said nothing inside `budgetMs` (a slow or absent network) — a clean "nothing there" is an answer.
+ * The read itself is not cancelled; its result is simply no longer waited for.
+ */
+async function _cloudPullTimed(deps, budgetMs) {
+    if (!(deps && deps.cloud && typeof deps.cloud.pull === 'function')) return { answered: true, blob: null };
+    let timer;
+    const late = new Promise((resolve) => { timer = setTimeout(() => resolve({ answered: false, blob: null }), budgetMs); });
+    const read = Promise.resolve().then(() => deps.cloud.pull()).then((blob) => ({ answered: true, blob: blob || null }), () => ({ answered: true, blob: null }));
+    try { return await Promise.race([read, late]); } finally { clearTimeout(timer); }
 }
 
 /** Best-effort push. A failed push never fails the (already-completed) local save. */
@@ -464,26 +484,42 @@ export async function unlock(pin, deps = {}) {
     if (p.length < MIN_PIN) return { ok: false, reason: VAULT.BAD_PIN, entries: [] };
     if (!subtleOf(deps)) return { ok: false, reason: VAULT.NO_CRYPTO, entries: [] };
 
-    const blob = await hydrate(deps);
-
-    const saltB64 = blob ? blob.salt : newSalt(deps);
-    const key = await deriveKey(p, b64ToBytes(saltB64), deps);
+    const st = deps.storage || (typeof localStorage !== 'undefined' ? localStorage : null);
+    const local = readBlob(st);
+    let blob, key, freshSalt = null, answered = true;
+    if (local) {
+        /* THE DEVICE ALREADY HAS ITS COPY, SO THE NETWORK MUST NOT HOLD THE UNLOCK. The key is derived from the device's copy WHILE the cloud copy is fetched (the two waits overlap instead of
+         * adding up), and the cloud is waited for only up to a budget: a slow or absent network opens the device's copy — what an offline device has always done — and the first save then asks the
+         * cloud whether it holds something newer before it writes over it. When the cloud does answer in time, the later copy wins exactly as before. */
+        const localKey = deriveKey(p, b64ToBytes(local.salt), deps).catch(() => null);
+        const pulled = await _cloudPullTimed(deps, CLOUD_UNLOCK_BUDGET_MS);
+        answered = pulled.answered;
+        blob = _newer(local, pulled.blob);
+        if (blob && blob === pulled.blob) writeBlob(blob, st); // cache the winning cloud copy for offline use
+        key = blob.salt === local.salt ? await localKey : await deriveKey(p, b64ToBytes(blob.salt), deps);
+    } else {
+        // nothing on this device: the cloud copy is the only thing to open, so it is waited for in full
+        blob = await hydrate(deps);
+        if (!blob) freshSalt = newSalt(deps);
+        key = await deriveKey(p, b64ToBytes(blob ? blob.salt : freshSalt), deps);
+    }
+    const saltB64 = blob ? blob.salt : freshSalt;
     if (!key) return { ok: false, reason: VAULT.NO_CRYPTO, entries: [] };
 
     if (!blob) {
         // First use anywhere on this account: nothing to verify against, so
         // this PIN defines the vault.
-        _sessionKey = key; _sessionSalt = saltB64;
+        _sessionKey = key; _sessionSalt = saltB64; _openedSavedAt = 0; _cloudAnswered = true;
         return { ok: true, reason: VAULT.OK, entries: [], fresh: true };
     }
     const opened = await openSealed(key, blob, deps);
     if (!opened.ok) return opened;
-    _sessionKey = key; _sessionSalt = saltB64;
-    return { ok: true, reason: VAULT.OK, entries: opened.entries, fresh: false };
+    _sessionKey = key; _sessionSalt = saltB64; _openedSavedAt = Number(blob.savedAt) || 0; _cloudAnswered = answered;
+    return { ok: true, reason: VAULT.OK, entries: opened.entries, fresh: false, cloudAnswered: answered };
 }
 
 /** Forget the key. Called when the app locks. */
-export function lock() { _sessionKey = null; _sessionSalt = null; }
+export function lock() { _sessionKey = null; _sessionSalt = null; _openedSavedAt = 0; _cloudAnswered = true; }
 
 export function isUnlocked() { return !!_sessionKey; }
 
@@ -506,6 +542,16 @@ export async function list(deps = {}) {
  */
 export async function save(entries, deps = {}) {
     if (!_sessionKey || !_sessionSalt) return { ok: false, reason: VAULT.EMPTY };
+    /* THE UNLOCK COULD NOT HEAR FROM THE CLOUD (a slow network), so it opened this device's copy. Before that copy is written over the cloud's, ask whether the cloud holds something newer: if it does,
+     * nothing is overwritten — the newer copy is cached on this device and the owner is told to reopen the vault, so a password saved on another device is never silently replaced by a stale list. */
+    if (!_cloudAnswered) {
+        const late = await _cloudPullTimed(deps, CLOUD_SAVE_BUDGET_MS);
+        if (late.answered) _cloudAnswered = true;
+        if (late.blob && (Number(late.blob.savedAt) || 0) > _openedSavedAt) {
+            writeBlob(late.blob, deps.storage);
+            return { ok: false, reason: VAULT.CLOUD_NEWER };
+        }
+    }
     const blob = await seal(_sessionKey, entries, _sessionSalt, deps);
     if (!blob) return { ok: false, reason: VAULT.NO_CRYPTO };
     const wrote = writeBlob(blob, deps.storage);
@@ -518,7 +564,7 @@ export async function save(entries, deps = {}) {
 export function _resetSession() { lock(); }
 
 const API = {
-    STORE_KEY, KDF, VAULT, MIN_PIN,
+    STORE_KEY, KDF, VAULT, MIN_PIN, CLOUD_UNLOCK_BUDGET_MS, CLOUD_SAVE_BUDGET_MS,
     normaliseEntry, normaliseAll, deriveKey, seal, openSealed, candidatesFor,
     isSet, readBlob, writeBlob, destroy, newSalt,
     unlock, lock, isUnlocked, list, save, hydrate,

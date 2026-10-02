@@ -564,7 +564,10 @@ export const BUDGETS = {
     // the owner without a web search or an AI call, and the email pipeline's question picked up from the filed row) and the rest is the comments recording WHY. No module
     // and no request were added: the 950-merchant list the email pipeline now uses lives in statement-merchants.mjs, which is server-only and never reaches the page.
     // 2026-10-02: 2,016,000 -> 2,019,000 (measured 2,016,087): wealthflow-statement-cloud.js only, for the phone's own mailbox review (the registry check/claim call for a mailbox item). No module or script tag added.
-    totalJsBytes: 2_019_000,
+    // 2026-10-03 (the vault opens when the PIN is right): 2,019,000 -> 2,026_000 (measured about 2,021,000 after merging the phone's own mailbox review + headroom): wealthflow-vault.js only. unlock() derives the key from the device's own copy
+    // while the cloud copy is fetched and waits for the cloud only up to a budget (it used to wait without limit, then for two more server calls in the page), and save() asks the cloud whether it
+    // holds something newer before writing over it when the unlock could not hear from it. About 1.5 KB is code; the rest is the comments recording why.
+    totalJsBytes: 2_026_000,
     largestModuleBytes: 217_000, // measured 215,954
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
