@@ -6006,7 +6006,7 @@
                             <div class="card-header">
                                 <div>
                                     <div class="card-title">Monthly Overview</div>
-                                    <div class="card-sub">Income vs Total Expenses</div>
+                                    <div class="card-sub">Received vs paid</div>
                                 </div>
                                 <select class="fi" style="width:110px;padding:5px 8px;font-size:12px;" id="dashYear"
                                     onchange="renderDash()"></select>
@@ -27585,7 +27585,19 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         // ==================== MONTHLY DATA & PLAN ====================
+        /* A month after the current one. */
+        function _wfMonthIsFuture(year, month) { const n = new Date(); return year > n.getFullYear() || (year === n.getFullYear() && month > n.getMonth()); }
+        /* THE BOOKS: what HAPPENED in a month — the dashboard chart and its year totals, the Expense Breakdown, the Monthly Plan page, the reports, the averages. It follows the rule income has always
+         * followed ("money that has not arrived must never be posted"), applied to the money that goes out:
+         *   loans         an installment counts when it is PAID (Bank Loans, marked paid, for the amount actually paid), in its own month — or through the bank debit it is tied to (never both);
+         *                 an installment that is not paid, a month that has not come, a loan nobody has marked paid: nothing counted, but NAMED (loanDueItems / loanUnpaid), like income not yet received
+         *   card instalments, subscriptions, recurring bills, card charges, logged expenses   only up to the current month / today (they are billed, not "paid" by a tap)
+         *   cheques       only once cleared
+         *   income        only what is marked received, and nothing dated after this month
+         * Before this, an owner who had paid a loan only up to August saw every month to December carrying its full installment as if paid, and a month he had paid 10 lakh of a 13.6 lakh
+         * installment showed the whole 13.6 lakh. What is scheduled is shown as scheduled (the "Due" lists), never as paid. */
         function getMonthlyData(year, month) {
+            const future = _wfMonthIsFuture(year, month);
             const dt = new Date(year, month, 1);
             const monthEnd = new Date(year, month + 1, 0); // last day of the month
             // v7.36.0 — INCOME = the ACTUAL money received in this month, taken from the
@@ -27614,34 +27626,46 @@ table.amort tbody tr { page-break-inside: avoid; }
             // field existed keep counting rather than vanishing on first load.
             const _incYM = year + '-' + p2(month + 1);
             const _inc = window.WFReactive.incomeIn(DB.get('incomeRecv') || [], _incYM);
-            const income = _inc.received;
+            // a month that has not come yet has received nothing, whatever the rows say: it is waiting, and named as such
+            const income = future ? 0 : _inc.received;
             // Not counted, not hidden: the dashboard names it under Year Income.
-            const incomePending = _inc.pending;
-            let loanTotal = 0, loanItems = [];
+            const incomePending = future ? _inc.received + _inc.pending : _inc.pending;
+            let loanTotal = 0, loanItems = [], loanUnpaid = 0, loanDueItems = [];   // loanDueItems / loanUnpaid: installments scheduled for this month that nobody has marked paid — not counted, but named (like income not yet received)
             const _linkedLoans = _wfLinkedLoanMonths(), _lym = year + '-' + p2(month + 1);
             (DB.get('loans') || []).forEach(l => {
                 if (!l || !l.start) return;
-                const start = new Date(l.start + 'T00:00:00');
-                const end = loanEndDate(l);
-                if (start <= dt && end > dt && !_linkedLoans.has(l.id + '|' + _lym)) {
-                    const m = getLoanMonthlyForDate(l, year, month);
-                    loanTotal += m; loanItems.push({ name: l.name, bank: l.bank, amount: m });
+                const inSchedule = _loanInstallmentMonths(l).some(m => m.key === _lym);   // the months Bank Loans lists as installments, the ones the owner marks paid
+                // the books: an installment that is PAID, for the amount that was paid, unless the bank debit it is tied to already counts it
+                if (_linkedLoans.has(l.id + '|' + _lym)) return;
+                const sched = getLoanMonthlyForDate(l, year, month);
+                // every payment marked paid for this month — the usual one entry keyed by month, or (filed from a review / detected from a statement) entries that carry only their date
+                const paidHere = (l.payments || []).filter(p => p && p.paid && (p.month || String(p.date || '').slice(0, 7)) === _lym);
+                if (!paidHere.length) {
+                    if (inSchedule && sched > 0) { loanDueItems.push({ name: l.name, bank: l.bank, amount: sched, future }); if (!future) loanUnpaid += sched; }
+                    return;
+                }
+                const m = paidHere.reduce((a, p) => a + (Number.isFinite(Number(p.amount)) ? Number(p.amount) : sched), 0);
+                // "paid from the bank", and that bank debit is already in the expenses though not yet tied to this installment: the debit counts it — never both
+                if (!paidHere.some(p => p.via === 'other') && m > 0 && _wfFindLoanDebit(l, _lym, m)) return;
+                if (m > 0) {
+                    loanTotal += m;
+                    loanItems.push({ name: l.name, bank: l.bank, amount: m, cat: 'Loan Repayment', paid: true, scheduled: sched, short: sched - m > 1 ? sched - m : 0 });
                 }
             });
             let ccTotal = 0, ccItems2 = [];
             (DB.get('ccinstall') || []).filter(x => x && !x.completed).forEach(item => {
-                if (!item || !item.date) return;
+                if (!item || !item.date || future) return;
                 const start = new Date(item.date + 'T00:00:00');
                 const end = new Date(item.date + 'T00:00:00'); end.setMonth(end.getMonth() + item.duration);
                 if (start <= dt && end > dt) {
                     const m = getCCIMonthlyForDate(item, year, month);
-                    ccTotal += m; ccItems2.push({ name: item.product, bank: item.bank, amount: m });
+                    ccTotal += m; ccItems2.push({ name: item.product, bank: item.bank, amount: m, cat: item.category || 'Card Installments' });
                 }
             });
             const ym = `${year}-${p2(month + 1)}`;
             let expTotal = 0, expItems = [];
             (DB.get('expenses') || []).forEach(e => {
-                if (!e) return;
+                if (!e || future) return;   // an expense of a month that has not come is a plan, not something spent
                 if (e.month === ym || (e.recurring && e.month <= ym)) { expTotal += (e.amount || 0); expItems.push({ name: e.desc, cat: e.cat, amount: (e.amount || 0) }); }
             });
 
@@ -27652,12 +27676,14 @@ table.amort tbody tr { page-break-inside: avoid; }
             //
             // CC One-Time: the payment date's month
             let ccotTotal = 0, ccotItems = [];
+            const _today = new Date();
             DB.get('cconetime').forEach(item => {
                 if (!item || !item.date || item.subscriptionLink) return;   // a card charge for a tracked subscription: the subscription's month counts it
                 const itemDate = new Date(item.date + 'T00:00:00');
+                if (itemDate > _today) return;                              // dated after today: not charged yet
                 if (itemDate.getFullYear() === year && itemDate.getMonth() === month) {
                     ccotTotal += item.amount || 0;
-                    ccotItems.push({ name: item.desc, bank: item.bank, amount: item.amount });
+                    ccotItems.push({ name: item.desc, bank: item.bank, amount: item.amount, cat: item.category || item.cat || 'Card Spending' });
                 }
             });
 
@@ -27667,7 +27693,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             // (s.monthOverrides[ym]) lets variable bills (telecom) be exact.
             let subTotal = 0, subItems = [];
             DB.get('subscriptions').forEach(s => {
-                if (!s) return;
+                if (!s || future) return;
                 const created = s.createdAt ? new Date(s.createdAt) : null;
                 if (created && (created.getFullYear() > year ||
                                (created.getFullYear() === year && created.getMonth() > month))) return;
@@ -27682,7 +27708,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
                 if (amt > 0) {
                     subTotal += amt;
-                    subItems.push({ name: s.name, cat: s.category, amount: amt });
+                    subItems.push({ name: s.name, cat: s.category || 'Subscriptions', amount: amt });
                 }
             });
 
@@ -27696,17 +27722,17 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (c.status === 'cleared' || c.status === 'bounced') {
                     // Only count cleared cheques in their cleared month.
                     if (c.status !== 'cleared') return;
-                }
+                } else return;     // a cheque that has not cleared has not been paid
                 const releaseDate = new Date((c.release || c.issue) + 'T00:00:00');
                 if (releaseDate.getFullYear() === year && releaseDate.getMonth() === month) {
                     cheTotal += c.amount || 0;
-                    cheItems.push({ name: c.party + ' · ' + (c.no || ''), amount: c.amount });
+                    cheItems.push({ name: c.party + ' · ' + (c.no || ''), amount: c.amount, cat: 'Cheques' });
                 }
             });
 
             const totalExp = loanTotal + ccTotal + expTotal + ccotTotal + subTotal + cheTotal;
             return {
-                income, incomePending, loanTotal, ccTotal, expTotal,
+                income, incomePending, loanTotal, loanUnpaid, loanDueItems, ccTotal, expTotal,
                 ccotTotal, subTotal, cheTotal,
                 totalExp, balance: income - totalExp,
                 loanItems, ccItems2, expItems,
@@ -27725,31 +27751,52 @@ table.amort tbody tr { page-break-inside: avoid; }
         function showMonthDetail(year, month, tabEl) {
             document.querySelectorAll('.mtab').forEach(t => t.classList.remove('active'));
             if (tabEl) tabEl.classList.add('active');
-            const data = getMonthlyData(year, month);
+            const data = getMonthlyData(year, month);   // the books: what was received and what was paid — never what is merely scheduled
             const mName = MONTHS[month] + ' ' + year;
+            const row = (left, right, tone) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;${tone ? 'color:var(--text3);' : ''}"><span>${left}</span><span class="td-r"${tone ? ' style="color:var(--text3);"' : ''}>${right}</span></div>`;
+            const empty = (text) => `<div class="empty" style="padding:16px;"><div class="empty-sub">${text}</div></div>`;
+            const other = data.ccotTotal + data.subTotal + data.cheTotal;
+            const due = data.loanDueItems || [];
+            const dueTotal = due.reduce((a, x) => a + x.amount, 0);
+            const isFutureMonth = _wfMonthIsFuture(year, month);
+            const extraItems = [
+                ...data.ccotItems.map(x => ({ ...x, tag: 'Card charge' })),
+                ...data.subItems.map(x => ({ ...x, tag: 'Subscription' })),
+                ...data.cheItems.map(x => ({ ...x, tag: 'Cheque' })),
+            ];
             $('monthlyContent').innerHTML = `
         <div class="mhero">
             <div class="mh-lbl">${mName}</div>
             <div class="mh-bal ${data.balance >= 0 ? 'mh-pos' : 'mh-neg'}">${fmt(data.balance)}</div>
-            <div style="font-size:12px;color:var(--text3);margin-top:3px;">Monthly Balance</div>
+            <div style="font-size:12px;color:var(--text3);margin-top:3px;">Received minus paid${isFutureMonth ? ' — this month has not come yet' : ' so far'}</div>
             <div class="mh-row">
                 <div class="mhi"><div class="mhi-lbl">Income</div><div class="mhi-val" style="color:var(--green);">${fmt(data.income)}</div></div>
-                <div class="mhi"><div class="mhi-lbl">Loans</div><div class="mhi-val" style="color:var(--red);">${fmt(data.loanTotal)}</div></div>
+                <div class="mhi"><div class="mhi-lbl">Loans paid</div><div class="mhi-val" style="color:var(--red);">${fmt(data.loanTotal)}</div></div>
                 <div class="mhi"><div class="mhi-lbl">CC Install.</div><div class="mhi-val" style="color:var(--red);">${fmt(data.ccTotal)}</div></div>
                 <div class="mhi"><div class="mhi-lbl">Other Exp.</div><div class="mhi-val" style="color:var(--red);">${fmt(data.expTotal)}</div></div>
+                <div class="mhi"><div class="mhi-lbl">Cards, subs &amp; cheques</div><div class="mhi-val" style="color:var(--red);">${fmt(other)}</div></div>
                 <div class="mhi"><div class="mhi-lbl">Total Expenses</div><div class="mhi-val" style="color:var(--red);">${fmt(data.totalExp)}</div></div>
             </div>
+            ${data.incomePending > 0 ? `<div style="font-size:12px;color:var(--text3);margin-top:10px;">${fmt(data.incomePending)} of income is not yet received — not counted.</div>` : ''}
+            ${dueTotal > 0 ? `<div style="font-size:12px;color:var(--text3);margin-top:${data.incomePending > 0 ? 4 : 10}px;">${fmt(dueTotal)} of loan installments ${isFutureMonth ? 'scheduled' : 'due'}, not paid — not counted.</div>` : ''}
         </div>
         <div class="g2">
-            <div class="card"><div class="card-header"><div class="card-title">🏦 Loan Payments</div><div class="card-sub">${fmt(data.loanTotal)}</div></div>
-                ${data.loanItems.length ? data.loanItems.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No loan payments</div></div>`}
+            <div class="card"><div class="card-header"><div class="card-title">🏦 Loan Payments</div><div class="card-sub">${fmt(data.loanTotal)} paid</div></div>
+                ${data.loanItems.length ? data.loanItems.map(x => row(`${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span>${x.short ? `<div class="td-m" style="font-size:11px;">scheduled ${fmt(x.scheduled)} · ${fmt(x.short)} short</div>` : ''}`, fmt(x.amount))).join('') : empty('No loan payments marked paid')}
             </div>
+            ${due.length ? `<div class="card"><div class="card-header"><div class="card-title">⏳ ${isFutureMonth ? 'Scheduled' : 'Due'} — not paid yet</div><div class="card-sub">${fmt(dueTotal)}</div></div>
+                ${due.map(x => row(`${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span>`, fmt(x.amount), true)).join('')}
+                <div class="td-m" style="font-size:11px;padding-top:8px;">Mark it paid on Bank Loans and it moves up to Loan Payments.</div>
+            </div>` : ''}
             <div class="card"><div class="card-header"><div class="card-title">💳 CC Installments</div><div class="card-sub">${fmt(data.ccTotal)}</div></div>
-                ${data.ccItems2.length ? data.ccItems2.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No CC installments</div></div>`}
+                ${data.ccItems2.length ? data.ccItems2.map(x => row(`${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span>`, fmt(x.amount))).join('') : empty('No CC installments')}
             </div>
             <div class="card"><div class="card-header"><div class="card-title">🧾 Other Expenses</div><div class="card-sub">${fmt(data.expTotal)}</div></div>
-                ${data.expItems.length ? data.expItems.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${_wfEsc(x.name)} <span class="badge bg-gr">${_wfEsc(x.cat)}</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No expenses</div></div>`}
+                ${data.expItems.length ? data.expItems.map(x => row(`${_wfEsc(x.name)} <span class="badge bg-gr">${_wfEsc(x.cat)}</span>`, fmt(x.amount))).join('') : empty('No expenses')}
             </div>
+            ${extraItems.length ? `<div class="card"><div class="card-header"><div class="card-title">💠 Cards, subscriptions &amp; cheques</div><div class="card-sub">${fmt(other)}</div></div>
+                ${extraItems.map(x => row(`${_wfEsc(x.name)} <span class="badge bg-gr">${x.tag}</span>`, fmt(x.amount))).join('')}
+            </div>` : ''}
         </div>
     `;
         }
@@ -27990,6 +28037,28 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window.renderRunwayCard = renderRunwayCard;
 
+        /* ONE YEAR OF THE BOOKS, in the one place the dashboard reads it: income and expenses per month, the year's totals, what is named but not counted, and the Expense Breakdown — the same
+         * money as Year Expenses split by what it was spent on (loans, card instalments, subscriptions, card charges, cheques and every logged expense), so the ring's total is always the Year
+         * Expenses figure. Everything comes from getMonthlyData's books (what happened), month by month. */
+        function _wfYearBooks(year) {
+            const incData = [], expData = [], netData = [], catMap = {};
+            let yrInc = 0, yrExp = 0, yrPending = 0, yrLoanUnpaid = 0;
+            const addCat = (items) => (items || []).forEach(it => { const c = (it && it.cat) || 'Other'; catMap[c] = (catMap[c] || 0) + (Number(it && it.amount) || 0); });
+            for (let i = 0; i < 12; i++) {
+                const md = getMonthlyData(year, i);
+                ['loanItems', 'ccItems2', 'expItems', 'ccotItems', 'subItems', 'cheItems'].forEach(k => addCat(md[k]));
+                incData.push(md.income);
+                expData.push(md.totalExp);
+                netData.push(md.balance);
+                yrInc += md.income; yrExp += md.totalExp;
+                /* Imported but not yet confirmed as arrived. It is NOT in yrInc — that is the point of the change — so it is named on the card instead. A total that quietly got smaller is
+                 * indistinguishable from a bug. The same for a loan installment that is due but that nobody has marked paid. */
+                yrPending += (md.incomePending || 0);
+                yrLoanUnpaid += (md.loanUnpaid || 0);
+            }
+            return { incData, expData, netData, catMap, yrInc, yrExp, yrPending, yrLoanUnpaid };
+        }
+
         function renderDash() {
 
             /* Also from here, because refreshAllSurfaces() is the REPAINT path and a
@@ -28005,20 +28074,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             try { _applyDisplaySettings(); } catch (_) {}
             const year = parseInt($('dashYear').value) || new Date().getFullYear();
             const months = MONTHS_S;
-            const incData = [], expData = [], netData = [];
-            let yrInc = 0, yrExp = 0, yrPending = 0;
-            for (let i = 0; i < 12; i++) {
-                const md = getMonthlyData(year, i);
-                incData.push(md.income);
-                expData.push(md.totalExp);
-                netData.push(md.balance);
-                yrInc += md.income; yrExp += md.totalExp;
-                /* Imported but not yet confirmed as arrived. It is NOT in
-                 * yrInc — that is the point of the change — so it is named on
-                 * the card instead. A total that quietly got smaller is
-                 * indistinguishable from a bug. */
-                yrPending += (md.incomePending || 0);
-            }
+            const { incData, expData, netData, catMap, yrInc, yrExp, yrPending, yrLoanUnpaid } = _wfYearBooks(year);
             // Current month expenses (actual expenses logged for this month only)
             const nowD = new Date();
             const curMonthStr = `${nowD.getFullYear()}-${p2(nowD.getMonth() + 1)}`;
@@ -28150,7 +28206,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             } catch (_) {}
             $('dashStats').innerHTML = predictiveHtml + `
         <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div>${yrPending > 0 ? `<div class="stat-meta">${fmtS(yrPending)} not yet confirmed received</div>` : ''}</div>
-        <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div></div>
+        <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div>${yrLoanUnpaid > 0 ? `<div class="stat-meta">${fmtS(yrLoanUnpaid)} of loan installments due, not marked paid</div>` : ''}</div>
         <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val">${fmtS(yrInc - yrExp)}</div>${forexHtml}</div>
         <div class="stat-card sc-blue"><div class="stat-label">${periodCardTitle}</div><div class="stat-val">${fmtS(periodExp)}</div><div class="stat-meta">${periodLabel}</div></div>
         ${DB.getObj('settings', {}).showSavingsRate === false ? '' : `<div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>`}
@@ -28184,12 +28240,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                 });
             }
 
-            const catMap = {};
-            // _allExp is already normalised; reading DB.get('expenses') raw here is
-            // what threw. Belt and braces: the fallback still counts the row rather
-            // than silently dropping money out of the chart.
-            _allExp.filter(e => (e.month || (e.date || '').slice(0, 7)).startsWith(year))
-                .forEach(e => { catMap[e.cat || 'Other'] = (catMap[e.cat || 'Other'] || 0) + (e.amount || 0); });
             const pCtx = $('dashPie');
             if (dashPieInst) dashPieInst.destroy();
             dashPieInst = null;
@@ -28239,9 +28289,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             });
 
+            const _upLinked = _wfLinkedLoanMonths();
             DB.get('loans').forEach(l => {
                 const nextD = getNextOccurenceDate(l.start);
                 if (nextD >= todayObj && nextD <= maxDate && loanEndDate(l) > nextD) {
+                    // an installment that is already paid (or counted through its bank debit) is not "upcoming"
+                    const key = `${nextD.getFullYear()}-${p2(nextD.getMonth() + 1)}`;
+                    if (_upLinked.has(l.id + '|' + key) || (l.payments || []).some(p => p && p.month === key && p.paid)) return;
                     upcoming.push({ title: l.name, sub: 'Bank Loan', date: nextD, amt: l.monthly, color: 'var(--red)' });
                 }
             });
@@ -28298,8 +28352,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                     recent.push({ title: x.desc, sub: x.cat + ' Expense', date: d, amt: x.amount, color: 'var(--red)' });
                 });
             } catch (e) { }
+            const _now = new Date();
             recent.sort((a, b) => b.date - a.date);
-            const top8 = recent.slice(0, 8);
+            const top8 = recent.filter(u => u.date <= _now).slice(0, 8);   // activity is what already happened: nothing dated after today
             const wrap = $('dashRecent');
             if (!top8.length) {
                 wrap.innerHTML = emptyState('📭', 'No Recent Activity', 'Your latest financial logs will appear here.');

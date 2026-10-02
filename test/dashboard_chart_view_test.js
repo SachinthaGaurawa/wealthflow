@@ -160,7 +160,7 @@ describe('Monthly Overview fills its card (no blank band under the line)', () =>
     });
     it('the chart sizes itself to its box and names its two lines with the chart\'s own legend (it belongs to the datasets, cannot overflow the card)', () => {
         const dashFn = html.slice(html.indexOf('function renderDash()'), html.indexOf('function renderUpcoming()'));
-        const line = dashFn.slice(dashFn.indexOf("type: 'line'"), dashFn.indexOf("const catMap = {}"));
+        const line = dashFn.slice(dashFn.indexOf("type: 'line'"), dashFn.indexOf("const pCtx = $('dashPie')"));
         expect(line).toContain('maintainAspectRatio: false');
         expect(line).toMatch(/legend: \{ display: true, position: 'top', align: 'end'/);
         expect(line).toContain("label: 'Income'"); expect(line).toContain("label: 'Expenses'");

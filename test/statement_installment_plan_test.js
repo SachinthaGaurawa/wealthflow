@@ -39,7 +39,7 @@ const src = n => { const s = html.indexOf(`function ${n}(`); const from = html.s
 function monthly(user, year = 2026, month = 8) {
     const store = { loans: [], expenses: [], incomeRecv: [], ccinstall: [], cconetime: [], subscriptions: [], cheques: [], ...user };
     const ctx = vm.createContext({ DB: { get: k => store[k] || [] }, p2: n => String(n).padStart(2, '0'), window: { WFReactive: { incomeIn } }, Date });
-    for (const n of ['_loanMethod', '_loanInstallmentMonths', '_scheduledPaymentFor', '_loanBalanceBeforeMonth', 'loanEndDate', 'getLoanMonthlyForDate', '_wfLinkedLoanMonths', 'getCCIMonthlyForDate', 'getMonthlyData']) vm.runInContext(src(n), ctx);
+    for (const n of ['_loanMethod', '_loanInstallmentMonths', '_scheduledPaymentFor', '_loanBalanceBeforeMonth', 'loanEndDate', 'getLoanMonthlyForDate', '_wfLinkedLoanMonths', 'getCCIMonthlyForDate', '_wfFindLoanDebit', '_wfMonthIsFuture', 'getMonthlyData']) vm.runInContext(src(n), ctx);
     return ctx.getMonthlyData(year, month);
 }
 const CARD = `<html><body><h1>Nations Trust Bank American Express Credit Card Statement</h1><p>Card Number: 376657XXXXX0276</p><p>Statement Date: 16/09/2026 Payment Due Date: 10/10/2026</p><p>Credit Limit 500000.00 Available Credit 400000.00 Minimum Amount Due 10000.00</p><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr><tr><td>12/09/2026</td><td>ABANS TV INSTALMENT 08/12</td><td>5000.00 DR</td></tr><tr><td>14/09/2026</td><td>KEELLS STORE</td><td>2000.00 DR</td></tr></table></body></html>`;
