@@ -578,6 +578,12 @@ export async function guardClaim(info){
     if(!info)return null;
     return noticeOf(await guardCall({action:'claim',sha256:info.sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,filename:info.filename,size:info.size,rows:info.rows,token:info.token}));
 }
+/** The device's own review of a MAILBOX statement: the same lock, held by the mailbox item it came from. `action` is 'check' (before the review opens) or 'claim' (at save).
+ *  A statement turned away is closed on the server like the email sync closes one. -> {duplicate, via, notice} or null (go ahead; also null when the server cannot be reached). */
+export async function guardMail(info,action='check'){
+    if(!info||!info.itemId)return null;
+    return noticeOf(await guardCall({action:action==='claim'?'claim':'check',itemId:String(info.itemId),bank:String(info.bank||''),last4:String(info.last4||''),periodText:String(info.periodText||''),dates:(info.dates||[]).slice(0,2000),filename:String(info.filename||'').slice(0,200),size:Number(info.size)||0,rows:Number(info.rows)||0}));
+}
 /** Give a statement back (e.g. its records were deleted) so the same file or month can be added again. */
 export async function guardRelease(id){const r=await guardCall({action:'release',id});return r?r.released||0:0}
 
@@ -586,7 +592,7 @@ if (typeof window !== 'undefined') {
         const text = document.getElementById('_statement_cloud_status');
         if (text) text.textContent = state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
     });
-    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, coverageSummary, retryAttemptsSummary, senderFunnel, guard: { file: guardFile, parsed: guardParsed, claim: guardClaim, release: guardRelease, accountTailOf } };
+    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, coverageSummary, retryAttemptsSummary, senderFunnel, guard: { file: guardFile, parsed: guardParsed, claim: guardClaim, mail: guardMail, release: guardRelease, accountTailOf } };
     const start=()=>{
         if (authBound) return;
         if (window.firebase?.apps?.length && typeof window.firebase.auth === 'function') {
