@@ -848,8 +848,20 @@
         _saveQ(LS_PENDING, hold);
         return key;
     }
-    function unknowns() { return _loadQ(LS_UNKNOWN); }
-    function pending() { return _loadQ(LS_PENDING); }
+    /* Questions saved by an earlier version may name a merchant the engine now identifies (747 of 950 known merchants were being queued). They are dropped, so the
+     * panel stops showing them and no web or AI call is spent on them. Redone only when what the engine knows has changed. */
+    var _purgedAt = -2;
+    function _purgeKnown() {
+        if (_purgedAt === _clsEpoch) return;
+        _purgedAt = _clsEpoch;
+        [LS_UNKNOWN, LS_PENDING].forEach(function (k) {
+            var q = _loadQ(k);
+            var keep = q.filter(function (x) { try { return analyze(x.raw || x.key, 'debit').system_action === ACTION.SEARCH; } catch (_) { return true; } });
+            if (keep.length !== q.length) _saveQ(k, keep);
+        });
+    }
+    function unknowns() { _purgeKnown(); return _loadQ(LS_UNKNOWN); }
+    function pending() { _purgeKnown(); return _loadQ(LS_PENDING); }
 
     /* ── THE QUESTION PUT TO THE AI BOARD ──────────────────────────────────────
      *
@@ -1035,6 +1047,7 @@
     function resolveUnknowns(limit) {
         try {
             if (typeof fetch !== 'function') return Promise.resolve({ resolved: 0, held: 0, note: 'no fetch' });
+            _purgeKnown();
             var q = _loadQ(LS_UNKNOWN);
             if (!q.length) return Promise.resolve({ resolved: 0, held: 0, note: 'nothing unknown' });
             var batch = q.slice(0, Math.max(1, Math.min(12, limit || 8)));
@@ -1050,6 +1063,7 @@
     // configured). Once it has been tried MAX_TRIES times it stays with the owner and is not asked again.
     function reconsider(limit) {
         try {
+            _purgeKnown();
             var now = Date.now(), hold = _loadQ(LS_PENDING), due = hold.filter(function (h) { return (h.tries || 1) < MAX_TRIES && (+h.nextAt || 0) <= now; }).slice(0, Math.max(1, Math.min(6, limit || 4)));
             if (!due.length || typeof fetch !== 'function') return Promise.resolve({ resolved: 0, held: 0, retried: 0 });
             var before = {}; due.forEach(function (h) { before[h.key] = h; });

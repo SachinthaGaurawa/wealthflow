@@ -53,6 +53,7 @@ export function expenseCategoryFor(row) {
    * two words or more and the rules say something else, the longer name is the better evidence ("AMAZON PRIME" was being filed as Shopping). */
   const byRule = EXPENSE_CATEGORY_RULES.find(([, pattern]) => pattern.test(desc));
   if (listed && listed.category && listed.basis === 'registry' && listed.words >= 2 && (!byRule || byRule[0] !== listed.category) && !(byRule && byRule[0] === 'Bank Charges')) return listed.category;
+  if (listed && listed.ambiguous) return 'Other';   // two known merchants (or two kinds of business) on one line: not picked between, whatever one brand word in the rules says
   if (byRule) return byRule[0];
   /* What the rules do not name, the merchant list the app already carries (merchants.json, 950 businesses) and the words for what a business sells may: the same words, the
    * same answer in the app and on the server. A name that fits two kinds of business equally well is NOT picked between: it stays "Other" and is put to the owner

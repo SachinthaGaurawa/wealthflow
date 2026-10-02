@@ -149,6 +149,12 @@ describe('two kinds of business that fit equally well are an ambiguity, not a pi
         expect(inquiryFor('ZZQ BAKERS JEWELLERS')).toMatchObject({ state: 'open', reason: 'ambiguous' });
         expect(inquiryFor('ZZQ BAKERS JEWELLERS').candidates.sort()).toEqual(['Dining', 'Gold']);
     });
+    it('two known merchants on one line stay "Other" even when one brand word is also in the rules (KEELLS ODEL)', () => {
+        expect(expenseCategoryFor(row('POS KEELLS ODEL COLOMBO'))).toBe('Other');
+        expect(inquiryFor('POS KEELLS ODEL COLOMBO')).toMatchObject({ state: 'open', reason: 'ambiguous' });
+        expect(inquiryFor('POS KEELLS ODEL COLOMBO').candidates.sort()).toEqual(['Groceries', 'Shopping']);
+        expect(expenseCategoryFor(row('POS KEELLS SUPER COLOMBO'))).toBe('Groceries');
+    });
     it('a longer name inside which a shorter one sits is not a conflict ("amazon prime" is not also "amazon")', () => {
         expect(expenseCategoryFor(row('AMAZON PRIME'))).toBe('Entertainment');
         expect(expenseCategoryFor(row('AMAZON PRIME VIDEO LK'))).toBe('Entertainment');
@@ -188,14 +194,14 @@ describe('adversarial input never throws and never takes long', () => {
 
 // ── the app's own engine ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 function world({ records = {} } = {}) {
-    const mem = new Map(), calls = { verify: 0, ai: 0 };
+    const mem = new Map(), calls = { verify: 0, ai: 0, asked: [] };
     const store = Object.fromEntries(Object.entries(records).map(([k, v]) => [k, structuredClone(v)]));
     const win = {
         localStorage: { getItem: k => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: k => mem.delete(k) },
         DB: { get: k => store[k] || [], set: (k, v) => { store[k] = v; } },
     };
-    const fetchStub = async url => {
-        if (String(url).includes('/api/verify')) { calls.verify++; return { ok: true, json: async () => ({ exists: 'unknown', abstain_reason: 'no_search_results', evidence_urls: [] }) }; }
+    const fetchStub = async (url, options) => {
+        if (String(url).includes('/api/verify')) { calls.verify++; try { calls.asked.push(JSON.parse(options.body).merchant); } catch (_) {} return { ok: true, json: async () => ({ exists: 'unknown', abstain_reason: 'no_search_results', evidence_urls: [] }) }; }
         if (String(url).includes('/api/ai')) { calls.ai++; return { ok: true, json: async () => ({ unanimous: false }) }; }
         return { ok: true, json: async () => MERCHANTS_JSON };
     };
@@ -224,18 +230,30 @@ describe('the app no longer asks about merchants it knows', () => {
         expect(clash.confidence).toBeLessThan(0.85);
         expect(M.refine('POS SAMPATH INSURANCE FUEL STATION', 'debit', { tab: 'expenses', category: 'Other' })).toBeNull();
     });
+    it('questions saved by the earlier version for merchants the engine now knows are dropped, with no web or AI call spent on them', async () => {
+        const w = world();
+        await new Promise(resolve => setTimeout(resolve, 30));
+        const stale = ['POS TRANSACTION KEELLS SUPER COLOMBO 03', 'POS TRANSACTION HEMAS PHARMACY', 'POS TRANSACTION ODEL PVT LTD'];
+        w.mem.set('wf_merchant_unknown', JSON.stringify(stale.map(raw => ({ key: raw.toLowerCase().slice(16, 30), raw, name: raw, at: 1 }))));
+        w.mem.set('wf_merchant_pending', JSON.stringify([{ key: 'cargills food city', raw: 'POS TRANSACTION CARGILLS FOOD CITY', merchant: 'Cargills', type: '', alternatives: [], tries: 1, nextAt: 0, at: 1 }, { key: 'zxq traders', raw: 'POS ZXQ TRADERS', merchant: 'Zxq', type: '', alternatives: [], tries: 1, nextAt: 0, at: 1 }]));
+        expect(w.M.pending().map(h => h.key)).toEqual(['zxq traders']);      // the known one is gone, the genuinely unknown one stays
+        expect(w.M.unknowns()).toEqual([]);
+        await w.M.resolveUnknowns(); await w.M.reconsider();
+        expect(w.calls.asked.length).toBeGreaterThan(0);
+        expect(w.calls.asked.every(name => /zxq/i.test(name))).toBe(true);   // only the unknown one is ever asked about
+    });
     it('a line that names only a gateway goes straight to the owner and spends no web search and no AI call', async () => {
         const w = world();
         for (const text of ['PAYME-VISA*COLOMBO', 'PAYME VISA COLOMBO 03 LK', 'POS TRANSACTION - MIRIGAMA']) expect(w.M.discover(text, 'debit'), text).toBeTruthy();
         const result = await w.M.resolveUnknowns();
-        expect(w.calls).toEqual({ verify: 0, ai: 0 });
+        expect([w.calls.verify, w.calls.ai]).toEqual([0, 0]);
         expect(result.resolved).toBe(0);
         const held = w.M.pending();
         expect(held.length).toBe(3);
         expect(held.every(h => h.reason && /gateway|place/.test(h.reason) && h.tries >= 4)).toBe(true);
         // asked again later by the autopilot? no: it has used all its tries
         expect((await w.M.reconsider()).retried).toBe(0);
-        expect(w.calls).toEqual({ verify: 0, ai: 0 });
+        expect([w.calls.verify, w.calls.ai]).toEqual([0, 0]);
     });
     it('the same opaque line is one question, however many times it is filed', () => {
         const w = world();
