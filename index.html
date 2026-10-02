@@ -2100,6 +2100,40 @@
         .dash-safe-legend { display: flex; gap: 12px; margin-bottom: 8px; color: var(--text3); font-size: 10px; }
         .dash-safe-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px; }
 
+        /* The owner's choice of how the two dashboard charts are drawn (per device): Charts (the line and the ring) or Lists (the same figures as bars). */
+        .dash-view-switch { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: 0 0 8px; font-size: 11px; color: var(--text3); }
+        .dvs-btn { appearance: none; border: 1px solid var(--border); background: var(--bg2); color: var(--text2); font: inherit; font-weight: 600; padding: 4px 12px; border-radius: 999px; cursor: pointer; }
+        .dvs-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #0b1220; }
+        .dvs-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+        /* Expense Breakdown: the ring and its own legend side by side, wrapping under each other when the card is narrow. The legend is HTML, not Chart.js's: a
+         * canvas legend that does not fit is drawn past the card's edge and the card (overflow: hidden) cuts it off. */
+        .dash-pie-wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px; min-height: 210px; min-width: 0; }
+        .dash-pie-ring { position: relative; flex: 0 0 190px; width: 190px; height: 190px; }
+        .dash-pie-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; text-align: center; }
+        .dash-pie-center b { font-family: var(--mono); font-size: 13px; color: var(--text); }
+        .dash-pie-center span { font-size: 10px; color: var(--text3); }
+        .dash-pie-legend { flex: 1 1 170px; min-width: 0; max-height: 320px; overflow-y: auto; display: grid; gap: 6px; padding-right: 2px; }
+        .dash-pie-item { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; font-size: 11px; color: var(--text2); }
+        .dash-pie-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+        .dash-pie-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .dash-pie-amt { font-family: var(--mono); color: var(--text); font-size: 10px; text-align: right; }
+        .dash-pie-pct { font-family: var(--mono); color: var(--text3); font-size: 10px; min-width: 30px; text-align: right; }
+        .dash-pie-empty { color: var(--text3); font-size: 12px; padding: 28px 8px; text-align: center; }
+        .dash-pie-item { cursor: pointer; border-radius: 6px; padding: 2px 4px; margin: 0 -4px; transition: opacity .12s, background .12s; }
+        .dash-pie-item.is-on { background: var(--bg3, rgba(127,127,127,.16)); }
+        .dash-pie-item.is-on .dash-pie-name { color: var(--text); font-weight: 600; }
+        .dash-pie-item.is-dim { opacity: .45; }
+        .dash-pie-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        .dash-pie-center span { max-width: 104px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* The amount under the pointer / finger: an element of the page (not Chart.js's canvas tooltip, which can only draw inside the canvas and is cut off there), kept inside the screen by _wfPieFocus. */
+        .dash-pie-tip { position: fixed; left: 0; top: 0; z-index: 100000; display: none; pointer-events: none; max-width: min(260px, calc(100vw - 16px)); padding: 8px 10px; border-radius: 10px; background: var(--bg2); color: var(--text); border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.28); font-size: 12px; line-height: 1.35; }
+        .dash-pie-tip.show { display: block; }
+        .dash-pie-tip .dpt-name { display: flex; align-items: center; gap: 7px; font-weight: 600; overflow-wrap: anywhere; }
+        .dash-pie-tip .dpt-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+        .dash-pie-tip .dpt-amt { font-family: var(--mono); font-size: 14px; margin-top: 3px; }
+        .dash-pie-tip .dpt-pct { color: var(--text3); font-size: 11px; }
+
         /* ================== TABLE ================== */
         .tbl-wrap {
             overflow-x: auto;
@@ -5955,6 +5989,11 @@
                         </div>
                     </div>
 
+                    <div class="dash-view-switch" role="group" aria-label="How the charts are drawn on this device">
+                        <span>Charts on this device</span>
+                        <button type="button" class="dvs-btn" id="dashViewCharts" data-view="charts" aria-pressed="true" onclick="_wfSetDashView('charts')">Charts</button>
+                        <button type="button" class="dvs-btn" id="dashViewLists" data-view="lists" aria-pressed="false" onclick="_wfSetDashView('lists')">Lists</button>
+                    </div>
                     <div class="dash-chart-row">
                         <div class="card">
                             <div class="card-header">
@@ -5972,7 +6011,10 @@
                             <div class="card-header">
                                 <div class="card-title">Expense Breakdown</div>
                             </div>
-                            <div id="dashPieCanvas" style="height:210px;"><canvas id="dashPie"></canvas></div>
+                            <div id="dashPieCanvas" class="dash-pie-wrap">
+                                <div class="dash-pie-ring"><canvas id="dashPie"></canvas><div class="dash-pie-center"><b id="dashPieTotal"></b><span id="dashPieNote">spent this year</span></div></div>
+                                <div id="dashPieLegend" class="dash-pie-legend"></div>
+                            </div>
                             <div id="dashPieSafe" class="dash-safe-chart" role="img" aria-label="Expense category breakdown"></div>
                         </div>
                     </div>
@@ -10447,7 +10489,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
                 const inc = income.filter(s => { const start = new Date(s.start + 'T00:00:00'); const end = s.end ? new Date(s.end + 'T00:00:00') : null; return start <= now && (!end || end >= now); }).reduce((s, x) => s + (x.monthly || 0), 0);
                 const exp = expenses.filter(e => e.month === curMonthStr).reduce((s, x) => s + (x.amount || 0), 0);
-                const loanTotal = loans.filter(l => loanEndDate(l) > now).reduce((s, x) => s + (x.monthly || 0), 0);
+                const loanTotal = _wfLoanDueNow(loans.filter(l => loanEndDate(l) > now), curMonthStr);   // an installment a bank debit already counts (it is in `exp`) is not added again
                 const targetTotal = targets.reduce((s, x) => s + (x.amount || 0), 0);
                 const targetSaved = targets.reduce((s, x) => s + (x.savings ? x.savings.reduce((a, b) => a + b.amount, 0) : 0), 0);
                 const netCash = inc - exp - loanTotal;
@@ -27705,12 +27747,127 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ==================== DASHBOARD AUTOMATION ====================
         let dashChartInst = null, dashPieInst = null;
 
-        function _renderSafeDashboardCharts(months, income, expenses, categories) {
+        /* HOW THE DASHBOARD DRAWS ITS TWO CHARTS IS THE OWNER'S CHOICE, PER DEVICE: 'charts' (the line and the ring) or 'lists' (the same figures as bars). Until they choose, a device takes the
+         * one it can carry — charts, except where the canvas path once crashed the page (iPhone, little memory, a small touch screen: _wfUseSafeDashboardCharts), which keeps the lists until the
+         * owner turns charts on there. A choice is remembered on that device only. */
+        const _WF_DASH_VIEW_KEY = 'wf_dash_view';
+        const _WF_PIE_COLORS = ['#d4af37', '#10b981', '#ef4444', '#3b82f6', '#8b5cf6', '#06b6d4', '#94a3b8', '#f87171', '#f59e0b', '#14b8a6', '#ec4899', '#84cc16'];
+        function _wfDashView() {
+            let saved = '';
+            try { saved = String(localStorage.getItem(_WF_DASH_VIEW_KEY) || ''); } catch (_) { /* storage blocked: the device's own default */ }
+            if (saved === 'charts' || saved === 'lists') return saved;
+            return (window._wfUseSafeDashboardCharts && window._wfUseSafeDashboardCharts()) ? 'lists' : 'charts';
+        }
+        function _wfDashSyncSwitch() {
+            const view = _wfDashView();
+            ['charts', 'lists'].forEach(v => { const b = $(v === 'charts' ? 'dashViewCharts' : 'dashViewLists'); if (b) b.setAttribute('aria-pressed', v === view ? 'true' : 'false'); });
+        }
+        function _wfSetDashView(view) {
+            if (view !== 'charts' && view !== 'lists') return;
+            try { localStorage.setItem(_WF_DASH_VIEW_KEY, view); } catch (_) { /* the choice holds until the page is closed */ }
+            _wfDashSyncSwitch();
+            // charts need Chart.js, which a lists-only device never downloaded: fetched now, and the dashboard drawn again when it is here (lists are shown meanwhile)
+            if (view === 'charts' && typeof Chart === 'undefined' && window.ensureChart) { renderDash(); return; }
+            renderDash();
+        }
+        window._wfDashView = _wfDashView; window._wfSetDashView = _wfSetDashView;
+        /** The categories largest first with their share — one list for the ring and its legend, so a colour means the same thing in both. */
+        function _wfDashCategoryRows(categories) {
+            const rows = Object.entries(categories || {}).map(([name, value]) => [String(name), Number(value) || 0]).filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]);
+            const total = rows.reduce((sum, [, value]) => sum + value, 0);
+            return { rows, total };
+        }
+        function _wfDashLegendHtml(categories) {
+            const { rows, total } = _wfDashCategoryRows(categories);
+            if (!rows.length) return '<div class="dash-pie-empty">No expenses for this year</div>';
+            return rows.map(([name, value], i) => '<div class="dash-pie-item" data-i="' + i + '" tabindex="0" title="' + _wfEsc(name) + '"><i class="dash-pie-dot" style="background:' + _WF_PIE_COLORS[i % _WF_PIE_COLORS.length] + '"></i>'
+                + '<span class="dash-pie-name">' + _wfEsc(name) + '</span><span class="dash-pie-amt">' + fmtS(value) + '</span><span class="dash-pie-pct">' + (total > 0 ? Math.round(value / total * 100) : 0) + '%</span></div>').join('');
+        }
+        window._wfDashLegendHtml = _wfDashLegendHtml;
+
+        /* WHAT A COLOUR OF THE RING IS WORTH, ON TOUCH AS ON MOUSE. Pointing at (or touching) a slice — or its row in the legend — shows its category, amount and share three ways at once: the ring's
+         * centre, the legend row (the others dim) and a small card next to the slice. The card is an element of the page, positioned by hand and kept inside the screen on every side; Chart.js's own
+         * tooltip is drawn on the canvas and is cut off at the canvas's edge, which on a 190px ring is exactly where the amount would be. Tapping anywhere else puts everything back. */
+        let _dashPieRows = [], _dashPieTotal = 0, _dashPieFocus = -1;
+        function _wfPieTipEl() {
+            let el = document.getElementById('dashPieTip');
+            if (!el) { el = document.createElement('div'); el.id = 'dashPieTip'; el.className = 'dash-pie-tip'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+            return el;
+        }
+        /** index < 0 puts the ring back to its total; `at` = {x, y}, the point (in the screen) the card should sit above. */
+        function _wfPieFocus(index, at) {
+            const row = index >= 0 ? _dashPieRows[index] : null;
+            _dashPieFocus = row ? index : -1;
+            const b = $('dashPieTotal'), note = $('dashPieNote');
+            if (b) b.textContent = row ? fmtS(row[1]) : fmtS(_dashPieTotal);
+            if (note) note.textContent = row ? row[0] : 'spent this year';
+            document.querySelectorAll('#dashPieLegend .dash-pie-item').forEach((el, i) => { el.classList.toggle('is-on', !!row && i === index); el.classList.toggle('is-dim', !!row && i !== index); });
+            const tip = _wfPieTipEl();
+            if (!row) { tip.classList.remove('show'); return; }
+            const pct = _dashPieTotal > 0 ? Math.round(row[1] / _dashPieTotal * 100) : 0;
+            tip.innerHTML = '<div class="dpt-name"><i class="dpt-dot" style="background:' + _WF_PIE_COLORS[index % _WF_PIE_COLORS.length] + '"></i><span>' + _wfEsc(row[0]) + '</span></div>'
+                + '<div class="dpt-amt">' + fmt(row[1]) + '</div><div class="dpt-pct">' + pct + '% of this year\'s expenses</div>';
+            tip.classList.add('show');
+            // inside the screen on all four sides: centred on the point, above it when there is room, below it when not
+            const vw = document.documentElement.clientWidth || window.innerWidth, vh = window.innerHeight, w = tip.offsetWidth, h = tip.offsetHeight, pt = at || { x: vw / 2, y: vh / 2 };
+            const left = Math.max(8, Math.min(pt.x - w / 2, vw - w - 8));
+            let top = pt.below ? pt.y + 10 : pt.y - h - 10;
+            if (top < 8) top = pt.y + 10;
+            if (top + h > vh - 8 && pt.y - h - 10 >= 8) top = pt.y - h - 10;
+            top = Math.max(8, Math.min(top, vh - h - 8));
+            tip.style.left = Math.round(left) + 'px'; tip.style.top = Math.round(top) + 'px';
+        }
+        /** Where the card goes for a slice: level with the slice, but OUTSIDE the ring — above it for a slice in the upper half, below it for one in the lower half — so the card never covers the colour being pointed at. */
+        function _wfPieSliceAt(index) {
+            try {
+                const meta = dashPieInst && dashPieInst.getDatasetMeta(0), arc = meta && meta.data[index];
+                if (!arc) return null;
+                const a = arc.getProps(['x', 'y', 'startAngle', 'endAngle', 'outerRadius'], true), r = dashPieInst.canvas.getBoundingClientRect();
+                const mid = (a.startAngle + a.endAngle) / 2, upper = Math.sin(mid) < 0;
+                return { x: r.left + a.x + a.outerRadius * Math.cos(mid), y: r.top + a.y + (upper ? -1 : 1) * a.outerRadius, below: !upper };
+            } catch (_) { return null; }
+        }
+        /** A slice named by its row in the legend: the ring lights up the same slice, and the card sits on it. */
+        function _wfPieFocusRow(index, rowEl) {
+            if (dashPieInst) {
+                // `_lastEvent`: Chart.js replays the last pointer event on the canvas after an update, which would put the slice the finger touched before back in charge of the card
+                try { dashPieInst._lastEvent = null; dashPieInst.setActiveElements([{ datasetIndex: 0, index }]); dashPieInst.update('none'); } catch (_) {}
+            }
+            const rect = rowEl && rowEl.getBoundingClientRect ? rowEl.getBoundingClientRect() : null;
+            _wfPieFocus(index, _wfPieSliceAt(index) || (rect ? { x: rect.left + rect.width / 2, y: rect.top } : null));
+        }
+        function _wfPieClear() {
+            if (dashPieInst) { try { dashPieInst._lastEvent = null; dashPieInst.setActiveElements([]); dashPieInst.tooltip.setActiveElements([], { x: 0, y: 0 }); dashPieInst.update('none'); } catch (_) {} }
+            _wfPieFocus(-1);
+        }
+        /** The legend's rows answer the mouse, the keyboard and a tap; one set of listeners, set once, however often the dashboard is drawn. */
+        function _wfPieWire() {
+            const host = $('dashPieLegend');
+            if (!host || host._wfPieWired) return;
+            host._wfPieWired = true;
+            const rowOf = (e) => { const el = e.target && e.target.closest ? e.target.closest('.dash-pie-item') : null; return el && host.contains(el) ? el : null; };
+            const idx = (el) => parseInt(el.getAttribute('data-i'), 10);
+            host.addEventListener('mouseover', (e) => { const el = rowOf(e); if (el) _wfPieFocusRow(idx(el), el); });
+            host.addEventListener('mouseleave', () => { _wfPieClear(); });
+            host.addEventListener('click', (e) => { const el = rowOf(e); if (el) _wfPieFocusRow(idx(el), el); });
+            host.addEventListener('focusin', (e) => { const el = rowOf(e); if (el) _wfPieFocusRow(idx(el), el); });
+            host.addEventListener('focusout', () => { _wfPieClear(); });
+            // a tap anywhere that is not the ring or its legend puts it back (a finger has no "mouse leaves")
+            document.addEventListener('pointerdown', (e) => {
+                if (_dashPieFocus < 0) return;
+                const t = e.target;
+                if (t && t.closest && (t.closest('#dashPieLegend') || t.closest('#dashPieCanvas'))) return;
+                _wfPieClear();
+            }, true);
+            window.addEventListener('scroll', () => { if (_dashPieFocus >= 0) _wfPieClear(); }, { passive: true, capture: true });
+        }
+
+        function _renderSafeDashboardCharts(months, income, expenses, categories, forceLists) {
             const lineHost = $('dashChartSafe');
             const pieHost = $('dashPieSafe');
             const lineCanvas = $('dashChartCanvas');
             const pieCanvas = $('dashPieCanvas');
-            const safe = !!(window._wfUseSafeDashboardCharts && window._wfUseSafeDashboardCharts());
+            const safe = typeof forceLists === 'boolean' ? forceLists : _wfDashView() === 'lists';
             if (lineCanvas) lineCanvas.style.display = safe ? 'none' : '';
             if (pieCanvas) pieCanvas.style.display = safe ? 'none' : '';
             if (lineHost) lineHost.style.display = safe ? 'block' : 'none';
@@ -27992,7 +28149,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             // ABORTS renderDash — so every stat, table and total BELOW the chart
             // silently never renders. Skipping the chart costs a chart; throwing
             // costs the whole page.
-            const _safeDashCharts = !!(window._wfUseSafeDashboardCharts && window._wfUseSafeDashboardCharts());
+            /* The owner's choice (or the device's default). Charts asked for before Chart.js is here are not a blank card: the lists show, Chart.js is fetched, and the dashboard is drawn again. */
+            const _wantCharts = _wfDashView() === 'charts';
+            if (_wantCharts && typeof Chart === 'undefined') { try { window._wfChartThen(() => renderDash()); } catch (_) {} }
+            const _safeDashCharts = !_wantCharts || typeof Chart === 'undefined';
+            try { _wfDashSyncSwitch(); } catch (_) {}
             if (!_safeDashCharts && ctxC && typeof Chart !== 'undefined') {
                 dashChartInst = new Chart(ctxC, {
                     type: 'line',
@@ -28016,18 +28177,30 @@ table.amort tbody tr { page-break-inside: avoid; }
             const pCtx = $('dashPie');
             if (dashPieInst) dashPieInst.destroy();
             dashPieInst = null;
-            if (!_safeDashCharts && pCtx && typeof Chart !== 'undefined') {
+            /* The ring's legend is HTML beside it (see .dash-pie-wrap), not Chart.js's: the card hides what overflows it, and a canvas legend of a dozen categories was drawn past the card's edge. */
+            const _pie = _wfDashCategoryRows(catMap);
+            _dashPieRows = _pie.rows; _dashPieTotal = _pie.total;
+            const _legendHost = $('dashPieLegend'); if (_legendHost) _legendHost.innerHTML = _wfDashLegendHtml(catMap);
+            _wfPieWire();
+            _wfPieFocus(-1);
+            if (!_safeDashCharts && pCtx && _pie.rows.length && typeof Chart !== 'undefined') {
                 dashPieInst = new Chart(pCtx, {
                     type: 'doughnut',
                     data: {
-                        labels: Object.keys(catMap),
-                        datasets: [{ data: Object.values(catMap), backgroundColor: ['#d4af37', '#10b981', '#ef4444', '#3b82f6', '#8b5cf6', '#06b6d4', '#94a3b8', '#f87171'] }]
+                        labels: _pie.rows.map(r => r[0]),
+                        datasets: [{ data: _pie.rows.map(r => r[1]), backgroundColor: _pie.rows.map((_, i) => _WF_PIE_COLORS[i % _WF_PIE_COLORS.length]), borderWidth: 0, spacing: 2, hoverOffset: 6 }]
                     },
-                    options: { maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#e2e8f0' : '#1e293b', font: { size: 10 } } } } }
+                    // the amount under the pointer is shown by _wfPieFocus (the centre, the legend row and a card that stays inside the screen), not by a canvas tooltip that is cut off at the canvas
+                    options: { maintainAspectRatio: false, cutout: '64%', plugins: { legend: { display: false }, tooltip: { enabled: false, external: (ctx) => {
+                        const act = ctx.tooltip.getActiveElements();
+                        if (!act.length) { if (_dashPieFocus >= 0) _wfPieFocus(-1); return; }
+                        const at = _wfPieSliceAt(act[0].index);
+                        if (act[0].index !== _dashPieFocus || at) _wfPieFocus(act[0].index, at);
+                    } } } }
                 });
             }
 
-            _renderSafeDashboardCharts(months, incData, expData, catMap);
+            _renderSafeDashboardCharts(months, incData, expData, catMap, _safeDashCharts);
 
             renderUpcoming();
             renderRecentActivity();

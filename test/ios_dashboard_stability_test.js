@@ -30,7 +30,10 @@ describe('iOS dashboard compositor stability', () => {
         const end = html.indexOf('function renderUpcoming()', start);
         const dash = html.slice(start, end);
         expect(dash.match(/if \(!_safeDashCharts && [^)]+typeof Chart !== 'undefined'\)/g)).toHaveLength(2);
-        expect(dash).toContain('_renderSafeDashboardCharts(months, incData, expData, catMap)');
+        expect(dash).toContain('_renderSafeDashboardCharts(months, incData, expData, catMap, _safeDashCharts)');
+        // the decision is the owner's switch; until they choose, a device that once crashed on canvas charts keeps the lists
+        expect(dash).toContain("const _wantCharts = _wfDashView() === 'charts'");
+        expect(dash).toContain('const _safeDashCharts = !_wantCharts || typeof Chart === \'undefined\'');
     });
 
     it('defers reactive and cloud snapshot paints through one scroll-idle gate', () => {

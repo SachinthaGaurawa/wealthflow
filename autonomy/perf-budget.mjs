@@ -268,7 +268,11 @@ export const BUDGETS = {
     // addresses the owner already approved (it said "0 of your 1 banks matched" beside an approved AMEX address), and a sender
     // row says how many EMAILS it sent and where they are from the state table instead of "seen 585 times" (a count of scans).
     // ~0.4% headroom.
-    htmlBytes: 2_100_000,
+    // Raised 2026-10-02: 2,100,000 -> 2,120,000 (measured 2,115,313). The dashboard's two charts can be drawn as Charts or as Lists on any device
+    // (the owner's switch, remembered per device), the Expense Breakdown ring's legend is an HTML legend that cannot be cut off by its card (the
+    // canvas legend was drawn past the card's edge with a dozen categories), pointing at or touching a slice (or its legend row) shows its
+    // amount in a card kept inside the screen, and the AI-insights context counts a loan installment once. No new script or request. ~0.2% headroom.
+    htmlBytes: 2_120_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
