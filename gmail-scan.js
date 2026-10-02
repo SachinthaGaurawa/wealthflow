@@ -160,10 +160,12 @@ export default async function handler(req, res, deps) {
             f(listUrl(GMAIL, window, body.pageToken, body.max), { headers: authed(token) }),
             10000, 'Gmail search',
         );
-        if (!r.ok) return j(res, 502, { ok: false, error: `Gmail search failed (HTTP ${r.status})` });
+        /* A quota or server-side refusal from Gmail mends itself; a 400/401/403 does not. Said plainly so the page repeats the first
+         * kind with backoff and does not hammer the second. */
+        if (!r.ok) return j(res, 502, { ok: false, error: `Gmail search failed (HTTP ${r.status})`, retryable: r.status === 429 || r.status >= 500, retryAfterMs: r.status === 429 ? 5000 : 0 });
         listed = await r.json();
     } catch (_) {
-        return j(res, 504, { ok: false, error: 'Gmail did not answer in time' });
+        return j(res, 504, { ok: false, error: 'Gmail did not answer in time', retryable: true });
     }
 
     const ids = ((listed && listed.messages) || []).map((m) => m && m.id).filter(Boolean);

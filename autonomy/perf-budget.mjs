@@ -546,7 +546,8 @@ export const BUDGETS = {
     // gains 'account balance', 'b/f' and 'a/c'; wealthflow-merchants.js paces its AI board calls two at a time. ~0.15% headroom.
     // Raised from 1_993_000 / 214_000 for the statement registry's two doors: the upload screen's check-and-claim calls (wealthflow-ai-v4.js, wealthflow-statement-cloud.js).
     // Measured 1,997,673 total; largest module 215,954. No module or script tag added.
-    totalJsBytes: 2_000_000,
+    // Raised from 2_000_000 for the sweep's retry/backoff helper and padded window query (wealthflow-backfill.js): measured 2,000,966. No module or script tag added.
+    totalJsBytes: 2_001_000,
     largestModuleBytes: 217_000, // measured 215,954
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

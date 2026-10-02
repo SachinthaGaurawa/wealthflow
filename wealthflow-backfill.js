@@ -190,6 +190,9 @@ export const STATEMENT_TERMS = [
 ];
 
 /** One month, as Gmail's after:/before: want it. */
+/** Query reach past each exact UTC edge; must exceed the largest UTC offset (14 h). */
+export const QUERY_PAD_MS = 24 * 3600 * 1000;
+
 const ymd = (d) => `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`;
 
 /**
@@ -326,8 +329,10 @@ export function planWindows({
     for (let i = 0; i < depth; i++) {
         const hi = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i + 1, 1));
         const lo = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i, 1));
-        // Exact senders constrain Gmail; the ingest policy validates MIME type.
-        const parts = ['has:attachment', `after:${ymd(lo)}`, `before:${ymd(hi)}`];
+        /* The query is a SUPERSET of the window; the internalDate gate in gmail-scan.js is the window. Gmail reads after:/before: in the
+         * account's own timezone, so a query cut at the UTC month edge listed nothing for mail in the offset-wide strip at each edge, and
+         * the gate refused it from the neighbouring month: dropped silently. One day each side exceeds any offset (max 14 h). */
+        const parts = ['has:attachment', `after:${ymd(new Date(lo.getTime() - QUERY_PAD_MS))}`, `before:${ymd(new Date(hi.getTime() + QUERY_PAD_MS))}`];
         if (any) parts.push(`(${any})`);
         windows.push({
             label: `${lo.getUTCFullYear()}-${String(lo.getUTCMonth() + 1).padStart(2, '0')}`,
@@ -390,7 +395,8 @@ export function startCursor(opts = {}) {
 /* Bumped when the persisted shape changes meaning. A cursor from an older
  * version is dropped rather than guessed at — resuming half-understood state
  * into a scan of somebody's mail is worse than starting over. */
-export const CURSOR_VERSION = 1;
+/* v2: padded window queries; a pageToken belongs to the search that minted it, so v1 cursors restart (a rescan is free). */
+export const CURSOR_VERSION = 2;
 
 /** The small, storable record of where a scan got to. */
 export function serializeCursor(cursor) {
@@ -508,6 +514,46 @@ export function shouldPause(startIndex, cursor, max = MAX_WINDOWS_PER_RUN) {
  * Note what is NOT here: a statement that failed to open, or one with no text
  * layer. Those matter for a statement that arrived thirty seconds ago; for one
  * from March 2023 they are a line in a summary, not a buzz. */
+/* A page that fails (504, Gmail 429, dropped connection) is repeated with backoff, up to MAX_PAGE_ATTEMPTS, before the run stops;
+ * the cursor has not advanced and the item key makes a re-store a no-op, so repeating is safe. A refused token or a 400/401/403/409
+ * does not mend by asking again and is not repeated. */
+export const MAX_PAGE_ATTEMPTS = 10;
+export const BACKOFF_BASE_MS = 1000;
+export const BACKOFF_CAP_MS = 60000;
+const RETRY_STATUS = new Set([0, 408, 425, 429, 500, 503, 504]);
+
+export function isRetryable(status, body) {
+    if (body && body.retryable === true) return true;
+    if (body && body.ok === false && body.retryable === false) return false;
+    return RETRY_STATUS.has(Number(status) || 0);
+}
+
+/** Wait before the n-th retry: 1 s doubling to 60 s, +/-20 % jitter, never under the server's own retryAfterMs. */
+export function backoffMs(attempt, { retryAfterMs = 0, random = Math.random } = {}) {
+    const n = Math.max(1, Math.floor(num(attempt)) || 1);
+    const base = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * (2 ** Math.min(n - 1, 16)));
+    const jitter = 1 + (Math.min(1, Math.max(0, num(random()))) * 0.4 - 0.2);
+    const floor = Math.min(BACKOFF_CAP_MS, Math.max(0, num(retryAfterMs)));
+    return Math.min(BACKOFF_CAP_MS, Math.max(floor, Math.round(base * jitter)));
+}
+
+/** Run `send()` ({status, body}) until it succeeds, fails unmendably, or max attempts pass. sleep/onRetry are injected. */
+export async function sendWithRetry(send, { max = MAX_PAGE_ATTEMPTS, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), onRetry = null, random = Math.random } = {}) {
+    const limit = Math.max(1, Math.floor(num(max)) || 1);
+    let last = { status: 0, body: null };
+    for (let attempt = 1; attempt <= limit; attempt++) {
+        try { last = (await send()) || { status: 0, body: null }; } catch (_) { last = { status: 0, body: null }; }
+        const { status, body } = last;
+        if (status === 200 && body && body.ok === true) return { ok: true, status, body, attempts: attempt, gaveUp: false };
+        if (!isRetryable(status, body)) return { ok: false, status, body, attempts: attempt, gaveUp: false };
+        if (attempt === limit) break;
+        const waitMs = backoffMs(attempt, { retryAfterMs: body && body.retryAfterMs, random });
+        if (typeof onRetry === 'function') { try { onRetry({ attempt, waitMs, status }); } catch (_) { /* a progress line is advice */ } }
+        await sleep(waitMs);
+    }
+    return { ok: false, status: last.status, body: last.body, attempts: limit, gaveUp: true };
+}
+
 export const NOTIFY_REASONS = new Set(['routing-conflict', 'direction-unresolved']);
 
 export function notifiable(quarantined) {
@@ -537,6 +583,7 @@ const API = {
     LEDGER_SOURCES, HASH_BATCH, MAX_WINDOWS_PER_RUN, NOTIFY_REASONS, CURSOR_VERSION,
     rowFromRecord, ledgerHashes, planWindows, startCursor, nextStep, advance,
     shouldPause, notifiable, runSummary, serializeCursor, resumeCursor, scanProgress,
+    isRetryable, backoffMs, sendWithRetry, MAX_PAGE_ATTEMPTS, QUERY_PAD_MS,
 };
 
 /* The page reaches this through window, the same way every other wired
