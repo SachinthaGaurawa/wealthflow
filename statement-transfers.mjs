@@ -9,6 +9,7 @@
  * A transfer is the owner's own when something on the page says so, and the rule needs no one's answer:
  *   the account number   the narration names one of the owner's own accounts or cards by its masked number ("376657XXXXX0276": the card the owner holds),
  *   the words            "my DFCC", "own account", "self transfer", a transfer to a savings or current account of the owner,
+ *   their name           the narration names the owner (the statement's client name, the mailbox address),
  *   the other leg        the same amount leaving one of the owner's accounts and arriving in another on the same statement, within three days.
  * Anything else is money to, or from, someone else.
  *
@@ -48,16 +49,32 @@ export function ownTails({ cardRegistry = {}, cards = [], statementTails = [], t
     return out;
 }
 
+const TITLES = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'rev', 'prof', 'sir']);
+/**
+ * The owner's own name, as the statement and the mailbox give it: the words of "Client Name: MR K S G KULASOORIYA" and the mailbox address ("gaurawasachintha@…"). A transfer that names the owner
+ * ("Transfer Credit-Mobilebanking Gaurawa") is the owner's own money from another account of theirs. Initials and titles are not names.
+ * @returns {{names:Set<string>, local:string}}
+ */
+export function ownerWords({ text = '', email = '' } = {}) {
+    const names = new Set();
+    const line = /(?:client|customer|account\s*holder)\s*name\s*[:\-]\s*([^\n\r]+)/i.exec(String(text || '').slice(0, 20000));
+    for (const word of (line ? line[1] : '').toLowerCase().match(/[a-z]{4,}/g) || []) if (!TITLES.has(word)) names.add(word);
+    const local = String(email || '').toLowerCase().split('@')[0].replace(/[^a-z]/g, '');
+    return { names, local: local.length >= 6 ? local : '' };
+}
+
 /**
  * What says this transfer row is the owner's own money moving between the owner's own accounts, or '' when nothing does.
  * @param {object} row
- * @param {{tails?: Set<string>|string[], paired?: {has:(row:object)=>boolean}}} own
+ * @param {{tails?: Set<string>|string[], paired?: {has:(row:object)=>boolean}, names?: Set<string>, local?: string}} own
  */
 export function ownTransferEvidence(row, own = {}) {
     if (!transferEvidence(row)) return '';
     const text = textOf(row), tails = own.tails instanceof Set ? own.tails : new Set(Array.isArray(own.tails) ? own.tails : []);
     if (tailsIn(text).some(tail => tails.has(tail))) return 'own-account-number';
     if (OWN_WORDS.test(text)) return 'own-account-words';
+    const words = text.toLowerCase().match(/[a-z]{5,}/g) || [];
+    if (words.some(word => (own.names && own.names.has(word)) || (own.local && word.length >= 6 && own.local.includes(word)))) return 'own-name';
     if (own.paired && typeof own.paired.has === 'function' && own.paired.has(row)) return 'other-leg-on-the-statement';
     return '';
 }
@@ -123,4 +140,4 @@ export function recordTwins(user) {
     return { records: list.length, sameRow, legs };
 }
 
-export default { tailsIn, ownTails, ownTransferEvidence, pairedTransfers, recordTwins };
+export default { tailsIn, ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins };
