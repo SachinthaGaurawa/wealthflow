@@ -63,7 +63,9 @@ describe('statement ledger', () => {
         expect(validateSettlementRow(credit, decision)).toBe('expense-direction-conflict');
         expect(validateSettlementRow(row, { module: 'incomeRecv', category: 'Salary', verified: true })).toBe('income-direction-conflict');
         const transfer = { ...credit, description: 'TRANSFER CREDIT-MOBILEBANKING' };
-        expect(validateSettlementRow(transfer, { module: 'incomeRecv', category: 'Income', verified: true })).toBe('transfer-route-conflict');
+        // money received from someone else is income like any other row; only the owner's own money moving between their own accounts is left out (decided before this, by statement-transfers)
+        expect(validateSettlementRow(transfer, { module: 'incomeRecv', category: 'Other', verified: true })).toBe(null);
+        expect(validateSettlementRow({ ...transfer, direction: 'debit' }, { module: 'incomeRecv', category: 'Other', verified: true })).toBe('income-direction-conflict');
         expect(validateSettlementRow(transfer, { module: 'skip', category: 'Transfer', verified: true })).toBe(null);
         expect(validateSettlementRow(row, { module: 'skip', category: 'Transfer', verified: true })).toBe('skip-requires-transfer-evidence');
     });

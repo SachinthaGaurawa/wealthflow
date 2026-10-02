@@ -30,6 +30,7 @@ import { planWithEvidence, evidenceContext, bankStillOwned, documentProof, known
 import { formKind } from './statement-document-kind.mjs';
 import { repairByArithmetic } from './statement-repair.mjs';
 import { buildHistory } from './statement-history.mjs';
+import { ownTails, ownTransferEvidence, pairedTransfers, recordTwins } from './statement-transfers.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
 
 export const config = { maxDuration: 60 };
@@ -209,6 +210,7 @@ function subscriptionWords(allocations) {
     return [...words];
 }
 function needsBoard(row, rule, words) {
+    if (rule.verified && (rule.autoDecided === 'transfer-to-others' || rule.autoDecided === 'transfer-from-others')) return false;      // what the rules know of a transfer is all there is to know: there is no merchant for the board to name
     if (!rule.verified || rule.category === 'Other' || rule.category === 'Income') return true;
     if (!words.length) return false;
     const text = String(row?.narration || row?.description || '').toLowerCase();
@@ -278,7 +280,15 @@ async function askBoard(rows, rules, allocations, board) {
 export function deterministicDecision(row, allocations = {}) {
     const description = String(row?.narration || row?.description || '');
     if (transferEvidence({ description })) {
-        return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true };
+        /* A TRANSFER IS LEFT OUT OF THE BOOKS ONLY WHEN IT IS THE OWNER'S OWN MONEY MOVING BETWEEN THE OWNER'S OWN ACCOUNTS (statement-transfers.mjs): the account number of one of their own cards, their own words
+         * ("my DFCC"), or the other leg on the same statement. "Outward Ceft Transfer Car", "Inward Ceft Transfer Dip Refund" are money paid to and received from other people — spending and income. They were all
+         * left out, and a statement that is half of those showed the owner a month with half of it missing. Where the direction is not proven, the row is not filed (the rows below ask for it as any row). */
+        const tails = ownTails({ cardRegistry: allocations.cardRegistry, statementTails: allocations.own ? [...allocations.own] : [], thisTail: allocations.card_last4 });
+        const own = ownTransferEvidence(row, { tails, paired: allocations.pairedRows });
+        if (own || isCreditCardRow(row, allocations) || validateLuhnChecksum(allocations.card_last4)) return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true, ...(own ? { ownTransfer: own } : {}) };
+        if (row.direction === 'debit') return { module: 'expenses', category: expenseCategoryFor(row) || 'Other', allocationId: '', verified: true, deterministic: true, autoDecided: 'transfer-to-others' };
+        if (row.direction === 'credit') return { module: 'incomeRecv', category: incomeCategoryFor(row) || 'Other', allocationId: '', verified: true, deterministic: true, autoDecided: 'transfer-from-others' };
+        return { verified: false, reason: 'unproven-direction' };
     }
     /* A BANK'S OWN LINE TYPE IS NOT A DEPOSIT TO A SAVINGS TARGET. "CEFT Charges Mirigama" shared one word with a target called "Mirigama Plot" (half its words, which the router
      * takes as a match) and was routed to that goal — a destination no rule can verify, so the AI board was asked, six models cannot all agree, and the owner was asked about a
@@ -872,6 +882,7 @@ export async function ledgerCensus({ db, mailRef, uid, log = console.info, limit
         if (status === 'filed' && row.module) bump(byModule, String(row.module).slice(0, 24));
     }
     log(JSON.stringify({ evt: 'statement-ledger-census', rows: page.docs.length, more: page.docs.length === limit, banks, skipped, byModule }));
+    try { log(JSON.stringify({ evt: 'statement-twins', ...recordTwins((await db.collection('users').doc(uid).get()).data() || {}) })); } catch (_) { /* advice only */ }
 }
 
 /* WHAT THE APP REALLY HOLDS, per bank: filed statements, how many carried no rows at all, the rows they brought in, the oldest and newest month,
@@ -1081,6 +1092,37 @@ export async function healMissingRows({ db, uid, limit = 5, now = Date.now() }) 
     return { requeued, rows, more };
 }
 
+/* THE TRANSFER ROWS THAT WERE LEFT OUT ARE DECIDED AGAIN. Every row worded as a transfer was recorded as skipped ("a transfer between your own accounts"), and most were money paid to and received from other people (statement-transfers.mjs).
+ * Each filed statement that holds such rows is read again, once per TRANSFER_REOPEN_VERSION: the rows the books already hold are recognised by their fingerprint and cost nothing, the skipped ones are decided by the rules of today —
+ * left out only when they are the owner's own money between their own accounts, filed as spending or income when they are not. Nothing is deleted. */
+export const TRANSFER_REOPEN_VERSION = 1;
+export async function reopenSkippedTransfers({ db, uid, limit = 3, until = Infinity, now = Date.now() }) {
+    const userRef = db.collection('users').doc(uid), ledger = userRef.collection('statementLedger');
+    const found = await ledger.where('status', '==', 'skipped').limit(400).get();
+    const by = new Map();
+    for (const doc of found.docs) {
+        const entry = doc.data() || {};
+        if (entry.uid !== uid || entry.module !== 'skip' || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(entry.sourcePath || ''))) continue;
+        if (!by.has(entry.sourcePath)) by.set(entry.sourcePath, []);
+        by.get(entry.sourcePath).push(doc.id);
+    }
+    let requeued = 0, rows = 0, more = false;
+    for (const [sourcePath, ids] of by) {
+        if (requeued >= Math.max(1, limit) || Date.now() > until) { more = true; break; }
+        const ref = db.doc(sourcePath);
+        const done = await db.runTransaction(async tx => {
+            const snap = await tx.get(ref), source = snap.data();
+            if (!snap.exists || source.uid !== uid || source.filed !== true || source.status !== 'filed' || (source.leaseUntil || 0) > now || (Number(source.transferReopen?.v) || 0) >= TRANSFER_REOPEN_VERSION || (Number(source.transferRule) || 0) >= TRANSFER_REOPEN_VERSION) return false;
+            for (const id of ids) tx.set(ledger.doc(id), { status: 'superseded_by_layout', supersededAt: now, supersededBy: 'transfer-rule' }, { merge: true });
+            tx.set(ref, { status: 'pending', filed: false, cursor: 0, totalRows: null, rowSetHash: '', leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0, resumed: now, resumeVersion: RESUME_VERSION, adaptiveTries: 0, adaptiveAt: 0,
+                transferReopen: { v: TRANSFER_REOPEN_VERSION, at: now, rows: ids.length }, updatedAt: now }, { merge: true });
+            return true;
+        });
+        if (done) { requeued += 1; rows += ids.length; }
+    }
+    return { requeued, rows, more };
+}
+
 // Reviews raised before the reader knew better: a "transaction" with a month-end date, no description and
 // no amount is a line that is not on the statement. They are not dismissed, and the statement is not assumed
 // empty — the statement is read again, and judged on its own text exactly as a new one is (the emptiness
@@ -1259,6 +1301,15 @@ async function replayLedger(db, uid, sourcePath, user, now = Date.now()) {
     const indexes = new Set();
     for (const entry of entries) if (Number.isSafeInteger(entry.index) && entry.status !== 'superseded_by_layout' && !lost.has(entry.id)) indexes.add(entry.index);
     return { indexes, healed: lost.size };
+}
+/* The accounts the owner's own statements are for, and the cards they track: the numbers a transfer row may name when it is their own money moving. */
+async function ownAccountTails({ mailRef, user }) {
+    const tails = new Set(ownTails({ cardRegistry: user.settings?.cardRegistry || {}, cards: [...(Array.isArray(user.cconetime) ? user.cconetime : []), ...(Array.isArray(user.ccPayments) ? user.ccPayments : [])] }));
+    try {
+        const found = await mailRef.collection('items').where('status', '==', 'filed').limit(300).get();
+        for (const doc of found.docs) for (const tail of ownTails({ statementTails: [doc.data()?.proof?.last4] })) tails.add(tail);
+    } catch (_) { /* the card registry and the cards alone still name the owner's cards */ }
+    return tails;
 }
 const MAX_SLICES_PER_RUN = 40, SLICE_ROOM_MS = 6000, SLICE_AI_ROOM_MS = 33000;
 const BOARD_ROOM_MS = 17000;           // the board's own floor (breaker.guard 'board' minRoomMs)
@@ -1508,6 +1559,9 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
             // the owner's own past decisions, kept out of what is serialised into a prompt (not enumerable)
             Object.defineProperty(allocations, 'history', { value: buildHistory(user, merchantNameFor), enumerable: false });
+            // the owner's own accounts and cards (so a transfer to one of them is not counted as spending), and the rows of this statement that are two legs of one transfer
+            Object.defineProperty(allocations, 'own', { value: await ownAccountTails({ mailRef, user }), enumerable: false });
+            Object.defineProperty(allocations, 'pairedRows', { value: pairedTransfers(parsed.rows), enumerable: false });
             /* A STATEMENT BEING RESUMED (resumePartialStatements) is replayed from its first row: the rows the ledger already holds are
              * checked against this reading by fingerprint inside the settlement, and cost no classification here. */
             const replayed = (claimed.cursor || 0) === 0 && claimed.resumed ? await replayLedger(db, uid, sourceRef.path, user) : null;
@@ -1610,7 +1664,7 @@ async function recordProof(sourceRef, parsed, bypassed, uid = '') {
     const proof = { math: bypassed ? 'owner-confirmed' : r.ok === true ? 'passed' : 'unchecked', rows: Array.isArray(parsed?.rows) ? parsed.rows.length : 0, last4: String(parsed?.layout?.accountLast4 || '').slice(0, 4),
         ...(parsed?.adaptive ? { method: 'ai-checked', attempts: Number(parsed.adaptive.attempts) || 1 } : {}), ...(key ? { key: key.slice(0, 64) } : {}) };
     for (const field of ['opening', 'closing', 'credits', 'debits']) { const v = cents(r[field]); if (v !== null) proof[field] = v; }
-    try { await sourceRef.set({ proof, ...(key ? { statementKey: key.slice(0, 64) } : {}) }, { merge: true }); } catch (_) { /* see above */ }
+    try { await sourceRef.set({ proof, transferRule: TRANSFER_REOPEN_VERSION, ...(key ? { statementKey: key.slice(0, 64) } : {}) }, { merge: true }); } catch (_) { /* see above */ }      // read under today's transfer rule: not looked at again by reopenSkippedTransfers
 }
 
 async function enqueueStatementSync({ db, owner, env = process.env, f = fetch, sourcePath = '', maxSteps = Infinity }) {
@@ -1842,6 +1896,11 @@ async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs
         done.revived = r.revived; out.more = out.more || r.more;
         if (!r.more) await mailRef.set({ lastReviveMs: Date.now() }, { merge: true });
     });
+    if ((Number(mail.transferReopenV) || 0) < TRANSFER_REOPEN_VERSION) steps.push(async stepUntil => {
+        const r = await reopenSkippedTransfers({ db, uid, limit: 3, until: stepUntil });
+        done.reopened = r.requeued; if (r.rows) done.reopenedRows = r.rows; out.more = out.more || r.more || r.requeued > 0;
+        if (!r.more && !r.requeued) await mailRef.set({ transferReopenV: TRANSFER_REOPEN_VERSION }, { merge: true });
+    });
     const turn = Math.floor(now / SETTLE_EVERY_MS) % steps.length;
     let skipped = 0;
     for (const work of [...steps.slice(turn), ...steps.slice(0, turn)]) {
@@ -1850,7 +1909,7 @@ async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs
     }
     try { await mailRef.set({ lastSettleMs: Date.now(), settleMore: out.more }, { merge: true }); } catch (_) { /* the pass simply runs again */ }
     /* one line, and only when the pass did or left something: this is how the log shows the owner's waiting reviews being settled */
-    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0 || done.wholeWhy) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
+    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0 || done.wholeWhy || done.reopened > 0) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
     return out;
 }
 

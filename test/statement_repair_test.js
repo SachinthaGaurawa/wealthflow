@@ -80,7 +80,7 @@ describe('a statement stopped at "rows could not be proven to add up" is read ag
     const world = () => createFirestore({
         [mail]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, lastSettleMs: Date.now(), senders: [{ id: 'statements@dfccbank.com', kind: 'address', status: 'approved', name: 'DFCC', domain: 'dfccbank.com' }] },
         'wf-statement-vault/u': { uid: 'u' },
-        'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], settings: {} },
+        'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], settings: { cardRegistry: { '0276': { bank: 'AMEX' } } } },       // the owner tracks the card the 50,000.00 is paid to
         [itemPath]: { uid: 'u', bank: 'DFCC', filename: 'DFCC Bank Statement - Aug 26.pdf', from: 'statements@dfccbank.com', messageId: 'm0', status: 'pending', hasReview: false, filed: false, cursor: 0, intent: 'stated' },
     });
     const text = 'DFCC BANK PLC\nStatement\nStatement Period: 01/08/2026 - 31/08/2026\nOpening Balance 200,000.00\nClosing Balance 145,975.00\n04/08/2026 POS Transaction KEELLS 4,000.00\n14/08/2026 Outward Ceft Transfer 376657XXXXX0276 50,000.00\n15/08/2026 Ceft Charges 376657XXXXX0276 25.00';
