@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createFirestore } from './helpers/fake-firestore.js';
 import { tailsIn, ownTails, ownTransferEvidence, pairedTransfers, recordTwins } from '../statement-transfers.mjs';
-import { runStatementSync, reopenSkippedTransfers, TRANSFER_REOPEN_VERSION } from '../statement-sync.js';
-import { settleStatement, sourceOccurrenceId } from '../statement-ledger.mjs';
+import { runStatementSync, reopenSkippedTransfers, removeOwnTransferRecords, TRANSFER_REOPEN_VERSION } from '../statement-sync.js';
+import { settleStatement, sourceOccurrenceId, lostFiledRows } from '../statement-ledger.mjs';
 
 // DFCC, production 2026-10-02: every row worded as a transfer was left out of the books as "a transfer between your own accounts" — 87 rows. "Outward Ceft Transfer Car / Chagiya / Sister / Title / Heaven
 // View" and "Inward Ceft Transfer Dip Refund / Loan / Order" are money paid to and received from other people: spending and income. Only the owner's own money between the owner's own accounts is left out.
@@ -207,5 +207,44 @@ describe('what the books hold twice is counted, in numbers only', () => {
     it('carries no amount and no description (it is written to a log)', () => {
         const twins = JSON.stringify(recordTwins({ expenses: [rec(), rec({ statementKey: 'wf-mail/m/items/b' })] }));
         expect(twins).not.toMatch(/50000|Sister|Ceft/);
+    });
+});
+
+describe('the owner\'s own money already filed as spending or income is taken out, once, without a trace to heal', () => {
+    const mail = 'wf-mail/owner_example_com', stmt = `${mail}/items/s1`;
+    const rec = (id, extra = {}) => ({ id, source: 'statement', statementKey: stmt, date: '2026-08-10', amount: 150000, direction: 'debit', bank: 'DFCC Bank', desc: 'Outward Ceft Transfer 376657Xxxxx0276', cat: 'Other', ...extra });
+    const world = (user = {}, items = {}) => createFirestore({
+        [mail]: { uid: 'u', email: 'owner@example.com', autonomous: true },
+        [`${mail}/items/amex1`]: { status: 'filed', bank: 'AMEX', filename: 'eStatement_376657XXXXX0276_2026AUG_265604.html', proof: { last4: '9999' }, ...items },
+        'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], settings: {}, ...user },
+    });
+    const mailRef = db => db.collection('wf-mail').doc('owner_example_com');
+    it('a transfer naming the number in the file name of the owner\'s own card statement is the owner paying their own card', async () => {
+        const w = world({ expenses: [rec('r1')] });
+        const out = await removeOwnTransferRecords({ db: w.db, mailRef: mailRef(w.db), uid: 'u' });
+        expect(out).toEqual({ removed: 1, more: false });
+        expect(w.data.get('users/u').expenses).toEqual([]);
+        expect(w.data.get('users/u')._tomb.expenses.r1).toBeGreaterThan(0);
+    });
+    it('leaves a transfer to someone else, a record the owner typed, a record whose category the owner changed, and what is not a transfer', async () => {
+        const keep = [rec('a', { desc: 'Outward Ceft Transfer Car', amount: 126000 }), rec('b', { source: 'manual' }), rec('c', { cat: 'Savings' }), rec('d', { desc: 'POS Transaction KEELLS 0276' }), rec('e', { statementKey: '' })];
+        const w = world({ expenses: keep });
+        expect(await removeOwnTransferRecords({ db: w.db, mailRef: mailRef(w.db), uid: 'u' })).toEqual({ removed: 0, more: false });
+        expect(w.data.get('users/u').expenses.map(r => r.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    });
+    it('takes income too (the owner\'s own words), says why in the ledger, and the heal does not bring it back', async () => {
+        const w = world({ incomeRecv: [{ id: 'i1', source: 'statement', statementKey: stmt, date: '2026-08-13', amount: 100000, direction: 'credit', bank: 'DFCC Bank', name: 'Transfer Credit-Mobilebanking My Dfcc', type: 'Other' }] });
+        w.data.set('users/u/statementLedger/i1', { uid: 'u', sourcePath: stmt, index: 7, status: 'filed', module: 'incomeRecv', fingerprint: 'f' });
+        expect(await removeOwnTransferRecords({ db: w.db, mailRef: mailRef(w.db), uid: 'u' })).toMatchObject({ removed: 1 });
+        expect(w.data.get('users/u').incomeRecv).toEqual([]);
+        expect(w.data.get('users/u/statementLedger/i1')).toMatchObject({ status: 'skipped', module: 'skip', reason: 'own-account', fingerprint: 'f', sourcePath: stmt });
+        const user = w.data.get('users/u');
+        expect(lostFiledRows({ user, entries: [{ id: 'i1', ...w.data.get('users/u/statementLedger/i1') }], now: Date.now() })).toEqual([]);
+    });
+    it('is bounded, says when there is more, and does not invent a ledger entry that does not exist', async () => {
+        const w = world({ expenses: Array.from({ length: 5 }, (_, i) => rec('x' + i)) });
+        expect(await removeOwnTransferRecords({ db: w.db, mailRef: mailRef(w.db), uid: 'u', limit: 3 })).toEqual({ removed: 3, more: true });
+        expect(w.data.get('users/u').expenses).toHaveLength(2);
+        expect(w.data.has('users/u/statementLedger/x0')).toBe(false);
     });
 });

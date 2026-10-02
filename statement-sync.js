@@ -30,7 +30,7 @@ import { planWithEvidence, evidenceContext, bankStillOwned, documentProof, known
 import { formKind } from './statement-document-kind.mjs';
 import { repairByArithmetic } from './statement-repair.mjs';
 import { buildHistory } from './statement-history.mjs';
-import { ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins } from './statement-transfers.mjs';
+import { ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins, tailsIn } from './statement-transfers.mjs';
 import { totalsAgree } from './statement-totals.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
 
@@ -1134,6 +1134,38 @@ export async function reopenSkippedTransfers({ db, uid, limit = 3, until = Infin
     return { requeued, rows, more };
 }
 
+/* THE OWNER'S OWN MONEY, ALREADY FILED AS SPENDING OR INCOME, IS TAKEN OUT. Before a transfer was recognised as the owner's own (their own card's number, their own words), "Outward Ceft Transfer 376657XXXXX0276 150,000.00" —
+ * the owner paying their AMEX — was filed as an expense, and the card statement counts the same payment: counted twice. Each record the statement worker filed (never one the owner typed, and never one whose
+ * category the owner changed) that today's rule calls the owner's own transfer is removed with a tombstone (so no heal brings it back) and its ledger entry says why. Counts only are logged. */
+export const OWN_TRANSFER_VERSION = 1;
+export async function removeOwnTransferRecords({ db, mailRef, uid, now = Date.now(), limit = 100 }) {
+    const userRef = db.collection('users').doc(uid);
+    const before = (await userRef.get()).data() || {};
+    const own = { tails: await ownAccountTails({ mailRef, user: before }) };
+    const KEYS = [['expenses', 'desc', 'cat'], ['incomeRecv', 'name', 'type']];
+    const isOwn = (record, textKey, catKey) => !!record && record.source === 'statement' && !!record.statementKey && String(record[catKey] || '') === 'Other' && !!ownTransferEvidence({ narration: record[textKey] || record.desc || record.name }, own);
+    if (!KEYS.some(([key, textKey, catKey]) => (Array.isArray(before[key]) ? before[key] : []).some(record => isOwn(record, textKey, catKey)))) return { removed: 0, more: false };
+    return db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), user = structuredClone(snap.data() || {});
+        const gone = [], changes = {};
+        for (const [key, textKey, catKey] of KEYS) {
+            const list = Array.isArray(user[key]) ? user[key] : [], keep = [];
+            for (const record of list) { if (gone.length < limit && isOwn(record, textKey, catKey)) gone.push([key, record]); else keep.push(record); }
+            if (keep.length !== list.length) changes[key] = keep;
+        }
+        if (!gone.length) return { removed: 0, more: false };
+        const ledgerSnaps = [];
+        for (const [, record] of gone) ledgerSnaps.push(await tx.get(userRef.collection('statementLedger').doc(String(record.id))));
+        const tomb = user._tomb && typeof user._tomb === 'object' ? { ...user._tomb } : {};
+        gone.forEach(([key, record], at) => {
+            tomb[key] = { ...(tomb[key] && typeof tomb[key] === 'object' ? tomb[key] : {}), [record.id]: now };
+            if (ledgerSnaps[at].exists) tx.set(ledgerSnaps[at].ref, { status: 'skipped', module: 'skip', reason: 'own-account', supersededBy: 'own-transfer-rule', settledAt: now }, { merge: true });
+        });
+        tx.set(userRef, { ...changes, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        return { removed: gone.length, more: gone.length >= limit };
+    });
+}
+
 // Reviews raised before the reader knew better: a "transaction" with a month-end date, no description and
 // no amount is a line that is not on the statement. They are not dismissed, and the statement is not assumed
 // empty — the statement is read again, and judged on its own text exactly as a new one is (the emptiness
@@ -1318,7 +1350,8 @@ async function ownAccountTails({ mailRef, user }) {
     const tails = new Set(ownTails({ cardRegistry: user.settings?.cardRegistry || {}, cards: [...(Array.isArray(user.cconetime) ? user.cconetime : []), ...(Array.isArray(user.ccPayments) ? user.ccPayments : [])] }));
     try {
         const found = await mailRef.collection('items').where('status', '==', 'filed').limit(300).get();
-        for (const doc of found.docs) for (const tail of ownTails({ statementTails: [doc.data()?.proof?.last4] })) tails.add(tail);
+        /* the account a statement is for, and the masked number its FILE NAME carries ("eStatement_376657XXXXX0276_2026AUG.html" is the owner's own card ending 0276): a bank row that names that number is the owner paying their own card */
+        for (const doc of found.docs) for (const tail of ownTails({ statementTails: [doc.data()?.proof?.last4, ...tailsIn(doc.data()?.filename)] })) tails.add(tail);
     } catch (_) { /* the card registry and the cards alone still name the owner's cards */ }
     return tails;
 }
@@ -1925,6 +1958,12 @@ async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs
         done.reopened = r.requeued; if (r.rows) done.reopenedRows = r.rows; out.more = out.more || r.more || r.requeued > 0;
         if (!r.more && !r.requeued) await mailRef.set({ transferReopenV: TRANSFER_REOPEN_VERSION }, { merge: true });
     });
+    if ((Number(mail.transferReopenV) || 0) >= TRANSFER_REOPEN_VERSION && (Number(mail.ownTransferV) || 0) < OWN_TRANSFER_VERSION) steps.push(async () => {
+        const r = await removeOwnTransferRecords({ db, mailRef, uid });
+        if (r.removed) done.ownRemoved = r.removed;
+        out.more = out.more || r.more;
+        if (!r.removed && !r.more) await mailRef.set({ ownTransferV: OWN_TRANSFER_VERSION }, { merge: true });
+    });
     const turn = Math.floor(now / SETTLE_EVERY_MS) % steps.length;
     let skipped = 0;
     for (const work of [...steps.slice(turn), ...steps.slice(0, turn)]) {
@@ -1933,7 +1972,7 @@ async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs
     }
     try { await mailRef.set({ lastSettleMs: Date.now(), settleMore: out.more }, { merge: true }); } catch (_) { /* the pass simply runs again */ }
     /* one line, and only when the pass did or left something: this is how the log shows the owner's waiting reviews being settled */
-    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0 || done.wholeWhy || done.reopened > 0) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
+    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0 || done.wholeWhy || done.reopened > 0 || done.ownRemoved > 0) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
     return out;
 }
 
