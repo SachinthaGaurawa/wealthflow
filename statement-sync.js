@@ -27,7 +27,7 @@ import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, i
 import { healLoanLinks } from './loan-link.mjs';
 import { manualTwin, markTwin } from './statement-links.mjs';
 import { statementCopies } from './statement-copies.mjs';
-import { ownMoneyLegs } from './statement-legs.mjs';
+import { looseLegsWhy, ownMoneyLegs } from './statement-legs.mjs';
 import { policyWithReach } from './bank-reach.mjs';
 import { planWithEvidence, evidenceContext, documentProof, knownLast4 } from './statement-evidence.mjs';
 import { formKind } from './statement-document-kind.mjs';
@@ -974,7 +974,7 @@ export async function ledgerCensus({ db, mailRef, uid, log = console.info, limit
          * leg, in counts only. `looser` is `legs.pairs` above (any transfer wording, any day within three): the difference is what the strict rule leaves for the owner. Nothing is changed. */
         const plan = ownMoneyLegs(user), kinds = {}, banks = {};
         for (const { kind, record } of plan.remove) { kinds[kind] = (kinds[kind] || 0) + 1; const bank = String(record.bank || '?').slice(0, 24); banks[bank] = (banks[bank] || 0) + 1; }
-        log(JSON.stringify({ evt: 'statement-legs-plan', pairs: plan.pairs, records: plan.remove.length, left: plan.left, looser: twins.legs.pairs, kinds, banks }));
+        log(JSON.stringify({ evt: 'statement-legs-plan', pairs: plan.pairs, records: plan.remove.length, left: plan.left, looser: twins.legs.pairs, kinds, banks, why: looseLegsWhy(user).reasons }));
     } catch (_) { /* advice only */ }
 }
 

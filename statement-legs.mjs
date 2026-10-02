@@ -75,4 +75,43 @@ export function ownMoneyLegs(user) {
     return { remove, pairs, left };
 }
 
-export default { ownMoneyLegs, CARD_BEFORE_DAYS, CARD_AFTER_DAYS, BANK_DAYS };
+/**
+ * WHY EACH LOOSE PAIR IS NOT TAKEN OUT, in counts only. `statement-twins` counts a debit and a credit of the same amount within three days on two statements, one worded as a transfer
+ * (statement-transfers.mjs `legs`); the strict rule above takes out fewer. Production 2026-10-02: 2 loose pairs, 0 planned. Each loose pair is given the FIRST thing the strict rule needs that it
+ * lacks, so the next step is decided from the facts: a store other than expenses for the debit, a debit not worded as a transfer, a credit not worded as one, one bank, one account, a refund, an
+ * edit by the owner, a loan or subscription tie, a day outside the window (signed: credit minus debit), another record that could be the leg ('ambiguous'), or 'would-take-out'.
+ * @returns {{pairs:number, reasons:Object<string,number>}}
+ */
+export function looseLegsWhy(user) {
+    const list = key => (Array.isArray(user && user[key]) ? user[key] : []).filter(record => record && record.statementKey && Number(record.amount) > 0);
+    const debits = [...list('expenses').map(record => ({ record, store: 'expenses' })), ...list('cconetime').map(record => ({ record, store: 'cconetime' }))].filter(({ record }) => record.direction !== 'credit');
+    const credits = [...list('incomeRecv').map(record => ({ record, store: 'incomeRecv' })), ...list('ccPayments').map(record => ({ record, store: 'ccPayments' }))];
+    const strict = ownMoneyLegs(user), planned = new Set(strict.remove.map(entry => entry.record));
+    const reasons = {}; let pairs = 0;
+    for (const out of debits) {
+        for (const into of credits) {
+            const gap = dayOf(into.record.date) - dayOf(out.record.date);
+            if (into.record.statementKey === out.record.statementKey || cents(into.record.amount) !== cents(out.record.amount) || !(Math.abs(gap) <= 3)) continue;
+            if (!asTransfer(out.record) && !asTransfer(into.record)) continue;                      // not a loose pair at all
+            pairs += 1;
+            const card = into.store === 'ccPayments', limit = card ? [-CARD_BEFORE_DAYS, CARD_AFTER_DAYS] : [-BANK_DAYS, BANK_DAYS];
+            let why = 'would-take-out';
+            if (out.store !== 'expenses') why = `debit-in-${out.store}`;
+            else if (!asTransfer(out.record)) why = 'debit-not-worded-as-transfer';
+            else if (!card && !asTransfer(into.record)) why = 'credit-not-worded-as-transfer';
+            else if (card && GIVEN_BACK.test(textOf(into.record))) why = 'card-credit-is-a-refund';
+            else if (!card && (!bankKeyOf(out.record.bank) || bankKeyOf(out.record.bank) === bankKeyOf(into.record.bank))) why = 'same-bank-or-unknown';
+            else if (out.record.card_last4 && into.record.card_last4 && String(out.record.card_last4) === String(into.record.card_last4)) why = 'same-account';
+            else if (out.record.source !== 'statement' || into.record.source !== 'statement') why = 'not-from-a-statement';
+            else if (touched(out.record) || touched(into.record)) why = 'edited-by-the-owner';
+            else if (out.record.loanLink || out.record.subscriptionLink || into.record.loanLink || into.record.subscriptionLink) why = 'tied-to-a-loan-or-subscription';
+            else if (!(gap >= limit[0] && gap <= limit[1])) why = `day-gap-${gap > 0 ? '+' : ''}${gap}`;
+            else if (!planned.has(out.record)) why = 'ambiguous';
+            const key = `${card ? 'card' : 'bank'}:${why}`;
+            reasons[key] = (reasons[key] || 0) + 1;
+        }
+    }
+    return { pairs, reasons };
+}
+
+export default { ownMoneyLegs, looseLegsWhy, CARD_BEFORE_DAYS, CARD_AFTER_DAYS, BANK_DAYS };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ownMoneyLegs } from '../statement-legs.mjs';
+import { ownMoneyLegs, looseLegsWhy } from '../statement-legs.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
 import { ledgerCensus } from '../statement-sync.js';
 import { createFirestore } from './helpers/fake-firestore.js';
@@ -129,12 +129,41 @@ describe('the log says what the rule would take out, and takes nothing out', () 
         const before = structuredClone(user);
         const { lines, w } = await run(user);
         const line = lines.map(text => JSON.parse(text)).find(entry => entry.evt === 'statement-legs-plan');
-        expect(line).toEqual({ evt: 'statement-legs-plan', pairs: 2, records: 3, left: 0, looser: 2, kinds: { card: 1, bank: 2 }, banks: { DFCC: 1, NTB: 1, Dfccbank: 1 } });
+        expect(line).toEqual({ evt: 'statement-legs-plan', pairs: 2, records: 3, left: 0, looser: 2, kinds: { card: 1, bank: 2 }, banks: { DFCC: 1, NTB: 1, Dfccbank: 1 }, why: { 'card:would-take-out': 1, 'bank:would-take-out': 1 } });
         expect(lines.join('\n')).not.toMatch(/CEFT|TRANSFER|PAYMENT|3000|50000|0741|0771/i);
         expect(w.data.get('users/u')).toEqual(before);
     });
     it('a household with nothing to take out says so in zeros', async () => {
         const { lines } = await run({ expenses: [sys('a', 'expenses', '2026-03-05', 800, 'KEELLS')] });
-        expect(lines.map(text => JSON.parse(text)).find(entry => entry.evt === 'statement-legs-plan')).toEqual({ evt: 'statement-legs-plan', pairs: 0, records: 0, left: 0, looser: 0, kinds: {}, banks: {} });
+        expect(lines.map(text => JSON.parse(text)).find(entry => entry.evt === 'statement-legs-plan')).toEqual({ evt: 'statement-legs-plan', pairs: 0, records: 0, left: 0, looser: 0, kinds: {}, banks: {}, why: {} });
+    });
+});
+
+describe('why a loose pair is not taken out', () => {
+    const debit = (extra = {}) => sys('d', 'expenses', '2026-03-20', 3000, 'CEFT TRANSFER 0741234567', { k: 'bankstmt', ...extra });
+    const card = (extra = {}) => sys('cc', 'ccPayments', '2026-03-21', 3000, 'PAYMENT RECEIVED', { bank: 'AMEX', card_last4: '0276', k: 'cardstmt', ...extra });
+    const into = (extra = {}) => sys('i', 'incomeRecv', '2026-03-20', 3000, 'Inward Ceft Transfer', { bank: 'NTB', card_last4: '8057', k: 'ntb', ...extra });
+    const why = user => looseLegsWhy(user).reasons;
+    const edited = { _ut: Date.parse('2026-10-02T10:00:00.000Z') };
+    it('names the first thing the strict rule needs that the pair lacks', () => {
+        expect(why({ expenses: [debit()], ccPayments: [card()] })).toEqual({ 'card:would-take-out': 1 });
+        expect(why({ expenses: [debit()], ccPayments: [card({ date: '2026-03-18' })] })).toEqual({ 'card:day-gap--2': 1 });
+        expect(why({ expenses: [debit()], ccPayments: [card({ desc: 'REFUND TRANSFER' })] })).toEqual({ 'card:card-credit-is-a-refund': 1 });
+        expect(why({ expenses: [debit({ desc: 'POS KEELLS' })], ccPayments: [card({ desc: 'TRANSFER CREDIT' })] })).toEqual({ 'card:debit-not-worded-as-transfer': 1 });
+        expect(why({ expenses: [debit(edited)], ccPayments: [card()] })).toEqual({ 'card:edited-by-the-owner': 1 });
+        expect(why({ expenses: [debit({ loanLink: { loanId: 'L', month: '2026-03' } })], ccPayments: [card()] })).toEqual({ 'card:tied-to-a-loan-or-subscription': 1 });
+        expect(why({ cconetime: [debit()], ccPayments: [card()] })).toEqual({ 'card:debit-in-cconetime': 1 });
+        expect(why({ expenses: [debit()], incomeRecv: [into({ bank: 'DFCC', card_last4: '9999' })] })).toEqual({ 'bank:same-bank-or-unknown': 1 });
+        expect(why({ expenses: [debit({ bank: 'HNB' })], incomeRecv: [into({ desc: 'Salary Bonus' })] })).toEqual({ 'bank:credit-not-worded-as-transfer': 1 });
+        expect(why({ expenses: [debit({ bank: 'HNB' })], incomeRecv: [into({ date: '2026-03-23' })] })).toEqual({ 'bank:day-gap-+3': 1 });
+    });
+    it('two records that could be the one leg are "ambiguous"; no loose pair says nothing', () => {
+        expect(why({ expenses: [debit(), debit({ id: 'd2', k: 'other' })], ccPayments: [card()] })).toEqual({ 'card:ambiguous': 2 });
+        expect(why({ expenses: [debit()], ccPayments: [card({ amount: 3001 })] })).toEqual({});
+        expect(looseLegsWhy({})).toEqual({ pairs: 0, reasons: {} });
+    });
+    it('keys are words and signed days only: no amount, no description, no account', () => {
+        const keys = Object.keys(why({ expenses: [debit()], ccPayments: [card({ date: '2026-03-18' })], incomeRecv: [into({ bank: 'HNB' })] })).join(' ');
+        expect(keys).not.toMatch(/\d{3,}|CEFT|PAYMENT/i);
     });
 });
