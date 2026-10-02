@@ -274,8 +274,11 @@ describe('planning a deep scan', () => {
         const w = planWindows({ months: 1, now: NOW, senders: ['hnb.lk', 'dfcc.lk'] });
         expect(w[0].query).toContain('has:attachment');
         expect(w[0].query).toContain('from:hnb.lk OR from:dfcc.lk');
-        expect(w[0].query).toMatch(/after:2026\/08\/01/);
-        expect(w[0].query).toMatch(/before:2026\/09\/01/);
+        // padded one day each side (see planWindows): the exact month is enforced by the internalDate gate, not by the query
+        expect(w[0].query).toMatch(/after:2026\/07\/31/);
+        expect(w[0].query).toMatch(/before:2026\/09\/02/);
+        expect(w[0].after).toBe(Date.UTC(2026, 7, 1));
+        expect(w[0].before).toBe(Date.UTC(2026, 8, 1));
     });
 
     it('still writes a usable query with no sender list', () => {
@@ -489,8 +492,8 @@ describe('the scan query catches an unlisted bank', () => {
     });
 
     it('still asks for exactly one month', () => {
-        expect(q({ senders: [] })).toMatch(/after:2026\/08\/01/);
-        expect(q({ senders: [] })).toMatch(/before:2026\/09\/01/);
+        expect(q({ senders: [] })).toMatch(/after:2026\/07\/31/);
+        expect(q({ senders: [] })).toMatch(/before:2026\/09\/02/);
     });
 
     it('every term is quoted, so a two-word term stays one term', () => {

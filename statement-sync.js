@@ -24,6 +24,7 @@ import { tieredAsk } from './statement-llm-router.mjs';
 import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
 import { VIA, identityOf, claimStatement, peekStatement, releaseStatement, registryDuplicatePatch } from './statement-registry.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
+import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 import { healLoanLinks } from './loan-link.mjs';
 import { manualTwin, markTwin } from './statement-links.mjs';
@@ -1457,33 +1458,44 @@ export async function recheckPhantomStatements({ db, uid, limit = 5 }) {
 
 export function repairCategoriesInUser(user) {
     const next = structuredClone(user || {});
-    let expenses = 0, income = 0;
+    let expenses = 0, income = 0, asked = 0;   // asked: merchant questions raised or answered on the row (the row's category is not what changed)
     const fromStatement = record => record?.source === 'statement'
         || (/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(record?.statementKey || ''))
             && Number.isSafeInteger(record?.statementRow) && record.statementRow >= 0);
     if (Array.isArray(next.expenses)) next.expenses.forEach(record => {
-        if (!fromStatement(record) || !['', 'Other'].includes(String(record.cat || ''))) return;
-        const category = expenseCategoryFor({ description: record.desc || record.description || record.name || '' });
-        if (category !== 'Other') { record.cat = category; record.categorySource = 'statement-taxonomy-v1'; expenses += 1; }
+        if (!fromStatement(record)) return;
+        const generic = ['', 'Other'].includes(String(record.cat || ''));
+        // a question already put to the owner whose row has since been categorised (by them, or by a better list) is answered: say so, so the Merchant review stops showing it
+        if (!generic) { if (record.merchantReview && record.merchantReview.state === 'open') { record.merchantReview = { ...record.merchantReview, state: 'resolved' }; asked += 1; } return; }
+        const description = record.desc || record.description || record.name || '';
+        const category = expenseCategoryFor({ description });
+        if (category !== 'Other') {
+            record.cat = category; record.categorySource = 'statement-taxonomy-v1';
+            if (record.merchantReview && record.merchantReview.state === 'open') record.merchantReview = { ...record.merchantReview, state: 'resolved' };
+            expenses += 1;
+            return;
+        }
+        // still unplaced: it carries its question (rows filed before the question existed get it here, once)
+        if (!record.merchantReview) { const ask = inquiryFor(description); if (ask) { record.merchantReview = ask; asked += 1; } }
     });
     if (Array.isArray(next.incomeRecv)) next.incomeRecv.forEach(record => {
         if (!fromStatement(record) || !['', 'Other', 'Income'].includes(String(record.type || ''))) return;
         const category = incomeCategoryFor({ description: record.name || record.desc || record.description || '' });
         if (category !== 'Other') { record.type = category; record.categorySource = 'statement-taxonomy-v1'; income += 1; }
     });
-    return { user: next, expenses, income, total: expenses + income };
+    return { user: next, expenses, income, asked, total: expenses + income };
 }
 
 export async function repairStatementCategories({ db, uid }) {
     const userRef = db.collection('users').doc(uid);
     return db.runTransaction(async tx => {
         const snap = await tx.get(userRef);
-        if (!snap.exists) return { expenses: 0, income: 0, total: 0 };
+        if (!snap.exists) return { expenses: 0, income: 0, total: 0, asked: 0 };
         const result = repairCategoriesInUser(snap.data());
         // Stamped like every other server write to this document: a snapshot whose stamp still names the last DEVICE to
         // push is read by that device as the echo of its own write, and the repair was never applied there.
-        if (result.total) tx.set(userRef, { expenses: result.user.expenses || [], incomeRecv: result.user.incomeRecv || [], _lastModified: new Date(), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: Date.now() }, { merge: true });
-        return { expenses: result.expenses, income: result.income, total: result.total };
+        if (result.total || result.asked) tx.set(userRef, { expenses: result.user.expenses || [], incomeRecv: result.user.incomeRecv || [], _lastModified: new Date(), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: Date.now() }, { merge: true });
+        return { expenses: result.expenses, income: result.income, total: result.total, asked: result.asked };
     });
 }
 
@@ -2396,7 +2408,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     try {
         const byBank = {};
         for (const doc of pending.docs) { const bank = String(doc.data()?.bank || '?').slice(0, 24); byBank[bank] = (byBank[bank] || 0) + 1; }
-        console.info(JSON.stringify({ evt: 'statement-sync-run', ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', ...(frontIncomplete ? { frontIncomplete: true } : {}), redriven: redrive.redriven, deadLettered: redrive.waiting,
+        console.info(JSON.stringify({ evt: 'statement-sync-run', merchantList: REGISTRY_SIZE, ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', ...(frontIncomplete ? { frontIncomplete: true } : {}), redriven: redrive.redriven, deadLettered: redrive.waiting,
             pending: pending.docs.length, processing: processing.docs.length, byBank, collectionMore, aiDown: Object.entries(breaker.health).filter(([, v]) => Number(v?.downUntil) > Date.now()).map(([k, v]) => `${k}:${String(v.reason || '').slice(0, 40)}`) }));
     } catch (_) { /* a log line never stops a sync */ }
     return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, orphansHealed, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, /* THE LAST REPORT STANDS WHEN THIS RUN MADE NO NEW ONE. The report (statements checked in, emails refused, closed months, the audit log) was returned only by a run that did the mailbox

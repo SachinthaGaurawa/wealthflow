@@ -276,10 +276,16 @@ export const BUDGETS = {
     // amount paid), future months and unpaid items count nothing and are listed as "due, not paid" instead; the Monthly Plan page shows what was paid, what is due and every group that is in its
     // total; the Expense Breakdown is built from the same books so it adds up to Year Expenses; Upcoming Payments and Recent Activity leave out what is paid / not yet happened. No new
     // script or request. ~0.3% headroom.
-    // Raised 2026-10-02 (the phone's own mailbox review): 2,130,000 -> 2,136,000 (measured 2,132,153). The review that opens a mailbox statement on the device asks the statement
-    // registry before it opens (a statement the email sync or an upload already holds is shown as "Already added" and not offered) and takes the statement at Save, one lock for all
-    // three doors; the server side is statement-guard.js and wealthflow-statement-cloud.js. No new script or request. ~0.2% headroom.
-    htmlBytes: 2_136_000,
+    // Raised 2026-10-03: 2,130,000 -> 2,160,000 (measured 2,148,591 + headroom). DSCR, the WealthFlow Score, the Debt Demolisher, the Wealth Simulator, the 3D Cash Flow and the AI advisor's context now
+    // read ONE typical month from the owner's books (the same getMonthlyData the dashboard totals with, over the last twelve complete months; debt service kept apart from living costs) and one
+    // position (cash, investments, what is owed): they read the Investments list and this month's hand-typed expenses before, so the salary, the card charges, the subscriptions and the
+    // installments never reached them. The Score's seven factors, DSCR's starting figures, the Debt Demolisher's extra-payment pool, the Wealth Simulator's start and monthly saving (now
+    // reproducible and keeping the saving's buying power) and the 3D flow's seven groups are rebuilt on them; the pages no longer lose what the owner typed when the app repaints. No new
+    // script or request. ~0.5% headroom.
+    // 2026-10-02 (the phone's own mailbox review): no raise needed over the 2,160,000 above. The review that opens a mailbox statement on the device now asks the statement registry before it
+    // opens (a statement the email sync or an upload already holds is shown as "Already added" and not offered) and takes the statement at Save, one lock for all three doors; measured
+    // 2,154,943 with it, merged onto the Score/DSCR work. The server side is statement-guard.js and wealthflow-statement-cloud.js. No new script or request. ~0.2% headroom.
+    htmlBytes: 2_160_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -552,7 +558,13 @@ export const BUDGETS = {
     // 2026-10-02 (card payments, exact to the cent): 2,000,000 -> 2_004_000 (measured 2,000,067 + headroom): wealthflow-cc-reconcile.js only. The page's
     // oldest-first card walk reads every amount as whole cents from its decimal text (no float sum, no tolerance), carries what is left in the pool and says
     // what the first unpaid charge still needs — the same rule the worker applies to the document (cc-fifo.mjs, server-side, not shipped to the page).
-    totalJsBytes: 2_004_000,
+    // 2026-10-02 (historical sweep): no change to the ceiling above; the sweep's retry/backoff helper and padded window query (wealthflow-backfill.js) add ~1 KB inside its headroom.
+    // Raised again, on top of the line above, by about 9 KB for the merchant engine in wealthflow-merchants.js: +9 KB, of which about 4 KB is
+    // code (most-specific-name-wins with a declared ambiguity, the gateway/terminal wrappers stripped from a merchant's key, a line that names no shop going straight to
+    // the owner without a web search or an AI call, and the email pipeline's question picked up from the filed row) and the rest is the comments recording WHY. No module
+    // and no request were added: the 950-merchant list the email pipeline now uses lives in statement-merchants.mjs, which is server-only and never reaches the page.
+    // 2026-10-02: 2,016,000 -> 2,019,000 (measured 2,016,087): wealthflow-statement-cloud.js only, for the phone's own mailbox review (the registry check/claim call for a mailbox item). No module or script tag added.
+    totalJsBytes: 2_019_000,
     largestModuleBytes: 217_000, // measured 215,954
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

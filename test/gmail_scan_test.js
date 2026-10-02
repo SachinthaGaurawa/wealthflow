@@ -33,8 +33,9 @@ describe('the window is derived, never accepted', () => {
         const w = windowFor({ months: 6, index: 0, now: NOW, senders: SENDERS });
         expect(w.label).toBe('2026-08');
         expect(w.query).toContain('has:attachment');
-        expect(w.query).toContain('after:2026/08/01');
-        expect(w.query).toContain('before:2026/09/01');
+        expect(w.query).toContain('after:2026/07/31');   // padded a day each side; the exact month is the internalDate gate
+        expect(w.query).toContain('before:2026/09/02');
+        expect([w.after, w.before]).toEqual([Date.UTC(2026, 7, 1), Date.UTC(2026, 8, 1)]);
         expect(w.query).toContain('from:no-reply@hnb.lk');
         expect(w.query).not.toContain('filename:');
     });

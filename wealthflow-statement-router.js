@@ -31,10 +31,34 @@ const EXPENSE_CATEGORY_RULES = [
   ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube\s+premium|playstation|xbox|concert|bowling)\b/i],
 ];
 
+/* THE SERVER HANDS THE ROUTER ITS MERCHANT LIST. statement-merchants.mjs (server-only; reads merchants.json) calls this when it is imported: the router, which the page also
+ * loads, never imports the list, and a page that never loads it behaves exactly as before. */
+let merchantClassifier = null;
+export function setMerchantClassifier(classify, categories = []) {
+  merchantClassifier = typeof classify === 'function' ? classify : null;
+  for (const category of categories) if (!CLASSIFY_CATEGORIES.includes(category)) CLASSIFY_CATEGORIES.splice(CLASSIFY_CATEGORIES.indexOf('Card Payment'), 0, category);
+}
+
+/** The category the fixed rules alone give a narration, or null — with no merchant list. (The lint in test/merchant_triage_test.js holds the list to these rules.) */
+export function expenseRuleCategory(row) {
+  const desc = String(descOf(row)).replace(/[*_/]+|(?<=[a-z])-(?=[a-z])/gi, ' ');
+  const hit = EXPENSE_CATEGORY_RULES.find(([, pattern]) => pattern.test(desc));
+  return hit ? hit[0] : null;
+}
+
 export function expenseCategoryFor(row) {
-  const desc = descOf(row).replace(/[*_/]+|(?<=[a-z])-(?=[a-z])/gi, ' ');   // a gateway's "*", "-" and "/" separate words
-  for (const [category, pattern] of EXPENSE_CATEGORY_RULES) if (pattern.test(desc)) return category;
-  return 'Other';
+  const desc = String(descOf(row)).replace(/[*_/]+|(?<=[a-z])-(?=[a-z])/gi, ' ');   // a gateway's "*", "-" and "/" separate words
+  const listed = merchantClassifier ? merchantClassifier(desc) : null;
+  /* A SPECIFIC NAME BEATS A BRAND WORD. The rules below know "amazon" as Shopping; the merchant list knows "amazon prime" as Streaming. When the list names a business in
+   * two words or more and the rules say something else, the longer name is the better evidence ("AMAZON PRIME" was being filed as Shopping). */
+  const byRule = EXPENSE_CATEGORY_RULES.find(([, pattern]) => pattern.test(desc));
+  if (listed && listed.category && listed.basis === 'registry' && listed.words >= 2 && (!byRule || byRule[0] !== listed.category) && !(byRule && byRule[0] === 'Bank Charges')) return listed.category;
+  if (listed && listed.ambiguous) return 'Other';   // two known merchants (or two kinds of business) on one line: not picked between, whatever one brand word in the rules says
+  if (byRule) return byRule[0];
+  /* What the rules do not name, the merchant list the app already carries (merchants.json, 950 businesses) and the words for what a business sells may: the same words, the
+   * same answer in the app and on the server. A name that fits two kinds of business equally well is NOT picked between: it stays "Other" and is put to the owner
+   * (statement-merchants.mjs). */
+  return listed && listed.category ? listed.category : 'Other';
 }
 
 const INCOME_CATEGORY_RULES = [
