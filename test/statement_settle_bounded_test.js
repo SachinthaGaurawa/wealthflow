@@ -73,7 +73,7 @@ describe('the retired statements are looked up together, within the deadline, an
     const run = (w, f, extra = {}) => reviveRetiredSources({ db: w.db, mailRef: w.db.collection('wf-mail').doc('owner_example_com'), uid: 'u', senders: SENDERS, token: 't', f, log: () => {}, ...extra });
     it('at most six requests are in flight at once, at most `lookups` are made, and the rest is `more`', async () => {
         let live = 0, peak = 0;
-        const f = vi.fn(async () => { live += 1; peak = Math.max(peak, live); await new Promise(r => setTimeout(r, 5)); live -= 1; return { ok: true, status: 200, json: async () => ({ payload: { headers: [{ name: 'From', value: 'NTB <statements@info.nationstrust.com>' }] } }) }; });
+        const f = vi.fn(async () => { live += 1; peak = Math.max(peak, live); await new Promise(r => setTimeout(r, 5)); live -= 1; return { ok: true, status: 200, json: async () => ({ payload: { headers: [{ name: 'From', value: 'NTB <estatement@info.nationstrust.com>' }] } }) }; });
         const out = await run(world(ids), f, { lookups: 12 });
         expect(peak).toBeLessThanOrEqual(6);
         expect(peak).toBeGreaterThan(1);

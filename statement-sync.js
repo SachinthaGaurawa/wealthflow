@@ -4,7 +4,7 @@ import { getAdminDb } from './admin-db.mjs';
 import { identify, userKeyFor, sendersOf } from './gmail-link.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { syncMailbox } from './gmail-hook.js';
-import { policyFrom, matchSender, normalizeList, approvedClauses, relatedApproval } from './wealthflow-mail-senders.mjs';
+import { policyFrom, matchSender, normalizeList, approvedClauses, hasApproved } from './wealthflow-mail-senders.mjs';
 import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf, gridOf, gridLines, chainOf, chainLines } from './statement-coverage.mjs';
 import { REJECT_TEXT, REJECT } from './wealthflow-mail-ingest.mjs';
 import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
@@ -26,7 +26,7 @@ import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 import { healLoanLinks } from './loan-link.mjs';
 import { policyWithReach } from './bank-reach.mjs';
-import { planWithEvidence, evidenceContext, bankStillOwned, documentProof, knownLast4 } from './statement-evidence.mjs';
+import { planWithEvidence, evidenceContext, documentProof, knownLast4 } from './statement-evidence.mjs';
 import { formKind } from './statement-document-kind.mjs';
 import { repairByArithmetic } from './statement-repair.mjs';
 import { buildHistory } from './statement-history.mjs';
@@ -478,19 +478,15 @@ async function rejectNonStatement(db, uid, ref, leaseToken, identity) {
     });
 }
 
-// Was this stored message taken on the owner's approval, and is that approval still in force? An
-// approved address always is. A statement taken from the bank's OTHER address (via: 'series') is only
-// while the owner still approves an address at that bank; revoke it and the statement is retired.
+// Was this stored message taken on the owner's approval, and is that approval still in force? ONLY an exact address on the owner's Senders list is: another desk of the bank, the same series of
+// file names and a mail that says statement are not, however the message came to be stored — revoke the address and the statement is retired.
 function senderStillApproved(senders, source) {
-    if (matchSender(senders, source.from || '').verdict === 'approved') return true;
-    // taken on evidence (statement-evidence.mjs): while the owner still approves an address at the bank it named
-    if (source.via === 'evidence') return bankStillOwned(senders, source.bank || '');
-    return (source.via === 'series' || source.via === 'sibling') && !!relatedApproval(senders, source.from || '');
+    return matchSender(senders, source.from || '').verdict === 'approved';
 }
 
 // The rules a stored message was taken under, so reading it again judges it the same way.
 function intakeRules(senders, source) {
-    return { ...policyWithReach(senders), ...(source.via === 'owner' ? { forced: true } : {}), ...(source.via === 'series' ? { siblingSeries: new Set([filenameStem(source.filename)]) } : {}) };
+    return { ...policyWithReach(senders), ...(source.via === 'owner' ? { forced: true } : {}) };
 }
 
 async function retireUnapprovedSource(db, uid, mailRef, ref, now = Date.now()) {
@@ -512,7 +508,7 @@ export async function attachmentBytes(source, ref, token, senders, f = fetch, ow
     if (response.status === 404) throw new Error('statement-message-deleted');
     if (!response.ok) throw new Error('gmail-fetch-unavailable');
     const message = await response.json();
-    const plan = source.via === 'evidence' ? planWithEvidence(message, intakeRules(senders, source), evidenceContext(senders, ownerEmail)) : planMessage(message, intakeRules(senders, source));
+    const plan = planMessage(message, intakeRules(senders, source));
     if (!plan.ok) throw Object.assign(new Error('statement-sender-no-longer-approved'), { planReason: String(plan.reason || '').slice(0, 80) });
     let items = plan.items.filter(item => item.key === ref.id || item.legacyKey === ref.id);
     if (items.length === 0 && source.attachmentId) {
@@ -768,12 +764,12 @@ export async function repairCardInstallments({ db, uid, now = Date.now(), log = 
  * was not (or not yet) one the owner approves, the worker retired it and nothing ever looked again. Two things made that wrong for real mail: items stored by the
  * client scan carried no `via`, so another desk of an approved bank (info.* beside estmt.*: one bank) read as a stranger; and a later approval — or a registered domain
  * the audit now searches — made the sender right after the fact. 14 NTB statements sat retired like that, "refused", while the owner counted missing years.
- * Now: each retired item is judged again under TODAY's list (exact approval, another desk of an approved bank, a registered domain of one, or the bank an
- * evidence-taken item named), unless the owner BLOCKED that sender, and goes back in the queue with the reason it is taken written on it. The worker still fetches the
+ * Now: each retired item is judged again under TODAY's list — and only an EXACT address on it brings one back (another desk of the bank, a registered domain of it and a mail that says
+ * statement never do, the owner's rule) — unless the owner BLOCKED that sender; it goes back in the queue with the reason it is taken written on it. The worker still fetches the
  * message, applies the intake rules to it and holds the document to what it is; if it is retired again it is not revived a third time. */
 export async function reviveRetiredSources({ db, mailRef, uid, senders, token = '', f = null, limit = 150, lookups = 24, now = Date.now(), until = Infinity, log = console.info }) {
     const found = await mailRef.collection('items').where('status', '==', 'rejected_unapproved_sender').limit(limit).get();
-    const list = normalizeList(senders), policy = policyWithReach(list);
+    const list = normalizeList(senders);
     const banks = {}, fromOf = new Map();
     let revived = 0, kept = 0, unknown = 0, looked = 0, gone = 0;
     /* PRODUCTION, 2026-10-02: 57 retired items were looked at and 56 had NO `from` — stored before the sender was recorded on an item. The sender is on the MESSAGE: it is read
@@ -813,17 +809,14 @@ export async function reviveRetiredSources({ db, mailRef, uid, senders, token = 
         // written on the item at once, whatever is decided: the next pass (and the owner's audit log) has the sender without asking Gmail again
         if (!source.from) { source.from = from; try { await doc.ref.set({ from }, { merge: true }); } catch (_) { /* looked up again next pass */ } }
         if (Number(source.reviveCount) >= 2) { kept += 1; continue; }
-        const said = matchSender(list, source.from).verdict;
-        const exact = said === 'approved';
-        const related = !exact && said !== 'blocked' && !!policy.related(source.from);
-        const evidence = !exact && !related && said !== 'blocked' && source.via === 'evidence' && bankStillOwned(list, source.bank || '');
-        if (!exact && !related && !evidence) { kept += 1; continue; }
-        const via = exact ? String(source.via || '') : evidence ? 'evidence' : (source.via === 'series' ? 'series' : 'sibling');
+        // only an exact address on the owner's list brings a retired statement back: another desk of the bank, a registered domain of it or a mail that merely says statement never does
+        if (matchSender(list, source.from).verdict !== 'approved') { kept += 1; continue; }
+        const via = String(source.via || '').replace(/^(?:sibling|series|evidence)$/, '');
         const done = await db.runTransaction(async tx => {
             const snap = await tx.get(doc.ref), current = snap.data() || {};
             if (!snap.exists || current.status !== 'rejected_unapproved_sender' || (current.uid && current.uid !== uid)) return false;
             tx.set(doc.ref, { uid, status: 'pending', filed: false, hasReview: false, cursor: 0, totalRows: null, rowSetHash: '', moneyHash: '', leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0,
-                ...(via ? { via } : {}), reviveCount: (Number(current.reviveCount) || 0) + 1, revivedAt: now, updatedAt: now }, { merge: true });
+                ...(via ? { via } : RELEASE_VIAS.includes(current.via) ? { via: '' } : {}), reviveCount: (Number(current.reviveCount) || 0) + 1, revivedAt: now, updatedAt: now }, { merge: true });
             return true;
         });
         if (done) { revived += 1; const bank = String(source.bank || '?').slice(0, 24); banks[bank] = (banks[bank] || 0) + 1; }
@@ -1164,6 +1157,98 @@ export async function removeOwnTransferRecords({ db, mailRef, uid, now = Date.no
         tx.set(userRef, { ...changes, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
         return { removed: gone.length, more: gone.length >= limit };
     });
+}
+
+/* WHAT CAME IN BY ANY WAY BUT THE OWNER'S LIST IS TAKEN BACK OUT. Only an exact address on the Senders list brings a statement in; for a while another desk of an approved bank, the same series of
+ * file names and a mail that merely said statement (via 'sibling' / 'series' / 'evidence') were taken as well, and their rows reached the books (the interim statement a bank staff member sent
+ * before the official one, September's rows in Income). Each such statement whose sender is not an exact address on the list TODAY is un-filed whole: every record it filed (expenses, income, card
+ * charges, card payments, installment plans, and what it did to a loan month, a subscription or a cheque) leaves the books with a tombstone so no device or heal brings it back; its ledger rows are
+ * released for a re-decision (so the statement is read afresh if the owner ever adds the sender) and its waiting reviews are closed; the statement is retired as `rejected_unapproved_sender`.
+ * Records the owner typed, and records of any other statement, are never touched (a record is found by the statement's own key). Counts only are logged. */
+export const EXACT_SENDER_VERSION = 1;
+const RELEASE_VIAS = ['sibling', 'series', 'evidence'];
+const BOOK_LISTS = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'];
+export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
+    const userRef = db.collection('users').doc(uid), path = itemRef.path, CAP = 400;
+    return db.runTransaction(async tx => {
+        const [itemSnap, userSnap, ledger, reviews] = await Promise.all([
+            tx.get(itemRef), tx.get(userRef),
+            tx.get(userRef.collection('statementLedger').where('sourcePath', '==', path).limit(CAP)),
+            tx.get(userRef.collection('statementReview').where('sourcePath', '==', path).limit(60)),
+        ]);
+        if (!itemSnap.exists || (itemSnap.data().uid && itemSnap.data().uid !== uid)) return { records: 0, ledger: 0, done: false };
+        const user = structuredClone(userSnap.data() || {}), changes = {}, gone = new Set(), tomb = user._tomb && typeof user._tomb === 'object' ? { ...user._tomb } : {};
+        for (const key of BOOK_LISTS) {
+            const list = Array.isArray(user[key]) ? user[key] : [], keep = [];
+            for (const record of list) {
+                if (record && record.statementKey === path) { gone.add(String(record.id)); tomb[key] = { ...(tomb[key] && typeof tomb[key] === 'object' ? tomb[key] : {}), [record.id]: now }; } else keep.push(record);
+            }
+            if (keep.length !== list.length) changes[key] = keep;
+        }
+        const stripped = (list, field, drop) => (Array.isArray(list) ? list : []).map(entry => {
+            const rows = Array.isArray(entry && entry[field]) ? entry[field] : null;
+            if (!rows || !rows.some(drop)) return entry;
+            return { ...entry, [field]: rows.filter(row => !drop(row)), _ut: now };
+        });
+        const touched = (before, after) => JSON.stringify(before) !== JSON.stringify(after);
+        const plans = stripped(user.ccinstall, 'payments', row => row && row.statementKey === path);
+        if (!changes.ccinstall && touched(user.ccinstall, plans)) changes.ccinstall = plans; else if (changes.ccinstall) changes.ccinstall = stripped(changes.ccinstall, 'payments', row => row && row.statementKey === path);
+        const subs = stripped(user.subscriptions, 'history', row => row && row.statementKey === path);
+        if (touched(user.subscriptions, subs)) changes.subscriptions = subs;
+        const loans = stripped(user.loans, 'payments', row => row && row.source === 'statement' && gone.has(String(row.expenseId)));
+        if (touched(user.loans, loans)) changes.loans = loans;
+        const cheques = (Array.isArray(user.cheques) ? user.cheques : []).map(cheque => {
+            if (!cheque || cheque.statementKey !== path) return cheque;
+            const { clearedDate, statementKey, statementRow, ...rest } = cheque;
+            return { ...rest, status: rest.status === 'cleared' ? 'pending' : rest.status, _ut: now };
+        });
+        if (touched(user.cheques, cheques)) changes.cheques = cheques;
+        const more = ledger.docs.length >= CAP;
+        for (const doc of ledger.docs) tx.set(doc.ref, { status: 'superseded_by_layout', supersededBy: 'exact-sender-rule', settledAt: now }, { merge: true });
+        let closed = 0;
+        for (const doc of reviews.docs) if (doc.data().status === 'pending') { tx.set(doc.ref, { status: 'resolved', replayStatus: 'sender-not-on-your-list', resolvedAt: now }, { merge: true }); closed += 1; }
+        if (Object.keys(changes).length) tx.set(userRef, { ...changes, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        tx.set(itemRef, { status: 'rejected_unapproved_sender', filed: false, hasReview: false, leaseToken: '', leaseUntil: 0, retryAt: 0, rejectionReason: 'sender-not-on-your-list', ...(more ? {} : { unlistedV: EXACT_SENDER_VERSION }), unlistedRemovedAt: now, updatedAt: now }, { merge: true });
+        return { records: gone.size, ledger: ledger.docs.length, reviews: closed, done: !more };
+    });
+}
+
+export async function removeUnlistedSenderStatements({ db, mailRef, uid, senders, token = '', f = null, now = Date.now(), until = Infinity, limit = 3, lookups = 12, log = console.info }) {
+    const list = normalizeList(senders);
+    // an unread or empty list would call every statement unlisted: nothing is removed without at least one exact address the owner approved
+    if (!hasApproved(list)) return { removed: 0, more: false, pending: 0 };
+    const found = await mailRef.collection('items').where('via', 'in', RELEASE_VIAS).limit(300).get();
+    const fromOf = new Map(), goneIds = new Set(), todo = [];
+    const open = found.docs.filter(doc => { const item = doc.data() || {}; return (!item.uid || item.uid === uid) && !(Number(item.unlistedV) >= EXACT_SENDER_VERSION); });
+    const wanted = [...new Set(open.filter(doc => !doc.data().from && doc.data().messageId).map(doc => String(doc.data().messageId)))].slice(0, lookups);
+    if (wanted.length && token && typeof f === 'function') {
+        const ask = async id => {
+            try {
+                const response = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From`, { headers: authed(token), signal: AbortSignal.timeout(6000) });
+                if (response.status === 404) goneIds.add(id);
+                else if (response.ok) fromOf.set(id, String(((await response.json()).payload?.headers || []).find(h => String(h?.name || '').toLowerCase() === 'from')?.value || ''));
+            } catch (_) { /* asked again at the next pass */ }
+        };
+        for (let at = 0; at < wanted.length && Date.now() < until; at += 6) await Promise.all(wanted.slice(at, at + 6).map(ask));
+    }
+    let kept = 0, unknown = 0;
+    for (const doc of open) {
+        const item = doc.data() || {}, from = String(item.from || fromOf.get(String(item.messageId || '')) || '');
+        // a message Gmail no longer has was taken as another desk's, and its sender cannot be read again: it is not an exact address of the list
+        if (!from && !goneIds.has(String(item.messageId || ''))) { unknown += 1; continue; }
+        if (from && matchSender(list, from).verdict === 'approved') { kept += 1; continue; }
+        todo.push(doc);
+    }
+    let removed = 0, records = 0, ledger = 0, reviews = 0, unfinished = 0;
+    for (const doc of todo.slice(0, limit)) {
+        if (Date.now() > until) break;
+        const r = await unfileStatement({ db, uid, itemRef: doc.ref, now });
+        if (r.done === false) unfinished += 1;
+        removed += 1; records += r.records || 0; ledger += r.ledger || 0; reviews += r.reviews || 0;
+    }
+    const more = todo.length > removed || unfinished > 0;
+    if (found.docs.length || removed) log(JSON.stringify({ evt: 'statement-unlisted-removed', released: found.docs.length, removed, records, ledger, reviews, kept, noSender: unknown, ...(more ? { more: true } : {}) }));
+    return { removed, more, pending: unknown };
 }
 
 // Reviews raised before the reader knew better: a "transaction" with a month-end date, no description and
@@ -1856,10 +1941,8 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
     try { live = (await mailRef.get()).data() || mail; } catch (_) { /* advice only: a stale copy is acceptable */ }
     const before = new Map((Array.isArray(live.coverage?.series) ? live.coverage.series : []).map(s => [`${s.bank}|${s.label}`, s]));
     const list = normalizeList(sendersOf(mail));
-    // Judged exactly as intake will judge it: a message from the bank's other address that is named like a
-    // statement already filed is one the intake takes, so the report must not call it "a new address".
-    const stems = new Set(items.filter(i => i.filed === true && i.filename).map(i => filenameStem(i.filename)).filter(st => st.replace(/[^a-z]/g, '').length >= 6));
-    const policy = { ...policyWithReach(list), siblingSeries: stems };
+    // Judged exactly as intake will judge it: only an exact address on the owner's list is taken.
+    const policy = policyWithReach(list);
     const stored = new Set(items.map(item => String(item.messageId || '')).filter(Boolean));
     const missingKey = coverage.series.map(s => `${s.key}:${s.missing.join(',')}`).join('|');
     const due = search && coverage.missing > 0 && (now - (Number(mail.lastGapSearchMs) || 0) >= GAP_SEARCH_EVERY_MS || mail.gapMissingKey !== missingKey);
@@ -1958,6 +2041,12 @@ async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs
         done.reopened = r.requeued; if (r.rows) done.reopenedRows = r.rows; out.more = out.more || r.more || r.requeued > 0;
         if (!r.more && !r.requeued) await mailRef.set({ transferReopenV: TRANSFER_REOPEN_VERSION }, { merge: true });
     });
+    if ((Number(mail.exactSenderV) || 0) < EXACT_SENDER_VERSION) steps.push(async stepUntil => {
+        const r = await removeUnlistedSenderStatements({ db, mailRef, uid, senders: sendersOf(mail), token, f, until: stepUntil });
+        if (r.removed) done.unlistedRemoved = r.removed;
+        out.more = out.more || r.more;
+        if (!r.more && !r.pending) await mailRef.set({ exactSenderV: EXACT_SENDER_VERSION }, { merge: true });
+    });
     if ((Number(mail.transferReopenV) || 0) >= TRANSFER_REOPEN_VERSION && (Number(mail.ownTransferV) || 0) < OWN_TRANSFER_VERSION) steps.push(async () => {
         const r = await removeOwnTransferRecords({ db, mailRef, uid });
         if (r.removed) done.ownRemoved = r.removed;
@@ -1972,7 +2061,7 @@ async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs
     }
     try { await mailRef.set({ lastSettleMs: Date.now(), settleMore: out.more }, { merge: true }); } catch (_) { /* the pass simply runs again */ }
     /* one line, and only when the pass did or left something: this is how the log shows the owner's waiting reviews being settled */
-    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0 || done.wholeWhy || done.reopened > 0 || done.ownRemoved > 0) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
+    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0 || done.wholeWhy || done.reopened > 0 || done.ownRemoved > 0 || done.unlistedRemoved > 0) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
     return out;
 }
 

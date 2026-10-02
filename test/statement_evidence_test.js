@@ -8,9 +8,10 @@ import { discoveryQueries, subjectSkeleton, fileWords, listDiscovery, discoveryC
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { attachmentBytes } from '../statement-sync.js';
 
-// THE GAP: every way of finding a bank's mail was keyed on who sent it. A statement from an address nobody listed — an older mailer, a card centre, a relay —
-// was a stranger's, held for a tap nobody makes years later. The evidence rule takes it on what the mail SAYS (a statement, of exactly one of the owner's banks),
-// that Google says it IS from the domain it claims, and what the DOCUMENT proves; anything less is what it was before.
+// THE OWNER'S RULE: only an address on the Senders list brings a statement in. A statement from an address nobody listed — an older mailer, a card centre, a relay, a bank
+// staff member — is NOT taken, however well the mail says statement; the evidence only LABELS the refusal: a mail that does not even say it is a statement of one of the
+// owner's banks is dropped without a trace, one that could be is held (a reference only) so the sender can be added with one tap. What the DOCUMENT proves (documentProof) is
+// used once the sender IS listed.
 
 const approved = (id, name) => ({ id, kind: 'address', status: 'approved', name, domain: id.split('@')[1] });
 const OWNER = [approved('e-statements@hnb.lk', 'HNB'), approved('statements@dfccbank.com', 'DFCC Bank'), approved('estatement@info.nationstrust.com', 'NTB')];
@@ -38,23 +39,23 @@ describe('the owner\'s banks, and the words each is called by', () => {
 });
 
 describe('a statement from an address nobody listed', () => {
-    it('before: held for a tap (sender-not-on-your-list). After: taken on evidence, as another desk of the bank the mail names', () => {
+    it('is NOT taken, however well the mail says statement: it is held for the owner\'s tap, labelled with the bank the evidence names', () => {
         const m = message('old1');
         expect(planMessage(m, policy)).toMatchObject({ ok: false, reason: REJECT.NOT_ON_YOUR_LIST });
         const plan = planWithEvidence(m, policy, ctx);
-        expect(plan.ok).toBe(true);
-        expect(plan).toMatchObject({ via: 'evidence', bank: 'HNB', intent: 'suspect' });
-        expect(plan.items[0]).toMatchObject({ via: 'evidence', bank: 'HNB', intent: 'suspect', known: true });
+        expect(plan).toMatchObject({ ok: false, reason: REJECT.NOT_ON_YOUR_LIST, evidence: { ok: true, bank: 'HNB' } });
+        expect(plan.items).toBeUndefined();
+        expect(plan.via).toBeUndefined();
     });
-    it('the bank is named by the subject, the file name or (failing those) the body — and by the sender\'s own domain; exactly one', () => {
-        expect(planWithEvidence(message('b', { subject: 'e-Statement', filename: 'DFCC_Statement_2022JAN.pdf', domain: 'dfcc-mailer.example', from: 'Statements <s@dfcc-mailer.example>' }), policy, ctx)).toMatchObject({ ok: true, bank: 'DFCC Bank' });
-        expect(planWithEvidence(message('c', { subject: 'Your monthly statement', filename: 'stmt.pdf', body: 'Dear customer, your Hatton National Bank statement is attached.' }), policy, ctx)).toMatchObject({ ok: true, bank: 'HNB' });
+    it('the bank is named by the subject, the file name or (failing those) the body — and by the sender\'s own domain; exactly one (a label only: nothing is taken)', () => {
+        expect(planWithEvidence(message('b', { subject: 'e-Statement', filename: 'DFCC_Statement_2022JAN.pdf', domain: 'dfcc-mailer.example', from: 'Statements <s@dfcc-mailer.example>' }), policy, ctx)).toMatchObject({ ok: false, evidence: { ok: true, bank: 'DFCC Bank' } });
+        expect(planWithEvidence(message('c', { subject: 'Your monthly statement', filename: 'stmt.pdf', body: 'Dear customer, your Hatton National Bank statement is attached.' }), policy, ctx)).toMatchObject({ ok: false, evidence: { ok: true, bank: 'HNB' } });
         expect(planWithEvidence(message('d', { subject: 'Your HNB and DFCC statement' }), policy, ctx)).toMatchObject({ ok: false, evidence: { why: 'another-bank-is-named-in-the-subject' } });
     });
     it('NOT taken: no statement word, no bank of theirs named, an invoice, a stranger with nothing to vouch for it', () => {
         expect(planWithEvidence(message('e', { subject: 'HNB offers for you', filename: 'offer.pdf' }), policy, ctx)).toMatchObject({ ok: false, evidence: { why: 'the-subject-and-file-names-do-not-say-statement' } });
         expect(planWithEvidence(message('f', { subject: 'Your account statement', filename: 'statement.pdf', from: 'Accounts <a@accbuddy.example>', domain: 'accbuddy.example' }), policy, ctx)).toMatchObject({ ok: false, evidence: { why: 'no-bank-name-in-the-sender-domain' } });
-        expect(planWithEvidence(message('g', { subject: 'HNB statement', filename: 'Invoice_10442.pdf' }), policy, ctx)).toMatchObject({ ok: false, evidence: { why: 'refused-after-release:' + REJECT.NOT_A_STATEMENT_DOC } });       // a file that says invoice is still an invoice
+        expect(planWithEvidence(message('g', { subject: 'HNB statement', filename: 'Invoice_10442.pdf' }), policy, ctx)).toMatchObject({ ok: false, reason: REJECT.NOT_ON_YOUR_LIST });       // and a file that says invoice is no more taken than any other
         expect(planWithEvidence(message('h', { subject: 'Your HNB Account Statement' }), policy, evidenceContext([]))).toMatchObject({ ok: false, reason: REJECT.NOT_ON_YOUR_LIST });
     });
     it('a bank named only where its writer typed it — a display name, a Reply-To, a Return-Path, the body of a stranger — is a stranger', () => {
@@ -211,7 +212,7 @@ function setup({ inbox, senders = OWNER, state = {}, audit = [] }) {
 }
 
 describe('the history audit, with the other ways of asking', () => {
-    it('stores a statement of the owner\'s bank from an address nobody listed, drops a statement-word newsletter without a trace, and says what it did', async () => {
+    it('stores NOTHING from an address nobody listed — what the other ways of asking found is judged like all mail and dropped, never offered back — and says what it did', async () => {
         const s = setup({ inbox: [
             message('old1'),
             message('news1', { subject: 'Your account statement is ready', filename: 'statement.pdf', from: 'Accounts <a@accbuddy.example>', domain: 'accbuddy.example' }),
@@ -220,20 +221,21 @@ describe('the history audit, with the other ways of asking', () => {
         const out = await s.run();
         expect(out.body).toMatchObject({ ok: true });
         const items = (await s.ref.collection('items').get()).docs.map((d) => d.data());
-        expect(items.map((i) => i.messageId)).toEqual(['old1']);
-        expect(items[0]).toMatchObject({ bank: 'HNB', via: 'evidence', status: 'pending', intent: 'suspect' });
+        expect(items).toEqual([]);
         const state = (await s.ref.get()).data();
-        // never held, never offered, never added to the owner's sender list
+        // found by what it says, not who sent it: never held, never offered, never added to the owner's sender list
+        expect((state.held || []).map((h) => h.messageId)).not.toContain('old1');
         expect((state.held || []).map((h) => h.messageId)).not.toContain('news1');
         expect((state.refused || []).map((h) => h.messageId)).not.toContain('news1');
         expect((state.senders || []).map((e) => e.domain || '')).not.toContain('accbuddy.example');
         // … but on record as judged, and the run said what each way of asking found
         const table = (await s.ref.collection('emails').get()).docs.map((d) => d.data());
         expect(table.find((r) => r.messageId === 'news1')).toMatchObject({ state: 'REFUSED', reason: 'not-a-statement-of-your-banks:no-bank-name-in-the-sender-domain' });
-        expect(table.find((r) => r.messageId === 'old1').state).toBe('PROCESSED');
+        expect(table.find((r) => r.messageId === 'old1')).toMatchObject({ state: 'REFUSED', reason: 'not-a-statement-of-your-banks:sender-not-on-your-list' });
         const events = s.logs.filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
         expect(events.find((e) => e.evt === 'mail-discovery-listing')).toMatchObject({ staged: 3 });
-        expect(events.find((e) => e.evt === 'mail-discovery')).toMatchObject({ judged: 3, taken: { HNB: 1 }, years: { 2022: 1 } });
+        expect(events.find((e) => e.evt === 'mail-discovery')).toMatchObject({ judged: 3 });
+        expect(events.find((e) => e.evt === 'mail-discovery').taken || {}).toEqual({});
         expect(state.discovery).toMatchObject({ v: 1, staged: 3 });
     });
     it('asks again only after its interval — a mailbox is not listed five ways on every push', async () => {
@@ -242,7 +244,7 @@ describe('the history audit, with the other ways of asking', () => {
         expect(s.queries.filter((q) => !q.includes('from:'))).toEqual([]);
         expect((await s.ref.collection('items').get()).docs).toHaveLength(0);
     });
-    it('a message dropped for naming no bank of theirs is judged again when they approve a bank that it names', async () => {
+    it('a message dropped for naming no bank of theirs is judged again when they approve a bank that it names — and is still not taken: its address is not on the list', async () => {
         const inbox = [message('seylan1', { subject: 'Your Seylan statement', filename: 'statement.pdf', from: 'S <s@seylan-mailer.example>', domain: 'seylan-mailer.example' })];
         const s = setup({ inbox });
         await s.run();
@@ -250,12 +252,11 @@ describe('the history audit, with the other ways of asking', () => {
         expect(((await s.ref.get()).data().auditSeen || { ids: [] }).ids).not.toContain('seylan1');      // not remembered for good
         // the owner approves Seylan, and (six hours on) the same mailbox is asked again
         await s.rerun({ senders: [...OWNER, approved('statements@seylan.lk', 'Seylan Bank')], discovery: null, lastAuditMs: 0 });
-        expect((await s.ref.collection('items').get()).docs.map((d) => d.data().messageId)).toEqual(['seylan1']);
-        expect((await s.ref.collection('items').get()).docs[0].data()).toMatchObject({ bank: 'Seylan Bank', via: 'evidence' });
-        // …and a message dropped under the SAME approvals is not fetched again
+        expect((await s.ref.collection('items').get()).docs).toHaveLength(0);
+        // …and a message judged under the SAME approvals is not fetched again
         const before = s.fetches.length, calls = s.queries.length;
         await s.rerun({ discovery: null, lastAuditMs: 0 });
-        expect((await s.ref.collection('items').get()).docs).toHaveLength(1);
+        expect((await s.ref.collection('items').get()).docs).toHaveLength(0);
         expect(s.queries.length).toBeGreaterThan(calls);                  // it asked again …
         expect(s.fetches.length).toBe(before);                            // … and read nothing it had already judged
     });
@@ -279,17 +280,20 @@ describe('a statement the owner mailed to their own address', () => {
     const ME = 'owner@example.com';
     const mine = evidenceContext(OWNER, ME);
     const selfMsg = (id, extra = {}) => message(id, { from: `Sachintha <${ME}>`, domain: 'example.com', subject: 'DFCC Bank Statement - Jan 26', filename: 'DFCC Bank Statement - Jan 26.pdf', ...extra });
-    it('before: turned away as "sender not on your list"; after: taken, the bank being the one the subject and file name name — and the document must still prove it (the worker)', () => {
+    it('is turned away as "sender not on your list" like any address nobody listed — the owner adds their own address to the Senders list if they want these taken', () => {
         const m = selfMsg('s1');
         expect(planMessage(m, policy)).toMatchObject({ ok: false, reason: REJECT.NOT_ON_YOUR_LIST });
-        expect(planWithEvidence(m, policy, evidenceContext(OWNER))).toMatchObject({ ok: false });                      // a mailbox that does not know its own address is what it was
+        expect(planWithEvidence(m, policy, evidenceContext(OWNER))).toMatchObject({ ok: false });
         const plan = planWithEvidence(m, policy, mine);
-        expect(plan).toMatchObject({ ok: true, via: 'evidence', bank: 'DFCC Bank', intent: 'suspect', evidence: { ok: true, self: true } });
-        expect(plan.items.every((i) => i.via === 'evidence')).toBe(true);
+        expect(plan).toMatchObject({ ok: false, reason: REJECT.NOT_ON_YOUR_LIST, evidence: { ok: true, bank: 'DFCC Bank', self: true } });
+        expect(plan.items).toBeUndefined();
+        // listed, it is taken like any other sender's
+        const listed = [...OWNER, { id: ME, kind: 'address', status: 'approved', name: 'DFCC Bank', domain: 'example.com' }];
+        expect(planWithEvidence(m, policyWithReach(listed), evidenceContext(listed, ME)).ok).toBe(true);
     });
-    it('the bank may be named in the body instead (a forwarded notice), and a bank in a different case or alias of the address is the same sender', () => {
-        expect(planWithEvidence(selfMsg('s2', { subject: 'Statement', filename: 'stmt.pdf', body: 'DFCC Bank e-statement for January' }), policy, mine)).toMatchObject({ ok: true, bank: 'DFCC Bank' });
-        expect(planWithEvidence(selfMsg('s3', { from: `"Me" <Owner@Example.com>` }), policy, mine).ok).toBe(true);
+    it('the bank may be named in the body instead (a forwarded notice), and a bank in a different case or alias of the address is the same sender (labelled, never taken)', () => {
+        expect(planWithEvidence(selfMsg('s2', { subject: 'Statement', filename: 'stmt.pdf', body: 'DFCC Bank e-statement for January' }), policy, mine)).toMatchObject({ ok: false, evidence: { ok: true, bank: 'DFCC Bank' } });
+        expect(planWithEvidence(selfMsg('s3', { from: `"Me" <Owner@Example.com>` }), policy, mine)).toMatchObject({ ok: false, evidence: { ok: true } });
     });
     it('and not otherwise: someone else at the same provider, no statement word, no bank, two banks, a forgery, a blocked sender', () => {
         expect(planWithEvidence(selfMsg('x1', { from: 'Friend <friend@example.com>' }), policy, mine).ok).toBe(false);
@@ -306,13 +310,12 @@ describe('a statement the owner mailed to their own address', () => {
         const m = selfMsg('x9'); m.payload.parts = m.payload.parts.slice(0, 1);
         expect(planWithEvidence(m, policy, mine).ok).toBe(false);
     });
-    it('the worker, reading it again, knows the mailbox\'s own address — without it the item would be retired as "sender no longer approved"', async () => {
+    it('the worker never reads an item from an address that is not on the list — not even the mailbox\'s own address', async () => {
         const m = selfMsg('w1');
         const data = Buffer.from('%PDF-self').toString('base64url');
         const f = () => vi.fn().mockResolvedValueOnce({ ok: true, json: async () => m }).mockResolvedValueOnce({ ok: true, json: async () => ({ data }) });
         const source = { messageId: 'w1', via: 'evidence', filename: 'DFCC Bank Statement - Jan 26.pdf' };
-        const key = planWithEvidence(m, policy, mine).items[0].key;
-        expect((await attachmentBytes(source, { id: key }, 'token', OWNER, f(), ME)).bytes.toString()).toBe('%PDF-self');
-        await expect(attachmentBytes(source, { id: key }, 'token', OWNER, f())).rejects.toThrow('statement-sender-no-longer-approved');
+        await expect(attachmentBytes(source, { id: 'k' }, 'token', OWNER, f(), ME)).rejects.toThrow('statement-sender-no-longer-approved');
+        await expect(attachmentBytes(source, { id: 'k' }, 'token', OWNER, f())).rejects.toThrow('statement-sender-no-longer-approved');
     });
 });

@@ -218,11 +218,11 @@ describe('another address of the same organisation (the wildcard the owner asked
         return planMessage(m, policy);
     };
     const good = (d) => GOOGLE + `dkim=pass header.i=@${d}; spf=pass; dmarc=pass header.from=${d}`;
-    it('a sibling mailbox in the approved organisation, authenticated, naming a statement, is taken — in any case — but must prove itself', () => {
+    it('a sibling mailbox in the approved organisation, authenticated, naming a statement, is NOT taken — in any case: only an address on the owner\'s list is', () => {
         for (const from of ['NTB <STATEMENTS@ESTMT.NATIONSTRUST.COM>', 'NTB <e-statement@mail.nationstrust.com>', 'Nations Trust <statement@nationstrust.com>']) {
             const plan = take(from, good(domainOf(from)));
-            expect(plan.ok, from + ' ' + JSON.stringify({ r: plan.reason })).toBe(true);
-            expect(plan.sibling === true || plan.via === 'sibling' || plan.intent === 'suspect' || plan.ok).toBe(true);
+            expect(plan.ok, from + ' ' + JSON.stringify({ r: plan.reason })).toBe(false);
+            expect(plan.reason, from).toBe('a-new-address-at-a-bank-you-approved');
         }
     });
     it('the same sibling with a purchase subject, or failing authentication, is not', () => {

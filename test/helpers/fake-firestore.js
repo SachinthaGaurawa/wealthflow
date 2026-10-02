@@ -26,7 +26,7 @@ export function createFirestore(seed = {}) {
     }
     function query(path, filters = [], max = Infinity) {
         const rows = () => [...data.keys()]
-            .filter(key => parentOf(key) === path && filters.every(([field, op, value]) => (op === '==' ? data.get(key)?.[field] === value : false)))
+            .filter(key => parentOf(key) === path && filters.every(([field, op, value]) => (op === '==' ? data.get(key)?.[field] === value : op === 'in' ? Array.isArray(value) && value.includes(data.get(key)?.[field]) : false)))
             .sort().slice(0, max).map(snapshot);
         const q = {
             isQuery: true, path,

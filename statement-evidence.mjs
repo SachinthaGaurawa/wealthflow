@@ -1,22 +1,14 @@
 /* =============================================================================
- * statement-evidence.mjs — a statement from an address nobody listed, taken on evidence
+ * statement-evidence.mjs — what a mail from an unlisted address says about itself (it is never taken on that)
  * -----------------------------------------------------------------------------
- * THE GAP. Every way of finding a bank's mail was keyed on WHO SENT IT: the addresses the owner approved, and the same banks' other registered
- * domains. A bank that once wrote from a domain the registry never held (an older mailer, a card centre, a relay) was a stranger, and a stranger's
- * statement was held for a tap that nobody could be expected to make years later — so years of statements stayed in the mailbox.
+ * THE RULE IS THE OWNER'S: only the addresses on the Senders list bring anything in. This file used to release a statement from an address nobody listed when the mail said statement,
+ * named one of the owner's banks in its own domain and the document proved it; the owner reported a bank staff member's address (the interim statement they had asked the bank for) being taken,
+ * and its rows reaching the books. Nothing is released now. What is left is the LABEL on a refusal, so the refusal is handled the right way:
  *
- * THE RULE. Who sent it is one kind of evidence; what it says and what it contains are two more, and together they decide without asking anyone:
+ *   evidence.ok === false   the mail does not even say it is a statement of one of the owner's banks (a newsletter, a course notice): refused, never held, never asked about;
+ *   evidence.ok === true    it could be one: held — a reference only, nothing downloaded — so the sender can be added with one tap. The tap is the owner's.
  *
- *   1. AUTHENTICATED  Google's own SPF / DKIM / DMARC verdict says the message IS from the domain it claims (planCore: a message that fails never gets
- *                     this far, and a forgery is never released by anything here).
- *   2. IT SAYS SO     the subject or a file name says statement, and exactly ONE of the owner's banks is named in the subject, the file names or the
- *                     body, AND is part of the SENDER'S OWN DOMAIN (hnb-mailer.example, dfccbank.lk): a bank's mailer carries the bank's name. A display
- *                     name, a Reply-To or a Return-Path is whatever its writer typed and never counts.
- *   3. IT PROVES SO   the DOCUMENT names that bank and, where the owner already has statements from it, shows one of the accounts those statements
- *                     were for (`documentProof`); it must then reconcile to the cent before a row is filed, exactly like every other statement.
- *
- * A mail that passes 1 and 2 is taken like another desk of the same bank (`via: 'evidence'`, `intent: 'suspect'`: the document must prove itself);
- * one that fails 3 is retired by the worker, counted and named, never put to the owner. A mail that fails 2 is exactly what it was before: not taken.
+ * The same evidence is used to judge a document once the sender IS listed (`documentProof`, `knownLast4`).
  *
  * Server only: nothing here is shipped to the browser.
  * ===========================================================================*/
@@ -100,18 +92,16 @@ export function evidenceVerdict(message, plan, ctx) {
 }
 
 /**
- * planMessage, plus the evidence release. Everything planMessage decides stands — a forgery, a block, an invoice, a stranger with no evidence — except
- * one refusal, `sender-not-on-your-list`, which is judged again as "another desk of the bank the evidence names".
+ * planMessage, plus what the evidence says about a refusal. NOTHING IS RELEASED: an address that is not on the owner's Senders list brings nothing in, however well the mail and the document
+ * say statement (the owner's rule, after a bank staff member's own address was taken on a subject that said so). The verdict only labels the refusal — `evidence.ok === false` is a mail that
+ * does not even say it is a statement of one of the owner's banks, which is not held for a tap at all; `evidence.ok === true` is one that could be, and is held so the sender can be added.
  */
 export function planWithEvidence(message, policy, ctx) {
     const plan = planMessage(message, policy);
-    if (plan.ok || plan.reason !== REJECT.NOT_ON_YOUR_LIST || !ctx || !ctx.banks || !ctx.banks.length) return plan;
+    if (plan.ok || (plan.reason !== REJECT.NOT_ON_YOUR_LIST && plan.reason !== REJECT.SENDER_SIBLING) || !ctx || !ctx.banks || !ctx.banks.length) return plan;
     const verdict = evidenceVerdict(message, plan, ctx);
     if (!verdict.ok) return { ...plan, evidence: { ok: false, why: verdict.why } };
-    const related = (from) => ({ approvedAddress: verdict.approvedAddress, domain: domainOf(from), name: verdict.bank, address: addressOf(from), via: 'evidence' });
-    const again = planMessage(message, { ...policy, related });
-    if (!again.ok) return { ...plan, evidence: { ok: false, why: 'refused-after-release:' + String(again.reason || '').slice(0, 60) } };
-    return { ...again, via: 'evidence', evidence: { ok: true, bank: verdict.bank, ...verdict.hits }, items: again.items.map((item) => ({ ...item, via: 'evidence' })) };
+    return { ...plan, evidence: { ok: true, bank: verdict.bank, ...verdict.hits } };
 }
 
 /** The same bank under two labels? ("DFCC Bank" the owner wrote, "Dfccbank" a domain gave): a shared word, or one label containing the other's word. */

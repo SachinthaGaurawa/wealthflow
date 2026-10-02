@@ -44,11 +44,12 @@ describe('coverage: which months did the mailbox not give us', () => {
         expect(s.calls[0]).toContain('nationstrust.com');
         expect(s.calls[0]).not.toContain('has%3Aattachment');
     });
-    it('queues what the bank wrote from another address of its own even when it is unlike its statements — the document judges itself, nothing waits for the owner', async () => {
+    it('does not queue what the bank wrote from another address of its own, however unlike or like its statements — only an address on the owner\'s list is taken, and the report says so', async () => {
         const s = setup({ inbox: [gmailMessage('msgMAR', 'NTB E-Statements <estatements@nationstrust.com>', 'Weekend_Offers.html', Date.parse('2026-04-02T05:00:00Z'), 'Weekend offers')] });
         const out = await run(s);
-        expect(out.series[0].gaps[0].mail).toMatchObject([{ messageId: 'msgMAR', from: 'estatements@nationstrust.com', outcome: 'missed' }]);
-        expect(out.staged).toBe(1);
+        expect(out.series[0].gaps[0].mail).toMatchObject([{ messageId: 'msgMAR', from: 'estatements@nationstrust.com', outcome: 'a-new-address-at-a-bank-you-approved' }]);
+        expect(out.staged).toBe(0);
+        expect(s.mailSnap().pendingCollection).toBeUndefined();
     });
     it('names the reason when the bank\'s other address sent an invoice (refused as not a statement)', async () => {
         const s = setup({ inbox: [gmailMessage('msgMAR', 'NTB Billing <billing@nationstrust.com>', 'Invoice-0042.pdf', Date.parse('2026-04-02T05:00:00Z'), 'Invoice')] });
@@ -59,11 +60,11 @@ describe('coverage: which months did the mailbox not give us', () => {
         expect(out.staged).toBe(0);
         expect(s.mailSnap().pendingCollection).toBeUndefined();
     });
-    it('queues a statement from the bank\'s other address when it is named like the ones already filed, exactly as intake will take it', async () => {
+    it('does not queue a statement from the bank\'s other address even when it is named like the ones already filed — exactly as intake will not take it', async () => {
         const s = setup({ inbox: [gmailMessage('msgMAR', 'NTB E-Statements <estatements@nationstrust.com>')] });
         const out = await run(s);
-        expect(out.series[0].gaps[0].mail).toMatchObject([{ messageId: 'msgMAR', outcome: 'missed' }]);
-        expect(out.staged).toBe(1);
+        expect(out.series[0].gaps[0].mail).toMatchObject([{ messageId: 'msgMAR', outcome: 'a-new-address-at-a-bank-you-approved' }]);
+        expect(out.staged).toBe(0);
     });
     it('says when nothing from the bank arrived at all that month', async () => {
         const s = setup({ inbox: [] });

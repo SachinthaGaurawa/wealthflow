@@ -83,34 +83,35 @@ function mailbox({ more = [], moreBodies = {} } = {}) {
 const drainAll = async s => { let out; for (let i = 0; i < 12; i++) { out = await s.run(); if (!out.collectionMore && !out.attempted) break; } return out; };
 
 describe('a mailbox where every old way of losing a statement is present', () => {
-    it('files what it may without asking, names what it may not, and never files the invoice', async () => {
+    it('files what the owner\'s list allows without asking, takes nothing from any other address, and never files the invoice', async () => {
         const s = mailbox();
         const out = await drainAll(s);
         const items = Object.values(s.items());
         const by = Object.fromEntries(items.map(i => [i.messageId, i]));
-        // MAR (the bank's other address), MAY (Spam) and JUN (today) are found, stored and filed — with no tap
-        for (const id of ['mMAR', 'mMAY', 'mJUN']) expect(by[id], id).toMatchObject({ status: 'filed', filed: true });
-        expect(by.mMAR.via).toBe('sibling');   // the bank's other address, subject says statement
+        // MAY (Spam) and JUN (today) are found, stored and filed — with no tap
+        for (const id of ['mMAY', 'mJUN']) expect(by[id], id).toMatchObject({ status: 'filed', filed: true });
         expect(by.mMAY.via).toBe('audit');
+        // MAR came from the bank's OTHER address (its subject says statement): not on the owner's list, so not taken — held for the owner's tap, never stored
+        expect(by.mMAR).toBeUndefined();
+        expect((s.mail().held || []).map(h => h.messageId)).toEqual(['mMAR']);
         // APR arrived without a verifiable signature: on record with its reason, not stored, not lost
         expect(by.mAPR).toBeUndefined();
         expect(s.mail().refused).toMatchObject([{ messageId: 'mAPR', reason: 'dkim-did-not-pass' }]);
         // the invoice from another address is never filed — refused as not a statement on what it says it is, with nothing held for the owner
         expect(by.mINV).toBeUndefined();
-        expect(s.mail().held || []).toEqual([]);
-        // the books hold exactly the three months that were filed now
+        // the books hold exactly the two months that were filed now
         const user = s.data.get('users/u');
-        expect(user.expenses.map(r => r.date).sort()).toEqual(['2026-03-05', '2026-05-05', '2026-06-05']);
-        expect(user.incomeRecv.map(r => r.date).sort()).toEqual(['2026-03-09', '2026-05-09', '2026-06-09']);
+        expect(user.expenses.map(r => r.date).sort()).toEqual(['2026-05-05', '2026-06-05']);
+        expect(user.incomeRecv.map(r => r.date).sort()).toEqual(['2026-05-09', '2026-06-09']);
         // the report says what happened
         expect(out.coverage.refused).toMatchObject([{ messageId: 'mAPR', takeable: true, asked: false }]);
-        expect(out.coverage.audit).toMatchObject({ complete: true, taken: 3 });
-        expect(out.coverage.series[0].missing).toEqual(['2026-04']);
-        expect(out.coverage.series[0].gaps[0].month).toBe('2026-04');
-        // March's statement (from the bank's other address) is in that window too, and is reported as what it is: already taken
+        expect(out.coverage.audit).toMatchObject({ complete: true, taken: 2 });
+        expect(out.coverage.series[0].missing).toEqual(['2026-03', '2026-04']);
+        expect(out.coverage.series[0].gaps.map(g => g.month)).toEqual(['2026-04', '2026-03']);
+        // March's statement (from the bank's other address) is named for what it is: a new address at their bank, not taken
         const april = Object.fromEntries(out.coverage.series[0].gaps[0].mail.map(m => [m.messageId, m.outcome]));
-        expect(april).toEqual({ mMAR: 'stored', mAPR: 'dkim-did-not-pass' });
-        expect(out.coverage.log.filter(l => l.status === 'Missing-Added').map(l => l.month).sort()).toEqual(['2026-03', '2026-05', '2026-06']);
+        expect(april).toEqual({ mMAR: 'a-new-address-at-a-bank-you-approved', mAPR: 'dkim-did-not-pass' });
+        expect(out.coverage.log.filter(l => l.status === 'Missing-Added').map(l => l.month).sort()).toEqual(['2026-05', '2026-06']);
         expect(out.coverage.log.every(l => l.math === 'PASSED' || l.status === 'Synced')).toBe(true);
     });
 
@@ -123,8 +124,8 @@ describe('a mailbox where every old way of losing a statement is present', () =>
         expect(apr).toMatchObject({ status: 'filed', filed: true, via: 'owner' });
         expect(apr.proof).toMatchObject({ math: 'passed', rows: 2 });
         expect(s.mail().refused).toEqual([]);
-        expect(s.data.get('users/u').expenses.map(r => r.date).sort()).toEqual(['2026-03-05', '2026-04-05', '2026-05-05', '2026-06-05']);
-        expect(out.coverage.missing).toBe(0);
+        expect(s.data.get('users/u').expenses.map(r => r.date).sort()).toEqual(['2026-04-05', '2026-05-05', '2026-06-05']);
+        expect(out.coverage.missing).toBe(1);        // March: from an address that is not on the list, so not taken
     });
 
     it('running the whole loop again changes nothing: no duplicate statements, no duplicate rows, nothing re-fetched that was judged', async () => {
@@ -137,7 +138,7 @@ describe('a mailbox where every old way of losing a statement is present', () =>
         expect(Object.keys(s.items()).sort()).toEqual(before.items);
         expect(s.data.get('users/u').expenses).toEqual(before.user.expenses);
         expect(s.data.get('users/u').incomeRecv).toEqual(before.user.incomeRecv);
-        // the invoice (held) is looked at again, because approving its sender could change the answer; nothing else is
+        // what is held (the other address's March statement) is looked at again, because approving its sender could change the answer; nothing else is
         const again = s.calls.filter(u => u.includes('/messages/m')).length - before.fetches;
         expect(again).toBeLessThanOrEqual(2);
     });
@@ -146,11 +147,11 @@ describe('a mailbox where every old way of losing a statement is present', () =>
 describe('a statement taken from the bank\'s other address', () => {
     const pendingSibling = { uid: 'u', bank: 'NTB', filename: fileName('03'), messageId: 'mMAR', from: 'NTB E-Statements <estatements@nationstrust.com>', status: 'pending', filed: false, hasReview: false, cursor: 0, via: 'series', size: 2000, receivedMs: Date.parse('2026-04-02T05:00:00Z') };
     const seed = (s, extra = {}) => { s.data.set(`${mailPath}/items/mMAR.${fileName('03')}.2000`, { ...pendingSibling, ...extra }); };
-    it('is read and filed while the owner still approves an address at that bank', async () => {
+    it('is retired unread, not filed, even while the owner approves another address at that bank — only an address on the list is taken', async () => {
         const s = mailbox(); seed(s);
         await drainAll(s);
-        expect(s.data.get(`${mailPath}/items/mMAR.${fileName('03')}.2000`)).toMatchObject({ status: 'filed', filed: true });
-        expect(s.data.get('users/u').expenses.map(r => r.date)).toContain('2026-03-05');
+        expect(s.data.get(`${mailPath}/items/mMAR.${fileName('03')}.2000`)).toMatchObject({ status: 'rejected_unapproved_sender', filed: false });
+        expect(s.data.get('users/u').expenses.map(r => r.date)).not.toContain('2026-03-05');
     });
     it('is retired, not filed, once the owner has revoked every address at that bank', async () => {
         const s = mailbox(); seed(s);
@@ -166,7 +167,7 @@ describe('a statement taken from the bank\'s other address', () => {
     });
 });
 
-describe('the bank\'s other desks are decided on evidence — nothing waits for the owner to decide whether an email is real', () => {
+describe('the bank\'s other desks are not taken — only the owner\'s list is a way in, and nothing waits for the owner to decide whether an email is real', () => {
     const at = (m, day) => ({ ...m, internalDate: String(Date.parse(`2026-07-${day}T05:00:00Z`)) });
     const more = [
         // a marketing mail with a PDF, from a mail host of the bank's own organisation, signed by it (the "Colombo Fashion Week" mail the owner was asked about)
@@ -177,22 +178,19 @@ describe('the bank\'s other desks are decided on evidence — nothing waits for 
         at(message('mFORGE', '07', { from: 'NTB Desk <desk@nationstrust.com>', subject: 'Your documents', filename: '5996631318_456.html', dkim: false }), '11'),
     ];
     const moreBodies = { mFASH: textPdf(['Colombo Fashion Week presented by Nations Trust Bank', 'Day 01 highlights from the runway', 'Tickets from Rs. 2,500.00 at the door']), mSIB: html('07'), mFORGE: html('07') };
-    it('a brochure is taken on who sent it, read, found not to be a statement and retired — no question, nothing filed, nothing held', async () => {
+    it('a brochure from another desk is not taken, not stored, not held — and the owner is asked nothing', async () => {
         const s = mailbox({ more, moreBodies });
         await drainAll(s);
         const by = Object.fromEntries(Object.values(s.items()).map(i => [i.messageId, i]));
-        expect(by.mFASH, 'taken and stored on the evidence of who sent it').toMatchObject({ via: 'sibling', intent: 'suspect' });
-        expect(by.mFASH.status).toBe('rejected_non_statement');
-        expect(by.mFASH.filed).not.toBe(true);
+        expect(by.mFASH).toBeUndefined();
         expect([...s.data.keys()].filter(k => k.startsWith('users/u/statementReview/'))).toEqual([]);      // the owner is asked nothing
-        expect(s.mail().held || []).toEqual([]);
+        expect((s.mail().held || []).map(h => h.messageId)).not.toContain('mFASH');
     });
-    it('a genuine statement from another desk with nothing in the mail saying statement is read, reconciled and filed', async () => {
+    it('a genuine statement from another desk with nothing in the mail saying statement is NOT taken either — the list is the only way in', async () => {
         const s = mailbox({ more, moreBodies });
         await drainAll(s);
-        const sib = Object.values(s.items()).find(i => i.messageId === 'mSIB');
-        expect(sib).toMatchObject({ via: 'sibling', status: 'filed', filed: true });
-        expect(s.data.get('users/u').expenses.map(r => r.date)).toContain('2026-07-05');
+        expect(Object.values(s.items()).find(i => i.messageId === 'mSIB')).toBeUndefined();
+        expect(s.data.get('users/u').expenses.map(r => r.date)).not.toContain('2026-07-05');
     });
     it('the same desk with no verifiable signature is never taken', async () => {
         const s = mailbox({ more, moreBodies });

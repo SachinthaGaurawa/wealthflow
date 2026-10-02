@@ -39,7 +39,7 @@ describe('exact sender intake boundary', () => {
         }
         expect(approvedClauses([entry])).toEqual(['from:statement@hnb.lk']);
     });
-    it('another desk of the bank, authenticated, with a PDF and nothing in the mail saying statement, is taken on that evidence — as a document that must prove itself, never as an approved address', () => {
+    it('another desk of the bank, authenticated, with a PDF, is NOT taken — the list is the only way in; it is held so the sender can be added', () => {
         const message = { id: 'm', internalDate: '1788000000000', payload: {
             headers: [
                 { name: 'From', value: 'promo@hnb.lk' },
@@ -48,11 +48,11 @@ describe('exact sender intake boundary', () => {
             ], parts: [{ filename: 'offer.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a', size: 500 } }],
         } };
         const plan = planMessage(message, policyFrom([entry]));
-        expect(plan.ok).toBe(true);
-        expect(plan.items[0]).toMatchObject({ via: 'sibling', intent: 'suspect', from: 'promo@hnb.lk' });
+        expect(plan.ok).toBe(false);
+        expect(plan.items).toBeUndefined();
         expect(policyFrom([entry]).decide('promo@hnb.lk').verdict).not.toBe('approved');
     });
-    it('takes another address at the same bank when its subject or file says statement, and then only as a document that must prove itself', () => {
+    it('another address at the same bank is not taken even when its subject and file say statement — the owner\'s rule: not on the Senders list, not taken', () => {
         const message = { id: 'm', internalDate: '1788000000000', payload: {
             headers: [
                 { name: 'From', value: 'promo@hnb.lk' },
@@ -61,9 +61,9 @@ describe('exact sender intake boundary', () => {
             ], parts: [{ filename: 'statement.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a', size: 500 } }],
         } };
         const plan = planMessage(message, policyFrom([entry]));
-        expect(plan.ok).toBe(true);
-        expect(plan.via).toBe('sibling');
-        expect(plan.items[0]).toMatchObject({ via: 'sibling', intent: 'suspect', approved: true });
+        expect(plan.ok).toBe(false);
+        expect(plan.reason).toBe('a-new-address-at-a-bank-you-approved');
+        expect(plan.items).toBeUndefined();
     });
     it('never takes another bank\'s address, however the mail is worded', () => {
         const message = { id: 'm', internalDate: '1788000000000', payload: {

@@ -130,9 +130,9 @@ function expected(from, auth, att, subject, body) {
     const namedStatement = (att === 'a statement PDF' || att === 'an upper-case .PDF' || att === 'a statement HTML' || att === 'an HTML sent as octet-stream' || att === 'a PDF named with a date')
         && /statement/i.test(ATTACHMENTS[att].parts[0].filename);
     const metaSays = s === 'stated' || namedStatement ? 'stated' : s === 'block' ? 'block' : 'neutral';
-    // another address at the approved bank (authenticated, above): taken on that evidence whatever the subject says — only as a document that
-    // must prove itself — except an invoice, a receipt, an order or a payment notice, which is refused as not a statement (never held for a tap)
-    if (f.out === 'held') return metaSays === 'block' ? { ok: false, reason: REJECT.NOT_A_STATEMENT_DOC, security: false } : { ok: true, intent: 'suspect' };
+    // another address at the approved bank (authenticated, above): NOT taken, whatever the subject, the file or the body says — only an address on the owner's list is. It is held, a reference only —
+    // except an invoice, a receipt, an order or a payment notice, which is refused as not a statement (never held for a tap)
+    if (f.out === 'held') return metaSays === 'block' ? { ok: false, reason: REJECT.NOT_A_STATEMENT_DOC, security: false } : { ok: false, reason: REJECT.SENDER_SIBLING, security: false };
     if (metaSays === 'block') return { ok: false, reason: REJECT.NOT_A_STATEMENT_DOC, security: false };
     const intent = metaSays === 'stated' ? 'stated' : b.adds === 'stated' ? 'stated' : b.adds === 'suspect' ? 'suspect' : 'unproven';
     return { ok: true, intent };
@@ -176,8 +176,7 @@ describe('every combination of sender, authentication, attachment, subject and b
         for (const from of froms) for (const auth of auths) for (const att of atts) for (const subject of subjects) {
             const plan = planMessage(message(from, auth, att, subject, 'no body'), policy);
             if (!plan.ok) continue;
-            expect(['approved', 'held']).toContain(FROMS[from].out);
-            if (FROMS[from].out === 'held') expect(plan.items.every((i) => i.intent === 'suspect' && i.via === 'sibling')).toBe(true);
+            expect(FROMS[from].out).toBe('approved');
             expect(AUTHS[auth].out).toBe('pass');
             expect(['ok', 'ok-numeric']).toContain(ATTACHMENTS[att].out);
             expect(SUBJECTS[subject] === 'block' && !/statement/i.test(ATTACHMENTS[att].parts[0].filename)).toBe(false);
@@ -370,18 +369,18 @@ describe('Layer 3 — deceptive scenarios', () => {
     it('a receipt PDF from the approved address is refused', () => {
         expect(planMessage(build({ subject: 'Payment receipt', parts: [pdf('Receipt-2402-5154.pdf')] }), policy)).toMatchObject({ ok: false, reason: REJECT.NOT_A_STATEMENT_DOC });
     });
-    it('a sub-domain of the bank that is NOT the approved address is taken only on evidence — and only as a document that must prove itself (a brochure is retired by its contents, never filed)', () => {
+    it('a sub-domain of the bank that is NOT the approved address is not taken, whatever it sends — only an address on the owner\'s list is', () => {
         const plan = planMessage(build({ from: 'Promo <offers@news.hnb.lk>', subject: 'New offers for you', parts: [pdf('Rewards.pdf')], auth: [GOOGLE + 'dkim=pass header.i=@news.hnb.lk'] }), policy);
-        expect(plan.ok).toBe(true);
-        expect(plan.items[0]).toMatchObject({ via: 'sibling', intent: 'suspect' });
+        expect(plan).toMatchObject({ ok: false, reason: REJECT.SENDER_SIBLING });
+        expect(plan.items).toBeUndefined();
         // with no signature that holds it is not taken at all
         const unsigned = planMessage(build({ from: 'Promo <offers@news.hnb.lk>', subject: 'New offers for you', parts: [pdf('Rewards.pdf')], auth: [GOOGLE + 'dkim=none'] }), policy);
         expect(unsigned.ok).toBe(false);
     });
-    it('the same sub-domain sending something that says statement is taken — as a document that must prove itself', () => {
+    it('the same sub-domain sending something that says statement is not taken either: the subject is the sender\'s to write, the list is the owner\'s', () => {
         const plan = planMessage(build({ from: 'Statements <estmt@news.hnb.lk>', auth: [GOOGLE + 'dkim=pass header.i=@news.hnb.lk'] }), policy);
-        expect(plan.ok).toBe(true);
-        expect(plan.items[0]).toMatchObject({ via: 'sibling', intent: 'suspect' });
+        expect(plan).toMatchObject({ ok: false, reason: REJECT.SENDER_SIBLING });
+        expect(plan.items).toBeUndefined();
     });
     it('a forged bank domain signed by the attacker\'s own valid key is a security event', () => {
         const plan = planMessage(build({ from: 'HNB <statements@hnb.lk.evil.net>', auth: [GOOGLE + 'dkim=pass header.i=@hnb.lk.evil.net'] }), policy);

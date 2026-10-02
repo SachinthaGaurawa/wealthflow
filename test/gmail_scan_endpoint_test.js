@@ -240,14 +240,14 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         expect(calls).toEqual([]);
     });
 
-    it('a sibling mailbox on an approved domain is taken on the evidence of who sent it even when nothing in the mail says statement — its document must then prove itself', async () => {
+    it('a sibling mailbox on an approved domain is NOT taken, whatever the mail says — nothing is fetched from it: only an address on the owner\'s list is', async () => {
         connect();
         const other = bankMessage('m2', { filename: 'rewards.pdf' });
         other.payload.headers.find((h) => h.name === 'From').value = 'HNB <billing@hnb.lk>';
         other.payload.headers.find((h) => h.name === 'Subject').value = 'Your rewards offer';
         const seen = await call({ body: WINDOW, gmail: { messages: ['m2'], byId: { m2: other } } });
         expect(seen.status).toBe(200);
-        expect(calls.some((c) => c.url.includes('/attachments/'))).toBe(true);
+        expect(calls.some((c) => c.url.includes('/attachments/'))).toBe(false);
     });
 
     it('a sibling mailbox\'s invoice or receipt is still never fetched', async () => {
@@ -261,13 +261,13 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         expect(calls.some((c) => c.url.includes('/attachments/'))).toBe(false);
     });
 
-    it('the bank\'s other address IS taken when its subject says statement — as a document that must prove itself', async () => {
+    it('the bank\'s other address is NOT taken even when its subject says statement — the subject is the sender\'s to write, the list is the owner\'s', async () => {
         connect();
         const other = bankMessage('m2');
         other.payload.headers.find((h) => h.name === 'From').value = 'HNB <billing@hnb.lk>';
         const seen = await call({ body: WINDOW, gmail: { messages: ['m2'], byId: { m2: other } } });
         expect(seen.status).toBe(200);
-        expect(calls.some((c) => c.url.includes('/attachments/'))).toBe(true);
+        expect(calls.some((c) => c.url.includes('/attachments/'))).toBe(false);
     });
 
     it('does not re-store a statement held under the OLD key', async () => {

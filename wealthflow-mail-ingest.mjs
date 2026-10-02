@@ -943,30 +943,33 @@ function planCore(message, policy = {}) {
      * one-tap approval and the next scan brings its statements in. That is
      * the same discovery path a first sender always needed; it no longer
      * runs through downloading and filing content nobody approved first. */
-    /* A SIBLING ADDRESS THAT SENDS A STATEMENT THE OWNER ALREADY RECEIVES. The
-     * bank wrote from another desk (the owner approved statements@, this came from
-     * estatements@ — same domain, and it passed the signature check above), and
-     * what it attached is named exactly like a statement that was filed from the
-     * approved address. That is the same document series, not a new kind of mail,
-     * so it is taken. It is still read, still has to reconcile before anything is
-     * filed, and anything that is not a statement is rejected on its contents.
-     * Without this rule the owner's approval covered ONE address while the bank
-     * used two, and every statement from the second was held for ever. */
+    /* ONLY THE ADDRESSES ON THE OWNER'S LIST ARE TAKEN, AND NOTHING ELSE — NOT ANOTHER DESK OF THE SAME BANK, NOT THE SAME SERIES OF FILE NAMES, NOT A MAIL THAT SAYS "STATEMENT".
+     * The owner's rule, stated again after a bank staff member's own address (the interim statement the owner had asked the bank for) was reported taken on the strength of a
+     * subject that said "statement": an address that is not on the Senders list brings nothing in, whatever the subject, the file name or the document says. It is HELD instead —
+     * a reference only, nothing downloaded — so the sender can be added with one tap, and that tap is the owner's, never ours. */
     const rel0 = typeof policy.related === 'function' ? policy.related(seenFrom) : null;
-    const releasedBySeries = who.approved !== true && !!rel0 && policy.siblingSeries instanceof Set && policy.siblingSeries.size > 0
-        && what.take.length > 0 && what.take.every((a) => policy.siblingSeries.has(filenameStem(a && a.filename)));
-    /* ANOTHER DESK OF A BANK THE OWNER APPROVED IS DECIDED ON EVIDENCE, NOT HELD FOR A TAP. By here Google's own SPF/DKIM/DMARC verdict says the message
-     * IS from that domain, which is the same organisation as an approved address and no lookalike of it, and the file is a PDF or HTML document: that is
-     * who sent it. What it IS is decided next — an invoice or a receipt is refused below; anything else is taken as a document that must prove itself a
-     * statement and reconcile to the cent before a row is filed, and a brochure is retired by the worker, never put to the owner. */
-    const releasedBySibling = who.approved !== true && !releasedBySeries && !!rel0 && what.take.length > 0;
-    const ownerApproved = who.approved === true || releasedBySeries || releasedBySibling;
-    const released = releasedBySeries || releasedBySibling;
-    const releasedVia = releasedBySeries ? 'series' : 'sibling';
-    // Filed under the name the owner gave the bank, not one guessed from the second address's domain.
-    const bankName = released && rel0.name && !rel0.legacyDomain ? rel0.name : who.bank;
+    const ownerApproved = who.approved === true;
+    const bankName = who.bank;
+    const mailSays = () => intentVerdict({
+        subject: headers.subject || '',
+        filenames: what.take.map((a) => a && a.filename).filter(Boolean),
+        body: bodyTextOf(message && message.payload),
+    });
+    const notAStatement = (said) => {
+        const fileSays = nameVerdict({ subject: '', filenames: [vetoedFiles[0] && vetoedFiles[0].filename] });
+        return {
+            ok: false,
+            reason: REJECT.NOT_A_STATEMENT_DOC,
+            bank: who.bank,
+            detail: said.intent === 'block' ? { from: who.domain, why: said.reason, hits: said.hits.slice(0, 4), where: said.where } : { from: who.domain, why: 'the file name ' + fileSays.reason.replace(/^the name /, ''), hits: fileSays.hits.slice(0, 4), where: 'file' },
+            from: seenFrom,
+            subject: headers.subject || '',
+        };
+    };
     if (!ownerApproved) {
         const rel = rel0;
+        // another desk of the owner's bank sending an invoice, a receipt or an order is refused as not a statement — not held for a tap: there is nothing to ask
+        if (rel) { const early = mailSays(); if (early.intent === 'block' || everyFileVetoed) return notAStatement(early); }
         return {
             ok: false,
             reason: rel ? REJECT.SENDER_SIBLING : REJECT.NOT_ON_YOUR_LIST,
@@ -1017,21 +1020,9 @@ function planCore(message, policy = {}) {
         body: bodyTextOf(message && message.payload),
     });
     const ownerTap = policy.forced === true && who.approved === true;   // an exact-address approval the owner tapped, never a release
-    if ((intent.intent === 'block' || everyFileVetoed) && !ownerTap) {
-        const fileSays = nameVerdict({ subject: '', filenames: [vetoedFiles[0] && vetoedFiles[0].filename] });
-        return {
-            ok: false,
-            reason: REJECT.NOT_A_STATEMENT_DOC,
-            bank: who.bank,
-            detail: intent.intent === 'block' ? { from: who.domain, why: intent.reason, hits: intent.hits.slice(0, 4), where: intent.where } : { from: who.domain, why: 'the file name ' + fileSays.reason.replace(/^the name /, ''), hits: fileSays.hits.slice(0, 4), where: 'file' },
-            from: seenFrom,
-            subject: headers.subject || '',
-        };
-    }
+    if ((intent.intent === 'block' || everyFileVetoed) && !ownerTap) return notAStatement(intent);
     // A block the owner lifted is still only as trusted as its contents: the attachment has to prove itself.
-    /* A sibling address is not the address the owner wrote down, so nothing is taken from it on the strength of the mail
-     * alone: its document must prove itself a statement from its own contents, and reconcile, before anything is filed. */
-    const intentKind = (intent.intent === 'block' || everyFileVetoed || releasedBySibling) ? 'suspect' : intent.intent;
+    const intentKind = (intent.intent === 'block' || everyFileVetoed) ? 'suspect' : intent.intent;
 
     /* THE KEYWORD GUESS THAT USED TO LIVE HERE IS GONE.
      *
@@ -1072,9 +1063,8 @@ function planCore(message, policy = {}) {
              * verified-but-unrecognised sender was filed exactly like a
              * confirmed bank. Both call sites now put it in the manifest, and
              * the mailbox card reads it back. */
-            known: who.known !== false || released,
-            approved: who.approved === true || released,
-            ...(released ? { via: releasedVia } : {}),
+            known: who.known !== false,
+            approved: who.approved === true,
             ...(who.forced ? { via: 'owner' } : {}),
             /* stated | unproven | suspect — what the worker must see in the DOCUMENT before it goes any further. */
             intent: intentKind,
@@ -1089,8 +1079,7 @@ function planCore(message, policy = {}) {
     }
     return {
         ok: true, bank: bankName, domain: who.domain, items, skipped: what.skipped, intent: intentKind,
-        from: seenFrom, subject: headers.subject || '', known: who.known !== false || released,
-        ...(released ? { via: releasedVia } : {}),
+        from: seenFrom, subject: headers.subject || '', known: who.known !== false,
     };
 }
 
@@ -1209,8 +1198,10 @@ export function worthSighting(plan) {
  *   7  a bank's other registered domains are searched and recognised: its earlier statements are judged for the first time.
  *   8  a statement the OWNER mailed to their own address (downloaded from the bank's portal) is taken when it says statement, names one of their banks and the document proves it: the
  *      years of statements that sit in a portal and never in the mailbox, which were turned away as "sender not on your list", are judged for the first time.
+ *   9  ONLY THE ADDRESSES ON THE OWNER'S LIST ARE TAKEN. Another desk of an approved bank, the same series of file names and a mail that merely says statement (versions 7 and 8) are no longer
+ *      released: they are held for the owner's tap like any unlisted sender, and what they had already brought in is taken back (statement-sync.js, removeUnlistedSenderStatements).
  */
-export const INTAKE_VERSION = 8;
+export const INTAKE_VERSION = 9;
 
 /**
  * Is this refusal one the owner would call a MISSED STATEMENT? Only mail from an

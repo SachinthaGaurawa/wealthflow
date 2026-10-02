@@ -1,15 +1,10 @@
 /* =============================================================================
- * bank-reach.mjs — every address a bank the owner approved has ever written from
+ * bank-reach.mjs — the other registered domains of a bank the owner approved an address of (recognised, never taken)
  * -----------------------------------------------------------------------------
- * THE GAP. The owner approves ONE address per bank (statements@dfccbank.com). The history audit listed only that address's domain, so a bank's
- * earlier statements — from its previous domain (dfcc.lk), or from its other registered domain — were never listed, never judged, never filed:
- * years of statements the owner can see in their mailbox and the system never touched.
- *
- * THE RULE. A bank is the owner's when they approved an address of it. Every domain the institutions registry (wealthflow-institutions.js) holds for
- * that bank is then (a) searched by the history audit and (b) recognised as the same bank writing from another desk — decided on evidence like any
- * other sibling: Google's own SPF/DKIM/DMARC verdict for that domain, a PDF or HTML file, no invoice or receipt; the document must then prove itself a
- * statement and reconcile to the cent before one row is filed. A registered bank domain cannot be registered by anyone else, so a display name is
- * never what decides it; a domain the registry does not hold is not recognised here (it is reported, never guessed).
+ * A bank is the owner's when they approved an address of it. The institutions registry (wealthflow-institutions.js) holds every domain the bank writes from; mail from one of them is
+ * RECOGNISED as that bank writing from another desk — so the owner is asked the right question (a new address at a bank you approved: add it?) — but NOTHING is taken on it. Only an exact
+ * address on the owner's Senders list brings a statement in (the owner's rule, after a bank staff member's address was taken on the strength of a subject): the history audit therefore
+ * lists the approved addresses' domains only, and the other registered domains are not searched at all.
  *
  * Pure: no network, no clock, no storage.
  * ===========================================================================*/
@@ -56,9 +51,9 @@ export function policyWithReach(list) {
     const policy = policyFrom(list), entries = normalizeList(list);
     return { ...policy, related: (from) => policy.related(from) || institutionRelation(entries, from) };
 }
-/** What the history audit asks Gmail for: the approved domains, and the same banks' other registered domains. */
+/** What the history audit asks Gmail for: the domains of the addresses the owner approved. The same banks' other registered domains are not searched: nothing from them would be taken. */
 export function auditQuery(list) {
-    return [...new Set([...approvedDomainClauses(list), ...reachClauses(normalizeList(list))])].sort();
+    return [...new Set(approvedDomainClauses(list))].sort();
 }
 
 export default { reachDomains, reachClauses, institutionRelation, policyWithReach, auditQuery };
