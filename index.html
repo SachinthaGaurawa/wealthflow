@@ -23024,6 +23024,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 unlocking:  ['lock',        'Unlocking',    'var(--blue)'],
                 reading:    ['fileText',    'Reading',      'var(--blue)'],
                 filed:      ['checkCircle', 'Filed',        'var(--green)'],
+                /* Not filed from here, and not lost: the same statement is already in the books by the other door (statement-registry.mjs). */
+                duplicate:  ['checkCircle', 'Already added', 'var(--green)'],
                 /* Parsed and waiting for the owner. Distinct from `filed`
                  * because it is the state the card used to LIE about: it said
                  * filed while nothing had been written. */
@@ -26446,6 +26448,20 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 reason: (summary.messages[0] || 'nothing could be read from it').slice(0, 60),
                             });
                         } else {
+                            /* ONE STATEMENT, ADDED ONCE (statement-registry.mjs). This device-side review is a third door into the books, beside the email
+                             * sync and the upload screen: a statement the others already hold — same bank, account and month, or the very same file — is not
+                             * offered to be filed a second time. The server says who got there first and closes the mailbox item; it fails OPEN, so an
+                             * unreachable server never hides a statement from its owner. */
+                            const _guardLast4 = (d.manifest && d.manifest.card_last4)
+                                || _mailAccountTail(typeof res.text === 'string' ? res.text : '');
+                            const _already = await _mailGuard('check', {
+                                itemId: d.id, bank, last4: _guardLast4, dates: rows.map((row) => row.date),
+                                filename: d.manifest && d.manifest.filename, rows: rows.length,
+                            });
+                            if (_already) {
+                                set(i, { stage: 'duplicate', reason: _already.via === 'upload' ? 'via manual upload' : 'via email sync' });
+                                continue;
+                            }
                             set(i, {
                                 stage: 'ready',
                                 note: `${rows.length} transaction${rows.length === 1 ? '' : 's'} ready for you to check`,
@@ -26465,6 +26481,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             _ready.push({
                                 key: d.id, bank, rows, doubts,
                                 last4: (d.manifest && d.manifest.card_last4) || '',
+                                guardLast4: _guardLast4,
                             });
                         }
                     } catch (e) {
@@ -26531,6 +26548,20 @@ table.amort tbody tr { page-break-inside: avoid; }
             finish(null);
         }
         window.runMailSync = runMailSync;
+
+        /* The statement registry, asked about a mailbox statement (see the check in runMailSync and the claim at Save). Fails OPEN: null means "go ahead". */
+        async function _mailGuard(action, info) {
+            try {
+                const guard = window.WFStatementCloud && window.WFStatementCloud.guard;
+                return guard && typeof guard.mail === 'function' ? await guard.mail(info, action) : null;
+            } catch (_) { return null; }
+        }
+        function _mailAccountTail(text) {
+            try {
+                const guard = window.WFStatementCloud && window.WFStatementCloud.guard;
+                return guard && typeof guard.accountTailOf === 'function' ? guard.accountTailOf(text) : '';
+            } catch (_) { return ''; }
+        }
 
         /**
          * Tell the store these statements have been dealt with.
@@ -26647,7 +26678,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             for (const r of (Array.isArray(ready) ? ready : [])) {
                 const bank = r.bank || 'Statement';
                 const groupKey = bank.toLowerCase() + '|' + String(r.last4 || '');
-                if (!groups.has(groupKey)) groups.set(groupKey, { bank, keys: [], rows: [], last4: r.last4 || '', omitted: 0 });
+                if (!groups.has(groupKey)) groups.set(groupKey, { bank, keys: [], rows: [], last4: r.last4 || '', omitted: 0, guards: [] });
                 const g = groups.get(groupKey);
                 const doubts = (r.doubts instanceof Map) ? r.doubts : new Map();
                 const statementRows = (Array.isArray(r.rows) ? r.rows : []).map((row, rowIndex) => {
@@ -26671,6 +26702,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     continue;
                 }
                 g.keys.push(r.key);
+                /* What the registry is asked at Save, one entry per statement: each is its own bank + account + month. */
+                g.guards.push({ itemId: r.key || '', bank, last4: r.guardLast4 || r.last4 || '', dates: statementRows.map((row) => row.date), rows: statementRows.length });
                 g.rows.push(...statementRows);
                 if (!g.last4 && r.last4) g.last4 = r.last4;
             }
@@ -26696,6 +26729,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     transactions: first.rows,
                     fileName: first.bank + ' statement' + (first.keys.length === 1 ? '' : 's'),
                     card_last4: first.last4 || '',
+                    _wfMailGuard: first.guards,
                 },
                 first.bank,
                 async (filed) => {
@@ -35376,6 +35410,23 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     if (_dup) { notify((_dup.notice || 'Already Added') + ' — this statement is already in your books, so it was not added a second time.', 'warn'); closeOvl(); return; }
                     parsed._wfClaimToken = parsed._wfGuard.token; parsed._wfGuard = null;           // taken: a second click on Save is not a second claim
                 }
+                /* The same lock for statements the device opened from the mailbox: each one is taken at Save, and one the email sync or an upload already
+                 * holds is left out (the server has closed its mailbox item). The rest of the batch is filed as usual. */
+                if (Array.isArray(parsed._wfMailGuard) && parsed._wfMailGuard.length && typeof parsed.cloudReview !== 'function'
+                    && window.WFStatementCloud && window.WFStatementCloud.guard && typeof window.WFStatementCloud.guard.mail === 'function') {
+                    const _asked = parsed._wfMailGuard; parsed._wfMailGuard = null;                    // asked once: a second click on Save asks nothing again
+                    parsed._wfMailBlocked = new Set();
+                    for (const _g of _asked) {
+                        let _held = null;
+                        try { _held = await window.WFStatementCloud.guard.mail(_g, 'claim'); } catch (_) { _held = null; }
+                        if (_held) {
+                            parsed._wfMailBlocked.add(_g.itemId);
+                            notify((_held.notice || 'Already Added') + ' — ' + (_g.bank || 'a') + ' statement is already in your books, so it was not added a second time.', 'warn');
+                        }
+                    }
+                    if (parsed._wfMailBlocked.size && parsed._wfMailBlocked.size >= _asked.length) { closeOvl(); return; }
+                }
+                const _mailBlocked = parsed._wfMailBlocked instanceof Set && parsed._wfMailBlocked.size ? parsed._wfMailBlocked : null;
                 const _uploadClaim = parsed._wfClaimToken || '';
                 if (typeof parsed.cloudReview === 'function') {
                     const button = $ovl('#_ccr_save'); button.disabled = true;
@@ -35392,7 +35443,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     return;
                 }
                 // Route every ticked row to the destination chosen in its "Goes to" cell.
-                const rows = txns;
+                const rows = _mailBlocked ? txns.filter((t) => !_mailBlocked.has(t._statementKey)) : txns;
                 const ccArr = DB.get('cconetime');
                 const ccPayArr = DB.get('ccPayments') || [];
                 const expArr = DB.get('expenses');

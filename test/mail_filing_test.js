@@ -384,6 +384,23 @@ describe('a huge catch-up sync does not open one unbounded review screen', () =>
         expect(calls.showModal.parsed.transactions.length).toBe(200);
     });
 
+    it('hands the statement registry one entry per statement it actually shows, never one it held back', () => {
+        const { reviewer, calls } = loadReviewer();
+        // cap 60: a (20) + b (20) fit; c (40) would pass the cap and is held back, with d
+        reviewer([statement('a', 'HNB', '1234', 20), statement('b', 'HNB', '1234', 20), statement('c', 'HNB', '1234', 40), statement('d', 'HNB', '1234', 40)]);
+        const guards = calls.showModal.parsed._wfMailGuard;
+        expect(guards.map(g => g.itemId)).toEqual(['a', 'b']);
+        expect(new Set(guards.map(g => g.itemId))).toEqual(new Set(calls.showModal.parsed.transactions.map(t => t._statementKey)));
+        for (const g of guards) expect(g).toMatchObject({ bank: 'HNB', last4: '1234', rows: 20 });
+        expect(guards.every(g => g.dates.length === g.rows && g.dates.every(Boolean))).toBe(true);
+    });
+
+    it('asks the registry about the account the statement\u2019s own text named, when the mailbox item gave none', () => {
+        const { reviewer, calls } = loadReviewer();
+        reviewer([{ ...statement('a', 'HNB', '', 5), guardLast4: '5678' }]);
+        expect(calls.showModal.parsed._wfMailGuard).toEqual([expect.objectContaining({ itemId: 'a', last4: '5678' })]);
+    });
+
     it('a second, smaller bank is never folded into the first bank’s cap', () => {
         const { reviewer, calls } = loadReviewer();
         reviewer([...manyStatements(), statement('other', 'Commercial Bank', '9999', 10)]);
