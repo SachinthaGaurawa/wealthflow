@@ -285,7 +285,10 @@ export const BUDGETS = {
     // 2026-10-02 (the phone's own mailbox review): no raise needed over the 2,160,000 above. The review that opens a mailbox statement on the device now asks the statement registry before it
     // opens (a statement the email sync or an upload already holds is shown as "Already added" and not offered) and takes the statement at Save, one lock for all three doors; measured
     // 2,154,943 with it, merged onto the Score/DSCR work. The server side is statement-guard.js and wealthflow-statement-cloud.js. No new script or request. ~0.2% headroom.
-    htmlBytes: 2_160_000,
+    // 2026-10-03 (the five tools, round two): 2,160,000 -> 2,166_000 (measured 2,161,221 + headroom). A month counts in the averages and in the 3D picture only when something real happened in it
+    // (not merely a subscription or a card plan, which are in every month from their start), the 3D picture falls back to the latest month that has data and names the months it shows, and the
+    // Wealth Simulator says what is missing instead of drawing a flat chart of zeros. No new script or request.
+    htmlBytes: 2_166_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

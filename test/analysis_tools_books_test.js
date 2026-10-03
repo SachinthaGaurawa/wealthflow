@@ -23,7 +23,7 @@ const ym = (y, m) => `${y}-${p2(m)}`;
 const run = (y1, m1, y2, m2) => { const out = []; let y = y1, m = m1; while (y < y2 || (y === y2 && m <= m2)) { out.push(ym(y, m)); m += 1; if (m > 12) { m = 1; y += 1; } } return out; };
 
 const NAMES = ['_loanMethod', '_loanInstallmentMonths', '_scheduledPaymentFor', '_loanBalanceBeforeMonth', '_loanBalanceAfter', 'loanEndDate', 'getLoanMonthlyForDate', 'getCCIMonthlyForDate', '_wfLinkedLoanMonths', '_wfFindLoanDebit',
-    '_wfMonthIsFuture', 'getMonthlyData', '_wfBooksProfile', '_wfLoanEmiNow', '_wfPosition', '_wfFreeCash', '_wfBasisLine', 'loanCurrentBalance', 'cciProgress', 'calculateWFScore', 'get12MonthAverages', '_cf3dPeriodKey',
+    '_wfMonthIsFuture', 'getMonthlyData', '_wfMonthSpent', '_wfMonthStarted', '_wfBooksProfile', '_wfLoanEmiNow', '_wfPosition', '_wfFreeCash', '_wfBasisLine', 'loanCurrentBalance', 'cciProgress', 'calculateWFScore', 'get12MonthAverages', '_cf3dPeriodKey',
     '_cf3dGatherFlows', 'calcEMI', '_amortizeStrategy', '_normalRand', '_mcSeeded', '_mcSeedOf', '_mcSimulate', 'buildFinancialContext'];
 const SOURCES = NAMES.map(source).join('\n');
 const EMPTY = () => ({ loans: [], expenses: [], incomeRecv: [], ccinstall: [], cconetime: [], subscriptions: [], cheques: [], income: [], targets: [], balance: { total: 0, flows: [] } });
@@ -280,5 +280,57 @@ describe('the Wealth Simulator is reproducible and keeps the savings\' buying po
         expect(sim.pct.p50[0]).toBe(1000000);
         expect(sim.finalVals.every(v => v >= 0)).toBe(true);
         expect(Number(sim.probLoss)).toBeGreaterThan(30);                  // ending below what was put in is about as likely as not with zero drift
+    });
+});
+
+
+describe('a month counts only when something real happened in it', () => {
+    const sub = { id: 'S1', name: 'Netflix', amount: 1500, cycle: 'monthly', category: 'Entertainment', createdAt: '2025-01-05T00:00:00Z' };
+    const plan = { id: 'C1', product: 'Laptop', bank: 'Sampath', total: 240000, rate: 0, duration: 36, monthly: 20000, date: '2025-01-05', completed: false };
+    it('what is merely scheduled (a subscription, a card plan, a recurring bill) does not start a month', () => {
+        const c = household({ subscriptions: [sub], ccinstall: [plan], expenses: [spend('2026-07', 5000, { recurring: true })] });
+        expect(c._wfMonthStarted(c.getMonthlyData(2026, 7))).toBe(false);
+    });
+    it('income received, a dated entry, a card charge, a paid installment or a cleared cheque does', () => {
+        const day = (data) => { const c = household(data); return c._wfMonthStarted(c.getMonthlyData(2026, 7)); };
+        expect(day({ incomeRecv: [salary('2026-08')] })).toBe(true);
+        expect(day({ expenses: [spend('2026-08', 800)] })).toBe(true);
+        expect(day({ cconetime: [{ id: 'K', desc: 'KEELLS', amount: 900, combinedTotal: 900, date: '2026-08-04', paid: false }] })).toBe(true);
+        expect(day({ loans: [loan({ payments: [paid('2026-08')] })] })).toBe(true);
+        expect(day({ cheques: [{ id: 'Q', party: 'P', no: '1', amount: 5000, issue: '2026-08-01', release: '2026-08-02', status: 'cleared', type: 'issued' }] })).toBe(true);
+    });
+    it('months before the first record are not averaged in as months of spending, however old the subscription or plan', () => {
+        const c = household({ subscriptions: [sub], ccinstall: [plan], incomeRecv: [salary('2026-08'), salary('2026-09')], expenses: [spend('2026-08', 100000), spend('2026-09', 100000)] });
+        const p = c._wfBooksProfile(new Date());
+        expect(p.basis.outgoMonths).toBe(2);                               // August and September, not the nineteen months of schedule before them
+        expect(p.avgOutgo).toBe(100000 + 1500 + 20000);
+    });
+});
+
+describe('the 3D picture shows the latest month that has anything, and says so', () => {
+    const view = (data, period) => { const c = household(data); c.$ = id => (id === 'cf3dPeriod' ? { value: period } : null); return c._cf3dGatherFlows(); };
+    it('"This Month" on the 2nd, before any statement of the month: the latest month with data is shown, named, with its income', () => {
+        const f = view({ incomeRecv: [salary('2026-09')], expenses: [spend('2026-09', 60000)] }, 'thisMonth');
+        expect(f.windowLabel).toBe('Sep 2026');
+        expect(f.note).toMatch(/Oct has nothing recorded yet — showing Sep 2026/);
+        expect(f.groups).toMatchObject({ Income: 800000, Expenses: 60000 });
+        expect(f.incomeSources).toEqual([{ name: 'Salary', amount: 800000 }]);
+    });
+    it('a month holding only a subscription and a card plan is still "nothing yet"', () => {
+        const f = view({ incomeRecv: [salary('2026-09')], subscriptions: [{ id: 'S', name: 'Netflix', amount: 1500, cycle: 'monthly', createdAt: '2026-01-05T00:00:00Z' }] }, 'thisMonth');
+        expect(f.windowLabel).toBe('Sep 2026');
+        expect(f.groups.Income).toBe(800000);
+    });
+    it('a month with real data is shown as it is, with no note', () => {
+        const f = view({ incomeRecv: [salary('2026-10')], expenses: [spend('2026-10', 1000)] }, 'thisMonth');
+        expect(f).toMatchObject({ windowLabel: 'Oct 2026', note: '' });
+    });
+    it('"Last Month", "Last 3 Months" and a household with nothing at all', () => {
+        const books = { incomeRecv: [salary('2026-09')], expenses: [spend('2026-09', 5000)] };
+        expect(view(books, 'lastMonth')).toMatchObject({ windowLabel: 'Sep 2026', note: '', groups: { Income: 800000 } });
+        expect(view(books, 'last3')).toMatchObject({ windowLabel: 'Aug 2026 – Oct 2026', months: 3 });
+        const none = view({}, 'thisMonth');
+        expect(none.note).toMatch(/Nothing is recorded yet/);
+        expect(Object.values(none.groups).every(v => v === 0)).toBe(true);
     });
 });
