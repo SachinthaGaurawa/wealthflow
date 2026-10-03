@@ -23,6 +23,8 @@ const bankAccount = { statementType: 'bank_account', card_last4: '', subscriptio
 
 describe('what the AI board is asked', () => {
     const answer = (n, module = 'expenses', category = 'Groceries') => ({ unanimous: true, trustworthy: true, expected: Array.from({ length: 10 }, (_, i) => 'e' + i), fields: { decisions: Array.from({ length: n }, (_, index) => ({ index, module, category, allocationId: '' })) } });
+    // the peer review: one verdict per row
+    const reviewed = (indexes, approved = true) => ({ unanimous: true, trustworthy: true, expected: Array.from({ length: 10 }, (_, i) => 'e' + i), fields: { reviews: indexes.map(index => ({ index, approved })) } });
 
     it('is not asked about a card statement the rules settle — no board call at all', async () => {
         const board = vi.fn();
@@ -35,7 +37,7 @@ describe('what the AI board is asked', () => {
 
     it('is asked only about the rows the rules did not settle, indexed from zero, and the answers go back to the right rows', async () => {
         const rows = [cardRow(1, 'POS TRANSACTION KEELLS SUPER'), cardRow(2, 'ZZYX QWERTY HOLDINGS'), cardRow(3, 'CEFT CHARGES TRANSPORT'), cardRow(4, 'QQQ UNKNOWN TRADERS')];
-        const board = vi.fn().mockResolvedValueOnce(answer(2, 'expenses', 'Shopping')).mockResolvedValueOnce({ ...answer(0), fields: { approved: true } });
+        const board = vi.fn().mockResolvedValueOnce(answer(2, 'expenses', 'Shopping')).mockResolvedValueOnce(reviewed([0, 1]));
         const decisions = await classifySlice(rows, bankAccount, { board });
         expect(board).toHaveBeenCalledTimes(2);
         const sent = board.mock.calls[0][0];
@@ -49,7 +51,7 @@ describe('what the AI board is asked', () => {
     });
 
     it('still asks about a row that looks like one of the owner\'s subscriptions, even when the rules settled it', async () => {
-        const board = vi.fn().mockResolvedValueOnce(answer(1, 'cconetime', 'Card Purchase')).mockResolvedValueOnce({ ...answer(0), fields: { approved: true } });
+        const board = vi.fn().mockResolvedValueOnce(answer(1, 'cconetime', 'Card Purchase')).mockResolvedValueOnce(reviewed([0]));
         await classifySlice([cardRow(1, 'NETFLIX.COM 866-579')], { ...creditCard, subscriptions: [{ id: 's1', name: 'Netflix Premium', category: 'Entertainment' }] }, { board });
         expect(board).toHaveBeenCalledTimes(2);
         const quiet = vi.fn();
@@ -67,12 +69,12 @@ describe('what the AI board is asked', () => {
     it('a row the board cannot refine keeps the rules\' own answer, marked — and only a row the rules themselves doubt is still put to the owner', async () => {
         const weak = cardRow(1, 'ZZYX QWERTY HOLDINGS'), doubted = { ...cardRow(2, 'QQQ UNKNOWN TRADERS'), needsReview: true };
         // the peer review says "not every decision is supported": it used to send BOTH rows to the owner ("the AI could not reach agreement")
-        const rejected = vi.fn().mockResolvedValueOnce(answer(2, 'expenses', 'Shopping')).mockResolvedValueOnce({ ...answer(0), fields: { approved: false } });
+        const rejected = vi.fn().mockResolvedValueOnce(answer(2, 'expenses', 'Shopping')).mockResolvedValueOnce(reviewed([0, 1], false));
         const decisions = await classifySlice([weak, doubted], bankAccount, { board: rejected });
         expect(decisions[0]).toMatchObject({ module: 'expenses', category: 'Other', verified: true, autoDecided: 'rules' });
         expect(decisions[1]).toMatchObject({ verified: false, reason: 'ai-consensus-unavailable' });
         // and when the board answers "review" (it is not sure) about a row the rules can place
-        const unsure = vi.fn().mockResolvedValueOnce(answer(1, 'review', 'Needs Review')).mockResolvedValueOnce({ ...answer(0), fields: { approved: true } });
+        const unsure = vi.fn().mockResolvedValueOnce(answer(1, 'review', 'Needs Review'));
         expect((await classifySlice([weak], bankAccount, { board: unsure }))[0]).toMatchObject({ module: 'expenses', category: 'Other', verified: true, autoDecided: 'rules' });
     });
 
@@ -211,7 +213,7 @@ describe('a long card statement in one invocation', () => {
         const ok = n => ({ unanimous: true, trustworthy: true, expected: Array.from({ length: 10 }, (_, i) => 'e' + i), fields: { decisions: Array.from({ length: n }, (_, index) => ({ index, module: 'cconetime', category: 'Card Purchase', allocationId: '' })) } });
         w.board.mockReset();
         // answers exactly the rows it is sent
-        w.board.mockImplementation(async prompt => (prompt.startsWith('Return only JSON. Independently') ? { ...ok(0), fields: { approved: true } }
+        w.board.mockImplementation(async prompt => (prompt.startsWith('Return only JSON. Independently') ? { ...ok(0), fields: { reviews: JSON.parse(prompt.slice(prompt.indexOf('Evidence: ') + 10)).decisions.map(d => ({ index: d.index, approved: true })) } }
             : ok(JSON.parse(prompt.slice(prompt.indexOf('Transactions: ') + 14)).length)));
         const result = await runStatementSync({ ...w.base, settle: settleStatement, maxSteps: 1, budgetMs: 40000, startedAt: Date.now() - 20000 });
         expect(result.attempted).toBe(1);

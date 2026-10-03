@@ -571,7 +571,15 @@ export default async function handler(req, res) {
         // providers are simultaneously healthy in practice, and silently
         // failed every unanimous vote whenever fewer than ten were up at once
         // — which is the normal case, not the exception, for free-tier keys.
-        const decision = Matrix.unanimousDecision(results, { task, expected: expectedNames, minimumProviders: 5, allowUnavailable: true });
+        /* A caller whose question is a LIST OF ROWS may ask for the answer to be read row by row too (`itemwise: { path, id }`): the whole answer
+         * is judged exactly as before — `unanimous` and the 422 are unchanged, so a caller that does not ask is not affected — and the body also says
+         * which rows every voter agreed on (`items`). The key names are plain identifiers; anything else is ignored. */
+        const itemwise = (() => {
+            const spec = req.body && req.body.itemwise;
+            const name = v => typeof v === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,30}$/.test(v);
+            return spec && typeof spec === 'object' && name(spec.path) && (spec.id === undefined || name(spec.id)) ? { path: spec.path, id: spec.id || 'index' } : null;
+        })();
+        const decision = Matrix.unanimousDecision(results, { task, expected: expectedNames, minimumProviders: 5, allowUnavailable: true, ...(itemwise ? { itemwise } : {}) });
         /* ONE LINE PER FINANCIAL DECISION, so the log says why a board of sixteen did or did not reach five: who answered, who was asked
          * and failed (and how), who was resting, and the reason. (Before this the answer had to be inferred from scattered warnings.) */
         try {
@@ -583,7 +591,7 @@ export default async function handler(req, res) {
                 return { clear: reading.clear, groups: Object.values(groups).sort((x, y) => y.length - x.length).slice(0, 4), sample: reading.dissent.slice(0, 2).map(key) };
             })();
             console.info(JSON.stringify({ evt: 'ai-board', ok: decision.unanimous, reason: decision.reason || '', answered: decision.answered, invalid: decision.invalid,
-                failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, probation, ...(reasked.length ? { reasked } : {}), ...(differing ? { differing } : {}), ms: Date.now() - boardStarted }));
+                failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, probation, ...(reasked.length ? { reasked } : {}), ...(differing ? { differing } : {}), ...(decision.items && !decision.items.reason ? { rows: { agreed: decision.items.agreed.length, disputed: decision.items.disputed.length } } : {}), ms: Date.now() - boardStarted }));
         } catch (_) { /* a log line never decides a financial question */ }
         // Preserve a machine-readable quarantine outcome; no partial answer is
         // released to consumers that might otherwise file a majority guess.

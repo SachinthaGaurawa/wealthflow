@@ -46,7 +46,7 @@ describe('the board is down and the rules doubt the row: it is filed, not asked 
         expect(out[1]).toMatchObject({ verified: true });
     });
     it('the same when the board answers and cannot agree with itself (a review verdict, a rejected proposal)', async () => {
-        const unsure = vi.fn().mockResolvedValueOnce({ unanimous: true, trustworthy: true, expected: ['a', 'b', 'c', 'd', 'e'], fields: { decisions: [{ index: 0, module: 'review', category: 'Needs Review', allocationId: '' }] } }).mockResolvedValueOnce({ unanimous: true, trustworthy: true, expected: ['a', 'b', 'c', 'd', 'e'], fields: { approved: true } });
+        const unsure = vi.fn().mockResolvedValueOnce({ unanimous: true, trustworthy: true, expected: ['a', 'b', 'c', 'd', 'e'], fields: { decisions: [{ index: 0, module: 'review', category: 'Needs Review', allocationId: '' }] } }).mockResolvedValueOnce({ unanimous: true, trustworthy: true, expected: ['a', 'b', 'c', 'd', 'e'], fields: { reviews: [{ index: 0, approved: true }] } });
         const out = await classifySlice([row()], bank, { board: unsure });
         expect(out[0]).toMatchObject({ module: 'expenses', verified: true, autoDecided: 'rules-fallback' });
     });
@@ -55,7 +55,7 @@ describe('the board is down and the rules doubt the row: it is filed, not asked 
         expect(out[0]).toMatchObject({ verified: false, reason: 'ai-consensus-unavailable' });
     });
     it('the AI still REFINES: when the board agrees on a category, that is what is filed, not the fallback', async () => {
-        const good = vi.fn().mockResolvedValueOnce({ unanimous: true, trustworthy: true, expected: ['a', 'b', 'c', 'd', 'e'], fields: { decisions: [{ index: 0, module: 'expenses', category: 'Shopping', allocationId: '' }] } }).mockResolvedValueOnce({ unanimous: true, trustworthy: true, expected: ['a', 'b', 'c', 'd', 'e'], fields: { approved: true } });
+        const good = vi.fn().mockResolvedValueOnce({ unanimous: true, trustworthy: true, expected: ['a', 'b', 'c', 'd', 'e'], fields: { decisions: [{ index: 0, module: 'expenses', category: 'Shopping', allocationId: '' }] } }).mockResolvedValueOnce({ unanimous: true, trustworthy: true, expected: ['a', 'b', 'c', 'd', 'e'], fields: { reviews: [{ index: 0, approved: true }] } });
         const out = await classifySlice([row()], bank, { board: good });
         expect(out[0]).toMatchObject({ module: 'expenses', category: 'Shopping', verified: true });
         expect(out[0].autoDecided).toBeUndefined();
