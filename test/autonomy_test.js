@@ -330,6 +330,33 @@ describe('agent-swarm: security verdict parsing fails closed', () => {
         expect(parseVerdict('PASS ... actually FAIL').verdict).toBe('FAIL');
     });
 
+    it('never reads the word PASS inside prose as a pass — a negation is the commonest way a reviewer says no', () => {
+        for (const reply of [
+            'This should not pass review: it removes the auth check',
+            'I would not say PASS here',
+            'Does this pass? It does not.',
+            'PASS the lint, but the change opens an injection hole',
+            'The change passes tests however it logs the API key',
+            'Verdict: PASS with reservations, see below',
+            'PASS\nHowever the new route is unauthenticated.',
+        ]) expect(parseVerdict(reply).verdict, reply).toBe('FAIL');
+    });
+
+    it('accepts a bare PASS however it is dressed, because that is a verdict and nothing else', () => {
+        for (const reply of ['PASS', 'pass', ' Pass. ', '"PASS"', '**PASS**', '```\nPASS\n```', 'Verdict: PASS', 'final verdict - PASS!']) expect(parseVerdict(reply).verdict, reply).toBe('PASS');
+    });
+
+    it('a PASS that names a medium, high or critical problem contradicts itself and is a FAIL; none and low stand', () => {
+        const pass = (severity, findings = []) => parseVerdict(JSON.stringify({ verdict: 'PASS', severity, findings, reason: 'x' }));
+        for (const severity of ['medium', 'high', 'critical', 'HIGH', 'severe', 'unknown', '']) {
+            if (severity === '') { expect(pass(severity).verdict).toBe('PASS'); continue; }                  // no rating given means none
+            const v = pass(severity, ['removed auth check']);
+            expect(v.verdict, severity).toBe('FAIL'); expect(v.reason).toContain('wrote PASS but rated the problem');
+        }
+        expect(pass('none').verdict).toBe('PASS'); expect(pass('low', ['a long line']).verdict).toBe('PASS');
+        expect(parseVerdict('{"verdict":"pass ","severity":"None"}').verdict).toBe('PASS');
+    });
+
     it('never throws on arbitrary reviewer output', () => {
         fc.assert(fc.property(fc.string({ maxLength: 300 }), (s) => {
             const v = parseVerdict(s);

@@ -48,7 +48,12 @@ const MAX_DIFF = 60_000;
 
 // ── vote parsing ─────────────────────────────────────────────────────────────
 
-/** Read a verdict out of a model reply, structured or prose. Fails closed. */
+/**
+ * Read a verdict out of a model reply, structured or prose. Fails closed: a PASS has to be STATED, never inferred.
+ * Prose is a pass only when the whole reply is the word PASS (a fence, quotes, a "verdict:" label and closing punctuation around it are allowed). Prose that merely contains
+ * the word is `unclear` — it is asked again, and after three tries it is a non-vote — because "this should not pass review: it removes the auth check" holds PASS and not FAIL,
+ * and used to count as the approval it is the opposite of. A FAIL in prose still blocks: the safe direction needs no proof.
+ */
 export function parseVote(text) {
     const j = extractJson(text);
     if (j && typeof j.verdict === 'string') {
@@ -56,10 +61,11 @@ export function parseVote(text) {
     }
     const t = String(text || '').trim().toUpperCase();
     if (!t) return 'unclear';
+    const bare = t.replace(/```[A-Z]*/g, ' ').replace(/^\s*(?:FINAL\s+)?(?:VERDICT|ANSWER|RESULT)\s*[:=-]\s*/, '').replace(/["'`*_\s.!]+/g, ' ').trim();
+    if (bare === 'PASS') return 'pass';
+    if (bare === 'FAIL') return 'fail';
     const head = t.slice(0, 300);
     if (/\bFAIL\b/.test(head) && !/\bPASS\b/.test(head)) return 'fail';
-    if (/\bPASS\b/.test(head) && !/\bFAIL\b/.test(head)) return 'pass';
-    if (/^PASS\b/.test(t)) return 'pass';
     if (/^FAIL\b/.test(t)) return 'fail';
     return 'unclear';
 }

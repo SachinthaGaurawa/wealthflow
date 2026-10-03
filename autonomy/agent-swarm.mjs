@@ -479,23 +479,32 @@ export function structuralCheck(before, after) {
     return { ok: problems.length === 0, problems };
 }
 
-/** Parse Agent 5's JSON verdict defensively — an unparseable review is a FAIL. */
+/** How serious a finding may be and still let a PASS stand. A reviewer that writes PASS and then names a medium, high or critical problem (or a word that is no severity) has contradicted itself: the contradiction is a FAIL. */
+const PASSABLE_SEVERITY = new Set(['none', 'low']);
+
+/**
+ * Parse Agent 5's verdict, failing closed: only a verdict that is unmistakably a PASS is a PASS.
+ *   · a JSON verdict of exactly "PASS" with a severity of none or low (or none given) passes; "PASS" with a worse severity is a contradiction and fails;
+ *   · with no JSON, the WHOLE reply must be the word PASS (a fence, quotes, a "verdict:" label and closing punctuation around it are allowed). Prose that merely
+ *     contains the word does not pass: "this should not pass review: it removes the auth check" used to, because it holds PASS and not FAIL.
+ * Everything else — empty, unsure, rambling, negated — is a FAIL.
+ */
 export function parseVerdict(text) {
     const j = extractJson(text);
     if (j && typeof j.verdict === 'string') {
-        const verdict = /^pass$/i.test(j.verdict.trim()) ? 'PASS' : 'FAIL';
+        const severity = String(j.severity || 'none').trim().toLowerCase();
+        const passed = /^pass$/i.test(j.verdict.trim());
+        const contradiction = passed && !PASSABLE_SEVERITY.has(severity);
         return {
-            verdict,
-            severity: String(j.severity || 'none').toLowerCase(),
+            verdict: passed && !contradiction ? 'PASS' : 'FAIL',
+            severity,
             findings: Array.isArray(j.findings) ? j.findings.map(String).slice(0, 10) : [],
-            reason: String(j.reason || '').slice(0, 400),
+            reason: contradiction ? `reviewer wrote PASS but rated the problem ${severity || 'unrated'}: ${String(j.reason || '').slice(0, 300)}` : String(j.reason || '').slice(0, 400),
         };
     }
-    // No parseable JSON — fall back to a keyword read, then fail closed.
-    const t = String(text || '').toUpperCase();
-    if (/\bPASS\b/.test(t) && !/\bFAIL\b/.test(t)) {
-        return { verdict: 'PASS', severity: 'none', findings: [], reason: 'unstructured PASS' };
-    }
+    // No parseable JSON: a bare PASS is accepted, nothing longer is.
+    const bare = String(text || '').replace(/```[A-Za-z]*/g, ' ').replace(/^\s*(?:final\s+)?(?:verdict|answer|result)\s*[:=-]\s*/i, '').replace(/["'`*_\s.!]+/g, ' ').trim();
+    if (/^pass$/i.test(bare)) return { verdict: 'PASS', severity: 'none', findings: [], reason: 'unstructured PASS' };
     return { verdict: 'FAIL', severity: 'unknown', findings: ['reviewer returned no parseable verdict'], reason: 'fail-closed' };
 }
 
