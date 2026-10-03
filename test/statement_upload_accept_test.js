@@ -138,8 +138,8 @@ describe('the HTML fast path can still recognise the file once picked', () => {
     it('detects by extension as well as MIME, because iOS often reports neither', () => {
         // Files handed over from iCloud Drive frequently arrive with an empty
         // file.type, so the name check is not redundant — it is the load-bearing one.
-        const branch = AIV4.slice(AIV4.indexOf('HTML e-STATEMENT FAST PATH'),
-            AIV4.indexOf('HTML e-STATEMENT FAST PATH') + 900);
+        // The detection is computed once at the top of the handler (the progress plan needs it before the fast path starts).
+        const branch = AIV4.slice(AIV4.indexOf('var _isHtml'), AIV4.indexOf('var _isHtml') + 300);
         expect(branch).toMatch(/text\\\/html/);
         expect(branch, 'the extension fallback is gone — an iOS file with an empty '
             + 'type would no longer be recognised as a statement').toMatch(/\\\.html\?\$/);

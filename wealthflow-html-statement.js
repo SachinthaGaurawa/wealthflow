@@ -1125,7 +1125,10 @@
         });
     }
 
-    function getStatementText(file) {
+    /*  `hooks.onWait(true|false)` — optional. True while the date-of-birth box is open and nothing can happen until the owner answers; false once an answer is
+     *  being tried. It lets the upload overlay say "waiting for you" instead of counting seconds as if the app were working. */
+    function getStatementText(file, hooks) {
+        var wait = function (on) { if (hooks && typeof hooks.onWait === 'function') { try { hooks.onWait(!!on); } catch (_) {} } };
         return _readFileText(file).then(function (text) {
             // Plain (already-decrypted) statement HTML?
             if (!isEncryptedHtmlStatement(text)) {
@@ -1135,7 +1138,9 @@
             // Encrypted → prompt for DOB, retry up to 3 times.
             var attempts = 0;
             function tryOnce() {
+                wait(true);
                 return promptPassword().then(function (pw) {
+                    wait(false);
                     if (pw == null) return { ok: false, cancelled: true };
                     return decrypt(text, pw).then(function (html) {
                         if (html && _decryptedOk(html)) {
@@ -1154,12 +1159,14 @@
                                 var ov = window.__wfhsActiveOverlay;
                                 if (ov && ov._setError) { ov._setError('Incorrect Date of Birth. Try again (' + (3 - attempts) + ' left).'); ov._inp.onkeydown = null; }
                             } catch (_) {}
+                            wait(true);
                             // reuse overlay: wait for the user to submit again
                             var ov2 = window.__wfhsActiveOverlay;
                             if (ov2) {
                                 ov2.querySelector('#_wfhsOk').onclick = function () {
                                     var v = (ov2._inp.value || '').replace(/\D/g, '');
                                     if (v.length !== 8) { ov2._setError('Enter all 8 digits (DDMMYYYY).'); return; }
+                                    wait(false);
                                     decrypt(text, v).then(function (h2) {
                                         if (h2 && _decryptedOk(h2)) {
                                             ov2.style.opacity = '0'; setTimeout(function () { ov2.remove(); window.__wfhsActiveOverlay = null; }, 150);
@@ -1167,7 +1174,7 @@
                                         } else {
                                             attempts++;
                                             if (attempts >= 3) { ov2.remove(); window.__wfhsActiveOverlay = null; res({ ok: false, wrongPassword: true, reason: 'Incorrect Date of Birth (3 attempts).' }); }
-                                            else ov2._setError('Incorrect Date of Birth. Try again (' + (3 - attempts) + ' left).');
+                                            else { wait(true); ov2._setError('Incorrect Date of Birth. Try again (' + (3 - attempts) + ' left).'); }
                                         }
                                     });
                                 };

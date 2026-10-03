@@ -194,6 +194,8 @@
         opts = opts || {};
         var maxPages = opts.maxPages || 3;
         var maxBytes = opts.maxBytes || 3.8 * 1024 * 1024;
+        /* opts.onProgress({phase:'pages', done, total}) — optional; told how many PDF pages are drawn, starting with 0, so an overlay can show real progress. */
+        var tell = function (done, total) { if (typeof opts.onProgress === 'function') { try { opts.onProgress({ phase: 'pages', done: done, total: total }); } catch (_) {} } };
 
         if (!file) throw new Error('No file provided');
         var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
@@ -376,11 +378,13 @@
         var images = [];
         var dims = [];
         try {
+            tell(0, pages);
             for (var i = 1; i <= pages; i++) {
                 try {
                     var rendered = await renderPdfPageAdaptive(pdf, i, maxBytes);
                     images.push(rendered.base64);
                     dims.push({ w: rendered.width, h: rendered.height, bytes: rendered.bytes });
+                    tell(i, pages);
                 } catch (e) {
                     console.warn('[' + V + '] PDF page ' + i + ' render failed:', e.message);
                     if (images.length === 0 && i === 1) throw e; // first page must succeed
@@ -1202,7 +1206,46 @@
         return r;
     }
 
+    /* THE UPLOAD OVERLAY'S BAR (wealthflow-scan-progress.js). Every stage below says what it is doing, and the bar moves only by work that was counted — pages read of N, pages the AI has
+     * answered of N — and holds, counting seconds aloud, while it waits on something with no unit (a registry call, one AI answer). The weights decide how the bar's length is shared
+     * between the stages; they say nothing about progress inside one. A scan that falls back to reading pictures redraws the plan from where the bar stands, so it never goes back. */
+    function _wfVisionPlan(isCCOT, withCheck) {
+        return isCCOT
+            ? [{ id: 'check', weight: withCheck ? 6 : 0 }, { id: 'render', weight: 14 }, { id: 'net', weight: 3 }, { id: 'prebank', weight: 7 }, { id: 'ai', weight: 50 }, { id: 'bank', weight: 8 }, { id: 'guard', weight: 8 }]
+            : [{ id: 'render', weight: 25 }, { id: 'net', weight: 5 }, { id: 'ai', weight: 55 }, { id: 'fill', weight: 15 }];
+    }
+    var _wfNoRun = { plan: function () { return _wfNoRun; }, stage: function () { return _wfNoRun; }, step: function () { return _wfNoRun; }, say: function () { return _wfNoRun; }, handoff: function () { return _wfNoRun; }, end: function () { return _wfNoRun; } };
+    /* If the progress module did not load (a stale cache, a blocked script), the overlay still opens and closes, with the bar left at the start: no number is made up. */
+    function _wfPlainRun(first) {
+        var run = {
+            plan: function () { return run; },
+            stage: function (id, label, detail, icon) { return run.say(label, detail, icon); },
+            step: function () { return run; },
+            say: function (label, detail, icon) { if (typeof window._showScanOverlay === 'function') window._showScanOverlay(label, detail, 0, icon); return run; },
+            handoff: function () { return run; },
+            end: function () { if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay(); return run; }
+        };
+        return run.say(first.label, first.detail, first.icon);
+    }
+    /** The run that owns the overlay for this upload. Receipts, bills and statements show it; the AI chat attachment has its own typing indicator and gets a run that does nothing. */
+    function _wfScanRun(type, file) {
+        if (type !== 'expense' && type !== 'subscription' && type !== 'ccot') return _wfNoRun;
+        var first = { resume: true, label: 'Opening file…', detail: ((file.size || 0) / 1024 / 1024).toFixed(2) + ' MB', icon: 'fileText' };
+        var SP = window.WFScanProgress;
+        return SP && typeof SP.begin === 'function' ? SP.begin(first) : _wfPlainRun(first);
+    }
+
+    /* The overlay is closed on EVERY way out of an upload — a result, a duplicate, a cancelled password, a thrown error — by the one `finally` here, not by each branch remembering to.
+     * A newer upload's overlay is never closed by an older one (the run knows whether it still owns it). */
     async function handleAIScanV4(e, type) {
+        var file = e.target && e.target.files && e.target.files[0];
+        if (!file) return;
+        var P = _wfScanRun(type, file);
+        try { await _handleAIScanV4(e, type, P); }
+        finally { P.end(); }
+    }
+
+    async function _handleAIScanV4(e, type, P) {
         var file = e.target && e.target.files && e.target.files[0];
         if (!file) return;
         var inputEl = e.target;
@@ -1214,8 +1257,16 @@
         var isAiChat = (type === 'ai_chat');
         var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
         var showsOverlay = isExpense || isSubscription || isCCOT;
+        var _isHtml = file && (/text\/html/i.test(file.type || '') || /\.html?$/i.test(file.name || ''));
 
         if (typeof window.triggerHaptic === 'function') window.triggerHaptic('medium');
+
+        /* The plan for this upload: which stages it will go through, so the bar's length is shared between them from the start. */
+        if (isCCOT) {
+            if (_isHtml) P.plan([{ id: 'check', weight: 6 }, { id: 'open', weight: 50 }, { id: 'bank', weight: 22 }, { id: 'guard', weight: 22 }]);
+            else if (isPdf) P.plan([{ id: 'check', weight: 6 }, { id: 'open', weight: 8 }, { id: 'read', weight: 40 }, { id: 'parse', weight: 6 }, { id: 'bank', weight: 20 }, { id: 'guard', weight: 20 }]);
+            else P.plan(_wfVisionPlan(true, true));
+        } else P.plan(_wfVisionPlan(false, false));
 
         // CCOT-specific: the issuing bank is READ from the statement (wealthflow-bank-detect.js) once its
         // text is open — it is never asked. It still picks the Sri-Lankan fee schedule (the record label is
@@ -1224,6 +1275,7 @@
         var _wfBank = null;
         var _wfSha = '';
         if (isCCOT && _wfStatementGuard()) {
+            P.stage('check', 'Checking the file…', 'Looking for an earlier copy of this statement', 'shield');
             try {
                 var _gf = await _wfStatementGuard().file(file);
                 _wfSha = _gf.sha || '';
@@ -1235,12 +1287,16 @@
         // Banks like Nations Trust send statements as an encrypted HTML file that
         // unlocks with the date of birth (DDMMYYYY). Open it DIRECTLY: prompt for
         // the DOB, decrypt in-app, and import the rows — no "HTML Viewer Q" app.
-        var _isHtml = file && (/text\/html/i.test(file.type || '') || /\.html?$/i.test(file.name || ''));
         if (isCCOT && _isHtml && window.WFHtmlStatement && typeof window._showCCReviewModal === 'function') {
             try {
-                if (showsOverlay && typeof window._showScanOverlay === 'function') window._showScanOverlay('Opening e-statement…', 'Unlocking and reading your statement', 20, 'lock');
-                var _hres = await window.WFHtmlStatement.getStatementText(file);
-                if (_hres && _hres.cancelled) { if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay(); inputEl.value = ''; return; }
+                P.stage('open', 'Opening e-statement…', 'Unlocking and reading your statement', 'lock');
+                var _hres = await window.WFHtmlStatement.getStatementText(file, {
+                    onWait: function (waiting) {
+                        if (waiting) P.say('Waiting for the date of birth…', 'Enter the 8 digits in the box to continue', 'lock');
+                        else P.say('Opening e-statement…', 'Unlocking and reading your statement', 'lock');
+                    }
+                });
+                if (_hres && _hres.cancelled) { P.end(); inputEl.value = ''; return; }
                 var _htx = (_hres && _hres.transactions) || [];
                 if (!_htx.length && _hres && _hres.text && window.WFStatementParser && window.WFStatementParser.hasTextLayer(_hres.text)) {
                     _htx = (window.WFStatementParser.parseStatementText(_hres.text) || []);
@@ -1260,17 +1316,19 @@
                         }),
                         card_last4: '', currency: 'LKR', statement_period: ''
                     };
+                    P.stage('bank', 'Identifying the bank…', _htx.length + ' transactions read', 'bank');
                     _wfBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _hres && _hres.text });
                     ccotBank = _wfBank && _wfBank.ok ? _wfBank.name : '';
                     _parsedH._wfBank = _wfBank;
+                    P.stage('guard', 'Checking your books…', 'Making sure this statement is not already added', 'shield');
                     if (await _wfGuardParsed(_parsedH, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', text: _hres && _hres.text })) { inputEl.value = ''; return; }
-                    if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                    P.end();
                     if (typeof window.notify === 'function') window.notify('Imported ' + _htx.length + ' transactions from your e-statement' + (ccotBank ? ' · ' + ccotBank : '') + '.', 'success');
                     window._showCCReviewModal(_parsedH, ccotBank);
                     inputEl.value = '';
                     return;
                 }
-                if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                P.end();
                 if (_hres && _hres.notStatement) {
                     if (typeof window.notify === 'function') window.notify("That HTML file doesn't look like a bank statement.", 'warn');
                 } else {
@@ -1293,7 +1351,7 @@
                 return; // never fall through to image/PDF processing for an HTML file
             } catch (_eH) {
                 console.warn('[' + V + '] HTML e-statement failed:', _eH && _eH.message);
-                if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                P.end();
                 if (typeof window.notify === 'function') window.notify('Could not open that e-statement file.', 'warn');
                 inputEl.value = '';
                 return;
@@ -1310,15 +1368,25 @@
         // or on any failure.
         if (isCCOT && isPdf && window.WFPdfUnlock && window.WFStatementParser && typeof window._showCCReviewModal === 'function') {
             try {
-                if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('Reading statement text…', 'Extracting every line directly from the PDF', 20, 'fileText');
-                var _res = await window.WFPdfUnlock.getStatementText(file);
+                P.stage('open', 'Opening PDF…', 'Unlocking it if it is protected', 'fileText');
+                var _res = await window.WFPdfUnlock.getStatementText(file, undefined, {
+                    /* What the unlocker reports is what is on screen: the pages it has read, the saved passwords it is trying, a box waiting for the owner. */
+                    onProgress: function (ev) {
+                        if (ev.phase === 'pages') {
+                            if (!ev.done) P.stage('read', 'Reading statement text…', 'Reading page 1 of ' + ev.total, 'fileText');
+                            P.step(ev.done, ev.total, ev.done >= ev.total ? 'All ' + ev.total + ' pages read' : 'Reading page ' + (ev.done + 1) + ' of ' + ev.total);
+                        } else if (ev.phase === 'saved') P.say('Trying your saved passwords…', 'Password ' + (ev.done + 1) + ' of ' + ev.total, 'lock');
+                        else if (ev.phase === 'password') P.say('Waiting for the PDF password…', 'Type it in the box to continue', 'lock');
+                        else if (ev.phase === 'unlock') P.say('Unlocking the PDF…', 'Trying the password you typed', 'lock');
+                    }
+                });
                 if (_res && _res.cancelled) {
-                    if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                    P.end();
                     inputEl.value = '';
                     return;
                 }
                 if (_res && _res.text && window.WFStatementParser.hasTextLayer(_res.text)) {
+                    P.stage('parse', 'Finding the transactions…', _res.text.split('\n').length + ' lines of text', 'fileText');
                     // parseStatement() also returns the whole-statement reconciliation
                     // (opening + credits − debits = closing). Guarded because a
                     // service worker can still be serving an older cached copy of the
@@ -1351,11 +1419,13 @@
                             currency: 'LKR',
                             statement_period: (_res.text.match(/Statement Period[:\s]*([\d/]+\s*-\s*[\d/]+)/i) || [])[1] || ''
                         };
+                        P.stage('bank', 'Identifying the bank…', _rows.length + ' transactions found', 'bank');
                         _wfBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _res.text, meta: _res.meta });
                         ccotBank = _wfBank && _wfBank.ok ? _wfBank.name : '';
                         _parsed._wfBank = _wfBank;
+                        P.stage('guard', 'Checking your books…', 'Making sure this statement is not already added', 'shield');
                         if (await _wfGuardParsed(_parsed, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', last4: _parsed.card_last4, text: _res.text })) { inputEl.value = ''; return; }
-                        if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                        P.end();
                         // Say what was actually verified. "High accuracy" was printed
                         // unconditionally before, including for statements the parser
                         // could not check at all.
@@ -1371,17 +1441,19 @@
                     }
                 }
                 console.log('[' + V + '] PDF has no text layer → vision cascade');
+                P.plan(_wfVisionPlan(true, false));   // the remaining stages share what is left of the bar
             } catch (_eTxt) {
                 console.warn('[' + V + '] text-PDF fast path failed, using vision:', _eTxt && _eTxt.message);
+                P.plan(_wfVisionPlan(true, false));
                 // fall through to the vision cascade below
             }
         }
 
         try {
             // ---- STEP A: file extraction ----
-            if (showsOverlay && typeof window._showScanOverlay === 'function')
-                window._showScanOverlay(isPdf ? 'Reading PDF…' : 'Reading Image…',
-                    'Optimising ' + sizeMB + 'MB ' + (isPdf ? 'PDF' : 'photo'), 8, isPdf ? 'fileText' : 'camera');
+            if (showsOverlay)
+                P.stage('render', isPdf ? 'Reading PDF…' : 'Reading Image…',
+                    'Optimising ' + sizeMB + 'MB ' + (isPdf ? 'PDF' : 'photo'), isPdf ? 'fileText' : 'camera');
             else if (typeof window.notify === 'function')
                 window.notify(isPdf ? 'Processing PDF…' : 'Reading image…', 'info');
 
@@ -1410,7 +1482,11 @@
                     maxPages: isCCOT ? 5 : 3,
                     maxBytes: _modeMaxBytes * 1024 * 1024,
                     maxDim: _modeMaxDim,
-                    enhance: _tfOn
+                    enhance: _tfOn,
+                    /* A PDF is drawn one page at a time, so this is the one part of the pictures path that has a unit: pages drawn of the pages that will be read. */
+                    onProgress: function (ev) {
+                        if (ev.phase === 'pages') P.step(ev.done, ev.total, ev.done >= ev.total ? 'All ' + ev.total + ' page' + (ev.total > 1 ? 's' : '') + ' ready' : 'Preparing page ' + (ev.done + 1) + ' of ' + ev.total);
+                    }
                 });
             } catch (ee) {
                 throw new Error((isPdf ? 'PDF' : 'Image') + ' could not be read: ' + ee.message);
@@ -1430,8 +1506,7 @@
             }
 
             // ---- STEP B: endpoint check ----
-            if (showsOverlay && typeof window._showScanOverlay === 'function')
-                window._showScanOverlay('Connecting…', 'Checking AI services', 18, 'globe');
+            P.stage('net', 'Connecting…', 'Checking AI services', 'globe');
             var hasVisionScan = await isEndpointAvailable('/vision-scan');
             console.log('[' + V + '] vision-scan available:', hasVisionScan);
 
@@ -1455,18 +1530,22 @@
             // voting cascade — and MORE ACCURATE because the model is told
             // upfront "this is a CC statement, expect many rows".
             if (isCCOT) {
-                if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('AI parsing CC statement…',
-                        'Extracting every transaction row', 35, 'bot');
+                var _pages = imgBundle.images.length;
+                var _ofPages = _pages > 1 ? ' of ' + _pages : '';
 
                 /* A page is read for its bank too. First what is already known without reading it (the exact file in the mailbox, the file name, the owner's cards); then, after the page is read,
                  * the bank the AI saw printed and any OCR text — weighed again, so a wrong early guess can still be overturned. */
                 var _aiBank = null, _ocrText = '';
+                P.stage('prebank', 'Identifying the bank…', 'From the file name and your accounts', 'bank');
                 var _preBank = await _wfResolveBank({ file: file, sha: _wfSha, text: '' });
                 if (_preBank) { _wfBank = _preBank; ccotBank = _preBank.ok ? _preBank.name : ''; }
                 var ccotPrompt = buildCCStatementPrompt(_preBank && _preBank.ok ? _preBank.issuer : '');
                 var ccotTxns = null;
                 var ccotLastErr = null;
+
+                /* The AI's unit is a page: page 1 first (with its retries and fallbacks, which are the same page tried again, so they change the words and not the bar), then the rest. */
+                P.stage('ai', 'AI parsing CC statement…', 'Reading page 1' + _ofPages, 'bot');
+                P.step(0, _pages);
 
                 // Primary attempt — full structured prompt
                 try {
@@ -1484,9 +1563,7 @@
                 // Retry with simpler prompt if the first attempt was empty.
                 // Vision models occasionally choke on long rule lists.
                 if (!ccotTxns) {
-                    if (showsOverlay && typeof window._showScanOverlay === 'function')
-                        window._showScanOverlay('Simplified prompt retry…',
-                            'Smaller payload, same image', 55, 'refresh');
+                    P.say('Simplified prompt retry…', 'Page 1' + _ofPages + ': smaller payload, same image', 'refresh');
                     try {
                         var simplePrompt = 'Read this ' + (ccotBank || '') +
                             ' credit card statement image. Return ONLY this JSON (no markdown, no explanation):\n' +
@@ -1514,9 +1591,7 @@
                 // catching statements the single-model path missed.
                 var _autoEsc = (window.WF_SCAN_SETTINGS && window.WF_SCAN_SETTINGS.autoEscalate !== false);
                 if (!ccotTxns && _autoEsc) {
-                    if (showsOverlay && typeof window._showScanOverlay === 'function')
-                        window._showScanOverlay('Auto-escalating to Ultra…',
-                            'Multi-engine vision-scan with Gemini Pro', 65, 'trendUp');
+                    P.say('Auto-escalating to Ultra…', 'Page 1' + _ofPages + ': multi-engine vision-scan with Gemini Pro', 'trendUp');
                     try {
                         var hasVS = await isEndpointAvailable('/vision-scan');
                         if (hasVS) {
@@ -1558,9 +1633,7 @@
                 // network down, all providers throttled). Slower but always
                 // works as long as JS can run.
                 if (!ccotTxns && !isPdf && typeof window._ocrWithTesseract === 'function') {
-                    if (showsOverlay && typeof window._showScanOverlay === 'function')
-                        window._showScanOverlay('Offline OCR fallback…',
-                            'Tesseract.js reading raw text', 80, 'fileText');
+                    P.say('Offline OCR fallback…', 'Tesseract.js reading raw text', 'fileText');
                     try {
                         var ocrTxt = await window._ocrWithTesseract(file);
                         if (ocrTxt && ocrTxt.length > 20) _ocrText += '\n' + ocrTxt.slice(0, 20000);
@@ -1580,12 +1653,12 @@
                 // Pass 5 — multi-page PDF: if we have multiple pages and the
                 // first page yielded nothing OR fewer rows than expected,
                 // try the remaining pages and merge.
+                P.step(1, _pages, _pages > 1 ? 'Page 1 of ' + _pages + ' read' : 'Page read');
                 if (imgBundle.images.length > 1) {
                     var mergedRows = ccotTxns ? ccotTxns.slice() : [];
                     for (var pgi = 1; pgi < imgBundle.images.length; pgi++) {
-                        if (showsOverlay && typeof window._showScanOverlay === 'function')
-                            window._showScanOverlay('Page ' + (pgi + 1) + ' of ' + imgBundle.images.length + '…',
-                                'Scanning remaining pages', 70 + (pgi * 5), 'fileText');
+                        P.say('Page ' + (pgi + 1) + ' of ' + imgBundle.images.length + '…', 'Scanning remaining pages', 'fileText');
+                        P.step(pgi, _pages);
                         try {
                             var pageResp = await legacyAICall(ccotPrompt, imgBundle.images[pgi], 40000);
                             var pageParsed = extractJSON(pageResp.reply);
@@ -1606,6 +1679,7 @@
                         }
                     }
                     if (mergedRows.length > 0) ccotTxns = mergedRows;
+                    P.step(_pages, _pages, 'All ' + _pages + ' pages read');
                 }
 
                 // ---- CLOUD VISION FALLBACK (v7.23.0) ----
@@ -1615,11 +1689,14 @@
                 // Vision DOCUMENT_TEXT_DETECTION, then extract rows from the
                 // OCR TEXT via a small, reliable text-only /api/ai call.
                 if (!ccotTxns || ccotTxns.length === 0) {
-                    if (showsOverlay && typeof window._showScanOverlay === 'function')
-                        window._showScanOverlay('Cloud Vision OCR…', 'Reading faint / zoomed-out text', 78, 'cloud');
+                    /* A second, different way of reading every page: it gets its own share of what is left of the bar, and its unit is again the page. */
+                    P.plan([{ id: 'cv', weight: 52 }, { id: 'bank', weight: 24 }, { id: 'guard', weight: 24 }]);
+                    P.stage('cv', 'Cloud Vision OCR…', 'Reading faint / zoomed-out text', 'cloud');
+                    P.step(0, _pages);
                     try {
                         var _cvMerged = [];
                         for (var _ci = 0; _ci < imgBundle.images.length; _ci++) {
+                            P.step(_ci, _pages, _pages > 1 ? 'Reading page ' + (_ci + 1) + ' of ' + _pages : 'Reading faint / zoomed-out text');
                             var _enh = await _enhanceImageForOCR(imgBundle.images[_ci]);
                             var _ocr = await cloudVisionOCR(_enh, ['en', 'si', 'ta'], 45000);
                             if (!_ocr || !_ocr.text) continue;
@@ -1641,6 +1718,7 @@
                                 });
                             }
                         }
+                        P.step(_pages, _pages, 'All ' + _pages + ' page' + (_pages > 1 ? 's' : '') + ' read');
                         if (_cvMerged.length > 0) { ccotTxns = _cvMerged; ccotLastErr = null; }
                     } catch (eCV) {
                         console.warn('[' + V + '] Cloud Vision CCOT fallback failed:', eCV && eCV.message);
@@ -1648,7 +1726,7 @@
                 }
 
                 if (!ccotTxns || ccotTxns.length === 0) {
-                    if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                    P.end();
                     var ccotFailMsg = 'AI could not find any transactions.';
                     if (ccotLastErr && ccotLastErr.message) ccotFailMsg += ' (' + ccotLastErr.message + ')';
                     ccotFailMsg += ' Try a clearer, well-lit photo of the full statement.';
@@ -1659,13 +1737,10 @@
                 }
 
                 if (_aiBank || _ocrText) {
+                    P.stage('bank', 'Identifying the bank…', ccotTxns.length + ' transaction' + (ccotTxns.length > 1 ? 's' : '') + ' found', 'bank');
                     var _postBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _ocrText, ai: _aiBank });
                     if (_postBank) { _wfBank = _postBank; ccotBank = _postBank.ok ? _postBank.name : ''; }
                 }
-
-                if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('Found ' + ccotTxns.length + ' transaction' +
-                        (ccotTxns.length > 1 ? 's' : '') + '…', 'Opening review modal', 90, 'checkCircle');
 
                 // Normalise + classify every row before handing off to UI.
                 var normalised = ccotTxns.map(function (t, idx) {
@@ -1684,9 +1759,8 @@
                     };
                 }).filter(function (t) { return t.amount && t.amount > 0; });
 
-                if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
-
                 if (!normalised.length) {
+                    P.end();
                     if (typeof window.notify === 'function')
                         window.notify('Found rows but none had valid amounts. Try a clearer photo.', 'warn');
                     inputEl.value = '';
@@ -1699,7 +1773,9 @@
                  * same statement (statement-registry.mjs): it needs the bank (the ISSUER label, as ever; nothing when the bank is not identified), the account's last four (the AI
                  * read it off the page) and the transactions' dates. Fail open, as the others do. */
                 var _parsedS = { transactions: normalised, statement_period: '', _wfBank: _wfBank };
+                P.stage('guard', 'Found ' + normalised.length + ' transaction' + (normalised.length > 1 ? 's' : '') + '…', 'Checking them against your books', 'checkCircle');
                 if (await _wfGuardParsed(_parsedS, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', last4: (_aiBank && _aiBank.last4) || '', text: _ocrText })) { inputEl.value = ''; return; }
+                P.end();
 
                 // Open the existing review modal — user confirms each row,
                 // can edit before bulk-save. Defined in index.html.
@@ -1734,10 +1810,10 @@
             }
 
             // ---- STEP C: multi-engine vision (or fallback to /api/ai) ----
-            if (showsOverlay && typeof window._showScanOverlay === 'function')
-                window._showScanOverlay('AI Vision…', hasVisionScan ?
-                    (isSubscription ? '12+ engines · bill mode' : '12+ engines voting') :
-                    'Reading with Gemini 3.1 Pro', 35, 'bot');
+            /* One AI answer has no unit: the bar holds where the reading of the file left it, and the seconds count. The retries below change the words, not the bar. */
+            P.stage('ai', 'AI Vision…', hasVisionScan ?
+                (isSubscription ? '12+ engines · bill mode' : '12+ engines voting') :
+                'Reading with Gemini 3.1 Pro', 'bot');
 
             var settings = window.WF_SCAN_SETTINGS || {};
             var hints = {
@@ -1760,8 +1836,7 @@
                     lastErr = err1;
                     console.warn('[' + V + '] vision-scan ' + mode + ' failed:', err1.message);
                     if (mode !== 'ultra') {
-                        if (showsOverlay && typeof window._showScanOverlay === 'function')
-                            window._showScanOverlay('Ultra Mode…', 'Escalating', 50, 'gem');
+                        P.say('Ultra Mode…', 'Escalating', 'gem');
                         try {
                             scanData = await visionScanCall(firstImage, 'ultra', hints, 58000);
                         } catch (err2) {
@@ -1774,8 +1849,7 @@
 
             // Confidence-low escalation
             if (scanData && scanData.confidence && scanData.confidence.overall < 0.55 && mode !== 'ultra' && hasVisionScan) {
-                if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('Low confidence — re-scanning…', 'Adding more engines', 65, 'scan');
+                P.say('Low confidence — re-scanning…', 'Adding more engines', 'scan');
                 try {
                     var ultra = await visionScanCall(firstImage, 'ultra', hints, 58000);
                     if (ultra && ultra.confidence && ultra.confidence.overall > scanData.confidence.overall) {
@@ -1786,9 +1860,8 @@
 
             // ---- STEP D: PDF page-2 retry if page-1 yielded nothing ----
             if ((!scanData || !scanData.result || !scanData.result.amount) && imgBundle.images.length > 1) {
-                if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('Page 2…', 'First page had no totals', 60, 'fileText');
                 for (var p = 1; p < imgBundle.images.length; p++) {
+                    P.say('Page ' + (p + 1) + ' of ' + imgBundle.images.length + '…', 'First page had no totals', 'fileText');
                     try {
                         var tryNext = await (hasVisionScan
                             ? visionScanCall(imgBundle.images[p], 'deep', hints, 45000)
@@ -1803,8 +1876,7 @@
 
             // ---- STEP E: legacy /api/ai fallback (works without vision-scan deployed) ----
             if (!scanData || !scanData.result || !scanData.result.amount) {
-                if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('Fallback AI…', 'Trying Gemini direct', 70, 'bot');
+                P.say('Fallback AI…', 'Trying Gemini direct', 'bot');
                 try {
                     var legacyData = await legacyAICall(buildReceiptPrompt(hints), firstImage, 35000);
                     var parsed = extractJSON(legacyData.reply);
@@ -1839,8 +1911,7 @@
                 try {
                     if (typeof window._ocrWithTesseract === 'function' &&
                         typeof window._extractFromOCRText === 'function') {
-                        if (showsOverlay && typeof window._showScanOverlay === 'function')
-                            window._showScanOverlay('Offline OCR…', 'Tesseract reading text', 85, 'fileText');
+                        P.say('Offline OCR…', 'Tesseract reading text', 'fileText');
                         var ocrText = await window._ocrWithTesseract(file);
                         var ocrResult = window._extractFromOCRText(ocrText);
                         if (ocrResult && ocrResult.amount) {
@@ -1863,8 +1934,7 @@
             // Cloud Vision DOCUMENT_TEXT_DETECTION → extract via small text-only
             // /api/ai call.
             if (!scanData || !scanData.result || !scanData.result.amount) {
-                if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('Cloud Vision OCR…', 'Reading faint / low-quality text', 80, 'cloud');
+                P.say('Cloud Vision OCR…', 'Reading faint / low-quality text', 'cloud');
                 try {
                     var _renh = await _enhanceImageForOCR(firstImage);
                     var _rocr = await cloudVisionOCR(_renh, ['en', 'si', 'ta'], 45000);
@@ -1903,7 +1973,7 @@
 
             // ---- STEP G: final result or failure ----
             if (!scanData || !scanData.result || !scanData.result.amount) {
-                if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                P.end();
                 var failMsg = 'Could not extract the amount. ';
                 if (lastErr && lastErr.message) failMsg += '(' + lastErr.message + ') ';
                 failMsg += 'Try a clearer photo or PDF.';
@@ -1920,8 +1990,7 @@
                 console.log('[' + V + '] recurring bill matched:', priorMatch.desc, 'from', priorMatch.month);
             }
 
-            if (showsOverlay && typeof window._showScanOverlay === 'function')
-                window._showScanOverlay('Filling form…', isSubscription ? 'Smart-populating subscription' : 'Smart-populating fields', 95, 'checkCircle');
+            P.stage('fill', 'Filling form…', isSubscription ? 'Smart-populating subscription' : 'Smart-populating fields', 'checkCircle');
 
             // Route to correct form populator
             var ok;
@@ -1932,7 +2001,7 @@
             } else {
                 ok = populateExpenseForm(scanData.result, { isPdf: isPdf, pageCount: pageCount });
             }
-            if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+            P.end();
 
             if (ok) {
                 if (typeof window.triggerHaptic === 'function') window.triggerHaptic('success');
@@ -1966,7 +2035,7 @@
             }
         } catch (err) {
             console.error('[' + V + '] scan failed:', err);
-            if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+            P.end();
             if (typeof window.notify === 'function')
                 window.notify('Scan failed: ' + (err.message || 'unknown error'), 'error');
             if (typeof window.triggerHaptic === 'function') window.triggerHaptic('error');
@@ -2736,6 +2805,9 @@
     function _hideScanOverlayV5() {
         var ov = document.getElementById('wf5_floating_scan_overlay');
         if (ov) ov.style.display = 'none';
+        /* The bar goes back to empty while nobody can see it, so the next upload opens at zero instead of sliding down from where this one stopped. */
+        var bar = document.getElementById('wf5ScanBar');
+        if (bar) bar.style.width = '0%';
         // Also hide the original expense-modal overlay if visible
         var oldOv = document.getElementById('aiScanOverlay');
         if (oldOv) oldOv.style.display = 'none';

@@ -529,6 +529,9 @@
          It is weighed from the statement's own words, the PDF's properties, the file name, an AI reading of a scanned page, the owner's cards and the
          mail the email sync already filed — and left unlabelled, not guessed, when none of them settles it. Pure; ESM; window.WFBankDetect. -->
     <script type="module" src="wealthflow-bank-detect.js"></script>
+    <!-- THE UPLOAD OVERLAY'S BAR. The "Reading statement text…" screen used to sit at a typed-in 20% for the whole read; its position now comes from work that was counted
+         (pages read of N, pages the AI has answered, bytes downloaded) and it holds, counting seconds, while a step has no unit. Pure; ESM; window.WFScanProgress. -->
+    <script type="module" src="wealthflow-scan-progress.js"></script>
     <script type="module" src="wealthflow-sender-discovery.js"></script>
     <!-- v7.67.0 — The verification matrix. A due date is a QUESTION, not an
          answer: it decides which payouts and bills are due, which have been
@@ -14762,18 +14765,20 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const token = _wfBrowse.token, inputId = _wfBrowse.inputId, type = _wfBrowse.type;
             _wfCloseDriveBrowser();
             notify('Downloading “' + (f.name || 'file') + '” from Drive…', 'info');
-            fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id) + '?alt=media&supportsAllDrives=true', { headers: { Authorization: 'Bearer ' + token } })
-                .then(r => { if (!r.ok) throw new Error('download HTTP ' + r.status); return r.blob(); })
-                .then(blob => {
+            let run = null;
+            _wfDriveBlob(f.id, token, f.name || 'drive-file', f.size)
+                .then(got => {
+                    const blob = got.blob; run = got.run;
                     let name = f.name || 'drive-file'; let mime = f.mimeType || blob.type || 'application/octet-stream';
                     if (!/\.[a-z0-9]{2,6}$/i.test(name)) {
                         const ext = /pdf/i.test(mime) ? '.pdf' : /x?html/i.test(mime) ? '.html' : /png/i.test(mime) ? '.png' : /webp/i.test(mime) ? '.webp' : /hei[cf]/i.test(mime) ? '.heic' : /gif/i.test(mime) ? '.gif' : /bmp/i.test(mime) ? '.bmp' : /(jpe?g)/i.test(mime) ? '.jpg' : '';
                         name += ext;
                     }
                     const file = new File([blob], name, { type: mime });
+                    if (run) run.handoff();
                     _wfRouteFileToInput(file, inputId, type);
                 })
-                .catch(err => { console.error('[Drive browser download]', err); notify('Couldn\'t download that file from Drive. Please try again.', 'error'); });
+                .catch(err => { if (run) run.end(); console.error('[Drive browser download]', err); notify('Couldn\'t download that file from Drive. Please try again.', 'error'); });
         }
         function _wfPickerFallback(inputId, type) {
             _wfDriveToken(true).then(token => {
@@ -14837,6 +14842,26 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
         }
 
+        /* The download is the first stretch of the same upload: it fills the first part of the overlay's bar by the bytes that have actually arrived, and then hands the overlay
+         * to the scan of the file (wealthflow-scan-progress.js), so the bar carries on from where the download left it. The caller owns `run` from here: handoff() once the file
+         * is routed, end() if anything after the download fails. A download that fails ends its own run. */
+        async function _wfDriveBlob(fileId, token, name, sizeHint) {
+            const SP = window.WFScanProgress;
+            const run = SP ? SP.begin({ label: 'Downloading from Google Drive…', detail: name, icon: 'cloud' }) : null;
+            try {
+                if (run) run.plan([{ id: 'download', weight: 1 }], { to: 12 }).stage('download', 'Downloading from Google Drive…', name, 'cloud');
+                const resp = await fetch(
+                    'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media&supportsAllDrives=true',
+                    { headers: { Authorization: 'Bearer ' + token } }
+                );
+                if (!resp.ok) throw new Error('download HTTP ' + resp.status);
+                const blob = SP ? await SP.readBlob(resp, sizeHint, (got, total) => {
+                    if (run) run.step(got, total, total ? (got ? _wfKb(got) : '0 KB') + ' of ' + _wfKb(total) : (got ? _wfKb(got) + ' so far' : 'Starting the download'));
+                }) : await resp.blob();
+                return { blob, run };
+            } catch (e) { if (run) run.end(); throw e; }
+        }
+
         async function _wfDrivePicked(data, token, inputId, type) {
             if (!data || !window.google || !google.picker) return;
             if (data.action !== google.picker.Action.PICKED) return; // ignore cancel/loaded
@@ -14845,14 +14870,11 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const fileId = doc.id;
             let name = doc.name || 'drive-file';
             let mime = doc.mimeType || '';
+            let run = null;
             try {
                 notify('Downloading “' + name + '” from Drive…', 'info');
-                const resp = await fetch(
-                    'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media&supportsAllDrives=true',
-                    { headers: { Authorization: 'Bearer ' + token } }
-                );
-                if (!resp.ok) throw new Error('download HTTP ' + resp.status);
-                const blob = await resp.blob();
+                const got = await _wfDriveBlob(fileId, token, name, doc.sizeBytes);
+                const blob = got.blob; run = got.run;
                 if (!mime) mime = blob.type || 'application/octet-stream';
                 // v4's routing sniffs by BOTH mime type and filename extension, so make
                 // sure the File carries a correct name + extension.
@@ -14868,8 +14890,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     name += ext;
                 }
                 const file = new File([blob], name, { type: mime || 'application/octet-stream' });
+                if (run) run.handoff();
                 _wfRouteFileToInput(file, inputId, type);
             } catch (e) {
+                if (run) run.end();
                 console.error('[Drive download]', e);
                 notify('Couldn\'t download that file from Drive. Please try again.', 'error');
             }
@@ -35584,11 +35608,22 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
             $ovl('#_ccr_save').onclick = async () => {
                 _captureRenderedRows();
+                /* The overlay for the steps before the rows are filed (wealthflow-scan-progress.js): the registry claim, the mailbox claims, the AI's notes. It opens at the first step
+                 * that has real work, names that step, and closes on every way out below. */
+                let _SP = null;
+                const _spStage = (id, label, detail, icon) => {
+                    try {
+                        if (!_SP && window.WFScanProgress) _SP = window.WFScanProgress.begin({ label: label, detail: detail, icon: icon }).plan([{ id: 'claim', weight: 25 }, { id: 'mail', weight: 20 }, { id: 'notes', weight: 55 }]);
+                        if (_SP) _SP.stage(id, label, detail, icon);
+                    } catch (_) { /* a progress display never stops a save */ }
+                };
+                const _spEnd = () => { try { if (_SP) _SP.end(); } catch (_) {} };
                 /* ONE STATEMENT, ADDED ONCE: at the moment of saving, take the statement in the registry. If the email sync (or an earlier upload) got there
                  * first nothing is added and the owner is told which. Rows of the cloud's own review (parsed.cloudReview) are the server's already. */
                 if (parsed._wfGuard && typeof parsed.cloudReview !== 'function' && window.WFStatementCloud && window.WFStatementCloud.guard) {
+                    _spStage('claim', 'Checking your books…', 'Making sure this statement is not already added', 'shield');
                     const _dup = await window.WFStatementCloud.guard.claim(parsed._wfGuard);
-                    if (_dup) { notify((_dup.notice || 'Already Added') + ' — this statement is already in your books, so it was not added a second time.', 'warn'); closeOvl(); return; }
+                    if (_dup) { _spEnd(); notify((_dup.notice || 'Already Added') + ' — this statement is already in your books, so it was not added a second time.', 'warn'); closeOvl(); return; }
                     parsed._wfClaimToken = parsed._wfGuard.token; parsed._wfGuard = null;           // taken: a second click on Save is not a second claim
                 }
                 /* The same lock for statements the device opened from the mailbox: each one is taken at Save, and one the email sync or an upload already
@@ -35597,7 +35632,11 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     && window.WFStatementCloud && window.WFStatementCloud.guard && typeof window.WFStatementCloud.guard.mail === 'function') {
                     const _asked = parsed._wfMailGuard; parsed._wfMailGuard = null;                    // asked once: a second click on Save asks nothing again
                     parsed._wfMailBlocked = new Set();
+                    let _gi = 0;
                     for (const _g of _asked) {
+                        _spStage('mail', 'Checking your books…', 'Statement ' + (_gi + 1) + ' of ' + _asked.length, 'shield');
+                        try { if (_SP) _SP.step(_gi, _asked.length); } catch (_) {}
+                        _gi++;
                         let _held = null;
                         try { _held = await window.WFStatementCloud.guard.mail(_g, 'claim'); } catch (_) { _held = null; }
                         if (_held) {
@@ -35605,7 +35644,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             notify((_held.notice || 'Already Added') + ' — ' + (_bankShown(_g.bank) || 'a') + ' statement is already in your books, so it was not added a second time.', 'warn');
                         }
                     }
-                    if (parsed._wfMailBlocked.size && parsed._wfMailBlocked.size >= _asked.length) { closeOvl(); return; }
+                    if (parsed._wfMailBlocked.size && parsed._wfMailBlocked.size >= _asked.length) { _spEnd(); closeOvl(); return; }
                 }
                 const _mailBlocked = parsed._wfMailBlocked instanceof Set && parsed._wfMailBlocked.size ? parsed._wfMailBlocked : null;
                 const _uploadClaim = parsed._wfClaimToken || '';
@@ -35663,10 +35702,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 });
                 let _notesMap = {};
                 if (_noteItems.length) {
-                    try { if (typeof window._showScanOverlay === 'function') window._showScanOverlay('Writing notes…', 'Letting AI label each transaction', 90, 'edit'); } catch (_) {}
+                    _spStage('notes', 'Writing notes…', 'Letting AI label each transaction', 'edit');
                     try { _notesMap = await _aiStatementNotes(_noteItems); } catch (_) { _notesMap = {}; }
-                    try { if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay(); } catch (_) {}
                 }
+                _spEnd();
                 const _noteFor = (date, desc, amount) => {
                     const k = (date || '') + '|' + String(desc || '').toLowerCase() + '|' + amount;
                     return _notesMap[k] || '';

@@ -187,7 +187,8 @@ describe('the scan overlay stage line', () => {
  * 3. Every stage names a real icon
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('the scanner pipeline', () => {
-    const calls = HTML.match(/_showScanOverlay\((?!stage)[^;]*?\);/g) || [];
+    /* The Save step draws its stage through `_spStage` (wealthflow-scan-progress.js sets the bar), the rest through `_showScanOverlay` itself. */
+    const calls = HTML.match(/(?:_showScanOverlay|_spStage)\((?!stage)[^;]*?\);/g) || [];
 
     it('has call sites to check', () => {
         expect(calls.length, 'the call-site scan found nothing').toBeGreaterThanOrEqual(11);
@@ -312,9 +313,13 @@ describe('the overlay that is really on screen', () => {
             .not.toContain('innerHTML');
     });
 
+    /* The upload handler no longer calls `_showScanOverlay` with a position of its own: every stage is `P.stage(id, label, detail, icon)` or a retry `P.say(label, detail, icon)`
+     * on the run that owns the overlay, and the run works out the bar. The icon is still the last argument of each. */
+    const stageCalls = () => V4.match(/\bP\.(?:stage|say)\([\s\S]*?\);/g) || [];
+
     it('names an icon at every one of its own stages, and each one exists', () => {
-        const calls = V4.match(/window\._showScanOverlay\([\s\S]*?\);/g) || [];
-        expect(calls.length, 'the v4 call-site scan found nothing').toBeGreaterThanOrEqual(19);
+        const calls = stageCalls();
+        expect(calls.length, 'the v4 call-site scan found nothing').toBeGreaterThanOrEqual(25);
         const bad = [];
         for (const c of calls) {
             const names = [...c.matchAll(/'([a-zA-Z][a-zA-Z0-9]*)'\s*(?:\)|:)/g)].map((m) => m[1]);
@@ -326,7 +331,7 @@ describe('the overlay that is really on screen', () => {
 
     it('carries no emoji on any stage line', () => {
         const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu;
-        const calls = V4.match(/window\._showScanOverlay\([\s\S]*?\);/g) || [];
+        const calls = stageCalls();
         const found = calls.flatMap((c) => c.match(EMOJI) || []);
         expect(found, `emoji still on the live stages: ${found.join(' ')}`).toEqual([]);
         const shell = (V4.match(/id="wf5ScanStage"[^']*/) || [''])[0];
