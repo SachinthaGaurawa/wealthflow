@@ -115,3 +115,27 @@ describe('only a clear majority is relied on', () => {
         for (const who of Object.keys(asked)) expect(asked[who], who).toBeLessThanOrEqual(2);   // Groq may be asked twice for its own reasoning-budget growth, never for a re-ask
     });
 });
+
+describe('the board\'s log line says WHY an answer was refused', () => {
+    it('names a cut-off answer, prose around the JSON, an answer that is not JSON, and torn keys — each by its own word', async () => {
+        const cut = ANSWER.slice(0, 60);
+        const cases = [[cut, 'truncated'], ['Sure! ' + ANSWER, 'prose-around-json'], ['I cannot help with that', 'prose'], [GARBLE, 'mangled-keys']];
+        for (const [reply, why] of cases) {
+            scripted('DeepSeek', () => reply);
+            const { res, log } = await board();
+            expect(res.body.invalid, why).toEqual(['DeepSeek']);
+            expect(log.invalidWhy, why).toEqual({ DeepSeek: why });
+            vi.unstubAllEnvs(); vi.unstubAllGlobals(); modelBook.reset(); resetProviderCooldowns();
+        }
+    });
+    it('a board with nothing refused carries no invalidWhy at all', async () => {
+        scripted('DeepSeek', () => ANSWER);
+        const { log } = await board();
+        expect(log.invalid).toEqual([]); expect(log.invalidWhy).toBeUndefined();
+    });
+    it('a bare code fence around the answer is a usable answer, not a refusal', async () => {
+        scripted('DeepSeek', () => '```\n' + ANSWER + '\n```');
+        const { res, log } = await board();
+        expect(res.body.answered).toContain('DeepSeek'); expect(log.invalid).toEqual([]);
+    });
+});

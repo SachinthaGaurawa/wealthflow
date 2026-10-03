@@ -590,7 +590,10 @@ export default async function handler(req, res) {
                 const groups = {}; for (const a of reading.answers) (groups[a.key.slice(0, 60)] = groups[a.key.slice(0, 60)] || []).push(a.name);
                 return { clear: reading.clear, groups: Object.values(groups).sort((x, y) => y.length - x.length).slice(0, 4), sample: reading.dissent.slice(0, 2).map(key) };
             })();
-            console.info(JSON.stringify({ evt: 'ai-board', ok: decision.unanimous, reason: decision.reason || '', answered: decision.answered, invalid: decision.invalid,
+            // an answer that was refused is named by WHY (cut off, prose around the JSON, broken syntax, torn keys): "invalid" alone cannot tell a model that ran out of room from one that talks first
+            const invalidWhy = {};
+            for (const name of decision.invalid || []) { const r = results.find(x => x && x.name === name); invalidWhy[name] = (r && r.ok ? Matrix.whyInvalid(r.reply) : null) || 'mangled-keys'; }
+            console.info(JSON.stringify({ evt: 'ai-board', ok: decision.unanimous, reason: decision.reason || '', answered: decision.answered, invalid: decision.invalid, ...(decision.invalid && decision.invalid.length ? { invalidWhy } : {}),
                 failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, probation, ...(reasked.length ? { reasked } : {}), ...(differing ? { differing } : {}), ...(decision.items && !decision.items.reason ? { rows: { agreed: decision.items.agreed.length, disputed: decision.items.disputed.length } } : {}), ms: Date.now() - boardStarted }));
         } catch (_) { /* a log line never decides a financial question */ }
         // Preserve a machine-readable quarantine outcome; no partial answer is
