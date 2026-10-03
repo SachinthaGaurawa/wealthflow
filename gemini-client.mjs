@@ -171,14 +171,15 @@ function failure(out, c, tried) {
  * @param {number} [o.temperature]
  * @param {number} [o.maxOutputTokens]
  * @param {object} [o.generationConfig]          extra generationConfig fields (topP …)
+ * @param {Array} [o.tools]                      tools the model may use, e.g. [{ google_search: {} }] for search grounding; the pages it used come back as `grounding`
  * @param {boolean} [o.safety=true]
  * @param {number} [o.deadlineMs=24000]          the whole call, every retry included
  * @param {number} [o.attemptMs=22000]           one request
- * @returns {Promise<{ text, model, finishReason, usage, tried }>}
+ * @returns {Promise<{ text, model, finishReason, usage, tried, grounding }>}   `grounding` is Google's groundingMetadata for the answer, or null
  */
 export async function geminiGenerate(o) {
     const {
-        key, parts, system = '', json = false, thinking, tier = 'fast', model: preferred = '', temperature, maxOutputTokens, generationConfig: extra = {}, safety = true,
+        key, parts, system = '', json = false, thinking, tier = 'fast', model: preferred = '', temperature, maxOutputTokens, generationConfig: extra = {}, tools, safety = true,
         deadlineMs = 24000, attemptMs = 22000, fetcher = defaultFetcher, book = geminiBook, loadList, now = Date.now, sleep = defaultSleep,
         log = (line) => { try { console.log(line); } catch (_) { /* a log is advice */ } },
     } = o || {};
@@ -213,6 +214,7 @@ export async function geminiGenerate(o) {
         if (think) config.thinkingConfig = think;
         const body = { contents: [{ role: 'user', parts }], generationConfig: config };
         if (system) body.systemInstruction = { parts: [{ text: system }] };
+        if (Array.isArray(tools) && tools.length) body.tools = tools;
         if (state.safety && !learned.safety.has(model)) body.safetySettings = SAFETY;
 
         paceNote(model, now());
@@ -230,7 +232,7 @@ export async function geminiGenerate(o) {
             if (data.promptFeedback && data.promptFeedback.blockReason) { note(); throw new Error('Blocked by Google Safety'); }
             const candidate = (data.candidates || [])[0] || {};
             const text = ((candidate.content && candidate.content.parts) || []).filter((p) => p && typeof p.text === 'string' && !p.thought).map((p) => p.text).join('');
-            if (text.trim()) { book.remember(slot, model); note(); return { text, model, finishReason: candidate.finishReason || '', usage: data.usageMetadata || null, tried }; }
+            if (text.trim()) { book.remember(slot, model); note(); return { text, model, finishReason: candidate.finishReason || '', usage: data.usageMetadata || null, tried, grounding: candidate.groundingMetadata || null }; }
             const why = String(candidate.finishReason || '');
             if (/SAFETY|PROHIBITED|BLOCKLIST|SPII/.test(why)) { note(); throw new Error('Blocked by Google Safety'); }
             // the model spent its whole budget thinking: ask again with room for the answer

@@ -66,6 +66,25 @@
         } catch (_) { return ''; }
     }
 
+    /* WHAT THE WEB SAYS about the outside world (a rate, a price, a tax rule): looked up before the prompt is built, for the questions that need it, and handed over as numbered
+     * sources, or as the plain statement that the lookup was not available (wealthflow-advisor-research.js). Independent of the books: a new owner with no records can ask about rates. What
+     * the model was given here joins what the answer is read back against, so a rate the notes state is not flagged and one the model made up is. */
+    function researchBlock(intent, userText) {
+        try {
+            if (intent === 'code' || intent === 'image_gen') return '';
+            var r = window._wfResearch, R = window.WFAdvisorResearch;
+            if (!r || !R || r.userText !== String(userText || '').trim()) return '';
+            var text = R.block(r);
+            if (!text) return '';
+            if (r.ok) {
+                var parts = R.partsOf(r);
+                if (window._wfGrounding && window._wfGrounding.parts) window._wfGrounding.parts = window._wfGrounding.parts.concat(parts);
+                else window._wfGrounding = { userText: String(userText || '').trim(), parts: parts, owner: recentUserLines(4).concat(userText ? [userText] : []), at: Date.now() };
+            }
+            return '\n\n' + text;
+        } catch (_) { return ''; }
+    }
+
     /* 1. INTENT CLASSIFIER ------------------------------------------------ */
     function classifyIntent(text, hasImage) {
         var t = (text || '').toLowerCase().trim();
@@ -293,7 +312,7 @@
             'You are their warm, caring best friend who is also a brilliant expert. Be clear, accurate and genuinely helpful.\n' +
             '═══════════════════════════════════════════════════════════════════════';
 
-        return base + userProfileBlock() + booksBlock(intent, userText) + soul + task + formatRule + finalRule;
+        return base + userProfileBlock() + booksBlock(intent, userText) + researchBlock(intent, userText) + soul + task + formatRule + finalRule;
     }
 
     /* 4. IMAGE GENERATION ------------------------------------------------- */
