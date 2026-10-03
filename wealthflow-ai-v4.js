@@ -1146,6 +1146,35 @@
     function _wfBooks() {
         try { var A = window.WFAccounts; return (A && typeof A.derive === 'function' && window.appData) ? (A.derive(window.appData) || []) : []; } catch (_) { return []; }
     }
+    /* WHAT THE OWNER HAS TOLD US. When the review screen's bank is corrected (or a suggestion confirmed), the card/account number printed on that statement is remembered against the bank the
+     * owner chose, so the next statement of the same account is named without anyone being asked. Labels and 4-digit tails only, on this device, per signed-in user; a store that cannot be
+     * read or written is simply no memory. The detector weighs it as the owner's word (wealthflow-bank-detect.js `taught`). */
+    var _WF_TAUGHT_MAX = 200;
+    function _wfTaughtKey() {
+        var uid = 'anon';
+        try { var u = window.firebase && window.firebase.auth && window.firebase.auth().currentUser; if (u && u.uid) uid = String(u.uid).slice(0, 64); } catch (_) {}
+        return 'wf_bank_taught_v1:' + uid;
+    }
+    function _wfTaught() {
+        try {
+            var list = JSON.parse(window.localStorage.getItem(_wfTaughtKey()) || '[]');
+            return Array.isArray(list) ? list.filter(function (a) { return a && typeof a.bank === 'string' && a.bank && /^\d{4}$/.test(String(a.last4)); }).slice(0, _WF_TAUGHT_MAX) : [];
+        } catch (_) { return []; }
+    }
+    /** @param {{name:string, tails?:Array<{tail:string,kind?:string}>}} choice the answer of WFBankDetect.choose(). Remembered only when a bank was named AND the statement printed a number to key it on. */
+    function _wfTeach(choice) {
+        try {
+            if (!choice || !choice.ok || !choice.name) return 0;
+            var tails = (choice.tails || []).map(function (t) { return t && t.tail; }).filter(function (t) { return /^\d{4}$/.test(String(t)); }).slice(0, 2);
+            if (!tails.length) return 0;
+            var list = _wfTaught().filter(function (a) { return tails.indexOf(String(a.last4)) < 0; });
+            tails.slice().reverse().forEach(function (t) { list.unshift({ bank: String(choice.name).slice(0, 60), last4: String(t), at: Date.now() }); });   // the strongest printed number stays first
+            window.localStorage.setItem(_wfTaughtKey(), JSON.stringify(list.slice(0, _WF_TAUGHT_MAX)));
+            return tails.length;
+        } catch (_) { return 0; }
+    }
+    window.WFBankMemory = { taught: _wfTaught, teach: _wfTeach };
+
     /** What a scanned page's reading says about the bank — only the three fields the prompt asks for, trimmed. */
     function _wfAiBankOf(obj) {
         if (!obj || typeof obj !== 'object') return null;
@@ -1156,7 +1185,7 @@
     async function _wfResolveBank(ctx) {
         var D = window.WFBankDetect; if (!D || typeof D.detect !== 'function') return null;
         var name = (ctx.file && ctx.file.name) || '';
-        var input = { text: ctx.text || '', filename: name, meta: ctx.meta || null, ai: ctx.ai || null, books: _wfBooks(), history: null };
+        var input = { text: ctx.text || '', filename: name, meta: ctx.meta || null, ai: ctx.ai || null, books: _wfBooks(), taught: _wfTaught(), history: null };
         var r = null;
         try { r = D.detect(input); } catch (_) { return null; }
         var g = _wfStatementGuard();
@@ -1168,6 +1197,8 @@
                 if (h) { input.history = h; r = D.detect(input) || r; }
             } catch (_) { /* no history: the statement and the owner's cards decide alone */ }
         }
+        /* What the review screen needs to turn an owner's correction into the same kind of answer (WFBankDetect.choose). */
+        if (r) r.ctx = { filename: name, tails: r.tails || [], books: input.books, taught: input.taught, history: input.history };
         return r;
     }
 
