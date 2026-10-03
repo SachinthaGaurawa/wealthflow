@@ -1693,10 +1693,18 @@
                     return;
                 }
 
+                /* ONE STATEMENT, ADDED ONCE — a photographed or scanned page is a statement too. The other two read paths (the e-statement and the text PDF) ask the registry
+                 * after the page is read; this one went straight to the review, so a statement already in the books (by email, or by an earlier upload) was added a second time
+                 * from its photo, and the photo took no claim, so a later email of the same month was not held either. The registry already treats "a photo" as a copy of the
+                 * same statement (statement-registry.mjs): it needs the bank (the ISSUER label, as ever; nothing when the bank is not identified), the account's last four (the AI
+                 * read it off the page) and the transactions' dates. Fail open, as the others do. */
+                var _parsedS = { transactions: normalised, statement_period: '', _wfBank: _wfBank };
+                if (await _wfGuardParsed(_parsedS, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', last4: (_aiBank && _aiBank.last4) || '', text: _ocrText })) { inputEl.value = ''; return; }
+
                 // Open the existing review modal — user confirms each row,
                 // can edit before bulk-save. Defined in index.html.
                 if (typeof window._showCCReviewModal === 'function') {
-                    window._showCCReviewModal({ transactions: normalised, statement_period: '', _wfBank: _wfBank }, ccotBank);
+                    window._showCCReviewModal(_parsedS, ccotBank);
                 } else {
                     // Fallback: bulk-save directly (review modal not present)
                     if (typeof window._bulkSaveCCOT === 'function') {

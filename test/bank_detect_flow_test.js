@@ -137,8 +137,8 @@ describe('the upload flow no longer asks which bank', () => {
         expect(v4).not.toMatch(/if \(!ccotBank\) \{ inputEl\.value = ''; return; \}/);
     });
     it('the registry is given the ISSUER label (the one the email sync writes), and nothing when the bank is not identified', () => {
-        const guarded = v4.match(/_wfGuardParsed\(_parsed[H]?, \{[^}]*\}/g) || [];
-        expect(guarded).toHaveLength(2);
+        const guarded = v4.match(/_wfGuardParsed\(_parsed[HS]?, \{[^}]*\}/g) || [];
+        expect(guarded).toHaveLength(3);                                   // the e-statement, the text PDF and the scanned page
         for (const call of guarded) expect(call).toMatch(/bank: _wfBank && _wfBank\.ok \? _wfBank\.lockName : ''/);
     });
     it('records carry the detected label, or none — never the placeholder "Bank Statement"', () => {
