@@ -27840,7 +27840,7 @@ table.amort tbody tr { page-break-inside: avoid; }
          * is not a month. Income is averaged over the months that have income in them and outgoings over the months that have outgoings, so a month whose statement has not arrived
          * does not drag the other down. The debt service (loan installments wherever they were paid from, card installment plans) is kept apart from living costs, because a debt-coverage
          * ratio divides one by the other and must not count the installments in both. With no complete month at all, this month so far is used and says so. */
-        function _wfBooksProfile(now) {
+        function _wfBooksProfileCompute(now) {
             now = now || new Date();
             const cy = now.getFullYear(), cm = now.getMonth();
             const rows = [], typesBy = {};
@@ -27894,7 +27894,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         /* WHAT THE OWNER HAS AND OWES TODAY: cash on hand as the Balance page shows it (the total typed, less what went out and plus what came in), the money in investments, what is saved towards
          * goals, and every debt — loan balances, what is left of the card installment plans, and card charges not yet paid. */
-        function _wfPosition(now) {
+        function _wfPositionCompute(now) {
             now = now || new Date();
             const bal = DB.getObj('balance', { total: 0, flows: [] });
             let cash = 0;
@@ -27917,6 +27917,44 @@ table.amort tbody tr { page-break-inside: avoid; }
         function _wfFreeCash(prof, pos, income) {
             const inc = income == null ? prof.avgIncome : income;
             return inc - prof.avgLiving - Math.max(prof.avgDebtService, pos.minimums);
+        }
+
+        /* THE PROFILE IS REMEMBERED UNTIL THE BOOKS CHANGE. It reads thirteen months through getMonthlyData (about 8 ms each on a year of statements), and the page asks for it on every repaint and
+         * several times within one — over 300 ms a time, on every save, on a phone several times that. The key is a fingerprint of everything the profile reads (each record's id, date, amount,
+         * status and the loan payments inside it) plus the day, so an edit, a filed statement or the next day recomputes it and nothing else does. */
+        let _wfBooksMemo = null;
+        function _wfBooksKey(now) {
+            let text = now.getFullYear() + '-' + now.getMonth() + '-' + now.getDate();
+            for (const store of ['expenses', 'incomeRecv', 'cconetime', 'loans', 'ccinstall', 'subscriptions', 'cheques', 'income', 'targets']) {
+                const list = DB.get(store) || [];
+                text += '|' + store + list.length;
+                for (const r of list) {
+                    if (!r) continue;
+                    text += ',' + (r.id || '') + (r.date || r.start || r.issue || '') + (r.month || '') + (r.amount != null ? r.amount : '') + (r.monthly != null ? r.monthly : '') + (r.received === false ? 'n' : '') + (r.paid ? 'p' : '') + (r.completed ? 'c' : '') + (r.status || '') + (r.cat || r.type || '') + (r.recurring ? 'r' : '') + (r.loanLink || r.subscriptionLink ? 'l' : '') + (r._ut || '');
+                    if (r.payments) for (const x of r.payments) text += ';' + (x && x.month || '') + (x && x.paid ? 'p' : '') + (x && x.amount != null ? x.amount : '');
+                    if (r.skipped) text += 's' + r.skipped.length;
+                    if (r.savings) text += 'v' + r.savings.length;
+                }
+            }
+            const bal = DB.getObj('balance', { total: 0, flows: [] });
+            text += '|b' + bal.total + ':' + (bal.flows || []).length;
+            let h = 5381;
+            for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+            return h + ':' + text.length;
+        }
+        function _wfBooksProfile(now) {
+            now = now || new Date();
+            const key = _wfBooksKey(now);
+            if (!_wfBooksMemo || _wfBooksMemo.key !== key) _wfBooksMemo = { key, profile: null, position: null };
+            if (!_wfBooksMemo.profile) _wfBooksMemo.profile = _wfBooksProfileCompute(now);
+            return _wfBooksMemo.profile;
+        }
+        function _wfPosition(now) {
+            now = now || new Date();
+            const key = _wfBooksKey(now);
+            if (!_wfBooksMemo || _wfBooksMemo.key !== key) _wfBooksMemo = { key, profile: null, position: null };
+            if (!_wfBooksMemo.position) _wfBooksMemo.position = _wfPositionCompute(now);
+            return _wfBooksMemo.position;
         }
 
         /* "…from your books": the one sentence that says what a tool's figures are made of, so a figure is never a mystery. */
