@@ -296,7 +296,9 @@ export const BUDGETS = {
     // stage with no unit holds the bar instead of inventing a number. One new module script tag (wealthflow-scan-progress.js); no new request at first paint.
     // 2026-10-03 (the Advisor reads the owner's books, on top of the upload bar): 2,184,000 -> 2,187_000 (measured 2,182,202 + ~0.2% headroom). buildFinancialContext hands the Advisor a fact sheet compiled by wealthflow-advisor-facts.js, and
     // callAI no longer throws away the prompt of a one-shot card (AI Insights, Score plan, Debt Demolisher, Wealth Simulator): both are comments recording why, plus one script tag and a few lines. No other new request.
-    htmlBytes: 2_187_000,
+    // 2026-10-03 (the Advisor shows what the books say before it is asked): 2,187,000 -> 2_192_000 (measured 2,191,134 + ~0.04% headroom). The "Your books today" card's container and stylesheet, the function that draws it and
+    // remembers a fold, the data-aware suggestion buttons (which now escape the names they show), and one script tag; about a third of it is the comments recording why each is there.
+    htmlBytes: 2_192_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -594,7 +596,9 @@ export const BUDGETS = {
     // 2026-10-03 (the Advisor's answer is read back against the books): 2,185,000 -> 2_200_000 (measured 2,196,362 + ~0.2% headroom). wealthflow-advisor-check.js (new, about 17 KB, a third of it the comments recording why each rule is what it is):
     // every figure of an answer is found and looked for in what the model was given, a rounded figure matches the one it rounds, exact arithmetic on the owner's figures is accepted as worked out, one retry when a money figure
     // is not theirs, and the line shown under the answer. wealthflow-ai-v6.js grew a few lines to leave the books it used for the turn.
-    totalJsBytes: 2_200_000,
+    // 2026-10-03 (the Advisor shows what the books say before it is asked): 2,200,000 -> 2_212_000 (measured 2,210,130 + ~0.1% headroom). wealthflow-advisor-briefing.js (new, about 13 KB, a quarter of it the comments recording why):
+    // the fact sheet's findings as a short card of what is worth a look, each with the question to ask about it, and suggested questions that name the owner's own loan and goal. No model is called.
+    totalJsBytes: 2_212_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     largestModuleBytes: 232_000, // measured 230,470
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
@@ -678,7 +682,8 @@ export const BUDGETS = {
     // 2026-10-03: 74 -> 75 for wealthflow-advisor-facts.js (the fact sheet the AI Advisor is given; see totalJsBytes).
     // 2026-10-03: 75 -> 76 for wealthflow-advisor-scenarios.js (the arithmetic under a decision the owner asks the AI Advisor about; see totalJsBytes).
     // 2026-10-03: 76 -> 77 for wealthflow-advisor-check.js (the answer the AI Advisor gives is read back against the owner's books; see totalJsBytes).
-    moduleCount: 77,   // measured 77
+    // 2026-10-03: 77 -> 78 for wealthflow-advisor-briefing.js (the card of what the books say today; see totalJsBytes).
+    moduleCount: 78,   // measured 78
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -742,7 +747,8 @@ export const BUDGETS = {
     // 2026-10-03: 72 -> 73 for wealthflow-advisor-facts.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-03: 73 -> 74 for wealthflow-advisor-scenarios.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-03: 74 -> 75 for wealthflow-advisor-check.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
-    scriptTags: 75,              // measured 75; the progress, fact-sheet, scenario and answer-check modules are nonblocking
+    // 2026-10-03: 75 -> 76 for wealthflow-advisor-briefing.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
+    scriptTags: 76,              // measured 76; the progress, fact-sheet, scenario, answer-check and briefing modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
