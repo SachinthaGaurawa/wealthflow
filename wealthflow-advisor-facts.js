@@ -120,7 +120,7 @@ const pct = (n) => `${r1(n)}%`;
  */
 export function build(deps) {
     const d = deps || {};
-    const now = d.now instanceof Date && Number.isFinite(d.now.getTime()) ? d.now : new Date();
+    const now = isDate(d.now) ? d.now : new Date();
     const get = (key) => safe(() => arr(d.get(key)), []);
     const appData = d.appData && typeof d.appData === 'object' ? d.appData : {};
     if (typeof d.monthly !== 'function') return { version: FACTS_VERSION, ok: false, reason: 'no-monthly-engine', asOf: isoLocal(now), currency: 'LKR', quality: ['The Monthly Plan engine was not available, so no figures could be computed.'] };
@@ -242,7 +242,7 @@ export function build(deps) {
     for (const l of get('loans')) {
         if (!l || !l.start) continue;
         const end = loanEnd ? safe(() => loanEnd(l), null) : null;
-        if (!(end instanceof Date) || !(end.getTime() > now.getTime())) continue;       // the Monthly Plan's own test of "still running"
+        if (!isDate(end) || !(end.getTime() > now.getTime())) continue;       // the Monthly Plan's own test of "still running"
         const bal = loanBal ? safe(() => loanBal(l), null) : null;
         const plan = safe(() => amortizeProject(l), null);
         loans.push({
@@ -506,13 +506,21 @@ export function renderFactSheet(f, o = {}) {
     return text.slice(0, maxChars - END_MARK.length - 40).replace(/\n[^\n]*$/, '') + `\n(the rest is left out to fit)\n${END_MARK}`;
 }
 
+/** A Date from any realm: a page that runs in its own window (or a test's sandbox) hands over Dates this module's `instanceof Date` does not recognise. */
+export function isDate(x) { return Object.prototype.toString.call(x) === '[object Date]' && Number.isFinite(x.getTime()); }
+
+/** "Now" as the page sees it (its own Date, so a pinned clock in a test or a skewed one in a browser is honoured). */
+export function clockOf(w) {
+    try { return typeof w.Date === 'function' ? new w.Date() : new Date(); } catch (_) { return new Date(); }
+}
+
 /* ── how the page reaches the screens' own functions ──────────────────────── */
 
 /** The page's own books profile and position (the figures DSCR, the Score and the Debt Demolisher read), when the page has them. */
 function booksFrom(w) {
     try {
         if (typeof w._wfBooksProfile !== 'function' || typeof w._wfPosition !== 'function') return {};
-        const now = new Date(), profile = w._wfBooksProfile(now), position = w._wfPosition(now);
+        const now = clockOf(w), profile = w._wfBooksProfile(now), position = w._wfPosition(now);
         const freeCash = typeof w._wfFreeCash === 'function' && profile && profile.basis && profile.basis.kind !== 'none' ? w._wfFreeCash(profile, position) : null;
         return { profile, position, freeCash };
     } catch (_) { return {}; }
@@ -522,7 +530,7 @@ function booksFrom(w) {
 export function pageDeps(w = globalThis) {
     const call = (name) => (typeof w[name] === 'function' ? (...a) => w[name](...a) : undefined);
     return {
-        now: new Date(),
+        now: clockOf(w),
         appData: w.appData,
         get: (k) => (w.DB && typeof w.DB.get === 'function' ? w.DB.get(k) : []),
         monthly: call('getMonthlyData'),

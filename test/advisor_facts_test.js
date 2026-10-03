@@ -82,7 +82,7 @@ describe('the fact sheet is the screens\' own numbers', () => {
         }
     });
     it('the typical month is the books profile the DSCR, the Score and the Debt Demolisher start from', () => {
-        const p = ctx._wfBooksProfile(new Date());
+        const p = ctx._wfBooksProfile(new ctx.Date());
         expect(f.typical.source).toBe('books-profile');
         expect(f.typical.income).toBe(Math.round(p.avgIncome));
         expect(f.typical.outflow).toBe(Math.round(p.avgOutgo));
@@ -90,7 +90,7 @@ describe('the fact sheet is the screens\' own numbers', () => {
         expect(f.typical.debtService).toBe(Math.round(p.avgDebtService));
     });
     it('cash on hand, what the loans ask, and what is left each month are the position\'s and _wfFreeCash\'s', () => {
-        const p = ctx._wfBooksProfile(new Date()), pos = ctx._wfPosition(new Date());
+        const p = ctx._wfBooksProfile(new ctx.Date()), pos = ctx._wfPosition(new ctx.Date());
         expect(f.liquidity.onHand).toBe(Math.round(pos.cash));
         expect(f.debt.monthlyService).toBe(Math.round(pos.minimums));
         expect(f.liquidity.freeCashPerMonth).toBe(Math.round(ctx._wfFreeCash(p, pos)));
