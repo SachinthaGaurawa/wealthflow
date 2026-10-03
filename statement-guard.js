@@ -16,12 +16,17 @@
  *
  * The statement's own state also counts: a statement the email sync filed BEFORE the registry existed is found by the SHA-256 of its
  * bytes on the mailbox item, so history is covered for the exact-file case without a backfill.
+ *
+ * "ALREADY ADDED" MUST BE TRUE. Neither a registry hold nor a filed twin is believed on its own: each is checked against the owner's books
+ * (statement-registry.mjs holderProof) — a hold with no record behind it and no worker on it (the statement failed, went to review, was
+ * deleted by the owner, or was reviewed on the phone with nothing ticked) is given back and the owner's statement goes in. What is turned
+ * away says what is in the books (`detail`), so a disagreement can be settled on sight.
  * ===========================================================================*/
 
 import { getAdminDb, withDeadline } from './admin-db.mjs';
 import { identify, userKeyFor } from './gmail-link.mjs';
 import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
-import { VIA, identityOf, claimStatement, peekStatement, releaseStatement, uploadHoldIsStale, registryDuplicatePatch, noticeFor } from './statement-registry.mjs';
+import { VIA, identityOf, lookup, holderProof, releaseStatement, registryDuplicatePatch, noticeFor, detailOf } from './statement-registry.mjs';
 
 const json = (res, code, body) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(body)); };
 const HASH = /^[a-f\d]{64}$/;
@@ -43,7 +48,7 @@ function inputsOf(body) {
     const sha = HASH.test(String(body.sha256 || '')) ? String(body.sha256) : '';
     const dates = (Array.isArray(body.dates) ? body.dates : []).slice(0, 2000).map(d => text(d, 40));
     const identity = body.bank || body.last4 || body.periodText || dates.length ? identityOf({ bank: text(body.bank, 80), account: text(body.last4, 40), periodText: text(body.periodText, 80), dates }) : null;
-    return { sha, identity };
+    return { sha, identity, rows: Math.min(100000, Math.max(0, Math.floor(Number(body.rows)) || 0)) };
 }
 
 export default async function handler(req, res) {
@@ -89,21 +94,20 @@ export default async function handler(req, res) {
         };
         /* A statement already filed from this very item (the sync worker got there between the phone listing it and the owner pressing Save). */
         if (item && item.filed === true) return json(res, 200, { ok: true, duplicate: true, via: VIA.EMAIL, kind: 'item', notice: noticeFor(VIA.EMAIL), closed: false });
-        /* A statement the email sync filed before the registry existed: found by its bytes on the mailbox item. */
+        /* A statement the email sync filed before the registry existed: found by its bytes on the mailbox item — and only if its records are still in the books. */
         if (sha) {
-            const twin = await withDeadline(findFiledTwin({ mailRef, sha, selfId: itemId }));
-            if (twin) return turnedAway({ via: VIA.EMAIL, kind: 'file', notice: noticeFor(VIA.EMAIL) }, itemRef ? duplicatePatch({ twin }) : null);
+            const proofs = new Map();
+            const twin = await withDeadline(findFiledTwin({ mailRef, sha, selfId: itemId, accept: async doc => {
+                const data = doc.data() || {};
+                const proof = await holderProof({ db, uid: who.uid, existing: { via: VIA.EMAIL, ref: doc.ref.path, door: data.filedMs ? 'phone' : 'worker', at: Number(data.filedMs) || 0 } });
+                proofs.set(doc.id, proof); return proof.live;
+            } }), 20000, 'mailbox');
+            if (twin) return turnedAway({ via: VIA.EMAIL, kind: 'file', notice: noticeFor(VIA.EMAIL), detail: detailOf({ filename: twin.data.filename }, proofs.get(twin.id)) }, itemRef ? duplicatePatch({ twin }) : null);
         }
-        const attempt = () => (action === 'check'
-            ? withDeadline(peekStatement({ db, uid: who.uid, identity, sha, ref }))
-            : withDeadline(claimStatement({ db, uid: who.uid, via, ref, identity, sha, meta: { filename: body.filename, size: body.size, rows: body.rows } })));
-        let found = await attempt();
-        /* A HAND UPLOAD WHOSE RECORDS THE OWNER HAS SINCE DELETED HOLDS NOTHING: its lock is given back and the statement may be added again. */
-        if (found.duplicate && await withDeadline(uploadHoldIsStale({ db, uid: who.uid, existing: found.existing }))) {
-            await withDeadline(releaseStatement({ db, uid: who.uid, ref: found.existing.ref }));
-            found = await attempt();
-        }
-        if (found.duplicate) return turnedAway({ via: found.existing.via, kind: found.kind, existing: { ...found.existing, ref: undefined }, notice: noticeFor(found.existing.via) }, itemRef ? registryDuplicatePatch({ duplicate: found }) : null);
+        /* The registry says who holds it; a holder with nothing behind it (holderProof) has been given back by the time we hear. */
+        const found = await withDeadline(lookup({ db, uid: who.uid, claim: action === 'claim', via, ref, identity, sha, rows: inputs.rows,
+            meta: { filename: body.filename, size: body.size, rows: Number(body.rows) || inputs.rows, door: itemId ? 'phone' : 'upload' } }), 20000, 'statement registry');
+        if (found.duplicate) return turnedAway({ via: found.existing.via, kind: found.kind, existing: { ...found.existing, ref: undefined }, notice: noticeFor(found.existing.via), detail: detailOf(found.existing, found.proof) }, itemRef ? registryDuplicatePatch({ duplicate: found }) : null);
         return json(res, 200, { ok: true, duplicate: false, ...(ref ? { id: ref } : {}), identified: !!(identity && identity.ok) });
     } catch (_) { return json(res, 503, { ok: false, reason: 'registry-unavailable' }); }
 }
