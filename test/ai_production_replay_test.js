@@ -10,7 +10,7 @@ import { ANSWER, KEYS, response, json, failure, chat, THOUGHT, world, boardReque
  * 10:11–10:17 UTC: 79 of 101 AI calls refused (HTTP 422). The financial board needs five independent providers to answer, and the
  * log shows what each of the sixteen did: some answered; Groq, Ollama, Fireworks and OpenRouter returned EMPTY (reasoning models that
  * spent the budget thinking); GitHubModels answered 200 "OK"; NVIDIA and Cerebras named retired models; Mistral, Cohere and HF were out
- * of quota; one provider never answered at all. This file stands up that exact roster — each provider failing the way the log says it
+ * of quota; one provider never answered at all. (Cerebras and HF were taken off the board on 2026-10-03 at the owner's request: they could never vote.) This file stands up that exact roster — each provider failing the way the log says it
  * failed — and asks the board the way the statement reader asks it. Before the fix it was a 422; the board now reaches five.
  * ===========================================================================*/
 
@@ -24,8 +24,17 @@ describe('the production roster of 2026-10-01', () => {
         expect(res.code).toBe(200);
         expect(res.body.unanimous).toBe(true);
         expect(res.body.answered.length).toBeGreaterThanOrEqual(5);
-        for (const name of ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together', 'Fireworks', 'OpenRouterFinance', 'Cerebras', 'NVIDIA']) expect(res.body.answered, name).toContain(name);
-        for (const name of ['GitHubModels', 'Mistral', 'Cohere', 'HF', 'OpenRouterQwen']) expect(res.body.answered, name).not.toContain(name);   // quota / not JSON: honestly unavailable
+        for (const name of ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together', 'Fireworks', 'OpenRouterFinance', 'NVIDIA']) expect(res.body.answered, name).toContain(name);
+        for (const name of ['GitHubModels', 'Mistral', 'Cohere', 'OpenRouterQwen']) expect(res.body.answered, name).not.toContain(name);   // quota / not JSON: honestly unavailable
+    });
+
+    it('does not ask Cerebras or HuggingFace at all, although their keys are still set in Vercel', async () => {
+        for (const key of KEYS) vi.stubEnv(key, 'test');
+        expect(KEYS).toEqual(expect.arrayContaining(['CEREBRAS_API_KEY', 'HF_API_KEY']));
+        const w = world(); vi.stubGlobal('fetch', w.fetch);
+        const res = response(); await handler(boardRequest(), res);
+        expect(w.log.filter((l) => /cerebras|huggingface/i.test(l.u))).toHaveLength(0);
+        expect([...res.body.expected, ...res.body.answered, ...res.body.failed.map((f) => String(f.name || f))].join(' ')).not.toMatch(/Cerebras|HF/);
     });
 
     it('says in ONE log line why the board did or did not reach five: who answered, who failed and how, who was resting', async () => {
@@ -64,8 +73,6 @@ describe('the production roster of 2026-10-01', () => {
         expect(modelBook.isBad('Fireworks:text', 'accounts/fireworks/models/llama-v3p3-70b-instruct')).toBe(true);
         // NVIDIA: the retired generation was tried and set aside; the newest family answered
         expect(modelBook.current('NVIDIA:text')).toBe('meta/llama-4-maverick-17b-128e-instruct');
-        // Cerebras: the model it has no access to is gone; the list's own model answered
-        expect(modelBook.current('Cerebras:text')).toBe('gpt-oss-120b');
         // GitHub Models: the documented headers
         const gh = w.log.find((l) => /models\.github\.ai/.test(l.u));
         expect(gh).toBeTruthy();

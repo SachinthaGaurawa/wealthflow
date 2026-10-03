@@ -71,7 +71,7 @@ describe('parallel unanimous endpoint', () => {
         expect(res.code).toBe(422); expect(res.body.reply).toBeNull(); expect(res.body.minimumProviders).toBe(5);
     });
     it('fans one OpenRouter key out to three fixed free model families while preserving the five-answer floor', async () => {
-        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY']) vi.stubEnv(key, 'test');
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY']) vi.stubEnv(key, 'test');
         vi.stubGlobal('fetch', vi.fn(async url => ({ ok: true, json: async () => url.includes('googleapis')
             ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
             : { choices: [{ message: { content: '{"approved":true}' } }] } })));
@@ -109,29 +109,29 @@ describe('parallel unanimous endpoint', () => {
         expect(res.code).toBe(503); expect(fetch).toHaveBeenCalledTimes(2);
     });
     it('lets the free OpenRouter reserve models replace a failed configured member', async () => {
-        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY']) vi.stubEnv(key, 'test');
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY']) vi.stubEnv(key, 'test');
         vi.stubGlobal('fetch', vi.fn(async url => {
-            if (url.includes('cerebras')) throw new Error('offline');
+            if (url.includes('nvidia')) throw new Error('offline');
             return { ok: true, json: async () => url.includes('googleapis')
                 ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
                 : { choices: [{ message: { content: '{"approved":true}' } }] } };
         }));
         const res = response(); await handler(request, res);
         expect(res.code).toBe(200); expect(res.body.expected).toHaveLength(10);
-        expect(res.body.failed).toEqual(['Cerebras']); expect(res.body.unanimous).toBe(true);
+        expect(res.body.failed).toEqual(['NVIDIA']); expect(res.body.unanimous).toBe(true);
         expect(res.body.answered).toHaveLength(9); expect(res.body.trustworthy).toBe(true);
     });
     it('replaces one unavailable engine with an agreeing spare instead of failing the financial decision', async () => {
-        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'NVIDIA_API_KEY']) vi.stubEnv(key, 'test');
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'GITHUB_MODELS_TOKEN']) vi.stubEnv(key, 'test');
         vi.stubGlobal('fetch', vi.fn(async url => {
-            if (url.includes('cerebras')) throw new Error('offline');
+            if (url.includes('nvidia')) throw new Error('offline');
             return { ok: true, json: async () => url.includes('googleapis')
                 ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
                 : { choices: [{ message: { content: '{"approved":true}' } }] } };
         }));
         const res = response(); await handler(request, res);
         expect(res.code).toBe(200); expect(res.body.unanimous).toBe(true);
-        expect(res.body.failed).toEqual(['Cerebras']);
+        expect(res.body.failed).toEqual(['NVIDIA']);
         expect(res.body.answered).toHaveLength(10);
         expect(res.body.corroboration).toMatchObject({ agreed: 10, of: 11 });
     });

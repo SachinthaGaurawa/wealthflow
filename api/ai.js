@@ -8,7 +8,6 @@
 //   - DEEPSEEK_API_KEY         (DeepSeek) — text fallback
 //   - GROQ_API_KEY             (Groq Llama 3.3 + Llava vision)
 //   - OLLAMA_API_KEY           (Ollama Cloud — vision + text)
-//   - HF_API_KEY               (HuggingFace inference, optional)
 //
 // Notes on Ollama Cloud:
 //   The correct endpoint for hosted models on ollama.com is https://ollama.com/api/chat
@@ -177,13 +176,11 @@ export default async function handler(req, res) {
     const deepseekKey = process.env.DEEPSEEK_API_KEY;
     const groqKey     = process.env.GROQ_API_KEY;
     const ollamaKey   = process.env.OLLAMA_API_KEY;
-    const hfKey       = process.env.HUGGINGFACE_API_KEY || process.env.HF_API_KEY || process.env.HF_TOKEN;
     // v7.24 — every additional provider the owner has configured in Vercel.
     const mistralKey    = process.env.MISTRAL_API_KEY;
     const togetherKey   = process.env.TOGETHER_API_KEY;
     const fireworksKey  = process.env.FIREWORKS_API_KEY;
     const openrouterKey = process.env.OPENROUTER_API_KEY;
-    const cerebrasKey   = process.env.CEREBRAS_API_KEY;
     const nvidiaKey     = process.env.NVIDIA_API_KEY;
     const githubKey     = process.env.GITHUB_MODELS_TOKEN;
     const cohereKey     = process.env.COHERE_API_KEY;
@@ -318,32 +315,7 @@ export default async function handler(req, res) {
         } catch (e) { throw chatError('Ollama', e); }
     }
 
-    // ---------- ENGINE 5: HuggingFace Inference (optional, last resort) ----------
-    // The old per-model REST endpoint (api-inference.huggingface.co/models/<id>,
-    // {inputs, parameters}) is retired — confirmed live: fetch failed, that host no
-    // longer resolves for this traffic. Current: router.huggingface.co/v1, a single
-    // OpenAI-chat-compatible endpoint that picks the fastest live provider for the
-    // requested model.
-    async function fetchHuggingFace() {
-        if (!hfKey) throw new Error('HuggingFace key not configured');
-        if (image) throw new Error('HF skipped (text-only here)');
-        const model = 'meta-llama/Llama-3.3-70B-Instruct';
-        const response = await fetchWithTimeout('https://router.huggingface.co/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hfKey}` },
-            body: JSON.stringify({
-                model, messages: [{ role: 'user', content: prompt }],
-                temperature: temp, max_tokens: Math.min(tokens, 1024)
-            })
-        });
-        if (!response.ok) { const t = await response.text().catch(() => ''); throw new Error(`HF status ${response.status}: ${t.substring(0, 160)}`); }
-        const data = await response.json();
-        const text = data.choices?.[0]?.message?.content;
-        if (!text) throw new Error('HF returned empty');
-        return { reply: text, provider: 'huggingface' };
-    }
-
-    // ---------- ENGINES 6-16: every other provider configured in Vercel ----------
+    // ---------- ENGINES 5-14: every other provider configured in Vercel ----------
     // Most are OpenAI-compatible (/chat/completions + Bearer). One factory builds
     // them all; Cohere uses its own shape below. Each fires in parallel with
     // the rest and contributes to fastest/consensus selection.
@@ -387,11 +359,6 @@ export default async function handler(req, res) {
     const fetchOpenRouterFinance = makeOAI({ name: 'OpenRouterFinance', provider: 'openrouter:ling-fin-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Finance', textModel: 'inclusionai/ling-3.0-flash-fin:free', visionModel: null, extraHeaders: openRouterHeaders });
     const fetchOpenRouterQwen = makeOAI({ name: 'OpenRouterQwen', provider: 'openrouter:qwen-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Qwen', textModel: 'qwen/qwen3.8-27b:free', visionModel: 'qwen/qwen3.8-27b:free', jsonMode: false, extraHeaders: openRouterHeaders });
     const fetchOpenRouterNemotron = makeOAI({ name: 'OpenRouterNemotron', provider: 'openrouter:nemotron-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Nemotron', textModel: 'nvidia/nemotron-3-ultra-550b-a55b:free', visionModel: null, extraHeaders: openRouterHeaders });
-    // llama-3.3-70b is a real Cerebras model name but returned 404 "does not exist
-    // or you do not have access to it" live -- an access/tier gap, not a spelling
-    // one. llama3.1-8b is the smaller model Cerebras documents alongside it as
-    // generally available.
-    const fetchCerebras = makeOAI({ name: 'Cerebras', provider: 'cerebras', key: cerebrasKey, url: 'https://api.cerebras.ai/v1/chat/completions', list: 'https://api.cerebras.ai/v1/models', textModel: 'llama3.1-8b', visionModel: null });
     // meta/llama-3.3-70b-instruct reached end of life 2026-08-26 (confirmed live:
     // 410 Gone). meta/llama-3.1-8b-instruct is NVIDIA's smaller, currently-documented
     // sibling model in the same family.
@@ -466,11 +433,9 @@ export default async function handler(req, res) {
             { name: 'OpenRouterFinance', fn: fetchOpenRouterFinance },
             { name: 'OpenRouterQwen', fn: fetchOpenRouterQwen },
             { name: 'OpenRouterNemotron', fn: fetchOpenRouterNemotron },
-            { name: 'Cerebras',     fn: fetchCerebras },
             { name: 'NVIDIA',       fn: fetchNvidia },
             { name: 'GitHubModels', fn: fetchGitHub },
             { name: 'Cohere',       fn: fetchCohere },
-            { name: 'HF',           fn: fetchHuggingFace },
             { name: 'CloudflareAI', fn: fetchCloudflare }
         ];
     }
@@ -482,10 +447,12 @@ export default async function handler(req, res) {
     // entirely (2026-09-28): their Vercel accounts are out of credit/payment
     // method, so every call was a guaranteed, wasted failure that only ate
     // into the deadline budget without ever being able to vote.
+    // Cerebras and HuggingFace followed (2026-10-03, the owner's decision): both answered 402 (no credit) in under half a second on
+    // every canary, so they could never vote and only filled the log. Their Vercel variables are now unused by this board.
     const configured = { Gemini: geminiKey, DeepSeek: deepseekKey, Groq: groqKey, Ollama: ollamaKey,
         Mistral: mistralKey, Together: togetherKey,
-        Fireworks: fireworksKey, OpenRouterFinance: openrouterKey, OpenRouterQwen: openrouterKey, OpenRouterNemotron: openrouterKey, Cerebras: cerebrasKey,
-        NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey,
+        Fireworks: fireworksKey, OpenRouterFinance: openrouterKey, OpenRouterQwen: openrouterKey, OpenRouterNemotron: openrouterKey,
+        NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey,
         CloudflareAI: cloudflareToken && cloudflareAccount };
     // Providers resting in a cooldown are not asked while the board has spare; below five voters plus three spare, every provider that
     // was only busy is asked anyway (boardRoster). Resting and probation are named in the board's log line below.
