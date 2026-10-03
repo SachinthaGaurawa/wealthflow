@@ -570,8 +570,12 @@ export const BUDGETS = {
     // 2026-10-03 (the vault opens when the PIN is right): 2,019,000 -> 2,026_000 (measured about 2,021,000 after merging the phone's own mailbox review + headroom): wealthflow-vault.js only. unlock() derives the key from the device's own copy
     // while the cloud copy is fetched and waits for the cloud only up to a budget (it used to wait without limit, then for two more server calls in the page), and save() asks the cloud whether it
     // holds something newer before writing over it when the unlock could not hear from it. About 1.5 KB is code; the rest is the comments recording why.
-    totalJsBytes: 2_026_000,
-    largestModuleBytes: 217_000, // measured 215,954
+    // 2026-10-03 (the bank is read, not asked): 2,026,000 -> 2,070,000 (measured 2,047,160 + ~1.1% headroom); the largest module 217,000 -> 223,000 (wealthflow-ai-v4.js, measured 220,870).
+    // The growth is wealthflow-bank-detect.js (new, about 19 KB: the evidence rules for naming the issuing bank from a statement's own words, the PDF's properties, the file name, an AI reading of a scanned page, the
+    // owner's cards and the mail history — most of it the comments recording why a bank is never guessed and never asked) and about 5 KB in wealthflow-ai-v4.js, which now resolves the bank in its three read paths instead of
+    // opening the fifteen-button picker (the picker itself, in index.html, was removed). statement-bank-evidence.mjs is server-only and never reaches the page.
+    totalJsBytes: 2_070_000,
+    largestModuleBytes: 223_000, // measured 220,870
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely
@@ -648,7 +652,8 @@ export const BUDGETS = {
      * month-by-month accrual on a balance that changes, a term schedule with
      * more than one rate, payments allocated interest-first — and it is
      * exercised by its own test without a browser. */
-    moduleCount: 72,   // measured 72 on main; statement worker fix adds no module
+    // 2026-10-03: 72 -> 73 for wealthflow-bank-detect.js (the bank of a manually uploaded statement is read from the statement; see totalJsBytes).
+    moduleCount: 73,   // measured 73
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -707,7 +712,8 @@ export const BUDGETS = {
      * type="module", so they are deferred and none of them blocks first paint —
      * renderBlockingScripts below is unchanged at 2, which is the number that
      * actually decides how fast the page appears. */
-    scriptTags: 70,              // measured 70; new cloud module is nonblocking
+    // 2026-10-03: 70 -> 71 for wealthflow-bank-detect.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
+    scriptTags: 71,              // measured 71; new detector module is nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

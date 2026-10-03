@@ -12,7 +12,7 @@
 // looks for the missing ones.
 
 import { filenameStem } from './wealthflow-mail-ingest.mjs';
-import { institutionFor } from './wealthflow-institutions.js';
+import { INSTITUTIONS, institutionFor } from './wealthflow-institutions.js';
 export { filenameStem };
 
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -49,8 +49,16 @@ export function monthOf(item) {
 /** One bank however its mail was labelled: "DFCC Bank" the owner wrote and "Dfccbank" a mail domain gave are one bank, "HNB" and "Hnb" too. `name` is what to call it. */
 export function bankIdentity(name) {
     const raw = String(name || '').trim();
-    const known = institutionFor(raw) || institutionFor(raw.replace(/\s*bank$/i, ''));
-    return known ? { key: known.id, name: known.name } : { key: raw.toLowerCase().replace(/[^a-z0-9]+/g, '').replace(/bank$/, ''), name: raw };
+    const known = institutionFor(raw) || institutionFor(raw.replace(/\s*bank$/i, '')) || runTogether(raw);
+    /* `lockId`: two entries of one issuer (NTB's AMEX and Visa/Mastercard cards) are ONE bank to the registry, whichever the label says. */
+    return known ? { key: known.lockId || known.id, name: known.name } : { key: raw.toLowerCase().replace(/[^a-z0-9]+/g, '').replace(/bank$/, ''), name: raw };
+}
+/* A mail domain gives its bank as one run of letters ("Nationstrust", "Peoplesbank"): the institution whose name or token is those letters with the spaces taken out. Short tokens ("ntb") are
+ * left to institutionFor, which matches them whole; here a run under five letters would match half the alphabet. */
+const squash = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+function runTogether(raw) {
+    const run = squash(raw).replace(/bank$/, '');
+    return run.length >= 5 ? INSTITUTIONS.find(i => [i.name, ...i.tokens].some(t => { const s = squash(t).replace(/bank$/, ''); return s.length >= 5 && s === run; })) || null : null;
 }
 export const bankKeyOf = name => bankIdentity(name).key;
 

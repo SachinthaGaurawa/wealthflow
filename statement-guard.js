@@ -8,6 +8,8 @@
  *   check    { sha256?, bank?, last4?, periodText?, dates? }  -> { duplicate, via, notice }    read-only, runs before anything is parsed
  *   claim    { ...check fields, token, filename?, size?, rows? } -> { duplicate:false } or { duplicate:true, via, notice }   atomic, at save
  *   release  { id }                                            -> { released }                 give a statement back so it can be added again
+ *   identify { sha256?, tails?, filename? }                    -> { approved, sha, last4, series }  what the mailbox already knows about the BANK of a statement
+ *                                                                                                      uploaded by hand (statement-bank-evidence.mjs): bank labels and counts only
  *
  * The device's own review of a MAILBOX statement (the legacy path: the phone opens the attachment, the owner ticks the rows) is a third
  * door into the same books, and takes the same lock through the same two actions with `itemId` — the mailbox item the statement came from.
@@ -26,6 +28,7 @@
 import { getAdminDb, withDeadline } from './admin-db.mjs';
 import { identify, userKeyFor } from './gmail-link.mjs';
 import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
+import { bankHistory } from './statement-bank-evidence.mjs';
 import { VIA, identityOf, lookup, holderProof, releaseStatement, registryDuplicatePatch, noticeFor, detailOf } from './statement-registry.mjs';
 
 const json = (res, code, body) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(body)); };
@@ -65,6 +68,12 @@ export default async function handler(req, res) {
             const id = text(body.id, 400);
             if (!id) return json(res, 400, { ok: false, reason: 'invalid-body' });
             return json(res, 200, { ok: true, released: await withDeadline(releaseStatement({ db, uid: who.uid, ref: id })) });
+        }
+        if (action === 'identify') {
+            /* The upload screen no longer asks which bank: it reads the statement, and asks the mailbox's own history only for what the statement does not say. Read-only. */
+            const tails = (Array.isArray(body.tails) ? body.tails : []).slice(0, 3).map(t => text(t, 8).replace(/\D+/g, '')).filter(t => /^\d{4}$/.test(t));
+            const found = await withDeadline(bankHistory({ mailRef: db.collection('wf-mail').doc(userKeyFor(who.email)), uid: who.uid, sha: HASH.test(String(body.sha256 || '')) ? String(body.sha256) : '', tails, filename: text(body.filename, 200) }), 20000, 'bank history');
+            return json(res, 200, { ok: true, ...found });
         }
         if (action !== 'check' && action !== 'claim') return json(res, 400, { ok: false, reason: 'unknown-action' });
         const inputs = inputsOf(body);

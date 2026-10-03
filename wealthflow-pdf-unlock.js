@@ -255,15 +255,24 @@
         return out.join('\n');
     }
 
+    /*  The document's own title / author / subject / keywords — "Hatton National Bank", "e-Statement" — one more thing a statement can say about whose it
+     *  is, for wealthflow-bank-detect.js. Advice only: a document that will not give them is simply read without them. */
+    async function _metaOf(pdf) {
+        try {
+            var i = ((await pdf.getMetadata()) || {}).info || {};
+            return { title: String(i.Title || ''), author: String(i.Author || ''), subject: String(i.Subject || ''), keywords: String(i.Keywords || '') };
+        } catch (_) { return null; }
+    }
+
     async function getStatementText(file, askPassword, opts) {
         var buf = await file.arrayBuffer();
         var pdf = await openPdf(buf, askPassword, opts);
         if (!pdf) return { cancelled: true, text: '', encrypted: true };
-        var text;
-        try { text = await extractText(pdf); }
+        var text, meta;
+        try { text = await extractText(pdf); meta = await _metaOf(pdf); }
         finally { try { if (typeof pdf.destroy === 'function') await pdf.destroy(); } catch (_) {} }
         return {
-            cancelled: false, text: text, encrypted: !!pdf.__wasEncrypted,
+            cancelled: false, text: text, meta: meta, encrypted: !!pdf.__wasEncrypted,
             /* 'vault' | 'typed' | null. The SOURCE, never the password — so a
              * screen can say "opened with a saved password" without saying
              * which one, and so a caller can tell whether the owner was made to
