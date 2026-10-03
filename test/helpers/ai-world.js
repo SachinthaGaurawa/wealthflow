@@ -10,7 +10,8 @@ export const failure = (status, text) => ({ ok: false, status, json: async () =>
 export const chat = (content, finish = 'stop', extra = {}) => json({ choices: [{ message: { content, ...extra }, finish_reason: finish }] });
 export const THOUGHT = (finish = 'length') => chat('', finish, { reasoning: 'let me think about this '.repeat(100) });
 
-export function world() {
+/** `answer` is what every healthy provider says: one row by default, or a whole board (ai_health_test.js passes ten gold rows). */
+export function world({ answer = ANSWER } = {}) {
     const log = [];
     const fetch = vi.fn(async (url, init) => {
         const u = String(url);
@@ -25,20 +26,20 @@ export function world() {
         if (/nvidia.*\/models$/.test(u)) return json({ data: [{ id: 'meta/llama-3.3-70b-instruct' }, { id: 'meta/llama-4-maverick-17b-128e-instruct' }, { id: 'nvidia/nv-embedqa-e5-v5' }] });
         if (/models\?/.test(u)) return json({ models: [] });
         // ---- the providers, each failing the way the log says it did
-        if (/googleapis/.test(u)) return json({ candidates: [{ content: { parts: [{ text: ANSWER }] }, finishReason: 'STOP' }] });
-        if (/deepseek/.test(u)) return chat(ANSWER);
-        if (/api\.groq\.com/.test(u)) return [3000, 4096].includes(body.max_tokens) ? chat(ANSWER) : THOUGHT('length');        // thought all of its budget; given room, it answers
-        if (/ollama\.com/.test(u)) return json({ message: { content: ANSWER }, done_reason: 'stop' });
-        if (/together/.test(u)) return chat(ANSWER);
-        if (/fireworks/.test(u)) return model === 'accounts/fireworks/models/llama-v3p3-70b-instruct' ? failure(404, '{"error":{"message":"Model not found, inaccessible, and/or not deployed","code":"NOT_FOUND"}}') : /thinking|llama4-maverick/.test(model) ? THOUGHT('length') : chat(ANSWER);   // the default is gone; the model the list offers first thinks its budget away
+        if (/googleapis/.test(u)) return json({ candidates: [{ content: { parts: [{ text: answer }] }, finishReason: 'STOP' }] });
+        if (/deepseek/.test(u)) return chat(answer);
+        if (/api\.groq\.com/.test(u)) return [3000, 4096].includes(body.max_tokens) ? chat(answer) : THOUGHT('length');        // thought all of its budget; given room, it answers
+        if (/ollama\.com/.test(u)) return json({ message: { content: answer }, done_reason: 'stop' });
+        if (/together/.test(u)) return chat(answer);
+        if (/fireworks/.test(u)) return model === 'accounts/fireworks/models/llama-v3p3-70b-instruct' ? failure(404, '{"error":{"message":"Model not found, inaccessible, and/or not deployed","code":"NOT_FOUND"}}') : /thinking|llama4-maverick/.test(model) ? THOUGHT('length') : chat(answer);   // the default is gone; the model the list offers first thinks its budget away
         if (/openrouter\.ai/.test(u)) {
             if (/ling-3\.0-flash-fin:free/.test(model)) return failure(404, '{"error":{"message":"This model is unavailable for free. The paid version is available now","code":404}}');
             if (/qwen/.test(model)) return failure(429, '{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3.8-27b:free is temporarily rate-limited upstream."}}}');
             if (/nemotron/.test(model)) return new Promise(() => {});                                                // never answers
-            return chat(ANSWER);
+            return chat(answer);
         }
-        if (/cerebras/.test(u)) return model === 'llama3.1-8b' ? failure(404, '{"message":"Model does not exist or you do not have access to it.","code":"model_not_found"}') : chat(ANSWER);
-        if (/nvidia/.test(u)) return /llama-3\.1-8b|llama-3\.3-70b/.test(model) ? failure(410, '{"title":"Gone","status":410,"detail":"The model has reached its end of life"}') : chat(ANSWER);
+        if (/cerebras/.test(u)) return model === 'llama3.1-8b' ? failure(404, '{"message":"Model does not exist or you do not have access to it.","code":"model_not_found"}') : chat(answer);
+        if (/nvidia/.test(u)) return /llama-3\.1-8b|llama-3\.3-70b/.test(model) ? failure(410, '{"title":"Gone","status":410,"detail":"The model has reached its end of life"}') : chat(answer);
         if (/models\.github\.ai/.test(u)) return { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token \'O\', "OK\r\n" is not valid JSON'); }, text: async () => 'OK\r\n' };
         if (/mistral/.test(u)) return failure(429, '{"object":"error","message":"Rate limit exceeded","type":"rate_limited","code":"1300"}');
         if (/cohere/.test(u)) return failure(429, '');

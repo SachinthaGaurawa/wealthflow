@@ -488,12 +488,49 @@ function finiteDecision(value) {
  *  board and the health report (ai-health.mjs) can never read an answer differently. */
 export function boardAnswer(reply) {
     try {
-        const raw = String(reply || '').trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+        const raw = unfenced(reply);
         if (raw.length > 262144) return null;
         const value = JSON.parse(raw);
         if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.keys(value).length || !finiteDecision(value)) return null;
         return value;
     } catch (_) { return null; }
+}
+
+/** The reply with the code fence around it taken off ("```json … ```", "``` … ```", any language word; an opening fence the model never closed too): nothing else is removed, so prose
+ *  before or after the fence still makes the reply unreadable. (A bare fence used to be refused although the answer inside it was exactly the JSON that was asked for.) */
+function unfenced(reply) {
+    let raw = String(reply == null ? '' : reply).trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[A-Za-z0-9_-]*[ \t]*\r?\n?/, '');
+    if (raw.endsWith('```')) raw = raw.replace(/\r?\n?[ \t]*```$/, '');
+    return raw.trim();
+}
+
+/**
+ * WHY a reply is not a usable board answer — one word, for the log and the health report: the answer itself is never kept.
+ * empty · too-long · prose (no JSON at all) · prose-around-json (an answer with words before or after it: refused on purpose, it may hide a qualification) · truncated (the object was cut
+ * off: the model ran out of room, usually because it thought first) · not-json (it tried and broke the syntax) · not-an-object (a list or a bare value) · empty-object · non-finite-number.
+ * Returns null when the reply IS a usable answer.
+ */
+export function whyInvalid(reply) {
+    const raw = unfenced(reply);
+    if (!raw) return 'empty';
+    if (raw.length > 262144) return 'too-long';
+    let value;
+    try { value = JSON.parse(raw); } catch (_) {
+        if (!/^[\[{]/.test(raw)) return /\{[\s\S]*\}/.test(raw) ? 'prose-around-json' : 'prose';
+        // where the first value ends (outside strings): never closed = cut off; closed with something after it = words around an answer; otherwise it broke its own syntax
+        let depth = 0, inString = false, escaped = false, end = -1;
+        for (let i = 0; i < raw.length && end < 0; i++) {
+            const ch = raw[i];
+            if (inString) { if (escaped) escaped = false; else if (ch === '\\') escaped = true; else if (ch === '"') inString = false; continue; }
+            if (ch === '"') inString = true; else if (ch === '{' || ch === '[') depth++; else if (ch === '}' || ch === ']') { depth--; if (depth === 0) end = i; }
+        }
+        if (end < 0) return 'truncated';
+        try { JSON.parse(raw.slice(0, end + 1)); return raw.slice(end + 1).trim() ? 'prose-around-json' : 'not-json'; } catch (_) { return 'not-json'; }
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return 'not-an-object';
+    if (!Object.keys(value).length) return 'empty-object';
+    return finiteDecision(value) ? null : 'non-finite-number';
 }
 
 export function canonicalAnswer(value) { return canonical(value); }
@@ -660,5 +697,5 @@ export function unanimousDecision(results, opts = {}) {
 export default {
     TASK, SPECIALISTS, DEFAULT_QUORUM, SAME_CLAIM, orderFor, normaliseReply, tokensOf, similarity,
     numbersOf, numbersAgree, ordinalsOf, monthsOf, contradicts, sameClaim, isNearMiss,
-    parseJson, fieldVote, decide, trustworthy, unanimousDecision, itemwiseReading,
+    parseJson, fieldVote, decide, trustworthy, unanimousDecision, itemwiseReading, whyInvalid,
 };
