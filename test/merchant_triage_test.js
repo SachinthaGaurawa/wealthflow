@@ -321,7 +321,7 @@ describe('filing keeps the money and carries the question', () => {
         expect(filed.map(x => x.amount)).toEqual([42.1, 10.05, 99.99]);
         expect(filed[0]).toMatchObject({ cat: 'Other', merchantReview: { state: 'open', reason: 'no-merchant-name' } });
         expect(filed[1]).toMatchObject({ cat: 'Other', merchantReview: { state: 'open', reason: 'unknown' } });
-        expect(filed[2].cat).toBe('Groceries');
+        expect(filed[2].cat).toBe('Food & Groceries');                    // the classifier says Groceries; the row is filed under the dropdown's name (test/category_entry_name_test.js)
         expect(filed[2].merchantReview).toBeUndefined();
     });
     it('the repair gives older "Other" rows their question once, closes answered ones, and never touches a category the owner chose', () => {

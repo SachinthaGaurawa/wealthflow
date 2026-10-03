@@ -253,7 +253,24 @@ export async function classifyStatement({ rows = [], existingHashes = new Set(),
   return out;
 }
 
-const API = { routeRow, hashRow, occurrenceKey, classifyStatement };
+/* THE NAME A CATEGORY IS STORED UNDER IS THE NAME THE EXPENSE DROPDOWN HAS.
+ * The classifiers (this file's rules, the AI board, the merchant list) say "Groceries", "Health", "Bank Charges"; the owner's own expenses are filed under the dropdown's names
+ * ("Food & Groceries", "Healthcare", "Banking" — EXPENSE_CATEGORIES in index.html). A statement row filed under the classifier's word was a separate slice on the dashboard, missed the
+ * owner's "Food" budget, and — because the page's editor sets the dropdown to the stored word — left the Category blank when the row was edited and saved. Every name here is the
+ * classifier's word for something the dropdown names differently; a word the dropdown already has (or has no counterpart for: "Cash Withdrawal") is left as it is.
+ * The registry names (Streaming, Software, Internet, Gym/Fitness) are the merchant list's own words for what the server already files as Entertainment, Subscriptions, Telecom and
+ * Personal Care (statement-merchants.mjs); they reach the page through its own classifier and are mapped the same way. Pinned in test/category_entry_name_test.js. */
+export const EXPENSE_ENTRY_NAME = Object.freeze({
+  Groceries: 'Food & Groceries', Health: 'Healthcare', 'Bank Charges': 'Banking',
+  Streaming: 'Entertainment', Software: 'Subscriptions', Internet: 'Telecom', 'Gym/Fitness': 'Personal Care',
+});
+/** The classifier's word for the dropdown's, where the two mean exactly the same (the way back is only for these: "Banking" is wider than "Bank Charges"). */
+export const CLASSIFIER_NAME = Object.freeze({ 'Food & Groceries': 'Groceries', Healthcare: 'Health' });
+const named = (table, name) => (typeof name === 'string' && Object.prototype.hasOwnProperty.call(table, name) ? table[name] : name);
+export const expenseEntryName = (name) => named(EXPENSE_ENTRY_NAME, name);
+export const classifierName = (name) => named(CLASSIFIER_NAME, name);
+
+const API = { routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName };
 
 if (typeof window !== 'undefined') window.WFStatementRouter = API;
 

@@ -9,15 +9,21 @@
  * answers only when it is sure: at least two filings, and one category for at least four in five of them. "Other" and "Needs Review" are never learned. It never overrides a rule that
  * already named a category, a transfer, a card line or an allocation.
  *
+ * "Groceries" (a statement row, filed before the names were aligned) and "Food & Groceries" (a row the owner typed) are ONE category: the memory counts them together, in the classifier's word
+ * (classifierName), and the ledger files the dropdown's (expenseEntryName).
+ *
  * Pure: no network, no clock, no storage.
  * ===========================================================================*/
+
+import { classifierName } from './wealthflow-statement-router.js';
 
 const EMPTY = new Set(['', 'other', 'needs review', 'uncategorized', 'uncategorised', 'misc', 'miscellaneous', 'unknown', 'transfer', 'duplicate']);
 const lower = (v) => String(v == null ? '' : v).trim().toLowerCase();
 
-function tally(map, key, category) {
+function tally(map, key, category, nameOf = (name) => name) {
     if (!key || EMPTY.has(lower(category))) return;
     const entry = map.get(key) || new Map();
+    category = nameOf(category);
     entry.set(category, (entry.get(category) || 0) + 1);
     map.set(key, entry);
 }
@@ -36,7 +42,7 @@ function verdict(entry, { minCount = 2, share = 0.8 } = {}) {
  */
 export function buildHistory(user, keyOf) {
     const expenses = new Map(), income = new Map();
-    for (const record of Array.isArray(user && user.expenses) ? user.expenses : []) if (record && record.desc) tally(expenses, keyOf({ narration: record.desc }), record.cat || record.category);
+    for (const record of Array.isArray(user && user.expenses) ? user.expenses : []) if (record && record.desc) tally(expenses, keyOf({ narration: record.desc }), record.cat || record.category, classifierName);
     for (const record of Array.isArray(user && user.incomeRecv) ? user.incomeRecv : []) if (record && record.name) tally(income, keyOf({ narration: record.name }), record.type || record.category);
     const minKey = (key) => key.length >= 4;
     return {
