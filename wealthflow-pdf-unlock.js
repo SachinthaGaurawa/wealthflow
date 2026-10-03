@@ -151,8 +151,9 @@
     /*  Try each candidate in turn. Returns the opened document, or null.
      *  `open` is injected so this can be tested without pdf.js or a browser.
      */
-    async function tryCandidates(open, bytes, candidates) {
+    async function tryCandidates(open, bytes, candidates, onTry) {
         for (var i = 0; i < candidates.length; i++) {
+            if (typeof onTry === 'function') { try { onTry(i, candidates.length); } catch (_) {} }
             try {
                 var doc = await open(candidates[i]);
                 if (doc) return { doc: doc, index: i };
@@ -171,10 +172,13 @@
      *  askPassword(isRetry) → Promise<string|null>  (null = user cancelled)
      *  opts.bank            → orders the saved passwords, when the bank is known
      *  opts.getCandidates   → injected for tests; defaults to the vault
+     *  opts.onProgress      → optional ({phase, done, total}) so a screen can say what is being waited on: 'saved' (saved password i of n),
+     *                         'password' (the box is open, nothing is happening until the owner answers), 'unlock' (the answer is being tried)
      *  Resolves the pdf document, or null if the user cancelled the password box.
      */
     async function openPdf(arrayBuffer, askPassword, opts) {
         opts = opts || {};
+        var tell = function (ev) { if (typeof opts.onProgress === 'function') { try { opts.onProgress(ev); } catch (_) {} } };
         var lib = await ensurePdfJs();
         var open = async function (pw) {
             var task = lib.getDocument({ data: _copy(arrayBuffer), password: pw });
@@ -197,7 +201,7 @@
         }
 
         var saved = await _vaultCandidates(opts.bank, opts.getCandidates);
-        var hit = await tryCandidates(open, arrayBuffer, saved);
+        var hit = await tryCandidates(open, arrayBuffer, saved, function (i, n) { tell({ phase: 'saved', done: i, total: n }); });
         if (hit) {
             hit.doc.__wasEncrypted = true;
             /* The SOURCE, never the password. */
@@ -211,8 +215,10 @@
         var password;
         for (var attempt = 0; attempt < 8; attempt++) {
             var incorrect = attempt > 0 || saved.length > 0;
+            tell({ phase: 'password' });
             password = await (askPassword || promptPassword)(incorrect);
             if (password === null || password === undefined) return null;  // cancelled
+            tell({ phase: 'unlock' });
             try {
                 var pdf = await open(password);
                 pdf.__wasEncrypted = true;
@@ -245,12 +251,16 @@
         }).filter(Boolean).join('\n');
     }
 
-    async function extractText(pdf) {
+    /*  `onPage(done, total)` — optional; told how many pages are read, starting with 0, so a screen can show real progress. */
+    async function extractText(pdf, onPage) {
         var out = [];
+        var tell = function (done) { if (typeof onPage === 'function') { try { onPage(done, pdf.numPages); } catch (_) {} } };
+        tell(0);
         for (var p = 1; p <= pdf.numPages; p++) {
             var page = await pdf.getPage(p);
             var tc = await page.getTextContent();
             out.push(_itemsToLines(tc.items));
+            tell(p);
         }
         return out.join('\n');
     }
@@ -269,7 +279,11 @@
         var pdf = await openPdf(buf, askPassword, opts);
         if (!pdf) return { cancelled: true, text: '', encrypted: true };
         var text, meta;
-        try { text = await extractText(pdf); meta = await _metaOf(pdf); }
+        try {
+            text = await extractText(pdf, opts && typeof opts.onProgress === 'function'
+                ? function (done, total) { opts.onProgress({ phase: 'pages', done: done, total: total }); } : null);
+            meta = await _metaOf(pdf);
+        }
         finally { try { if (typeof pdf.destroy === 'function') await pdf.destroy(); } catch (_) {} }
         return {
             cancelled: false, text: text, meta: meta, encrypted: !!pdf.__wasEncrypted,
