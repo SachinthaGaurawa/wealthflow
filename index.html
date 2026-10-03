@@ -567,6 +567,7 @@
     <script type="module" src="wealthflow-advisor-scenarios.js"></script>
     <!-- The answer read back against the books: every figure the Advisor writes is looked for in what it was given; one that is not theirs is asked for again once, and shown if it stays. window.WFAdvisorCheck -->
     <script type="module" src="wealthflow-advisor-check.js"></script>
+    <script type="module" src="wealthflow-advisor-briefing.js"></script>
     <!-- Statement router — routeRow, the SHA-256 row hash and classifyStatement.
          Imported only by tests until now: Statement Sync is the first caller in
          the page, and the first to pass `existingHashes`, which classifyStatement
@@ -3389,7 +3390,31 @@
         }
         .ai-followup-pill:hover { background: rgba(212,175,55,.18); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(212,175,55,.15); }
 
+        /* "Your books today": the card above the chat, built by code from the fact sheet (wealthflow-advisor-briefing.js) */
+        .ai-brief { background: var(--card2); border: 1px solid var(--border); border-radius: 14px; margin-bottom: 12px; overflow: hidden; }
+        .ai-brief-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; width: 100%; padding: 10px 14px; background: transparent; border: 0; color: var(--text); cursor: pointer; text-align: left; font: inherit; }
+        .ai-brief-title { font-size: 13px; font-weight: 700; }
+        .ai-brief-sub { font-size: 12px; color: var(--text2); }
+        .ai-brief.collapsed .ai-brief-body { display: none; }
+        .ai-brief-body { padding: 0 14px 12px; }
+        .ai-brief-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 10px; }
+        .ai-brief-stat { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 7px 10px; min-width: 0; }
+        .ai-brief-stat-l { font-size: 10.5px; color: var(--text3); }
+        .ai-brief-stat-v { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+        .ai-brief-items { display: flex; flex-direction: column; gap: 6px; }
+        .ai-brief-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+        .ai-brief-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--text3); }
+        .ai-brief-item.high .ai-brief-dot { background: var(--red); }
+        .ai-brief-item.medium .ai-brief-dot { background: #f5a623; }
+        .ai-brief-item.good .ai-brief-dot { background: var(--green); }
+        .ai-brief-text { flex: 1; min-width: 0; }
+        .ai-brief-item-t { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+        .ai-brief-item-d { font-size: 11.5px; color: var(--text2); line-height: 1.45; overflow-wrap: anywhere; }
+        .ai-brief-ask { flex-shrink: 0; padding: 5px 12px; border-radius: 16px; font-size: 11.5px; font-weight: 600; background: transparent; border: 1px solid var(--border); color: var(--text2); cursor: pointer; }
+        .ai-brief-ask:hover { border-color: var(--accent); color: var(--accent); }
+
         .ai-suggestion-pill {
+            max-width: 100%; overflow: hidden; text-overflow: ellipsis;
             padding: 7px 16px; border-radius: 20px; font-size: 12px; font-weight: 600;
             background: var(--card2); border: 1px solid var(--border); color: var(--text2);
             cursor: pointer; transition: all .2s; white-space: nowrap;
@@ -6503,6 +6528,9 @@
 
                     <!-- AI Context Awareness -->
                     <div class="ai-context-pills" id="aiContextPills"></div>
+
+                    <!-- What the books say today (wealthflow-advisor-briefing.js) -->
+                    <div id="aiBriefing"></div>
 
                     <!-- AI Suggestion Pills -->
                     <div id="aiSuggestionPills" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
@@ -12606,6 +12634,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const ctx = buildFinancialContext();
             const typed = (($('aiChatInput') || {}).value || '').trim().toLowerCase();
             let suggestions = [];
+            let smart = [];     // { text, ask }: the button says one thing and sends another
 
             if (typed.length >= 2) {
                 // ── DYNAMIC: adapt to what the user is typing + their records ──
@@ -12635,6 +12664,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 suggestions.push('Give me 3 investment tips for Sri Lanka');
                 suggestions.push('What should I focus on this month?');
                 suggestions.push('Show my full financial analysis with charts');
+                // questions that name the owner's own loan and goal come first (wealthflow-advisor-briefing.js)
+                try { if (window.WFAdvisorBriefing) smart = window.WFAdvisorBriefing.pills(_wfAdvisorFacts()); } catch (_) { smart = []; }
             }
 
             const icons = { cash: '📊', loan: '🏦', save: '🎯', invest: '📈', income: '💰', expense: '💸', budget: '💡', tax: '🧾', debt: '🏦', analysis: '📈', health: '❤️' };
@@ -12651,8 +12682,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 return icons.budget;
             }
 
-            container.innerHTML = suggestions.slice(0, 5).map((s) =>
-                `<button class="ai-suggestion-pill" type="button" data-q="${s.replace(/"/g, '&quot;')}">${iconFor(s)}&nbsp; ${s}</button>`
+            // Names in a button (a loan called "<img onerror=...>") are the owner's own text, so they are escaped, not parsed.
+            container.innerHTML = smart.concat(suggestions.map((t) => ({ text: t, ask: t }))).slice(0, 5).map((s) =>
+                `<button class="ai-suggestion-pill" type="button" data-q="${_wfEsc(s.ask)}">${iconFor(s.text)}&nbsp; ${_wfEsc(s.text)}</button>`
             ).join('');
 
             // Bind ONCE via event delegation on the container itself. This is
@@ -12661,6 +12693,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             if (!container._wfBound) {
                 container._wfBound = true;
                 container.addEventListener('click', function (ev) {
+                    if (ev.defaultPrevented) return;     // the document-level handler below already sent it: one tap, one question
                     const btn = ev.target.closest('.ai-suggestion-pill');
                     if (!btn || !container.contains(btn)) return;
                     ev.preventDefault();
@@ -12910,8 +12943,27 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             } catch (e) { /* leave previous pills intact on error */ }
         }
 
+        // "Your books today": what the books say before anything is asked, from the same fact sheet the Advisor reads (wealthflow-advisor-briefing.js)
+        function _wfAdvisorFacts() {
+            try { const s = window.WFAdvisorFacts && window.WFAdvisorFacts.currentSheet(window); return (s && s.facts) || null; } catch (_) { return null; }
+        }
+        function _wfRenderAdvisorBriefing(tries) {
+            const el = document.getElementById('aiBriefing');
+            if (!el) return;
+            const B = window.WFAdvisorBriefing;
+            if (!B) { if ((tries || 0) < 10) setTimeout(function () { _wfRenderAdvisorBriefing((tries || 0) + 1); }, 400); return; }   // the module loads after the page script
+            let collapsed = false;
+            try { collapsed = localStorage.getItem('wf_ai_brief_collapsed') === '1'; } catch (_) {}
+            try {
+                B.render(el, B.briefing(_wfAdvisorFacts()), document, { collapsed: collapsed, onToggle: function (c) { try { localStorage.setItem('wf_ai_brief_collapsed', c ? '1' : '0'); } catch (_) {} } });
+            } catch (e) { el.textContent = ''; }
+            if (tries) initAISuggestionPills();     // the buttons were drawn before the module arrived
+        }
+        window._wfRenderAdvisorBriefing = _wfRenderAdvisorBriefing;
+
         // ==================== AI PAGE INIT ====================
         function _initAIPage() {
+            _wfRenderAdvisorBriefing();
             initAISuggestionPills();
             _updateAIContextPills();
             renderAIChatHistory();
