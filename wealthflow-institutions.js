@@ -65,8 +65,13 @@ export const INSTITUTIONS = [
      * one of the two. They share one mailbox. `mailName` is what the statement
      * pipeline labels that mail with, because "Nations Trust Bank (NTB) — AMEX"
      * would be a claim about the card the domain cannot support. */
+    /* `lockId` is the id the statement registry (statement-registry.mjs) builds a statement's lock from: sha256(bank | last 4 | year | month).
+     * The card PRODUCT is not part of a statement's identity — one card is one product — so the two NTB entries share one lock id, and it is
+     * 'ntb-amex' because that is the id every NTB statement the email sync ever filed already carries ("Nations Trust Bank (NTB)" resolves to
+     * it). Without it a Visa/Mastercard statement uploaded by hand locked as 'ntb-visa' while the same statement by email locked as 'ntb-amex',
+     * and the two doors could never see each other. Never change this value: every existing registry document is keyed on it. */
     { id: 'ntb-amex', name: 'Nations Trust Bank (NTB) — AMEX', mailName: 'Nations Trust Bank (NTB)', tokens: ['nations trust', 'ntb'], domains: ['nationstrust.com'] },
-    { id: 'ntb-visa', name: 'Nations Trust Bank (NTB) — Visa/Mastercard', mailName: 'Nations Trust Bank (NTB)', tokens: ['nations trust', 'ntb'], domains: ['nationstrust.com'] },
+    { id: 'ntb-visa', lockId: 'ntb-amex', name: 'Nations Trust Bank (NTB) — Visa/Mastercard', mailName: 'Nations Trust Bank (NTB)', tokens: ['nations trust', 'ntb'], domains: ['nationstrust.com'] },
     { id: 'panasia', name: 'Pan Asia Bank', tokens: ['pan asia'], domains: [] },
     { id: 'peoples', name: 'Peoples Bank', tokens: ['peoples bank', "people's bank"], domains: [] },
     { id: 'sampath', name: 'Sampath Bank', tokens: ['sampath'], domains: [] },

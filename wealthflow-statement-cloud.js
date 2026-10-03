@@ -584,6 +584,13 @@ export async function guardMail(info,action='check'){
     if(!info||!info.itemId)return null;
     return noticeOf(await guardCall({action:action==='claim'?'claim':'check',itemId:String(info.itemId),bank:String(info.bank||''),last4:String(info.last4||''),periodText:String(info.periodText||''),dates:(info.dates||[]).slice(0,2000),filename:String(info.filename||'').slice(0,200),size:Number(info.size)||0,rows:Number(info.rows)||0}));
 }
+/** What the mailbox already knows about the BANK of a statement being added by hand — the same file, the same card tail, the same file-name series, the banks the owner approved a sender of.
+ *  Asked only when the statement alone does not name its bank, and never waited for beyond 8 seconds: null means "no history", and the bank is then read from the statement alone — never asked. */
+export async function guardIdentify({sha='',tails=[],filename=''}){
+    const call=guardCall({action:'identify',sha256:sha||undefined,tails:(tails||[]).slice(0,3),filename:String(filename||'').slice(0,200)});
+    const r=await Promise.race([call,new Promise(done=>setTimeout(()=>done(null),8000))]);
+    return r&&r.ok?{approved:r.approved||[],sha:r.sha||null,last4:r.last4||{},series:r.series||null}:null;
+}
 /** Give a statement back (e.g. its records were deleted) so the same file or month can be added again. */
 export async function guardRelease(id){const r=await guardCall({action:'release',id});return r?r.released||0:0}
 
@@ -592,7 +599,7 @@ if (typeof window !== 'undefined') {
         const text = document.getElementById('_statement_cloud_status');
         if (text) text.textContent = state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
     });
-    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, coverageSummary, retryAttemptsSummary, senderFunnel, guard: { file: guardFile, parsed: guardParsed, claim: guardClaim, mail: guardMail, release: guardRelease, accountTailOf } };
+    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, coverageSummary, retryAttemptsSummary, senderFunnel, guard: { file: guardFile, parsed: guardParsed, claim: guardClaim, mail: guardMail, release: guardRelease, identify: guardIdentify, accountTailOf } };
     const start=()=>{
         if (authBound) return;
         if (window.firebase?.apps?.length && typeof window.firebase.auth === 'function') {

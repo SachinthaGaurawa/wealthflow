@@ -525,6 +525,10 @@
          four in the pipeline, nothing comparing them — which is why an owner
          with ten accounts watched three of them sync. ESM; window.WFInstitutions. -->
     <script type="module" src="wealthflow-institutions.js"></script>
+    <!-- WHICH BANK ISSUED A STATEMENT, READ FROM THE STATEMENT. The manual upload used to stop and ask for the bank (fifteen buttons).
+         It is weighed from the statement's own words, the PDF's properties, the file name, an AI reading of a scanned page, the owner's cards and the
+         mail the email sync already filed — and left unlabelled, not guessed, when none of them settles it. Pure; ESM; window.WFBankDetect. -->
+    <script type="module" src="wealthflow-bank-detect.js"></script>
     <script type="module" src="wealthflow-sender-discovery.js"></script>
     <!-- v7.67.0 — The verification matrix. A due date is a QUESTION, not an
          answer: it decides which payouts and bills are due, which have been
@@ -11226,39 +11230,9 @@ Keep total under 200 words. No markdown, no asterisks.`;
         // The CC scan uses the global #aiScanOverlay, which does exist.
         // If a modal-local progress panel is wanted later, add the markup first.
 
-        // Bank-picker dialog used by the CCOT AI scan flow. Returns
-        // the selected bank string (or null on cancel) via a Promise.
-        function _ccotPickBankAsync() {
-            return new Promise((resolve) => {
-                const banks = (typeof BANKS !== 'undefined' && Array.isArray(BANKS)) ? BANKS : ['Other'];
-                const bankList = banks.map(b =>
-                    `<button class="auth-btn _wf_bank_pick" data-bank="${b}" style="text-align:left;justify-content:flex-start;font-size:13px;padding:10px 14px;">${b}</button>`
-                ).join('');
-                const overlay = document.createElement('div');
-                overlay.className = 'mo';
-                document.body.appendChild(overlay);
-                requestAnimationFrame(() => overlay.classList.add('open'));
-                overlay.innerHTML = `
-                    <div class="md md-sm">
-                        <div class="md-hdr">
-                            <div class="md-title">🤖 Which credit card / bank?</div>
-                            <button class="md-x" aria-label="Close" id="_wf_bank_x"><i data-wfi="x"></i></button>
-                        </div>
-                        <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.55;">
-                            Before AI scans the statement, please confirm the issuing bank. This unlocks the correct service-fee schedule (Sri Lanka 🇱🇰).
-                        </div>
-                        <div style="display:flex;flex-direction:column;gap:6px;max-height:55vh;overflow-y:auto;">${bankList}</div>
-                    </div>`;
-                const close = (val) => {
-                    try { overlay.classList.remove('open'); } catch(_){}
-                    setTimeout(() => { try { overlay.remove(); } catch(_){} resolve(val); }, 180);
-                };
-                overlay.querySelectorAll('._wf_bank_pick').forEach(b =>
-                    b.onclick = () => close(b.getAttribute('data-bank')));
-                overlay.querySelector('#_wf_bank_x').onclick = () => close(null);
-                overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(null); });
-            });
-        }
+        // REMOVED — _ccotPickBankAsync, the bank-picker dialog (fifteen buttons shown before every statement was read). The statement
+        // names its own bank, and so do the owner's cards and the mail the email sync already filed: wealthflow-bank-detect.js reads it, wealthflow-ai-v4.js
+        // calls it once the statement's text is open, and a bank it cannot settle is filed without a label and shown as such in the review — never asked.
 
         // (v7.4.9 — CC AI Scan now goes through v4's handleAIScanV4 via
         //  populateCCOTForm in wealthflow-ai-v4.js. The old standalone
@@ -35288,10 +35262,16 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 }).join('');
             };
 
+            /* WHICH BANK — said, never asked. wealthflow-ai-v4.js read it from the statement (wealthflow-bank-detect.js) and hands the answer in `parsed._wfBank`;
+             * a statement it could not settle is filed without a bank label, and that is stated here rather than turned into a question. */
+            const _wb = parsed && parsed._wfBank;
+            const _bankNote = !_wb ? ''
+                : _wb.ok ? `<br><b style="color:var(--green);">🏦 Bank:</b> ${_wfEsc(_wb.name)} <span style="opacity:.8">— found automatically (${_wfEsc((_wb.basis || []).join('; '))})</span>`
+                : `<br><b style="color:var(--gold, #d4a017);">🏦 Bank not identified</b> — nothing in the statement, your cards or your email history names it, so these rows are filed without a bank label and still checked against your books by amount and date.`;
             overlay.innerHTML = `
                 <div class="md" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
-                        <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — ${_wfEsc(bank)}</div>
+                        <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — ${_wfEsc(bank || 'Bank Statement')}</div>
                         <button class="md-x" aria-label="Close" id="_ccrx"><i data-wfi="x"></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
@@ -35302,7 +35282,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 <button type="button" id="_ccr_typeBank" class="btn" style="padding:4px 10px;font-size:11px;border-radius:8px;${_acctType==='bank_account'?'background:var(--accent,#f5a623);color:#1a1300;':'background:transparent;border:1px solid var(--border2,#243049);color:var(--text2);'}">🏦 Bank Account</button>
                             </div>
                             Each row's <b>Goes to</b> is set automatically from that — change any row if needed. Credit-card cash advances get their bank fee added; bank credits become Income (salary/interest, not investments); transfers are skipped.
-                            ${parsed.statement_period ? `<br><b style="color:var(--blue);">Statement period:</b> ${_wfEsc(parsed.statement_period)}` : ''}
+                            ${parsed.statement_period ? `<br><b style="color:var(--blue);">Statement period:</b> ${_wfEsc(parsed.statement_period)}` : ''}${_bankNote}
                         </div>
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.28);border-radius:10px;padding:9px 12px;">
                             <span style="color:var(--text2);font-weight:600;">Send every ticked row to →</span>

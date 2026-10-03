@@ -665,11 +665,15 @@
             'Peoples Bank, Pan Asia, Union Bank).\n' + bankLine +
             '\nRead the image and extract EVERY transaction line. Return ONLY a single JSON object ' +
             'with this exact schema (no markdown, no comments, no prose):\n\n' +
-            '{"statement_period":"YYYY-MM","transactions":[' +
+            '{"bank_name":"","card_network":"","card_last4":"","statement_period":"YYYY-MM","transactions":[' +
             '{"date":"YYYY-MM-DD","description":"merchant or vendor","amount":1500.50,' +
             '"direction":"debit","type":"purchase","merchant_category":"","notes":""}' +
             ']}\n\n' +
             'Rules:\n' +
+            '- "bank_name" = the bank that ISSUED this card/account, exactly as printed in the header, logo text or footer of THIS statement ' +
+            '(for example "Sampath Bank PLC"). NEVER take it from a transaction row: a row names a merchant or some OTHER bank. ' +
+            'If no bank name is printed anywhere, return "" — do NOT guess.\n' +
+            '- "card_network" = visa, mastercard or amex when the card prints it, else "". "card_last4" = the last 4 digits of the card/account number as printed, else "".\n' +
             '- "description" = the COMPLETE narration EXACTLY as printed — keep payee/merchant names, ' +
             'and key phrases like "Inward Ceft Transfer <name>", "Outward Ceft Transfer <name>", ' +
             '"POS Transaction - <merchant>", "CASH DEP", "ATM WTD", "MB BillPmt/<biller>". Do NOT shorten, ' +
@@ -1127,12 +1131,44 @@
     async function _wfGuardParsed(parsed, ctx) {
         var g = _wfStatementGuard(); if (!g) return false;
         try {
+            /* The registry locks on the ISSUER's label (the one the email sync writes), not on the record label: a statement taken by hand and by email must meet at one lock. */
             var r = await g.parsed({ sha: ctx.sha, bank: ctx.bank, last4: ctx.last4 || g.accountTailOf(ctx.text), periodText: parsed.statement_period || '',
                 dates: parsed.transactions.map(function (t) { return t.date; }), filename: ctx.file.name, size: ctx.file.size, rows: parsed.transactions.length });
             if (r.duplicate) { _wfSayDuplicate(r); return true; }
             parsed._wfGuard = r.info;
         } catch (_) { /* fail open */ }
         return false;
+    }
+
+
+    /* WHICH BANK, WITHOUT ASKING (wealthflow-bank-detect.js). The statement's own words, the PDF's properties, the file name, an AI reading of a scanned page, the owner's cards, and what the
+     * mailbox already knows (/api/statement-guard `identify`) are weighed together; the answer is a bank, or "not identified" — never a guess, never a question. */
+    function _wfBooks() {
+        try { var A = window.WFAccounts; return (A && typeof A.derive === 'function' && window.appData) ? (A.derive(window.appData) || []) : []; } catch (_) { return []; }
+    }
+    /** What a scanned page's reading says about the bank — only the three fields the prompt asks for, trimmed. */
+    function _wfAiBankOf(obj) {
+        if (!obj || typeof obj !== 'object') return null;
+        var bank = String(obj.bank_name || '').trim().slice(0, 80), network = String(obj.card_network || '').trim().slice(0, 20), last4 = String(obj.card_last4 || '').replace(/\D+/g, '').slice(-4);
+        return (bank || network || last4.length === 4) ? { bank: bank, network: network, last4: last4.length === 4 ? last4 : '' } : null;
+    }
+    /** -> the detector's answer ({ok, name, lockName, product, basis, note, …}) or null when the detector is not loaded. Never throws. */
+    async function _wfResolveBank(ctx) {
+        var D = window.WFBankDetect; if (!D || typeof D.detect !== 'function') return null;
+        var name = (ctx.file && ctx.file.name) || '';
+        var input = { text: ctx.text || '', filename: name, meta: ctx.meta || null, ai: ctx.ai || null, books: _wfBooks(), history: null };
+        var r = null;
+        try { r = D.detect(input); } catch (_) { return null; }
+        var g = _wfStatementGuard();
+        if (g && typeof g.identify === 'function') {
+            try {
+                var tails = D.tailsOf(input.text, name).map(function (t) { return t.tail; });
+                if (ctx.ai && ctx.ai.last4 && tails.indexOf(ctx.ai.last4) < 0) tails.push(ctx.ai.last4);
+                var h = await g.identify({ sha: ctx.sha || '', tails: tails, filename: name });
+                if (h) { input.history = h; r = D.detect(input) || r; }
+            } catch (_) { /* no history: the statement and the owner's cards decide alone */ }
+        }
+        return r;
     }
 
     async function handleAIScanV4(e, type) {
@@ -1150,10 +1186,11 @@
 
         if (typeof window.triggerHaptic === 'function') window.triggerHaptic('medium');
 
-        // CCOT-specific: ask which bank issued the statement BEFORE we kick
-        // off the heavy engine cascade. This gives us the right Sri-Lankan
-        // service-fee schedule and helps the AI prompt focus the parse.
-        var ccotBank = null;
+        // CCOT-specific: the issuing bank is READ from the statement (wealthflow-bank-detect.js) once its
+        // text is open — it is never asked. It still picks the Sri-Lankan fee schedule (the record label is
+        // the picker's name) and the registry lock (the issuer label the email sync writes). '' = not identified.
+        var ccotBank = '';
+        var _wfBank = null;
         var _wfSha = '';
         if (isCCOT && _wfStatementGuard()) {
             try {
@@ -1161,16 +1198,6 @@
                 _wfSha = _gf.sha || '';
                 if (_gf.duplicate) { _wfSayDuplicate(_gf); inputEl.value = ''; return; }
             } catch (_) { /* fail open */ }
-        }
-        if (isCCOT) {
-            try {
-                if (typeof window._ccotPickBankAsync === 'function') {
-                    ccotBank = await window._ccotPickBankAsync();
-                    if (!ccotBank) { inputEl.value = ''; return; }
-                }
-            } catch (e0) {
-                console.warn('[' + V + '] bank picker failed:', e0);
-            }
         }
 
         // ── HTML e-STATEMENT FAST PATH (v7.8.0) ──────────────────────────────
@@ -1202,10 +1229,13 @@
                         }),
                         card_last4: '', currency: 'LKR', statement_period: ''
                     };
-                    if (await _wfGuardParsed(_parsedH, { file: file, sha: _wfSha, bank: ccotBank, text: _hres && _hres.text })) { inputEl.value = ''; return; }
+                    _wfBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _hres && _hres.text });
+                    ccotBank = _wfBank && _wfBank.ok ? _wfBank.name : '';
+                    _parsedH._wfBank = _wfBank;
+                    if (await _wfGuardParsed(_parsedH, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', text: _hres && _hres.text })) { inputEl.value = ''; return; }
                     if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
-                    if (typeof window.notify === 'function') window.notify('Imported ' + _htx.length + ' transactions from your e-statement.', 'success');
-                    window._showCCReviewModal(_parsedH, ccotBank || 'Bank Statement');
+                    if (typeof window.notify === 'function') window.notify('Imported ' + _htx.length + ' transactions from your e-statement' + (ccotBank ? ' · ' + ccotBank : '') + '.', 'success');
+                    window._showCCReviewModal(_parsedH, ccotBank);
                     inputEl.value = '';
                     return;
                 }
@@ -1290,7 +1320,10 @@
                             currency: 'LKR',
                             statement_period: (_res.text.match(/Statement Period[:\s]*([\d/]+\s*-\s*[\d/]+)/i) || [])[1] || ''
                         };
-                        if (await _wfGuardParsed(_parsed, { file: file, sha: _wfSha, bank: ccotBank, last4: _parsed.card_last4, text: _res.text })) { inputEl.value = ''; return; }
+                        _wfBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _res.text, meta: _res.meta });
+                        ccotBank = _wfBank && _wfBank.ok ? _wfBank.name : '';
+                        _parsed._wfBank = _wfBank;
+                        if (await _wfGuardParsed(_parsed, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', last4: _parsed.card_last4, text: _res.text })) { inputEl.value = ''; return; }
                         if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
                         // Say what was actually verified. "High accuracy" was printed
                         // unconditionally before, including for statements the parser
@@ -1301,7 +1334,7 @@
                             else if (_rc.ok === false) window.notify(_n + ', but they don\'t add up to the closing balance (off by ' + Math.abs(_rc.difference) + '). Please check the list before saving.', 'warn');
                             else window.notify(_n + '. This statement prints no running balance, so please confirm the amounts.', 'success');
                         }
-                        window._showCCReviewModal(_parsed, ccotBank || 'Bank Statement');
+                        window._showCCReviewModal(_parsed, ccotBank);
                         inputEl.value = '';
                         return;
                     }
@@ -1395,7 +1428,12 @@
                     window._showScanOverlay('AI parsing CC statement…',
                         'Extracting every transaction row', 35, 'bot');
 
-                var ccotPrompt = buildCCStatementPrompt(ccotBank);
+                /* A page is read for its bank too. First what is already known without reading it (the exact file in the mailbox, the file name, the owner's cards); then, after the page is read,
+                 * the bank the AI saw printed and any OCR text — weighed again, so a wrong early guess can still be overturned. */
+                var _aiBank = null, _ocrText = '';
+                var _preBank = await _wfResolveBank({ file: file, sha: _wfSha, text: '' });
+                if (_preBank) { _wfBank = _preBank; ccotBank = _preBank.ok ? _preBank.name : ''; }
+                var ccotPrompt = buildCCStatementPrompt(_preBank && _preBank.ok ? _preBank.issuer : '');
                 var ccotTxns = null;
                 var ccotLastErr = null;
 
@@ -1403,6 +1441,7 @@
                 try {
                     var ccotResp = await legacyAICall(ccotPrompt, firstImage, 45000);
                     var ccotParsed = extractJSON(ccotResp.reply);
+                    _aiBank = _aiBank || _wfAiBankOf(ccotParsed);
                     if (ccotParsed && Array.isArray(ccotParsed.transactions) && ccotParsed.transactions.length > 0) {
                         ccotTxns = ccotParsed.transactions;
                     }
@@ -1420,11 +1459,13 @@
                     try {
                         var simplePrompt = 'Read this ' + (ccotBank || '') +
                             ' credit card statement image. Return ONLY this JSON (no markdown, no explanation):\n' +
-                            '{"transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":0,"type":"purchase"}]}\n' +
+                            '{"bank_name":"","transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":0,"type":"purchase"}]}\n' +
+                            '"bank_name" = the bank printed in the statement header or footer, or "" if none is printed (never guess it from a row).\n' +
                             '"type" must be one of: purchase, cash_advance, service_fee, fuel.\n' +
                             'Include EVERY transaction row. Skip the closing balance, opening balance, and payment-received rows.';
                         var ccotResp2 = await legacyAICall(simplePrompt, firstImage, 35000);
                         var ccotParsed2 = extractJSON(ccotResp2.reply);
+                        _aiBank = _aiBank || _wfAiBankOf(ccotParsed2);
                         if (ccotParsed2 && Array.isArray(ccotParsed2.transactions) && ccotParsed2.transactions.length > 0) {
                             ccotTxns = ccotParsed2.transactions;
                         }
@@ -1491,6 +1532,7 @@
                             'Tesseract.js reading raw text', 80, 'fileText');
                     try {
                         var ocrTxt = await window._ocrWithTesseract(file);
+                        if (ocrTxt && ocrTxt.length > 20) _ocrText += '\n' + ocrTxt.slice(0, 20000);
                         if (ocrTxt && ocrTxt.length > 20 && typeof window._ccOcrTextToTransactions === 'function') {
                             var ocrRows = window._ccOcrTextToTransactions(ocrTxt, ccotBank);
                             if (ocrRows && ocrRows.length > 0) {
@@ -1516,6 +1558,7 @@
                         try {
                             var pageResp = await legacyAICall(ccotPrompt, imgBundle.images[pgi], 40000);
                             var pageParsed = extractJSON(pageResp.reply);
+                            _aiBank = _aiBank || _wfAiBankOf(pageParsed);
                             if (pageParsed && Array.isArray(pageParsed.transactions)) {
                                 pageParsed.transactions.forEach(function (t) {
                                     // Skip duplicates: same date + same description + same amount
@@ -1549,11 +1592,13 @@
                             var _enh = await _enhanceImageForOCR(imgBundle.images[_ci]);
                             var _ocr = await cloudVisionOCR(_enh, ['en', 'si', 'ta'], 45000);
                             if (!_ocr || !_ocr.text) continue;
-                            var _txtPrompt = buildCCStatementPrompt(ccotBank) +
+                            _ocrText += '\n' + _ocr.text.slice(0, 20000);
+                            var _txtPrompt = buildCCStatementPrompt(_wfBank && _wfBank.ok ? _wfBank.issuer : '') +
                                 '\n\nThe statement has ALREADY been OCR-read for you. Parse EVERY transaction row from this extracted text (preserve order, do not invent rows):\n"""\n' +
                                 _ocr.text.slice(0, 14000) + '\n"""';
                             var _txtResp = await legacyAICall(_txtPrompt, null, 40000); // text-only → small, reliable
                             var _txtParsed = extractJSON(_txtResp.reply);
+                            _aiBank = _aiBank || _wfAiBankOf(_txtParsed);
                             if (_txtParsed && Array.isArray(_txtParsed.transactions)) {
                                 _txtParsed.transactions.forEach(function (t) {
                                     var dup = _cvMerged.some(function (r) {
@@ -1580,6 +1625,11 @@
                     if (typeof window.triggerHaptic === 'function') window.triggerHaptic('error');
                     inputEl.value = '';
                     return;
+                }
+
+                if (_aiBank || _ocrText) {
+                    var _postBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _ocrText, ai: _aiBank });
+                    if (_postBank) { _wfBank = _postBank; ccotBank = _postBank.ok ? _postBank.name : ''; }
                 }
 
                 if (showsOverlay && typeof window._showScanOverlay === 'function')
@@ -1615,7 +1665,7 @@
                 // Open the existing review modal — user confirms each row,
                 // can edit before bulk-save. Defined in index.html.
                 if (typeof window._showCCReviewModal === 'function') {
-                    window._showCCReviewModal({ transactions: normalised, statement_period: '' }, ccotBank);
+                    window._showCCReviewModal({ transactions: normalised, statement_period: '', _wfBank: _wfBank }, ccotBank);
                 } else {
                     // Fallback: bulk-save directly (review modal not present)
                     if (typeof window._bulkSaveCCOT === 'function') {
