@@ -26,6 +26,8 @@ export function coverageSummary(){
 const GAP_TEXT={missed:'found in Gmail — being filed now',stored:'already stored','a-new-address-at-a-bank-you-approved':'a new sender address — approve it in Settings → Statement senders','sender-not-on-your-list':'sender not on your list — approve it in Settings → Statement senders','dkim-did-not-pass':'the sender could not be verified','signed-by-a-different-domain':'the sender could not be verified','the-attachment-is-not-a-bank-statement':'the attachment looked like an invoice or receipt','no-pdf-attachment':'no statement attached','attachment-over-the-size-ceiling':'attachment too large'};
 
 const say=(message,type='info')=>{if(window.notify)window.notify(message,type)};
+/* How a bank is WRITTEN on this screen ("Dfccbank" -> "DFCC Bank"). Display only: the stored label is a key and is never rewritten. Rule: displayBank() in wealthflow-institutions.js. */
+const shownBank=b=>{try{const f=window.WFInstitutions&&window.WFInstitutions.displayBank;return f?f(b):b}catch{return b}};
 function change(){window.dispatchEvent(new CustomEvent('wf-statement-cloud',{detail:{...state}}))}
 function sdkUser(){try{return typeof window.firebase?.auth==='function'?window.firebase.auth().currentUser:null;}catch(_){return null;}}
 function currentUser(){return user||sdkUser();}
@@ -491,7 +493,7 @@ function drawReview() {
         for (const s of holes) for (const m of s.missing) {
             const line = document.createElement('p'); line.style.cssText = 'margin:6px 0 0;font-size:13px;';
             const mail = (s.gaps || []).find(g => g.month === m)?.mail;
-            line.textContent = `${s.label || s.bank} · ${m}: ` + (!mail ? 'searching…' : mail.length ? mail.map(x => GAP_TEXT[x.outcome] || x.outcome).join('; ') : 'no email from this bank arrived that month');
+            line.textContent = `${shownBank(s.label || s.bank)} · ${m}: ` + (!mail ? 'searching…' : mail.length ? mail.map(x => GAP_TEXT[x.outcome] || x.outcome).join('; ') : 'no email from this bank arrived that month');
             gap.appendChild(line);
         }
     }
@@ -506,13 +508,13 @@ function drawReview() {
     }
     if (coverage?.log?.length) {
         const d = document.createElement('details'); d.style.cssText = 'margin:0 0 12px;'; const sm = document.createElement('summary'); sm.textContent = `Statement audit log (${coverage.log.length})`; d.appendChild(sm);
-        for (const e of coverage.log) note(d, `${e.month || '?'} · ${e.bank} · ${e.file} · ${e.status} · maths ${e.math}${e.last4 ? ' · …' + e.last4 : ''}${e.sha ? ' · ' + e.sha : ''}`);
+        for (const e of coverage.log) note(d, `${e.month || '?'} · ${shownBank(e.bank)} · ${e.file} · ${e.status} · maths ${e.math}${e.last4 ? ' · …' + e.last4 : ''}${e.sha ? ' · ' + e.sha : ''}`);
         box.appendChild(d);
     }
     if (!pending.length) { const p = document.createElement('p'); p.textContent = 'No transactions are awaiting review.'; box.appendChild(p); }
     for (const entry of pending) {
         const item = document.createElement('div'); item.style.cssText = 'padding:14px 0;border-bottom:1px solid var(--border);';
-        const identity = [entry.bank, entry.filename].filter(Boolean).join(' · ');
+        const identity = [shownBank(entry.bank), entry.filename].filter(Boolean).join(' · ');
         const description = entry.row?.description || entry.row?.narration || '';
         const text = document.createElement('p');
         text.textContent = [entry.row?.date || (entry.receivedMs && new Date(entry.receivedMs).toLocaleDateString()) || 'Date ?', identity || 'Statement', description].filter(Boolean).join(' · ');

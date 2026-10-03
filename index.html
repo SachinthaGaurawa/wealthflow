@@ -9245,6 +9245,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
 
         // One name per bank: American Express (long) and AMEX (short) are one card. Rule: canonicalBank() in wealthflow-institutions.js.
         function _canonBank(n) { try { const f = window.WFInstitutions.canonicalBank; return f ? f(n) : n; } catch (_) { return n; } }
+        // Name a bank is shown by ("Dfccbank" -> "DFCC Bank"); the stored label is a key and stays. See displayBank().
+        function _bankShown(n) { try { const f = window.WFInstitutions.displayBank; return f ? f(n) : n; } catch (_) { return n; } }
         // Idempotent: writes only when a record changed, so it is free to run on every card-page draw.
         function _migrateBankNames() {
             try {
@@ -21777,7 +21779,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 return `<tr class="${item.completed ? 'done-row' : ''}">
             <td><div style="font-weight:600;">${_wfEsc(item.product)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
             <td>${item.buyer}</td>
-            <td><span class="badge bg-b">${_wfEsc(item.bank)}</span></td>
+            <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
             <td class="td-a">${fmt(item.total)}</td>
             <td class="td-mono">${item.rate > 0 ? item.rate + '%' : '0% Free'}</td>
             <td class="td-r">${fmt(item.monthly)}</td>
@@ -22127,7 +22129,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const _capP = _wfCap('ccPayments', pays.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)));
             const rows = _capP.rows.map(p => `
                 <tr><td style="font-weight:600;">${_wfEsc(p.desc || 'Payment')}</td>
-                    <td><span class="badge bg-b">${_wfEsc(p.bank || '—')}</span></td>
+                    <td><span class="badge bg-b">${_wfEsc(_bankShown(p.bank) || '—')}</span></td>
                     <td class="td-a" style="color:var(--green,#16a34a);font-weight:700;">+${fmt(p.amount || 0)}</td>
                     <td class="td-m">${p.date || ''}</td>
                     <td><button class="ib d" onclick="deleteCCPayment('${_wfJsAttr(p.id)}')" title="Delete payment"><i data-wfi="trash"></i></button></td></tr>`).join('') + _capP.row;
@@ -22135,7 +22137,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             // the walk's own memory: what each card's payments have left over after the charges they cleared, and what the first charge they could not clear still needs
             const walkLines = Object.keys(_ccWalk.cards || {}).map(k => ({ k, w: _ccWalk.cards[k] })).filter(x => (_ccotBankFilter === 'all' || x.w.bank === _ccotBankFilter) && (x.w.carry > 0 || x.w.blocked)).map(({ w }) => {
                 const first = w.blocked ? (DB.get('cconetime') || []).find(c => c.id === w.blocked.id) : null;
-                return `<div style="font-size:11.5px;color:var(--text2);line-height:1.6;"><b>${_wfEsc(w.bank || 'Card')}</b>: ${w.carry > 0 ? 'carried forward <b style="font-family:var(--mono);">' + fmt(w.carry) + '</b>' : 'nothing carried'}${w.blocked ? ' · next unpaid charge <b>' + _wfEsc(first ? first.desc : '') + '</b> needs <b style="font-family:var(--mono);color:var(--red);">' + fmt(w.blocked.needs) + '</b> more' : ''}</div>`;
+                return `<div style="font-size:11.5px;color:var(--text2);line-height:1.6;"><b>${_wfEsc(_bankShown(w.bank) || 'Card')}</b>: ${w.carry > 0 ? 'carried forward <b style="font-family:var(--mono);">' + fmt(w.carry) + '</b>' : 'nothing carried'}${w.blocked ? ' · next unpaid charge <b>' + _wfEsc(first ? first.desc : '') + '</b> needs <b style="font-family:var(--mono);color:var(--red);">' + fmt(w.blocked.needs) + '</b> more' : ''}</div>`;
             }).join('');
             host.innerHTML = `
                 <div style="background:var(--card);border:1px solid var(--border2);border-radius:var(--r2);padding:14px 16px;margin-bottom:14px;">
@@ -22189,7 +22191,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <span style="font-size:10px;font-family:var(--mono);color:${due > 0 ? 'var(--red)' : 'var(--text3)'};">Due: ${fmt(due)}</span>
                         </button>`;
                     };
-                    fbar.innerHTML = chip('all', '🗂️ All cards') + banks.map(b => chip(b, b)).join('');
+                    fbar.innerHTML = chip('all', '🗂️ All cards') + banks.map(b => chip(b, _wfEsc(_bankShown(b)))).join('');
                     fbar.style.display = 'flex';
                 } else {
                     _ccotBankFilter = 'all';
@@ -22245,7 +22247,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 : `<span class="badge bg-gr">${typeL}</span>`;
                 return `<tr class="${item.paid ? 'done-row' : ''}">
             <td><div style="font-weight:600;">${_wfEsc(item.desc)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
-            <td><span class="badge bg-b">${_wfEsc(item.bank)}</span></td>
+            <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
             <td>${typeBadge}</td>
             <td class="td-a">${amountCell}</td>
             <td class="td-m">${item.date}</td>
@@ -24637,7 +24639,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div class="wf-sync-item">
                     <div class="wf-sync-item-main">
                         <div class="wf-sync-item-title" style="font-size:13px;font-weight:600;color:var(--text);">
-                            ${_wfEsc(it.bank || 'Statement')}${it.filename ? ' · <span style="color:var(--text3);font-weight:400;">' + _wfEsc(it.filename) + '</span>' : ''}
+                            ${_wfEsc(_bankShown(it.bank) || 'Statement')}${it.filename ? ' · <span style="color:var(--text3);font-weight:400;">' + _wfEsc(it.filename) + '</span>' : ''}
                         </div>
                         ${it.note ? `<div style="font-size:11.5px;color:var(--text3);margin-top:2px;">${_wfEsc(it.note)}</div>` : ''}
                         ${!it.known ? `<div style="font-size:11.5px;color:var(--text3);margin-top:3px;overflow-wrap:anywhere;">
@@ -25803,7 +25805,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + '<div><b>' + c.covered + ' of your ' + c.of + ' banks</b> have an approved exact statement address. '
                 + 'Add and label an exact address for these banks:</div>'
                 + '<div class="wf-sender-cover-list">'
-                + c.uncovered.map((b) => '<span class="wf-cover-chip">' + _wfEsc(b) + '</span>').join('')
+                + c.uncovered.map((b) => '<span class="wf-cover-chip">' + _wfEsc(_bankShown(b)) + '</span>').join('')
                 + '</div>'
                 + '<div class="wf-sender-cover-how">Open a statement from one of them and add the address it '
                 + 'came from below, or press <b>Find my banks</b> to go and look. Nothing is filed until you '
@@ -35296,18 +35298,23 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
              * before saving: the answer goes through WFBankDetect.choose(), so the records' label, the registry lock and the fee schedule follow exactly as they do for an automatic answer. */
             const _canEditBank = !!(parsed && parsed._wfBank && parsed._wfBank.ctx && !parsed.cloudReview && window.WFBankDetect && typeof window.WFBankDetect.choose === 'function');
             let _bankEdit = false, _bankDup = '', _bankSeq = 0;
+            /* The name shown ("Dfccbank" -> "DFCC Bank"); the label stored on the records is untouched. */
+            const _bankShown = (n) => { try { const f = window.WFInstitutions && window.WFInstitutions.displayBank; return f ? f(n) : n; } catch (_) { return n; } };
             const _bankPicker = () => ((window.WFInstitutions && window.WFInstitutions.PICKER) || []).filter((n) => n !== 'Other');
             const _bankEditor = () => {
                 const w = parsed._wfBank || {}, names = _bankPicker();
-                const known = w.ok && names.indexOf(w.name) >= 0;
-                const sel = w.ok ? (known ? w.name : '__other') : '';
+                /* Select the list entry for the stored label ("Dfccbank" -> "DFCC Bank"); NTB has two, the card's product picks. */
+                const shown = _bankShown(w.name);
+                const pick = w.ok && w.product ? (names.find((n) => /nations trust/i.test(n) && (w.product === 'amex' ? /amex/i : /visa/i).test(n)) || shown) : shown;
+                const known = w.ok && names.indexOf(pick) >= 0;
+                const sel = w.ok ? (known ? pick : '__other') : '';
                 return `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
                     <select id="_ccr_bankSel" class="fs" aria-label="Bank" style="font-size:12px;padding:5px 8px;max-width:100%;">
                         <option value="" ${sel === '' ? 'selected' : ''}>— no bank label —</option>
                         ${names.map((n) => `<option value="${_wfEsc(n)}" ${sel === n ? 'selected' : ''}>${_wfEsc(n)}</option>`).join('')}
                         <option value="__other" ${sel === '__other' ? 'selected' : ''}>Another bank (type its name)…</option>
                     </select>
-                    <input id="_ccr_bankTxt" class="fi" maxlength="60" placeholder="Bank name" aria-label="Bank name" value="${_wfEsc(sel === '__other' ? w.name : '')}" style="font-size:12px;min-width:160px;${sel === '__other' ? '' : 'display:none;'}">
+                    <input id="_ccr_bankTxt" class="fi" maxlength="60" placeholder="Bank name" aria-label="Bank name" value="${_wfEsc(sel === '__other' ? shown : '')}" style="font-size:12px;min-width:160px;${sel === '__other' ? '' : 'display:none;'}">
                     <button type="button" id="_ccr_bankUse" class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px;">Use this bank</button>
                     <button type="button" id="_ccr_bankCancel" class="btn btn-ghost btn-sm" style="padding:5px 10px;font-size:11px;">Cancel</button>
                 </div>`;
@@ -35318,12 +35325,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const editBtn = (!_canEditBank || _bankEdit) ? '' : ` <button type="button" id="_ccr_bankEdit" class="btn btn-secondary btn-sm" style="padding:2px 10px;font-size:11px;margin-left:4px;">${w.ok ? 'Edit' : 'Choose bank'}</button>`;
                 let h;
                 if (w.ok) {
-                    h = `<b style="color:var(--green);">🏦 Bank:</b> <span id="_ccr_bankName">${_wfEsc(w.name)}</span> <span style="opacity:.8">— ${w.manual ? 'set by you' : 'found automatically (' + _wfEsc((w.basis || []).join('; ')) + ')'}</span>${editBtn}`;
+                    h = `<b style="color:var(--green);">🏦 Bank:</b> <span id="_ccr_bankName">${_wfEsc(_bankShown(w.name))}</span> <span style="opacity:.8">— ${w.manual ? 'set by you' : 'found automatically (' + _wfEsc((w.basis || []).join('; ')) + ')'}</span>${editBtn}`;
                 } else {
                     const why = (w.why || []).slice(0, 3).map((x) => _wfEsc(x)).join(' ');
                     h = `<b style="color:var(--gold, #d4a017);">🏦 ${w.cleared ? 'No bank label' : 'Bank not identified'}</b> — ${w.cleared ? 'you chose to file these rows without one; they are still checked against your books by amount and date.' : 'nothing in the statement, your cards or your email history names it, so these rows are filed without a bank label and still checked against your books by amount and date.'}${why && !w.cleared ? ` <span style="opacity:.8">${why}</span>` : ''}${editBtn}`;
                     if (_canEditBank && !_bankEdit && !w.cleared && (w.suggest || []).length) {
-                        h += `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;"><span>Closest:</span>${w.suggest.map((c) => `<button type="button" class="btn btn-secondary btn-sm _ccr_bankPick" data-bank="${_wfEsc(c.name)}" style="padding:3px 10px;font-size:11px;" title="${_wfEsc((c.basis || []).join('; '))}">Use ${_wfEsc(c.name)}</button>`).join('')}</div>`;
+                        h += `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;"><span>Closest:</span>${w.suggest.map((c) => `<button type="button" class="btn btn-secondary btn-sm _ccr_bankPick" data-bank="${_wfEsc(c.name)}" style="padding:3px 10px;font-size:11px;" title="${_wfEsc((c.basis || []).join('; '))}">Use ${_wfEsc(_bankShown(c.name))}</button>`).join('')}</div>`;
                     }
                 }
                 if (_bankEdit) h += _bankEditor();
@@ -35333,7 +35340,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             overlay.innerHTML = `
                 <div class="md" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
-                        <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — <span id="_ccr_ttlbank">${_wfEsc(bank || 'Bank Statement')}</span></div>
+                        <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — <span id="_ccr_ttlbank">${_wfEsc(_bankShown(bank) || 'Bank Statement')}</span></div>
                         <button class="md-x" aria-label="Close" id="_ccrx"><i data-wfi="x"></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
@@ -35399,7 +35406,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
              *   - the registry is asked about THAT bank — a statement already in the books under it ("Already Added via Email Sync") turns Save off with the reason, rather than being added twice;
              *   - the claim made at Save carries the new issuer label, so a hand-made and an e-mailed statement still meet at one lock;
              *   - a correction is remembered for this card/account (WFBankMemory), so the next statement of it is named without anyone being asked. */
-            const _bankRepaint = () => { const box = $ovl('#_ccr_bank'); if (box) box.innerHTML = _bankInner(); const t = $ovl('#_ccr_ttlbank'); if (t) t.textContent = bank || 'Bank Statement'; };
+            const _bankRepaint = () => { const box = $ovl('#_ccr_bank'); if (box) box.innerHTML = _bankInner(); const t = $ovl('#_ccr_ttlbank'); if (t) t.textContent = _bankShown(bank) || 'Bank Statement'; };
             const _saveAllowed = (on, why) => { const b = $ovl('#_ccr_save'); if (!b) return; b.disabled = !on; b.style.opacity = on ? '' : '.55'; if (why) b.title = why; else b.removeAttribute('title'); };
             const _setBank = async (label) => {
                 const D = window.WFBankDetect, w0 = parsed._wfBank;
@@ -35595,7 +35602,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         try { _held = await window.WFStatementCloud.guard.mail(_g, 'claim'); } catch (_) { _held = null; }
                         if (_held) {
                             parsed._wfMailBlocked.add(_g.itemId);
-                            notify((_held.notice || 'Already Added') + ' — ' + (_g.bank || 'a') + ' statement is already in your books, so it was not added a second time.', 'warn');
+                            notify((_held.notice || 'Already Added') + ' — ' + (_bankShown(_g.bank) || 'a') + ' statement is already in your books, so it was not added a second time.', 'warn');
                         }
                     }
                     if (parsed._wfMailBlocked.size && parsed._wfMailBlocked.size >= _asked.length) { closeOvl(); return; }
@@ -35666,7 +35673,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 };
 
                 // One undoable batch per import (records every payment it creates).
-                const _batch = (window.WFBatch ? WFBatch.begin((parsed && parsed.fileName) || (bank ? (bank + ' statement') : 'Statement'), 'statement') : null);
+                const _batch = (window.WFBatch ? WFBatch.begin((parsed && parsed.fileName) || (bank ? (_bankShown(bank) + ' statement') : 'Statement'), 'statement') : null);
                 rows.forEach((t) => {
                     if (!t._keep) { skipped++; return; }
                     const date = t.date || today();
@@ -35760,7 +35767,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             if (!_ln.payments) _ln.payments = [];
                             const _pi = _ln.payments.findIndex(p => p.month === _mo);
                             const _prevPay = (_pi > -1) ? _ln.payments[_pi] : null;   // v7.43.0 — capture for exact undo
-                            const _prec = { month: _mo, paid: true, amount, paidAt: Date.now(), notes: 'Auto-allocated from ' + (bank || 'bank') + ' statement', source: 'statement', via: 'bank', _batch: (_batch ? _batch.id : undefined) };
+                            const _prec = { month: _mo, paid: true, amount, paidAt: Date.now(), notes: 'Auto-allocated from ' + (_bankShown(bank) || 'bank') + ' statement', source: 'statement', via: 'bank', _batch: (_batch ? _batch.id : undefined) };
                             if (_pi > -1) { _ln.payments[_pi] = _prec; loanRepl++; } else { _ln.payments.push(_prec); }
                             // v7.43.0 — record the loan-payment op so Undo removes/restores it.
                             if (_batch && WFBatch.recordLoan) { try { WFBatch.recordLoan(_batch, { loanId: _ln.id, month: _mo, prev: _prevPay }); } catch (_) {} }

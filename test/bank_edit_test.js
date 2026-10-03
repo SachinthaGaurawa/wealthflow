@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseHTML } from 'linkedom';
 import { detect, choose, tailsOf } from '../wealthflow-bank-detect.js';
-import { INSTITUTIONS, PICKER } from '../wealthflow-institutions.js';
+import { INSTITUTIONS, PICKER, displayBank } from '../wealthflow-institutions.js';
 import { bankIdentity } from '../statement-coverage.mjs';
 
 /* =============================================================================
@@ -220,7 +220,7 @@ const MODAL = extractModal();
 function harness({ guard, memory, parsedExtra = {}, bankArg = '', detection } = {}) {
     const { window, document } = parseHTML('<html><body></body></html>');
     window.WFRoute = null; window.WFMerchants = null;
-    window.WFInstitutions = { PICKER };
+    window.WFInstitutions = { PICKER, displayBank };
     window.WFBankDetect = { choose };
     window.WFBankMemory = memory || { teach() {} };
     window.WFStatementCloud = { guard };
@@ -438,6 +438,77 @@ describe('the review screen shows the bank and lets the owner correct it', () =>
         expect(h.q('#_ccr_bank img')).toBeNull();
         expect(h.q('#_ccr_ttlbank img')).toBeNull();
         expect(h.q('#_ccr_ttlbank').textContent).toBe('<img src=x onerror=alert(1)>');
+    });
+});
+
+describe('a bank is written by its own name — the label stored on the records is not touched', () => {
+    /* The email sync labels a statement from the sender's mail domain ("dfccbank.com" -> "Dfccbank"), and the books reuse that label so one card stays one card. */
+    const dfccBooks = (label) => detect({ text: 'Statement of Account\nAccount No: 1000 0000 5187\nDFCC Bank PLC\nStatement Period: 01/04/2026 - 30/04/2026', books: [{ bank: label, last4: '5187', seen: 6 }] });
+
+    it('the books\' label stays the record label; the screen shows the institution\'s name', async () => {
+        const det = dfccBooks('Dfccbank');
+        expect(det).toMatchObject({ ok: true, name: 'Dfccbank' });   // the stored label: unchanged, so the card stays one card
+        const h = harness({ guard: guardSpy(), detection: det, bankArg: det.name });
+        expect(h.q('#_ccr_ttlbank').textContent).toBe('DFCC Bank');
+        expect(h.q('#_ccr_bankName').textContent).toBe('DFCC Bank');
+        expect(h.q('#_ccr_bank').textContent).not.toMatch(/Dfccbank/);
+        h.document.querySelectorAll('#_ccr_body ._ccr_keep').forEach((el) => { el.checked = true; });
+        h.q('#_ccr_save').click();
+        for (let i = 0; i < 6; i += 1) await h.tick();
+        expect(filed(h)[0].bank).toBe('Dfccbank');
+    });
+
+    it('correcting it by hand keeps that label too, and the screen still shows the proper name (the owner\'s screenshot)', async () => {
+        const det = dfccBooks('Dfccbank');
+        const h = harness({ guard: guardSpy(), detection: { ...det, ok: false, name: '', manual: false }, bankArg: '' });
+        h.parsed._wfBank.ctx.books = [{ bank: 'Dfccbank', last4: '5187', seen: 6 }];
+        h.q('#_ccr_bankEdit').click(); setSelect(h, 'DFCC Bank'); h.q('#_ccr_bankUse').click();
+        await h.tick(); await h.tick();
+        expect(h.parsed._wfBank).toMatchObject({ manual: true, name: 'Dfccbank', lockName: 'DFCC Bank' });
+        expect(h.q('#_ccr_ttlbank').textContent).toBe('DFCC Bank');
+        expect(h.q('#_ccr_bankName').textContent).toBe('DFCC Bank');
+        expect(h.q('#_ccr_bank').textContent).toMatch(/Bank:\s*DFCC Bank\s*— set by you/);
+        h.document.querySelectorAll('#_ccr_body ._ccr_keep').forEach((el) => { el.checked = true; });
+        h.q('#_ccr_save').click();
+        for (let i = 0; i < 6; i += 1) await h.tick();
+        expect(filed(h)[0].bank).toBe('Dfccbank');
+    });
+
+    it('opening the editor on a mail-domain label selects the institution in the list, not "another bank"', () => {
+        for (const [label, listed] of [['Dfccbank', 'DFCC Bank'], ['Hnb', 'Hatton National Bank (HNB)'], ['Sampathbank', 'Sampath Bank'], ['Commercialbank', 'Commercial Bank'], ['Peoplesbank', 'Peoples Bank']]) {
+            const det = detect({ text: `${listed} PLC\nStatement of Account\nAccount No: 1000 0000 5187`, books: [{ bank: label, last4: '5187', seen: 3 }] });
+            const h = harness({ guard: guardSpy(), detection: det, bankArg: det.name });
+            h.q('#_ccr_bankEdit').click();
+            const picked = [...h.document.querySelectorAll('#_ccr_bankSel option')].filter((o) => o.hasAttribute('selected')).map((o) => o.getAttribute('value'));
+            expect(picked, label).toEqual([listed]);
+        }
+    });
+
+    it('NTB: the product picks the list entry; with no product the bank is typed as the issuer', () => {
+        const amex = harness({ guard: guardSpy(), detection: { ...detect({ text: 'Nations Trust Bank PLC\nAmerican Express card 376657*****0276' }), name: 'Nations Trust Bank (NTB)' }, bankArg: 'Nations Trust Bank (NTB)' });
+        expect(amex.parsed._wfBank.product).toBe('amex');
+        amex.q('#_ccr_bankEdit').click();
+        expect([...amex.document.querySelectorAll('#_ccr_bankSel option')].filter((o) => o.hasAttribute('selected')).map((o) => o.getAttribute('value'))).toEqual(['Nations Trust Bank (NTB) — AMEX']);
+        const bare = harness({ guard: guardSpy(), detection: { ...detect({ text: 'Nations Trust Bank PLC\nStatement of Account\nAccount No: 1000 0000 5187' }), name: 'Nationstrust' }, bankArg: 'Nationstrust' });
+        expect(bare.q('#_ccr_ttlbank').textContent).toBe('Nations Trust Bank (NTB)');
+        bare.q('#_ccr_bankEdit').click();
+        expect(bare.q('#_ccr_bankTxt').getAttribute('value')).toBe('Nations Trust Bank (NTB)');
+    });
+
+    it('a bank the app does not list is shown exactly as it is written, and never as a different bank', () => {
+        for (const name of ['Cargills Bank', 'Pan', 'National Bank', 'Pdbank']) {
+            const h = harness({ guard: guardSpy(), detection: { ...detect({ text: 'Statement of Account\nAccount No: 1000 0000 5187' }), name }, bankArg: name });
+            expect(h.q('#_ccr_ttlbank').textContent, name).toBe(name);
+        }
+    });
+
+    it('the mailbox-review path, which passes the stored label as the bank, shows the name and files the label', async () => {
+        const h = harness({ guard: guardSpy(), bankArg: 'Dfccbank', parsedExtra: { _wfBank: undefined, _wfGuard: undefined } });
+        expect(h.q('#_ccr_ttlbank').textContent).toBe('DFCC Bank');
+        h.document.querySelectorAll('#_ccr_body ._ccr_keep').forEach((el) => { el.checked = true; });
+        h.q('#_ccr_save').click();
+        for (let i = 0; i < 6; i += 1) await h.tick();
+        expect(filed(h)[0].bank).toBe('Dfccbank');
     });
 });
 

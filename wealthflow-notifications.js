@@ -72,6 +72,8 @@
     function curYM() { var d = new Date(); return d.getFullYear() + '-' + p2(d.getMonth() + 1); }
     function dLeft(s) { if (!s) return NaN; var d = new Date(s + 'T00:00:00'), n = new Date(); n.setHours(0, 0, 0, 0); return Math.ceil((d - n) / 86400000); }
     function money(n) { try { return Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 }); } catch (_) { return String(n || 0); } }
+    /* How a bank is WRITTEN ("Dfccbank" -> "DFCC Bank"); display only, the stored label is a key. Rule: displayBank() in wealthflow-institutions.js. */
+    function shownBank(b) { try { var f = window.WFInstitutions && window.WFInstitutions.displayBank; return f ? f(b) : b; } catch (_) { return b; } }
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function toast(m, t) { try { if (typeof window.notify === 'function') window.notify(m, t || 'info'); } catch (_) { } }
 
@@ -164,7 +166,7 @@
                 var dl = dLeft(x.deadline); if (isNaN(dl)) return;
                 var label = x.merchant || x.desc || x.name || x.note || x.party || 'Card charge';
                 var amt = money(x.combinedTotal != null ? x.combinedTotal : ((x.amount || 0) + (x.serviceFee || 0)));
-                var meta = amt + (x.bank ? ' \u00b7 ' + esc(x.bank) : '');
+                var meta = amt + (x.bank ? ' \u00b7 ' + esc(shownBank(x.bank)) : '');
                 if (dl < 0 && st.urgent) out.push({ id: 'ccot:' + x.id, sev: 'urgent', cat: 'Card payment', icon: 'card', title: 'Card payment overdue \u2014 ' + esc(label), sub: meta, when: Math.abs(dl) + 'd over', date: x.deadline, page: 'cconetime' });
                 else if (dl >= 0 && dl <= 3 && st.urgent) out.push({ id: 'ccot:' + x.id, sev: 'urgent', cat: 'Card payment', icon: 'card', title: 'Card payment due ' + (dl === 0 ? 'today' : 'in ' + dl + 'd') + ' \u2014 ' + esc(label), sub: 'Due ' + esc(x.deadline) + ' \u00b7 ' + meta, when: dl === 0 ? 'Today' : 'in ' + dl + 'd', date: x.deadline, page: 'cconetime' });
                 else if (dl >= 4 && dl <= 10 && st.dueSoon) out.push({ id: 'ccot:' + x.id, sev: 'warning', cat: 'Card payment', icon: 'card', title: 'Card payment \u2014 ' + esc(label), sub: 'Due ' + esc(x.deadline) + ' \u00b7 ' + meta, when: 'in ' + dl + 'd', date: x.deadline, page: 'cconetime' });
