@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import fc from 'fast-check';
 import { project as amortizeProject } from '../wealthflow-amortize.js';
 import advisor, { build, lkr } from '../wealthflow-advisor-facts.js';
 import scenarios, { emi, quote, payDown, readNumbers, readScenario, merge, work, currentBlock } from '../wealthflow-advisor-scenarios.js';
-import { page, household, factsOf, run, ym, EMPTY, p2 } from './helpers/advisor-page.js';
+import { page, household, factsOf, advisorPage, run, ym, EMPTY, p2 } from './helpers/advisor-page.js';
 
 // "WHAT IF I DO THIS" IS WORKED OUT BY CODE, NOT BY THE MODEL.
 //
@@ -456,17 +455,6 @@ describe('it honours the page\'s clock, from any realm', () => {
 });
 
 describe('wealthflow-ai-v6 hands the block to the model, on the page\'s own books', () => {
-    /** The real page functions AND the real prompt builder in one context, as in the browser. */
-    function advisorPage(history = []) {
-        const { ctx } = page(household());
-        Object.assign(ctx, {
-            console: { log() {}, warn() {}, error() {} }, setInterval: () => 0, setTimeout: () => 0, clearInterval() {}, clearTimeout() {},
-            localStorage: { getItem: () => null, setItem() {} }, document: { getElementById: () => null, querySelector: () => null }, navigator: { language: 'en' },
-            getAIHistory: () => history,
-        });
-        vm.runInContext(readFileSync(new URL('../wealthflow-ai-v6.js', import.meta.url), 'utf8'), ctx);
-        return ctx;
-    }
     const HEAD = '=== WHAT-IF, WORKED OUT BY WEALTHFLOW';
     it('a decision gets the block after the sheet, with the figures worked out', () => {
         const ctx = advisorPage();

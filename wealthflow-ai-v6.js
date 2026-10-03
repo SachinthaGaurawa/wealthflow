@@ -42,6 +42,7 @@
      * and everything unrelated, so the figures are not sent to every provider for a joke. */
     function booksBlock(intent, userText) {
         try {
+            window._wfGrounding = null;      // set again below when this turn carries the books; the answer is read back against it (wealthflow-advisor-check.js)
             if (intent === 'code' || intent === 'image_gen') return '';
             var wants = intent === 'finance' || intent === 'finance_vision' || isMoneyLine(userText) || recentUserLines(3).some(isMoneyLine);
             if (!wants) return '';
@@ -57,6 +58,10 @@
                     block = window.WFAdvisorScenarios.currentBlock(window, lines);
                 }
             } catch (_) { block = ''; }
+            var learned = '';
+            try { learned = window.WealthFlowML && window.WealthFlowML.personalizationBlock ? String(window.WealthFlowML.personalizationBlock() || '') : ''; } catch (_) { learned = ''; }
+            /* what the owner typed (this turn, the lines before it, and the details the app has learned from them) counts as a source for the read-back, next to the books */
+            window._wfGrounding = { userText: String(userText || '').trim(), parts: [c.factSheet, block].filter(Boolean), owner: recentUserLines(4).concat(userText ? [userText] : [], learned ? [learned] : []), at: Date.now() };
             return '\n\n' + c.factSheet + (block ? '\n\n' + block : '');
         } catch (_) { return ''; }
     }

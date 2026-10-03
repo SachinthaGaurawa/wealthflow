@@ -62,3 +62,16 @@ export function household() {
 }
 /** The fact sheet exactly as the page builds it. */
 export function factsOf(ctx) { return build(advisor.pageDeps(ctx)); }
+
+/** The real page functions AND the real prompt builder (wealthflow-ai-v6.js) in one context, as in the browser. `history` is what getAIHistory() returns. */
+export function advisorPage(history = [], data = household()) {
+    const { ctx, store } = page(data);
+    Object.assign(ctx, {
+        console: { log() {}, warn() {}, error() {} }, setInterval: () => 0, setTimeout: () => 0, clearInterval() {}, clearTimeout() {},
+        localStorage: { getItem: () => null, setItem() {} }, document: { getElementById: () => null, querySelector: () => null }, navigator: { language: 'en' },
+        getAIHistory: () => history,
+    });
+    vm.runInContext(readFileSync(new URL('../../wealthflow-ai-v6.js', import.meta.url), 'utf8'), ctx);
+    ctx.__store = store;
+    return ctx;
+}
