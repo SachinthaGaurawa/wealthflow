@@ -46,7 +46,18 @@
             var wants = intent === 'finance' || intent === 'finance_vision' || isMoneyLine(userText) || recentUserLines(3).some(isMoneyLine);
             if (!wants) return '';
             var c = window.buildFinancialContext ? window.buildFinancialContext() : null;
-            return c && c.factSheet ? '\n\n' + c.factSheet : '';
+            if (!c || !c.factSheet) return '';
+            /* "Can I buy a car for 2.5M?", "if I pay 20,000 extra on the loan": the arithmetic under a decision is done by code (wealthflow-advisor-scenarios.js), from the
+             * same books, and handed over as a block to copy. Follow-ups ("and over 36 months?") are read together with the earlier lines. */
+            var block = '';
+            try {
+                if (window.WFAdvisorScenarios) {
+                    var lines = recentUserLines(4);
+                    if (userText && lines[lines.length - 1] !== userText) lines.push(userText);
+                    block = window.WFAdvisorScenarios.currentBlock(window, lines);
+                }
+            } catch (_) { block = ''; }
+            return '\n\n' + c.factSheet + (block ? '\n\n' + block : '');
         } catch (_) { return ''; }
     }
 
@@ -242,7 +253,7 @@
             case 'image_analyze': task = '\n\nThey shared an image and asked about it. Look closely and tell them what is actually in it — like a friend looking at their photo. Describe what you really see (objects, text, brand, model, specs, scene). Do NOT treat it as a receipt unless it clearly is.'; break;
             case 'finance_vision': task = '\n\nThey shared a financial document. Help them understand it warmly, extract the key numbers, and where it bears on their books (a bill, a statement, a payslip) say how it compares with the figures above.'; break;
             case 'finance': task = '\n\nThis IS about their money — finance is your #1 priority and you are a world-class financial advisor AND their close friend.\n' +
-                'THE FIGURES: use ONLY the numbers in THE OWNER\'S BOOKS above, copied exactly. You are here to think, not to do arithmetic: when a new figure is needed (a sum, a gap, a percentage, what a loan costs), say it is YOUR estimate and name the two figures it comes from. Never let your own sum pass for a number from their books. A figure that is not in the books is not known — say so and say what to record.\n' +
+                'THE FIGURES: use ONLY the numbers in THE OWNER\'S BOOKS above (and in a WHAT-IF block that follows them, which WealthFlow worked out: use its figures and verdict, say what it assumed, and do not redo its sums), copied exactly. You are here to think, not to do arithmetic: when a new figure is needed (a sum, a gap, a percentage, what a loan costs), say it is YOUR estimate and name the two figures it comes from. Never let your own sum pass for a number from their books. A figure that is not in the books is not known — say so and say what to record.\n' +
                 'HOW TO THINK (silently; show only the result):\n' +
                 '1. What exactly is asked, and what decision hangs on it?\n' +
                 '2. Which figures bear on it, and which are missing? A missing figure is a finding.\n' +

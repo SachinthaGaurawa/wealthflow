@@ -562,6 +562,9 @@
     <!-- What the AI Advisor is told about the owner's money: the Monthly Plan's own months, the cash-flow engine, the amortiser and the
          dashboard's flags, as one fact sheet. window.WFAdvisorFacts -->
     <script type="module" src="wealthflow-advisor-facts.js"></script>
+    <!-- "What if I do this": the arithmetic under a decision the owner asks the Advisor about (a purchase, a loan, an extra payment, a lost income),
+         worked out from the same books by the amortiser, the what-if engine and the cash-flow engine. window.WFAdvisorScenarios -->
+    <script type="module" src="wealthflow-advisor-scenarios.js"></script>
     <!-- Statement router — routeRow, the SHA-256 row hash and classifyStatement.
          Imported only by tests until now: Statement Sync is the first caller in
          the page, and the first to pass `existingHashes`, which classifyStatement
