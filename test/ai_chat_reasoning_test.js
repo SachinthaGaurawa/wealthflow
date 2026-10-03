@@ -241,6 +241,18 @@ describe('through the endpoint', () => {
         expect(providerAvailable('GitHubModels', Date.now() + 31 * 60 * 1000)).toBe(true);
     });
 
+    it('GitHubModels: a failure names which variable the token came from and what kind it is, and never a character of it', async () => {
+        const secret = 'github_pat_11ABCDEFG0123456789_secretsecretsecret';
+        const bare = () => vi.fn(async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('not json'); }, text: async () => 'OK' }));
+        vi.stubEnv('GH_PAT', secret); vi.stubEnv('GITHUB_MODELS_TOKEN', 'ghs_old'); vi.stubGlobal('fetch', bare());
+        const a = response(); await handler(adviceReq({ engines: ['GitHubModels'] }), a);
+        expect(a.body.details).toContain('returned non-JSON (HTTP 200): "OK"'); expect(a.body.details).toContain('[token GH_PAT, fine-grained]');
+        expect(JSON.stringify(a.body)).not.toContain(secret);
+        resetProviderCooldowns(); vi.unstubAllEnvs(); vi.stubEnv('GITHUB_MODELS_TOKEN', 'ghp_classic'); vi.stubGlobal('fetch', bare());
+        const b = response(); await handler(adviceReq({ engines: ['GitHubModels'] }), b);
+        expect(b.body.details).toContain('[token GITHUB_MODELS_TOKEN, classic]'); expect(JSON.stringify(b.body)).not.toContain('ghp_classic');
+    });
+
     it('a real Response whose body is not JSON is read without losing the body (clone)', async () => {
         vi.stubEnv('GITHUB_MODELS_TOKEN', 'test');
         vi.stubGlobal('fetch', vi.fn(async () => new Response('OK\r\n', { status: 200 })));

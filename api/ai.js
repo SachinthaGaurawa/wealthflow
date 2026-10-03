@@ -184,7 +184,8 @@ export default async function handler(req, res) {
     const nvidiaKey     = process.env.NVIDIA_API_KEY;
     // GitHub Models is paid for by the token's own "Models: read" permission. The owner's fine-grained GH_PAT (the one Vercel already holds
     // for feedback issues) has it since 2026-10-03; GITHUB_MODELS_TOKEN does not, and answered 200 "OK" to every canary, so GH_PAT goes first.
-    const githubKey     = process.env.GH_PAT || process.env.GITHUB_MODELS_TOKEN;
+    const githubKeyName = process.env.GH_PAT ? 'GH_PAT' : process.env.GITHUB_MODELS_TOKEN ? 'GITHUB_MODELS_TOKEN' : '';
+    const githubKey     = githubKeyName ? process.env[githubKeyName] : undefined;
     const cohereKey     = process.env.COHERE_API_KEY;
     const cloudflareToken = process.env.CLOUDFLARE_AI_API_TOKEN || process.env.CLOUDFLARE_API_TOKEN;
     const cloudflareAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -255,7 +256,7 @@ export default async function handler(req, res) {
         catch (_) {
             // what the 200 was, besides its words: the content type, who answered, whether we were sent somewhere else (a proxy's "OK", an HTML page)
             let meta = '';
-            try { const h = r.headers && typeof r.headers.get === 'function' ? r.headers : null; meta = [h && h.get('content-type'), h && h.get('server'), r.redirected ? 'redirected' : '', r.url ? new URL(r.url).host : ''].filter(Boolean).join('; ').slice(0, 80); } catch (_) { /* advice */ }
+            try { const h = r.headers && typeof r.headers.get === 'function' ? r.headers : null; meta = [h && h.get('content-type'), h && h.get('server'), r.redirected ? 'redirected' : '', r.url ? new URL(r.url).host : '', h && h.get('via') ? 'via ' + h.get('via') : '', h && h.get('x-github-request-id') ? 'gh-req ' + h.get('x-github-request-id') : '', h && h.get('content-length') ? 'len ' + h.get('content-length') : ''].filter(Boolean).join('; ').slice(0, 160); } catch (_) { /* advice */ }
             return { ok: true, nonJson: (typeof r.text === 'function' ? await r.text().catch(() => '') : '') || '(unreadable)', meta };
         }
     };
@@ -369,7 +370,14 @@ export default async function handler(req, res) {
     // "Llama-3.3-70B-Instruct") are retired (confirmed live: fetch failed — the host no
     // longer resolves for this traffic). Current: models.github.ai/inference, with every
     // model namespaced "<publisher>/<model>".
-    const fetchGitHub = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.github.ai/inference/chat/completions', textModel: 'openai/gpt-4o-mini', visionModel: 'openai/gpt-4o', jsonMode: true, extraHeaders: { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } });
+    const fetchGitHubOnce = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.github.ai/inference/chat/completions', textModel: 'openai/gpt-4o-mini', visionModel: 'openai/gpt-4o', jsonMode: true, extraHeaders: { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } });
+    // a failure says which variable the token came from and what kind it is (never any of its characters): the one question the canary could
+    // not answer after the owner gave GH_PAT the Models permission and GitHub Models still replied 200 "OK" -- is that token even the one in use?
+    const githubKeyKind = /^github_pat_/.test(githubKey || '') ? 'fine-grained' : /^ghp_/.test(githubKey || '') ? 'classic' : /^gh[sou]_/.test(githubKey || '') ? 'app/oauth' : 'other';
+    const fetchGitHub = async function () {
+        try { return await fetchGitHubOnce(); }
+        catch (e) { if (githubKey && e && typeof e.message === 'string') e.message += ` [token ${githubKeyName}, ${githubKeyKind}]`; throw e; }
+    };
     const fetchCloudflare = makeOAI({
         name: 'CloudflareAI',
         provider: 'cloudflare:llama-4-scout',
