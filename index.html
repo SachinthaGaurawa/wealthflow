@@ -565,6 +565,8 @@
     <!-- "What if I do this": the arithmetic under a decision the owner asks the Advisor about (a purchase, a loan, an extra payment, a lost income),
          worked out from the same books by the amortiser, the what-if engine and the cash-flow engine. window.WFAdvisorScenarios -->
     <script type="module" src="wealthflow-advisor-scenarios.js"></script>
+    <!-- The answer read back against the books: every figure the Advisor writes is looked for in what it was given; one that is not theirs is asked for again once, and shown if it stays. window.WFAdvisorCheck -->
+    <script type="module" src="wealthflow-advisor-check.js"></script>
     <!-- Statement router — routeRow, the SHA-256 row hash and classifyStatement.
          Imported only by tests until now: Statement Sync is the first caller in
          the page, and the first to pass `existingHashes`, which classifyStatement
@@ -3328,6 +3330,13 @@
         .ai-bubble .ai-callout.warning { background: rgba(245,166,35,.1); border: 1px solid rgba(245,166,35,.2); }
         .ai-bubble .ai-callout.success { background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.2); }
         .ai-bubble .ai-callout.info { background: rgba(59,130,246,.1); border: 1px solid rgba(59,130,246,.2); }
+        /* what the Advisor's answer was read back against: "Checked against your books" or "N figures are not from your books" (wealthflow-advisor-check.js) */
+        .ai-bubble .ai-grounding { display: flex; gap: 6px; align-items: flex-start; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); font-size: 11.5px; line-height: 1.5; color: var(--text2); }
+        .ai-bubble .ai-grounding .ai-grounding-icon { flex-shrink: 0; margin-top: 1px; display: inline-flex; }
+        .ai-bubble .ai-grounding .ai-grounding-icon svg { width: 13px; height: 13px; }
+        .ai-bubble .ai-grounding.ok .ai-grounding-icon { color: var(--green); }
+        .ai-bubble .ai-grounding.warn { color: var(--text); }
+        .ai-bubble .ai-grounding.warn .ai-grounding-icon { color: #f5a623; }
 
         .ai-bubble .ai-spacer { height: 12px; }
 
@@ -10372,6 +10381,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     if (_tail.indexOf(_langGate) === -1) _tail += _langGate;
 
                     prompt = _sys + '\n\n' + _tail;
+                    window._wfLastChatPrompt = prompt;     // the answer is read back against the books and, when a figure is not theirs, asked for again from this (wealthflow-advisor-check.js)
                     window._wfLastIntent = _intent;
                     window._wfLastUserLine = _lastLine;
                     window._wfReplyLang = _replyLang;
@@ -11920,6 +11930,38 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
         window._editUserMessage = _editUserMessage;
 
+        /* THE ANSWER, READ BACK AGAINST THE BOOKS. The Advisor is given the owner's figures and told to copy them; a model still sometimes writes one of its own. This looks for
+         * every figure of the answer in what the model was given (window._wfGrounding, set by wealthflow-ai-v6.js for a turn that carries the books), asks for the answer again
+         * ONCE when a money figure or a percentage is not theirs, and keeps the new answer only if it is better. Never throws; a turn without the books is left alone. */
+        async function _wfGroundReply(msg, reply) {
+            try {
+                const C = window.WFAdvisorCheck, g = window._wfGrounding;
+                if (!C || !g || g.userText !== String(msg || '').trim() || typeof reply !== 'string' || !reply) return { reply, verdict: null, revised: false };
+                return await C.verify(reply, { parts: g.parts, owner: g.owner, prompt: window._wfLastChatPrompt || '' }, (p) => callAIRaw(p, null, {}), { timeoutMs: 25000 });
+            } catch (_) { return { reply, verdict: null, revised: false }; }
+        }
+        /* The line under the last bot bubble that says what was checked. Text only: nothing from the answer is put in as HTML. */
+        function _wfAttachGroundingChip(result) {
+            try {
+                const chip = window.WFAdvisorCheck && window.WFAdvisorCheck.chipOf(result);
+                if (!chip) return;
+                const bubbles = document.querySelectorAll('#aiChatMessages .ai-bubble.bot');
+                const bubble = bubbles[bubbles.length - 1];
+                if (!bubble) return;
+                const row = document.createElement('div');
+                row.className = 'ai-grounding ' + chip.tone;
+                const icon = document.createElement('span');
+                icon.className = 'ai-grounding-icon';
+                icon.innerHTML = _ic(chip.tone === 'warn' ? 'alert' : 'checkCircle');
+                const label = document.createElement('span');
+                label.textContent = chip.text;
+                row.appendChild(icon); row.appendChild(label);
+                // under the answer itself, above the follow-up pills, the copy / read buttons and the time
+                const anchor = bubble.querySelector('.ai-followup-pills, .ai-msg-actions, .ai-bubble-meta');
+                if (anchor) bubble.insertBefore(row, anchor); else bubble.appendChild(row);
+            } catch (_) {}
+        }
+
         async function sendAIMessage(msgOverride) {
             const input = $('aiChatInput');
             const msg = msgOverride || (input ? input.value.trim() : '');
@@ -11988,6 +12030,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 conversationText += `${ctx.userName}: ${msg}\nAI:`;
 
                 _lastAIProvider = null;
+                window._wfGrounding = null; window._wfLastChatPrompt = '';
                 let rawReply = await callAI(conversationText);
 
                 // Parse followup questions
@@ -12005,12 +12048,17 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 // bullets, numbered lists, and LKR highlighting. Just clean the H1/H2 headers.
                 mainReply = mainReply.replace(/^#{1,3}\s+/gm, '').trim();
 
+                // Read the answer back against the books (a figure that is not theirs is asked for again once, and shown if it stays)
+                const grounded = await _wfGroundReply(msg, mainReply);
+                mainReply = grounded.reply;
+
                 // Save AI response to history
                 history.push({ role: 'assistant', content: mainReply, ts: Date.now() });
                 saveAIHistory(history);
 
                 // Show bot reply with followups
                 appendAIMessage('bot', mainReply, followups);
+                _wfAttachGroundingChip(grounded);
 
                 // On-device ML: learn from this exchange (facts, intent, prefs)
                 try {
