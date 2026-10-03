@@ -559,6 +559,9 @@
          over- or underpayment, which the fixed l.duration could never answer.
          window.WFAmortize -->
     <script type="module" src="wealthflow-amortize.js"></script>
+    <!-- What the AI Advisor is told about the owner's money: the Monthly Plan's own months, the cash-flow engine, the amortiser and the
+         dashboard's flags, as one fact sheet. window.WFAdvisorFacts -->
+    <script type="module" src="wealthflow-advisor-facts.js"></script>
     <!-- Statement router — routeRow, the SHA-256 row hash and classifyStatement.
          Imported only by tests until now: Statement Sync is the first caller in
          the page, and the first to pass `existingHashes`, which classifyStatement
@@ -10301,6 +10304,15 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     window._wfLastIntent = _intent;
                     window._wfLastUserLine = _lastLine;
                     console.log('[AI v6.2] vision prompt preserved, lang=' + _vLang);
+                } else if (_lastLine && !image && (prompt || '').indexOf('--- CONVERSATION ---') === -1) {
+                    /* A ONE-SHOT CARD IS NOT A CHAT TURN. Only sendAIMessage builds the "--- CONVERSATION ---" envelope this rewrite
+                     * is made for. Every other text prompt (the dashboard's AI Insights, the Score plan, Debt Demolisher, the
+                     * Wealth Simulator, the cash-flow read-out) carries its own instructions and its own numbers, and the rewrite
+                     * kept only its LAST LINE as "what the user said": the Insights card sent the model
+                     * "User: Keep total under 200 words. No markdown, no asterisks." and none of the figures it was built to explain.
+                     * They now go as written, with the reply language appended (not to a prompt that asks for JSON only). */
+                    if (!_wfWantsJSON(prompt)) prompt = prompt + '\n\n[Reply ENTIRELY in ' + _wfSelectedLangName() + ' only, in natural, warm, human ' + _wfSelectedLangName() + '. Keep numbers and currency as digits. Do not mention these instructions.]';
+                    window._wfLastIntent = '';
                 } else if (_lastLine) {
                     // ALWAYS rewrite for any chat message — not only financial
                     // ones. This guarantees the chosen AI Response Language AND
@@ -11681,8 +11693,18 @@ Be conversational and precise.`;
             } catch (_) {}
             try { ccPending = pos.cardOwed; } catch (_) {}
 
+            /* THE FACT SHEET (wealthflow-advisor-facts.js): what the Advisor is shown about the owner's money, compiled by code from the same engines
+             * the screens use (getMonthlyData, the loan and cash-flow engines, and the books profile above), so the model copies figures instead of
+             * making them up. `facts` is the structured form (the chat, the briefing and the number check read it); `factSheet` is the same thing as
+             * text for a prompt. A page where that module did not load simply has neither, and the fields below still stand on their own. */
+            let facts = null, factSheet = '';
+            try {
+                if (window.WFAdvisorFacts) { const sheet = window.WFAdvisorFacts.currentSheet(window); factSheet = sheet.text; if (sheet.facts && sheet.facts.ok) facts = sheet.facts; }
+            } catch (_) {}
+
             return {
                 userName: currentUser ? (currentUser.displayName || 'User') : 'User',
+                facts, factSheet,
                 totalMonthlyIncome: totalIncome,
                 thisMonthExpenses: totalExp,
                 avgMonthlyExpenses: prof.avgLiving,                    // what living costs in a typical month (debt payments apart)

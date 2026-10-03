@@ -22,6 +22,34 @@
     var TAG = '[AI v6.1]';
     function log() { try { console.log.apply(console, [TAG].concat([].slice.call(arguments))); } catch (_) {} }
 
+    /* The multilingual money test lives with the figures it gates (wealthflow-advisor-facts.js). If that module has not loaded, nothing
+     * changes: the English rules below still decide. */
+    /* The three glyphs the chat renderer turns into callouts (appendAIMessage; pinned by test/ai_format_contract_test.js). They are a protocol the MODEL is
+     * asked to write, not something drawn on a screen, so they are written as escapes: the no-emoji ratchet counts what a person would see in the source. */
+    var CALLOUT = { warn: '\u26A0\uFE0F', good: '\u2705', bottom: '\uD83D\uDCA1' };
+
+    function isMoneyLine(text) {
+        try { return !!(window.WFAdvisorFacts && window.WFAdvisorFacts.looksFinancial(text)); } catch (_) { return false; }
+    }
+    function recentUserLines(n) {
+        try {
+            var h = typeof window.getAIHistory === 'function' ? window.getAIHistory() : [];
+            return h.filter(function (m) { return m && m.role === 'user' && typeof m.content === 'string'; }).slice(-n).map(function (m) { return m.content; });
+        } catch (_) { return []; }
+    }
+    /* THE OWNER'S BOOKS, for any question that is about money or follows one. Not only when the English rule says "finance": a follow-up
+     * ("and next month?") has no money word in it, and a Sinhala question never had one this file could read. Skipped for code, images
+     * and everything unrelated, so the figures are not sent to every provider for a joke. */
+    function booksBlock(intent, userText) {
+        try {
+            if (intent === 'code' || intent === 'image_gen') return '';
+            var wants = intent === 'finance' || intent === 'finance_vision' || isMoneyLine(userText) || recentUserLines(3).some(isMoneyLine);
+            if (!wants) return '';
+            var c = window.buildFinancialContext ? window.buildFinancialContext() : null;
+            return c && c.factSheet ? '\n\n' + c.factSheet : '';
+        } catch (_) { return ''; }
+    }
+
     /* 1. INTENT CLASSIFIER ------------------------------------------------ */
     function classifyIntent(text, hasImage) {
         var t = (text || '').toLowerCase().trim();
@@ -42,6 +70,11 @@
         }
 
         if (/\b(code|coding|function|script|bug|stack ?trace|exception|python|javascript|typescript|java\b|c\+\+|c#|php|ruby|golang|rust|html|css|sql|api|regex|algorithm|debug|compile|programming|program|leetcode|terminal|git\b|react|node\.?js)\b/.test(t)) return 'code';
+
+        // A money question in ANY language is finance. This used to be an English-only regex, so a Sinhala question about loans or savings
+        // fell through to 'general' and was answered with none of the owner's figures. Decided here, before the arithmetic and translate
+        // rules, because "calculate how much I can save" is a money question that happens to contain a verb.
+        if (!/^[\s\d+\-*/().^%×÷=?]+$/.test(t) && isMoneyLine(t)) return 'finance';
 
         if (/^[\s\d+\-*/().^%×÷=?]+$/.test(t) ||
             /\b(calculate|compute|solve|equation|derivative|integral|square root|cube root|factorial|prime number|geometry|algebra|trigonometry|logarithm|percentage of|what is \d)\b/.test(t)) return 'math';
@@ -163,6 +196,7 @@
         try {
             var c = window.buildFinancialContext ? window.buildFinancialContext() : null;
             if (!c) return '';
+            if (c.factSheet) return '\n\n' + c.factSheet;
             return '\n\nUSER FINANCIAL SNAPSHOT (use only when relevant):\n' +
                 '• Monthly Income: LKR ' + (c.totalMonthlyIncome || 0).toLocaleString() + '\n' +
                 '• This Month Expenses: LKR ' + (c.thisMonthExpenses || 0).toLocaleString() + '\n' +
@@ -206,15 +240,18 @@
             case 'math': task = '\n\nThey asked a math question. Solve it warmly, show the steps simply, give the answer in **bold**.'; break;
             case 'translate': task = '\n\nThey asked for translation/language help. Help naturally like a multilingual friend.'; break;
             case 'image_analyze': task = '\n\nThey shared an image and asked about it. Look closely and tell them what is actually in it — like a friend looking at their photo. Describe what you really see (objects, text, brand, model, specs, scene). Do NOT treat it as a receipt unless it clearly is.'; break;
-            case 'finance_vision': task = '\n\nThey shared a financial document. Help them understand it warmly, extract the key numbers, give friendly useful insight.' + financeContext(); break;
-            case 'finance': task = '\n\nThis IS about their money/finances — finance is your #1 priority and you are a world-class financial advisor AND their close friend.\n' +
-                'ANSWER FIRST, clearly and accurately, using their REAL numbers from the snapshot below. Structure it so it is easy to understand:\n' +
-                '• Start with a 1-line direct answer/verdict.\n' +
-                '• Then clear point-by-point breakdown (use • bullets, one idea per line, real figures with LKR).\n' +
-                '• Show the maths plainly (income − outflows = net), no vague hand-waving.\n' +
-                '• End with 1–3 concrete, specific action steps.\n' +
-                'Be precise with every number. Be warm but get to the point. DO NOT reply with a question instead of an answer, and DO NOT end every message with a question — only ask a follow-up if it is genuinely needed, and never before you have fully answered.' + financeContext(); break;
-            default: task = '\n\nThey are just talking with you — about life, a question, curiosity, or how they feel. Be their friend. Answer genuinely and warmly and actually ANSWER what they asked first. Do NOT deflect with a question instead of answering. Do NOT bring up their finances unless they do.';
+            case 'finance_vision': task = '\n\nThey shared a financial document. Help them understand it warmly, extract the key numbers, and where it bears on their books (a bill, a statement, a payslip) say how it compares with the figures above.'; break;
+            case 'finance': task = '\n\nThis IS about their money — finance is your #1 priority and you are a world-class financial advisor AND their close friend.\n' +
+                'THE FIGURES: use ONLY the numbers in THE OWNER\'S BOOKS above, copied exactly. You are here to think, not to do arithmetic: when a new figure is needed (a sum, a gap, a percentage, what a loan costs), say it is YOUR estimate and name the two figures it comes from. Never let your own sum pass for a number from their books. A figure that is not in the books is not known — say so and say what to record.\n' +
+                'HOW TO THINK (silently; show only the result):\n' +
+                '1. What exactly is asked, and what decision hangs on it?\n' +
+                '2. Which figures bear on it, and which are missing? A missing figure is a finding.\n' +
+                '3. Read the trend, not one month. This month is still filling in: do not call it a result.\n' +
+                '4. Weigh at least two options, including doing nothing, by cost, risk and flexibility.\n' +
+                '5. Stress-test the recommendation against the tightest point in CASH AND COMMITMENTS: does it survive a late salary or an early bill?\n' +
+                '6. Choose ONE best move, say how sure you are, and name the one thing that would change your mind.\n' +
+                'HOW TO ANSWER: line one is the verdict in plain words. Then the evidence as short bullets with exact figures (LKR, bold). Then the main risk. Then the next step, concrete and small. Open a warning line with ' + CALLOUT.warn + ', good news with ' + CALLOUT.good + ' and the bottom line with ' + CALLOUT.bottom + '. Be warm but get to the point. DO NOT answer with a question instead of an answer, and do not end every message with a question.'; break;
+            default: task = '\n\nThey are just talking with you — about life, a question, curiosity, or how they feel. Be their friend. Answer genuinely and warmly and actually ANSWER what they asked first. Do NOT deflect with a question instead of answering. Do NOT bring up their finances unless they do — but if THE OWNER\'S BOOKS appear above, this follows a money conversation, so answer from those figures.';
         }
 
         // Universal output-format capability — every response, not just vision.
@@ -240,7 +277,7 @@
             'You are their warm, caring best friend who is also a brilliant expert. Be clear, accurate and genuinely helpful.\n' +
             '═══════════════════════════════════════════════════════════════════════';
 
-        return base + userProfileBlock() + soul + task + formatRule + finalRule;
+        return base + userProfileBlock() + booksBlock(intent, userText) + soul + task + formatRule + finalRule;
     }
 
     /* 4. IMAGE GENERATION ------------------------------------------------- */
