@@ -6659,6 +6659,7 @@
                         <div class="sh-actions">
                             <select class="fi" id="cf3dPeriod" style="width:160px;" onchange="renderCashFlow3D()">
                                 <option value="thisMonth">This Month</option>
+                                <option value="lastMonth">Last Month</option>
                                 <option value="last3">Last 3 Months</option>
                                 <option value="thisYear">This Year</option>
                                 <option value="allTime">All Time</option>
@@ -27742,7 +27743,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             let expTotal = 0, expItems = [], expDebt = 0;   // expDebt: the part of the expenses that is a loan installment paid from the bank (a debit tied to a loan) — debt service, not living costs
             (DB.get('expenses') || []).forEach(e => {
                 if (!e || future) return;   // an expense of a month that has not come is a plan, not something spent
-                if (e.month === ym || (e.recurring && e.month <= ym)) { expTotal += (e.amount || 0); if (e.loanLink || e.cat === 'Loan Repayment') expDebt += (e.amount || 0); expItems.push({ name: e.desc, cat: e.cat, amount: (e.amount || 0), debt: !!(e.loanLink || e.cat === 'Loan Repayment') }); }
+                if (e.month === ym || (e.recurring && e.month <= ym)) { expTotal += (e.amount || 0); if (e.loanLink || e.cat === 'Loan Repayment') expDebt += (e.amount || 0); expItems.push({ name: e.desc, cat: e.cat, amount: (e.amount || 0), debt: !!(e.loanLink || e.cat === 'Loan Repayment'), rec: !!e.recurring }); }
             });
 
             // ── v7.4.0: include CC One-Time payments, Subscriptions and
@@ -27819,6 +27820,16 @@ table.amort tbody tr { page-break-inside: avoid; }
             };
         }
 
+        /* A MONTH HAS STARTED WHEN SOMETHING REAL HAPPENED IN IT: income received, a dated entry or statement line, a card charge, an installment marked paid, a cheque that cleared. What is merely
+         * scheduled — a subscription, a card installment plan, a recurring bill — is in every month from its start, so a month holding nothing else (the 3rd of this month; a month before the first
+         * statement) is not a month of spending, and must not be averaged in as one or shown as the month the picture is about. */
+        function _wfMonthSpent(md) {          // real spending in it (what the averages of outgoings are taken over: a month with income but no spending recorded is a statement that has not arrived)
+            return !!md && ((md.expItems || []).some(x => !x.rec) || (md.ccotItems || []).length > 0 || (md.loanItems || []).length > 0 || (md.cheItems || []).length > 0);
+        }
+        function _wfMonthStarted(md) {        // anything real: money received, or real spending
+            return !!md && (md.income > 0 || _wfMonthSpent(md));
+        }
+
         /* WHAT A TYPICAL MONTH LOOKS LIKE IN THE OWNER'S OWN BOOKS — the one place the analysis tools read it from.
          *
          * DSCR, the WealthFlow Score, the Debt Demolisher, the Wealth Simulator, the 3D Cash Flow and the AI advisor each used to take their own reading of "income" and "expenses":
@@ -27829,7 +27840,7 @@ table.amort tbody tr { page-break-inside: avoid; }
          * is not a month. Income is averaged over the months that have income in them and outgoings over the months that have outgoings, so a month whose statement has not arrived
          * does not drag the other down. The debt service (loan installments wherever they were paid from, card installment plans) is kept apart from living costs, because a debt-coverage
          * ratio divides one by the other and must not count the installments in both. With no complete month at all, this month so far is used and says so. */
-        function _wfBooksProfile(now) {
+        function _wfBooksProfileCompute(now) {
             now = now || new Date();
             const cy = now.getFullYear(), cm = now.getMonth();
             const rows = [], typesBy = {};
@@ -27844,18 +27855,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const d = getMonthlyData(y, m);
                 const cats = {};
                 [d.expItems, d.ccotItems, d.subItems, d.cheItems].forEach(list => (list || []).forEach(x => { const c = x.cat || 'Other'; cats[c] = (cats[c] || 0) + (+x.amount || 0); }));
-                rows.push({ key: y + '-' + p2(m + 1), income: d.income, outgo: d.totalExp, debt: d.debtService, living: d.living, cats, types: typesBy[y + '-' + p2(m + 1)] || {} });
+                rows.push({ key: y + '-' + p2(m + 1), income: d.income, outgo: d.totalExp, started: _wfMonthSpent(d), debt: d.debtService, living: d.living, cats, types: typesBy[y + '-' + p2(m + 1)] || {} });
             }
             const mean = (list, pick) => (list.length ? list.reduce((a, r) => a + pick(r), 0) / list.length : 0);
-            const incMonths = rows.filter(r => r.income > 0), outMonths = rows.filter(r => r.outgo > 0);
+            const incMonths = rows.filter(r => r.income > 0), outMonths = rows.filter(r => r.started);
             let kind = incMonths.length || outMonths.length ? 'average' : 'none', thisKey = cy + '-' + p2(cm + 1);
             const cur = getMonthlyData(cy, cm);
             let avgIncome = mean(incMonths, r => r.income), avgOutgo = mean(outMonths, r => r.outgo);
             let avgDebt = mean(outMonths, r => r.debt), avgLiving = mean(outMonths, r => r.living);
-            if (kind === 'none' && (cur.income > 0 || cur.totalExp > 0)) {
+            if (kind === 'none' && _wfMonthStarted(cur)) {
                 kind = 'this-month'; avgIncome = cur.income; avgOutgo = cur.totalExp; avgDebt = cur.debtService; avgLiving = cur.living;
             }
-            const keys = rows.filter(r => r.income > 0 || r.outgo > 0).map(r => r.key);
+            const keys = rows.filter(r => r.income > 0 || r.started).map(r => r.key);
             const incomeTypes = {};                                      // each kind of income (Salary, Rental, …) and what it brings in a month, on average
             (kind === 'this-month' ? [{ types: typesBy[thisKey] || {} }] : incMonths).forEach(r => Object.keys(r.types).forEach(t => { incomeTypes[t] = (incomeTypes[t] || 0) + r.types[t] / (kind === 'this-month' ? 1 : incMonths.length); }));
             const avgCats = {}, spendMonths = kind === 'this-month' ? 1 : outMonths.length;
@@ -27883,7 +27894,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         /* WHAT THE OWNER HAS AND OWES TODAY: cash on hand as the Balance page shows it (the total typed, less what went out and plus what came in), the money in investments, what is saved towards
          * goals, and every debt — loan balances, what is left of the card installment plans, and card charges not yet paid. */
-        function _wfPosition(now) {
+        function _wfPositionCompute(now) {
             now = now || new Date();
             const bal = DB.getObj('balance', { total: 0, flows: [] });
             let cash = 0;
@@ -27906,6 +27917,44 @@ table.amort tbody tr { page-break-inside: avoid; }
         function _wfFreeCash(prof, pos, income) {
             const inc = income == null ? prof.avgIncome : income;
             return inc - prof.avgLiving - Math.max(prof.avgDebtService, pos.minimums);
+        }
+
+        /* THE PROFILE IS REMEMBERED UNTIL THE BOOKS CHANGE. It reads thirteen months through getMonthlyData (about 8 ms each on a year of statements), and the page asks for it on every repaint and
+         * several times within one — over 300 ms a time, on every save, on a phone several times that. The key is a fingerprint of everything the profile reads (each record's id, date, amount,
+         * status and the loan payments inside it) plus the day, so an edit, a filed statement or the next day recomputes it and nothing else does. */
+        let _wfBooksMemo = null;
+        function _wfBooksKey(now) {
+            let text = now.getFullYear() + '-' + now.getMonth() + '-' + now.getDate();
+            for (const store of ['expenses', 'incomeRecv', 'cconetime', 'loans', 'ccinstall', 'subscriptions', 'cheques', 'income', 'targets']) {
+                const list = DB.get(store) || [];
+                text += '|' + store + list.length;
+                for (const r of list) {
+                    if (!r) continue;
+                    text += ',' + (r.id || '') + (r.date || r.start || r.issue || '') + (r.month || '') + (r.amount != null ? r.amount : '') + (r.monthly != null ? r.monthly : '') + (r.received === false ? 'n' : '') + (r.paid ? 'p' : '') + (r.completed ? 'c' : '') + (r.status || '') + (r.cat || r.type || '') + (r.recurring ? 'r' : '') + (r.loanLink || r.subscriptionLink ? 'l' : '') + (r._ut || '') + (r.duration || '') + (r.cycle || '') + (r.rate || '') + (r.total || '') + (r.end || '') + (r.release || '') + (r.paymentMethod || '') + (r.createdAt || '');
+                    if (r.payments) for (const x of r.payments) text += ';' + (x && x.month || '') + (x && x.paid ? 'p' : '') + (x && x.amount != null ? x.amount : '');
+                    if (r.skipped) text += 's' + r.skipped.length;
+                    if (r.savings) text += 'v' + r.savings.length;
+                }
+            }
+            const bal = DB.getObj('balance', { total: 0, flows: [] });
+            text += '|b' + bal.total + ':' + (bal.flows || []).length;
+            let h = 5381;
+            for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+            return h + ':' + text.length;
+        }
+        function _wfBooksProfile(now) {
+            now = now || new Date();
+            const key = _wfBooksKey(now);
+            if (!_wfBooksMemo || _wfBooksMemo.key !== key) _wfBooksMemo = { key, profile: null, position: null };
+            if (!_wfBooksMemo.profile) _wfBooksMemo.profile = _wfBooksProfileCompute(now);
+            return _wfBooksMemo.profile;
+        }
+        function _wfPosition(now) {
+            now = now || new Date();
+            const key = _wfBooksKey(now);
+            if (!_wfBooksMemo || _wfBooksMemo.key !== key) _wfBooksMemo = { key, profile: null, position: null };
+            if (!_wfBooksMemo.position) _wfBooksMemo.position = _wfPositionCompute(now);
+            return _wfBooksMemo.position;
         }
 
         /* "…from your books": the one sentence that says what a tool's figures are made of, so a figure is never a mystery. */
@@ -32650,7 +32699,10 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
         }
 
         function _mcSignature() {
-            return ['mcYears', 'mcSavings', 'mcStart', 'mcReturn', 'mcInflation', 'mcRuns'].map(id => ($(id) ? $(id).value : '')).join('|');
+            // the inputs, and what the books leave each month (the "nothing to project" note quotes it)
+            let free = 0;
+            try { free = Math.round(buildFinancialContext().netMonthlyCashFlow) || 0; } catch (_) { /* the signature still works without it */ }
+            return ['mcYears', 'mcSavings', 'mcStart', 'mcReturn', 'mcInflation', 'mcRuns'].map(id => ($(id) ? $(id).value : '')).concat([free]).join('|');
         }
         function runMonteCarlo() {
             if ($('mcResults')) $('mcResults').dataset.sig = _mcSignature();
@@ -32664,6 +32716,15 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
             // what the simulation starts with: the cash on hand and the money in investments (the Starting Wealth box, filled from them, can be changed)
             const startBal = $('mcStart') && $('mcStart').value !== '' ? parseMoney($('mcStart').value) : Math.max(0, pos.cash + pos.invested);
             const rand = _mcSeeded(_mcSeedOf([years, Math.round(savings), expectedReturn, inflation, runs, Math.round(startBal)]));
+            /* NOTHING TO PROJECT: no wealth to start from and nothing left to save each month. Five hundred paths of LKR 0.00 and a flat chart look like a broken page; the page says what is missing instead. */
+            if (!(savings > 0) && !(startBal > 0)) {
+                if (mcChartInst) { mcChartInst.destroy(); mcChartInst = null; }
+                $('mcResults').innerHTML = `<div style="text-align:left;font-size:12.5px;color:var(--text2);line-height:1.7;padding:6px 4px;">
+                    <b style="color:var(--accent);">Nothing to project yet.</b>
+                    Starting wealth is <b>LKR 0</b> (cash on hand and investments) and, after living costs and what the debts ask each month, your books leave <b>${fmtS(ctx.netMonthlyCashFlow)}</b> a month.
+                    Set your cash on hand (the Balance card on the Dashboard), add your investments, or type a Starting Wealth and a Monthly Savings above — the projection is drawn as soon as either is more than zero.</div>`;
+                return;
+            }
 
             const sim = _mcSimulate({ years, savings, expectedReturn, inflation, runs, startBal }, rand);
             const { labels, pct, putIn, mean, stdDev, worstCase, medianCase, bestCase, probLoss, deflator, sigma } = sim;
@@ -32877,7 +32938,25 @@ Be concrete and reference actual LKR figures. No generic advice.`;
         function _cf3dGatherFlows() {
             const period = _cf3dPeriodKey();
             const now = new Date();
-            const months = period === 'thisMonth' ? 1 : period === 'last3' ? 3 : period === 'thisYear' ? (now.getMonth() + 1) : 24;
+            /* WHICH MONTHS THE PICTURE COVERS. A month is counted back from this one (0 = this month). "This Month" on the 3rd of the month — before any statement of the month has arrived — held
+             * nothing at all, so the page showed LKR 0.00 and a lone "YOU" beside a household whose books hold a year of income and spending. When the chosen window has nothing in it, the picture
+             * shows the latest month that does, and says so. */
+            const monthAt = i => new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const hasActivity = i => { const d = monthAt(i); return _wfMonthStarted(getMonthlyData(d.getFullYear(), d.getMonth())); };
+            const span = n => Array.from({ length: n }, (_, i) => i);
+            let offsets = period === 'thisMonth' ? [0] : period === 'lastMonth' ? [1] : period === 'last3' ? span(3) : period === 'thisYear' ? span(now.getMonth() + 1) : span(24);
+            let note = '';
+            if (!offsets.some(hasActivity)) {
+                const latest = span(24).find(hasActivity);
+                if (latest !== undefined) {
+                    const d = monthAt(latest);
+                    note = MONTHS_S[monthAt(offsets[0]).getMonth()] + ' has nothing recorded yet — showing ' + MONTHS_S[d.getMonth()] + ' ' + d.getFullYear();
+                    offsets = [latest];
+                } else note = 'Nothing is recorded yet — income and spending appear here as statements are filed or entries are added';
+            }
+            const months = offsets.length;
+            const first = monthAt(Math.max(...offsets)), last = monthAt(Math.min(...offsets));
+            const windowLabel = months === 1 ? MONTHS_S[last.getMonth()] + ' ' + last.getFullYear() : MONTHS_S[first.getMonth()] + ' ' + first.getFullYear() + ' – ' + MONTHS_S[last.getMonth()] + ' ' + last.getFullYear();
 
             // EVERY rupee the books hold, in one of seven groups — the same getMonthlyData the dashboard totals with. The outflow used to be the hand-typed expenses and the card installments only: the
             // card charges, the subscriptions and bills, the cleared cheques and the loan installments paid from the bank were all missing, so a household that spends mostly on its card showed almost no outflow.
@@ -32887,8 +32966,8 @@ Be concrete and reference actual LKR figures. No generic advice.`;
             const loanItems = [];
             const expenseItems = [];
 
-            for (let i = 0; i < months; i++) {
-                const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            for (const i of offsets) {
+                const dt = monthAt(i);
                 const md = getMonthlyData(dt.getFullYear(), dt.getMonth());
                 groups.Income += md.income;
                 groups.Loans += md.loanTotal + md.expDebt;            // installments marked paid, and the ones paid from the bank
@@ -32905,7 +32984,7 @@ Be concrete and reference actual LKR figures. No generic advice.`;
                 (t.savings || []).forEach(s => {
                     const sd = new Date(s.date);
                     const monthsAgo = (now.getFullYear() - sd.getFullYear()) * 12 + (now.getMonth() - sd.getMonth());
-                    if (monthsAgo >= 0 && monthsAgo < months) groups.Targets += s.amount;
+                    if (offsets.includes(monthsAgo)) groups.Targets += s.amount;
                 });
             });
 
@@ -32922,13 +33001,13 @@ Be concrete and reference actual LKR figures. No generic advice.`;
                 const ry = +parts[0], rmo = +parts[1];
                 if (!ry || !rmo) return;
                 const monthsAgo = (now.getFullYear() - ry) * 12 + (now.getMonth() - (rmo - 1));
-                if (monthsAgo < 0 || monthsAgo >= months) return;
+                if (!offsets.includes(monthsAgo)) return;
                 const t = r.type || r.source || 'Other';
                 _cf3dIncByType[t] = (_cf3dIncByType[t] || 0) + (+r.amount || 0);
             });
             Object.keys(_cf3dIncByType).forEach(t => incomeSources.push({ name: t, amount: _cf3dIncByType[t] }));
 
-            return { groups, expByCat, incomeSources, loanItems, months, period };
+            return { groups, expByCat, incomeSources, loanItems, months, period, windowLabel, note };
         }
 
         function _cf3dProjectPoint(x, y, z, cx, cy) {
@@ -32955,7 +33034,7 @@ Be concrete and reference actual LKR figures. No generic advice.`;
                 const totalOut = data.groups.Loans + data.groups.CC + data.groups.Expenses + data.groups.Bills + data.groups.Cheques + data.groups.Targets;
                 const net = totalIn - totalOut;
                 sc.innerHTML = `
-                    <div class="stat-card sc-green"><div class="stat-label">Total Inflow</div><div class="stat-val">${fmtS(totalIn)}</div><div class="stat-meta">${data.months} month(s)</div></div>
+                    <div class="stat-card sc-green"><div class="stat-label">Total Inflow</div><div class="stat-val">${fmtS(totalIn)}</div><div class="stat-meta">${_wfEsc(data.windowLabel)}${data.note ? ' · ' + _wfEsc(data.note) : ''}</div></div>
                     <div class="stat-card sc-red"><div class="stat-label">Total Outflow</div><div class="stat-val">${fmtS(totalOut)}</div><div class="stat-meta">all categories</div></div>
                     <div class="stat-card sc-gold"><div class="stat-label">Net Flow</div><div class="stat-val" style="color:${net >= 0 ? 'var(--green)' : 'var(--red)'};">${fmtS(net)}</div><div class="stat-meta">${net >= 0 ? '✓ Surplus' : '⚠ Deficit'}</div></div>
                 `;
