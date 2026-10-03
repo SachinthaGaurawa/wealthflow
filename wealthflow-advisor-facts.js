@@ -95,6 +95,9 @@ function slope(ys) {
 }
 
 /** 285000 → "285,000"; -25700 → "-25,700". Whole rupees: cents are noise on a personal ledger. */
+/** An ISO day plus n days, as an ISO day (UTC arithmetic, so the daylight-saving shift cannot move it). */
+function isoPlus(iso, n) { const t = Date.parse(`${String(iso).slice(0, 10)}T00:00:00Z`); return Number.isFinite(t) ? new Date(t + n * 86400000).toISOString().slice(0, 10) : null; }
+
 export function lkr(n) {
     const v = r0(n);
     return (v < 0 ? '-' : '') + Math.abs(v).toLocaleString('en-US');
@@ -281,8 +284,16 @@ export function build(deps) {
     const onHand = pos && Number.isFinite(pos.cash) ? pos.cash : safe(() => openingBalance(appData), null);
     const cashOpts = (extra) => safe(() => (typeof d.cashOpts === 'function' ? d.cashOpts(extra) : Object.assign({ asOf: now }, extra)), Object.assign({ asOf: now }, extra));
     const runway = safe(() => cashSummary(appData, cashOpts({ horizon: 90 })), null);
-    const ahead = safe(() => cashProject(appData, cashOpts({ horizon: 30 })), null);
-    const upcoming = ahead ? arr(ahead.commitments).filter((c) => c.kind === 'out').slice(0, 8).map((c) => ({ date: c.date, label: clean(c.label, 60), amount: r0(c.amount), certainty: c.certainty })) : [];
+    const ahead = safe(() => cashProject(appData, cashOpts({ horizon: 90 })), null);
+    const iso30 = ahead && ahead.asOf ? isoPlus(ahead.asOf, 30) : null;
+    const dated = ahead ? arr(ahead.commitments).filter((c) => c.kind === 'out' && (!iso30 || String(c.date) <= iso30)) : [];
+    const upcoming = dated.slice(0, 8).map((c) => ({ date: c.date, label: clean(c.label, 60), amount: r0(c.amount), certainty: c.certainty }));
+    /* THE ENGINE ONLY KNOWS INCOME IT HAS BEEN TOLD ABOUT: a dated receivable, or a source on the Investments tab. A salary that arrives every month, but that the books know
+     * only as months already received, is NOT in its projection, so the "runway" is then the picture if no further income arrives. That is worth saying (and is not a forecast),
+     * so how much income the 90 days hold, against what three typical months bring, is kept and the runway is labelled by it. */
+    const incomeKnown = ahead ? r0(arr(ahead.commitments).filter((c) => c.kind === 'in').reduce((s, c) => s + num(c.amount), 0)) : null;
+    const incomeExpected = typical ? r0(typical.income * 3) : null;
+    const runwayBasis = incomeKnown === null || incomeExpected === null || incomeExpected <= 0 ? null : incomeKnown >= incomeExpected * 0.6 ? 'income-known' : 'outflows-only';
     const liquidity = {
         onHand: onHand === null ? null : r0(onHand),
         monthsOfCover: onHand !== null && typical && typical.outflow > 0 ? r1(onHand / typical.outflow) : null,
@@ -296,7 +307,9 @@ export function build(deps) {
         tightestDate: runway ? runway.tightestDate : null,
         tightestBalance: runway ? r0(runway.tightestBalance) : null,
         freeCashPerMonth: Number.isFinite(d.freeCash) ? r0(d.freeCash) : null,
-        committed30: ahead ? r0(arr(ahead.commitments).filter((c) => c.kind === 'out').reduce((s, c) => s + num(c.amount), 0)) : null,
+        runwayCauses: runway ? arr(runway.runwayCauses).slice(0, 3).map((c) => clean(typeof c === 'string' ? c : (c && (c.label || c.name)) || '', 60)).filter(Boolean) : [],
+        incomeKnown90: incomeKnown, incomeExpected90: incomeExpected, runwayBasis,
+        committed30: ahead ? r0(dated.reduce((s, c) => s + num(c.amount), 0)) : null,
         upcoming,
     };
     const balanceStore = appData.balance && typeof appData.balance === 'object' ? appData.balance : {};
@@ -373,7 +386,10 @@ export function flagsOf(f) {
     for (const l of (D && D.loans) || []) if (l.problem === 'payment-below-interest') add('loan-below-interest', 'high', `${l.name}: the instalment (${lkr(l.monthly)}) is smaller than the interest, so the balance grows.`);
     const L = f.liquidity;
     if (L) {
-        if (L.runwayStatus === 'critical' || L.runwayStatus === 'at-risk') add('runway', L.runwayStatus === 'critical' ? 'high' : 'medium', `The cash-flow engine projects the balance going below zero on ${L.runwayDate}${L.runwayDays !== null ? ` (${L.runwayDays} days away)` : ''}.`);
+        if (L.runwayStatus === 'critical' || L.runwayStatus === 'at-risk') {
+            if (L.runwayBasis === 'outflows-only') add('runway-no-income', 'low', `The cash-flow engine counts only LKR ${lkr(L.incomeKnown90)} of income in the next 90 days (three typical months bring about LKR ${lkr(L.incomeExpected90)}), so if no further salary arrives the balance goes below zero on ${L.runwayDate}${L.runwayDays !== null ? ` (${L.runwayDays} days away)` : ''}. That is a worst case, not a forecast.`);
+            else add('runway', L.runwayStatus === 'critical' ? 'high' : 'medium', `The cash-flow engine projects the balance going below zero on ${L.runwayDate}${L.runwayDays !== null ? ` (${L.runwayDays} days away)` : ''}.`);
+        }
         if (L.monthsOfCover !== null && L.monthsOfCover < RULES.COVER_CRITICAL) add('cover-critical', 'high', `The Balance page covers ${L.monthsOfCover} month of a typical outflow.`);
         else if (L.monthsOfCover !== null && L.monthsOfCover < RULES.COVER_LOW) add('cover-low', 'medium', `The Balance page covers ${L.monthsOfCover} months of a typical outflow; a ${RULES.COVER_LOW}-month cushion would be ${lkr(L.cushion3)}.`);
     }
@@ -462,6 +478,7 @@ export function renderFactSheet(f, o = {}) {
     out('CASH AND COMMITMENTS');
     if (L.onHand !== null) out(`- On hand (Balance page: total - outflows + inflows): ${lkr(L.onHand)}${L.monthsOfCover !== null ? `, which covers ${L.monthsOfCover} months of a typical outflow; a 3-month cushion would be ${lkr(L.cushion3)} (gap ${lkr(L.cushionGap)}). This holds only if the Balance page is liquid cash` : ''}`);
     if (L.runwayStatus) out(`- Cash-flow engine, next 90 days: status ${L.runwayStatus}${L.runwayDate ? `; the balance first goes below zero on ${L.runwayDate}` : '; no shortfall projected'}; tightest point ${lkr(L.tightestBalance)} on ${L.tightestDate || 'n/a'}; safe to spend ${lkr(L.safeToSpend)} until ${L.safeUntil || 'n/a'}`);
+    if (L.runwayStatus && L.runwayBasis === 'outflows-only') out(`  NOTE: the engine counts only ${lkr(L.incomeKnown90)} of income in these 90 days (three typical months bring about ${lkr(L.incomeExpected90)}): a salary that is not on the books as a coming receipt is not in the projection. Read the line above as "if no further income arrives", not as a forecast.`);
     if (L.committed30 !== null) out(`- Dated outflows in the next 30 days: ${lkr(L.committed30)} in all${L.upcoming.length ? '; the biggest, by date:' : ''}`);
     for (const u of L.upcoming.slice(0, cap.upcoming)) out(`    · ${u.date}  ${u.label}  ${lkr(u.amount)}${u.certainty === 'expected' ? ' (date is approximate)' : ''}`);
     out('');
@@ -542,10 +559,22 @@ export function pageDeps(w = globalThis) {
     };
 }
 
+/* The sheet reads up to twelve months through getMonthlyData, and one chat turn asks for it more than once (the prompt, the figures behind a scenario, the
+ * context object). It is remembered per page until the books change: the page's own fingerprint of everything it reads (_wfBooksKey, which includes the day)
+ * or a minute, whichever comes first (the sweep ledger and the clock are not in the fingerprint). */
+const SHEET_TTL_MS = 60_000;
+const sheetMemo = new WeakMap();
+
 /** Facts and their text, from the page, in one call. Never throws: a failure is a sheet that says so. */
 export function currentSheet(w = globalThis, o = {}) {
-    try { const facts = build(pageDeps(w)); return { facts, text: renderFactSheet(facts, o) }; }
+    const key = safe(() => (typeof w._wfBooksKey === 'function' ? `${w._wfBooksKey(clockOf(w))}|${JSON.stringify(o)}` : null), null);
+    const hit = key && w && typeof w === 'object' ? sheetMemo.get(w) : null;
+    if (hit && hit.key === key && Date.now() - hit.at < SHEET_TTL_MS) return hit.value;
+    let value;
+    try { const facts = build(pageDeps(w)); value = { facts, text: renderFactSheet(facts, o) }; }
     catch (e) { return { facts: null, text: renderFactSheet({ ok: false, reason: `error: ${clean(e && e.message, 80)}` }) }; }
+    if (key && w && typeof w === 'object') sheetMemo.set(w, { key, at: Date.now(), value });
+    return value;
 }
 
 /* ── is this about money? (English, Sinhala, Tamil and the romanised Sinhala people actually type) ──
