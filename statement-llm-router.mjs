@@ -15,9 +15,9 @@
 /** The roster of api/ai.js, in the order they are asked. Every provider appears exactly once. */
 export const TIERS = Object.freeze([
     Object.freeze(['Groq', 'Gemini', 'DeepSeek']),
-    Object.freeze(['Mistral', 'Together', 'OpenRouterQwen', 'Cerebras']),
+    Object.freeze(['Mistral', 'Together', 'OpenRouterQwen']),
     Object.freeze(['Fireworks', 'NVIDIA', 'GitHubModels', 'OpenRouterFinance', 'OpenRouterNemotron']),
-    Object.freeze(['Cohere', 'HF', 'CloudflareAI', 'Ollama']),
+    Object.freeze(['Cohere', 'CloudflareAI', 'Ollama']),
 ]);
 
 /* How long each tier may take, strongest first. The first tier holds the providers that read a long statement best, and a thinking-capable

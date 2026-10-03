@@ -19,7 +19,7 @@ describe('the roster', () => {
     it('names every provider of api/ai.js exactly once, strongest first', () => {
         const all = TIERS.flat();
         expect(new Set(all).size).toBe(all.length);
-        expect(all.sort()).toEqual(['Cerebras', 'Cohere', 'CloudflareAI', 'DeepSeek', 'Fireworks', 'Gemini', 'GitHubModels', 'Groq', 'HF', 'Mistral', 'NVIDIA', 'Ollama', 'OpenRouterFinance', 'OpenRouterNemotron', 'OpenRouterQwen', 'Together'].sort());
+        expect(all.sort()).toEqual(['Cohere', 'CloudflareAI', 'DeepSeek', 'Fireworks', 'Gemini', 'GitHubModels', 'Groq', 'Mistral', 'NVIDIA', 'Ollama', 'OpenRouterFinance', 'OpenRouterNemotron', 'OpenRouterQwen', 'Together'].sort());
         expect(TIERS[0]).toContain('Groq');
     });
 });

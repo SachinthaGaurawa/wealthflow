@@ -2,6 +2,8 @@
 import { vi } from 'vitest';
 
 export const ANSWER = '{"decisions":[{"index":0,"module":"expenses","category":"Groceries","allocationId":""}]}';
+/* CEREBRAS_API_KEY and HF_API_KEY stay in the list on purpose: the owner removed both providers from the board (2026-10-03) but the variables are still
+ * set in Vercel, and the world no longer answers for either, so a board that still asked them would fail on 'unexpected url'. */
 export const KEYS = ['WealthFlow_API_Key', 'DEEPSEEK_API_KEY', 'GROQ_API_KEY', 'OLLAMA_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'NVIDIA_API_KEY', 'GITHUB_MODELS_TOKEN', 'COHERE_API_KEY', 'HF_API_KEY'];
 
 export const response = () => ({ setHeader() {}, status(n) { this.code = n; return this; }, json(body) { this.body = body; return this; } });
@@ -22,7 +24,6 @@ export function world({ answer = ANSWER } = {}) {
         if (/api\.groq\.com.*\/models$/.test(u)) return json({ data: [{ id: 'openai/gpt-oss-120b' }] });
         if (/fireworks.*\/models$/.test(u)) return json({ data: [{ id: 'accounts/fireworks/models/qwen3-235b-a22b-thinking-2507' }, { id: 'accounts/fireworks/models/llama4-maverick-instruct-basic' }, { id: 'accounts/fireworks/models/qwen3-235b-a22b-instruct-2507' }] });
         if (/openrouter\.ai.*\/models$/.test(u)) return json({ data: [{ id: 'inclusionai/ling-3.0-flash-fin', pricing: { prompt: '0', completion: '0' } }, { id: 'google/gemma-4-27b-it:free', pricing: { prompt: '0', completion: '0' } }] });
-        if (/cerebras.*\/models$/.test(u)) return json({ data: [{ id: 'gpt-oss-120b' }, { id: 'llama3.1-8b' }] });
         if (/nvidia.*\/models$/.test(u)) return json({ data: [{ id: 'meta/llama-3.3-70b-instruct' }, { id: 'meta/llama-4-maverick-17b-128e-instruct' }, { id: 'nvidia/nv-embedqa-e5-v5' }] });
         if (/models\?/.test(u)) return json({ models: [] });
         // ---- the providers, each failing the way the log says it did
@@ -38,12 +39,10 @@ export function world({ answer = ANSWER } = {}) {
             if (/nemotron/.test(model)) return new Promise(() => {});                                                // never answers
             return chat(answer);
         }
-        if (/cerebras/.test(u)) return model === 'llama3.1-8b' ? failure(404, '{"message":"Model does not exist or you do not have access to it.","code":"model_not_found"}') : chat(answer);
         if (/nvidia/.test(u)) return /llama-3\.1-8b|llama-3\.3-70b/.test(model) ? failure(410, '{"title":"Gone","status":410,"detail":"The model has reached its end of life"}') : chat(answer);
         if (/models\.github\.ai/.test(u)) return { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token \'O\', "OK\r\n" is not valid JSON'); }, text: async () => 'OK\r\n' };
         if (/mistral/.test(u)) return failure(429, '{"object":"error","message":"Rate limit exceeded","type":"rate_limited","code":"1300"}');
         if (/cohere/.test(u)) return failure(429, '');
-        if (/huggingface/.test(u)) return failure(402, '{"error":"You have depleted your monthly included credits."}');
         throw new Error('unexpected url ' + u);
     });
     return { fetch, log };

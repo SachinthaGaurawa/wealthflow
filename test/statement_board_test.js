@@ -127,10 +127,10 @@ describe('the board\'s own decision is unchanged, and says which rows were agree
 
 /* ── the endpoint, with real providers' wire shapes and a stubbed network ─────────────────────────────────────────────── */
 function stubProviders(answerFor) {
-    for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY']) vi.stubEnv(key, 'test');
+    for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY']) vi.stubEnv(key, 'test');
     const asked = [];
     vi.stubGlobal('fetch', vi.fn(async (url, init) => {
-        const who = ['googleapis', 'deepseek', 'groq', 'mistral', 'together', 'fireworks', 'openrouter', 'cerebras'].find(k => String(url).includes(k)) || 'other';
+        const who = ['googleapis', 'deepseek', 'groq', 'mistral', 'together', 'fireworks', 'openrouter', 'nvidia'].find(k => String(url).includes(k)) || 'other';
         let model = ''; try { model = JSON.parse(init.body).model || ''; } catch (_) { /* gemini carries it in the url */ }
         asked.push(who);
         const text = answerFor(who, model, init);
@@ -328,7 +328,7 @@ describe('ten rows through the real board code', () => {
     });
 
     it('several rows disputed in the proposal and one more in the review: the others are filed, each only with every voter\'s agreement', async () => {
-        world({ odd: (who, index) => (index === 1 && who === 'groq' ? 'Dining' : index === 2 && who === 'gemini' ? 'Health' : index === 2 && who === 'deepseek' ? 'Fuel' : null), refuse: (who, index) => index === 8 && who === 'cerebras' });
+        world({ odd: (who, index) => (index === 1 && who === 'groq' ? 'Dining' : index === 2 && who === 'gemini' ? 'Health' : index === 2 && who === 'deepseek' ? 'Fuel' : null), refuse: (who, index) => index === 8 && who === 'nvidia' });
         const out = await classifySlice(Array.from({ length: 10 }, (_, i) => unknownRow(i)), bank);
         const refined = out.map((d, i) => (d.category === 'Shopping' ? i : -1)).filter(i => i >= 0);
         expect(refined).toEqual([0, 3, 4, 5, 6, 7, 9]);

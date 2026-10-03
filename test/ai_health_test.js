@@ -54,12 +54,12 @@ describe('GET /api/ai?canary=1', () => {
         expect(res.body).toMatchObject({ ok: true, cached: false, ageSec: expect.any(Number) });
         expect(res.body.verdict).toMatch(/^GOOD/);
         const names = res.body.report.providers.map((p) => p.name);
-        for (const n of ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together', 'Fireworks', 'OpenRouterFinance', 'Cerebras', 'NVIDIA', 'GitHubModels', 'Mistral', 'Cohere', 'HF', 'OpenRouterQwen', 'OpenRouterNemotron']) expect(names, n).toContain(n);
+        for (const n of ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together', 'Fireworks', 'OpenRouterFinance', 'NVIDIA', 'GitHubModels', 'Mistral', 'Cohere', 'OpenRouterQwen', 'OpenRouterNemotron']) expect(names, n).toContain(n);
+        for (const n of ['Cerebras', 'HF']) expect(names, n).not.toContain(n);   // removed from the board on 2026-10-03 (owner): their keys are still set, they are never asked
         const by = Object.fromEntries(res.body.report.providers.map((p) => [p.name, p]));
         expect(by.Groq.ok).toBe(true);                                         // healed: reasoning budget
         expect(by.GitHubModels.error).toMatch(/non-JSON/);
         expect(by.Mistral.error).toMatch(/429/);
-        expect(by.HF.error).toMatch(/402/);
         expect(by.OpenRouterNemotron.error).toMatch(/deadline/);
         expect(res.body.report.board.floor).toBe(5);
         // what the providers were asked is the fixed synthetic prompt — nothing of the owner's
@@ -70,10 +70,10 @@ describe('GET /api/ai?canary=1', () => {
     it('ignores cooldowns: a provider resting after a failure is asked anyway, because the point is what it does NOW', async () => {
         for (const key of KEYS) vi.stubEnv(key, 'test');
         const w = world({ answer: GOLD }); vi.stubGlobal('fetch', w.fetch);
-        coolProvider('Groq', new Error('Groq status 429')); coolProvider('HF', new Error('HF status 402: credits'));
+        coolProvider('Groq', new Error('Groq status 429')); coolProvider('Mistral', new Error('Mistral status 402: credits'));
         const res = await get('/api/ai?canary=1');
         const names = res.body.report.providers.map((p) => p.name);
-        expect(names).toContain('Groq'); expect(names).toContain('HF');
+        expect(names).toContain('Groq'); expect(names).toContain('Mistral');
     });
 
     it('is rate-limited: a report younger than the gap is served and NO provider is called, so the address cannot burn quota', async () => {
@@ -192,8 +192,8 @@ describe('the canary asks what a statement\'s board is asked, about ten rows wit
         const w = world({ answer: GOLD }); vi.stubGlobal('fetch', w.fetch);
         const res = await get('/api/ai?canary=1');
         expect(res.body.report.board.rows).toMatchObject({ of: 10, agreed: 10, correct: 10, disputed: [] });
-        // HF caps its own reply at 1024 (ten rows need ~300) and Cohere sets none (its default is 4000); every other chat provider is given the board's room
-        const chats = w.log.filter((c) => c.body && c.body.messages && !/huggingface|cohere/.test(c.u) && JSON.stringify(c.body.messages).includes('KEELLS SUPER NUGEGODA'));
+        // Cohere sets none (its default is 4000); every other chat provider is given the board's room
+        const chats = w.log.filter((c) => c.body && c.body.messages && !/cohere/.test(c.u) && JSON.stringify(c.body.messages).includes('KEELLS SUPER NUGEGODA'));
         expect(chats.length).toBeGreaterThan(5);
         for (const c of chats) expect(c.body.max_tokens || c.body.options?.num_predict || 0, c.u).toBeGreaterThanOrEqual(3000);
     });
