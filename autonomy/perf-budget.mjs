@@ -288,7 +288,10 @@ export const BUDGETS = {
     // 2026-10-03 (the five tools, round two): 2,160,000 -> 2,166_000 (measured 2,161,221 + headroom). A month counts in the averages and in the 3D picture only when something real happened in it
     // (not merely a subscription or a card plan, which are in every month from their start), the 3D picture falls back to the latest month that has data and names the months it shows, and the
     // Wealth Simulator says what is missing instead of drawing a flat chart of zeros. No new script or request.
-    htmlBytes: 2_166_000,
+    // 2026-10-03 (the bank can be corrected): 2,166,000 -> 2,177_000 (measured 2,172,457 + ~0.2% headroom). The statement review screen now shows the bank it read, offers the closest bank for one tap when it could not
+    // name one, and lets the owner pick or type another; the choice is re-checked against the statement registry and drives the label, the lock and the fee schedule. About 4 KB is markup and code; the rest
+    // is the comments recording why a correction goes through the same path as an automatic answer. No new script or request.
+    htmlBytes: 2_177_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -575,7 +578,8 @@ export const BUDGETS = {
     // owner's cards and the mail history — most of it the comments recording why a bank is never guessed and never asked) and about 5 KB in wealthflow-ai-v4.js, which now resolves the bank in its three read paths instead of
     // opening the fifteen-button picker (the picker itself, in index.html, was removed). statement-bank-evidence.mjs is server-only and never reaches the page.
     totalJsBytes: 2_070_000,
-    largestModuleBytes: 223_000, // measured 220,870
+    // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
+    largestModuleBytes: 225_000, // measured 223,296
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely

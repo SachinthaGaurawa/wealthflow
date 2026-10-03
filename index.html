@@ -35262,16 +35262,49 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 }).join('');
             };
 
-            /* WHICH BANK — said, never asked. wealthflow-ai-v4.js read it from the statement (wealthflow-bank-detect.js) and hands the answer in `parsed._wfBank`;
-             * a statement it could not settle is filed without a bank label, and that is stated here rather than turned into a question. */
-            const _wb = parsed && parsed._wfBank;
-            const _bankNote = !_wb ? ''
-                : _wb.ok ? `<br><b style="color:var(--green);">🏦 Bank:</b> ${_wfEsc(_wb.name)} <span style="opacity:.8">— found automatically (${_wfEsc((_wb.basis || []).join('; '))})</span>`
-                : `<br><b style="color:var(--gold, #d4a017);">🏦 Bank not identified</b> — nothing in the statement, your cards or your email history names it, so these rows are filed without a bank label and still checked against your books by amount and date.`;
+            /* WHICH BANK — said, never asked, and always correctable. wealthflow-ai-v4.js read it from the statement (wealthflow-bank-detect.js) and hands the answer in `parsed._wfBank`.
+             * A statement it could not settle is filed without a bank label and says so, with the closest bank offered for one tap. The owner can set or change the bank here at any time
+             * before saving: the answer goes through WFBankDetect.choose(), so the records' label, the registry lock and the fee schedule follow exactly as they do for an automatic answer. */
+            const _canEditBank = !!(parsed && parsed._wfBank && parsed._wfBank.ctx && !parsed.cloudReview && window.WFBankDetect && typeof window.WFBankDetect.choose === 'function');
+            let _bankEdit = false, _bankDup = '', _bankSeq = 0;
+            const _bankPicker = () => ((window.WFInstitutions && window.WFInstitutions.PICKER) || []).filter((n) => n !== 'Other');
+            const _bankEditor = () => {
+                const w = parsed._wfBank || {}, names = _bankPicker();
+                const known = w.ok && names.indexOf(w.name) >= 0;
+                const sel = w.ok ? (known ? w.name : '__other') : '';
+                return `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
+                    <select id="_ccr_bankSel" class="fs" aria-label="Bank" style="font-size:12px;padding:5px 8px;max-width:100%;">
+                        <option value="" ${sel === '' ? 'selected' : ''}>— no bank label —</option>
+                        ${names.map((n) => `<option value="${_wfEsc(n)}" ${sel === n ? 'selected' : ''}>${_wfEsc(n)}</option>`).join('')}
+                        <option value="__other" ${sel === '__other' ? 'selected' : ''}>Another bank (type its name)…</option>
+                    </select>
+                    <input id="_ccr_bankTxt" class="fi" maxlength="60" placeholder="Bank name" aria-label="Bank name" value="${_wfEsc(sel === '__other' ? w.name : '')}" style="font-size:12px;min-width:160px;${sel === '__other' ? '' : 'display:none;'}">
+                    <button type="button" id="_ccr_bankUse" class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px;">Use this bank</button>
+                    <button type="button" id="_ccr_bankCancel" class="btn btn-ghost btn-sm" style="padding:5px 10px;font-size:11px;">Cancel</button>
+                </div>`;
+            };
+            const _bankInner = () => {
+                const w = parsed && parsed._wfBank;
+                if (!w) return '';
+                const editBtn = (!_canEditBank || _bankEdit) ? '' : ` <button type="button" id="_ccr_bankEdit" class="btn btn-secondary btn-sm" style="padding:2px 10px;font-size:11px;margin-left:4px;">${w.ok ? 'Edit' : 'Choose bank'}</button>`;
+                let h;
+                if (w.ok) {
+                    h = `<b style="color:var(--green);">🏦 Bank:</b> <span id="_ccr_bankName">${_wfEsc(w.name)}</span> <span style="opacity:.8">— ${w.manual ? 'set by you' : 'found automatically (' + _wfEsc((w.basis || []).join('; ')) + ')'}</span>${editBtn}`;
+                } else {
+                    const why = (w.why || []).slice(0, 3).map((x) => _wfEsc(x)).join(' ');
+                    h = `<b style="color:var(--gold, #d4a017);">🏦 ${w.cleared ? 'No bank label' : 'Bank not identified'}</b> — ${w.cleared ? 'you chose to file these rows without one; they are still checked against your books by amount and date.' : 'nothing in the statement, your cards or your email history names it, so these rows are filed without a bank label and still checked against your books by amount and date.'}${why && !w.cleared ? ` <span style="opacity:.8">${why}</span>` : ''}${editBtn}`;
+                    if (_canEditBank && !_bankEdit && !w.cleared && (w.suggest || []).length) {
+                        h += `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;"><span>Closest:</span>${w.suggest.map((c) => `<button type="button" class="btn btn-secondary btn-sm _ccr_bankPick" data-bank="${_wfEsc(c.name)}" style="padding:3px 10px;font-size:11px;" title="${_wfEsc((c.basis || []).join('; '))}">Use ${_wfEsc(c.name)}</button>`).join('')}</div>`;
+                    }
+                }
+                if (_bankEdit) h += _bankEditor();
+                if (_bankDup) h += `<div role="alert" style="margin-top:6px;color:var(--red,#ef4444);font-weight:600;">${_wfEsc(_bankDup)}</div>`;
+                return h;
+            };
             overlay.innerHTML = `
                 <div class="md" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
-                        <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — ${_wfEsc(bank || 'Bank Statement')}</div>
+                        <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — <span id="_ccr_ttlbank">${_wfEsc(bank || 'Bank Statement')}</span></div>
                         <button class="md-x" aria-label="Close" id="_ccrx"><i data-wfi="x"></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
@@ -35282,7 +35315,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 <button type="button" id="_ccr_typeBank" class="btn" style="padding:4px 10px;font-size:11px;border-radius:8px;${_acctType==='bank_account'?'background:var(--accent,#f5a623);color:#1a1300;':'background:transparent;border:1px solid var(--border2,#243049);color:var(--text2);'}">🏦 Bank Account</button>
                             </div>
                             Each row's <b>Goes to</b> is set automatically from that — change any row if needed. Credit-card cash advances get their bank fee added; bank credits become Income (salary/interest, not investments); transfers are skipped.
-                            ${parsed.statement_period ? `<br><b style="color:var(--blue);">Statement period:</b> ${_wfEsc(parsed.statement_period)}` : ''}${_bankNote}
+                            ${parsed.statement_period ? `<br><b style="color:var(--blue);">Statement period:</b> ${_wfEsc(parsed.statement_period)}` : ''}${parsed && parsed._wfBank ? `<div id="_ccr_bank" style="margin-top:6px;">${_bankInner()}</div>` : ''}
                         </div>
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.28);border-radius:10px;padding:9px 12px;">
                             <span style="color:var(--text2);font-weight:600;">Send every ticked row to →</span>
@@ -35331,6 +35364,59 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const closeOvl = () => { try { overlay.classList.remove('open'); } catch(_){} setTimeout(() => overlay.remove(), 180); };
             $ovl('#_ccrx').onclick = closeOvl;
             $ovl('#_ccr_cancel').onclick = closeOvl;
+
+            /* ── THE BANK, CORRECTABLE. Whatever the owner picks or types is turned into the same kind of answer the automatic reading gives (WFBankDetect.choose), then:
+             *   - the records' label (`bank`, read when Save is pressed) and the title follow;
+             *   - the registry is asked about THAT bank — a statement already in the books under it ("Already Added via Email Sync") turns Save off with the reason, rather than being added twice;
+             *   - the claim made at Save carries the new issuer label, so a hand-made and an e-mailed statement still meet at one lock;
+             *   - a correction is remembered for this card/account (WFBankMemory), so the next statement of it is named without anyone being asked. */
+            const _bankRepaint = () => { const box = $ovl('#_ccr_bank'); if (box) box.innerHTML = _bankInner(); const t = $ovl('#_ccr_ttlbank'); if (t) t.textContent = bank || 'Bank Statement'; };
+            const _saveAllowed = (on, why) => { const b = $ovl('#_ccr_save'); if (!b) return; b.disabled = !on; b.style.opacity = on ? '' : '.55'; if (why) b.title = why; else b.removeAttribute('title'); };
+            const _setBank = async (label) => {
+                const D = window.WFBankDetect, w0 = parsed._wfBank;
+                if (!D || !w0 || !w0.ctx) return;
+                const seq = ++_bankSeq;
+                let res;
+                try { res = D.choose(label, w0.ctx); } catch (_) { return; }
+                res.ctx = w0.ctx;
+                parsed._wfBank = res;
+                bank = res.ok ? res.name : '';
+                _bankEdit = false; _bankDup = '';
+                _bankRepaint();
+                const info = parsed._wfGuard, G = window.WFStatementCloud && window.WFStatementCloud.guard;
+                if (!info || !G || typeof G.parsed !== 'function') return;
+                _saveAllowed(false, 'Checking this bank against your books…');
+                let dup = null, fresh = null;
+                try {
+                    const r = await G.parsed({ sha: info.sha, bank: res.ok ? res.lockName : '', last4: info.last4, periodText: info.periodText, dates: info.dates, filename: info.filename, size: info.size, rows: info.rows });
+                    dup = r && r.duplicate ? r : null; fresh = r && r.info ? r.info : null;
+                } catch (_) { /* the lock fails open: an unreachable server never stops the owner */ }
+                if (seq !== _bankSeq) return;                                  // a newer choice is already being checked
+                if (dup) {
+                    _bankDup = (dup.notice || 'Already Added') + ' — this statement is already in your books under ' + (res.ok ? res.name : 'that bank') + ', so it will not be added a second time. If the bank was misread, change it.';
+                    _bankRepaint();
+                    _saveAllowed(false, 'Already in your books');
+                    return;
+                }
+                if (fresh && parsed._wfGuard === info) parsed._wfGuard = fresh;   // the claim at Save now carries the chosen bank's issuer label
+                _saveAllowed(true);
+            };
+            overlay.addEventListener('click', (ev) => {
+                const el = ev.target && ev.target.closest ? ev.target.closest('#_ccr_bankEdit, #_ccr_bankCancel, #_ccr_bankUse, ._ccr_bankPick') : null;
+                if (!el || !overlay.contains(el)) return;
+                if (el.id === '_ccr_bankEdit') { _bankEdit = true; _bankRepaint(); return; }
+                if (el.id === '_ccr_bankCancel') { _bankEdit = false; _bankRepaint(); return; }
+                if (el.classList.contains('_ccr_bankPick')) { _setBank(el.getAttribute('data-bank') || ''); return; }
+                const sel = $ovl('#_ccr_bankSel'), txt = $ovl('#_ccr_bankTxt');
+                const pick = !sel ? '' : sel.value === '__other' ? String(txt ? txt.value : '').trim() : sel.value;
+                if (sel && sel.value === '__other' && !pick) { notify('Type the bank name, or choose "no bank label".', 'warn'); if (txt) txt.focus(); return; }
+                _setBank(pick);
+            });
+            overlay.addEventListener('change', (ev) => {
+                if (!ev.target || ev.target.id !== '_ccr_bankSel') return;
+                const txt = $ovl('#_ccr_bankTxt');
+                if (txt) { txt.style.display = ev.target.value === '__other' ? '' : 'none'; if (ev.target.value === '__other') txt.focus(); }
+            });
 
             // ── v7.42.0 — one-tap BULK ROUTE. Directly answers "statement expenses
             // aren't going to Expenses": pick a destination and every ticked row is
@@ -35696,6 +35782,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const tail = (skipped ? (' · skipped ' + skipped) : '') + (dup ? (' · ' + dup + ' duplicate' + (dup > 1 ? 's' : '') + ' ignored') : '');
                 if (parts.length) { notify('✅ Filed ' + parts.join(' · ') + tail, 'success'); triggerHaptic('success'); }
                 else { notify('Nothing added' + (dup ? (' · ' + dup + ' duplicate(s) ignored') : '') + (skipped ? (' · ' + skipped + ' skipped') : ''), 'warn'); }
+                /* A bank the owner set by hand is remembered for this card / account number, so its next statement is named without anyone being asked. */
+                if (parts.length && parsed._wfBank && parsed._wfBank.manual && parsed._wfBank.ok && window.WFBankMemory && typeof window.WFBankMemory.teach === 'function') { try { window.WFBankMemory.teach(parsed._wfBank); } catch (_) {} }
 
                 /* Written and committed above, so this is the first point at
                  * which "these rows are in the ledger" is true. A caller that

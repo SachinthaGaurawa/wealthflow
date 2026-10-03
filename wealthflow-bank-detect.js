@@ -33,6 +33,11 @@
  *   lockName   what the statement registry locks on. It is the ISSUER's label — the one the email worker writes — so a statement taken by hand
  *              and the same statement taken by email lock on the same id (statement-coverage.mjs bankIdentity). Never the record label.
  *
+ * ALWAYS CORRECTABLE. Reading is automatic, but the owner has the last word. `choose()` turns a bank the owner picked or typed on the review screen into the same answer
+ * `detect()` gives (record label, issuer label for the lock, fee key), so a correction files, locks and prices exactly like an automatic one. `taught` lets the next
+ * statement of that card or account be named from what the owner said (6 points: the owner's word about their own account number), and a statement that nearly names a bank
+ * says which one it came closest to (`suggest`) so the owner confirms with one tap instead of searching a list.
+ *
  * Pure: no network, no clock, no DOM, no storage. test/bank_detect_test.js exercises it directly.
  * ===========================================================================*/
 
@@ -65,11 +70,20 @@ const GROUPS = (() => {
 const groupOfInstitution = (inst) => (inst ? GROUPS.find((g) => g.members.includes(inst)) || null : null);
 const mentions = (g, text) => { const h = padded(text); return g.words.some((w) => h.includes(' ' + w + ' ')); };
 
+/* A mail domain gives its bank as one run of letters ("Nationstrust", "Dfccbank"): the institution whose name or token is those letters with the spaces taken out. The same rule the registry
+ * lock applies (statement-coverage.mjs bankIdentity), so a label the email sync wrote groups with its bank here exactly as it locks with it there. */
+const squash = (v) => str(v).toLowerCase().replace(/[^a-z0-9]+/g, '');
+function runTogether(label) {
+    const run = squash(label).replace(/bank$/, '');
+    return run.length >= 5 ? INSTITUTIONS.find((i) => [i.name, ...i.tokens].some((t) => { const w = squash(t).replace(/bank$/, ''); return w.length >= 5 && w === run; })) || null : null;
+}
+
 /** The issuer a bank label belongs to: a known institution, else a label of the owner's own (an address they approved, a card they filed). */
 function groupOfLabel(label, extra) {
     const clean = str(label).trim();
     if (!clean) return null;
-    const known = groupOfInstitution(institutionFor(clean)) || GROUPS.find((g) => mentions(g, clean));
+    const known = groupOfInstitution(institutionFor(clean)) || GROUPS.find((g) => mentions(g, clean))
+        || groupOfInstitution(institutionFor(clean.replace(/\s*bank$/i, ''))) || groupOfInstitution(runTogether(clean));
     if (known) return known;
     const key = 'x:' + norm(clean);
     let g = extra.get(key);
@@ -177,20 +191,65 @@ export function tailsOf(text, filename = '') {
 
 /* ── the answer ───────────────────────────────────────────────────────────── */
 
-const SAYS = { doc: 'the statement names it', ai: 'an AI reading of the page', meta: "the PDF's own properties", file: 'the file name', sha: 'the same file already in your mailbox', last4: 'the card number in your email history', series: 'the same file-name series in your email history', books: 'the card number in your own cards' };
+const SAYS = { doc: 'the statement names it', ai: 'an AI reading of the page', meta: "the PDF's own properties", file: 'the file name', sha: 'the same file already in your mailbox', last4: 'the card number in your email history', series: 'the same file-name series in your email history', books: 'the card number in your own cards', taught: 'you set the bank for this card or account before' };
+
+/** The NTB product a bank label names ('' when it names none) — "Nations Trust Bank (NTB) — AMEX" is the AMEX card, the bare mail name is neither. */
+const productOfLabel = (label) => { const n = norm(label); return /amex|american express/.test(n) ? 'amex' : /visa|master/.test(n) ? 'visa-mc' : ''; };
+
+/**
+ * What a bank is called on a record, and which fee schedule it opens — one place, so a bank the page named and a bank the owner chose are labelled identically.
+ *   name    the owner's existing label for this card (books, taught, mailbox) when it is the same issuer, else the picker name (or the owner's own words for a bank outside the fifteen).
+ *   feeKey  the key of the Sri Lanka fee schedule: only a bank the picker knew — and for NTB only once the card's product is known — names one; anything else is "Other".
+ */
+function labelling(g, product, ctx) {
+    const { mine = [], taught = [], tailSet = [], hist = {}, extra } = ctx;
+    const kin = (o) => o === g || (g.key === 'ntb' && product === 'amex' && o.key === 'amex') || (g.key === 'amex' && o.key === 'ntb');
+    const seen = [];
+    for (const a of mine.slice().sort((x, y) => (Number(y.seen) || 0) - (Number(x.seen) || 0))) seen.push(a.bank);
+    for (const a of taught) if (a && a.bank && tailSet.includes(String(a.last4))) seen.push(a.bank);
+    for (const tail of tailSet) for (const [label] of Object.entries((hist.last4 || {})[tail] || {}).sort((x, y) => y[1] - x[1])) seen.push(label);
+    if (hist.sha && hist.sha.bank) seen.push(hist.sha.bank);
+    if (hist.series && hist.series.bank) seen.push(hist.series.bank);
+    for (const label of hist.approved || []) seen.push(label);
+    const used = seen.find((label) => { const o = groupOfLabel(label, extra), p = productOfLabel(label); return o && kin(o) && !(g.key === 'ntb' && product && p && p !== product); });
+    const picker = g.custom ? g.issuer
+        : g.key === 'ntb' ? (product === 'amex' ? g.members[0].name : product === 'visa-mc' ? g.members[1].name : g.issuer)
+            : g.members[0].name;
+    return { name: str(used).trim() || picker, picker, feeKey: g.custom || (g.key === 'ntb' && !product) ? 'Other' : picker };
+}
+
+/** WHICH NTB CARD. The fee schedule differs (AMEX: 5% + LKR 1,250; Visa/Mastercard: 4%, min LKR 600), so the product is read from the first digits of the card number,
+ *  then the statement's own words, then the owner's cards — and left out (the issuer's own label, which is what the email sync writes) when none of them says. */
+function productOf(g, { tails = [], lines = [], ai = null, mine = [] }) {
+    if (g.key !== 'ntb') return { product: '', basis: '' };
+    const votes = { amex: 0, 'visa-mc': 0 };
+    for (const t of tails) if (t.network) votes[t.network] += 8;
+    const h = lines.map((ln) => ln.h).join(' ');
+    if (/ (?:american express|amex) /.test(h)) votes.amex += 3;
+    if (/ (?:visa|master ?card) /.test(h)) votes['visa-mc'] += 3;
+    if (ai && ai.network) { const n = norm(ai.network); if (/amex|american/.test(n)) votes.amex += 4; else if (/visa|master/.test(n)) votes['visa-mc'] += 4; }
+    for (const a of mine) { const p = productOfLabel(a.bank); if (p) votes[p] += 6; }
+    const [best, other] = votes.amex >= votes['visa-mc'] ? ['amex', 'visa-mc'] : ['visa-mc', 'amex'];
+    return votes[best] >= 4 && votes[best] - votes[other] >= 3 ? { product: best, basis: tails.some((t) => t.network === best) ? 'the card number' : 'the statement' } : { product: '', basis: '' };
+}
 
 /**
  * @param {{ text?:string, filename?:string, meta?:object|null, ai?:{bank?:string,network?:string}|null,
  *           books?:Array<{bank:string,last4:string,seen?:number}>,
+ *           taught?:Array<{bank:string,last4:string}>,
  *           history?:{ approved?:string[], sha?:{bank:string}|null, last4?:Object<string,Object<string,number>>, series?:{bank:string,count?:number}|null }|null }} input
- *   `books` is wealthflow-accounts.js derive(); `history` is what /api/statement-guard `identify` answers from the mailbox.
- * @returns {{ ok:boolean, name:string, lockName:string, feeKey:string, issuer:string, product:''|'amex'|'visa-mc', confidence:'certain'|'strong'|'none', basis:string[], tail:string, ranked:Array<{issuer:string,total:number}>, note:string }}
+ *   `books` is wealthflow-accounts.js derive(); `history` is what /api/statement-guard `identify` answers from the mailbox; `taught` is what the owner themselves said on the review screen
+ *   about a card or account number before (wealthflow-ai-v4.js WFBankMemory).
+ * @returns {{ ok:boolean, name:string, lockName:string, feeKey:string, issuer:string, product:''|'amex'|'visa-mc', confidence:'certain'|'strong'|'none', basis:string[], tail:string,
+ *             tails:Array<{tail:string,kind:string,network:string}>, ranked:Array<{issuer:string,total:number}>, suggest:Array<object>, why:string[], note:string }}
+ *   `suggest` (only when not identified): up to two banks that came closest, each shaped like a successful answer, for the owner to confirm with one tap — never filed on their own.
  */
 export function detect(input) {
-    const { text = '', filename = '', meta = null, ai = null, books = [], history = null } = input && typeof input === 'object' ? input : {};
+    const { text = '', filename = '', meta = null, ai = null, books = [], taught = [], history = null } = input && typeof input === 'object' ? input : {};
     const extra = new Map();
     const prose = proseOf(text), tails = tailsOf(prose, filename);
     const hist = history && typeof history === 'object' ? history : {};
+    const told = (Array.isArray(taught) ? taught : []).filter((a) => a && str(a.bank).trim() && /^\d{4}$/.test(str(a.last4)));
     const groups = new Map(GROUPS.map((g) => [g.key, { g, ev: {}, total: 0 }]));
     const slot = (g) => { if (!groups.has(g.key)) groups.set(g.key, { g, ev: {}, total: 0 }); return groups.get(g.key); };
     const give = (g, kind, points) => { if (g && points) { const s = slot(g); s.ev[kind] = Math.max(s.ev[kind] || 0, points); } };
@@ -201,6 +260,7 @@ export function detect(input) {
     if (hist.series && hist.series.bank) labels.push(hist.series.bank);
     for (const byLabel of Object.values(hist.last4 || {})) labels.push(...Object.keys(byLabel || {}));
     for (const a of Array.isArray(books) ? books : []) labels.push(a && a.bank);
+    for (const a of told) labels.push(a.bank);
     for (const label of labels) groupOfLabel(label, extra);
     for (const g of extra.values()) slot(g);
 
@@ -225,6 +285,9 @@ export function detect(input) {
         give(g, 'books', 4);
         if (kindOf.get(String(a.last4)) === 'card' && Number(a.seen) >= 3) ownCard.add(g.key);
     }
+    /* THE OWNER'S OWN WORD. A card or account number printed on this statement that the owner earlier said belongs to a bank (a correction on the review screen) names that bank by itself:
+     * 6 points, so it never stands against a statement that names another bank (that one scores 7 or more from its own header) — a disagreement is a conflict, and a conflict is "not identified". */
+    for (const a of told) if (tailSet.includes(String(a.last4))) give(groupOfLabel(a.bank, extra), 'taught', NAMED_AT);
 
     /* AMERICAN EXPRESS IS A NETWORK WHEN A BANK ISSUES IT. A Nations Trust statement prints "American Express" on its card: that is the product, not the issuer. */
     const ntb = groups.get('ntb'), amex = groups.get('amex');
@@ -240,55 +303,72 @@ export function detect(input) {
      * the statement prints no bank name at all (a logo, a scan read as text). It never stands against a statement that does name another bank (that one scores 3 or more from its own words). */
     if (ranked[0] && ranked[0].total < NAMED_AT && ranked[0].ev.books && ownCard.has(ranked[0].g.key) && !(ranked[1] && ranked[1].total >= 3)) ranked[0].total = NAMED_AT;
 
+    const ctx = { mine, taught: told, tailSet, hist, extra };
+    const tailsOut = tails.map((t) => ({ tail: t.tail, kind: t.kind, network: t.network }));
+    const answer = (s, ok) => {
+        const kinds = Object.keys(s.ev).filter((k) => s.ev[k] > 0);
+        const { product, basis: productBasis } = productOf(s.g, { tails, lines, ai, mine });
+        const { name, feeKey } = labelling(s.g, product, ctx);
+        const basis = kinds.map((k) => SAYS[k]).filter(Boolean);
+        if (product && productBasis) basis.push(`${productBasis} says ${product === 'amex' ? 'American Express' : 'Visa/Mastercard'}`);
+        return { ok, name, lockName: s.g.issuer, feeKey, issuer: s.g.issuer, product, confidence: s.total >= 10 || (kinds.length >= 2 && s.total >= 8) ? 'certain' : 'strong', basis, points: s.total };
+    };
+
     const win = ranked[0], second = ranked[1];
     const rankedOut = ranked.slice(0, 4).map((s) => ({ issuer: s.g.issuer, total: s.total }));
     if (!win || win.total < NAMED_AT || (second && win.total - second.total < LEAD_BY)) {
-        return { ok: false, name: '', lockName: '', feeKey: '', issuer: '', product: '', confidence: 'none', basis: [], tail: tailSet[0] || '', ranked: rankedOut,
+        /* NOT NAMED — and says why, and who came closest. A candidate with some real evidence (3 points: a header mention, the file name and a footer, a card seen twice) is offered for one-tap
+         * confirmation; it is never filed under without the owner's tap. A close contest offers both. */
+        const suggest = ranked.filter((s) => s.total >= 3 && (!win || win.total - s.total < LEAD_BY + 3)).slice(0, 2).map((s) => ({ ...answer(s, false), ok: false }));
+        const why = [];
+        if (!ranked.some((s) => s.ev.doc)) why.push('The statement text does not name a bank (often it is only a logo picture).');
+        else if (win && second && win.total >= NAMED_AT) why.push('Two banks are named about equally, so neither is taken.');
+        else if (win) why.push(`The closest was ${win.g.issuer}, at ${win.total} of the ${NAMED_AT} points needed.`);
+        if (!tailSet.length) why.push('No card or account number was found on it to look up.');
+        else if (!mine.length && !told.length && !Object.keys(hist.last4 || {}).length) why.push(`Card or account ••${tailSet[0]} is not in your books or your email history.`);
+        if (history === null) why.push('Your email history could not be checked.');
+        return { ok: false, name: '', lockName: '', feeKey: '', issuer: '', product: '', confidence: 'none', basis: [], tail: tailSet[0] || '', tails: tailsOut, ranked: rankedOut, suggest, why,
             note: 'Bank not identified: nothing in the statement, your cards or your email history names it, so it was filed without a bank label.' };
     }
 
-    const kinds = Object.keys(win.ev).filter((k) => win.ev[k] > 0);
-    const confidence = win.total >= 10 || (kinds.length >= 2 && win.total >= 8) ? 'certain' : 'strong';
-
-    /* WHICH NTB CARD. The fee schedule differs (AMEX: 5% + LKR 1,250; Visa/Mastercard: 4%, min LKR 600), so the product is read from the first digits of the card number,
-     * then the statement's own words, then the owner's cards — and left out (the issuer's own label, which is what the email sync writes) when none of them says. */
-    let product = '', productBasis = '';
-    if (win.g.key === 'ntb') {
-        const votes = { amex: 0, 'visa-mc': 0 };
-        for (const t of tails) if (t.network) votes[t.network] += 8;
-        const h = lines.map((ln) => ln.h).join(' ');
-        if (/ (?:american express|amex) /.test(h)) votes.amex += 3;
-        if (/ (?:visa|master ?card) /.test(h)) votes['visa-mc'] += 3;
-        if (ai && ai.network) { const n = norm(ai.network); if (/amex|american/.test(n)) votes.amex += 4; else if (/visa|master/.test(n)) votes['visa-mc'] += 4; }
-        for (const a of mine) { const n = norm(a.bank); if (/amex|american express/.test(n)) votes.amex += 6; else if (/visa|master/.test(n)) votes['visa-mc'] += 6; }
-        const [best, other] = votes.amex >= votes['visa-mc'] ? ['amex', 'visa-mc'] : ['visa-mc', 'amex'];
-        if (votes[best] >= 4 && votes[best] - votes[other] >= 3) { product = best; productBasis = tails.some((t) => t.network === best) ? 'the card number' : 'the statement'; }
-    }
-
-    /* ONE LABEL FOR ONE CARD: a name the owner's books or the email sync already use for this card — same issuer, or the American Express name an NTB AMEX card is often filed under. */
-    const kin = (g) => g === win.g || (win.g.key === 'ntb' && product === 'amex' && g.key === 'amex') || (win.g.key === 'amex' && g.key === 'ntb');
-    const seen = [];
-    for (const a of mine.slice().sort((x, y) => (Number(y.seen) || 0) - (Number(x.seen) || 0))) seen.push(a.bank);
-    for (const tail of tailSet) for (const [label] of Object.entries((hist.last4 || {})[tail] || {}).sort((x, y) => y[1] - x[1])) seen.push(label);
-    if (hist.sha && hist.sha.bank) seen.push(hist.sha.bank);
-    if (hist.series && hist.series.bank) seen.push(hist.series.bank);
-    for (const label of hist.approved || []) seen.push(label);
-    const productOf = (label) => { const n = norm(label); return /amex|american express/.test(n) ? 'amex' : /visa|master/.test(n) ? 'visa-mc' : ''; };
-    const used = seen.find((label) => { const g = groupOfLabel(label, extra), p = productOf(label); return g && kin(g) && !(win.g.key === 'ntb' && product && p && p !== product); });
-    const picker = win.g.custom ? win.g.issuer
-        : win.g.key === 'ntb' ? (product === 'amex' ? win.g.members[0].name : product === 'visa-mc' ? win.g.members[1].name : win.g.issuer)
-            : win.g.members[0].name;
-    const name = str(used).trim() || picker;
-    /* The key of the Sri Lanka fee schedule (index.html CC_CASH_ADVANCE_FEES / CC_FUEL_FEES). Only a bank the picker knew — and for NTB only once the card's product is known —
-     * names a schedule; anything else is the schedules' own "Other" default, which says "edit if your bank publishes a different tariff" rather than quoting a wrong one. */
-    const feeKey = win.g.custom || (win.g.key === 'ntb' && !product) ? 'Other' : picker;
-    const basis = kinds.map((k) => SAYS[k]).filter(Boolean);
-    if (product && productBasis) basis.push(`${productBasis} says ${product === 'amex' ? 'American Express' : 'Visa/Mastercard'}`);
-    return { ok: true, name, lockName: win.g.issuer, feeKey, issuer: win.g.issuer, product, confidence, basis, tail: tailSet[0] || '', ranked: rankedOut,
-        note: `Bank identified automatically: ${name} (${basis.join('; ')}).` };
+    const a = answer(win, true);
+    return { ok: true, name: a.name, lockName: a.lockName, feeKey: a.feeKey, issuer: a.issuer, product: a.product, confidence: a.confidence, basis: a.basis, tail: tailSet[0] || '', tails: tailsOut, ranked: rankedOut, suggest: [], why: [],
+        note: `Bank identified automatically: ${a.name} (${a.basis.join('; ')}).` };
 }
 
-const API = { detect, tailsOf, networkOfBin, NAMED_AT, LEAD_BY };
+/**
+ * THE OWNER'S WORD. A bank the owner picked or typed on the review screen, turned into the same answer `detect()` gives, so a correction is labelled, locked and priced exactly like an
+ * automatic one. A blank label clears the bank (the statement is filed without one, as an unidentified statement is). A name the fifteen know — however typed ("dfcc", "Sampath") — is that
+ * institution; anything else is the owner's own bank, kept as typed (fee schedule "Other").
+ * @param {string} label
+ * @param {{ tails?:Array<{tail:string}|string>, filename?:string, books?:Array<object>, taught?:Array<object>, history?:object|null }} [ctx]  what `detect()` returned as `tails`, plus the same books / history it was given
+ */
+export function choose(label, ctx) {
+    const c = ctx && typeof ctx === 'object' ? ctx : {};
+    const tails = (Array.isArray(c.tails) ? c.tails : []).map((t) => (t && typeof t === 'object' ? t : { tail: str(t), kind: 'labelled', network: '' })).filter((t) => /^\d{4}$/.test(str(t.tail)));
+    const tailSet = tails.map((t) => t.tail);
+    const clean = str(label).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!clean) {
+        return { ok: false, manual: true, cleared: true, name: '', lockName: '', feeKey: '', issuer: '', product: '', confidence: 'none', basis: [], tail: tailSet[0] || '', tails, ranked: [], suggest: [], why: [],
+            note: 'No bank label: the owner chose to file this statement without one.' };
+    }
+    const extra = new Map();
+    const hist = c.history && typeof c.history === 'object' ? c.history : {};
+    const mine = (Array.isArray(c.books) ? c.books : []).filter((a) => a && a.bank && tailSet.includes(String(a.last4)));
+    const told = (Array.isArray(c.taught) ? c.taught : []).filter((a) => a && str(a.bank).trim() && /^\d{4}$/.test(str(a.last4)));
+    for (const a of mine) groupOfLabel(a.bank, extra);
+    for (const a of told) groupOfLabel(a.bank, extra);
+    const exact = INSTITUTIONS.find((i) => norm(i.name) === norm(clean));
+    const g = (exact && groupOfInstitution(exact)) || groupOfLabel(clean, extra);
+    /* The product an NTB choice names comes from the picker entry itself (AMEX / Visa/Mastercard), or from the words the owner typed. */
+    const product = g.key === 'ntb' ? (exact ? (exact === g.members[0] ? 'amex' : 'visa-mc') : productOfLabel(clean)) : '';
+    /* Labelled the way the owner's books already label this card, else the picker's name; a bank of the owner's own is kept in the owner's words. */
+    const { name, feeKey } = labelling(g, product, { mine, taught: told, tailSet, hist, extra });
+    return { ok: true, manual: true, name, lockName: g.issuer, feeKey, issuer: g.issuer, product, confidence: 'certain', basis: ['you chose it'], tail: tailSet[0] || '', tails, ranked: [], suggest: [], why: [],
+        note: `Bank set by the owner: ${name}.` };
+}
+
+const API = { detect, choose, tailsOf, networkOfBin, NAMED_AT, LEAD_BY };
 
 if (typeof window !== 'undefined') window.WFBankDetect = API;
 
