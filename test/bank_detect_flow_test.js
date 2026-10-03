@@ -152,9 +152,9 @@ describe('the upload flow no longer asks which bank', () => {
         expect(v4).toMatch(/do NOT guess/);
     });
     it('the review says what it found, or that it did not, instead of asking', () => {
-        expect(html).toMatch(/Bank:<\/b> <span id="_ccr_bankName">\$\{_wfEsc\(w\.name\)\}<\/span> <span style="opacity:\.8">— \$\{w\.manual \? 'set by you' : 'found automatically/);
+        expect(html).toMatch(/Bank:<\/b> <span id="_ccr_bankName">\$\{_wfEsc\(_bankShown\(w\.name\)\)\}<\/span> <span style="opacity:\.8">— \$\{w\.manual \? 'set by you' : 'found automatically/);
         expect(html).toMatch(/Bank not identified/);
-        expect(html).toMatch(/_wfEsc\(bank \|\| 'Bank Statement'\)/);
+        expect(html).toMatch(/_wfEsc\(_bankShown\(bank\) \|\| 'Bank Statement'\)/);
     });
     it('the PDF reader hands its properties (title, author, subject) to the detector', () => {
         const unlock = read('wealthflow-pdf-unlock.js');

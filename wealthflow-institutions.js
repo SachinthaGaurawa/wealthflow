@@ -208,13 +208,48 @@ export function canonicalBank(name) {
     return /\bamex\b|\bamerican express\b/.test(text) ? INSTITUTIONS.find((i) => i.id === 'amex').name : raw;
 }
 
+/**
+ * HOW A BANK IS WRITTEN ON A SCREEN — and nothing else.
+ *
+ * A statement the email sync filed carries the label it made from the sender's mail domain (wealthflow-mail-ingest.mjs nameFromDomain): `dfccbank.com`
+ * gives "Dfccbank", `hnb.lk` gives "Hnb", `nationstrust.com` gives "Nationstrust". That label is a KEY — the books, the card walk and the registry group
+ * by it, and it is written by a server — so it is never rewritten. But a person reading "AI extracted 21 transactions — Dfccbank" is reading a name,
+ * and the name is "DFCC Bank".
+ *
+ * So this turns a stored label into the institution's own name, for display. It is deliberately stricter than institutionFor(): only an exact picker
+ * name, or the same letters once spaces and a trailing "bank" are taken out (the rule the registry lock applies, statement-coverage.mjs bankIdentity),
+ * and never a substring — "Pan" is not Pan Asia Bank, and showing a wrong bank's name on a screen is worse than showing the label as it was.
+ *
+ *   "Dfccbank" / "DFCC" / "dfcc bank"      -> "DFCC Bank"
+ *   "Hnb" / "HNB Bank" / "Hatton National" -> "Hatton National Bank (HNB)"
+ *   "Nationstrust" / "NTB"                 -> "Nations Trust Bank (NTB)"   (the issuer; a label that names the product keeps it: "… — AMEX")
+ *   a bank the app does not list           -> exactly as it was written
+ */
+const squashed = (v) => norm(v).replace(/ /g, '');
+const stemOf = (v) => squashed(v).replace(/bank$/, '');
+export function displayBank(label) {
+    const raw = s(label);
+    if (!raw) return raw;
+    const n = norm(raw);
+    const named = INSTITUTIONS.find((i) => norm(i.name) === n);
+    if (named) return named.name;
+    const folded = canonicalBank(raw);
+    if (folded !== raw) return folded;
+    const issuer = INSTITUTIONS.find((i) => i.mailName && norm(i.mailName) === n);
+    if (issuer) return issuer.mailName;
+    const run = stemOf(raw);
+    if (run.length < 3) return raw;
+    const hit = INSTITUTIONS.find((i) => [i.name, i.mailName, ...i.tokens].some((t) => t && stemOf(t) === run));
+    return hit ? (hit.mailName || hit.name) : raw;
+}
+
 /** Do these two names mean the same bank? Empty never equals anything. */
 export function sameBank(a, b) {
     const x = norm(canonicalBank(a)), y = norm(canonicalBank(b));
     return !!x && x === y;
 }
 
-const API = { INSTITUTIONS, PICKER, BANK_DOMAINS, institutionFor, tokensFor, domainsFor, institutionForSender, canonicalBank, sameBank };
+const API = { INSTITUTIONS, PICKER, BANK_DOMAINS, institutionFor, tokensFor, domainsFor, institutionForSender, canonicalBank, displayBank, sameBank };
 
 if (typeof window !== 'undefined') window.WFInstitutions = API;
 
