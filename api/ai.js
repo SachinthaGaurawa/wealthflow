@@ -564,7 +564,7 @@ export default async function handler(req, res) {
             const differing = decision.unanimous || decision.reason !== 'provider_disagreement' ? null : (() => {
                 const reading = Matrix.boardReading(results.filter(r => r && r.ok).map(r => ({ name: r.name, reply: r.reply })), 5);
                 const key = (name) => { const a = reading.answers.find(x => x.name === name); return a ? String(a.key).slice(0, 90) : ''; };
-                const groups = {}; for (const a of reading.answers) (groups[a.key.slice(0, 60)] = groups[a.key.slice(0, 60)] || []).push(a.name);
+                const groups = {}; for (const a of reading.answers) (groups[a.key] = groups[a.key] || []).push(a.name);   // by the WHOLE answer: two long lists that differ late are two groups, not one
                 return { clear: reading.clear, groups: Object.values(groups).sort((x, y) => y.length - x.length).slice(0, 4), sample: reading.dissent.slice(0, 2).map(key) };
             })();
             // an answer that was refused is named by WHY (cut off, prose around the JSON, broken syntax, torn keys): "invalid" alone cannot tell a model that ran out of room from one that talks first
