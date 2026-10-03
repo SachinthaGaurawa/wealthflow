@@ -17697,6 +17697,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             $(id).classList.remove('open');
             document.body.style.overflow = '';
             editMode = null;
+            if (id === 'mdExpense') { const sel = $('e_cat'); if (sel) Array.prototype.slice.call(sel.options).forEach(o => { if (o.getAttribute('data-stray')) sel.removeChild(o); }); }   // the editor's one-off category (setExpenseCategoryChoice) is not the dropdown's
             triggerHaptic('light');
         }
 
@@ -22379,10 +22380,23 @@ table.amort tbody tr { page-break-inside: avoid; }
             closeModal('mdExpense'); renderExpenses(); renderDash();
             notify(editMode ? 'Expense updated!' : 'Expense added!'); editMode = null;
         }
+        /* The Category select can show only the names it has. A row filed under another name (an older statement row: "Groceries", "Cash Withdrawal") used to blank it, and saving
+         * then wrote an empty category. The name's dropdown equivalent is chosen where there is one; a name with none is offered for as long as the editor is open (and removed again,
+         * so it never reaches the lists that read the dropdown's options). */
+        function setExpenseCategoryChoice(name) {
+            const sel = $('e_cat'); if (!sel) return;
+            Array.prototype.slice.call(sel.options).forEach(o => { if (o.getAttribute('data-stray')) sel.removeChild(o); });
+            let want = String(name == null ? '' : name);
+            try { if (window.WFStatementRouter && window.WFStatementRouter.expenseEntryName) want = window.WFStatementRouter.expenseEntryName(want); } catch (_) {}
+            if (want && !Array.prototype.some.call(sel.options, o => o.value === want)) {
+                const o = document.createElement('option'); o.value = want; o.textContent = want; o.setAttribute('data-stray', '1'); sel.appendChild(o);
+            }
+            sel.value = want;
+        }
         function clearExpenseForm() {
             editMode = null;
             ['e_desc', 'e_amount', 'e_notes'].forEach(id => { if ($(id)) $(id).value = ''; });
-            if ($('e_cat')) $('e_cat').value = 'Food & Groceries'; if ($('e_recurring')) $('e_recurring').value = '0';
+            if ($('e_cat')) { setExpenseCategoryChoice('Food & Groceries'); } if ($('e_recurring')) $('e_recurring').value = '0';
             if ($('e_month')) $('e_month').value = today().substring(0, 7);
             if ($('mdExpenseTitle')) $('mdExpenseTitle').textContent = 'Add Monthly Expense';
             setTimeout(initAllAC, 100);
@@ -22390,7 +22404,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         function editExpense(id) {
             const x = DB.get('expenses').find(e => e.id === id); if (!x) return;
             editMode = id; if ($('mdExpenseTitle')) $('mdExpenseTitle').textContent = 'Edit Expense';
-            $('e_desc').value = x.desc; $('e_cat').value = x.cat;
+            $('e_desc').value = x.desc; setExpenseCategoryChoice(x.cat);
             $('e_amount').value = fmtN(x.amount); $('e_month').value = x.month;
             $('e_recurring').value = x.recurringType || (x.recurring ? '1' : '0'); $('e_notes').value = x.notes || '';
             openModal('mdExpense'); setTimeout(initAllAC, 100);
@@ -35675,8 +35689,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     } else if (dest === 'expenses') {
                         if (_dupIn(expArr, date, amount, desc, 'amount', _source)) { dup++; return; }
                         const _mt = t || {};
-                        const cat = (_mt._cat && _mt._cat !== 'Other') ? _mt._cat : ((window.WFRoute ? window.WFRoute.expenseCategory(desc) : 'Other') || 'Other');
+                        let cat = (_mt._cat && _mt._cat !== 'Other') ? _mt._cat : ((window.WFRoute ? window.WFRoute.expenseCategory(desc) : 'Other') || 'Other');
                         try { if (window.WFMerchants) window.WFMerchants.learn(desc, 'expenses', cat); } catch (_) {}
+                        // filed under the name the Category dropdown has (Groceries → Food & Groceries), so an edit keeps it and the dashboard has one slice
+                        try { if (window.WFStatementRouter && window.WFStatementRouter.expenseEntryName) cat = window.WFStatementRouter.expenseEntryName(cat); } catch (_) {}
                         const _rec = { id: uid(), desc, cat, ..._source, amount, month, date, recurring: false, recurringType: '0', notes: _noteFor(date, desc, amount), completed: past, source: 'statement', createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'expenses', _rec.id); }
                         expArr.push(_rec);

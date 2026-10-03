@@ -3,7 +3,7 @@ import { isPhantomRow } from './statement-emptiness.mjs';
 import { applyCardSettlement } from './cc-fifo.mjs';
 import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
-import { isCreditCardRow } from './wealthflow-statement-router.js';
+import { isCreditCardRow, expenseEntryName } from './wealthflow-statement-router.js';
 import { canonicalBank } from './wealthflow-institutions.js';
 import { bankKeyOf } from './statement-coverage.mjs';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
@@ -133,7 +133,7 @@ function makeRecord(row, decision, context, id, now) {
     const module = modules[decision.module];
     /* A merchant the rules could not place is filed WITH its question. The money is counted in the month it left (nothing is held back or dropped); only the label waits, and
      * the app's Merchant review shows the owner the line, the candidates and how many rows one answer will settle. */
-    if (module === 'expenses') { const ask = decision.category === 'Other' ? inquiryFor(desc) : null; return { ...base, desc, cat: decision.category, month: row.date.slice(0, 7), recurring: false, recurringType: '0', completed: true, ...(ask ? { merchantReview: ask } : {}) }; }
+    if (module === 'expenses') { const ask = decision.category === 'Other' ? inquiryFor(desc) : null; return { ...base, desc, cat: expenseEntryName(decision.category), month: row.date.slice(0, 7), recurring: false, recurringType: '0', completed: true, ...(ask ? { merchantReview: ask } : {}) }; }
     if (module === 'incomeRecv') return { ...base, name: desc, type: decision.category, month: row.date.slice(0, 7), received: true };
     if (module === 'ccPayments') return { ...base, desc };
     const deadline = new Date(row.date + 'T00:00:00Z'); deadline.setUTCDate(deadline.getUTCDate() + 50);

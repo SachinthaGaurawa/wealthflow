@@ -26,7 +26,7 @@ import { VIA, identityOf, lookup, releaseStatement, registryDuplicatePatch } fro
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
-import { PROPOSAL, REVIEW, decisionProblem, agreedRows, approvedRows, reviewPrompt } from './statement-board.mjs';
+import { PROPOSAL, REVIEW, decisionProblem, agreedRows, approvedRows, reviewPrompt, inVocabulary } from './statement-board.mjs';
 import { healLoanLinks } from './loan-link.mjs';
 import { manualTwin, markTwin } from './statement-links.mjs';
 import { statementCopies } from './statement-copies.mjs';
@@ -257,7 +257,7 @@ export async function classifySlice(rows, allocations, { board = invokeBoard, se
 }
 
 async function askBoard(rows, rules, allocations, board) {
-    const evidence = rows.map((row, index) => { const used = allocations.history && allocations.history.hint(row); return { index, date: row.date, amount: row.amount, description: row.narration || row.description, merchant: merchantNameFor(row), direction: row.direction, directionSource: row.directionSource, needsReview: row.needsReview, ...(used ? { categoryUsedBefore: used.category } : {}) }; });
+    const evidence = rows.map((row, index) => { const used = allocations.history && allocations.history.hint(row); return { index, date: row.date, amount: row.amount, description: row.narration || row.description, merchant: merchantNameFor(row), direction: row.direction, directionSource: row.directionSource, needsReview: row.needsReview, ...(used && inVocabulary(used.category) ? { categoryUsedBefore: used.category } : {}) }; });
     
     // Strict Tab Routing context enforcement injected directly into prompt
     const accountTypeStrict = validateLuhnChecksum(allocations.card_last4) ? "CREDIT_CARD_ACCOUNT" : "BANK_OR_DEBIT_ACCOUNT";

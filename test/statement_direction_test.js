@@ -103,7 +103,7 @@ describe('the rows already waiting are settled the same way', () => {
         const w = world(assumed(), 'unproven-direction');
         expect((await recoverConsensusFailures({ db: w.db, uid: 'u' })).recovered).toBe(1);
         expect(w.data.get('users/u').expenses).toHaveLength(1);
-        expect(w.data.get('users/u').expenses[0]).toMatchObject({ amount: 25, cat: 'Bank Charges' });
+        expect(w.data.get('users/u').expenses[0]).toMatchObject({ amount: 25, cat: 'Banking' });   // a bank charge, filed under the dropdown's word for it
         expect(w.data.get(`users/u/statementReview/${w.id}`).status).not.toBe('pending');
         const quiet = world(assumed({ narration: 'John Silva', description: 'John Silva' }), 'unproven-direction');
         expect((await recoverConsensusFailures({ db: quiet.db, uid: 'u' })).recovered).toBe(0);
@@ -136,7 +136,7 @@ describe('a statement whose rows the page left unmarked is filed whole, without 
         expect(out.status).toBe('filed');
         expect(w.data.get(itemPath)).toMatchObject({ status: 'filed', filed: true });
         expect(w.data.get('users/u').expenses).toHaveLength(3);
-        expect(w.data.get('users/u').expenses.find(e => e.amount === 25)).toMatchObject({ cat: 'Bank Charges', directionProof: 'statement' });
+        expect(w.data.get('users/u').expenses.find(e => e.amount === 25)).toMatchObject({ cat: 'Banking', directionProof: 'statement' });
         expect([...w.data.keys()].filter(key => key.includes('/statementReview/'))).toEqual([]);
     });
     it('with no balances to prove it, the charge and the POS purchase are proven by their words and filed; the row that says nothing is the one that waits', async () => {
