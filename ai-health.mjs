@@ -40,7 +40,7 @@ export const CANARY_ROWS = Object.freeze([
     { description: 'SALARY ACME HOLDINGS PVT LTD', merchant: 'ACME HOLDINGS', amount: 185000, direction: 'credit', module: 'incomeRecv', category: 'Salary' },
     { description: 'AIA INSURANCE PREMIUM', merchant: 'AIA INSURANCE', amount: 6200, direction: 'debit', module: 'expenses', category: 'Insurance' },
     { description: 'ODEL FASHION STORE COLOMBO', merchant: 'ODEL', amount: 7990, direction: 'debit', module: 'expenses', category: 'Shopping' },
-    { description: 'SARASAVI BOOKSHOP NUGEGODA', merchant: 'SARASAVI', amount: 2100, direction: 'debit', module: 'expenses', category: 'Education' },
+    { description: 'UNIVERSITY OF COLOMBO TUITION FEE', merchant: 'UNIVERSITY OF COLOMBO', amount: 45000, direction: 'debit', module: 'expenses', category: 'Education' },   // not a bookshop: a bookshop is Shopping to a careful reader (Ollama and NVIDIA said so on 2026-10-03) and a canary row must have one right answer
     { description: 'PIZZA HUT KOLLUPITIYA', merchant: 'PIZZA HUT', amount: 3890, direction: 'debit', module: 'expenses', category: 'Dining' },
 ]);
 
