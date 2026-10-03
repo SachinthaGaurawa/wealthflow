@@ -27,7 +27,7 @@
 // =============================================================================
 
 import { describe, it, expect } from 'vitest';
-import { runReviewer, tally, REVIEWERS } from '../consensus-review.mjs';
+import { runReviewer, tally, REVIEWERS, parseVote } from '../consensus-review.mjs';
 
 const ROLE = REVIEWERS[0];
 const PASS = JSON.stringify({ verdict: 'pass', reason: 'looks fine', evidence: '', concerns: [] });
@@ -162,6 +162,30 @@ describe('review board: verdict handling is unchanged by the parallel rewrite', 
         expect(chatImpl.calls).toHaveLength(3);
         expect(vote.vote).toBe('unavailable');
         expect(vote.reason).toMatch(/no parseable verdict/);
+    });
+
+    it('a PASS has to be stated: prose that merely contains the word never counts as an approval', () => {
+        for (const reply of [
+            'This should not pass review: it removes the auth check',
+            'I would not say PASS here',
+            'Does this pass? It does not.',
+            'PASS the lint, but the change opens an injection hole',
+            'PASS: looks fine, although the new route is unauthenticated',
+            'The change passes tests however it logs the API key',
+        ]) expect(parseVote(reply), reply).toBe('unclear');
+        for (const reply of ['PASS', 'pass', ' Pass. ', '"PASS"', '**PASS**', '```\nPASS\n```', 'Verdict: PASS', 'final verdict - PASS!']) expect(parseVote(reply), reply).toBe('pass');
+        // the safe direction needs no proof, and a reply that says both is not an approval
+        for (const reply of ['FAIL', 'FAIL: removes a null check', 'This is a FAIL because it drops the owner check']) expect(parseVote(reply), reply).toBe('fail');
+        expect(parseVote('PASS ... actually FAIL')).toBe('unclear');
+        expect(parseVote('')).toBe('unclear'); expect(parseVote(null)).toBe('unclear');
+    });
+
+    it('a negated PASS in prose is re-asked and then a non-vote: it can never merge a pull request on its own', async () => {
+        const chatImpl = stubChat('This should not pass review: it removes the auth check');
+        const vote = await runReviewer({ role: ROLE, primary: 'deepseek', fallbacks: [] }, 'diff', false, chatImpl);
+        expect(chatImpl.calls).toHaveLength(3);
+        expect(vote.vote).toBe('unavailable');
+        expect(tally([vote]).merge).toBe(false);                                                                        // zero reviewers ran: fails closed
     });
 
     it('a real FAIL blocks, and carries its reason and evidence through', async () => {
