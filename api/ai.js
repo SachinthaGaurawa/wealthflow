@@ -182,7 +182,9 @@ export default async function handler(req, res) {
     const fireworksKey  = process.env.FIREWORKS_API_KEY;
     const openrouterKey = process.env.OPENROUTER_API_KEY;
     const nvidiaKey     = process.env.NVIDIA_API_KEY;
-    const githubKey     = process.env.GITHUB_MODELS_TOKEN;
+    // GitHub Models is paid for by the token's own "Models: read" permission. The owner's fine-grained GH_PAT (the one Vercel already holds
+    // for feedback issues) has it since 2026-10-03; GITHUB_MODELS_TOKEN does not, and answered 200 "OK" to every canary, so GH_PAT goes first.
+    const githubKey     = process.env.GH_PAT || process.env.GITHUB_MODELS_TOKEN;
     const cohereKey     = process.env.COHERE_API_KEY;
     const cloudflareToken = process.env.CLOUDFLARE_AI_API_TOKEN || process.env.CLOUDFLARE_API_TOKEN;
     const cloudflareAccount = process.env.CLOUDFLARE_ACCOUNT_ID;

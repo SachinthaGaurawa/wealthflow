@@ -136,6 +136,29 @@ describe('parallel unanimous endpoint', () => {
         expect(res.body.corroboration).toMatchObject({ agreed: 10, of: 11 });
     });
 
+    describe('which token GitHub Models is asked with', () => {
+        const authFor = async (env) => {
+            for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+            const seen = [];
+            vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+                if (String(url).includes('models.github.ai')) seen.push(init.headers.Authorization);
+                return { ok: true, json: async () => String(url).includes('googleapis')
+                    ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
+                    : { choices: [{ message: { content: '{"approved":true}' } }] } };
+            }));
+            await handler(request, response());
+            return seen;
+        };
+        it('the owner\'s GH_PAT (which has the Models permission) goes before the older GITHUB_MODELS_TOKEN (which does not)', async () => {
+            expect(await authFor({ GEMINI_API_KEY: 't', GH_PAT: 'pat-with-models', GITHUB_MODELS_TOKEN: 'old-models-token' })).toEqual(['Bearer pat-with-models']);
+        });
+        it('GITHUB_MODELS_TOKEN still works alone, and with neither set GitHub Models is simply not asked', async () => {
+            expect(await authFor({ GEMINI_API_KEY: 't', GITHUB_MODELS_TOKEN: 'old-models-token' })).toEqual(['Bearer old-models-token']);
+            vi.unstubAllEnvs(); vi.unstubAllGlobals(); resetProviderCooldowns();
+            expect(await authFor({ GEMINI_API_KEY: 't' })).toEqual([]);
+        });
+    });
+
     describe('advice is not a financial decision', () => {
         // The chat engine's system prompt describes a chart format "with JSON" and names categories.
         const chatPrompt = 'You are WealthFlow AI. Charts: fenced ```chart blocks with JSON {"type":"bar"}. Spending category totals follow.\n\n--- CONVERSATION ---\nUser: how is my month?\n\n[REPLY NOW — in English only, as their warm caring best friend.]\nAI:';
