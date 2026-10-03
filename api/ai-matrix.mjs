@@ -537,6 +537,67 @@ export function boardReading(entries, minimumProviders = 5) {
     return { answers, topKey, topCount, clear, mangled, dissent };
 }
 
+/**
+ * ROW BY ROW: WHICH ITEMS OF A BATCH EVERY VOTER SAYS THE SAME ABOUT.
+ *
+ * The statement reader asks about up to ten rows at once and the board used to need ALL of its answer to be identical: one provider
+ * judging one row differently vetoed the other nine, and a veto sends every row back to the rules' own answer. The production log of
+ * 2026-10-03 shows it: five of sixteen boards in a day refused (422) with six or seven providers answering and splitting 5/1, 4/1/1, 3/2/1.
+ * The unit of a financial decision is a ROW, not a batch, so the unit of unanimity is a row too.
+ *
+ * What does not change, and is the whole safety argument:
+ *   · a row is agreed only when at least `minimumProviders` valid voters answered it and EVERY valid voter's item for it is identical
+ *     (the same typed value, key order aside) — exactly the rule the whole answer was held to, applied to the part of the answer that
+ *     is about that row;
+ *   · a voter that leaves a row out is a dissent for that row, never silence that lets the others through;
+ *   · an answer that is not a list of items at all (a refusal in a shape of its own, `{"approved":false}`, a verdict) is a dissent for the
+ *     whole batch, as before; only a MANGLED answer (its key torn by the model) is set aside, as before;
+ *   · nothing is "decided by majority": a disputed row is simply not released.
+ *
+ * `entries` are `[{ name, value }]`, each value a board answer (boardAnswer). Pure.
+ *
+ * @param {{name:string, value:object}[]} entries
+ * @param {{path:string, id?:string, minimumProviders?:number}} spec   `path` is the answer's key holding the list; `id` the key of each item naming its row
+ * @returns {{ agreed:{id:(number|string), value:object}[], disputed:(number|string)[], voters:string[], misshaped:string[], mangled:string[], vetoed:boolean, reason:(string|null) }}
+ */
+export function itemwiseReading(entries, { path, id = 'index', minimumProviders = 5 } = {}) {
+    const none = (reason, extra = {}) => ({ agreed: [], disputed: [], voters: [], misshaped: [], mangled: [], vetoed: false, reason, ...extra });
+    if (typeof path !== 'string' || !path || typeof id !== 'string' || !id) return none('bad_spec');
+    const idOf = (item) => (item && typeof item === 'object' && !Array.isArray(item) && (Number.isSafeInteger(item[id]) || (typeof item[id] === 'string' && item[id].length > 0 && item[id].length <= 80)) ? item[id] : undefined);
+    const voters = [], misshaped = [], mangled = [], table = new Map();   // name → Map(id → canonical item)
+    const items = new Map();                                                 // id → one parsed item
+    for (const e of Array.isArray(entries) ? entries : []) {
+        const value = e && e.value;
+        if (!value || typeof value !== 'object' || Array.isArray(value)) { misshaped.push(e && e.name); continue; }
+        const keys = Object.keys(value);
+        // the key torn into something longer ("decisions [{"): garbage, not a judgement — set aside like the whole-answer rule does
+        if (!(path in value) && keys.length && keys.some(x => torn(x, path))) { mangled.push(e.name); continue; }
+        const list = value[path];
+        const shaped = keys.length === 1 && keys[0] === path && Array.isArray(list) && list.length > 0 && list.length <= 500;
+        const mine = new Map();
+        let ok = shaped;
+        if (shaped) for (const item of list) {
+            const key = idOf(item);
+            if (key === undefined || mine.has(key)) { ok = false; break; }
+            mine.set(key, canonical(item));
+            if (!items.has(key)) items.set(key, item);
+        }
+        if (!ok) { misshaped.push(e.name); continue; }
+        voters.push(e.name); table.set(e.name, mine);
+    }
+    // an answer that is no list of rows is a dissent against the whole batch (the rule for a refusal in a shape of its own)
+    if (misshaped.length) return none('misshaped_answer', { voters, misshaped, mangled, vetoed: true });
+    if (voters.length < minimumProviders) return none('too_few_voters', { voters, mangled });
+    const agreed = [], disputed = [];
+    const ids = [...items.keys()].sort((a, b) => (typeof a === typeof b ? (a < b ? -1 : a > b ? 1 : 0) : (typeof a === 'number' ? -1 : 1)));
+    for (const key of ids) {
+        const seen = voters.map(name => table.get(name).get(key));
+        if (seen.every(v => v !== undefined && v === seen[0])) agreed.push({ id: key, value: items.get(key) });
+        else disputed.push(key);
+    }
+    return { agreed, disputed, voters, misshaped, mangled, vetoed: false, reason: null };
+}
+
 export function unanimousDecision(results, opts = {}) {
     const all = Array.isArray(results) ? results : [];
     const expected = Array.isArray(opts.expected) ? opts.expected : [];
@@ -573,6 +634,16 @@ export function unanimousDecision(results, opts = {}) {
     const quorumReady = values.length >= minimumProviders;
     const complete = allowUnavailable ? quorumReady : (!failed.length && !invalid.length && values.length === roster.length);
     const unanimous = Boolean(rosterValid && !unexpected && complete && agrees);
+    /* The answer is also read ROW BY ROW when the caller says which key holds the rows (itemwiseReading): the batch's unanimity is unchanged,
+     * `unanimous` still means the whole answer agreed, and `items` says which rows every voter agreed on even when the whole did not. Only
+     * with a valid roster and a quorum of valid voters; nothing here ever turns a refusal into a release. */
+    const spec = opts.itemwise && typeof opts.itemwise === 'object' ? opts.itemwise : null;
+    let items;
+    if (spec && rosterValid && !unexpected && values.length >= minimumProviders) {
+        items = itemwiseReading(values.map(v => ({ name: v.result.name, value: v.value })), { path: spec.path, id: spec.id, minimumProviders });
+        // a whole answer that agreed needs no reading by row: whatever shape it has, it is the answer (`fields`)
+        if (unanimous && items.vetoed) items = { ...items, vetoed: false, reason: 'not_a_list' };
+    }
     return {
         reply: unanimous ? JSON.stringify(values[0].value) : null,
         provider: unanimous ? 'parallel-unanimous-board' : null,
@@ -582,11 +653,12 @@ export function unanimousDecision(results, opts = {}) {
         fields: unanimous ? values[0].value : null,
         corroboration: { agreed: unanimous ? values.length : 0, of: roster.length, score: unanimous ? values.length / roster.length : 0,
             dissent: agrees ? [] : values.map(v => ({ name: v.result.name })), nearMisses: [], numericConflict: !agrees },
+        ...(items ? { items } : {}),
     };
 }
 
 export default {
     TASK, SPECIALISTS, DEFAULT_QUORUM, SAME_CLAIM, orderFor, normaliseReply, tokensOf, similarity,
     numbersOf, numbersAgree, ordinalsOf, monthsOf, contradicts, sameClaim, isNearMiss,
-    parseJson, fieldVote, decide, trustworthy, unanimousDecision,
+    parseJson, fieldVote, decide, trustworthy, unanimousDecision, itemwiseReading,
 };

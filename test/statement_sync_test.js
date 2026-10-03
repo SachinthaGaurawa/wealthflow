@@ -12,6 +12,7 @@ const roster = Array.from({ length: 10 }, (_, index) => 'engine' + index);
 const row = { date: '2026-09-10', narration: 'Merchant', amount: 42, direction: 'debit', directionSource: 'column', needsReview: false };
 const decision = { index: 0, module: 'expenses', category: 'Groceries', allocationId: '' };
 const good = fields => ({ unanimous: true, trustworthy: true, expected: roster, fields });
+const verdicts = (approved, n = 1) => good({ reviews: Array.from({ length: n }, (_, index) => ({ index, approved })) });
 
 describe('statement worker authorization and board', () => {
     it('has an independent daily catch-up schedule routed to the worker', () => {
@@ -35,18 +36,21 @@ describe('statement worker authorization and board', () => {
         await expect(invoke({ ...good({}), unanimous: false })).rejects.toThrow('ai-consensus-unavailable');
     });
     it('runs independent classification then independent unanimous peer approval without editing amounts', async () => {
-        const board = vi.fn().mockResolvedValueOnce(good({ decisions: [decision] })).mockResolvedValueOnce(good({ approved: true }));
+        const board = vi.fn().mockResolvedValueOnce(good({ decisions: [decision] })).mockResolvedValueOnce(verdicts(true));
         expect(await classifySlice([row], {}, { board })).toEqual([{ module: 'expenses', category: 'Groceries', allocationId: '', verified: true }]);
         expect(board).toHaveBeenCalledTimes(2);
         expect(row.amount).toBe(42);
         expect(JSON.stringify(board.mock.calls[0][0])).toContain('MERCHANT');
     });
-    it('a veto, a changed roster or a malformed index mapping discards what the board proposed: the row keeps the rules\' own answer, marked (it is no longer put to the owner)', async () => {
-        for (const peer of [good({ approved: false }), { ...good({ approved: true }), expected: [...roster, 'new-engine'] }]) {
+    it('a veto, a review that does not name the row or a malformed index mapping discards what the board proposed: the row keeps the rules\' own answer, marked (it is no longer put to the owner)', async () => {
+        for (const peer of [verdicts(false), good({ reviews: [{ index: 5, approved: true }] }), good({ approved: true }), good({ reviews: [{ index: 0, approved: true, why: 'x' }] })]) {
             const board = vi.fn().mockResolvedValueOnce(good({ decisions: [decision] })).mockResolvedValueOnce(peer);
             const [out] = await classifySlice([row], {}, { board });
             expect(out).toMatchObject({ verified: true, module: 'expenses', category: 'Other', autoDecided: 'rules' });      // never the board's rejected "Groceries"
         }
+        // the peer review is a verdict per row, and the engines that answered it need not be the engines that proposed (a provider resting between the two calls is not a veto)
+        const changed = vi.fn().mockResolvedValueOnce(good({ decisions: [decision] })).mockResolvedValueOnce({ ...verdicts(true), expected: [...roster.slice(1), 'new-engine'] });
+        expect((await classifySlice([row], {}, { board: changed }))[0]).toMatchObject({ verified: true, module: 'expenses', category: 'Groceries' });
         const [malformed] = await classifySlice([row], {}, { board: async () => good({ decisions: [{ ...decision, index: 1 }] }) });
         expect(malformed).toMatchObject({ verified: true, category: 'Other', autoDecided: 'rules' });
         // a row the rules themselves doubt (an assumed direction) is the one thing still left unverified
@@ -94,14 +98,14 @@ describe('statement worker authorization and board', () => {
     });
     it('overrules a unanimous but direction-conflicting or generic AI classification', async () => {
         const bad = { index: 0, module: 'incomeRecv', category: 'Other', allocationId: '' };
-        const board = vi.fn().mockResolvedValueOnce(good({ decisions: [bad] })).mockResolvedValueOnce(good({ approved: true }));
+        const board = vi.fn().mockResolvedValueOnce(good({ decisions: [bad] })).mockResolvedValueOnce(verdicts(true));
         expect(await classifySlice([{ ...row, narration: 'POS TRANSACTION KEELLS SUPER' }], { statementType: 'bank_account' }, { board }))
             .toEqual([{ module: 'expenses', category: 'Groceries', allocationId: '', verified: true, deterministic: true }]);
     });
     it('never lets a unanimous board turn the owner\'s own transfer into income or spending, and does not ask it about a transfer the rules settle', async () => {
         for (const [direction, module] of [['credit', 'incomeRecv'], ['debit', 'expenses']]) {
             const wrong = { index: 0, module, category: direction === 'credit' ? 'Income' : 'Other', allocationId: '' };
-            const board = vi.fn().mockResolvedValueOnce(good({ decisions: [wrong] })).mockResolvedValueOnce(good({ approved: true }));
+            const board = vi.fn().mockResolvedValueOnce(good({ decisions: [wrong] })).mockResolvedValueOnce(verdicts(true));
             expect(await classifySlice([{ ...row, direction, narration: direction === 'credit' ? 'TRANSFER CREDIT-MOBILEBANKING MY DFCC' : 'TRANSFER TO MY OWN ACCOUNT' }], { statementType: 'bank_account' }, { board }))
                 .toEqual([{ module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true, ownTransfer: 'own-account-words' }]);
             expect(board).not.toHaveBeenCalled();
