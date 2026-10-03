@@ -56,7 +56,7 @@ when a provider rate-limits, so more is better but one is enough:
 
 | Secret | Why |
 |---|---|
-| `GH_PAT` | A fine-grained PAT with **Issues: read & write** on this repo. Vercel functions need it to file feedback issues and report completions. `GITHUB_TOKEN` covers this inside Actions, but Vercel has no such token. |
+| `GH_PAT` | A fine-grained PAT with **Issues: read & write** on this repo. Vercel functions need it to file feedback issues and report completions. `GITHUB_TOKEN` covers this inside Actions, but Vercel has no such token. Give the same token **Models: read** and the AI board's GitHub Models member uses it too (`api/ai.js` reads `GH_PAT` before `GITHUB_MODELS_TOKEN`). |
 
 Then in **Vercel → Project → Settings → Environment Variables**, add `GH_PAT`
 and `GITHUB_REPO=SachinthaGaurawa/wealthflow`.
