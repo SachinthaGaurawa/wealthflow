@@ -26,16 +26,17 @@ const HASH = /^[a-f\d]{64}$/;
 
 /**
  * The statement ALREADY FILED whose bytes are exactly these, if any: { id, data } — never the item asking, never one that is
- * itself only a duplicate (a duplicate of a duplicate points at the original), never one that is not filed.
+ * itself only a duplicate (a duplicate of a duplicate points at the original), never one that is not filed. `accept(doc)`, when given, is asked
+ * about each candidate in turn (the manual upload door asks whether the twin's records are still in the books).
  */
-export async function findFiledTwin({ mailRef, sha, selfId }) {
+export async function findFiledTwin({ mailRef, sha, selfId, accept = null }) {
     if (!HASH.test(String(sha || ''))) return null;
     let page;
     try { page = await mailRef.collection('items').where('contentSha256', '==', sha).limit(8).get(); }
     catch (_) { return null; }                                                    // advice: a failed lookup only means the statement is read as before
     for (const doc of page.docs) {
         const data = doc.data() || {};
-        if (doc.id !== selfId && data.filed === true && !data.duplicateOf && data.emptyStatement !== true) return { id: doc.id, data };
+        if (doc.id !== selfId && data.filed === true && !data.duplicateOf && data.emptyStatement !== true && (!accept || await accept(doc))) return { id: doc.id, data };
     }
     return null;
 }

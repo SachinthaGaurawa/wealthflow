@@ -22,7 +22,7 @@ import { readTable, reconcile as reconcileMailStates, applyReconcile, summarize 
 import { claimOrder, CLAIM_WINDOW, failurePatch, redriveDeadLetters, aiBreaker, DEAD_LETTER } from './statement-queue.mjs';
 import { tieredAsk } from './statement-llm-router.mjs';
 import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
-import { VIA, identityOf, claimStatement, peekStatement, releaseStatement, registryDuplicatePatch } from './statement-registry.mjs';
+import { VIA, identityOf, lookup, releaseStatement, registryDuplicatePatch } from './statement-registry.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
@@ -1678,9 +1678,10 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
          * the original — and is never read, classified or filed a second time. A statement part-way through is not touched. */
         if (attachment.contentSha256 && claimed.contentSha256 !== attachment.contentSha256) { try { await sourceRef.set({ contentSha256: attachment.contentSha256 }, { merge: true }); } catch (_) { /* recorded at the next look */ } }
         /* THE OWNER ALREADY UPLOADED THIS FILE BY HAND. The statement registry (statement-registry.mjs) is asked, by the file's hash, before it is read:
-         * a statement the other door took is closed here as a copy of it and nothing is filed. A failed lookup costs only the shortcut. */
+         * a statement the other door took is closed here as a copy of it and nothing is filed. A failed lookup costs only the shortcut. A hold with
+         * nothing behind it (the upload's records were deleted) is given back by the lookup itself and is no reason to skip a statement. */
         if (attachment.contentSha256 && !(Number(claimed.cursor) > 0)) {
-            const held = await peekStatement({ db, uid, sha: attachment.contentSha256, ref: sourceRef.path }).catch(() => null);
+            const held = await lookup({ db, uid, via: VIA.EMAIL, sha: attachment.contentSha256, ref: sourceRef.path }).catch(() => null);
             if (held?.duplicate) { await closeAsRegistryDuplicate(db, uid, sourceRef, claimed.leaseToken, held); return { status: 'filed', filed: 0, duplicate: 1, blockedBy: held.existing.via }; }
         }
         if (attachment.contentSha256 && !(Number(claimed.cursor) > 0)) {
@@ -1975,8 +1976,8 @@ async function claimInRegistry({ db, uid, sourceRef, claimed, parsed, sha }) {
         const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
         const single = !(Array.isArray(parsed?.adaptive?.keys) && parsed.adaptive.keys.length > 1);
         const identity = single ? identityOf({ bank: claimed.bank || '', account: parsed?.layout?.accountLast4 || '', dates: rows.map(row => row?.date) }) : null;
-        const result = await claimStatement({ db, uid, via: VIA.EMAIL, ref: sourceRef.path, identity, sha, meta: { filename: claimed.filename, size: claimed.size, rows: rows.length } });
-        return result.ok ? null : result;
+        const result = await lookup({ db, uid, claim: true, via: VIA.EMAIL, ref: sourceRef.path, identity, sha, rows: rows.length, meta: { filename: claimed.filename, size: claimed.size, rows: rows.length, door: 'worker' } });
+        return result.duplicate ? result : null;
     } catch (_) { return null; }
 }
 async function closeAsRegistryDuplicate(db, uid, sourceRef, leaseToken, held) {

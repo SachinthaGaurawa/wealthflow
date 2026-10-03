@@ -559,7 +559,7 @@ export function accountTailOf(text){
     const m=/(?:a\/c|acct|account|card)\s*(?:no|number|num|#)?\.?\s*[:.\-]?\s*([\dxX*•\- ]{6,40}\d{4})(?!\d)/i.exec(t)||/\d{6}[xX*•]+(\d{4})(?!\d)/.exec(t);
     return m?String(m[m.length-1]).replace(/\D+/g,'').slice(-4):'';
 }
-const noticeOf=r=>r&&r.duplicate===true?{duplicate:true,via:r.via||'',notice:r.notice||'Already Added'}:null;
+const noticeOf=r=>r&&r.duplicate===true?{duplicate:true,via:r.via||'',notice:(r.notice||'Already Added')+(r.detail?' ('+String(r.detail).slice(0,160)+')':'')}:null;      // `detail` says what is in the books, so a wrong match can be seen at once
 /** Before anything is read: is this exact file already in the books? -> {duplicate, via, notice, sha} or {sha}. */
 export async function guardFile(file){
     const sha=await fileSha256(file);
@@ -570,7 +570,7 @@ export async function guardFile(file){
 /** After the statement is read: is this bank + account + month already in the books? Returns {duplicate,...,info} or {info}; `info` goes to guardClaim at save. */
 export async function guardParsed({sha='',bank='',last4='',periodText='',dates=[],filename='',size=0,rows=0}){
     const info={sha,bank:String(bank||''),last4:String(last4||''),periodText:String(periodText||''),dates:(dates||[]).slice(0,2000),filename:String(filename||'').slice(0,200),size:Number(size)||0,rows:Number(rows)||0,token:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g,'').slice(0,64).padEnd(8,'0')};
-    const r=noticeOf(await guardCall({action:'check',sha256:sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates}));
+    const r=noticeOf(await guardCall({action:'check',sha256:sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,rows:info.rows}));
     return r?{...r,info}:{info};
 }
 /** At save: take the statement. -> {duplicate, via, notice} when another door got there first, else null (go ahead). */
