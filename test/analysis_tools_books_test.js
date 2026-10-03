@@ -351,6 +351,18 @@ describe('the profile is remembered until the books change', () => {
         c.DB.set('loans', [loan({ payments: [paid('2026-09', 250000)] })]);
         expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(253000);
     });
+    it('a change that touches no amount or date (a subscription\'s cycle, a plan\'s length) still gives a new profile', () => {
+        const sub = { id: 'S1', name: 'Netflix', amount: 12000, cycle: 'monthly', category: 'Entertainment', createdAt: '2026-01-05T00:00:00Z' };
+        const c = household({ incomeRecv: [salary('2026-09')], expenses: [spend('2026-09', 1000)], subscriptions: [sub] });
+        expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(1000 + 12000);
+        c.DB.set('subscriptions', [{ ...sub, cycle: 'yearly' }]);          // yearly: only the anniversary month (January) counts
+        expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(1000);
+        const plan = { id: 'C1', product: 'Laptop', bank: 'Sampath', total: 240000, rate: 0, duration: 12, monthly: 20000, date: '2026-01-05', completed: false };
+        c.DB.set('ccinstall', [plan]);
+        expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(21000);
+        c.DB.set('ccinstall', [{ ...plan, duration: 6 }]);                 // a 6-month plan from January has ended by September
+        expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(1000);
+    });
     it('the position follows the same rule (a balance typed, a card charge paid)', () => {
         const c = household({ balance: { total: 100, flows: [] }, cconetime: [{ id: 'K', desc: 'KEELLS', amount: 900, combinedTotal: 900, date: '2026-09-04', paid: false }] });
         expect(c._wfPosition(new Date())).toMatchObject({ cash: 100, cardOwed: 900 });

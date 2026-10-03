@@ -27930,7 +27930,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 text += '|' + store + list.length;
                 for (const r of list) {
                     if (!r) continue;
-                    text += ',' + (r.id || '') + (r.date || r.start || r.issue || '') + (r.month || '') + (r.amount != null ? r.amount : '') + (r.monthly != null ? r.monthly : '') + (r.received === false ? 'n' : '') + (r.paid ? 'p' : '') + (r.completed ? 'c' : '') + (r.status || '') + (r.cat || r.type || '') + (r.recurring ? 'r' : '') + (r.loanLink || r.subscriptionLink ? 'l' : '') + (r._ut || '');
+                    text += ',' + (r.id || '') + (r.date || r.start || r.issue || '') + (r.month || '') + (r.amount != null ? r.amount : '') + (r.monthly != null ? r.monthly : '') + (r.received === false ? 'n' : '') + (r.paid ? 'p' : '') + (r.completed ? 'c' : '') + (r.status || '') + (r.cat || r.type || '') + (r.recurring ? 'r' : '') + (r.loanLink || r.subscriptionLink ? 'l' : '') + (r._ut || '') + (r.duration || '') + (r.cycle || '') + (r.rate || '') + (r.total || '') + (r.end || '') + (r.release || '') + (r.paymentMethod || '') + (r.createdAt || '');
                     if (r.payments) for (const x of r.payments) text += ';' + (x && x.month || '') + (x && x.paid ? 'p' : '') + (x && x.amount != null ? x.amount : '');
                     if (r.skipped) text += 's' + r.skipped.length;
                     if (r.savings) text += 'v' + r.savings.length;
