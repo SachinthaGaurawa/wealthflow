@@ -72,6 +72,16 @@ describe('a dissent that repeats keeps its veto — the safety rule is not weake
         expect(log.differing.groups[0].length).toBeGreaterThanOrEqual(5); expect(log.differing.groups[1]).toEqual(['DeepSeek']);
         expect(log.differing.sample[0]).toContain('Transport');
     });
+    it('two long lists that differ only late are two groups in the log, not one (the log used to cut every answer at 60 characters)', async () => {
+        const rows = (last) => JSON.stringify({ decisions: [0, 1, 2, 3, 4, 5].map((index) => ({ index, module: 'expenses', category: index === 5 ? last : 'Groceries', allocationId: '' })) });
+        for (const key of KEYS) vi.stubEnv(key, 'test');
+        const w = world({ answer: rows('Groceries') });
+        vi.stubGlobal('fetch', vi.fn(async (url, init) => (/deepseek/.test(String(url)) && !/\/models/.test(String(url)) ? chat(rows('Transport')) : w.fetch(url, init))));
+        const { res, log } = await board();
+        expect(res.code).toBe(422); expect(res.body.reason).toBe('provider_disagreement');
+        expect(log.differing.groups).toHaveLength(2);
+        expect(log.differing.groups[1]).toEqual(['DeepSeek']);
+    });
     it('a refusal in a shape of its own, every time: refused', async () => {
         scripted('DeepSeek', () => '{"error":"I cannot verify this transaction"}');
         const { res } = await board();

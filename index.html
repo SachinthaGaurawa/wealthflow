@@ -10458,6 +10458,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (mode) body.mode = mode;
             if (opts.temperature != null) body.temperature = opts.temperature;
             if (opts.maxTokens != null) body.maxTokens = opts.maxTokens;
+            if (opts.itemwise && typeof opts.itemwise === 'object') body.itemwise = opts.itemwise;
             var base = (function () {
                 try {
                     var h = location.hostname || '';
@@ -10471,6 +10472,16 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     var d = await r.json();
                     if (d && d.reply && (!wantJSON || (d.trustworthy === true && d.financialDecision === true))) {
                         try { _lastAIProvider = d.provider || _lastAIProvider; } catch (_) {} return d.reply;
+                    }
+                } else if (r.status === 422 && body.itemwise) {
+                    // The board refused the WHOLE list because some row was disputed. Rows that EVERY voter agreed on (at least five of them,
+                    // on a roster of at least five) are still unanimous rows; hand back only those, marked partial. Never on an outage.
+                    var dp = await r.json().catch(function () { return null; });
+                    var it = dp && dp.items;
+                    if (dp && dp.reason === 'provider_disagreement' && Array.isArray(dp.expected) && dp.expected.length >= 5 && it && !it.vetoed &&
+                        Array.isArray(it.agreed) && it.agreed.length && Array.isArray(it.voters) && it.voters.length >= 5) {
+                        var part = { partial: true }; part[body.itemwise.path] = it.agreed.map(function (x) { return x.value; });
+                        return JSON.stringify(part);
                     }
                 }
             } catch (_) {}
@@ -34987,14 +34998,18 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 JSON.stringify(items.map((it, i) => ({ i: i, desc: it.desc, amount: it.amount })));
             try {
                 const raw = await Promise.race([
-                    callAIRaw(prompt, null, { json: true, mode: 'unanimous' }),
+                    callAIRaw(prompt, null, { json: true, mode: 'unanimous', itemwise: { path: 'decisions', id: 'i' } }),
                     new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 50000))
                 ]);
                 let t = String(raw || '').replace(/```json|```/g, '').trim();
                 let payload = null;
                 try { payload = JSON.parse(t); } catch (_) { const m = t.match(/\{[\s\S]*\}/); if (m) { try { payload = JSON.parse(m[0]); } catch (_) {} } }
                 const arr = payload && Array.isArray(payload.decisions) ? payload.decisions : null;
-                const exactOrder = arr && arr.length === items.length && arr.every((row, i) => row && Number(row.i) === i);
+                // a whole unanimous answer must cover every line in order; a PARTIAL one (callAIRaw: the rows every voter agreed on) only needs
+                // each of its rows to name a real, distinct line. A line left out simply keeps its deterministic type.
+                const exactOrder = arr && (payload.partial === true
+                    ? arr.every((row, k) => row && Number.isInteger(row.i) && row.i >= 0 && row.i < items.length && arr.findIndex(o => o && o.i === row.i) === k)
+                    : arr.length === items.length && arr.every((row, i) => row && Number(row.i) === i));
                 if (exactOrder) {
                     arr.forEach((row) => {
                         if (!row || row.i == null || !items[row.i]) return;
