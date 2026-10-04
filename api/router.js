@@ -325,6 +325,24 @@ function resolveName(req) {
     return '';
 }
 
+// A request that is still running after SLOW_MS is about to be stopped by Vercel at maxDuration
+// (60 s) — "Task timed out after 60 seconds" in the error table, with no route in it, and the raw
+// runtime logs that could say which are kept for under a day. This names the route while the
+// process is still alive. It goes out as an error so it reaches the 7-day error table (grouped by
+// its text: one group per route, with counts and last-seen), which the daily health check reads.
+// Only the endpoint's own name is written (it is a key of HANDLERS here, never user input), and
+// the timer is dropped as soon as the request ends. A handler that blocks the event loop with
+// synchronous work for the whole time cannot be caught by a timer; that case stays unnamed.
+export const SLOW_MS = 50000;
+function watchSlow(name, method) {
+    var timer = setTimeout(function () {
+        console.error('[WF-SLOW] /api/' + name + ' (' + String(method || '?').toUpperCase() + ') still running after '
+            + (SLOW_MS / 1000) + 's; Vercel stops it at 60s');
+    }, SLOW_MS);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+    return function () { clearTimeout(timer); };
+}
+
 export default async function handler(req, res) {
     setCors(res);
     if (req.method === 'OPTIONS') { res.status(204).end(); return; }
@@ -342,6 +360,7 @@ export default async function handler(req, res) {
         });
     }
 
+    var stopWatch = watchSlow(name, req.method);
     try {
         var mod;
         try {
@@ -400,5 +419,7 @@ export default async function handler(req, res) {
                 reason: 'the ' + name + ' endpoint crashed while handling the request.',
             });
         }
+    } finally {
+        stopWatch();
     }
 }
