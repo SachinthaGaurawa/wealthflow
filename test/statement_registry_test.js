@@ -325,7 +325,8 @@ describe('the email door, through the real worker', () => {
         expect(w.user().cconetime).toHaveLength(0);
     });
     it('a re-send of the same email, and a second copy from another address, are filed once', async () => {
-        const w = world([{ html: html(0) }, { html: html(0) }, { html: html(1) }]);
+        // the copy from another address is the same statement in other bytes; a statement with other transactions is another statement (statement_same_month_test.js)
+        const w = world([{ html: html(0) }, { html: html(0) }, { html: html(0).replace('<h1>', '<h1 class="forwarded">') }]);
         await w.run();
         expect([0, 1, 2].every(i => w.item(i).filed === true)).toBe(true);
         expect([0, 1, 2].filter(i => w.item(i).duplicateOf)).toHaveLength(2);
