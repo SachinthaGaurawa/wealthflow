@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createFirestore } from './helpers/fake-firestore.js';
 import { tailsIn, ownTails, ownTransferEvidence, pairedTransfers, recordTwins } from '../statement-transfers.mjs';
-import { runStatementSync, reopenSkippedTransfers, removeOwnTransferRecords, TRANSFER_REOPEN_VERSION } from '../statement-sync.js';
+import { runStatementSync, reopenSkippedTransfers, removeOwnTransferRecords, TRANSFER_REOPEN_VERSION, OWN_TRANSFER_VERSION } from '../statement-sync.js';
 import { settleStatement, sourceOccurrenceId, lostFiledRows } from '../statement-ledger.mjs';
 
 // DFCC, production 2026-10-02: every row worded as a transfer was left out of the books as "a transfer between your own accounts" — 87 rows. "Outward Ceft Transfer Car / Chagiya / Sister / Title / Heaven
@@ -240,6 +240,34 @@ describe('the owner\'s own money already filed as spending or income is taken ou
         expect(w.data.get('users/u/statementLedger/i1')).toMatchObject({ status: 'skipped', module: 'skip', reason: 'own-account', fingerprint: 'f', sourcePath: stmt });
         const user = w.data.get('users/u');
         expect(lostFiledRows({ user, entries: [{ id: 'i1', ...w.data.get('users/u/statementLedger/i1') }], now: Date.now() })).toEqual([]);
+    });
+    describe('cash drawn on the owner\'s own card (wealthflow-own-money.js), filed as income before the rule', () => {
+        const advance = (id, extra = {}) => ({ id, source: 'statement', statementKey: stmt, date: '2026-07-10', amount: 100000, direction: 'credit', bank: 'DFCC Bank', name: 'Cash advance cr 376657******0276', type: 'Other', ...extra });
+        const registry = { '0276': { type: 'credit_card', bank: 'AMEX', network: 'Amex', last4: '0276' } };
+        it('is taken out of the income with a tombstone, kept whole in statementTrash, and the ledger says why', async () => {
+            const w = world({ incomeRecv: [advance('c1'), advance('s1', { name: 'Salary Credit', amount: 150000, type: 'Salary' })], settings: { cardRegistry: registry } });
+            w.data.set('users/u/statementLedger/c1', { uid: 'u', sourcePath: stmt, index: 4, status: 'filed', module: 'incomeRecv', fingerprint: 'f' });
+            expect(await removeOwnTransferRecords({ db: w.db, mailRef: mailRef(w.db), uid: 'u' })).toEqual({ removed: 1, more: false });
+            const user = w.data.get('users/u');
+            expect(user.incomeRecv.map(r => r.id)).toEqual(['s1']);
+            expect(user._tomb.incomeRecv.c1).toBeGreaterThan(0);
+            expect(w.data.get('users/u/statementTrash/incomeRecv_c1')).toMatchObject({ store: 'incomeRecv', reason: 'own-money:card-cash-advance-in', source: stmt, record: { id: 'c1', amount: 100000, name: 'Cash advance cr 376657******0276', type: 'Other' } });
+            expect(w.data.get('users/u/statementLedger/c1')).toMatchObject({ status: 'skipped', module: 'skip', reason: 'own-account' });
+        });
+        it('leaves a refund of an advance, a record the owner typed or recategorised, and a card the owner does not hold', async () => {
+            const keep = [advance('a', { name: 'Cash advance reversal 376657******0276' }), advance('b', { source: 'manual' }), advance('c', { type: 'Loan' }), advance('d', { statementKey: '' })];
+            const w = world({ incomeRecv: keep, settings: { cardRegistry: registry } });
+            expect(await removeOwnTransferRecords({ db: w.db, mailRef: mailRef(w.db), uid: 'u' })).toEqual({ removed: 0, more: false });
+            expect(w.data.get('users/u').incomeRecv.map(r => r.id)).toEqual(['a', 'b', 'c', 'd']);
+        });
+        it('also backs up what the older own-transfer rule takes out (an outward payment to the owner\'s own card)', async () => {
+            const w = world({ expenses: [rec('r1')] });
+            await removeOwnTransferRecords({ db: w.db, mailRef: mailRef(w.db), uid: 'u' });
+            expect(w.data.get('users/u/statementTrash/expenses_r1')).toMatchObject({ reason: 'own-transfer-rule', record: { id: 'r1', amount: 150000 } });
+        });
+        it('runs again for an owner whose first pass ran under version 1', () => {
+            expect(OWN_TRANSFER_VERSION).toBe(2);
+        });
     });
     it('is bounded, says when there is more, and does not invent a ledger entry that does not exist', async () => {
         const w = world({ expenses: Array.from({ length: 5 }, (_, i) => rec('x' + i)) });

@@ -7,7 +7,7 @@
  *
  * The memory is built from the owner's expense and income records (never from a transaction's amount), keyed by the merchant name merchantNameFor() takes out of a bank narration, and
  * answers only when it is sure: at least two filings, and one category for at least four in five of them. "Other" and "Needs Review" are never learned. It never overrides a rule that
- * already named a category, a transfer, a card line or an allocation.
+ * already named a category, a transfer, a card line or an allocation — except for a statement row the owner opened and corrected themselves (below): that is their answer, and it comes first.
  *
  * "Groceries" (a statement row, filed before the names were aligned) and "Food & Groceries" (a row the owner typed) are ONE category: the memory counts them together, in the classifier's word
  * (classifierName), and the ledger files the dropdown's (expenseEntryName).
@@ -35,18 +35,32 @@ function verdict(entry, { minCount = 2, share = 0.8 } = {}) {
     return total >= minCount && bestCount / total >= share ? { category: best, count: bestCount, of: total } : null;
 }
 
+/* A RECORD THE OWNER CORRECTED. The Expenses editor rebuilds a record from its form, which drops the statement's provenance (statementKey, statementRow, bank): a record still marked source "statement"
+ * but without its statement is a statement row the owner opened and saved — their own answer to "what is this?", given about the system's. One such correction settles the merchant, even over a category
+ * the rules named ("never correct the same merchant twice"); a typed entry (source "manual") or a row nobody touched does not have that weight. */
+const isCorrection = (record) => !!record && record.source === 'statement' && !record.statementKey && !record.uploadClaim;
+
 /**
  * @param {object} user         the owner's document ({expenses, incomeRecv})
  * @param {(row:object)=>string} keyOf   the merchant key of a narration (statement-sync's merchantNameFor)
  * @returns {{expense:(row:object)=>({category:string,count:number,of:number}|null), income:(row:object)=>({category:string,count:number,of:number}|null), hint:(row:object)=>(object|null), size:number}}
  */
 export function buildHistory(user, keyOf) {
-    const expenses = new Map(), income = new Map();
-    for (const record of Array.isArray(user && user.expenses) ? user.expenses : []) if (record && record.desc) tally(expenses, keyOf({ narration: record.desc }), record.cat || record.category, classifierName);
+    const expenses = new Map(), income = new Map(), corrected = new Map();
+    for (const record of Array.isArray(user && user.expenses) ? user.expenses : []) {
+        if (!record || !record.desc) continue;
+        tally(expenses, keyOf({ narration: record.desc }), record.cat || record.category, classifierName);
+        if (isCorrection(record)) tally(corrected, keyOf({ narration: record.desc }), record.cat || record.category, classifierName);
+    }
     for (const record of Array.isArray(user && user.incomeRecv) ? user.incomeRecv : []) if (record && record.name) tally(income, keyOf({ narration: record.name }), record.type || record.category);
     const minKey = (key) => key.length >= 4;
     return {
-        expense: (row) => { const key = keyOf(row); return key && minKey(key) ? verdict(expenses.get(key)) : null; },
+        expense: (row) => {
+            const key = keyOf(row);
+            if (!key || !minKey(key)) return null;
+            const fixed = verdict(corrected.get(key), { minCount: 1 });
+            return fixed ? { ...fixed, corrected: true } : verdict(expenses.get(key));
+        },
         income: (row) => { const key = keyOf(row); return key && minKey(key) ? verdict(income.get(key)) : null; },
         // weaker than a verdict, still evidence: the AI is told what the owner has used for this merchant, so its answer and the owner's habit are not strangers
         hint: (row) => { const key = keyOf(row); const entry = key && minKey(key) ? (expenses.get(key) || income.get(key)) : null; return verdict(entry, { minCount: 1, share: 0.5 }); },

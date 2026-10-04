@@ -78,3 +78,49 @@ describe('the rows already waiting are settled by it too', () => {
         expect(fs.data.get('users/u').expenses.find(e => e.amount === 1500)).toMatchObject({ cat: 'Shopping', autoDecided: 'history', notes: expect.stringContaining('used for this merchant before') });
     });
 });
+
+describe('what the owner corrected themselves comes first, and only that', () => {
+    /* A statement row opened in the Expenses editor and saved: the editor rebuilds the record from its form, which drops the statement's provenance (statementKey, statementRow, bank). */
+    const fixed = (desc, cat) => ({ desc, cat, source: 'statement', amount: 100, date: '2026-05-01' });
+    const filed = (desc, cat) => ({ ...fixed(desc, cat), statementKey: 'wf-mail/owner_example_com/items/a', statementRow: 1, bank: 'NTB' });
+    const typed = (desc, cat) => ({ desc, cat, source: 'manual', amount: 100, date: '2026-05-01' });
+
+    it('one correction of a merchant the rules name beats the rules, at any outlet of it, marked so it can be found', () => {
+        const u = user([fixed('POS Transaction KEELLS SUPER NUGEGODA', 'Dining')]);
+        expect(deterministicDecision(row('KEELLS SUPER COLOMBO 03 4412 LK'), withHistory(u))).toMatchObject({ module: 'expenses', category: 'Dining', verified: true, deterministic: true, autoDecided: 'history-corrected' });
+        expect(deterministicDecision(row('KEELLS SUPER COLOMBO 03 4412 LK'), withHistory(user()))).toMatchObject({ category: 'Groceries' });          // without the correction: the rules' own answer
+    });
+    it('a row nobody opened (still carrying its statement), or a typed entry, does not outrank a rule: that is the old contract', () => {
+        for (const record of [filed('KEELLS SUPER NUGEGODA', 'Dining'), typed('KEELLS SUPER NUGEGODA', 'Dining')]) {
+            expect(deterministicDecision(row('KEELLS SUPER MIRIGAMA'), withHistory(user([record, { ...record }])))).toMatchObject({ category: 'Groceries' });
+        }
+    });
+    it('two corrections that disagree settle nothing (the rules answer), and the owner\'s "Other" teaches nothing', () => {
+        expect(deterministicDecision(row('KEELLS SUPER MIRIGAMA'), withHistory(user([fixed('KEELLS SUPER NUGEGODA', 'Dining'), fixed('KEELLS SUPER GALLE', 'Health')])))).toMatchObject({ category: 'Groceries' });
+        expect(deterministicDecision(row('KEELLS SUPER MIRIGAMA'), withHistory(user([fixed('KEELLS SUPER NUGEGODA', 'Other')])))).toMatchObject({ category: 'Groceries' });
+    });
+    it('it never turns a transfer, a card line or a bank charge into an expense category', () => {
+        const u = user([fixed('KEELLS SUPER NUGEGODA', 'Dining'), fixed('CEFT CHARGES MIRIGAMA', 'Dining')]);
+        expect(deterministicDecision(row('POS Transaction KEELLS SUPER NUGEGODA'), withHistory(u, { statementType: 'credit_card', card_last4: '0276' }))).toMatchObject({ module: 'cconetime' });
+        expect(deterministicDecision(row('Outward Ceft Transfer 376657Xxxxx0276'), withHistory(u, { statementType: 'bank_account', cardRegistry: { '0276': { type: 'credit_card' } } }))).toMatchObject({ module: 'skip' });
+    });
+});
+
+describe('a merchant is the same merchant at another outlet, behind a gateway, with another terminal number', () => {
+    const key = (narration) => merchantNameFor({ narration });
+    it('POPEYES-3921-COLOMBO and POPEYES-4410-KANDY are one key; so are the gateways and the card terminals\' wrappers', () => {
+        expect(key('POPEYES-3921-COLOMBO')).toBe('POPEYES');
+        expect(key('POPEYES-4410-KANDY')).toBe('POPEYES');
+        expect(key('POS 4412 ARPICO SUPERCENTRE   COLOMBO 03 LK')).toBe('ARPICO SUPERCENTRE');
+        expect(key('PAYPAL *NETFLIX')).toBe('NETFLIX');
+        expect(key('Pos Transaction Koko C')).toBe('KOKO C');
+    });
+    it('a line with nothing but a gateway, a town and a number keeps its plain cleaned text instead of an empty key', () => {
+        expect(key('PAYME-VISA*COLOMBO')).toBe('PAYME-VISA COLOMBO');
+        expect(key('AB')).toBe('');
+    });
+    it('what the owner decided about one outlet is found at the next', () => {
+        const h = buildHistory(user([exp('POPEYES-3921-COLOMBO', 'Dining'), exp('POPEYES-4410-KANDY', 'Dining')]), merchantNameFor);
+        expect(h.expense({ narration: 'POPEYES-7001-GALLE' })).toMatchObject({ category: 'Dining', count: 2, of: 2 });
+    });
+});

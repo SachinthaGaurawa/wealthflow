@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow, expenseEntryName } from './wealthflow-statement-router.js';
 import { canonicalBank } from './wealthflow-institutions.js';
+import { ownMoney } from './wealthflow-own-money.js';
 import { bankKeyOf } from './statement-coverage.mjs';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
 import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment } from './statement-links.mjs';
@@ -50,7 +51,8 @@ export function validateSettlementRow(row, decision, ctx = {}) {
     
     /* A transfer row is left out of the books only when it is the owner's own money moving between the owner's own accounts (statement-transfers.mjs decides that, before this);
      * money to or from someone else is spending or income like any other row and takes the checks below. */
-    if (module === 'skip') return transferEvidence(row) ? null : 'skip-requires-transfer-evidence';
+    /* …or the owner's own card named in a bank row (wealthflow-own-money.js: a cash advance arriving in the account, money from or to the owner's own card) */
+    if (module === 'skip') return transferEvidence(row) || ownMoney({ description: row.description || row.narration, direction: row.direction, isCard: card, registry: ctx.cardRegistry, tails: ctx.ownTails }) ? null : 'skip-requires-transfer-evidence';
     if (module === 'incomeRecv' && (row.direction !== 'credit' || card)) return 'income-direction-conflict';
     if (module === 'ccPayments' && (row.direction !== 'credit' || !card)) return 'card-payment-context-required';
     if (['expenses', 'cconetime', 'subscriptions'].includes(module) && row.direction !== 'debit') return 'expense-direction-conflict';
@@ -200,7 +202,7 @@ async function settledRowVerdict({ entry, row, user, sourcePath, index, id, read
     return 'unknown-status';
 }
 
-export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', cardRegistry = {}, mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false }) {
+export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', cardRegistry = {}, ownTails = null, mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false }) {
     if (!db || !uid || !sourceRef?.path || !leaseToken || !Array.isArray(rows) || rows.length > 30 || !rows.length || !Array.isArray(decisions) || decisions.length !== rows.length || !Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(totalRows) || totalRows < cursor + rows.length || !Number.isSafeInteger(now)) throw new Error('invalid-settlement-request');
     const userRef = db.collection('users').doc(uid);
     const ledgerRefs = rows.map((_, index) => userRef.collection('statementLedger').doc(sourceOccurrenceId(sourceRef.path, cursor + index)));
@@ -237,7 +239,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             const index = cursor + offset, id = ledgerRefs[offset].id;
             // A consolidated statement carries several accounts: a row knows which one it belongs to.
             const rowLast4 = String(row?.card_last4 || last4 || '');
-            const context = { bank, last4: rowLast4, card_last4: rowLast4, statementType, cardRegistry, sourcePath: sourceRef.path, index };
+            const context = { bank, last4: rowLast4, card_last4: rowLast4, statementType, cardRegistry, ownTails, sourcePath: sourceRef.path, index };
             const fingerprint = hash(rowIdentity(row, context));
             if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
                 const entry = ledgerSnaps[offset].data() || {};

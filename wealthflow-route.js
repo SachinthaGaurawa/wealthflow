@@ -162,6 +162,16 @@
         return 'other'; // a real credit we can't name precisely — still income, NOT investment
     }
 
+    /* THE OWNER'S OWN CARD NAMED IN A BANK ROW (wealthflow-own-money.js — the same rule the email worker applies, so a row is not one thing here and another there). The module loads as a type="module" script
+     * and the registry is the owner's Cards & Accounts; when either is missing this returns null and the row is routed exactly as before. */
+    function ownMoneyOf(desc, dir) {
+        var W = root.WFOwnMoney;
+        if (!W || typeof W.ownMoney !== 'function') return null;
+        var reg = {};
+        try { if (root.wfCardRegistry && typeof root.wfCardRegistry.get === 'function') reg = root.wfCardRegistry.get() || {}; } catch (_) { reg = {}; }
+        try { return W.ownMoney({ description: desc, direction: dir, registry: reg, tails: Object.keys(reg) }); } catch (_) { return null; }
+    }
+
     function ccDebitType(desc) {
         var d = norm(desc);
         // A fee / surcharge / duty WINS over fuel and cash-advance: "FUEL SURCHARGE"
@@ -333,6 +343,17 @@
                 out.chequeNo = chq.no || '';
                 out.reason = 'cheque (' + out.chequeType + ') → Cheque tab';
                 if (!chq.type && lowConf) out.needsReview = true;
+                return out;
+            }
+            // The owner's OWN CREDIT CARD named in a credit ("Cash advance cr 376657******0276": cash drawn on the AMEX arriving in the account) is borrowed money / the owner's
+            // own money moving, not income. A payment TO the owner's own card (a debit) keeps going to the Card Payments tab through WFMerchants.refine.
+            var ownCard = ownMoneyOf(desc, dir);
+            if (ownCard && root.WFOwnMoney.leavesTheBooks(ownCard)) {
+                out.tab = 'skip';
+                out.needsReview = lowConf;
+                out.ownMoney = ownCard.kind;
+                out.ccLast4 = ownCard.last4 || '';
+                out.reason = ownCard.reason;
                 return out;
             }
             // GENUINE own-account / internal movements are neither income nor an
