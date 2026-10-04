@@ -1011,6 +1011,36 @@ export async function reviveRetiredSources({ db, mailRef, uid, senders, token = 
     return { revived, kept, more };
 }
 
+/* A STATEMENT THE REGISTRY CLOSED AS A COPY IS READ AGAIN, ONCE, UNDER TODAY'S RULE. The registry used to turn a statement away when ANOTHER statement held its bank, account
+ * and month — the next billing cycle of a card that closes early in the month is keyed on the same month as the last — and a hold written before the registry kept a statement's
+ * days could not be told from a copy at all. Such a statement was closed as "Already Added", nothing of it was filed, and nothing ever looked at it again: the owner found the
+ * month missing from the books and the upload screen turning the same statement away. Now a hold is believed only when the statement's own TRANSACTIONS are in the books
+ * (statement-registry.mjs lookup); each statement it closed is put back in the queue once, from its first row, and the worker asks the registry again. A real copy is closed again
+ * at once (its transactions ARE in the books) and is not reopened a second time; a statement that was never in the books is filed. A copy of a statement whose records the
+ * owner deleted stays closed (lookup keepEmptied): reading it again never brings back what the owner removed. Nothing is deleted. */
+export const REGISTRY_COPIES_VERSION = 1;
+const REGISTRY_COPY = ['registry:email', 'registry:upload', 'registry:unknown'];
+export async function reopenRegistryCopies({ db, mailRef, uid, limit = 25, until = Infinity, now = Date.now(), log = console.info }) {
+    const found = await mailRef.collection('items').where('duplicateOf', 'in', REGISTRY_COPY).limit(300).get();
+    let reopened = 0, kept = 0, stopped = false;
+    const banks = {};
+    for (const doc of found.docs) {
+        const source = doc.data() || {};
+        if ((source.uid && source.uid !== uid) || Number(source.registryReopened) > 0) { kept += 1; continue; }
+        if (reopened >= limit || Date.now() > until) { stopped = true; break; }
+        const done = await db.runTransaction(async tx => {
+            const snap = await tx.get(doc.ref), current = snap.data() || {};
+            if (!snap.exists || !REGISTRY_COPY.includes(current.duplicateOf) || Number(current.registryReopened) > 0 || Number(current.leaseUntil) > now) return false;
+            tx.set(doc.ref, { status: 'pending', filed: false, hasReview: false, cursor: 0, totalRows: null, rowSetHash: '', moneyHash: '', leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0,
+                duplicateOf: '', blockedBy: '', blockedVia: '', proof: null, registryReopened: now, registryReopenedFrom: String(current.duplicateOf).slice(0, 40), updatedAt: now }, { merge: true });
+            return true;
+        });
+        if (done) { reopened += 1; const bank = String(source.bank || '?').slice(0, 24); banks[bank] = (banks[bank] || 0) + 1; }
+    }
+    if (found.docs.length) log(JSON.stringify({ evt: 'statement-registry-copies', checked: found.docs.length, reopened, kept, ...(stopped ? { more: true } : {}), banks }));
+    return { reopened, more: stopped };
+}
+
 /* WHERE EVERY STATEMENT IS, IN ONE LINE OF THE PLATFORM LOG: per bank, how many are waiting, stopped or part-way, and why. It exists because
  * "the owner has to tap Map statement layout on NTB and AMEX" could only be guessed at from outside: the reason codes are the evidence. Bank
  * names, status words, reason codes and counts only — no amount, no merchant, no account number, no file name. Every few hours, never more. */
@@ -2010,7 +2040,9 @@ async function claimInRegistry({ db, uid, sourceRef, claimed, parsed, sha }) {
         const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
         const single = !(Array.isArray(parsed?.adaptive?.keys) && parsed.adaptive.keys.length > 1);
         const identity = single ? identityOf({ bank: claimed.bank || '', account: parsed?.layout?.accountLast4 || '', dates: rows.map(row => row?.date) }) : null;
-        const result = await lookup({ db, uid, claim: true, via: VIA.EMAIL, ref: sourceRef.path, identity, sha, rows: rows.length, meta: { filename: claimed.filename, size: claimed.size, rows: rows.length, door: 'worker' } });
+        /* its transactions go with it: a month held by ANOTHER statement (one that only shares the bank, account and month) is not a reason to close this one as a copy */
+        const result = await lookup({ db, uid, claim: true, via: VIA.EMAIL, ref: sourceRef.path, identity, sha, rows: rows.length, rowKeys: rows.map(row => ({ date: row?.date, amount: row?.amount })),
+            keepEmptied: Number(claimed.registryReopened) > 0, meta: { filename: claimed.filename, size: claimed.size, rows: rows.length, door: 'worker' } });
         return result.duplicate ? result : null;
     } catch (_) { return null; }
 }
@@ -2272,6 +2304,12 @@ async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs
         done.revived = r.revived; out.more = out.more || r.more;
         if (!r.more) await mailRef.set({ lastReviveMs: Date.now() }, { merge: true });
     });
+    if ((Number(mail.registryCopiesV) || 0) < REGISTRY_COPIES_VERSION) steps.push(async stepUntil => {
+        const r = await reopenRegistryCopies({ db, mailRef, uid, until: stepUntil });
+        if (r.reopened) done.registryReopened = r.reopened;
+        out.more = out.more || r.more;
+        if (!r.more) await mailRef.set({ registryCopiesV: REGISTRY_COPIES_VERSION }, { merge: true });
+    });
     if ((Number(mail.transferReopenV) || 0) < TRANSFER_REOPEN_VERSION) steps.push(async stepUntil => {
         const r = await reopenSkippedTransfers({ db, uid, limit: 3, until: stepUntil });
         done.reopened = r.requeued; if (r.rows) done.reopenedRows = r.rows; out.more = out.more || r.more || r.requeued > 0;
@@ -2297,7 +2335,7 @@ async function settleWaiting({ db, mailRef, uid, mail, token, f, start, budgetMs
     }
     try { await mailRef.set({ lastSettleMs: Date.now(), settleMore: out.more }, { merge: true }); } catch (_) { /* the pass simply runs again */ }
     /* one line, and only when the pass did or left something: this is how the log shows the owner's waiting reviews being settled */
-    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0 || done.wholeWhy || done.reopened > 0 || done.ownRemoved > 0 || done.unlistedRemoved > 0) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
+    if (out.recovered > 0 || out.more || done.duplicates > 0 || done.revived > 0 || done.wholeWhy || done.reopened > 0 || done.ownRemoved > 0 || done.unlistedRemoved > 0 || done.registryReopened > 0) { try { console.info(JSON.stringify({ evt: 'statement-settle', ms: Date.now() - now, ...done, more: out.more, ...(skipped ? { skipped } : {}) })); } catch (_) { /* a log line never stops a sync */ } }
     return out;
 }
 

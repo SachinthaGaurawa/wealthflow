@@ -115,15 +115,21 @@ describe('a hold with the statement really behind it still turns the owner away 
         books({ cheques: [{ id: 'q', statementKey: `${MAIL}/items/a` }] });
         expect((await call({ ...upload, action: 'check' })).body.duplicate).toBe(true);
     });
-    it('a statement the worker is working on this minute, or has part-way through, is being added: not free', async () => {
+    it('a statement the worker is working on this minute, or is part-way through and made progress minutes ago, is being added: not free', async () => {
         item('a', { status: 'processing', leaseUntil: Date.now() + 30_000 });
         await hold('a');
         expect((await call({ ...upload, action: 'check' })).body).toMatchObject({ duplicate: true, via: 'email' });
         expect((await call({ ...upload, action: 'check' })).body.detail).toMatch(/being added right now/);
-        item('a', { status: 'pending', cursor: 10, totalRows: 40, leaseUntil: 0 });
+        item('a', { status: 'pending', cursor: 10, totalRows: 40, leaseUntil: 0, updatedAt: Date.now() - 60_000 });
         expect((await call({ ...upload, action: 'check' })).body.duplicate).toBe(true);
-        item('a', { status: 'dead_letter', cursor: 10, totalRows: 40, leaseUntil: 0 });      // parked with its place kept, and re-driven
-        expect((await call({ ...upload, action: 'check' })).body.duplicate).toBe(true);
+    });
+    it('a statement parked part-way with nothing in the books (stalled for hours, or a dead letter) is being added by nobody: free', async () => {
+        item('a', { status: 'pending', cursor: 10, totalRows: 40, leaseUntil: 0, updatedAt: Date.now() - 3 * HOUR });
+        await hold('a');
+        expect((await call({ ...upload, action: 'check' })).body.duplicate).toBe(false);
+        item('b', { status: 'dead_letter', cursor: 10, totalRows: 40, leaseUntil: 0, updatedAt: Date.now() - 60_000 });
+        await hold('b');
+        expect((await call({ ...upload, action: 'check' })).body.duplicate).toBe(false);
     });
     it('a hand upload: held while its records exist (however old), held while younger than ten minutes, free once old and empty', async () => {
         await call({ ...upload, action: 'claim', token: 'attempt-0001' });
@@ -152,7 +158,9 @@ describe('two DIFFERENT statements are not one', () => {
         expect((await call({ ...next, action: 'claim', token: 'attempt-0001' })).body.duplicate).toBe(false);
         // and it is held for what it is: its own file, though not the month the first one already holds
         expect((await call({ action: 'check', sha256: sha('cycle-two') })).body).toMatchObject({ duplicate: true, via: 'upload' });
-        expect(registry()).toHaveLength(3);
+        // …and the month's second slot (keyed on its first day), so another copy of it in other bytes is recognised too
+        expect(registry()).toHaveLength(4);
+        expect((await call({ ...next, sha256: sha('cycle-two-downloaded-again'), action: 'check' })).body).toMatchObject({ duplicate: true, via: 'upload' });
     });
     it('a statement of several months or several accounts is not a copy of one month it contains', async () => {
         item('a', { status: 'filed', filed: true });
@@ -186,7 +194,8 @@ describe('every state a holder can be in', () => {
     const states = {                                   // what the mailbox item looks like in each life of a statement
         missing: null,
         'pending, first row not reached': { status: 'pending', cursor: 0, retryAt: Date.now() + 60_000 },
-        'pending, part-way': { status: 'pending', cursor: 12, totalRows: 40 },
+        'pending, part-way, progress a minute ago': { status: 'pending', cursor: 12, totalRows: 40, updatedAt: Date.now() - 60_000 },
+        'pending, part-way, stalled for hours': { status: 'pending', cursor: 12, totalRows: 40, updatedAt: Date.now() - 3 * HOUR },
         'working this minute': { status: 'processing', leaseUntil: Date.now() + 30_000 },
         'lease expired, first row not reached': { status: 'processing', cursor: 0, leaseUntil: Date.now() - 1000 },
         'in review': { status: 'needs_review', hasReview: true },
@@ -195,7 +204,7 @@ describe('every state a holder can be in', () => {
         filed: { status: 'filed', filed: true, cursor: 4, totalRows: 4 },
         'rejected': { status: 'rejected_unapproved_sender' },
     };
-    const working = name => ['pending, part-way', 'working this minute', 'dead letter, part-way'].includes(name);
+    const working = name => ['pending, part-way, progress a minute ago', 'working this minute'].includes(name);
     for (const door of ['worker', 'phone']) for (const [name, shape] of Object.entries(states)) for (const records of [true, false]) for (const fresh of [true, false]) {
         it(`${door} hold · ${name} · ${records ? 'records in the books' : 'no records'} · ${fresh ? 'just taken' : 'an hour old'}: believed exactly when something is behind it`, async () => {
             if (shape) item('h', shape);

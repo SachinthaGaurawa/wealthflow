@@ -26854,7 +26854,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
                 g.keys.push(r.key);
                 /* What the registry is asked at Save, one entry per statement: each is its own bank + account + month. */
-                g.guards.push({ itemId: r.key || '', bank, last4: r.guardLast4 || r.last4 || '', dates: statementRows.map((row) => row.date), rows: statementRows.length });
+                g.guards.push({ itemId: r.key || '', bank, last4: r.guardLast4 || r.last4 || '', dates: statementRows.map((row) => row.date), amounts: statementRows.map((row) => row.amount), rows: statementRows.length });
                 g.rows.push(...statementRows);
                 if (!g.last4 && r.last4) g.last4 = r.last4;
             }
@@ -35232,7 +35232,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const txns = parsed.transactions.map((t, i) => ({
                 ...t,
                 _i: i,
-                _keep: true,
+                _keep: !t._have,                  // a row the books already hold (statement-registry.mjs coverage) is left out unless ticked
                 amount: parseFloat(t.amount) || 0
             }));
             // ── Account-type-aware routing (v7.7.0) ──────────────────────────────
@@ -35420,7 +35420,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 <tr data-idx="${idx}" style="border-bottom:1px solid var(--border);${t._review ? 'background:rgba(245,166,35,.07);box-shadow:inset 3px 0 0 var(--accent,#f5a623);' : ''}">
                     <td style="padding:6px 6px;"><input type="checkbox" class="_ccr_keep" ${t._keep ? 'checked' : ''}></td>
                     <td style="padding:6px 6px;"><input class="fi _ccr_date" type="date" value="${_wfEsc(t.date || '')}" style="width:130px;font-size:12px;"></td>
-                    <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${_wfEsc(t.description || '')}" style="font-size:12px;min-width:150px;">${t._review ? '<div style="font-size:10px;color:var(--accent,#f5a623);margin-top:3px;font-weight:600;">⚠ Please review — ' + _wfEsc(t._reviewWhy || 'AI wasn\'t sure') + '</div>' : ''}</td>
+                    <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${_wfEsc(t.description || '')}" style="font-size:12px;min-width:150px;">${t._have ? '<div style="font-size:10px;color:var(--green);margin-top:3px;">Already in your books</div>' : ''}${t._review ? '<div style="font-size:10px;color:var(--accent,#f5a623);margin-top:3px;font-weight:600;">⚠ Please review — ' + _wfEsc(t._reviewWhy || 'AI wasn\'t sure') + '</div>' : ''}</td>
                     <td style="padding:6px 6px;"><select class="fs _ccr_dest" style="font-size:11px;">${_destOpts(t._dest)}</select>${parsed.cloudReview ? `<label>Category<input class="fi _ccr_cloud_category" value="${_wfEsc(t._cloudCategory || t._cat || 'Other')}" maxlength="100"></label><label>Direction<select class="fs _ccr_cloud_direction"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></label><label>Subscription allocation<select class="fs _ccr_cloud_allocation"><option value="">Choose an existing subscription when routing to Subscription</option>${(DB.get('subscriptions') || []).map(s => `<option value="${_wfEsc(s.id)}" ${t._cloudAllocation === s.id ? 'selected' : ''}>${_wfEsc(s.name || s.id)}</option>`).join('')}</select></label>` : ''}</td>
                     <td style="padding:6px 6px;">
                         ${_acctType === 'bank_account'
@@ -35573,7 +35573,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 _saveAllowed(false, 'Checking this bank against your books…');
                 let dup = null, fresh = null;
                 try {
-                    const r = await G.parsed({ sha: info.sha, bank: res.ok ? res.lockName : '', last4: info.last4, periodText: info.periodText, dates: info.dates, filename: info.filename, size: info.size, rows: info.rows });
+                    const r = await G.parsed({ sha: info.sha, bank: res.ok ? res.lockName : '', last4: info.last4, periodText: info.periodText, dates: info.dates, amounts: info.amounts, filename: info.filename, size: info.size, rows: info.rows });
                     dup = r && r.duplicate ? r : null; fresh = r && r.info ? r.info : null;
                 } catch (_) { /* the lock fails open: an unreachable server never stops the owner */ }
                 if (seq !== _bankSeq) return;                                  // a newer choice is already being checked
@@ -35839,7 +35839,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 // One undoable batch per import (records every payment it creates).
                 const _batch = (window.WFBatch ? WFBatch.begin((parsed && parsed.fileName) || (bank ? (_bankShown(bank) + ' statement') : 'Statement'), 'statement') : null);
                 rows.forEach((t) => {
-                    if (!t._keep) { skipped++; return; }
+                    if (!t._keep) { if (t._have) dup++; else skipped++; return; }
                     const date = t.date || today();
                     const desc = String(t.description || '').trim();
                     const dest = t._dest || 'skip';

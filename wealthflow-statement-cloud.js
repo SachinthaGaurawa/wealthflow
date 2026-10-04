@@ -569,22 +569,29 @@ export async function guardFile(file){
     const r=noticeOf(await guardCall({action:'check',sha256:sha}));
     return r?{...r,sha}:{sha};
 }
-/** After the statement is read: is this bank + account + month already in the books? Returns {duplicate,...,info} or {info}; `info` goes to guardClaim at save. */
-export async function guardParsed({sha='',bank='',last4='',periodText='',dates=[],filename='',size=0,rows=0}){
-    const info={sha,bank:String(bank||''),last4:String(last4||''),periodText:String(periodText||''),dates:(dates||[]).slice(0,2000),filename:String(filename||'').slice(0,200),size:Number(size)||0,rows:Number(rows)||0,token:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g,'').slice(0,64).padEnd(8,'0')};
-    const r=noticeOf(await guardCall({action:'check',sha256:sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,rows:info.rows}));
-    return r?{...r,info}:{info};
+/* The amounts go beside the dates (the same places): the server compares a statement's TRANSACTIONS with what the books hold, so a statement is "already added" only when it really is,
+ * and not because another statement of the same card shares its month. */
+const amountsOf=(amounts,dates)=>Array.isArray(amounts)&&amounts.length===dates.length?amounts.map(a=>Math.abs(Number(a))||0):undefined;
+/** After the statement is read: is this bank + account + month already in the books? Returns {duplicate,...,info} or {info, have}; `info` goes to guardClaim at save,
+ *  `have` lists the places of the rows the books already hold (a statement let past another one of its month). */
+export async function guardParsed({sha='',bank='',last4='',periodText='',dates=[],amounts=null,filename='',size=0,rows=0}){
+    const d=(dates||[]).slice(0,2000);
+    const info={sha,bank:String(bank||''),last4:String(last4||''),periodText:String(periodText||''),dates:d,amounts:amountsOf((amounts||[]).slice(0,2000),d),filename:String(filename||'').slice(0,200),size:Number(size)||0,rows:Number(rows)||0,token:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g,'').slice(0,64).padEnd(8,'0')};
+    const raw=await guardCall({action:'check',sha256:sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,amounts:info.amounts,rows:info.rows});
+    const r=noticeOf(raw);
+    return r?{...r,info}:{info,have:raw&&Array.isArray(raw.have)?raw.have.filter(Number.isInteger):[]};
 }
 /** At save: take the statement. -> {duplicate, via, notice} when another door got there first, else null (go ahead). */
 export async function guardClaim(info){
     if(!info)return null;
-    return noticeOf(await guardCall({action:'claim',sha256:info.sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,filename:info.filename,size:info.size,rows:info.rows,token:info.token}));
+    return noticeOf(await guardCall({action:'claim',sha256:info.sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,amounts:info.amounts,filename:info.filename,size:info.size,rows:info.rows,token:info.token}));
 }
 /** The device's own review of a MAILBOX statement: the same lock, held by the mailbox item it came from. `action` is 'check' (before the review opens) or 'claim' (at save).
  *  A statement turned away is closed on the server like the email sync closes one. -> {duplicate, via, notice} or null (go ahead; also null when the server cannot be reached). */
 export async function guardMail(info,action='check'){
     if(!info||!info.itemId)return null;
-    return noticeOf(await guardCall({action:action==='claim'?'claim':'check',itemId:String(info.itemId),bank:String(info.bank||''),last4:String(info.last4||''),periodText:String(info.periodText||''),dates:(info.dates||[]).slice(0,2000),filename:String(info.filename||'').slice(0,200),size:Number(info.size)||0,rows:Number(info.rows)||0}));
+    const dates=(info.dates||[]).slice(0,2000);
+    return noticeOf(await guardCall({action:action==='claim'?'claim':'check',itemId:String(info.itemId),bank:String(info.bank||''),last4:String(info.last4||''),periodText:String(info.periodText||''),dates,amounts:amountsOf((info.amounts||[]).slice(0,2000),dates),filename:String(info.filename||'').slice(0,200),size:Number(info.size)||0,rows:Number(info.rows)||0}));
 }
 /** What the mailbox already knows about the BANK of a statement being added by hand — the same file, the same card tail, the same file-name series, the banks the owner approved a sender of.
  *  Asked only when the statement alone does not name its bank, and never waited for beyond 8 seconds: null means "no history", and the bank is then read from the statement alone — never asked. */

@@ -1131,15 +1131,20 @@
         if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
         if (typeof window.notify === 'function') window.notify((r.notice || 'Already Added') + ' — this statement is already in your books, so it was not added a second time.', 'warn');
     }
-    /* After the statement is read: the same bank + account + month is the same statement, whatever the file is called. Returns true when it was blocked. */
+    /* A statement the books hold PART of (another reading filed some of its rows): the rows already there are marked, so the review leaves them out and only what is missing is added. */
+    function _wfMarkHave(parsed, have) {
+        (Array.isArray(have) ? have : []).forEach(function (at) { var t = parsed.transactions[at]; if (t) t._have = true; });
+    }
+    /* After the statement is read: the same bank + account + month is the same statement, whatever the file is called — when its TRANSACTIONS are in the books. Returns true when it was blocked. */
     async function _wfGuardParsed(parsed, ctx) {
         var g = _wfStatementGuard(); if (!g) return false;
         try {
             /* The registry locks on the ISSUER's label (the one the email sync writes), not on the record label: a statement taken by hand and by email must meet at one lock. */
             var r = await g.parsed({ sha: ctx.sha, bank: ctx.bank, last4: ctx.last4 || g.accountTailOf(ctx.text), periodText: parsed.statement_period || '',
-                dates: parsed.transactions.map(function (t) { return t.date; }), filename: ctx.file.name, size: ctx.file.size, rows: parsed.transactions.length });
+                dates: parsed.transactions.map(function (t) { return t.date; }), amounts: parsed.transactions.map(function (t) { return t.amount; }), filename: ctx.file.name, size: ctx.file.size, rows: parsed.transactions.length });
             if (r.duplicate) { _wfSayDuplicate(r); return true; }
             parsed._wfGuard = r.info;
+            _wfMarkHave(parsed, r.have);
         } catch (_) { /* fail open */ }
         return false;
     }

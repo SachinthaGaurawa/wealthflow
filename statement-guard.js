@@ -29,7 +29,7 @@ import { getAdminDb, withDeadline } from './admin-db.mjs';
 import { identify, userKeyFor } from './gmail-link.mjs';
 import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
 import { bankHistory } from './statement-bank-evidence.mjs';
-import { VIA, identityOf, lookup, holderProof, releaseStatement, registryDuplicatePatch, noticeFor, detailOf } from './statement-registry.mjs';
+import { VIA, identityOf, lookup, holderProof, releaseStatement, registryDuplicatePatch, noticeFor, detailOf, ROWS_CAP } from './statement-registry.mjs';
 
 const json = (res, code, body) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(body)); };
 const HASH = /^[a-f\d]{64}$/;
@@ -47,11 +47,25 @@ async function closeMailItem({ db, itemRef, patch, now = Date.now() }) {
     });
 }
 
+/** `amounts` run beside `dates` (the same places): together they say WHICH transactions the statement has, which is what tells two statements of one month apart. */
 function inputsOf(body) {
     const sha = HASH.test(String(body.sha256 || '')) ? String(body.sha256) : '';
-    const dates = (Array.isArray(body.dates) ? body.dates : []).slice(0, 2000).map(d => text(d, 40));
+    const dates = (Array.isArray(body.dates) ? body.dates : []).slice(0, ROWS_CAP).map(d => text(d, 40));
+    const amounts = Array.isArray(body.amounts) ? body.amounts.slice(0, ROWS_CAP) : [];
+    const rowKeys = amounts.length === dates.length && dates.length ? dates.map((date, at) => ({ date, amount: Number(amounts[at]) })) : null;
     const identity = body.bank || body.last4 || body.periodText || dates.length ? identityOf({ bank: text(body.bank, 80), account: text(body.last4, 40), periodText: text(body.periodText, 80), dates }) : null;
-    return { sha, identity, rows: Math.min(100000, Math.max(0, Math.floor(Number(body.rows)) || 0)) };
+    return { sha, identity, rowKeys, rows: Math.min(100000, Math.max(0, Math.floor(Number(body.rows)) || 0)) };
+}
+
+/** One line in the platform log for every statement turned away or let past another holder: WHY, in words and counts (no amount, no account number, no file name), so "it said already added" can be read from the log. */
+function note(action, door, identity, answer) {
+    try {
+        const held = answer.duplicate ? answer : answer.partial ? { existing: {}, proof: { why: 'other-statement' }, coverage: answer.partial } : null;
+        if (!held) return;
+        const existing = held.existing || {}, cover = held.coverage || null;
+        console.info(JSON.stringify({ evt: 'statement-guard', action, door, verdict: answer.duplicate ? 'duplicate' : 'other-statement', kind: answer.kind || '', via: existing.via || '', holderDoor: existing.door || '', why: held.proof?.why || '',
+            records: held.proof?.records || 0, matched: cover ? cover.matched : null, of: cover ? cover.of : null, bank: identity?.bank || '', month: identity?.ok ? `${identity.year}-${String(identity.month).padStart(2, '0')}` : '', ageMin: existing.at ? Math.round((Date.now() - existing.at) / 60000) : null }));
+    } catch (_) { /* a log line never stops an answer */ }
 }
 
 export default async function handler(req, res) {
@@ -114,9 +128,10 @@ export default async function handler(req, res) {
             if (twin) return turnedAway({ via: VIA.EMAIL, kind: 'file', notice: noticeFor(VIA.EMAIL), detail: detailOf({ filename: twin.data.filename }, proofs.get(twin.id)) }, itemRef ? duplicatePatch({ twin }) : null);
         }
         /* The registry says who holds it; a holder with nothing behind it (holderProof) has been given back by the time we hear. */
-        const found = await withDeadline(lookup({ db, uid: who.uid, claim: action === 'claim', via, ref, identity, sha, rows: inputs.rows,
+        const found = await withDeadline(lookup({ db, uid: who.uid, claim: action === 'claim', via, ref, identity, sha, rows: inputs.rows, rowKeys: inputs.rowKeys,
             meta: { filename: body.filename, size: body.size, rows: Number(body.rows) || inputs.rows, door: itemId ? 'phone' : 'upload' } }), 20000, 'statement registry');
-        if (found.duplicate) return turnedAway({ via: found.existing.via, kind: found.kind, existing: { ...found.existing, ref: undefined }, notice: noticeFor(found.existing.via), detail: detailOf(found.existing, found.proof) }, itemRef ? registryDuplicatePatch({ duplicate: found }) : null);
-        return json(res, 200, { ok: true, duplicate: false, ...(ref ? { id: ref } : {}), identified: !!(identity && identity.ok) });
+        note(action, itemId ? 'phone' : 'upload', identity, found);
+        if (found.duplicate) return turnedAway({ via: found.existing.via, kind: found.kind, existing: { ...found.existing, ref: undefined }, notice: noticeFor(found.existing.via), detail: detailOf(found.existing, found.proof, found.coverage) }, itemRef ? registryDuplicatePatch({ duplicate: found }) : null);
+        return json(res, 200, { ok: true, duplicate: false, ...(ref ? { id: ref } : {}), identified: !!(identity && identity.ok), ...(found.have && found.have.length ? { have: found.have } : {}) });
     } catch (_) { return json(res, 503, { ok: false, reason: 'registry-unavailable' }); }
 }
