@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
-import research, { RULES, cleanText, hostOf, scrubQuery, configured, finish, fromTavily, fromBrave, fromSerper, fromGemini, search, makeLimiter } from '../advisor-research.mjs';
+import research, { RULES, PROBE_QUESTION, cleanText, hostOf, scrubQuery, configured, finish, fromTavily, fromBrave, fromSerper, fromGemini, search, probe, makeLimiter } from '../advisor-research.mjs';
 import handler from '../advisor-research.js';
 import { geminiGenerate, geminiBook } from '../gemini-client.mjs';
 
@@ -245,6 +245,45 @@ describe('looking a question up', () => {
     });
 });
 
+describe('probing every provider with one fixed public question', () => {
+    it('reports each configured provider on its own: pages and sites, how long, or why not', async () => {
+        const f = fake({
+            tavily: TAVILY,
+            brave: () => ({ ok: false, status: 401, json: async () => ({}) }),
+            serper: () => { throw new Error('connect failed for https://google.serper.dev/search with X-API-KEY serper-SECRET-3'); },
+        });
+        let t = 0;
+        const r = await probe({ env: KEYS, fetcher: f.fetcher, generate: async () => ({ text: 'The rate is 7.75%.', grounding: null }), now: () => (t += 10) });
+        expect(r.query).toBe(PROBE_QUESTION);
+        expect(r.results.map((x) => x.name)).toEqual(['tavily', 'brave', 'serper', 'gemini']);
+        const by = Object.fromEntries(r.results.map((x) => [x.name, x]));
+        expect(by.tavily).toMatchObject({ ok: true, sources: 2, hosts: ['examplebank.lk', 'cbsl.gov.lk'] });
+        expect(by.brave).toMatchObject({ ok: false, sources: 0, error: 'brave 401' });
+        expect(by.serper.ok).toBe(false);
+        expect(by.gemini).toMatchObject({ ok: false, sources: 0, error: 'answered with no pages' });
+        expect(JSON.stringify(r)).not.toMatch(/SECRET/);
+        for (const x of r.results) expect(x.ms).toBeGreaterThan(0);
+    });
+
+    it('asks the same public question of every provider and nothing else', async () => {
+        const f = fake({ tavily: TAVILY, serper: SERPER });
+        await probe({ env: { TAVILY_API_KEY: 'tvly-SECRET-1', SERPER_API_KEY: 'serper-SECRET-3' }, fetcher: f.fetcher, now: () => NOW });
+        expect(f.calls.map((c) => c.key).sort()).toEqual(['serper', 'tavily']);
+        expect(JSON.parse(f.calls[0].body).query || JSON.parse(f.calls[0].body).q).toBe(PROBE_QUESTION);
+        expect(PROBE_QUESTION).toBe(scrubQuery(PROBE_QUESTION));        // nothing in it would be scrubbed: it is public
+    });
+
+    it('with nothing configured it reports no providers, and never throws', async () => {
+        expect(await probe({ env: {}, now: () => NOW })).toMatchObject({ results: [] });
+    });
+
+    it('a provider answering with the wrong shape is a report, not a crash', async () => {
+        const f = fake({ tavily: { results: 'x' }, serper: () => ({ ok: true, status: 200, json: async () => { throw new Error('not json'); } }) });
+        const r = await probe({ env: { TAVILY_API_KEY: 'tvly-SECRET-1', SERPER_API_KEY: 'serper-SECRET-3' }, fetcher: f.fetcher, now: () => NOW });
+        expect(r.results.map((x) => x.ok)).toEqual([false, false]);
+    });
+});
+
 describe('the cache and the limit', () => {
     it('remembers an answer for fifteen minutes, and only an answer', () => {
         const l = makeLimiter();
@@ -304,6 +343,26 @@ describe('the door', () => {
         expect(JSON.stringify(g.payload)).not.toMatch(/SECRET/);
     });
 
+    it('GET ?check=1 probes the providers once, remembers it, and a plain GET never searches', async () => {
+        const f = stubSearchWeb();
+        const plain = await call('GET');
+        expect(plain.payload.check).toBeUndefined();
+        expect(f).not.toHaveBeenCalled();
+        for (const off of [{ query: { check: '0' } }, { query: { check: '' } }, { url: '/api/advisor-research?check=0' }, { url: '/api/advisor-research' }]) {
+            const r = await new Promise((resolve) => { const res = { headers: {}, setHeader() {}, status() { return this; }, json(p) { resolve(p); return this; } }; handler({ method: 'GET', headers: {}, ...off }, res); });
+            expect(r.check, JSON.stringify(off)).toBeUndefined();
+        }
+        expect(f).not.toHaveBeenCalled();
+        const probeCall = (req) => new Promise((resolve) => { const res = { headers: {}, setHeader() {}, status() { return this; }, json(p) { resolve(p); return this; } }; handler({ method: 'GET', headers: {}, ...req }, res); });
+        const a = await probeCall({ query: { check: '1' } });
+        expect(a.check.results).toHaveLength(1);
+        expect(a.check.results[0]).toMatchObject({ name: 'tavily', ok: true, sources: 2 });
+        expect(JSON.stringify(a)).not.toMatch(/SECRET/);
+        const b = await probeCall({ url: '/api/advisor-research?path=advisor-research&check=1' });     // the router's rewrite adds its own parameter
+        expect(b.check).toEqual(a.check);
+        expect(f).toHaveBeenCalledTimes(1);
+    });
+
     it('POST looks the question up, and an identical question is answered from memory', async () => {
         const f = stubSearchWeb();
         const a = await call('POST', { q: 'What is the 12 month fixed deposit rate right now in the cache test?' }, { 'x-forwarded-for': '9.9.9.1' });
@@ -361,6 +420,6 @@ describe('the endpoint is routed and the module is the one the door uses', () =>
         expect(fs.existsSync(new URL('../advisor-research.js', import.meta.url))).toBe(true);
     });
     it('the default export is the whole API', () => {
-        expect(Object.keys(research).sort()).toEqual(['RESEARCH_VERSION', 'RULES', 'cleanText', 'configured', 'finish', 'fromBrave', 'fromGemini', 'fromSerper', 'fromTavily', 'hostOf', 'makeLimiter', 'scrubQuery', 'search']);
+        expect(Object.keys(research).sort()).toEqual(['RESEARCH_VERSION', 'RULES', 'cleanText', 'configured', 'finish', 'fromBrave', 'fromGemini', 'fromSerper', 'fromTavily', 'hostOf', 'makeLimiter', 'probe', 'scrubQuery', 'search']);
     });
 });

@@ -179,6 +179,47 @@ async function viaGemini(q, key, fetcher, generate) {
     return fromGemini(result);
 }
 
+function runnersFor(query, env, fetcher, generate) {
+    return {
+        tavily: () => viaTavily(query, env.TAVILY_API_KEY, fetcher),
+        brave: () => viaBrave(query, env.BRAVE_API_KEY, fetcher),
+        serper: () => viaSerper(query, env.SERPER_API_KEY, fetcher),
+        gemini: () => viaGemini(query, geminiKeyOf(env), fetcher, generate),
+    };
+}
+
+/** An error message for a report, with every key value and any `key=` in an address taken out. */
+function redact(message, env) {
+    let m = cleanText(message, 160).replace(/([?&](?:key|api_key|token)=)[^&\s]+/gi, '$1…');
+    for (const v of Object.values(env || {})) if (typeof v === 'string' && v.length >= 8) m = m.split(v).join('…');
+    return m.slice(0, 100);
+}
+
+/**
+ * Ask EVERY configured provider one fixed public question and say, for each, whether it gave pages (and from which sites), how long it took, or why not. This is how the
+ * owner (and the next engineer) can see which provider actually works with the real key, which a lookup that stops at the first answer never shows. Nothing personal is
+ * involved: the question is the same one every time. Never throws; never returns a key.
+ */
+export const PROBE_QUESTION = 'Central Bank of Sri Lanka overnight policy rate';
+export async function probe(o = {}) {
+    const { env = (typeof process !== 'undefined' && process.env) || {}, fetcher = fetchWithTimeout, generate = geminiGenerate, now = Date.now } = o;
+    const names = configured(env);
+    const runners = runnersFor(PROBE_QUESTION, env, fetcher, generate);
+    const results = await Promise.all(names.map(async (name) => {
+        const t0 = now();
+        try {
+            const got = await runners[name]();
+            const list = (got && got.sources) || [];
+            const r = { name, ok: list.length > 0, sources: list.length, hosts: list.slice(0, 3).map((s) => s.host), ms: now() - t0 };
+            if (!r.ok) r.error = 'answered with no pages';
+            return r;
+        } catch (e) {
+            return { name, ok: false, sources: 0, hosts: [], ms: now() - t0, error: redact(e && e.message, env) || 'failed' };
+        }
+    }));
+    return { query: PROBE_QUESTION, at: new Date(now()).toISOString(), results };
+}
+
 /**
  * Look the question up. Never throws. Returns { ok, via, query, at, sources, notes } or { ok: false, reason } where reason is
  * `no-question`, `not-configured`, `empty` (a provider answered with nothing usable), `failed` or `timeout`.
@@ -190,12 +231,7 @@ export async function search(question, o = {}) {
     const names = configured(env);
     if (!names.length) return { ok: false, reason: 'not-configured', query };
     const startedAt = now();
-    const runners = {
-        tavily: () => viaTavily(query, env.TAVILY_API_KEY, fetcher),
-        brave: () => viaBrave(query, env.BRAVE_API_KEY, fetcher),
-        serper: () => viaSerper(query, env.SERPER_API_KEY, fetcher),
-        gemini: () => viaGemini(query, geminiKeyOf(env), fetcher, generate),
-    };
+    const runners = runnersFor(query, env, fetcher, generate);
     let reason = 'empty';
     for (const name of names) {
         if (now() - startedAt > RULES.DEADLINE_MS - 1500) { reason = 'timeout'; break; }
@@ -233,5 +269,5 @@ export function makeLimiter(rules = RULES) {
     };
 }
 
-const API = { RESEARCH_VERSION, RULES, cleanText, hostOf, scrubQuery, configured, finish, fromTavily, fromBrave, fromSerper, fromGemini, search, makeLimiter };
+const API = { RESEARCH_VERSION, RULES, cleanText, hostOf, scrubQuery, configured, finish, fromTavily, fromBrave, fromSerper, fromGemini, search, probe, makeLimiter };
 export default API;
