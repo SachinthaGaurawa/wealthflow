@@ -59,7 +59,7 @@ describe('rows that were filed and then lost are filed again, once', () => {
         w.data.set('users/u', { ...w.user(), expenses: [], incomeRecv: [], _wipedAt: Date.now() + 1000 });
         expect(await healMissingRows({ db: w.db, uid: 'u' })).toMatchObject({ requeued: 0 });
         w.data.set('users/u', { ...w.user(), _wipedAt: 0 });
-        expect(await healMissingRows({ db: w.db, uid: 'u', now: Date.now() + 46 * 86400000 })).toMatchObject({ requeued: 0 });
+        expect(await healMissingRows({ db: w.db, uid: 'u', now: Date.now() + 91 * 86400000 })).toMatchObject({ requeued: 0 });
     });
     it('gives up after a few tries rather than loop, and never touches a statement being processed', async () => {
         const w = world();

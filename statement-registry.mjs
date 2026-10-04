@@ -179,7 +179,7 @@ export async function peekStatement({ db, uid, identity = null, sha = '', ref = 
     for (const { kind, id } of keysOf(identity, sha)) {
         const snap = await reg.doc(id).get();
         if (!snap.exists || snap.data().ref === ref) continue;
-        if (kind === 'period' && (skip?.has(snap.data().ref) || !sameStatement(snap.data(), { identity, rows }))) continue;       // another statement of that month, not this one
+        if (skip?.has(snap.data().ref) || (kind === 'period' && !sameStatement(snap.data(), { identity, rows }))) continue;       // another statement of that month, not this one (or a holder the caller has shown is not this statement)
         return { duplicate: true, kind, existing: describe(snap.data()) };
     }
     return { duplicate: false };
@@ -203,7 +203,7 @@ export async function claimStatement({ db, uid, via, ref, identity = null, sha =
         for (const entry of snaps) {
             const { kind, snap } = entry;
             if (!snap.exists || snap.data().ref === ref) continue;
-            if (kind === 'period' && (skip?.has(snap.data().ref) || !sameStatement(snap.data(), { identity, rows: meta.rows }))) { entry.other = true; continue; }
+            if (skip?.has(snap.data().ref) || (kind === 'period' && !sameStatement(snap.data(), { identity, rows: meta.rows }))) { entry.other = true; continue; }
             return { ok: false, duplicate: true, kind, existing: describe(snap.data()) };
         }
         const record = { via, door: String(meta.door || '').slice(0, 12), ref: String(ref).slice(0, 400), bank: identity?.bank || '', account: identity?.account || '', year: identity?.year || 0, month: identity?.month || 0,
@@ -247,6 +247,29 @@ function heldBy(user, test) {
     }
     return { records, keys: keys.filter(Boolean) };
 }
+/** The statement the email system read, as its LEDGER says: how many rows it has, and how many of the rows it filed are no longer in the books (a device that had not yet seen them pushed
+ *  its own copy of the list over them; healMissingRows brings them back). A row the owner deleted has a tombstone and counts as decided. The ledger has no row for a statement filed
+ *  before it existed: unknown (total 0). */
+export const LEDGER_MODULES = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'];
+async function ledgerOf({ db, uid, path, user }) {
+    try {
+        const snap = await db.collection('users').doc(uid).collection('statementLedger').where('sourcePath', '==', path).limit(3000).get();
+        const tomb = user._tomb && typeof user._tomb === 'object' ? user._tomb : {}, ids = {};
+        let total = 0, lost = 0;
+        for (const doc of snap.docs) {
+            const entry = doc.data() || {};
+            if (entry.status === 'superseded_by_layout') continue;
+            total += 1;
+            if (entry.status !== 'filed' || !LEDGER_MODULES.includes(entry.module)) continue;
+            ids[entry.module] ||= new Set((Array.isArray(user[entry.module]) ? user[entry.module] : []).map(record => record && record.id));
+            if (!ids[entry.module].has(doc.id) && tomb[entry.module]?.[doc.id] == null) lost += 1;
+        }
+        return { total, lost };
+    } catch (_) { return { total: 0, lost: 0 }; }          // advice: a ledger that cannot be read leaves the hold believed, as before
+}
+/** A statement is COMPLETE in the books when the ledger knows at least COVERED of its rows to be there or decided (or knows nothing about it). */
+const completeOf = ({ total, lost }) => !(total > 0 && (total - lost) / total < COVERED);
+
 /** A statement the worker has filed part of and is still working through is being added: it made progress within this long ago. Parked longer than this, it is not being added by anyone. */
 export const ACTIVE_MS = 15 * 60 * 1000;
 
@@ -258,7 +281,7 @@ export const ACTIVE_MS = 15 * 60 * 1000;
  *     records itself, in the same transaction that settles them: it has no such delay).
  * Otherwise it holds nothing — the statement failed and waits, went to review, was never filed, was parked, or the owner deleted what it filed — and is
  * not believed. A hold that cannot be checked (a holder it does not recognise, books it cannot read) is believed: unknown never frees a statement.
- * @returns {{live:boolean, why:string, records:number, held?:string[], working?:boolean, emptied?:boolean}}
+ * @returns {{live:boolean, why:string, records:number, held?:string[], total?:number, lost?:number, complete?:boolean, working?:boolean, emptied?:boolean}}
  */
 export async function holderProof({ db, uid, existing, now = Date.now() }) {
     const ref = String(existing?.ref || ''), via = existing?.via, token = UPLOAD_REF.exec(ref)?.[1] || '', item = ITEM_PATH.exec(ref);
@@ -267,18 +290,21 @@ export async function holderProof({ db, uid, existing, now = Date.now() }) {
     if (!userSnap.exists) return { live: true, why: 'books-unreadable', records: 0 };
     const user = userSnap.data() || {};
     const { records, keys } = heldBy(user, token ? record => record.uploadClaim === token : record => record.statementKey === ref || record.statementKey === item[2] || record.sourcePath === ref);
-    if (records) return { live: true, why: 'in-books', records, held: keys };
-    let itemExists = false, itemFiled = false;
+    let itemExists = false, itemFiled = false, working = '';
     if (item) {
         const snap = await db.collection('wf-mail').doc(item[1]).collection('items').doc(item[2]).get(), data = snap.exists ? (snap.data() || {}) : null;
         itemExists = !!data;
         itemFiled = !!data && data.filed === true && !data.duplicateOf && (Number(data.totalRows) > 0 || Number(data.cursor) > 0);
         if (data) {
             const status = String(data.status || '');
-            if (Number(data.leaseUntil) > now) return { live: true, why: 'working', records: 0, working: true };
-            if ((status === 'pending' || status === 'processing') && Number(data.cursor) > 0 && now - (Number(data.updatedAt) || 0) < ACTIVE_MS) return { live: true, why: 'part-way', records: 0, working: true };
+            working = Number(data.leaseUntil) > now ? 'working' : (status === 'pending' || status === 'processing') && Number(data.cursor) > 0 && now - (Number(data.updatedAt) || 0) < ACTIVE_MS ? 'part-way' : '';
         }
     }
+    if (records) {
+        const ledger = item && item[1] && ref.startsWith('wf-mail/') ? await ledgerOf({ db, uid, path: ref, user }) : { total: 0, lost: 0 };
+        return { live: true, why: 'in-books', records, held: keys, total: ledger.total, lost: ledger.lost, complete: completeOf(ledger), working: !!working };
+    }
+    if (working) return { live: true, why: working, records: 0, working: true };
     const graced = existing.door !== 'worker' && now - (Number(existing.at) || 0) < HOLD_GRACE_MS;
     if (graced) return { live: true, why: 'recent', records: 0 };
     /* `emptied`: the holder did file the statement and its records are gone (the owner deleted them; an upload holds only from Save), or it can no longer say (its item is gone) */
@@ -297,13 +323,21 @@ export async function holderProof({ db, uid, existing, now = Date.now() }) {
  * bring back what the owner removed. The owner's own upload does take such a month back.
  * @returns the peek/claim answer; a duplicate carries `proof` ({live, why, records, held?, working?}) and, when transactions were compared, `coverage`; a statement let through past another holder carries `partial` and `have`
  */
-export async function lookup({ db, uid, claim = false, via, ref = '', identity = null, sha = '', rows = 0, rowKeys = null, keepEmptied = false, meta = {}, now = Date.now() }) {
+export async function lookup({ db, uid, claim = false, via, ref = '', identity = null, sha = '', rows = 0, rowKeys = null, keepEmptied = false, force = false, meta = {}, now = Date.now() }) {
     const mine = Array.isArray(rowKeys) ? rowKeysOf(rowKeys) : [];
     const skip = new Set();
     let partial = null;
+    /* Every holder a statement is let past leaves its rows with the owner's review: the rows ANY of them holds are named in `have` (the email system's rows and the upload's own, together). */
+    const haves = new Set(); let ofAll = 0, matchedAll = 0, heldAll = 0;
+    const leave = (holderRef, coverage, held) => {
+        skip.add(holderRef);
+        for (const at of coverage?.have || []) haves.add(at);
+        ofAll = Math.max(ofAll, coverage?.of || 0); matchedAll = Math.max(matchedAll, coverage?.matched || 0, haves.size); heldAll += held;
+        partial = { of: ofAll, matched: matchedAll, have: [...haves].sort((a, b) => a - b), held: heldAll };
+    };
     for (let round = 0; ; round += 1) {
         const found = claim ? await claimStatement({ db, uid, via, ref, identity, sha, meta: { ...meta, rows: meta.rows ?? rows }, now, skip }) : await peekStatement({ db, uid, identity, sha, ref, rows, skip });
-        if (claim ? found.ok : !found.duplicate) return partial ? { ...found, partial: { of: partial.of, matched: partial.matched, held: partial.held }, have: partial.have } : found;
+        if (claim ? found.ok : !found.duplicate) return partial ? { ...found, partial: { of: partial.of, matched: partial.matched, held: partial.held }, have: partial.have, ...(force ? { forced: true } : {}) } : found;
         const proof = await holderProof({ db, uid, existing: found.existing, now });
         if (round >= 5) return { ...found, proof: { ...proof, live: true, why: proof.live ? proof.why : 'too-many-holders' } };
         if (!proof.live) {
@@ -311,16 +345,24 @@ export async function lookup({ db, uid, claim = false, via, ref = '', identity =
             if (!(await releaseStatement({ db, uid, ref: found.existing.ref }))) return { ...found, proof: { ...proof, live: true, why: 'could-not-release' } };
             continue;
         }
-        if (found.kind === 'period' && proof.why === 'in-books' && proof.held?.length) {      // records that carry no day or amount cannot be compared: believed
-            if (mine.some(Boolean)) {
-                const coverage = coverageOf(proof.held, mine);
-                if (!coverage.same) { skip.add(found.existing.ref); partial = { ...coverage, held: proof.held.length }; continue; }
+        /* The owner said "add it anyway": every holder that is not being worked on this minute is left with its statement. What the books already hold of it is still named (`have`), so nothing is added twice. */
+        if (force && !proof.working) {
+            const coverage = proof.held?.length && mine.some(Boolean) ? coverageOf(proof.held, mine) : null;
+            leave(found.existing.ref, coverage, proof.held?.length || 0); continue;
+        }
+        if ((found.kind === 'period' || found.kind === 'file') && proof.why === 'in-books' && proof.held?.length) {      // records that carry no day or amount cannot be compared: believed
+            /* Is it THIS statement? Its transactions say. And is the holder's statement really there? A statement the email system read whose rows are mostly gone from the books (a stale device overwrote
+             * them) is not "added": the owner may add it, and the rows that are still there are named. */
+            const coverage = mine.some(Boolean) ? coverageOf(proof.held, mine) : null;
+            if (coverage) {
+                if (!coverage.same || proof.complete === false) { leave(found.existing.ref, coverage, proof.held.length); continue; }
                 return { ...found, proof, coverage };
             }
+            if (proof.complete === false) { leave(found.existing.ref, null, proof.held.length); continue; }
             /* No amounts came (a device still on the app of before 2026-10-04): the same tests on the DAYS the books hold for the holder. */
             const days = [...new Set(proof.held.map(key => key.split('|')[0]))], mineDays = Array.isArray(identity?.days) ? identity.days : [];
             const byDay = coverageOf(days, mineDays);
-            if (mineDays.length && !byDay.same) { skip.add(found.existing.ref); partial = { of: byDay.of, matched: byDay.matched, have: [], held: proof.held.length }; continue; }
+            if (mineDays.length && !byDay.same) { leave(found.existing.ref, { of: byDay.of, matched: byDay.matched, have: [] }, proof.held.length); continue; }
         }
         return { ...found, proof };
     }
@@ -330,7 +372,8 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 /** A line that says WHAT is in the books, so a duplicate the owner disagrees with can be checked on sight. Their own data only. */
 export function detailOf(existing = {}, proof = {}, coverage = null) {
     const what = existing.bank && existing.account && existing.year && existing.month ? `${bankIdentity(existing.bank).name} ••${existing.account}, ${MONTHS[existing.month - 1]} ${existing.year}` : String(existing.filename || '').slice(0, 60);
-    const state = proof.working ? 'being added right now' : coverage && coverage.of && coverage.ratio >= COVERED ? `${coverage.matched} of ${coverage.of} transactions are in your books` : proof.records ? `${proof.records} transaction${proof.records === 1 ? '' : 's'} in your books` : '';
+    const state = proof.working ? 'being added right now' : coverage && coverage.of && coverage.ratio >= COVERED ? `${coverage.matched} of ${coverage.of} transactions are in your books`
+        : proof.total > 0 ? `${proof.total - proof.lost} of its ${proof.total} rows are in your books` : proof.records ? `${proof.records} transaction${proof.records === 1 ? '' : 's'} in your books` : '';
     return [what, state].filter(Boolean).join(' · ');
 }
 

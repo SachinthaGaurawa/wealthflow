@@ -54,17 +54,17 @@ function inputsOf(body) {
     const amounts = Array.isArray(body.amounts) ? body.amounts.slice(0, ROWS_CAP) : [];
     const rowKeys = amounts.length === dates.length && dates.length ? dates.map((date, at) => ({ date, amount: Number(amounts[at]) })) : null;
     const identity = body.bank || body.last4 || body.periodText || dates.length ? identityOf({ bank: text(body.bank, 80), account: text(body.last4, 40), periodText: text(body.periodText, 80), dates }) : null;
-    return { sha, identity, rowKeys, rows: Math.min(100000, Math.max(0, Math.floor(Number(body.rows)) || 0)) };
+    return { sha, identity, rowKeys, force: body.force === true && !body.itemId, rows: Math.min(100000, Math.max(0, Math.floor(Number(body.rows)) || 0)) };
 }
 
 /** One line in the platform log for every statement turned away or let past another holder: WHY, in words and counts (no amount, no account number, no file name), so "it said already added" can be read from the log. */
 function note(action, door, identity, answer) {
     try {
-        const held = answer.duplicate ? answer : answer.partial ? { existing: {}, proof: { why: 'other-statement' }, coverage: answer.partial } : null;
+        const held = answer.duplicate ? answer : answer.partial ? { existing: {}, proof: { why: answer.forced ? 'owner-override' : 'other-statement' }, coverage: answer.partial } : null;
         if (!held) return;
-        const existing = held.existing || {}, cover = held.coverage || null;
-        console.info(JSON.stringify({ evt: 'statement-guard', action, door, verdict: answer.duplicate ? 'duplicate' : 'other-statement', kind: answer.kind || '', via: existing.via || '', holderDoor: existing.door || '', why: held.proof?.why || '',
-            records: held.proof?.records || 0, matched: cover ? cover.matched : null, of: cover ? cover.of : null, bank: identity?.bank || '', month: identity?.ok ? `${identity.year}-${String(identity.month).padStart(2, '0')}` : '', ageMin: existing.at ? Math.round((Date.now() - existing.at) / 60000) : null }));
+        const existing = held.existing || {}, cover = held.coverage || null, proof = held.proof || {};
+        console.info(JSON.stringify({ evt: 'statement-guard', action, door, verdict: answer.duplicate ? 'duplicate' : answer.forced ? 'override' : 'other-statement', kind: answer.kind || '', via: existing.via || '', holderDoor: existing.door || '', why: proof.why || '',
+            records: proof.records || 0, ledgerRows: proof.total || 0, ledgerLost: proof.lost || 0, matched: cover ? cover.matched : null, of: cover ? cover.of : null, bank: identity?.bank || '', month: identity?.ok ? `${identity.year}-${String(identity.month).padStart(2, '0')}` : '', ageMin: existing.at ? Math.round((Date.now() - existing.at) / 60000) : null }));
     } catch (_) { /* a log line never stops an answer */ }
 }
 
@@ -123,15 +123,18 @@ export default async function handler(req, res) {
             const twin = await withDeadline(findFiledTwin({ mailRef, sha, selfId: itemId, accept: async doc => {
                 const data = doc.data() || {};
                 const proof = await holderProof({ db, uid: who.uid, existing: { via: VIA.EMAIL, ref: doc.ref.path, door: data.filedMs ? 'phone' : 'worker', at: Number(data.filedMs) || 0 } });
-                proofs.set(doc.id, proof); return proof.live;
+                proofs.set(doc.id, proof);
+                /* Records of it in the books are not enough: its rows must really be there. The email system's own ledger says how many of them are (statement-registry.mjs holderProof);
+                 * a statement most of whose rows are gone is not "already added", and "add it anyway" (`force`) never waits for a statement that is not being worked on this minute. */
+                return proof.live && (proof.working || (!inputs.force && proof.complete !== false));
             } }), 20000, 'mailbox');
-            if (twin) return turnedAway({ via: VIA.EMAIL, kind: 'file', notice: noticeFor(VIA.EMAIL), detail: detailOf({ filename: twin.data.filename }, proofs.get(twin.id)) }, itemRef ? duplicatePatch({ twin }) : null);
+            if (twin) { note(action, itemId ? 'phone' : 'upload', identity, { duplicate: true, kind: 'file', existing: { via: VIA.EMAIL, door: twin.data.filedMs ? 'phone' : 'worker', at: 0 }, proof: proofs.get(twin.id) }); return turnedAway({ via: VIA.EMAIL, kind: 'file', notice: noticeFor(VIA.EMAIL), detail: detailOf({ filename: twin.data.filename }, proofs.get(twin.id)), canForce: !proofs.get(twin.id)?.working }, itemRef ? duplicatePatch({ twin }) : null); }
         }
         /* The registry says who holds it; a holder with nothing behind it (holderProof) has been given back by the time we hear. */
-        const found = await withDeadline(lookup({ db, uid: who.uid, claim: action === 'claim', via, ref, identity, sha, rows: inputs.rows, rowKeys: inputs.rowKeys,
+        const found = await withDeadline(lookup({ db, uid: who.uid, claim: action === 'claim', via, ref, identity, sha, rows: inputs.rows, rowKeys: inputs.rowKeys, force: inputs.force,
             meta: { filename: body.filename, size: body.size, rows: Number(body.rows) || inputs.rows, door: itemId ? 'phone' : 'upload' } }), 20000, 'statement registry');
         note(action, itemId ? 'phone' : 'upload', identity, found);
-        if (found.duplicate) return turnedAway({ via: found.existing.via, kind: found.kind, existing: { ...found.existing, ref: undefined }, notice: noticeFor(found.existing.via), detail: detailOf(found.existing, found.proof, found.coverage) }, itemRef ? registryDuplicatePatch({ duplicate: found }) : null);
+        if (found.duplicate) return turnedAway({ via: found.existing.via, kind: found.kind, existing: { ...found.existing, ref: undefined }, notice: noticeFor(found.existing.via), detail: detailOf(found.existing, found.proof, found.coverage), canForce: !found.proof?.working }, itemRef ? registryDuplicatePatch({ duplicate: found }) : null);
         return json(res, 200, { ok: true, duplicate: false, ...(ref ? { id: ref } : {}), identified: !!(identity && identity.ok), ...(found.have && found.have.length ? { have: found.have } : {}) });
     } catch (_) { return json(res, 503, { ok: false, reason: 'registry-unavailable' }); }
 }
