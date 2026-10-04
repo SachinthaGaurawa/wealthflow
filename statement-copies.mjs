@@ -13,6 +13,7 @@
  * ===========================================================================*/
 
 import { bankKeyOf } from './statement-coverage.mjs';
+import { recordsOf, overlapOf, broadlySame, similarWords, isWorkerSource } from './statement-rowmatch.mjs';
 
 const STORES = ['expenses', 'incomeRecv', 'cconetime', 'ccPayments'];
 const norm = text => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -54,4 +55,59 @@ export function statementCopies(user, { labelOf = () => '' } = {}) {
     return { remove, groups: found, left };
 }
 
-export default { statementCopies, touched };
+/**
+ * THE SAME STATEMENT FILED BY TWO DOORS (statement-rowmatch.mjs). Production, 2026-10-04: the email system and the owner's own upload each filed a statement's rows, and every row of it was in the books twice.
+ * The matcher above never saw it: a hand upload has no `statementKey`, and its words and account tail differ from the email system's. Here a record's SOURCE is its email item, its upload or its hand-filed batch,
+ * and two sources are one statement when they overlap broadly (most of the smaller is in the other). For each day+amount of such sources the books keep what the source holding the MOST of them holds — so a payment
+ * that really happened twice on one day (two identical rows of one statement) stays twice — and the other sources' copies go. A record the owner has touched is never taken out (the group is left for them),
+ * and an unclear account (two different known tails or banks among the records of one day+amount) is left alone. Of two sources holding as many, the one that knows its account (card tail) is kept, then the email system's:
+ * its records carry the statement's key, which every other check of the books relies on.
+ * @returns {{remove: {store:string, record:object, keep:object, source:string, keptSource:string}[], groups:number, left:number}}
+ */
+export function crossDoorCopies(user, { labelOf = () => '' } = {}) {
+    const records = recordsOf(user).filter(r => r.store !== 'ccinstall');
+    const bySource = new Map();
+    for (const r of records) { if (!bySource.has(r.source)) bySource.set(r.source, []); bySource.get(r.source).push(r); }
+    if (bySource.size < 2) return { remove: [], groups: 0, left: 0 };
+    const keysOf = list => list.map(r => `${r.family}|${r.date}|${r.cents}`);   // evidence ignores WHICH list a door filed a row in (a card row hand-filed as an expense is still the same row)
+    const evidence = new Map();
+    const sameStatement = (a, b, lone) => {
+        const id = a < b ? `${a}\n${b}` : `${b}\n${a}`;
+        if (!evidence.has(id)) { const la = bySource.get(a), lb = bySource.get(b); evidence.set(id, { overlap: overlapOf(keysOf(la), keysOf(lb)), smaller: Math.min(la.length, lb.length) }); }
+        const { overlap, smaller } = evidence.get(id);
+        return broadlySame(overlap, smaller, lone);
+    };
+    const buckets = new Map();
+    for (const r of records) { if (r.store === 'ccinstall') continue; const key = `${r.store}|${r.date}|${r.cents}`; if (!buckets.has(key)) buckets.set(key, []); buckets.get(key).push(r); }
+    const remove = []; let found = 0, left = 0;
+    for (const members of buckets.values()) {
+        const sources = [...new Set(members.map(r => r.source))];
+        if (sources.length < 2) continue;
+        if (new Set(members.map(r => r.last4).filter(Boolean)).size > 1 || new Set(members.map(r => r.bank).filter(Boolean)).size > 1) continue;
+        const parent = new Map(sources.map(source => [source, source]));
+        const root = source => { while (parent.get(source) !== source) source = parent.get(source); return source; };
+        for (let i = 0; i < sources.length; i += 1) for (let j = i + 1; j < sources.length; j += 1) {
+            const a = members.filter(r => r.source === sources[i]), b = members.filter(r => r.source === sources[j]);
+            if (sameStatement(sources[i], sources[j], a.length === 1 && b.length === 1 && similarWords(a[0].words, b[0].words))) parent.set(root(sources[i]), root(sources[j]));
+        }
+        const clusters = new Map();
+        for (const source of sources) { const id = root(source); if (!clusters.has(id)) clusters.set(id, []); clusters.get(id).push(source); }
+        for (const cluster of clusters.values()) {
+            if (cluster.length < 2) continue;
+            found += 1;
+            const of = source => members.filter(r => r.source === source);
+            const date = members[0].date.slice(0, 7);
+            const rank = source => { const list = of(source); return [-list.length, list.some(r => touched(r.record)) ? 0 : 1, list.some(r => r.last4) ? 0 : 1, isWorkerSource(source) ? 0 : 1, labelOf(source.replace(/^k:/, '')) === date ? 0 : 1, Math.min(...list.map(r => r.created)), source]; };
+            const ordered = [...cluster].sort((a, b) => { const x = rank(a), y = rank(b); for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; });
+            const anchor = ordered[0], keep = of(anchor);
+            for (const source of ordered.slice(1)) {
+                const drop = of(source);
+                if (drop.some(r => touched(r.record))) { left += 1; continue; }
+                drop.forEach((r, at) => { const twin = keep.find(k => similarWords(k.words, r.words)) || keep[at % keep.length]; remove.push({ store: r.store, record: r.record, keep: twin.record, source, keptSource: anchor }); });
+            }
+        }
+    }
+    return { remove, groups: found, left };
+}
+
+export default { statementCopies, crossDoorCopies, touched };

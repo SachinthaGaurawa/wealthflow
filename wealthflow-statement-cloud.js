@@ -573,19 +573,26 @@ export async function guardFile(file,{force=false}={}){
 /* The amounts go beside the dates (the same places): the server compares a statement's TRANSACTIONS with what the books hold, so a statement is "already added" only when it really is,
  * and not because another statement of the same card shares its month. */
 const amountsOf=(amounts,dates)=>Array.isArray(amounts)&&amounts.length===dates.length?amounts.map(a=>Math.abs(Number(a))||0):undefined;
+/* The way each row went and its words go beside the dates too: the server counts rows by day, cents and direction (statement-rowmatch.mjs) and uses the words only as evidence. */
+const directionsOf=(list,dates)=>Array.isArray(list)&&list.length===dates.length?list.map(d=>d==='credit'?'credit':d==='debit'?'debit':''):undefined;
+const wordsOf=(list,dates)=>Array.isArray(list)&&list.length===dates.length?list.map(w=>String(w||'').slice(0,80)):undefined;
 /** After the statement is read: is this bank + account + month already in the books? Returns {duplicate,...,info} or {info, have}; `info` goes to guardClaim at save,
  *  `have` lists the places of the rows the books already hold (a statement let past another one of its month). */
-export async function guardParsed({sha='',bank='',last4='',periodText='',dates=[],amounts=null,filename='',size=0,rows=0,force=false}){
+export async function guardParsed({sha='',bank='',last4='',periodText='',dates=[],amounts=null,directions=null,words=null,filename='',size=0,rows=0,force=false}){
     const d=(dates||[]).slice(0,2000);
-    const info={sha,bank:String(bank||''),last4:String(last4||''),periodText:String(periodText||''),dates:d,amounts:amountsOf((amounts||[]).slice(0,2000),d),filename:String(filename||'').slice(0,200),size:Number(size)||0,rows:Number(rows)||0,force:force===true,token:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g,'').slice(0,64).padEnd(8,'0')};
-    const raw=await guardCall({action:'check',sha256:sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,amounts:info.amounts,rows:info.rows,force:info.force?true:undefined});
+    const info={sha,bank:String(bank||''),last4:String(last4||''),periodText:String(periodText||''),dates:d,amounts:amountsOf((amounts||[]).slice(0,2000),d),directions:directionsOf((directions||[]).slice(0,2000),d),words:wordsOf((words||[]).slice(0,2000),d),filename:String(filename||'').slice(0,200),size:Number(size)||0,rows:Number(rows)||0,force:force===true,token:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g,'').slice(0,64).padEnd(8,'0')};
+    const raw=await guardCall({action:'check',sha256:sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,amounts:info.amounts,directions:info.directions,words:info.words,rows:info.rows,force:info.force?true:undefined});
     const r=noticeOf(raw);
     return r?{...r,info}:{info,have:raw&&Array.isArray(raw.have)?raw.have.filter(Number.isInteger):[]};
 }
 /** At save: take the statement. -> {duplicate, via, notice} when another door got there first, else null (go ahead). */
 export async function guardClaim(info){
     if(!info)return null;
-    return noticeOf(await guardCall({action:'claim',sha256:info.sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,amounts:info.amounts,filename:info.filename,size:info.size,rows:info.rows,token:info.token,force:info.force===true?true:undefined}));
+    const raw=await guardCall({action:'claim',sha256:info.sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,amounts:info.amounts,directions:info.directions,words:info.words,filename:info.filename,size:info.size,rows:info.rows,token:info.token,force:info.force===true?true:undefined});
+    const r=noticeOf(raw);
+    /* The books may have taken rows of this statement since the review opened (the email system files while the owner reads): the claim names the places of the rows it holds NOW, in `info.have`. */
+    if(!r)info.have=raw&&Array.isArray(raw.have)?raw.have.filter(Number.isInteger):[];
+    return r;
 }
 /** The device's own review of a MAILBOX statement: the same lock, held by the mailbox item it came from. `action` is 'check' (before the review opens) or 'claim' (at save).
  *  A statement turned away is closed on the server like the email sync closes one. -> {duplicate, via, notice} or null (go ahead; also null when the server cannot be reached). */

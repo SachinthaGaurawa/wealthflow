@@ -29,7 +29,8 @@ import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, i
 import { PROPOSAL, REVIEW, decisionProblem, agreedRows, approvedRows, reviewPrompt, proposalPrompt, inVocabulary } from './statement-board.mjs';
 import { healLoanLinks } from './loan-link.mjs';
 import { manualTwin, markTwin } from './statement-links.mjs';
-import { statementCopies } from './statement-copies.mjs';
+import { statementCopies, crossDoorCopies } from './statement-copies.mjs';
+import { matchStatementRows, recordsOf } from './statement-rowmatch.mjs';
 import { looseLegsWhy, ownMoneyLegs, OWN_TRANSFER_LABEL } from './statement-legs.mjs';
 import { applyCardSettlement } from './cc-fifo.mjs';
 import { policyWithReach } from './bank-reach.mjs';
@@ -838,31 +839,40 @@ export async function healHandMadeTwins({ db, uid, now = Date.now(), log = conso
 export async function healStatementCopies({ db, mailRef, uid, now = Date.now(), log = console.info, limit = 120 }) {
     const userRef = db.collection('users').doc(uid), STORES = ['expenses', 'incomeRecv', 'cconetime', 'ccPayments'];
     const peek = (await userRef.get()).data() || {};
-    const sources = new Set();
-    for (const store of STORES) for (const record of Array.isArray(peek[store]) ? peek[store] : []) if (record && record.source === 'statement' && record.statementKey) sources.add(record.statementKey);
-    if (sources.size < 2) return { removed: 0, more: false };
+    if (new Set(recordsOf(peek).map(entry => entry.source)).size < 2) return { removed: 0, more: false };
     const labels = new Map();
     for (const item of await storedItems(mailRef)) labels.set(`${mailRef.path}/items/${item.id}`, monthOf(item) || '');
     const labelOf = key => labels.get(key) || '';
-    if (!statementCopies(peek, { labelOf }).remove.length) return { removed: 0, more: false };
+    /* TWO KINDS OF COPY, in this order: the same line filed from two email items (statement-copies.mjs), then the same statement filed by two DOORS (the email system and the owner's own upload: rows of one
+     * statement in the books twice, `crossDoorCopies`). The second is worked out on the books WITHOUT the first's removals, so nothing is counted against a record that is already going. */
+    const planOf = user => {
+        const same = statementCopies(user, { labelOf }), going = new Set(same.remove.map(entry => entry.record));
+        const rest = { ...user }; for (const store of STORES) if (Array.isArray(user[store])) rest[store] = user[store].filter(record => !going.has(record));
+        const doors = crossDoorCopies(rest, { labelOf });
+        return { remove: [...same.remove.map(entry => ({ ...entry, why: 'copy-of-another-statement' })), ...doors.remove.map(entry => ({ ...entry, why: 'copy-from-another-door' }))], groups: same.groups, doors: doors.groups, left: same.left + doors.left };
+    };
+    if (!planOf(peek).remove.length) return { removed: 0, more: false };
     const result = await db.runTransaction(async tx => {
         const snap = await tx.get(userRef), user = structuredClone(snap.data() || {});
-        const plan = statementCopies(user, { labelOf }), chosen = plan.remove.slice(0, limit);
+        const plan = planOf(user), chosen = plan.remove.slice(0, limit);
         if (!chosen.length) return { removed: 0, more: false, left: plan.left };
         const ledgerSnaps = [];
         for (const { record } of chosen) ledgerSnaps.push(await tx.get(userRef.collection('statementLedger').doc(String(record.id))));
-        const tomb = user._tomb && typeof user._tomb === 'object' ? { ...user._tomb } : {}, banks = {}, gone = new Set(chosen.map(({ record }) => record));
-        chosen.forEach(({ store, record, keep }, at) => {
+        const tomb = user._tomb && typeof user._tomb === 'object' ? { ...user._tomb } : {}, banks = {}, gone = new Set(chosen.map(({ record }) => record)), byWhy = {};
+        chosen.forEach(({ store, record, keep, why, source, keptSource }, at) => {
             tomb[store] = { ...(tomb[store] && typeof tomb[store] === 'object' ? tomb[store] : {}), [record.id]: now };
             const bank = String(record.bank || '?').slice(0, 24); banks[bank] = (banks[bank] || 0) + 1;
-            if (ledgerSnaps[at].exists) tx.set(ledgerSnaps[at].ref, { status: 'duplicate', matchedId: String(keep.id || ''), reason: 'copy-of-another-statement', settledAt: now }, { merge: true });
+            byWhy[why] = (byWhy[why] || 0) + 1;
+            if (ledgerSnaps[at].exists) tx.set(ledgerSnaps[at].ref, { status: 'duplicate', matchedId: String(keep.id || ''), reason: why, settledAt: now }, { merge: true });
+            /* NOTHING IS LOST: the removed record is kept whole, with the one it is a copy of, so it can be put back by hand */
+            tx.set(userRef.collection('statementTrash').doc(`${store}_${String(record.id)}`.slice(0, 200)), { uid, store, record: JSON.parse(JSON.stringify(record)), keptId: String(keep.id || ''), reason: why, source: String(source || ''), keptSource: String(keptSource || ''), removedAt: now }, { merge: false });
         });
         const changes = {};
         for (const store of STORES) if (Array.isArray(user[store]) && chosen.some(entry => entry.store === store)) changes[store] = user[store].filter(record => !gone.has(record));
         tx.set(userRef, { ...changes, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
-        return { removed: chosen.length, more: plan.remove.length > chosen.length, left: plan.left, groups: plan.groups, banks };
+        return { removed: chosen.length, more: plan.remove.length > chosen.length, left: plan.left, groups: plan.groups, doors: plan.doors, banks, byWhy };
     });
-    if (result.removed || result.left) log(JSON.stringify({ evt: 'statement-copies-removed', removed: result.removed, groups: result.groups || 0, left: result.left || 0, ...(result.banks ? { banks: result.banks } : {}), ...(result.more ? { more: true } : {}) }));
+    if (result.removed || result.left) log(JSON.stringify({ evt: 'statement-copies-removed', removed: result.removed, groups: result.groups || 0, doors: result.doors || 0, left: result.left || 0, ...(result.byWhy ? { why: result.byWhy } : {}), ...(result.banks ? { banks: result.banks } : {}), ...(result.more ? { more: true } : {}) }));
     return result;
 }
 
@@ -1299,7 +1309,25 @@ export async function healMissingRows({ db, uid, limit = 5, now = Date.now(), ma
     let page = userRef.collection('statementLedger').where('status', '==', 'filed').orderBy('__name__');
     if (after) page = page.startAfter(after);
     const filed = await page.limit(ROW_HEAL_PAGE).get();
-    if (mailRef) { try { await mailRef.set({ rowHealAfter: filed.docs.length < ROW_HEAL_PAGE ? '' : filed.docs.at(-1).id }, { merge: true }); } catch (_) { /* the next run reads the same page again */ } }
+    /* A ROW THE EMAIL SYSTEM LEFT OUT BECAUSE THE OWNER'S OWN UPLOAD ALREADY HELD IT (`already-in-books`) depends on that record: if it is gone from the books and nobody deleted it (a stale device's copy of the list went over it,
+     * like a filed row above), the statement has no copy of the row at all. It is read again, and the row it can no longer find in the books is filed from the email. A record the owner deleted (a tombstone) stays gone. */
+    let dupAfter = '';
+    if (mailRef) { try { dupAfter = String((await mailRef.get()).data()?.rowHealDupAfter || ''); } catch (_) { dupAfter = ''; } }
+    let dupPage = userRef.collection('statementLedger').where('reason', '==', 'already-in-books').orderBy('__name__');
+    if (dupAfter) dupPage = dupPage.startAfter(dupAfter);
+    const left = await dupPage.limit(ROW_HEAL_PAGE).get();
+    if (mailRef) { try { await mailRef.set({ rowHealAfter: filed.docs.length < ROW_HEAL_PAGE ? '' : filed.docs.at(-1).id, rowHealDupAfter: left.docs.length < ROW_HEAL_PAGE ? '' : left.docs.at(-1).id }, { merge: true }); } catch (_) { /* the next run reads the same page again */ } }
+    const allIds = new Set(); for (const key of ROW_KEYS) for (const record of Array.isArray(user[key]) ? user[key] : []) if (record && record.id != null) allIds.add(String(record.id));
+    const tombed = id => ROW_KEYS.some(key => tomb[key]?.[id] != null);
+    for (const doc of left.docs) {
+        const entry = doc.data();
+        if (entry.uid !== uid || entry.status !== 'duplicate' || !entry.matchedId || entry.matchedId === 'unknown' || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(entry.sourcePath || ''))) continue;
+        const settled = Number(entry.settledAt) || 0;
+        if (!settled || settled <= wiped || now - settled > ROW_HEAL_WINDOW_MS) continue;
+        if (allIds.has(String(entry.matchedId)) || tombed(String(entry.matchedId))) continue;
+        if (!missing.has(entry.sourcePath)) missing.set(entry.sourcePath, []);
+        missing.get(entry.sourcePath).push(doc.id);
+    }
     for (const doc of filed.docs) {
         const entry = doc.data();
         if (entry.uid !== uid || !ROW_KEYS.includes(entry.module) || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(entry.sourcePath || ''))) continue;
@@ -1959,6 +1987,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             if ((claimed.cursor || 0) === 0) {
                 const held = await claimInRegistry({ db, uid, sourceRef, claimed, parsed, sha: attachment.contentSha256 });
                 if (held?.duplicate) { await closeAsRegistryDuplicate(db, uid, sourceRef, claimed.leaseToken, held); return { status: 'filed', filed: 0, duplicate: 1, blockedBy: held.existing.via }; }
+                await recordBooksHave({ sourceRef, user, parsed, claimed });
             }
             const replayed = (claimed.cursor || 0) === 0 && claimed.resumed ? await replayLedger(db, uid, sourceRef.path, user) : null;
             const settledRows = replayed ? replayed.indexes : null;
@@ -2043,6 +2072,16 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
 
 /* THE STATEMENT REGISTRY, EMAIL DOOR. A combined e-statement of several accounts has several identities and no single one to hold, so only its file is
  * held; a lookup that fails lets the statement through (the transaction-level matcher, statement-copies.mjs, is still behind it). */
+/** WHICH ROWS OF THIS STATEMENT THE BOOKS ALREADY HOLD FROM ANOTHER DOOR (statement-rowmatch.mjs), worked out once for the whole statement before its first row is filed and left on the item for the settlement:
+ *  `booksHave` {rowIndex: recordId}. A statement the owner uploaded by hand is the same statement as the email that carries it: its rows are in the books, counted by day, cents and direction, and are not filed again.
+ *  Always written (empty too), so a statement read again after a heal never goes by an old answer. Advice: if it cannot be worked out the rows are filed exactly as before. */
+async function recordBooksHave({ sourceRef, user, parsed, claimed }) {
+    try {
+        const rows = (Array.isArray(parsed.rows) ? parsed.rows : []).map(row => ({ date: row.date, amount: row.amount, direction: row.direction, description: row.description || row.narration || row.desc || '', last4: row.card_last4 || '' }));
+        const { have } = matchStatementRows({ user, rows, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', selfSource: `k:${sourceRef.path}` });
+        await sourceRef.set({ booksHave: Object.fromEntries(have.map(entry => [String(entry.index), String(entry.id || 'unknown')])), booksHaveAt: Date.now() }, { merge: true });
+    } catch (_) { /* advice only */ }
+}
 async function claimInRegistry({ db, uid, sourceRef, claimed, parsed, sha }) {
     try {
         const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
