@@ -525,6 +525,9 @@
          four in the pipeline, nothing comparing them — which is why an owner
          with ten accounts watched three of them sync. ESM; window.WFInstitutions. -->
     <script type="module" src="wealthflow-institutions.js"></script>
+    <!-- WHOSE MONEY A BANK ROW IS. "Cash advance cr 376657******0276" is money drawn on the owner's own AMEX, not income; the email worker and this page ask the same rule (the Cards & Accounts registry decides which numbers are the
+         owner's cards). Pure; ESM; window.WFOwnMoney. -->
+    <script type="module" src="wealthflow-own-money.js"></script>
     <!-- WHICH BANK ISSUED A STATEMENT, READ FROM THE STATEMENT. The manual upload used to stop and ask for the bank (fifteen buttons).
          It is weighed from the statement's own words, the PDF's properties, the file name, an AI reading of a scanned page, the owner's cards and the
          mail the email sync already filed — and left unlabelled, not guessed, when none of them settles it. Pure; ESM; window.WFBankDetect. -->
@@ -22578,6 +22581,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) { rec.completed = arr[i].completed; rec.source = arr[i].source || 'manual'; rec.autoPaid = arr[i].autoPaid; arr[i] = rec; } } else arr.push(rec);
             DB.set('expenses', arr);
             try { if (window.WealthFlowML && window.WealthFlowML.learnTransaction) window.WealthFlowML.learnTransaction({ vendor: desc, category: cat }); } catch (_) {}
+            /* A statement row the owner opened and saved under a category is their own answer about that merchant: the manual upload asks the merchant memory for it next time (the email worker reads it from the books, where
+             * the saved record has lost its statement and so counts as a correction — statement-history.mjs). The memory knows the classifier's names, the dropdown has its own. */
+            try { if (editMode && rec.source === 'statement' && window.WFMerchants && window.WFStatementRouter) window.WFMerchants.learn(desc, 'expenses', window.WFStatementRouter.classifierName(cat)); } catch (_) {}
             acSave('exp_desc', desc);
             closeModal('mdExpense'); renderExpenses(); renderDash();
             notify(editMode ? 'Expense updated!' : 'Expense added!'); editMode = null;
@@ -35759,10 +35765,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     if (!t._keep) return;
                     const date = t.date || today();
                     const desc = String(t.description || '').trim();
-                    const type = t.type || '';
                     const amount = Number(t.amount) || 0;
                     if (!desc || !amount) return;
-                    picked.push({ date, description: desc, amount, type: (type === 'cash_advance' || type === 'service_fee') ? 'debit' : 'debit' });
+                    picked.push({ date, description: desc, amount, type: t.direction === 'credit' ? 'credit' : 'debit' });
                 });
                 if (!picked.length) { notify('Tick at least one row first.', 'warn'); return; }
                 const last4 = (parsed && (parsed.card_last4 || parsed.last4)) || (typeof bank === 'string' && (bank.match(/\d{4}/) || [])[0]) || '';

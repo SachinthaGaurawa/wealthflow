@@ -39,6 +39,8 @@ import { formKind } from './statement-document-kind.mjs';
 import { repairByArithmetic } from './statement-repair.mjs';
 import { buildHistory } from './statement-history.mjs';
 import { ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins, tailsIn } from './statement-transfers.mjs';
+import { ownMoney } from './wealthflow-own-money.js';
+import { isolateMerchant } from './statement-merchant-name.mjs';
 import { totalsAgree } from './statement-totals.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
 
@@ -104,6 +106,10 @@ export function merchantNameFor(row) {
     value = value.replace(/\b(?:POS\s+TRANSACTION|CARD\s+PURCHASE|DEBIT\s+CARD|VISA\s+DEBIT|MASTER(?:CARD)?\s+DEBIT|ECOM(?:MERCE)?\s+TRANSACTION)\b/g, ' ')
         .replace(/\b(?:TXN|TRANSACTION)?\s*REF(?:ERENCE)?\s*[:#-]?\s*[A-Z0-9-]{4,}\b/g, ' ')
         .replace(/\b(?:\d{4,}|[X*]+\d{2,4}|\d{2,4}[X*]+)\b/g, ' ').replace(/[^A-Z0-9&.' -]+/g, ' ').replace(/\s+/g, ' ').trim();
+    /* THEN THE MERCHANT ALONE (statement-merchant-name.mjs, the isolation the manual upload has always used): the gateway, the terminal number, the town and the country are not part of anyone's name, so "POPEYES-3921-COLOMBO" and
+     * "POPEYES-4410-KANDY" are one merchant, and what the owner decided about the first is found again at the second. A line with nothing left keeps the plain cleaned text above. */
+    const alone = isolateMerchant(value).toUpperCase();
+    if (alone.length >= 3) value = alone;
     return value.length >= 3 ? value.slice(0, 80) : '';
 }
 
@@ -160,24 +166,6 @@ export function validScheduleSecret(req, env = process.env) {
     return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-// Luhn Validation algorithm for precise Statement Identity matching
-export function validateLuhnChecksum(numericSequence) {
-    const sanitized = (numericSequence || '').replace(/\D/g, '');
-    if (sanitized.length < 4) return false;
-    let checksumTotal = 0;
-    let shouldDoubleDigit = false;
-    for (let i = sanitized.length - 1; i >= 0; i--) {
-        let currentDigit = parseInt(sanitized.charAt(i), 10);
-        if (shouldDoubleDigit) {
-            currentDigit *= 2;
-            if (currentDigit > 9) currentDigit -= 9;
-        }
-        checksumTotal += currentDigit;
-        shouldDoubleDigit = !shouldDoubleDigit;
-    }
-    return (checksumTotal % 10) === 0;
-}
-
 /* `itemwise` ({ path, id }) asks the endpoint to read the answer ROW BY ROW as well (api/ai-matrix.mjs itemwiseReading). The whole answer is still
  * judged as before: when every voter agreed on all of it this returns exactly what it always returned. When they did not, and a quorum of voters
  * answered, the rows they all agreed on come back (`partial: true`, `items`) instead of an error — the caller releases those rows and no others. */
@@ -227,6 +215,7 @@ function subscriptionWords(allocations) {
     return [...words];
 }
 function needsBoard(row, rule, words) {
+    if (rule.ownMoney) return false;      // the owner's own card, named in the row: nothing for a board to name
     if (rule.verified && (rule.autoDecided === 'transfer-to-others' || rule.autoDecided === 'transfer-from-others')) return false;      // what the rules know of a transfer is all there is to know: there is no merchant for the board to name
     if (!rule.verified || rule.category === 'Other' || rule.category === 'Income') return true;
     if (!words.length) return false;
@@ -260,8 +249,9 @@ export async function classifySlice(rows, allocations, { board = invokeBoard, se
 async function askBoard(rows, rules, allocations, board) {
     const evidence = rows.map((row, index) => { const used = allocations.history && allocations.history.hint(row); return { index, date: row.date, amount: row.amount, description: row.narration || row.description, merchant: merchantNameFor(row), direction: row.direction, directionSource: row.directionSource, needsReview: row.needsReview, ...(used && inVocabulary(used.category) ? { categoryUsedBefore: used.category } : {}) }; });
     
-    // Strict Tab Routing context enforcement injected directly into prompt
-    const accountTypeStrict = validateLuhnChecksum(allocations.card_last4) ? "CREDIT_CARD_ACCOUNT" : "BANK_OR_DEBIT_ACCOUNT";
+    /* WHICH KIND OF ACCOUNT THIS IS COMES FROM WHAT THE OWNER AND THE DOCUMENT SAY (the statement's own type, the Cards & Accounts registry), never from the digits: a Luhn check of
+     * four digits passes for one account in ten, and every such BANK account was told to the board as a credit card ("you MUST use cconetime") and filed as one. */
+    const accountTypeStrict = isCreditCardRow({}, allocations) ? "CREDIT_CARD_ACCOUNT" : "BANK_OR_DEBIT_ACCOUNT";
     const prompt = proposalPrompt({ evidence, allocations, accountType: accountTypeStrict });
     
     /* A ROW THE BOARD COULD NOT SETTLE IS SETTLED BY THE RULES' OWN ANSWER WHEN THEY HAVE ONE. The owner was asked "the independent AI review could not
@@ -321,13 +311,17 @@ async function askBoard(rows, rules, allocations, board) {
 
 export function deterministicDecision(row, allocations = {}) {
     const description = String(row?.narration || row?.description || '');
+    /* THE OWNER'S OWN CARD IN A BANK ROW IS THE OWNER'S OWN MONEY (wealthflow-own-money.js, the same rule the manual upload applies): "Cash advance cr 376657******0276" is money drawn on the AMEX arriving in
+     * the account, not income; the card statement carries the advance. It is decided from the Cards & Accounts registry and the owner's own statements before any wording of a transfer is asked for. */
+    const own = ownMoney({ description, direction: row?.direction, isCard: isCreditCardRow(row || {}, allocations), registry: allocations.cardRegistry, tails: allocations.own });
+    if (own) return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true, ownTransfer: own.kind, ownMoney: own };
     if (transferEvidence({ description })) {
         /* A TRANSFER IS LEFT OUT OF THE BOOKS ONLY WHEN IT IS THE OWNER'S OWN MONEY MOVING BETWEEN THE OWNER'S OWN ACCOUNTS (statement-transfers.mjs): the account number of one of their own cards, their own words
          * ("my DFCC"), or the other leg on the same statement. "Outward Ceft Transfer Car", "Inward Ceft Transfer Dip Refund" are money paid to and received from other people — spending and income. They were all
          * left out, and a statement that is half of those showed the owner a month with half of it missing. Where the direction is not proven, the row is not filed (the rows below ask for it as any row). */
         const tails = ownTails({ cardRegistry: allocations.cardRegistry, statementTails: allocations.own ? [...allocations.own] : [], thisTail: allocations.card_last4 });
         const own = ownTransferEvidence(row, { tails, paired: allocations.pairedRows, names: allocations.ownerWords?.names, local: allocations.ownerWords?.local });
-        if (own || isCreditCardRow(row, allocations) || validateLuhnChecksum(allocations.card_last4)) return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true, ...(own ? { ownTransfer: own } : {}) };
+        if (own || isCreditCardRow(row, allocations)) return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true, ...(own ? { ownTransfer: own } : {}) };
         if (row.direction === 'debit') return { module: 'expenses', category: expenseCategoryFor(row) || 'Other', allocationId: '', verified: true, deterministic: true, autoDecided: 'transfer-to-others' };
         if (row.direction === 'credit') return { module: 'incomeRecv', category: incomeCategoryFor(row) || 'Other', allocationId: '', verified: true, deterministic: true, autoDecided: 'transfer-from-others' };
         return { verified: false, reason: 'unproven-direction' };
@@ -338,7 +332,7 @@ export function deterministicDecision(row, allocations = {}) {
     const routed = routeRow(row, { ...allocations, ...(genericBankLine(row) ? { targets: [], loans: [] } : {}), reviewThreshold: 0.7 });
     if (routed.needsReview) return { verified: false, reason: 'ai-consensus-unavailable' };
     if (routed.module === 'subscriptions' && !routed.allocation?.id) {
-        return isCreditCardRow(row, allocations) || validateLuhnChecksum(allocations.card_last4)
+        return isCreditCardRow(row, allocations)
             ? { module: 'cconetime', category: 'Card Purchase', allocationId: '', verified: true, deterministic: true }
             : { module: 'expenses', category: routed.category || expenseCategoryFor(row), allocationId: '', verified: true, deterministic: true };
     }
@@ -354,9 +348,11 @@ export function deterministicDecision(row, allocations = {}) {
     /* WHAT THE OWNER HAS ALREADY DECIDED IS THE BEST EVIDENCE: a merchant the books hold repeatedly under ONE category is that category (statement-history.mjs). It only ever replaces the
      * rules' "Other" — never a named category, a transfer, a card line or an allocation — and it is marked so it can be found and changed. */
     const memory = allocations.history;
-    if (memory && ((decision.module === 'expenses' && (!decision.category || decision.category === 'Other')) || (decision.module === 'incomeRecv' && (!decision.category || decision.category === 'Other')))) {
+    if (memory && (decision.module === 'expenses' || decision.module === 'incomeRecv')) {
         const known = decision.module === 'expenses' ? memory.expense(row) : memory.income(row);
-        if (known) return { ...decision, category: known.category, allocationId: '', verified: true, deterministic: true, autoDecided: 'history' };
+        const generic = !decision.category || decision.category === 'Other';
+        /* …and what the owner CORRECTED themselves (a statement row they opened and saved under another category) is the first thing asked, before the rules' own name for the merchant. */
+        if (known && (generic || known.corrected)) return { ...decision, category: known.category, allocationId: '', verified: true, deterministic: true, autoDecided: known.corrected ? 'history-corrected' : 'history' };
     }
     return { ...decision, allocationId: '', verified: true, deterministic: true };
 }
@@ -375,7 +371,7 @@ export function fallbackDecision(row, allocations = {}) {
     const byWords = !proven && row.directionSource === 'assumed' && semanticDirection(row) === row.direction;
     if (!proven && !byWords) return null;
     const autoDecided = proven ? 'rules-fallback' : 'rules-words';
-    const card = isCreditCardRow(row, allocations) || validateLuhnChecksum(allocations.card_last4);
+    const card = isCreditCardRow(row, allocations);
     if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? (/\b(?:fees?|charges?|duty|tax)\b/i.test(String(row.narration || row.description || '')) ? 'Card Fee' : 'Card Purchase') : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
     if (row.direction === 'credit') return { module: card ? 'ccPayments' : 'incomeRecv', category: card ? 'Card Payment' : (incomeCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
     return null;
@@ -1386,30 +1382,43 @@ export async function reopenSkippedTransfers({ db, uid, limit = 3, until = Infin
 }
 
 /* THE OWNER'S OWN MONEY, ALREADY FILED AS SPENDING OR INCOME, IS TAKEN OUT. Before a transfer was recognised as the owner's own (their own card's number, their own words), "Outward Ceft Transfer 376657XXXXX0276 150,000.00" —
- * the owner paying their AMEX — was filed as an expense, and the card statement counts the same payment: counted twice. Each record the statement worker filed (never one the owner typed, and never one whose
- * category the owner changed) that today's rule calls the owner's own transfer is removed with a tombstone (so no heal brings it back) and its ledger entry says why. Counts only are logged. */
-export const OWN_TRANSFER_VERSION = 1;
+ * the owner paying their AMEX — was filed as an expense, and the card statement counts the same payment: counted twice. Version 2 adds the rule the manual upload shares (wealthflow-own-money.js): "Cash advance cr 376657******0276
+ * 100,000.00", cash drawn on the owner's AMEX arriving in the account, was filed as Income · Other. Each record the statement worker filed (never one the owner typed, and never one whose category the owner changed) that today's
+ * rule calls the owner's own money is removed with a tombstone (so no heal brings it back) and its ledger entry says why. The record itself is kept whole in users/{uid}/statementTrash (the way statement-copies.mjs keeps what it
+ * removes), so the owner can have it back. Counts only are logged. */
+export const OWN_TRANSFER_VERSION = 2;
 export async function removeOwnTransferRecords({ db, mailRef, uid, now = Date.now(), limit = 100 }) {
     const userRef = db.collection('users').doc(uid);
     const before = (await userRef.get()).data() || {};
     const own = { tails: await ownAccountTails({ mailRef, user: before }) };
-    const KEYS = [['expenses', 'desc', 'cat'], ['incomeRecv', 'name', 'type']];
-    const isOwn = (record, textKey, catKey) => !!record && record.source === 'statement' && !!record.statementKey && String(record[catKey] || '') === 'Other' && !!ownTransferEvidence({ narration: record[textKey] || record.desc || record.name }, own);
-    if (!KEYS.some(([key, textKey, catKey]) => (Array.isArray(before[key]) ? before[key] : []).some(record => isOwn(record, textKey, catKey)))) return { removed: 0, more: false };
+    const registry = before.settings?.cardRegistry || {};
+    const KEYS = [['expenses', 'desc', 'cat', 'debit'], ['incomeRecv', 'name', 'type', 'credit']];
+    const whyOwn = (record, textKey, catKey, direction) => {
+        if (!record || record.source !== 'statement' || !record.statementKey || String(record[catKey] || '') !== 'Other') return '';
+        const text = record[textKey] || record.desc || record.name;
+        if (ownTransferEvidence({ narration: text }, own)) return 'own-transfer-rule';
+        const rule = ownMoney({ description: text, direction, registry, tails: own.tails });
+        return rule ? `own-money:${rule.kind}` : '';
+    };
+    if (!KEYS.some(([key, textKey, catKey, direction]) => (Array.isArray(before[key]) ? before[key] : []).some(record => whyOwn(record, textKey, catKey, direction)))) return { removed: 0, more: false };
     return db.runTransaction(async tx => {
         const snap = await tx.get(userRef), user = structuredClone(snap.data() || {});
         const gone = [], changes = {};
-        for (const [key, textKey, catKey] of KEYS) {
+        for (const [key, textKey, catKey, direction] of KEYS) {
             const list = Array.isArray(user[key]) ? user[key] : [], keep = [];
-            for (const record of list) { if (gone.length < limit && isOwn(record, textKey, catKey)) gone.push([key, record]); else keep.push(record); }
+            for (const record of list) {
+                const why = gone.length < limit ? whyOwn(record, textKey, catKey, direction) : '';
+                if (why) gone.push([key, record, why]); else keep.push(record);
+            }
             if (keep.length !== list.length) changes[key] = keep;
         }
         if (!gone.length) return { removed: 0, more: false };
         const ledgerSnaps = [];
         for (const [, record] of gone) ledgerSnaps.push(await tx.get(userRef.collection('statementLedger').doc(String(record.id))));
         const tomb = user._tomb && typeof user._tomb === 'object' ? { ...user._tomb } : {};
-        gone.forEach(([key, record], at) => {
+        gone.forEach(([key, record, why], at) => {
             tomb[key] = { ...(tomb[key] && typeof tomb[key] === 'object' ? tomb[key] : {}), [record.id]: now };
+            tx.set(userRef.collection('statementTrash').doc(`${key}_${String(record.id)}`.slice(0, 200)), { uid, store: key, record: JSON.parse(JSON.stringify(record)), reason: why, source: String(record.statementKey || ''), removedAt: now }, { merge: false });
             if (ledgerSnaps[at].exists) tx.set(ledgerSnaps[at].ref, { status: 'skipped', module: 'skip', reason: 'own-account', supersededBy: 'own-transfer-rule', settledAt: now }, { merge: true });
         });
         tx.set(userRef, { ...changes, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
@@ -2005,7 +2014,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 const { rows } = sliceRows(parsed.rows, cursor, allocations, settledRows);
                 const here = settledRows ? new Set(rows.map((_, at) => at).filter(at => settledRows.has(cursor + at))) : null;
                 const decisions = await classifySlice(rows, allocations, { board, settled: here });
-                outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType, cardRegistry: user.settings?.cardRegistry || {},
+                outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType, cardRegistry: user.settings?.cardRegistry || {}, ownTails: allocations.own,
                     mailRef, vaultRef, vaultSavedAt, vaultExpected: vaultSnap.exists });
                 slices += 1;
                 for (const key of Object.keys(total)) total[key] += Number(outcome?.[key]) || 0;

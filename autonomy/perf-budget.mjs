@@ -608,7 +608,10 @@ export const BUDGETS = {
     // wealthflow-ai-v6.js grew a few lines to hand that block over. The server half (advisor-research.mjs / advisor-research.js) is not served to the page and is not counted here.
     // 2026-10-04 (the owner is never shut out of a statement the books only partly hold): 2,229,000 -> 2_233_000 (measured 2,230,576 + ~0.1% headroom). The upload screen's duplicate answer can now offer "Add missing rows"
     // (wealthflow-ai-v4.js: the dialog, and the re-run with the owner's word), wealthflow-statement-cloud.js carries that word to the server (`force`), and index.html passes it on the bank re-check; about a third is the comments recording why.
-    totalJsBytes: 2_233_000,
+    // 2026-10-04 (the owner's own card is the owner's own money): 2,233,000 -> 2_243_000 (measured 2,241,110 + ~0.1% headroom). wealthflow-own-money.js (new, about 7 KB, over half of it the comments recording why a cash advance arriving in
+    // the account is not income and why a number the owner has not registered is not claimed) is the one rule the email worker and the manual upload both ask; wealthflow-route.js routes a credit by it, and index.html loads it and
+    // teaches the merchant memory what the owner corrected. statement-merchant-name.mjs (the worker's copy of the page's merchant isolation) is server-only and is not counted here.
+    totalJsBytes: 2_243_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     largestModuleBytes: 233_000, // measured 232,325
@@ -695,7 +698,8 @@ export const BUDGETS = {
     // 2026-10-03: 76 -> 77 for wealthflow-advisor-check.js (the answer the AI Advisor gives is read back against the owner's books; see totalJsBytes).
     // 2026-10-03: 77 -> 78 for wealthflow-advisor-briefing.js (the card of what the books say today; see totalJsBytes).
     // 2026-10-03: 78 -> 79 for wealthflow-advisor-research.js (the Advisor looks up the outside world; see totalJsBytes).
-    moduleCount: 79,   // measured 79
+    // 2026-10-04: 79 -> 80 for wealthflow-own-money.js (whose money a bank row is; see totalJsBytes).
+    moduleCount: 80,   // measured 80
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -761,7 +765,8 @@ export const BUDGETS = {
     // 2026-10-03: 74 -> 75 for wealthflow-advisor-check.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-03: 75 -> 76 for wealthflow-advisor-briefing.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-03: 76 -> 77 for wealthflow-advisor-research.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
-    scriptTags: 77,              // measured 77; the progress, fact-sheet, scenario, answer-check, briefing and research modules are nonblocking
+    // 2026-10-04: 77 -> 78 for wealthflow-own-money.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
+    scriptTags: 78,              // measured 78; the progress, fact-sheet, scenario, answer-check, briefing, research and own-money modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
