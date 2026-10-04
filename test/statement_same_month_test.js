@@ -125,14 +125,14 @@ const statement = (date, rows) => `<html><body><h1>Nations Trust Bank American E
 /* Two consecutive cycles of a card that closes on the 3rd, neither with a transaction after the 28th: the worker keys BOTH on September. */
 const AUG_CYCLE = statement('03/09/2026', [['12/08/2026', 'KEELLS STORE', 123.45, 'DR'], ['02/09/2026', 'PAYMENT THANK YOU', 50, 'CR']]);
 const SEP_CYCLE = statement('03/10/2026', [['18/09/2026', 'CARGILLS FOOD CITY', 2450, 'DR'], ['27/09/2026', 'ODEL COLOMBO', 1999, 'DR']]);
-function world(sources) {
+function world(sources, { settle = settleStatement } = {}) {
     const seed = { [MAIL]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, senders: [{ id: 'statements@nationstrust.com', kind: 'address', status: 'approved' }] }, 'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [] } };
     sources.forEach((body, i) => { seed[`${MAIL}/items/s${i}`] = { uid: 'u', bank: 'NTB', from: 'statements@nationstrust.com', filename: 'AMEX_Statement.html', messageId: `m${i}`, receivedMs: 1000 + i, status: i ? 'held-back' : 'pending', cursor: 0, filed: false }; });
     const w = createFirestore(seed);
     fs = w; fake.admin.firestore = () => w.db;
     const loadAttachment = async source => { const body = sources[Number(source.messageId.slice(1))]; return { bytes: Buffer.from(body), filename: 'AMEX_Statement.html', contentSha256: sha(body) }; };
     const f = async () => ({ ok: true, json: async () => ({ access_token: 'token' }) });
-    const run = async () => { for (let i = 0; i < 12; i++) { const r = await runStatementSync({ action: 'drain', db: w.db, owner, env: {}, f, read: readStatement, open: async () => [], settle: settleStatement, board: async () => null, loadAttachment, budgetMs: 20000 }); if (!r || !r.filed) break; } };
+    const run = async () => { for (let i = 0; i < 12; i++) { const r = await runStatementSync({ action: 'drain', db: w.db, owner, env: {}, f, read: readStatement, open: async () => [], settle, board: async () => null, loadAttachment, budgetMs: 20000 }); if (!r || !r.filed) break; } };
     const release = i => w.data.set(`${MAIL}/items/s${i}`, { ...w.data.get(`${MAIL}/items/s${i}`), status: 'pending' });
     /* what a hold written before the registry kept days looks like */
     const legacy = () => { for (const key of [...w.data.keys()].filter(k => k.startsWith(`users/u/${REGISTRY}/`))) { const { days, rows, door, ...rest } = w.data.get(key); w.data.set(key, rest); } };
@@ -193,5 +193,73 @@ describe('through the real email worker', () => {
         w.release(1); await w.run();
         expect(w.item(1)).toMatchObject({ filed: true, duplicateOf: 'registry:upload' });
         expect(w.user().cconetime).toHaveLength(3);
+    });
+});
+
+/* ── every way the system itself can leave a hold with nothing real behind it, and every kind of record that is real ── */
+describe('a hold the email system took and left with nothing behind it never turns the owner away', () => {
+    const SEP_UPLOAD = { bank: 'Nations Trust Bank', last4: '376657XXXXX0276', periodText: '04/09/2026 - 03/10/2026', dates: ['2026-09-18', '2026-09-27'], amounts: [2450, 1999], rows: 2, sha256: sha('the-owners-download') };
+    const hold = async (rows, ref, sha256 = 'mailed') => claimStatement({ db: fs.db, uid: 'u', via: VIA.EMAIL, ref, identity: identityOf({ bank: 'NTB', account: '0276', dates: rows.map(r => r[0]) }), sha: sha(sha256), meta: { filename: 'AMEX_Statement.pdf', rows: rows.length, door: 'worker' } });
+    const ROWS = [['2026-09-18', 2450], ['2026-09-27', 1999]];
+    const state = (extra = {}) => fs.data.set(`${MAIL}/items/x`, { uid: 'u', bank: 'NTB', status: 'pending', filed: false, cursor: 0, leaseUntil: 0, ...extra });
+    it.each([
+        ['the sync claimed it, then the attachment could not be settled (retry waiting)', { status: 'pending', retryAt: Date.now() + 60_000, retryCount: 3 }],
+        ['it stopped for the owner to confirm an empty reading', { status: 'needs_review', hasReview: true, reviewReason: 'statement-empty-needs-confirmation' }],
+        ['it was filed with zero rows (an empty statement)', { status: 'filed', filed: true, cursor: 0, totalRows: 0 }],
+        ['it was parked as a dead letter part-way, hours ago', { status: 'dead_letter', cursor: 4, updatedAt: Date.now() - 3 * 3600_000 }],
+        ['its sender was rejected afterwards', { status: 'rejected_unapproved_sender' }],
+    ])('%s: the month and the file are free for a hand upload', async (_, shape) => {
+        state(shape); await hold(ROWS, `${MAIL}/items/x`);
+        expect((await call({ ...SEP_UPLOAD, action: 'check' })).body).toMatchObject({ ok: true, duplicate: false });
+        expect((await call({ action: 'check', sha256: sha('mailed') })).body).toMatchObject({ duplicate: false });
+        expect((await call({ ...SEP_UPLOAD, action: 'claim', token: 'attempt-0001' })).body).toMatchObject({ ok: true, duplicate: false });
+    });
+    it('the statement the worker really read: it takes its hold, then settling it fails, and the owner can still add that month by hand', async () => {
+        let failing = true;
+        const w = world([SEP_CYCLE], { settle: async (...args) => { if (failing) throw new Error('settle-down'); return settleStatement(...args); } });
+        await w.run();
+        expect(w.item(0).filed).not.toBe(true);
+        expect([...w.data.keys()].filter(k => k.includes(REGISTRY) && w.data.get(k).via === 'email').length).toBeGreaterThan(0);      // the hold is really there
+        expect(w.user().cconetime).toHaveLength(0);
+        expect((await call({ ...SEP_UPLOAD, action: 'check' })).body).toMatchObject({ ok: true, duplicate: false });
+        failing = false;                                                                                                    // and the email system, retrying, still files it
+        w.data.set(`${MAIL}/items/s0`, { ...w.item(0), status: 'pending', retryAt: 0, leaseUntil: 0, leaseToken: '' }); await w.run();
+        expect(w.item(0)).toMatchObject({ status: 'filed', filed: true });
+        expect(w.user().cconetime.map(r => r.date).sort()).toEqual(['2026-09-18', '2026-09-27']);
+    });
+});
+
+describe('every kind of record that really holds a statement counts', () => {
+    const UP = { bank: 'Nations Trust Bank', last4: '376657XXXXX0276', periodText: '', dates: ['2026-10-06', '2026-10-11', '2026-10-19', '2026-10-30'], amounts: [1250, 4800.5, 310, 9990], rows: 4, sha256: sha('a-download') };
+    const heldAs = (user, { status = 'filed' } = {}) => {
+        const { path, identity } = emailFiled(NOV_ROWS);
+        fs.data.set(path, { ...fs.data.get(path), status, filed: status === 'filed' });
+        fs.data.set('users/u', { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], ...user });
+        return { path, identity };
+    };
+    const stamp = (path, [date, amount], at) => ({ sourcePath: path, index: at, date, cents: Math.round(amount * 100), direction: 'debit' });
+    it('rows the worker tied to entries the owner typed leave only stamps on those entries: the statement is still in the books', async () => {
+        const path = `${MAIL}/items/nov`;
+        heldAs({ expenses: NOV_ROWS.map(([date, amount], at) => ({ id: `m${at}`, date, amount, name: 'typed by hand', statementTwin: stamp(path, [date, amount], at) })) });
+        const reply = (await call({ ...UP, action: 'check' })).body;
+        expect(reply).toMatchObject({ duplicate: true, via: 'email' });
+        expect(reply.detail).toMatch(/4 of 4 transactions are in your books/);
+        // and the next cycle of the card is not blocked by them
+        expect((await call({ ...upload(OCT_ROWS), action: 'check' })).body.duplicate).toBe(false);
+    });
+    it('a recurring entry keeps one stamp per month', async () => {
+        const path = `${MAIL}/items/nov`;
+        heldAs({ expenses: NOV_ROWS.map(([date, amount], at) => ({ id: `m${at}`, date: '2026-01-05', amount, recurring: true, statementTwins: { '2026-10': stamp(path, [date, amount], at) } })) });
+        expect((await call({ ...UP, action: 'check' })).body).toMatchObject({ duplicate: true, via: 'email' });
+        expect((await call({ ...upload(OCT_ROWS), action: 'check' })).body.duplicate).toBe(false);
+    });
+    it('instalment plans, cheques and subscription histories count by the day of the charge', async () => {
+        const path = `${MAIL}/items/nov`;
+        heldAs({ ccinstall: [{ id: 'i', date: '2026-06-01', startDate: '2026-10-06', amount: 1250, statementKey: path }], cheques: [{ id: 'q', date: '2026-10-01', clearedDate: '2026-10-11', amount: 4800.5, statementKey: path }],
+            subscriptions: [{ id: 's', history: [{ date: '2026-10-19', amount: 310, statementKey: path }] }], loans: [{ id: 'l', date: '2026-10-30', amount: 9990, statementKey: path }] });
+        const reply = (await call({ ...UP, action: 'check' })).body;
+        expect(reply).toMatchObject({ duplicate: true, via: 'email' });
+        expect(reply.detail).toMatch(/4 of 4 transactions are in your books/);
+        expect((await call({ ...upload(OCT_ROWS), action: 'check' })).body.duplicate).toBe(false);
     });
 });

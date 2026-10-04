@@ -216,7 +216,8 @@ export async function claimStatement({ db, uid, via, ref, identity = null, sha =
     });
 }
 
-/** The records of a hand upload carry its claim token (`uploadClaim`); a mailbox statement's carry its item (`statementKey`: the item's path from the sync worker, its id from the phone). */
+/** The records of a hand upload carry its claim token (`uploadClaim`); a mailbox statement's carry its item (`statementKey`: the item's path from the sync worker, its id from the phone), and
+ *  an entry the owner typed that a row of it was tied to carries the item's path in its stamp (`statementTwin.sourcePath`). */
 export const BOOKS = ['expenses', 'incomeRecv', 'cconetime', 'ccPayments', 'ccinstall', 'loans', 'cheques', 'subscriptions'];
 /** How long a hold is believed with nothing behind it when its records are written by a phone that may not have synced yet. */
 export const HOLD_GRACE_MS = 10 * 60 * 1000;
@@ -237,7 +238,12 @@ function heldBy(user, test) {
         if (!mentions(record, test)) continue;
         records += 1;
         if (test(record)) keys.push(rowKeyOf({ date: record[DAY_OF[store]] || record.date, amount: record.amount }));
-        for (const value of Object.values(record || {})) if (Array.isArray(value)) for (const entry of value) if (entry && typeof entry === 'object' && test(entry)) keys.push(rowKeyOf(entry));
+        for (const value of Object.values(record || {})) {
+            if (!value || typeof value !== 'object') continue;
+            if (Array.isArray(value)) { for (const entry of value) if (entry && typeof entry === 'object' && test(entry)) keys.push(rowKeyOf(entry)); continue; }
+            /* a row of the statement that was tied to an entry the owner typed leaves a stamp on that entry (`statementTwin`, or one per month in `statementTwins`): the stamp is the row */
+            for (const stamp of test(value) ? [value] : Object.values(value)) if (stamp && typeof stamp === 'object' && test(stamp)) keys.push(stamp.cents ? rowKeyOf({ date: stamp.date, amount: Number(stamp.cents) / 100 }) : rowKeyOf(stamp));
+        }
     }
     return { records, keys: keys.filter(Boolean) };
 }
@@ -260,7 +266,7 @@ export async function holderProof({ db, uid, existing, now = Date.now() }) {
     const userSnap = await db.collection('users').doc(uid).get();
     if (!userSnap.exists) return { live: true, why: 'books-unreadable', records: 0 };
     const user = userSnap.data() || {};
-    const { records, keys } = heldBy(user, token ? record => record.uploadClaim === token : record => record.statementKey === ref || record.statementKey === item[2]);
+    const { records, keys } = heldBy(user, token ? record => record.uploadClaim === token : record => record.statementKey === ref || record.statementKey === item[2] || record.sourcePath === ref);
     if (records) return { live: true, why: 'in-books', records, held: keys };
     let itemExists = false, itemFiled = false;
     if (item) {
