@@ -263,7 +263,7 @@ describe('through the real worker', () => {
         const mine = { bank: 'Nations Trust Bank', last4: '376657XXXXX0276', dates: ['2026-09-14', '2026-09-15'], rows: 2 };
         const blocked = (await call({ ...mine, sha256: sha('the-owners-copy'), action: 'check' })).body;
         expect(blocked).toMatchObject({ duplicate: true, via: 'email', notice: 'Already Added via Email Sync' });
-        expect(blocked.detail).toMatch(/2 transactions in your books/);
+        expect(blocked.detail).toMatch(/2 of its 2 rows are in your books/);
         // the owner deletes the statement's records on the device and the books sync
         w.data.set('users/u', { ...w.user(), cconetime: [], ccPayments: [] });
         expect((await call({ ...mine, sha256: sha('the-owners-copy'), action: 'claim', token: 'attempt-0001' })).body).toMatchObject({ duplicate: false });

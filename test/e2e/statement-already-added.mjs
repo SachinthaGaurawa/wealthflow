@@ -7,7 +7,7 @@
  * rewritten the way the first registry wrote them (no days, no rows): the state production carries for every statement filed before 2026-10-03.
  *
  *   1. the next billing cycle of the same card, never filed by email      -> the review opens and Save files it (no "Already Added")
- *   2. a re-download of the statement the email system DID file            -> "Already Added via Email Sync (… 2 of 2 transactions are in your books)"
+ *   2. a re-download of the statement the email system DID file            -> "Already Added via Email Sync (… 2 of 2 transactions are in your books)", with "Add missing rows" offered
  *   3. a statement that overlaps the filed one (shares one row with it)     -> the review opens with the row already there unticked and marked
  *
  * Run from the repository root:  node test/e2e/statement-already-added.mjs
@@ -78,8 +78,11 @@ const notes = () => page.evaluate(() => window.__notes.splice(0));
 async function upload(name, body) {
     calls.length = 0;
     await page.setInputFiles('#ccot_ai_scan', { name, mimeType: 'text/html', buffer: Buffer.from(body) });
-    await page.waitForFunction(() => document.querySelector('#_ccr_body') || (window.__notes || []).some(n => /Already Added/.test(n[0])), null, { timeout: 30000 });
-    return { modal: await page.$('#_ccr_body') !== null, notes: await notes() };
+    await page.waitForFunction(() => document.querySelector('#_ccr_body') || document.querySelector('#mdConfirm.open') || (window.__notes || []).some(n => /Already Added/.test(n[0])), null, { timeout: 30000 });
+    /* a statement that is really in the books is turned away with the owner's way out: the dialog says what is there, and "Add missing rows" is offered (a toast says it when no way out is offered) */
+    const ask = await page.evaluate(() => { const m = document.getElementById('mdConfirm'); return m && m.classList.contains('open') ? document.getElementById('confMsg').textContent + ' | ' + document.getElementById('confBtn').textContent : ''; });
+    if (ask) await page.evaluate(() => closeModal('mdConfirm'));
+    return { modal: await page.$('#_ccr_body') !== null, ask, notes: await notes() };
 }
 const close = () => page.evaluate(() => { const x = document.getElementById('_ccrx'); if (x) x.click(); });
 
@@ -99,9 +102,10 @@ await page.waitForFunction(() => !document.querySelector('#_ccr_body'), null, { 
 
 // 2. a re-download of the statement the email system DID file
 const second = await upload('AMEX_Statement_Sep_redownload.html', AUG.replace('<h1>', '<h1 class="app">'));
-console.log('2. real copy   ->', second.modal ? 'REVIEW OPENED' : 'turned away', '|', second.notes.map(n => n[0]).find(m => /Already/.test(m)), '| guard:', calls.map(c => `${c.action}${c.duplicate ? ':duplicate' : ''}`).join(', '));
+console.log('2. real copy   ->', second.modal ? 'REVIEW OPENED' : 'turned away', '|', second.ask || second.notes.map(n => n[0]).find(m => /Already/.test(m)), '| guard:', calls.map(c => `${c.action}${c.duplicate ? ':duplicate' : ''}`).join(', '));
 assert.ok(!second.modal, 'a statement whose transactions are in the books is turned away');
-assert.match(second.notes.map(n => n[0]).join(' '), /Already Added via Email Sync \(.*2 of 2 transactions are in your books\)/);
+assert.match(second.ask || second.notes.map(n => n[0]).join(' '), /Already Added via Email Sync \(.*2 of 2 transactions are in your books\)/);
+assert.match(second.ask, /Add missing rows/, 'the owner is offered a way to add it anyway');
 
 // 3. a statement of another period that overlaps the filed one: it shares one row (the payment of 2 Sep) and nothing else
 const PART = statement('19/09/2026', [['25/08/2026', 'UBER TRIP', 880, 'DR'], ['02/09/2026', 'PAYMENT THANK YOU', 50, 'CR'], ['05/09/2026', 'PICKME FOOD', 1430, 'DR'], ['10/09/2026', 'DARAZ', 2990, 'DR']]);

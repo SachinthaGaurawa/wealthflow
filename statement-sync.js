@@ -1283,15 +1283,23 @@ export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {
 // are filed (every other row is already in the ledger and is skipped as a duplicate). A row the owner deleted has
 // a tombstone and is left alone; so are rows filed before a factory reset, and rows older than the tombstones'
 // 100-day life (a deletion that old could no longer be told from a loss).
-export const ROW_HEAL_VERSION = 1, ROW_HEAL_MAX = 3, ROW_HEAL_WINDOW_MS = 45 * 86400000;
+export const ROW_HEAL_VERSION = 1, ROW_HEAL_MAX = 3, ROW_HEAL_WINDOW_MS = 90 * 86400000;      // 90 days: inside the 100 days a tombstone lives, so a row that is gone and has none was lost, not deleted
 const ROW_KEYS = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'];
-export async function healMissingRows({ db, uid, limit = 5, now = Date.now() }) {
+export const ROW_HEAL_PAGE = 500;
+/** The ledger is read ROW_HEAL_PAGE rows at a time, from where the last run stopped (`rowHealAfter` on the mailbox, when `mailRef` is given): a ledger of several thousand rows is walked through in full over the runs
+ *  instead of its first 500 rows being read every time and everything after them never being looked at. */
+export async function healMissingRows({ db, uid, limit = 5, now = Date.now(), mailRef = null }) {
     const userRef = db.collection('users').doc(uid);
     const user = (await userRef.get()).data() || {};
     const tomb = user._tomb && typeof user._tomb === 'object' ? user._tomb : {};
     const wiped = Number(user._wipedAt) || 0;
     const have = {}, missing = new Map();
-    const filed = await userRef.collection('statementLedger').where('status', '==', 'filed').limit(500).get();
+    let after = '';
+    if (mailRef) { try { after = String((await mailRef.get()).data()?.rowHealAfter || ''); } catch (_) { after = ''; } }
+    let page = userRef.collection('statementLedger').where('status', '==', 'filed').orderBy('__name__');
+    if (after) page = page.startAfter(after);
+    const filed = await page.limit(ROW_HEAL_PAGE).get();
+    if (mailRef) { try { await mailRef.set({ rowHealAfter: filed.docs.length < ROW_HEAL_PAGE ? '' : filed.docs.at(-1).id }, { merge: true }); } catch (_) { /* the next run reads the same page again */ } }
     for (const doc of filed.docs) {
         const entry = doc.data();
         if (entry.uid !== uid || !ROW_KEYS.includes(entry.module) || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(entry.sourcePath || ''))) continue;
@@ -2414,7 +2422,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (frontRoom()) reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
         if (frontRoom()) zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
         if (frontRoom()) { const phantom = await recheckPhantomStatements({ db, uid, limit: heavy ? 10 : 3 }); phantomRequeued = phantom.requeued; phantomMore = phantom.more; }
-        if (frontRoom()) { const healed = await healMissingRows({ db, uid, limit: heavy ? 5 : 2 }); rowsHealed = healed.rows; healMore = healed.more; }
+        if (frontRoom()) { const healed = await healMissingRows({ db, uid, limit: heavy ? 5 : 2, mailRef }); rowsHealed = healed.rows; healMore = healed.more; }
         if (frontSkipped) { wholeMore = true; frontIncomplete = true; }
         if (interactive) { try { await mailRef.set({ lastFrontMs: Date.now() }, { merge: true }); } catch (_) { /* the front pass simply runs again */ } }
     }

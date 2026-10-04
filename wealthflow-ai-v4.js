@@ -1127,8 +1127,16 @@
     /* ONE STATEMENT, ADDED ONCE (statement-registry.mjs). The same bank statement can reach the books by email sync and by this screen; the server
      * holds the lock and says which door was first. These two calls only ask it — fail OPEN, so an unreachable server never stops the owner. */
     function _wfStatementGuard() { return window.WFStatementCloud && window.WFStatementCloud.guard ? window.WFStatementCloud.guard : null; }
-    function _wfSayDuplicate(r) {
+    function _wfSayDuplicate(r, redo) {
         if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+        /* The owner is never shut out of their own statement: when the server says it may be added anyway (it is not being added by the email system this minute), the owner is asked, and only the
+         * rows the books are missing are added — the ones already there stay unticked ("Already in your books"). `redo` runs this same upload again with that word given. */
+        if (r.canForce === true && typeof redo === 'function' && typeof window.showConfirm === 'function') {
+            window.showConfirm('shield', r.notice || 'Already Added',
+                'Your books already hold this statement, in whole or in part. If you add it anyway, only the transactions your books are missing are added; the ones already there are left unticked so nothing is counted twice.',
+                'btn-primary', 'Add missing rows', redo);
+            return;
+        }
         if (typeof window.notify === 'function') window.notify((r.notice || 'Already Added') + ' — this statement is already in your books, so it was not added a second time.', 'warn');
     }
     /* A statement the books hold PART of (another reading filed some of its rows): the rows already there are marked, so the review leaves them out and only what is missing is added. */
@@ -1140,9 +1148,9 @@
         var g = _wfStatementGuard(); if (!g) return false;
         try {
             /* The registry locks on the ISSUER's label (the one the email sync writes), not on the record label: a statement taken by hand and by email must meet at one lock. */
-            var r = await g.parsed({ sha: ctx.sha, bank: ctx.bank, last4: ctx.last4 || g.accountTailOf(ctx.text), periodText: parsed.statement_period || '',
+            var r = await g.parsed({ sha: ctx.sha, bank: ctx.bank, last4: ctx.last4 || g.accountTailOf(ctx.text), periodText: parsed.statement_period || '', force: ctx.force === true,
                 dates: parsed.transactions.map(function (t) { return t.date; }), amounts: parsed.transactions.map(function (t) { return t.amount; }), filename: ctx.file.name, size: ctx.file.size, rows: parsed.transactions.length });
-            if (r.duplicate) { _wfSayDuplicate(r); return true; }
+            if (r.duplicate) { _wfSayDuplicate(r, ctx.redo); return true; }
             parsed._wfGuard = r.info;
             _wfMarkHave(parsed, r.have);
         } catch (_) { /* fail open */ }
@@ -1254,6 +1262,9 @@
         var file = e.target && e.target.files && e.target.files[0];
         if (!file) return;
         var inputEl = e.target;
+        /* "Add it anyway": the owner answered the duplicate dialog; this run asks the server with that word (statement-guard.js `force`). */
+        var _wfForce = e._wfForce === true;
+        var _wfRedo = function () { handleAIScanV4({ target: { files: [file], value: '' }, _wfForce: true }, type); };
         var startTime = Date.now();
         var sizeMB = (file.size / 1024 / 1024).toFixed(2);
         var isExpense = (type === 'expense');
@@ -1282,9 +1293,9 @@
         if (isCCOT && _wfStatementGuard()) {
             P.stage('check', 'Checking the file…', 'Looking for an earlier copy of this statement', 'shield');
             try {
-                var _gf = await _wfStatementGuard().file(file);
+                var _gf = await _wfStatementGuard().file(file, { force: _wfForce });
                 _wfSha = _gf.sha || '';
-                if (_gf.duplicate) { _wfSayDuplicate(_gf); inputEl.value = ''; return; }
+                if (_gf.duplicate) { _wfSayDuplicate(_gf, _wfRedo); inputEl.value = ''; return; }
             } catch (_) { /* fail open */ }
         }
 
@@ -1326,7 +1337,7 @@
                     ccotBank = _wfBank && _wfBank.ok ? _wfBank.name : '';
                     _parsedH._wfBank = _wfBank;
                     P.stage('guard', 'Checking your books…', 'Making sure this statement is not already added', 'shield');
-                    if (await _wfGuardParsed(_parsedH, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', text: _hres && _hres.text })) { inputEl.value = ''; return; }
+                    if (await _wfGuardParsed(_parsedH, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', text: _hres && _hres.text, force: _wfForce, redo: _wfRedo })) { inputEl.value = ''; return; }
                     P.end();
                     if (typeof window.notify === 'function') window.notify('Imported ' + _htx.length + ' transactions from your e-statement' + (ccotBank ? ' · ' + ccotBank : '') + '.', 'success');
                     window._showCCReviewModal(_parsedH, ccotBank);
@@ -1429,7 +1440,7 @@
                         ccotBank = _wfBank && _wfBank.ok ? _wfBank.name : '';
                         _parsed._wfBank = _wfBank;
                         P.stage('guard', 'Checking your books…', 'Making sure this statement is not already added', 'shield');
-                        if (await _wfGuardParsed(_parsed, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', last4: _parsed.card_last4, text: _res.text })) { inputEl.value = ''; return; }
+                        if (await _wfGuardParsed(_parsed, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', last4: _parsed.card_last4, text: _res.text, force: _wfForce, redo: _wfRedo })) { inputEl.value = ''; return; }
                         P.end();
                         // Say what was actually verified. "High accuracy" was printed
                         // unconditionally before, including for statements the parser
@@ -1779,7 +1790,7 @@
                  * read it off the page) and the transactions' dates. Fail open, as the others do. */
                 var _parsedS = { transactions: normalised, statement_period: '', _wfBank: _wfBank };
                 P.stage('guard', 'Found ' + normalised.length + ' transaction' + (normalised.length > 1 ? 's' : '') + '…', 'Checking them against your books', 'checkCircle');
-                if (await _wfGuardParsed(_parsedS, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', last4: (_aiBank && _aiBank.last4) || '', text: _ocrText })) { inputEl.value = ''; return; }
+                if (await _wfGuardParsed(_parsedS, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', last4: (_aiBank && _aiBank.last4) || '', text: _ocrText, force: _wfForce, redo: _wfRedo })) { inputEl.value = ''; return; }
                 P.end();
 
                 // Open the existing review modal — user confirms each row,

@@ -25,15 +25,15 @@ export function createFirestore(seed = {}) {
             collection: name => collectionRef(`${path}/${name}`),
         };
     }
-    function query(path, filters = [], max = Infinity) {
+    function query(path, filters = [], max = Infinity, after = '') {
         const rows = () => [...data.keys()]
-            .filter(key => parentOf(key) === path && filters.every(([field, op, value]) => (op === '==' ? data.get(key)?.[field] === value : op === 'in' ? Array.isArray(value) && value.includes(data.get(key)?.[field]) : false)))
+            .filter(key => parentOf(key) === path && (!after || idOf(key) > after) && filters.every(([field, op, value]) => (op === '==' ? data.get(key)?.[field] === value : op === 'in' ? Array.isArray(value) && value.includes(data.get(key)?.[field]) : false)))
             .sort().slice(0, max).map(snapshot);
         const q = {
             isQuery: true, path,
-            where: (field, op, value) => query(path, [...filters, [field, op, value]], max),
-            orderBy: () => q, startAfter: () => q,
-            limit: count => query(path, filters, count),
+            where: (field, op, value) => query(path, [...filters, [field, op, value]], max, after),
+            orderBy: () => q, startAfter: cursor => query(path, filters, max, typeof cursor === 'string' ? cursor : String(cursor?.id || '')),
+            limit: count => query(path, filters, count, after),
             get: async () => { const docs = rows(); return { docs, empty: !docs.length, size: docs.length }; },
             onSnapshot(next) {
                 let last = '';

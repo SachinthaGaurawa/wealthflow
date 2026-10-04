@@ -35613,7 +35613,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 _saveAllowed(false, 'Checking this bank against your books…');
                 let dup = null, fresh = null;
                 try {
-                    const r = await G.parsed({ sha: info.sha, bank: res.ok ? res.lockName : '', last4: info.last4, periodText: info.periodText, dates: info.dates, amounts: info.amounts, filename: info.filename, size: info.size, rows: info.rows });
+                    const r = await G.parsed({ sha: info.sha, bank: res.ok ? res.lockName : '', last4: info.last4, periodText: info.periodText, dates: info.dates, amounts: info.amounts, filename: info.filename, size: info.size, rows: info.rows, force: info.force === true });
                     dup = r && r.duplicate ? r : null; fresh = r && r.info ? r.info : null;
                 } catch (_) { /* the lock fails open: an unreachable server never stops the owner */ }
                 if (seq !== _bankSeq) return;                                  // a newer choice is already being checked

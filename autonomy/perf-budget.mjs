@@ -603,9 +603,12 @@ export const BUDGETS = {
     // 2026-10-03 (the Advisor looks up the outside world): 2,212,000 -> 2_229_000 (measured 2,226,495 + ~0.1% headroom). wealthflow-advisor-research.js (new, about 15 KB, a quarter of it the comments recording why):
     // which questions are about the outside world (English, Sinhala, Tamil), the question scrubbed of anything personal, the web answer made safe, the block the model reads as data, and the line under the answer.
     // wealthflow-ai-v6.js grew a few lines to hand that block over. The server half (advisor-research.mjs / advisor-research.js) is not served to the page and is not counted here.
-    totalJsBytes: 2_229_000,
+    // 2026-10-04 (the owner is never shut out of a statement the books only partly hold): 2,229,000 -> 2_233_000 (measured 2,230,576 + ~0.1% headroom). The upload screen's duplicate answer can now offer "Add missing rows"
+    // (wealthflow-ai-v4.js: the dialog, and the re-run with the owner's word), wealthflow-statement-cloud.js carries that word to the server (`force`), and index.html passes it on the bank re-check; about a third is the comments recording why.
+    totalJsBytes: 2_233_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
-    largestModuleBytes: 232_000, // measured 230,470
+    // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
+    largestModuleBytes: 233_000, // measured 232,325
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely

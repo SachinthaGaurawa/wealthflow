@@ -561,12 +561,13 @@ export function accountTailOf(text){
     const m=/(?:a\/c|acct|account|card)\s*(?:no|number|num|#)?\.?\s*[:.\-]?\s*([\dxX*•\- ]{6,40}\d{4})(?!\d)/i.exec(t)||/\d{6}[xX*•]+(\d{4})(?!\d)/.exec(t);
     return m?String(m[m.length-1]).replace(/\D+/g,'').slice(-4):'';
 }
-const noticeOf=r=>r&&r.duplicate===true?{duplicate:true,via:r.via||'',notice:(r.notice||'Already Added')+(r.detail?' ('+String(r.detail).slice(0,160)+')':'')}:null;      // `detail` says what is in the books, so a wrong match can be seen at once
+/* `detail` says what is in the books, so a wrong match can be seen at once; `canForce` says the owner may add the statement anyway (a statement being added this minute is not offered). */
+const noticeOf=r=>r&&r.duplicate===true?{duplicate:true,via:r.via||'',notice:(r.notice||'Already Added')+(r.detail?' ('+String(r.detail).slice(0,160)+')':''),canForce:r.canForce===true}:null;
 /** Before anything is read: is this exact file already in the books? -> {duplicate, via, notice, sha} or {sha}. */
-export async function guardFile(file){
+export async function guardFile(file,{force=false}={}){
     const sha=await fileSha256(file);
     if(!sha)return {sha:''};
-    const r=noticeOf(await guardCall({action:'check',sha256:sha}));
+    const r=noticeOf(await guardCall({action:'check',sha256:sha,...(force===true?{force:true}:{})}));
     return r?{...r,sha}:{sha};
 }
 /* The amounts go beside the dates (the same places): the server compares a statement's TRANSACTIONS with what the books hold, so a statement is "already added" only when it really is,
@@ -574,17 +575,17 @@ export async function guardFile(file){
 const amountsOf=(amounts,dates)=>Array.isArray(amounts)&&amounts.length===dates.length?amounts.map(a=>Math.abs(Number(a))||0):undefined;
 /** After the statement is read: is this bank + account + month already in the books? Returns {duplicate,...,info} or {info, have}; `info` goes to guardClaim at save,
  *  `have` lists the places of the rows the books already hold (a statement let past another one of its month). */
-export async function guardParsed({sha='',bank='',last4='',periodText='',dates=[],amounts=null,filename='',size=0,rows=0}){
+export async function guardParsed({sha='',bank='',last4='',periodText='',dates=[],amounts=null,filename='',size=0,rows=0,force=false}){
     const d=(dates||[]).slice(0,2000);
-    const info={sha,bank:String(bank||''),last4:String(last4||''),periodText:String(periodText||''),dates:d,amounts:amountsOf((amounts||[]).slice(0,2000),d),filename:String(filename||'').slice(0,200),size:Number(size)||0,rows:Number(rows)||0,token:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g,'').slice(0,64).padEnd(8,'0')};
-    const raw=await guardCall({action:'check',sha256:sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,amounts:info.amounts,rows:info.rows});
+    const info={sha,bank:String(bank||''),last4:String(last4||''),periodText:String(periodText||''),dates:d,amounts:amountsOf((amounts||[]).slice(0,2000),d),filename:String(filename||'').slice(0,200),size:Number(size)||0,rows:Number(rows)||0,force:force===true,token:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g,'').slice(0,64).padEnd(8,'0')};
+    const raw=await guardCall({action:'check',sha256:sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,amounts:info.amounts,rows:info.rows,force:info.force?true:undefined});
     const r=noticeOf(raw);
     return r?{...r,info}:{info,have:raw&&Array.isArray(raw.have)?raw.have.filter(Number.isInteger):[]};
 }
 /** At save: take the statement. -> {duplicate, via, notice} when another door got there first, else null (go ahead). */
 export async function guardClaim(info){
     if(!info)return null;
-    return noticeOf(await guardCall({action:'claim',sha256:info.sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,amounts:info.amounts,filename:info.filename,size:info.size,rows:info.rows,token:info.token}));
+    return noticeOf(await guardCall({action:'claim',sha256:info.sha||undefined,bank:info.bank,last4:info.last4,periodText:info.periodText,dates:info.dates,amounts:info.amounts,filename:info.filename,size:info.size,rows:info.rows,token:info.token,force:info.force===true?true:undefined}));
 }
 /** The device's own review of a MAILBOX statement: the same lock, held by the mailbox item it came from. `action` is 'check' (before the review opens) or 'claim' (at save).
  *  A statement turned away is closed on the server like the email sync closes one. -> {duplicate, via, notice} or null (go ahead; also null when the server cannot be reached). */
