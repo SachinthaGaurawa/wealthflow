@@ -36,6 +36,8 @@ export function manualTwin(records, row, { month = ymOf(row && row.date), strict
     for (const r of arr(records)) {
         if (!r || r.source === 'statement' || r.statementKey || cents(r.amount) !== want) continue;
         if (r.loanLink || r.subscriptionLink) continue;
+        /* an entry the owner's own UPLOAD filed (a card charge keeps no `source` of its own) is a statement's row, not one typed by hand: it is compared as a row of a statement (statement-rowmatch.mjs), never taken for a twin */
+        if (r.uploadClaim || r._batch || (r.feeMeta && r.feeMeta.source === 'statement')) continue;
         const mine = tokens(r.desc || r.name), named = mine.some((t) => text.includes(t)) || sharesAWord(r.desc || r.name, text);
         if (r.recurring) {
             if (r.statementTwins && r.statementTwins[month]) continue;

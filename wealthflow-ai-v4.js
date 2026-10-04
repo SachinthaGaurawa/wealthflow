@@ -1149,7 +1149,7 @@
         try {
             /* The registry locks on the ISSUER's label (the one the email sync writes), not on the record label: a statement taken by hand and by email must meet at one lock. */
             var r = await g.parsed({ sha: ctx.sha, bank: ctx.bank, last4: ctx.last4 || g.accountTailOf(ctx.text), periodText: parsed.statement_period || '', force: ctx.force === true,
-                dates: parsed.transactions.map(function (t) { return t.date; }), amounts: parsed.transactions.map(function (t) { return t.amount; }), filename: ctx.file.name, size: ctx.file.size, rows: parsed.transactions.length });
+                dates: parsed.transactions.map(function (t) { return t.date; }), amounts: parsed.transactions.map(function (t) { return t.amount; }), directions: parsed.transactions.map(function (t) { return t.direction || ''; }), words: parsed.transactions.map(function (t) { return t.description || ''; }), filename: ctx.file.name, size: ctx.file.size, rows: parsed.transactions.length });
             if (r.duplicate) { _wfSayDuplicate(r, ctx.redo); return true; }
             parsed._wfGuard = r.info;
             _wfMarkHave(parsed, r.have);

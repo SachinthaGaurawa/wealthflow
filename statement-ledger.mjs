@@ -71,7 +71,9 @@ export function crossSourceMatches(records, row, context) {
     const bankOf = value => bankKeyOf(value);
     return records.filter(record => {
         const actual = rowIdentity({ ...record, amount: record.amount, description: record.desc || record.name || record.description, direction: record.direction || row.direction }, {});
-        for (const index of [0, 1, 2, 4]) if (wanted[index] !== actual[index]) return false;
+        for (const index of [0, 1, 2]) if (wanted[index] !== actual[index]) return false;
+        /* the account tail is a conflict only when BOTH know it: a hand upload often could not read one (statement-rowmatch.mjs) */
+        if (wanted[4] && actual[4] && wanted[4] !== actual[4]) return false;
         if (wanted[3] !== actual[3] && bankOf(wanted[3]) !== bankOf(actual[3])) return false;
         return !wanted[5] || !actual[5] || wanted[5] === actual[5];
     });
@@ -222,6 +224,8 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         const ledgerSnaps = [];
         for (const ref of ledgerRefs) ledgerSnaps.push(await tx.get(ref));
         const user = structuredClone(userSnap.data() || {});
+        /* THE ROWS THE BOOKS ALREADY HOLD FROM ANOTHER DOOR, worked out once for the whole statement when it was claimed (statement-rowmatch.mjs): {rowIndex: recordId}. Row identity is day + cents + direction, counted. */
+        const booksHave = source.booksHave && typeof source.booksHave === 'object' && !Array.isArray(source.booksHave) ? source.booksHave : null;
         const changes = {};
         const allRecords = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
         const cards = [...(Array.isArray(user.cconetime) ? user.cconetime : []), ...(Array.isArray(user.ccPayments) ? user.ccPayments : [])].filter(record => record && (record.card_last4 || record.bank));
@@ -260,10 +264,16 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'skipped', module: '', reason: 'zero-amount', fingerprint, settledAt: now }]);
                 outcome.skipped++; continue;
             }
+            /* the owner's own upload (or another reading of this statement) already put this row in the books: it is counted once, here it is a copy */
+            if (booksHave && booksHave[String(index)] !== undefined && !allRecords.some(record => record && record.statementKey === sourceRef.path && record.statementRow === index)) {
+                writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', reason: 'already-in-books', fingerprint, matchedId: String(booksHave[String(index)] || ''), settledAt: now }]);
+                outcome.duplicates++; continue;
+            }
             let reason = validateSettlementRow(row, decisions[offset], context);
             let decision = decisions[offset] || {};
             let module = modules[decision.module];
-            const matching = reason ? [] : crossSourceMatches(allRecords, row, context).filter(record => record.statementKey !== sourceRef.path || record.statementRow === index);
+            /* with the whole statement compared at the claim, only this statement's own earlier filing of the row can still match: a looser per-row match would send the rows that are NOT copies to the owner's review */
+            const matching = reason ? [] : crossSourceMatches(allRecords, row, context).filter(record => record.statementKey !== sourceRef.path || record.statementRow === index).filter(record => !booksHave || (record.statementKey === sourceRef.path && record.statementRow === index));
             const exact = matching.filter(record => record.statementKey === sourceRef.path && record.statementRow === index && record.direction === row.direction);
             
             if (exact.length === 1 && matching.length === 1) {

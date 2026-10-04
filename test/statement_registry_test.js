@@ -365,7 +365,7 @@ describe('the wiring', () => {
         const { readFileSync } = await import('node:fs');
         const ai = readFileSync('wealthflow-ai-v4.js', 'utf8'), index = readFileSync('index.html', 'utf8'), cloud = readFileSync('wealthflow-statement-cloud.js', 'utf8');
         expect(ai).toContain('_wfStatementGuard().file(file, { force: _wfForce })'); expect(ai).toContain('_wfGuardParsed(');
-        expect(index).toContain('window.WFStatementCloud.guard.claim(parsed._wfGuard)'); expect(index).toContain('uploadClaim: _uploadClaim');
+        expect(index).toContain('window.WFStatementCloud.guard.claim(_claimInfo)'); expect(index).toContain('uploadClaim: _uploadClaim');
         expect(cloud).toContain("request('/api/statement-guard','POST'");
     });
     it("the device's own review of mailbox statements asks before opening and claims at save", async () => {

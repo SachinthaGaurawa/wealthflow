@@ -29,6 +29,7 @@ import { getAdminDb, withDeadline } from './admin-db.mjs';
 import { identify, userKeyFor } from './gmail-link.mjs';
 import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
 import { bankHistory } from './statement-bank-evidence.mjs';
+import { matchStatementRows } from './statement-rowmatch.mjs';
 import { VIA, identityOf, lookup, holderProof, releaseStatement, registryDuplicatePatch, noticeFor, detailOf, ROWS_CAP } from './statement-registry.mjs';
 
 const json = (res, code, body) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(body)); };
@@ -53,8 +54,12 @@ function inputsOf(body) {
     const dates = (Array.isArray(body.dates) ? body.dates : []).slice(0, ROWS_CAP).map(d => text(d, 40));
     const amounts = Array.isArray(body.amounts) ? body.amounts.slice(0, ROWS_CAP) : [];
     const rowKeys = amounts.length === dates.length && dates.length ? dates.map((date, at) => ({ date, amount: Number(amounts[at]) })) : null;
+    /* the way each row went (credit/debit) and its words run beside the dates too: they tell a payment from a refund of the same amount and one line of a statement from another (statement-rowmatch.mjs) */
+    const sides = Array.isArray(body.directions) && body.directions.length === dates.length ? body.directions.slice(0, ROWS_CAP).map(side => (side === 'credit' ? 'credit' : side === 'debit' ? 'debit' : '')) : [];
+    const words = Array.isArray(body.words) && body.words.length === dates.length ? body.words.slice(0, ROWS_CAP).map(line => text(line, 80)) : [];
+    const rowsFull = rowKeys ? rowKeys.map((key, at) => ({ date: key.date, amount: key.amount, direction: sides[at] || '', description: words[at] || '' })) : null;
     const identity = body.bank || body.last4 || body.periodText || dates.length ? identityOf({ bank: text(body.bank, 80), account: text(body.last4, 40), periodText: text(body.periodText, 80), dates }) : null;
-    return { sha, identity, rowKeys, force: body.force === true && !body.itemId, rows: Math.min(100000, Math.max(0, Math.floor(Number(body.rows)) || 0)) };
+    return { sha, identity, rowKeys, rowsFull, force: body.force === true && !body.itemId, rows: Math.min(100000, Math.max(0, Math.floor(Number(body.rows)) || 0)) };
 }
 
 /** One line in the platform log for every statement turned away or let past another holder: WHY, in words and counts (no amount, no account number, no file name), so "it said already added" can be read from the log. */
@@ -135,6 +140,16 @@ export default async function handler(req, res) {
             meta: { filename: body.filename, size: body.size, rows: Number(body.rows) || inputs.rows, door: itemId ? 'phone' : 'upload' } }), 20000, 'statement registry');
         note(action, itemId ? 'phone' : 'upload', identity, found);
         if (found.duplicate) return turnedAway({ via: found.existing.via, kind: found.kind, existing: { ...found.existing, ref: undefined }, notice: noticeFor(found.existing.via), detail: detailOf(found.existing, found.proof, found.coverage), canForce: !found.proof?.working }, itemRef ? registryDuplicatePatch({ duplicate: found }) : null);
-        return json(res, 200, { ok: true, duplicate: false, ...(ref ? { id: ref } : {}), identified: !!(identity && identity.ok), ...(found.have && found.have.length ? { have: found.have } : {}) });
+        /* THE ROWS THE BOOKS ALREADY HOLD FROM ANY DOOR, whatever the registry knew: the email system files the statement under the bank's own name and account, a hand upload often under neither, and
+         * the registry's key then differs. Row by row, counted (statement-rowmatch.mjs), so a payment that really happened twice one day stays twice. Advice: if the books cannot be read, the registry's answer stands. */
+        let have = Array.isArray(found.have) ? found.have : [];
+        if (inputs.rowsFull) {
+            try {
+                const user = (await withDeadline(db.collection('users').doc(who.uid).get())).data() || {};
+                const books = matchStatementRows({ user, rows: inputs.rowsFull, bank: text(body.bank, 80), last4: text(body.last4, 40), selfSource: itemRef ? `k:${itemRef.path}` : (token ? `u:${token}` : '') });
+                if (books.have.length) have = [...new Set([...have, ...books.have.map(entry => entry.index)])].sort((a, b) => a - b);
+            } catch (_) { /* advice only */ }
+        }
+        return json(res, 200, { ok: true, duplicate: false, ...(ref ? { id: ref } : {}), identified: !!(identity && identity.ok), ...(have.length ? { have } : {}) });
     } catch (_) { return json(res, 503, { ok: false, reason: 'registry-unavailable' }); }
 }

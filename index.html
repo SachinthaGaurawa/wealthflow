@@ -35613,7 +35613,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 _saveAllowed(false, 'Checking this bank against your books…');
                 let dup = null, fresh = null;
                 try {
-                    const r = await G.parsed({ sha: info.sha, bank: res.ok ? res.lockName : '', last4: info.last4, periodText: info.periodText, dates: info.dates, amounts: info.amounts, filename: info.filename, size: info.size, rows: info.rows, force: info.force === true });
+                    const r = await G.parsed({ sha: info.sha, bank: res.ok ? res.lockName : '', last4: info.last4, periodText: info.periodText, dates: info.dates, amounts: info.amounts, directions: info.directions, words: info.words, filename: info.filename, size: info.size, rows: info.rows, force: info.force === true });
                     dup = r && r.duplicate ? r : null; fresh = r && r.info ? r.info : null;
                 } catch (_) { /* the lock fails open: an unreachable server never stops the owner */ }
                 if (seq !== _bankSeq) return;                                  // a newer choice is already being checked
@@ -35787,9 +35787,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                  * first nothing is added and the owner is told which. Rows of the cloud's own review (parsed.cloudReview) are the server's already. */
                 if (parsed._wfGuard && typeof parsed.cloudReview !== 'function' && window.WFStatementCloud && window.WFStatementCloud.guard) {
                     _spStage('claim', 'Checking your books…', 'Making sure this statement is not already added', 'shield');
-                    const _dup = await window.WFStatementCloud.guard.claim(parsed._wfGuard);
+                    const _claimInfo = parsed._wfGuard;
+                    const _dup = await window.WFStatementCloud.guard.claim(_claimInfo);
                     if (_dup) { _spEnd(); notify((_dup.notice || 'Already Added') + ' — this statement is already in your books, so it was not added a second time.', 'warn'); closeOvl(); return; }
-                    parsed._wfClaimToken = parsed._wfGuard.token; parsed._wfGuard = null;           // taken: a second click on Save is not a second claim
+                    parsed._wfClaimToken = _claimInfo.token; parsed._wfGuard = null;                // taken: a second click on Save is not a second claim
+                    /* Rows of this statement the books took while the review was open (the email system files at any time): the claim names them, and they are left out like the ones the review marked. */
+                    (Array.isArray(_claimInfo.have) ? _claimInfo.have : []).forEach((at) => { txns.forEach((t) => { if (t._i === at && !t._have) { t._have = true; t._keep = false; } }); });
                 }
                 /* The same lock for statements the device opened from the mailbox: each one is taken at Save, and one the email sync or an upload already
                  * holds is left out (the server has closed its mailbox item). The rest of the batch is filed as usual. */
@@ -35842,15 +35845,23 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const _isPast = (d) => { try { const dt = new Date(d + 'T23:59:59'); return dt < new Date(); } catch (_) { return false; } };
                 const _nz = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
                 // Re-import / mandatory-fee de-dupe: same date + amount + merchant already filed?
-                const _dupIn = (list, d, a, name, amtKey, src) => list.some(r => {
-                    if (r.date !== d || Math.abs(((r[amtKey] != null ? r[amtKey] : r.amount) || 0) - a) >= 0.01 || _nz(r.desc || r.name) !== _nz(name)) return false;
+                /* ROWS ARE COUNTED, not just looked up. A statement that shows the same payment three times on one day (two bus fares, three identical micro-credits) has three transactions: the books must hold
+                 * three. This used to look in the list the rows were being added to, so the first of three identical rows hid the other two. Now the books as they were BEFORE this upload are searched, and
+                 * the Nth identical row of this statement (`_curNth`, counted over all its rows, ticked or not) is a copy only when the books already held N of it. */
+                const _before = new Map([ccArr, ccPayArr, expArr, incRecvArr].map(list => [list, list.slice()]));
+                let _curNth = 1;
+                const _dupIn = (list, d, a, name, amtKey, src) => {
                     src = src || {};
-                    if (src.ref && r.ref) return String(src.ref).toUpperCase() === String(r.ref).toUpperCase();
-                    if (src.card_last4 && r.card_last4 && String(src.card_last4) !== String(r.card_last4)) return false;
-                    if (src.bank && r.bank && _nz(src.bank) !== _nz(r.bank)) return false;
-                    if (src.statementKey && r.statementKey && src.statementKey === r.statementKey) return Number(src.statementRow) === Number(r.statementRow);
-                    return true;
-                });
+                    const held = (_before.get(list) || list).filter(r => {
+                        if (r.date !== d || Math.abs(((r[amtKey] != null ? r[amtKey] : r.amount) || 0) - a) >= 0.01 || _nz(r.desc || r.name) !== _nz(name)) return false;
+                        if (src.ref && r.ref) return String(src.ref).toUpperCase() === String(r.ref).toUpperCase();
+                        if (src.card_last4 && r.card_last4 && String(src.card_last4) !== String(r.card_last4)) return false;
+                        if (src.bank && r.bank && _nz(src.bank) !== _nz(r.bank)) return false;
+                        if (src.statementKey && r.statementKey && src.statementKey === r.statementKey) return Number(src.statementRow) === Number(r.statementRow);
+                        return true;
+                    }).length;
+                    return held >= _curNth;
+                };
 
                 // ── AI authors a useful note per row (it decides which need one) ──
                 // Gather the rows we'll actually file, ask the AI once, then look up
@@ -35878,8 +35889,11 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
                 // One undoable batch per import (records every payment it creates).
                 const _batch = (window.WFBatch ? WFBatch.begin((parsed && parsed.fileName) || (bank ? (_bankShown(bank) + ' statement') : 'Statement'), 'statement') : null);
+                const _identical = new Map();
+                rows.forEach((t) => { const k = (t.date || today()) + '|' + Math.round((Number(t.amount) || 0) * 100) + '|' + _nz(String(t.description || '').trim()); _identical.set(k, (_identical.get(k) || 0) + 1); t._nth = _identical.get(k); });
                 rows.forEach((t) => {
                     if (!t._keep) { if (t._have) dup++; else skipped++; return; }
+                    _curNth = t._nth || 1;
                     const date = t.date || today();
                     const desc = String(t.description || '').trim();
                     const dest = t._dest || 'skip';

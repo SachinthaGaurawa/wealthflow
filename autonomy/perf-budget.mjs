@@ -300,7 +300,10 @@ export const BUDGETS = {
     // remembers a fold, the data-aware suggestion buttons (which now escape the names they show), and one script tag; about a third of it is the comments recording why each is there.
     // 2026-10-03 (the Advisor looks up the outside world): 2,192,000 -> 2_196_000 (measured 2,193,922 + ~0.1% headroom). The page asks for a lookup before the model is asked a question about a rate, a price or a tax rule
     // (_wfResearchFor), shows where the answer was looked up (_wfAttachSources) and its stylesheet, plus one script tag; the rest is the comments recording why.
-    htmlBytes: 2_196_000,
+    // 2026-10-04 (rows of one statement filed by two doors are counted once): 2,196,000 -> 2_199_000 (measured 2,196,419 + ~0.1% headroom). The Save step's own duplicate check (_dupIn) now counts rows against the books
+    // as they were before the upload (so three identical payments on one day stay three, and a row the books already hold is skipped), and the rows the claim says the books took while the review was open are left
+    // out like the ones the review marked. Comments recording why make up most of it. No new script or request.
+    htmlBytes: 2_199_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
