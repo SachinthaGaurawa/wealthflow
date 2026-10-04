@@ -568,6 +568,7 @@
     <!-- The answer read back against the books: every figure the Advisor writes is looked for in what it was given; one that is not theirs is asked for again once, and shown if it stays. window.WFAdvisorCheck -->
     <script type="module" src="wealthflow-advisor-check.js"></script>
     <script type="module" src="wealthflow-advisor-briefing.js"></script>
+    <script type="module" src="wealthflow-advisor-research.js"></script>
     <!-- Statement router — routeRow, the SHA-256 row hash and classifyStatement.
          Imported only by tests until now: Statement Sync is the first caller in
          the page, and the first to pass `existingHashes`, which classifyStatement
@@ -3338,6 +3339,11 @@
         .ai-bubble .ai-grounding.ok .ai-grounding-icon { color: var(--green); }
         .ai-bubble .ai-grounding.warn { color: var(--text); }
         .ai-bubble .ai-grounding.warn .ai-grounding-icon { color: #f5a623; }
+        /* where an answer about the outside world was looked up, with links (wealthflow-advisor-research.js) */
+        .ai-bubble .ai-sources { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); font-size: 11.5px; line-height: 1.5; color: var(--text2); }
+        .ai-bubble .ai-sources.warn { color: var(--text); }
+        .ai-bubble .ai-source { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+        .ai-bubble .ai-source:hover { text-decoration: underline; }
 
         .ai-bubble .ai-spacer { height: 12px; }
 
@@ -11654,7 +11660,10 @@ Be conversational and precise.`;
                 wrap.appendChild(wb);
                 return;
             }
-            hist.forEach(m => appendAIMessage(m.role === 'user' ? 'user' : 'bot', m.content, [], true));
+            hist.forEach(m => {
+                appendAIMessage(m.role === 'user' ? 'user' : 'bot', m.content, [], true);
+                try { if (m.role !== 'user' && m.src && window.WFAdvisorResearch) _wfAttachSources(window.WFAdvisorResearch.fromStamp(m.src)); } catch (_) {}
+            });
         }
 
         function getAIMemory() {
@@ -11968,10 +11977,38 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 return await C.verify(reply, { parts: g.parts, owner: g.owner, prompt: window._wfLastChatPrompt || '' }, (p) => callAIRaw(p, null, {}), { timeoutMs: 25000 });
             } catch (_) { return { reply, verdict: null, revised: false }; }
         }
+        /* A question about the outside world (a rate, a price, a tax rule) is looked up on the web before the prompt is built, and the sources are shown under the answer. The question only
+         * is sent, scrubbed of figures; nothing about the books (wealthflow-advisor-research.js). Never throws; null when the question is not about the outside world. */
+        async function _wfResearchFor(msg) {
+            window._wfResearch = null;
+            try {
+                const R = window.WFAdvisorResearch;
+                if (!R) return null;
+                const v6 = window.WealthFlowAIv6;
+                const intent = v6 && typeof v6.classifyIntent === 'function' ? v6.classifyIntent(msg, false) : '';
+                if (intent === 'code' || intent === 'image_gen') return null;
+                const r = await R.gather(msg, { now: new Date() });
+                if (r) window._wfResearch = r;
+                return r;
+            } catch (_) { return null; }
+        }
+        /* Under the answer: where it was looked up, with links, or that it could not be. Text only; a link only for an http(s) address. */
+        function _wfAttachSources(r) {
+            try {
+                if (!r || !window.WFAdvisorResearch) return;
+                const bubbles = document.querySelectorAll('#aiChatMessages .ai-bubble.bot');
+                const bubble = bubbles[bubbles.length - 1];
+                if (!bubble) return;
+                const row = window.WFAdvisorResearch.render(null, r, document);
+                if (!row) return;
+                const anchor = bubble.querySelector('.ai-grounding, .ai-followup-pills, .ai-msg-actions, .ai-bubble-meta');
+                if (anchor) bubble.insertBefore(row, anchor); else bubble.appendChild(row);
+            } catch (_) {}
+        }
         /* The line under the last bot bubble that says what was checked. Text only: nothing from the answer is put in as HTML. */
         function _wfAttachGroundingChip(result) {
             try {
-                const chip = window.WFAdvisorCheck && window.WFAdvisorCheck.chipOf(result);
+                const chip = window.WFAdvisorCheck && window.WFAdvisorCheck.chipOf(result, { outside: !!(window._wfResearch && window._wfResearch.ok) });
                 if (!chip) return;
                 const bubbles = document.querySelectorAll('#aiChatMessages .ai-bubble.bot');
                 const bubble = bubbles[bubbles.length - 1];
@@ -12059,6 +12096,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
                 _lastAIProvider = null;
                 window._wfGrounding = null; window._wfLastChatPrompt = '';
+                await _wfResearchFor(msg);          // a rate, a price or a rule is looked up first; the prompt builder reads window._wfResearch
                 let rawReply = await callAI(conversationText);
 
                 // Parse followup questions
@@ -12081,11 +12119,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 mainReply = grounded.reply;
 
                 // Save AI response to history
-                history.push({ role: 'assistant', content: mainReply, ts: Date.now() });
+                const _wfStamp = window.WFAdvisorResearch && window._wfResearch ? window.WFAdvisorResearch.stamp(window._wfResearch) : null;     // where it was looked up, so [1] still points somewhere next time
+                history.push(_wfStamp ? { role: 'assistant', content: mainReply, ts: Date.now(), src: _wfStamp } : { role: 'assistant', content: mainReply, ts: Date.now() });
                 saveAIHistory(history);
 
                 // Show bot reply with followups
                 appendAIMessage('bot', mainReply, followups);
+                _wfAttachSources(window._wfResearch);
                 _wfAttachGroundingChip(grounded);
 
                 // On-device ML: learn from this exchange (facts, intent, prefs)

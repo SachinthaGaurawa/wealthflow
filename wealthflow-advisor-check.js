@@ -215,17 +215,19 @@ export async function verify(reply, grounding, ask, o = {}) {
 }
 
 /** What to tell the owner under the answer: { tone: 'ok' | 'warn', text }, or null when there was nothing to say. */
-export function chipOf(result) {
+/** The line for the owner. `o.outside` is true when the model was also given pages looked up on the web, which the answer is read back against as well. */
+export function chipOf(result, o = {}) {
+    const where = o && o.outside ? ' or the pages above' : '';
     const v = result && result.verdict;
     if (!v || !v.counted || (!v.checked && !v.unknown.length)) return null;
     if (v.unknown.length) {
         const list = v.unknown.slice(0, 4).map((u) => clip(u.text, 24)).join(', ');
-        return { tone: 'warn', text: `${v.unknown.length} figure${v.unknown.length === 1 ? '' : 's'} in this answer ${v.unknown.length === 1 ? 'is' : 'are'} not from your books (${list}). Treat ${v.unknown.length === 1 ? 'it' : 'them'} as the AI's own estimate.` };
+        return { tone: 'warn', text: `${v.unknown.length} figure${v.unknown.length === 1 ? '' : 's'} in this answer ${v.unknown.length === 1 ? 'is' : 'are'} not from your books${where} (${list}). Treat ${v.unknown.length === 1 ? 'it' : 'them'} as the AI's own estimate.` };
     }
     const own = v.given + v.derived;
     if (!own) return null;
     const extra = [v.derived ? `${v.derived} worked out from them` : '', v.estimates ? `${v.estimates} labelled as estimate${v.estimates === 1 ? '' : 's'}` : ''].filter(Boolean);
-    return { tone: 'ok', text: `${result.revised ? 'Corrected once, then checked' : 'Checked'} against your books: ${own} figure${own === 1 ? '' : 's'}${extra.length ? ` (${extra.join(', ')})` : ''}.` };
+    return { tone: 'ok', text: `${result.revised ? 'Corrected once, then checked' : 'Checked'} against your books${o && o.outside ? ' and the pages above' : ''}: ${own} figure${own === 1 ? '' : 's'}${extra.length ? ` (${extra.join(', ')})` : ''}.` };
 }
 
 const API = { CHECK_VERSION, figuresIn, groundingFrom, check, correctionNote, revisionPrompt, verify, chipOf };

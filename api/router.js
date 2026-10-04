@@ -117,6 +117,8 @@ const HANDLERS = {
     // same wf-mail items collection the push writes to, so the device pipeline
     // is reused rather than duplicated.
     'gmail-scan': () => import('../gmail-scan.js'),
+    // What the web says about the outside world (a rate, a price, a tax rule), looked up for the Advisor with the sources it came from. The question only, scrubbed of figures; never the books.
+    'advisor-research': () => import('../advisor-research.js'),
     'health': () => import('../health.js'),
     'inbox-ack': () => import('../inbox-ack.js'),
     'inbox-pull': () => import('../inbox-pull.js'),

@@ -305,7 +305,7 @@ describe('the page: sendAIMessage reads the answer back and shows the chip', () 
         ctx.window.window = win;
         vm.createContext(ctx);
         vm.runInContext('var _lastAIProvider = null;', ctx);
-        for (const n of ['_wfGroundReply', '_wfAttachGroundingChip', 'sendAIMessage']) vm.runInContext(source(n), ctx);
+        for (const n of ['_wfGroundReply', '_wfAttachGroundingChip', '_wfResearchFor', '_wfAttachSources', 'sendAIMessage']) vm.runInContext(source(n), ctx);
         return { ctx, events, shown, bubbleChildren, bubble, run: () => vm.runInContext('sendAIMessage', ctx)('how am I doing?') };
     }
     const SHEET = "=== THE OWNER'S BOOKS ===\nTypical month: income LKR 285,000, outflow LKR 282,343, left LKR 2,657. Cash LKR 640,000.\n=== END OF THE OWNER'S BOOKS ===";
