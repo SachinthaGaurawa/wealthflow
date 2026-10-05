@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-    SMS_FIELDS, CLIENT, BALANCE, balanceWaitMs, requestBalance, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, watchSmsLog, rowsOf, panelHtml, describeIssue, ALERT_TITLE, boot,
+    SMS_FIELDS, CLIENT, BALANCE, balanceWaitMs, requestBalance, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue, ALERT_TITLE, boot,
 } from '../wealthflow-sms.js';
 import { FIELDS } from '../sms-events.mjs';
 
@@ -609,5 +609,74 @@ describe('"Send balance": the owner asks for the balance to be texted', () => {
         expect(rows.find((r) => r.id === 'a').note).toMatch(/Press Send balance again/);
         expect(rows.find((r) => r.id === 'b').note).toMatch(/Press Send balance again/);
         expect(rows.find((r) => r.id === 'c').note).toMatch(/Switched off or changed/);
+    });
+});
+
+describe('texts that are waiting for the owner are announced, once, instead of sitting in a quiet log', () => {
+    const q = (id, kind) => ({ id, status: 'queued', error: kind ? { kind, message: 'x' } : null });
+
+    it('out of credit, a rejected token, an unapproved sender and a missing token each say what to do, with how many are waiting', () => {
+        for (const [kind, words] of [['credit', /SMS credit/], ['auth', /rejected the API token/], ['sender', /sender ID/], ['config', /not connected/]]) {
+            const out = heldAlerts([q('a', kind), q('b', kind)], { configured: true }, new Set());
+            expect(out.toasts, kind).toHaveLength(1);
+            expect(out.toasts[0].text).toMatch(words);
+            expect(out.toasts[0].tone).toBe('error');
+            expect(out.toasts[0].detail).toMatch(/^2 texts are waiting\./);
+            expect([...out.told]).toEqual([kind]);
+        }
+        expect(heldAlerts([q('a', 'credit')], null, new Set()).toasts[0].detail).toMatch(/^1 text is waiting\./);
+    });
+
+    it('a gateway that was never connected queues without trying: that is announced too, and names the variable to add', () => {
+        const out = heldAlerts([q('a', null)], { configured: false }, new Set());
+        expect(out.toasts).toHaveLength(1);
+        expect(out.toasts[0].detail).toMatch(/TEXTLK_API_TOKEN/);
+        expect(heldAlerts([q('a', null)], { configured: true }, new Set()).toasts).toEqual([]);           // queued for a moment: nothing to say
+    });
+
+    it('says nothing for a retry in the ordinary course, a delivered or a cancelled text, or the status card itself', () => {
+        const rows = [q('a', 'rate-limit'), q('b', 'network'), q('c', 'cap'), { id: 'd', status: 'sent' }, { id: 'e', status: 'cancelled', error: { kind: 'credit' } }, { id: 'f', status: 'failed', error: { kind: 'credit' } }, { id: '_status', status: 'queued', error: { kind: 'credit' } }];
+        expect(heldAlerts(rows, { configured: true }, new Set()).toasts).toEqual([]);
+    });
+
+    it('announces a problem once while it lasts, and again if it clears and comes back', () => {
+        const first = heldAlerts([q('a', 'credit')], { configured: true }, new Set());
+        expect(first.toasts).toHaveLength(1);
+        const again = heldAlerts([q('a', 'credit'), q('b', 'credit')], { configured: true }, first.told);
+        expect(again.toasts).toEqual([]);
+        const cleared = heldAlerts([], { configured: true }, again.told);
+        expect(cleared.toasts).toEqual([]);
+        expect(cleared.told.size).toBe(0);
+        expect(heldAlerts([q('c', 'credit')], { configured: true }, cleared.told).toasts).toHaveLength(1);
+    });
+
+    it('a low balance is a heads-up (not an error), with the units that are left', () => {
+        const out = heldAlerts([], { configured: true, lowCredit: true, units: 3 }, new Set());
+        expect(out.toasts).toHaveLength(1);
+        expect(out.toasts[0].tone).toBe('info');
+        expect(out.toasts[0].detail).toMatch(/\(3 units left\)/);
+        expect(heldAlerts([], { configured: true, lowCredit: false, units: 90 }, new Set()).toasts).toEqual([]);
+    });
+
+    it('survives rows and status that are not what they should be', () => {
+        for (const bad of [null, undefined, 'x', 5, [null, 7, 'a', {}, { id: 'x' }]]) {
+            expect(() => heldAlerts(bad, 'nope', 'nope')).not.toThrow();
+            expect(heldAlerts(bad, null, undefined).toasts).toEqual([]);
+        }
+    });
+
+    it('every wording is plain text, never markup', () => {
+        for (const [a, b] of Object.values(HELD_NOTICE)) { expect(a).not.toMatch(/[<>]/); expect(b).not.toMatch(/[<>]/); }
+    });
+
+    it('the live listener passes them to the page\'s toast once, as the snapshots arrive', () => {
+        const toasts = []; let push = null;
+        const q2 = { orderBy() { return this; }, limit() { return this; }, onSnapshot(cb) { push = cb; return () => {}; } };
+        const fsx = { collection: () => ({ doc: () => ({ collection: () => q2 }) }) };
+        watchSmsLog({ firestore: fsx, uid: 'u1', storage: null, onToast: (x) => toasts.push(x) });
+        const snap = (docs) => ({ docs: docs.map((d) => ({ id: d.id, data: () => { const { id, ...rest } = d; return rest; } })) });
+        push(snap([{ id: 'a', status: 'queued', error: { kind: 'credit' }, updatedAt: 1 }, { id: '_status', configured: true, updatedAt: 2 }]));
+        push(snap([{ id: 'a', status: 'queued', error: { kind: 'credit' }, updatedAt: 3 }, { id: '_status', configured: true, updatedAt: 4 }]));
+        expect(toasts.filter((x) => /SMS credit/.test(x.text))).toHaveLength(1);
     });
 });

@@ -24518,7 +24518,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     list[at] = r.record;
                     DB.set('debtors', list);
                     try { triggerHaptic('success'); } catch (_) {}
-                    notify('Balance text queued — the delivery alert appears here when it goes out', 'success');
+                    notify('Balance text queued — the delivery alert appears here when it goes out. If it has not gone in half an hour, press Send balance again', 'success');
                     renderLiquidity();
                 },
             );

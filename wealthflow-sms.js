@@ -401,12 +401,49 @@ export function announce(rows, memory = {}) {
 }
 
 /**
+ * What the owner must be told even though nothing was delivered: texts that are WAITING for something only they can fix. Without this the
+ * only sign is a quiet message log, and a debtor is never told about a payment because the account ran out of its ten units.
+ *   rows:   mirror documents (not the status card); status: the status card or null; told: the problems already announced on this page
+ * -> { toasts:[{tone,text,detail}], told:Set<string> }
+ * A problem is announced once while it lasts; when it clears and comes back it is announced again.
+ */
+export const HELD_NOTICE = Object.freeze({
+    credit: ['Texts are waiting for SMS credit', 'Top up your Text.lk account and they go out by themselves.'],
+    auth: ['Texts are waiting: Text.lk rejected the API token', 'Check TEXTLK_API_TOKEN in the Vercel settings.'],
+    sender: ['Texts are waiting for the sender ID', 'Text.lk has to approve the WEALTHFLOW sender ID first.'],
+    config: ['Texts are waiting: Text.lk is not connected', 'Add TEXTLK_API_TOKEN in the Vercel settings.'],
+    unconfigured: ['Texts are waiting: Text.lk is not connected', 'Add TEXTLK_API_TOKEN in the Vercel settings and they go out by themselves.'],
+    low: ['SMS credit is running low', 'When it runs out, texts are held, not lost, until you top up.'],
+});
+
+export function heldAlerts(rows, status, told = new Set()) {
+    const waiting = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id && r.id !== '_status' && r.status === 'queued');
+    const now = new Set();
+    const counts = {};
+    for (const r of waiting) {
+        const k = s(r.error && r.error.kind);
+        const key = Object.prototype.hasOwnProperty.call(HELD_NOTICE, k) && k !== 'low' && k !== 'unconfigured' ? k : (status && status.configured === false && !k ? 'unconfigured' : '');
+        if (!key) continue;
+        now.add(key); counts[key] = (counts[key] || 0) + 1;
+    }
+    if (status && status.lowCredit === true) now.add('low');
+    const toasts = [];
+    for (const key of ['credit', 'auth', 'sender', 'config', 'unconfigured', 'low']) {
+        if (!now.has(key) || (told instanceof Set && told.has(key))) continue;
+        const [text, detail] = HELD_NOTICE[key];
+        const n = counts[key];
+        toasts.push({ tone: key === 'low' ? 'info' : 'error', text, detail: (n ? n + (n === 1 ? ' text is' : ' texts are') + ' waiting. ' : '') + detail + (key === 'low' && num(status && status.units) ? ' (' + num(status.units) + ' units left)' : '') });
+    }
+    return { toasts, told: now };
+}
+
+/**
  * Listen to the mirror and announce. Returns the unsubscribe function.
  *   deps: { firestore, uid, storage, onToast(t), onRows(rows, status), onError(e) }
  */
 export function watchSmsLog(deps) {
     const key = 'wf_sms_seen_' + deps.uid;
-    let memory = { seenSentAt: num(safeStorage(deps.storage, (x) => (x ? x.getItem(key) : 0))), boundaryIds: new Set(), knownFailed: new Set(), first: true };
+    let memory = { seenSentAt: num(safeStorage(deps.storage, (x) => (x ? x.getItem(key) : 0))), boundaryIds: new Set(), knownFailed: new Set(), first: true, told: new Set() };
     let q;
     try {
         q = deps.firestore.collection('users').doc(deps.uid).collection('smsLog').orderBy('updatedAt', 'desc').limit(CLIENT.LOG_LIMIT);
@@ -415,9 +452,10 @@ export function watchSmsLog(deps) {
         try {
             const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
             const out = announce(rows, memory);
-            memory = { seenSentAt: out.seenSentAt, boundaryIds: out.boundaryIds, knownFailed: out.knownFailed, first: false };
+            const held = heldAlerts(rows, rows.find((r) => r.id === '_status') || null, memory.told);
+            memory = { seenSentAt: out.seenSentAt, boundaryIds: out.boundaryIds, knownFailed: out.knownFailed, first: false, told: held.told };
             if (out.seenSentAt > 0) safeStorage(deps.storage, (x) => { if (x) x.setItem(key, String(out.seenSentAt)); });
-            for (const t of out.toasts) if (deps.onToast) deps.onToast(t);
+            for (const t of out.toasts.concat(held.toasts)) if (deps.onToast) deps.onToast(t);
             if (deps.onRows) deps.onRows(rows.filter((r) => r.id !== '_status'), rows.find((r) => r.id === '_status') || null);
         } catch (e) { if (deps.onError) deps.onError(e); }
     }, (e) => { if (deps.onError) deps.onError(e); });
@@ -540,7 +578,7 @@ export function boot(win) {
     const live = { uid: null, unsub: null, notifier: null, rows: [], status: null, timer: null, bound: false, told: false };
     const decoy = () => win._isDecoyMode === true;
     const storage = (() => { try { return win.localStorage; } catch (_) { return null; } })();
-    const toast = (t) => { try { if (typeof win.notify === 'function') win.notify(t.text + (t.detail ? ' (' + t.detail + ')' : ''), t.tone === 'error' ? 'error' : 'success'); } catch (_) { /* a toast is a courtesy */ } };
+    const toast = (t) => { try { if (typeof win.notify === 'function') win.notify(t.text + (t.detail ? ' (' + t.detail + ')' : ''), t.tone === 'error' ? 'error' : (t.tone === 'info' ? 'info' : 'success')); } catch (_) { /* a toast is a courtesy */ } };
     const nameOf = (kind, id) => {
         try {
             const list = kind === 'debtor' ? win.appData.debtors : win.appData.income;
@@ -617,4 +655,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFSms = boot(window); } catch (e) { console.warn('[WF-SMS] page side did not start:', e && e.message); }
 }
 
-export default { SMS_FIELDS, CLIENT, BALANCE, balanceWaitMs, requestBalance, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, watchSmsLog, rowsOf, panelHtml, describeIssue };
+export default { SMS_FIELDS, CLIENT, BALANCE, balanceWaitMs, requestBalance, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue };

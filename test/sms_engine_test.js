@@ -540,6 +540,16 @@ describe('the owner sees it', () => {
         expect(status.issues).toEqual([{ recordKind: 'debtor', recordId: 'd1', reason: 'no-phone' }]);
     });
 
+    it('a low-credit reading survives the owner\'s next save: a sweep that did not ask the gateway for the balance leaves it alone', async () => {
+        const { fs, db } = makeDb();
+        await run(db, books(), gateway(), { deps: { random: () => 0.5, units: 3 } });                   // the daily sweep asked: 3 units left
+        expect(mirrorDocs(fs).find((m) => m.id === '_status')).toMatchObject({ units: 3, lowCredit: true });
+        await run(db, books(), gateway(), { now: NOW + 60e3 });                                          // the page's nudge after a save did not
+        expect(mirrorDocs(fs).find((m) => m.id === '_status')).toMatchObject({ units: 3, lowCredit: true });
+        await run(db, books(), gateway(), { now: NOW + 3600e3, deps: { random: () => 0.5, units: 120 } });  // topped up, and the next daily sweep says so
+        expect(mirrorDocs(fs).find((m) => m.id === '_status')).toMatchObject({ units: 120, lowCredit: false });
+    });
+
     it('a failure to mirror never fails the delivery', async () => {
         const { fs, db } = makeDb(); const gw = gateway();
         const realCollection = db.collection;

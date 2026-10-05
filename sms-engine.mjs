@@ -351,9 +351,10 @@ async function dueIds({ db, uid, now }) {
 
 /** Write the owner's status card: what is switched on but cannot work, whether the gateway is configured, whether credit is low. */
 export async function writeStatus({ db, uid, issues, configured, units = null, now }) {
-    await mirror(db, uid, '_status', {
-        kind: 'status', configured: !!configured, issues: issues.slice(0, 50), units, lowCredit: units !== null && units <= LOW_CREDIT_UNITS,
-    }, now);
+    // A sweep that did not ask the gateway for the balance (the page's nudge after a save) knows nothing about it, and must not erase what the
+    // last one that did (the daily sweep) found: writing `units: null` here made the low-credit warning vanish at the owner's next save.
+    const credit = units === null || units === undefined ? {} : { units, lowCredit: units <= LOW_CREDIT_UNITS, unitsAt: now };
+    await mirror(db, uid, '_status', { kind: 'status', configured: !!configured, issues: issues.slice(0, 50), ...credit }, now);
 }
 
 /**
