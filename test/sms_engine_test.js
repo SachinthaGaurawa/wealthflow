@@ -247,6 +247,48 @@ describe('retry and backoff', () => {
     });
 });
 
+describe('a held text whose recipient was corrected goes to, and links to, the corrected person', () => {
+    const linkOf = (body) => (/\/t\/([A-Za-z0-9_-]{16})/.exec(body) || [])[1];
+    const heldDb = async () => {
+        const { fs, db } = makeDb();
+        await run(db, books(), gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: true, message: 'x' })));
+        return { fs, db };
+    };
+
+    it('the number and the NIC both corrected: the words are built again, so the new number is not sent a link to the old NIC\'s statement', async () => {
+        const { fs, db } = await heldDb();
+        const oldLinks = ledger(fs).map((d) => linkOf(d.body));
+        expect(oldLinks.every(Boolean)).toBe(true);
+        const user = books(); user.debtors[0].phone = '0712345678'; user.debtors[0].nic = '902301234V';
+        const gw = gateway();
+        const r = await run(db, user, gw, { now: NOW + HOLD_MS + 1000 });
+        expect(r.enqueued.rephoned).toBe(2);
+        expect(gw.sent).toHaveLength(2);
+        expect(gw.sent.every((m) => m.to === '+94712345678')).toBe(true);
+        const newLinks = gw.sent.map((m) => linkOf(m.message));
+        expect(newLinks.every(Boolean)).toBe(true);
+        expect(newLinks.some((l) => oldLinks.includes(l))).toBe(false);
+    });
+
+    it('only the NIC corrected (same number): the link follows it too', async () => {
+        const { fs, db } = await heldDb();
+        const oldLinks = ledger(fs).map((d) => linkOf(d.body));
+        const user = books(); user.debtors[0].nic = '902301234V';
+        const gw = gateway();
+        await run(db, user, gw, { now: NOW + HOLD_MS + 1000 });
+        expect(gw.sent).toHaveLength(2);
+        expect(gw.sent.map((m) => linkOf(m.message)).some((l) => oldLinks.includes(l))).toBe(false);
+    });
+
+    it('nothing changed: the held text is left exactly as it was written', async () => {
+        const { fs, db } = await heldDb();
+        const before = ledger(fs).map((d) => d.body);
+        const r = await run(db, books(), gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: true, message: 'x' })), { now: NOW + HOLD_MS + 1000 });
+        expect(r.enqueued.rephoned).toBe(0);
+        expect(ledger(fs).map((d) => d.body)).toEqual(before);
+    });
+});
+
 describe('a worker that dies', () => {
     it('the lease lapses, the message is claimed again, and it is flagged as possibly doubled', async () => {
         const { fs, db } = makeDb();

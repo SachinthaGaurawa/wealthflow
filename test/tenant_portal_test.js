@@ -95,6 +95,24 @@ describe('asking for a code', () => {
         for (const [name, out] of Object.entries(cases)) expect({ name, status: out.status, body: out.body }).toEqual({ name, status: expected.status, body: expected.body });
     });
 
+    it('a lender the owner has switched off sends no code, and the stranger is told the same as ever; one never registered still does', async () => {
+        const off = await ready();
+        off.fs.data.set(`wf-sms/${UID}`, { active: false, deactivatedReason: 'the sign-in account is disabled' });
+        const gw = gateway();
+        const out = await ask(off.db, gw, off.token);
+        const normal = await ask((await ready()).db, gateway(), (await ready()).token);
+        expect(gw.calls).toBe(0);
+        expect(off.fs.data.has(`wf-tenants/${off.token}/otp/current`)).toBe(false);              // no slot taken, no daily count used
+        expect({ status: out.status, body: out.body }).toEqual({ status: normal.status, body: normal.body });
+
+        const on = await ready();
+        on.fs.data.set(`wf-sms/${UID}`, { active: true });
+        const gw2 = gateway(); await ask(on.db, gw2, on.token);
+        expect(gw2.sent).toHaveLength(1);
+        const none = await ready(); const gw3 = gateway(); await ask(none.db, gw3, none.token);        // no registration document at all
+        expect(gw3.sent).toHaveLength(1);
+    });
+
     it('does not make a request that does nothing quicker than one that texts', async () => {
         const { db, token } = await ready();
         const pad = vi.fn(async () => {});
