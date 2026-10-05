@@ -38,6 +38,19 @@ On the debtor's card:
   The text is written when it is queued, so a request that cannot go out within half an hour (no credit, a rejected token) is dropped and the
   message log says so, rather than sent later with a figure that has moved.
 
+### Late-payment reminders (optional, per debtor)
+
+Off unless the owner ticks **Also remind when a payment is late** on that debtor's form (it needs an *Expected back by* date; the form refuses
+the tick without one). While it is ticked and money is still confirmed as owed:
+
+* One text the day after the date (the debtor's own calendar day, from their number's country), then one a week later, then 15 and 22 days
+  after: at most four. Each is sent between 08:00 and 20:00 where the debtor is, never overnight.
+  `Reminder: LKR 50,000.00 is still outstanding, due 02 Oct 2026, ref DEB-7E1E60. Statement: <link>`
+* No interest, no penalty and no demand: the figure is the confirmed balance and the date is the one the owner set.
+* Nothing is sent for a day that was over before the box was ticked, and an edit keeps the moment it was ticked (`sms_remind_at`).
+* A reminder whose day has gone by more than 24 hours ago is dropped, not sent late; a payment confirmed before it goes out cancels it.
+* Layer A (investments) has no such box: capital is not a debt.
+
 ## Saved people and payment details (Investments tab and Liquidity & Credit Hub)
 
 **Saved people** (button on the Investments tab and on the Debtors card) is one address book for both tabs.

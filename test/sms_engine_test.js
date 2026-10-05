@@ -627,3 +627,65 @@ describe('the balance the owner asked for', () => {
         expect(gw.sent.filter((m) => m.message.startsWith('Balance'))).toHaveLength(1);
     });
 });
+
+describe('late-payment reminders through the queue', () => {
+    const due = (extra = {}) => {
+        const u = books();
+        Object.assign(u.debtors[0], { dueISO: '2026-10-04', [FIELDS.REMIND]: true, [FIELDS.REMIND_AT]: NOW - 86400e3 * 3, [FIELDS.ENABLED_AT]: NOW - 86400e3 * 3, ...extra });
+        u.debtors[0].events = [{ id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-01', confirmed: true, at: NOW - 3 * 86400e3 }];
+        return u;
+    };
+    const lateDocs = (fs) => ledger(fs).filter((d) => d.kind === 'B.late');
+
+    it('goes out in the morning where the debtor is, once, with the balance and the date, and never twice', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        const night = T('2026-10-04T20:00:00Z');                         // 01:30 on the 5th in Colombo: the day after the date has begun, the window has not opened
+        await run(db, due(), gw, { now: night });
+        expect(lateDocs(fs)).toHaveLength(1);
+        expect(lateDocs(fs)[0]).toMatchObject({ status: STATUS.QUEUED, scheduled: true });
+        expect(lateDocs(fs)[0].nextAttemptAt).toBe(T('2026-10-05T02:30:00Z'));      // 08:00 Colombo
+        expect(gw.sent.some((m) => m.message.startsWith('Reminder'))).toBe(false);
+
+        await run(db, due(), gw, { now: T('2026-10-05T03:00:00Z') });
+        const sent = gw.sent.filter((m) => m.message.startsWith('Reminder'));
+        expect(sent).toHaveLength(1);
+        expect(sent[0].message).toMatch(/^Reminder: LKR 50,000\.00 is still outstanding, due 04 Oct 2026, ref DEB-[0-9A-F]{6}\. Statement: https:/);
+        await run(db, due(), gw, { now: T('2026-10-05T09:00:00Z') });
+        expect(gw.sent.filter((m) => m.message.startsWith('Reminder'))).toHaveLength(1);
+    });
+
+    it('is cancelled before it goes if the money arrives first (the morning\'s payment, confirmed before 08:00)', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        await run(db, due(), gw, { now: T('2026-10-04T20:00:00Z') });
+        expect(lateDocs(fs)[0].status).toBe(STATUS.QUEUED);
+        const paid = due();
+        paid.debtors[0].events.push({ id: 'e9', kind: 'repayment', amount: 50000, date: '2026-10-05', confirmed: true, at: T('2026-10-04T23:00:00Z') });
+        const r = await run(db, paid, gw, { now: T('2026-10-05T03:00:00Z') });
+        expect(r.cancelled).toBeGreaterThanOrEqual(1);
+        expect(lateDocs(fs)[0].status).toBe(STATUS.CANCELLED);
+        expect(gw.sent.some((m) => m.message.startsWith('Reminder'))).toBe(false);
+    });
+
+    it('held for credit for more than a day, it is dropped, not sent with a balance that may have moved', async () => {
+        const { fs, db } = makeDb();
+        const broke = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: false, message: 'out of units' }));
+        await run(db, due(), broke, { now: T('2026-10-05T03:00:00Z') });
+        expect(lateDocs(fs)[0]).toMatchObject({ status: STATUS.QUEUED, lastError: { kind: KIND.CREDIT } });
+        const gw = gateway();
+        await run(db, due(), gw, { now: T('2026-10-07T03:00:00Z') });
+        expect(gw.sent.some((m) => m.message.startsWith('Reminder'))).toBe(false);
+        expect(['cancelled', 'expired']).toContain(lateDocs(fs)[0].status);
+    });
+
+    it('five sweeps racing for the same reminder send one text', async () => {
+        const { db } = makeDb(); const gw = gateway();
+        await Promise.all([1, 2, 3, 4, 5].map(() => run(db, due(), gw, { now: T('2026-10-05T03:00:00Z') })));
+        expect(gw.sent.filter((m) => m.message.startsWith('Reminder'))).toHaveLength(1);
+    });
+
+    it('with the box unticked nothing is queued, however late they are', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        await run(db, due({ [FIELDS.REMIND]: false }), gw, { now: T('2026-10-05T03:00:00Z') });
+        expect(lateDocs(fs)).toHaveLength(0);
+    });
+});

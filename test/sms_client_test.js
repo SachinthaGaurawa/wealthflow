@@ -18,8 +18,8 @@ import { FIELDS } from '../sms-events.mjs';
 const T0 = Date.parse('2026-10-05T05:00:00Z');
 
 describe('the fields are the server\'s fields', () => {
-    it('the page and the server read and write the same five names', () => {
-        expect(SMS_FIELDS).toEqual({ ENABLED: FIELDS.ENABLED, ENABLED_AT: FIELDS.ENABLED_AT, PHONE: FIELDS.PHONE, NIC: FIELDS.NIC, REQUESTS: FIELDS.REQUESTS });
+    it('the page and the server read and write the same seven names', () => {
+        expect(SMS_FIELDS).toEqual({ ENABLED: FIELDS.ENABLED, ENABLED_AT: FIELDS.ENABLED_AT, PHONE: FIELDS.PHONE, NIC: FIELDS.NIC, REQUESTS: FIELDS.REQUESTS, REMIND: FIELDS.REMIND, REMIND_AT: FIELDS.REMIND_AT });
     });
 });
 
@@ -678,5 +678,49 @@ describe('texts that are waiting for the owner are announced, once, instead of s
         push(snap([{ id: 'a', status: 'queued', error: { kind: 'credit' }, updatedAt: 1 }, { id: '_status', configured: true, updatedAt: 2 }]));
         push(snap([{ id: 'a', status: 'queued', error: { kind: 'credit' }, updatedAt: 3 }, { id: '_status', configured: true, updatedAt: 4 }]));
         expect(toasts.filter((x) => /SMS credit/.test(x.text))).toHaveLength(1);
+    });
+});
+
+describe('the late-payment reminder box (a debtor only)', () => {
+    const on = { enabled: true, phone: '0771234567', nic: '' };
+
+    it('is a debtor\'s box: the investor\'s block does not show it, the debtor\'s does, and it reads back as the owner left it', () => {
+        expect(blockHtml('i_sms', { layer: 'A' })).not.toMatch(/_late/);
+        const b = blockHtml('_db_sms', { layer: 'B', record: {} });
+        expect(b).toMatch(/id="_db_sms_late"/);
+        expect(b).not.toMatch(/_late"[^>]*checked/);                                                      // off unless the owner ticks it
+        expect(blockHtml('_db_sms', { layer: 'B', record: { [SMS_FIELDS.REMIND]: true } })).toMatch(/id="_db_sms_late" checked/);
+        expect(b).toMatch(/Needs that date/);
+        const root = { querySelector: (sel) => ({ '#_db_sms_on': { checked: true }, '#_db_sms_late': { checked: true } }[sel] || null) };
+        expect(readBlock(root, '_db_sms')).toMatchObject({ enabled: true, remindLate: true });
+        const noBox = { querySelector: (sel) => ({ '#i_sms_on': { checked: true } }[sel] || null) };
+        expect(readBlock(noBox, 'i_sms').remindLate).toBeUndefined();
+    });
+
+    it('stamps the moment it was ticked, and keeps that stamp while it stays ticked, so an edit never revives a day that was over', () => {
+        const first = applyToggle({}, { ...on, remindLate: true }, T0);
+        expect(first.fields).toMatchObject({ [SMS_FIELDS.REMIND]: true, [SMS_FIELDS.REMIND_AT]: T0, [SMS_FIELDS.ENABLED_AT]: T0 });
+        const edit = applyToggle({ ...first.fields }, { ...on, remindLate: true }, T0 + 5 * 86400000);
+        expect(edit.fields[SMS_FIELDS.REMIND_AT]).toBe(T0);
+        const unticked = applyToggle({ ...first.fields }, { ...on, remindLate: false }, T0 + 1000);
+        expect(unticked.fields[SMS_FIELDS.REMIND]).toBe(false);
+        expect(unticked.fields[SMS_FIELDS.REMIND_AT]).toBeUndefined();
+        const again = applyToggle({ ...first.fields, ...unticked.fields }, { ...on, remindLate: true }, T0 + 9 * 86400000);
+        expect(again.fields[SMS_FIELDS.REMIND_AT]).toBe(T0 + 9 * 86400000);                            // ticked again: a new moment
+    });
+
+    it('a form that does not carry the box (an investment) adds nothing, and switching the texts off touches nothing else', () => {
+        expect(applyToggle({}, on, T0).fields).not.toHaveProperty(SMS_FIELDS.REMIND);
+        expect(applyToggle({ [SMS_FIELDS.REMIND]: true }, { enabled: false }, T0).fields).toEqual({ [SMS_FIELDS.ENABLED]: false });
+    });
+
+    it('an edit of the record carries both fields on', () => {
+        expect(carry({ [SMS_FIELDS.REMIND]: true, [SMS_FIELDS.REMIND_AT]: T0 })).toMatchObject({ [SMS_FIELDS.REMIND]: true, [SMS_FIELDS.REMIND_AT]: T0 });
+    });
+
+    it('ticking it is a change the nudge notices', () => {
+        const a = { debtors: [{ id: 'd', [SMS_FIELDS.ENABLED]: true }] };
+        const b = { debtors: [{ id: 'd', [SMS_FIELDS.ENABLED]: true, [SMS_FIELDS.REMIND]: true, [SMS_FIELDS.REMIND_AT]: T0 }] };
+        expect(signatureOf(a)).not.toBe(signatureOf(b));
     });
 });

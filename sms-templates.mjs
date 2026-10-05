@@ -34,6 +34,7 @@ export const KINDS = Object.freeze({
     A_RECEIPT: 'A.receipt',          // a payment received (principal or interest)
     B_DISBURSED: 'B.disbursed',      // loan capital paid out (the first advance, or a further one)
     B_REPAYMENT: 'B.repayment',      // a repayment acknowledged
+    B_LATE: 'B.late',                // a payment is late: the date the debtor was expected to pay by has passed and money is still owing (opt-in)
     B_BALANCE: 'B.balance',          // the owner asked for the current balance to be sent (a part payment was agreed, or they asked)
     OTP: 'otp',                    // the portal's one-time code
 });
@@ -123,6 +124,9 @@ function render(kind, ctx) {
         text = ctx.settled
             ? `Repayment ${amt} received${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}, ref ${ref}. Loan fully settled, thank you.${tail(link)}`
             : `Repayment ${amt} received${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}, ref ${ref}. Balance ${fmtMoney(ctx.balance, cur)}.${tail(link)}`;
+        break;
+    case KINDS.B_LATE:
+        text = `Reminder: ${fmtMoney(ctx.balance, cur)} is still outstanding, due ${fmtDay(ctx.dateISO) || 'earlier'}, ref ${ref}.${tail(link)}`;
         break;
     case KINDS.B_BALANCE: {
         const on = ctx.dateISO ? ` as at ${fmtDay(ctx.dateISO)}` : '';

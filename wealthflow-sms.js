@@ -25,13 +25,15 @@
 import { normalizePhone } from './wealthflow-phone.js';
 import { phoneProblem as phoneText, idProblem, storedId, idKindOf } from './wealthflow-people.js';
 
-/** The record fields. The server reads the same five; a test pins that they agree (sms-events.mjs FIELDS). */
+/** The record fields. The server reads the same seven; a test pins that they agree (sms-events.mjs FIELDS). */
 export const SMS_FIELDS = Object.freeze({
     ENABLED: 'sms_notifications_enabled',
     ENABLED_AT: 'sms_enabled_at',
     PHONE: 'phone',
     NIC: 'nic',
     REQUESTS: 'sms_requests',
+    REMIND: 'sms_remind_late',
+    REMIND_AT: 'sms_remind_at',
 });
 
 export const CLIENT = Object.freeze({
@@ -90,15 +92,20 @@ export function applyToggle(prev, input, now = Date.now()) {
     if (!id.ok) errors.nic = id.text;
     if (Object.keys(errors).length) return { ok: false, errors, fields: {} };
     const keep = p[SMS_FIELDS.ENABLED] === true && num(p[SMS_FIELDS.ENABLED_AT]) > 0;
-    return {
-        ok: true, errors: {},
-        fields: {
-            [SMS_FIELDS.ENABLED]: true,
-            [SMS_FIELDS.ENABLED_AT]: keep ? num(p[SMS_FIELDS.ENABLED_AT]) : now,
-            [SMS_FIELDS.PHONE]: phone.e164,
-            [SMS_FIELDS.NIC]: id.stored,
-        },
+    const fields = {
+        [SMS_FIELDS.ENABLED]: true,
+        [SMS_FIELDS.ENABLED_AT]: keep ? num(p[SMS_FIELDS.ENABLED_AT]) : now,
+        [SMS_FIELDS.PHONE]: phone.e164,
+        [SMS_FIELDS.NIC]: id.stored,
     };
+    // Late-payment reminders (a debtor only: the caller passes the box). The moment it was ticked is kept while it stays ticked, so editing a record
+    // never brings back a reminder for a day that was over before the owner asked for them.
+    if (input.remindLate !== undefined) {
+        const was = p[SMS_FIELDS.REMIND] === true && num(p[SMS_FIELDS.REMIND_AT]) > 0;
+        fields[SMS_FIELDS.REMIND] = input.remindLate === true;
+        if (input.remindLate === true) fields[SMS_FIELDS.REMIND_AT] = was ? num(p[SMS_FIELDS.REMIND_AT]) : now;
+    }
+    return { ok: true, errors: {}, fields };
 }
 
 /* ── the balance on request ───────────────────────────────────────────────── */
@@ -141,7 +148,7 @@ export function requestBalance(rec, { now = Date.now(), newId = newRequestId } =
 
 const COPY = {
     A: 'Texts the investor when capital is recorded, when interest is applied and when a payment is received.',
-    B: 'Texts the debtor when a loan is paid out and when a repayment is confirmed. Loans never carry interest, so no interest is ever calculated or sent.',
+    B: 'Texts the debtor when a loan is paid out and when a repayment is confirmed (with the balance that is left). Loans never carry interest, so no interest is ever calculated or sent.',
     PORTAL: ' Works for a mobile number in any country. With an NIC or a passport / ID number, each text carries a private link to a statement page; the person sees it only after entering that number and a one-time code sent to the mobile number above.',
 };
 
@@ -157,6 +164,11 @@ export function blockHtml(prefix, { layer = 'A', record = null } = {}) {
         + '<label for="' + id + '_on" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;">'
         + '<input type="checkbox" id="' + id + '_on"' + (on ? ' checked' : '') + ' style="width:18px;height:18px;">'
         + 'Send SMS notifications</label>'
+        + (layer === 'B'
+            ? '<label for="' + id + '_late" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12.5px;margin-top:8px;">'
+              + '<input type="checkbox" id="' + id + '_late"' + (r[SMS_FIELDS.REMIND] === true ? ' checked' : '') + ' style="width:18px;height:18px;margin-top:1px;flex:0 0 auto;">'
+              + '<span>Also remind when a payment is late. One text the day after the \u201cExpected back by\u201d date, then one a week later, at most four, only while money is still owed. Needs that date.</span></label>'
+            : '')
         + '<div id="' + id + '_err" role="alert" style="color:var(--red,#e5484d);font-size:12px;margin-top:4px;"></div>'
         + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5;">' + esc(COPY[layer === 'B' ? 'B' : 'A'] + COPY.PORTAL) + '</div>'
         + '</div>';
@@ -168,7 +180,8 @@ export function readBlock(root, prefix) {
     const on = root.querySelector('#' + prefix + '_on');
     if (!on) return null;
     const val = (suffix) => { const el = root.querySelector('#' + prefix + '_' + suffix); return el ? s(el.value) : ''; };
-    return { enabled: !!on.checked, phone: val('phone'), nic: val('nic'), hasPhone: !!root.querySelector('#' + prefix + '_phone') };
+    const late = root.querySelector('#' + prefix + '_late');
+    return { enabled: !!on.checked, phone: val('phone'), nic: val('nic'), hasPhone: !!root.querySelector('#' + prefix + '_phone'), ...(late ? { remindLate: !!late.checked } : {}) };
 }
 
 /** Put a validation message in the block. */

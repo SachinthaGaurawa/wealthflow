@@ -628,7 +628,9 @@ export const BUDGETS = {
     // (dialling code, national lengths, time zone) that makes a number from anywhere reachable. The statement page, the PDF writer and the page's Sinhala words are served as their own files and are not counted here.
     // 2026-10-05 (a debtor who pays in parts is told the balance): 2,412,000 -> 2_415_000 (measured 2,412,254 + ~0.1% headroom). wealthflow-sms.js carries the Send balance request: the pause between two requests, the record it
     // adds and the words the message log shows when a balance could not go out in time.
-    totalJsBytes: 2_415_000,
+    // 2026-10-05 (late-payment reminders and held-text alerts): 2,415,000 -> 2_419_000 (measured 2,416,330 + ~0.1% headroom). wealthflow-sms.js carries the reminder box and its stamp, and the alert that says texts are waiting
+    // (no credit, a rejected token) so the owner hears about it on the page rather than from the debtor.
+    totalJsBytes: 2_419_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     largestModuleBytes: 233_000, // measured 232,325

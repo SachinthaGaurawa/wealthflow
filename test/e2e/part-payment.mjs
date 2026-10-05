@@ -170,6 +170,60 @@ assert.equal(await page.locator('#_ev_now').count(), 0, 'a further advance is mo
 await page.click('#_liq_x');
 await page.waitForSelector('#_ev_amount', { state: 'detached' });
 
+/* ── 8. late-payment reminders: opt-in, on the debtor form only, and only with a date ─ */
+assert.equal(await page.evaluate(() => /_late"/.test(window.WFSms.blockHtml('_x', { layer: 'A', record: {} }))), false, 'an investor is never offered a late reminder: capital is not a debt');
+await page.evaluate(() => { DB.set('debtors', []); DB.set('people', []); window.openDebtorModal(null); });
+await page.waitForSelector('#_db_sms_late');
+assert.equal(await page.isChecked('#_db_sms_late'), false, 'reminders start unticked: a debtor is never chased unless the owner says so');
+assert.match(await page.textContent('[data-wf-sms="_db_sms"]'), /remind when a payment is late/);
+await page.fill('#_db_name', 'Sunil');
+await page.fill('#_db_amount', '50000');
+await page.fill('#_db_phone', '077 123 4567');
+await page.fill('#_db_nic', '853400937V');
+await page.check('#_db_sms_on');
+await page.check('#_db_sms_late');
+await page.click('#_db_save');                                       // ticked, but no "Expected back by": refused, nothing saved
+await page.waitForFunction(() => window.__toasts.some((m) => /Set "Expected back by"/.test(m)));
+assert.equal(await page.evaluate(() => (DB.get('debtors') || []).length), 0, 'a reminder with no date to remind about is refused before anything is saved');
+
+const dayISO = (offsetDays) => new Date(Date.now() + offsetDays * 864e5).toISOString().slice(0, 10);
+const due = dayISO(-3);
+await page.fill('#_db_due', due);
+await page.click('#_db_save');
+await page.waitForFunction(() => (DB.get('debtors') || []).length === 1);
+const chased = await page.evaluate(() => (DB.get('debtors') || [])[0]);
+assert.equal(chased[FIELDS.REMIND], true);
+assert.ok(Math.abs(chased[FIELDS.REMIND_AT] - Date.now()) < 20000, 'the moment it was ticked is kept, so a date that is already over does not bring back old reminders');
+assert.equal(chased.dueISO, due);
+
+/* the row says so, and the server owes the next reminder, not the ones for days that were over before the box was ticked */
+await page.evaluate(() => { window.showPage('liquidity'); window.setLiquidityTab('debt'); });
+await page.waitForSelector('.liq-row');
+assert.match(await page.textContent('.liq-row'), /SMS on, reminds when late/);
+assert.equal(serverView(chased, Date.parse(`${due}T00:00:00Z`) + 2 * 864e5).events.filter((e) => e.kind === KINDS.B_LATE).length, 0, 'the reminder for the day after a date that was already over is not sent late');
+const reminders = serverView(chased, Date.parse(`${due}T00:00:00Z`) + 8 * 864e5 + 6 * 3600e3).events.filter((e) => e.kind === KINDS.B_LATE);
+assert.equal(reminders.length, 1, 'a week after the date, one reminder is owed');
+const lateText = buildMessage(reminders[0].kind, { ...reminders[0], link: 'https://wealthflow-personal.vercel.app/t/AbCdEfGhIjKlMnOp' });
+console.log('8. late reminder      ->', lateText);
+assert.match(lateText, /^Reminder: LKR 50,000\.00 is still outstanding, due \d{2} \w{3} \d{4}, ref DEB-[0-9A-F]{6}\. Statement: https:/);
+assert.equal(analyzeSms(lateText).segments, 1);
+
+/* editing it again keeps the stamp, and unticking stops them for good */
+await page.evaluate(() => window.openDebtorModal((DB.get('debtors') || [])[0]));
+await page.waitForSelector('#_db_sms_late');
+assert.equal(await page.isChecked('#_db_sms_late'), true, 'the box shows how it was left');
+await page.fill('#_db_note', 'renovation');
+await page.click('#_db_save');
+await page.waitForFunction(() => (DB.get('debtors') || [])[0].note === 'renovation');
+assert.equal(await page.evaluate(() => (DB.get('debtors') || [])[0][window.WFSms.SMS_FIELDS.REMIND_AT]), chased[FIELDS.REMIND_AT], 'an edit never moves the moment reminders began');
+await page.evaluate(() => window.openDebtorModal((DB.get('debtors') || [])[0]));
+await page.waitForSelector('#_db_sms_late');
+await page.uncheck('#_db_sms_late');
+await page.click('#_db_save');
+await page.waitForFunction(() => (DB.get('debtors') || [])[0][window.WFSms.SMS_FIELDS.REMIND] === false);
+const quiet = await page.evaluate(() => (DB.get('debtors') || [])[0]);
+assert.equal(serverView(quiet, Date.parse(`${due}T00:00:00Z`) + 8 * 864e5 + 6 * 3600e3).events.filter((e) => e.kind === KINDS.B_LATE).length, 0, 'unticked: no reminder');
+
 assert.deepEqual(errors, [], 'no uncaught page errors: ' + errors.join(' | '));
 console.log('a debtor who pays in parts is told the balance, on the real page');
 await app.close();

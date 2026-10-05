@@ -63,7 +63,18 @@ export const FIELDS = Object.freeze({
     PHONE: 'phone',                         // any shape; normalised to E.164 here
     NIC: 'nic',                             // old or new Sri Lankan NIC; the portal's key
     REQUESTS: 'sms_requests',               // [{ id, at }] — the owner pressed "Send balance"; a debtor only
+    REMIND: 'sms_remind_late',              // boolean — also text a debtor when the date they were expected to pay by has passed; a debtor only, off unless the owner ticks it
+    REMIND_AT: 'sms_remind_at',             // epoch ms when that box was last ticked
 });
+
+/**
+ * LATE-PAYMENT REMINDERS (opt-in, a debtor only). With `dueISO` ("expected back by") set, money still owing and the box ticked, a debtor gets at most
+ * four reminders: the day after the date, then one a week later each time. Each is a SCHEDULED notice (08:00-20:00 where the debtor is), carries the
+ * balance as it was when it was queued, and is good for a day only, so a reminder that could not go out is dropped rather than sent stale.
+ */
+export const REMINDER_OFFSETS_DAYS = Object.freeze([1, 8, 15, 22]);
+export const REMINDER_WINDOW_MS = 3 * 86400000;      // a reminder whose day was more than this long ago is not sent late
+export const REMINDER_SHELF_MS = 24 * 3600000;
 
 /**
  * A "send the balance now" request is good for this long. The figure is written into the text when it is queued, so a request
@@ -259,6 +270,26 @@ function debtorEvents(user, now, currency, out, issues) {
                 sink.push({
                     ...base, key: `B:${d.id}:bal:${str(r.id)}`, kind: KINDS.B_BALANCE, occurredAt: at, amount: outstanding, balance: outstanding,
                     dateISO: new Date(at + (Number.isFinite(base.tzMin) ? base.tzMin : LOCAL_OFFSET_MIN) * 60000).toISOString().slice(0, 10), maxAgeMs: REQUEST_WINDOW_MS,
+                });
+            }
+        }
+        // A late-payment reminder, when the owner asked for them for this debtor: the money is still owing, the date they were expected to pay by has passed.
+        if (d[FIELDS.REMIND] === true && /^\d{4}-\d{2}-\d{2}$/.test(str(d.dueISO))) {
+            const due = parseDay(str(d.dueISO));
+            const remindAt = num(d[FIELDS.REMIND_AT]) > 0 ? num(d[FIELDS.REMIND_AT]) : enabledAt;
+            const outstanding = Math.max(0, debtorSummary(d, new Date(now)).outstanding);
+            if (due && outstanding > 0 && remindAt <= now + CLOCK_SKEW_MS) {
+                const tz = Number.isFinite(base.tzMin) ? base.tzMin : LOCAL_OFFSET_MIN;
+                const dueStartUtc = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
+                const floor = Math.floor(Math.max(enabledAt, remindAt) / 86400000) * 86400000;
+                REMINDER_OFFSETS_DAYS.forEach((days, i) => {
+                    const dayStart = dueStartUtc + days * 86400000 - tz * 60000;      // that day begins, where the debtor is
+                    if (dayStart > now || now - dayStart > REMINDER_WINDOW_MS) return;
+                    if (dayStart + 86400000 < floor) return;                            // a day that was over before the reminders were switched on
+                    sink.push({
+                        ...base, key: `B:${d.id}:late:${str(d.dueISO)}:${i + 1}`, kind: KINDS.B_LATE, occurredAt: dayStart, amount: outstanding, balance: outstanding,
+                        dateISO: str(d.dueISO), scheduled: true, notBefore: nextSendWindow(dayStart, tz), maxAgeMs: REMINDER_SHELF_MS + (nextSendWindow(dayStart, tz) - dayStart),
+                    });
                 });
             }
         }

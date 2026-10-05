@@ -23693,7 +23693,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <div style="font-weight:800;font-size:14px;color:${open ? 'var(--accent)' : 'var(--text3)'};">${fmtS(su.outstanding)}</div>
                         </div>
                         <div class="liq-sub" style="margin-top:3px;">
-                            ${fmtS(su.lent)} lent · ${fmtS(su.repaid)} repaid${d.note ? ' · ' + _wfEsc(d.note) : ''}${d.sms_notifications_enabled === true ? ' · SMS on' : ''}
+                            ${fmtS(su.lent)} lent · ${fmtS(su.repaid)} repaid${d.note ? ' · ' + _wfEsc(d.note) : ''}${d.sms_notifications_enabled === true ? (d.sms_remind_late === true ? ' · SMS on, reminds when late' : ' · SMS on') : ''}
                             ${su.pending ? ' · <b style="color:var(--amber,#f59e0b);">' + su.pending + ' unconfirmed, not counted above</b>' : ''}
                         </div>
                         ${dueLine}
@@ -24331,8 +24331,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const amount = amountEl ? parseMoney(amountEl.value) : 0;
                         if (!name) { notify('Name the debtor', 'error'); return; }
                         if (!existing && !amount) { notify('How much was lent?', 'error'); return; }
-                        /* The person: country, number and NIC / passport are checked together, and a problem is shown under the field it belongs to. */
                         const smsForm = window.WFSms ? WFSms.readBlock(ov, '_db_sms') : null;
+                        /* A reminder is about a date: with none there is nothing to remind them of, and silence would look like a promise kept. */
+                        if (smsForm && smsForm.enabled && smsForm.remindLate && !(ov.querySelector('#_db_due').value || '')) { notify('Set "Expected back by" so there is a date to remind about', 'error'); return; }
+                        /* The person: country, number and NIC / passport are checked together, and a problem is shown under the field it belongs to. */
                         const contact = WP ? WP.collect(ov, '_db', { smsOn: !!(smsForm && smsForm.enabled), kind: 'debtor' }) : null;
                         if (contact && !contact.ok) { notify(Object.values(contact.errors)[0], 'error'); return; }
                         /* SPREAD FROM THE EXISTING RECORD, not rebuilt from the
@@ -24357,7 +24359,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         /* The text-message switch. The number is the one above; the rest is validated and stamped here, before anything is saved. */
                         try {
                             if (smsForm) {
-                                const sms = WFSms.applyToggle(existing || {}, { enabled: smsForm.enabled, phone: rec.phone, country: contact ? contact.country : undefined, nic: contact ? contact.nic : (rec.nic || ''), idKind: contact ? contact.idKind : undefined }, Date.now());
+                                const sms = WFSms.applyToggle(existing || {}, { enabled: smsForm.enabled, phone: rec.phone, country: contact ? contact.country : undefined, nic: contact ? contact.nic : (rec.nic || ''), idKind: contact ? contact.idKind : undefined, remindLate: smsForm.remindLate }, Date.now());
                                 if (!sms.ok) { if (WP) WP.showErrors(ov, '_db', sms.errors); WFSms.showBlockErrors(ov, '_db_sms', sms.errors); notify(Object.values(sms.errors)[0], 'error'); return; }
                                 WFSms.showBlockErrors(ov, '_db_sms', {});
                                 rec = { ...rec, ...sms.fields };

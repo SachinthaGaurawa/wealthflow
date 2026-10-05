@@ -142,4 +142,14 @@ describe('the Debtors screen: a part payment and the balance', () => {
         expect(HTML).toMatch(/const texted = d\.sms_notifications_enabled === true && ev && ev\.kind === 'repayment';/);
         expect(HTML).toMatch(/const textedRow = list\[at\]\.sms_notifications_enabled === true && evRaw && evRaw\.kind === 'repayment';/);
     });
+
+    it('the late-payment box is on the debtor form only, is passed to the one validator, and a reminder is refused before saving when there is no date to remind about', () => {
+        const body = fn('openDebtorModal', 'window.openDebtorModal');
+        expect(body).toContain("WFSms.blockHtml('_db_sms', { layer: 'B', record: d })");
+        expect(body).toContain('remindLate: smsForm.remindLate');
+        expect(body.indexOf('smsForm.remindLate && !(ov.querySelector(\'#_db_due\').value')).toBeGreaterThan(0);
+        expect(body.indexOf('smsForm.remindLate && !(ov.querySelector(\'#_db_due\').value')).toBeLessThan(body.indexOf('WFSms.applyToggle('));
+        // the investment form never offers it (layer A) and never passes the box
+        expect(HTML).toContain("WFSms.blockHtml('i_sms', { layer: 'A', record: rec })");
+    });
 });
