@@ -11,6 +11,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { handlePortal, sameSite, readBody } from '../tenant-portal.js';
 import { portalSecret } from '../tenant-links.mjs';
 import { LIMITS } from '../tenant-portal.mjs';
+import zlib from 'node:zlib';
 import { makeDb, seedTenant, gateway, codeIn, codes, SECRET, NIC, T0 } from './helpers/tenant-fixture.js';
 
 const ENV = { TENANT_PORTAL_SECRET: Buffer.from(SECRET).toString('hex').repeat(2) };
@@ -44,7 +45,8 @@ function call(d, { method = 'POST', headers = {}, body, cookie } = {}) {
     };
     const out = { headers: {}, statusCode: 0, text: '' };
     const res = { setHeader: (k, v) => { out.headers[String(k).toLowerCase()] = v; }, end: (t) => { out.text = t; }, set statusCode(v) { out.statusCode = v; }, get statusCode() { return out.statusCode; } };
-    return handlePortal(req, res, d).then(() => ({ status: out.statusCode, headers: out.headers, json: out.text ? JSON.parse(out.text) : null, raw: out.text }));
+    // a PDF comes back as a Buffer, everything else as JSON text
+    return handlePortal(req, res, d).then(() => ({ status: out.statusCode, headers: out.headers, json: out.text && !Buffer.isBuffer(out.text) ? JSON.parse(out.text) : null, file: Buffer.isBuffer(out.text) ? out.text : null, raw: out.text }));
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -216,5 +218,92 @@ describe('the door', () => {
         let last;
         for (let i = 0; i <= LIMITS.statementsPerIpHour; i += 1) last = await call(d, { body: { action: 'statement', token } });
         expect(last.status).toBe(429);
+    });
+});
+
+describe('the PDF', () => {
+    async function signedIn(over = {}) {
+        const ctx = {}; Object.assign(ctx, makeDb());
+        const user = over.user;
+        const token = await seed(ctx, user ? { user } : {});
+        const { d, gw, advance } = deps({ ctx });
+        await call(d, { body: { action: 'request', token, nic: NIC } });
+        const v = await call(d, { body: { action: 'verify', token, nic: NIC, code: codeIn(gw.sent[0].message) } });
+        return { ctx, d, token, advance, cookie: String(v.headers['set-cookie']).split(';')[0] };
+    }
+    /** The text of every page of the file, read by the PDF engine's own decompressor. */
+    const pageTexts = (file) => {
+        const src = file.toString('latin1');
+        const out = [];
+        for (const m of src.matchAll(/stream\n([\s\S]*?)\nendstream/g)) out.push(zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'));
+        return out;
+    };
+
+    it('downloads the same statement as a file, to the person whose session it is', async () => {
+        const { d, token, cookie } = await signedIn();
+        const out = await call(d, { body: { action: 'pdf', token }, cookie });
+        expect(out.status).toBe(200);
+        expect(out.headers['content-type']).toBe('application/pdf');
+        expect(out.headers['content-disposition']).toBe('attachment; filename="WealthFlow-statement-2026-10-05.pdf"');
+        expect(out.headers['content-length']).toBe(String(out.file.length));
+        expect(out.headers['cache-control']).toBe('no-store, max-age=0');
+        expect(out.headers['x-content-type-options']).toBe('nosniff');
+        expect(out.headers['x-robots-tag']).toMatch(/noindex/);
+        expect(out.file.subarray(0, 8).toString('latin1')).toBe('%PDF-1.4');
+        expect(out.file.subarray(-6).toString('latin1')).toBe('%%EOF\n');
+        const text = pageTexts(out.file).join('\n');
+        expect(text).toContain('INV-');
+        expect(text).toContain('DEB-');
+        expect(text).toContain('500,000.00');
+    });
+
+    it('is a file with no name, note, phone, NIC or record id in it, whatever way the bytes are read', async () => {
+        const { d, token, cookie } = await signedIn();
+        const out = await call(d, { body: { action: 'pdf', token }, cookie });
+        const everything = out.file.toString('latin1') + pageTexts(out.file).join('\n');
+        for (const leak of ['PRIVATE', 'Fixed deposit', '853400937', '198534000937', '0771234567', '771234567', 'inv1', 'deb1']) expect(everything, leak).not.toContain(leak);
+    });
+
+    it('is refused without a live session, for another link\'s session, and after sign-out', async () => {
+        const { d, token, cookie, ctx } = await signedIn();
+        const none = await call(d, { body: { action: 'pdf', token } });
+        expect(none.status).toBe(401);
+        expect(none.file).toBeNull();
+        expect(String(none.headers['set-cookie'])).toContain('Max-Age=0');
+        const other = await seed(ctx, { uid: 'ownerB' });
+        expect((await call(d, { body: { action: 'pdf', token: other }, cookie })).status).toBe(401);
+        expect((await call(d, { body: { action: 'pdf' }, cookie })).status).toBe(401);
+        await call(d, { body: { action: 'logout', token }, cookie });
+        expect((await call(d, { body: { action: 'pdf', token }, cookie })).status).toBe(401);
+    });
+
+    it('is POST-only, same-site-only and JSON-only like every other door', async () => {
+        const { d, token, cookie } = await signedIn();
+        expect((await call(d, { method: 'GET', body: { action: 'pdf', token }, cookie })).status).toBe(405);
+        expect((await call(d, { headers: { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' }, body: { action: 'pdf', token }, cookie })).status).toBe(403);
+        expect((await call(d, { headers: { 'content-type': 'text/plain' }, body: JSON.stringify({ action: 'pdf', token }), cookie })).status).toBe(400);
+    });
+
+    it('has a bucket of its own: downloading cannot use up the page\'s statement reads, nor the other way round', async () => {
+        const { d, token, cookie } = await signedIn();
+        let last;
+        for (let i = 0; i <= LIMITS.pdfsPerIpHour; i += 1) last = await call(d, { body: { action: 'pdf', token }, cookie });
+        expect(last.status).toBe(429);
+        expect(last.headers['retry-after']).toBeDefined();
+        expect((await call(d, { body: { action: 'statement', token }, cookie })).status).toBe(200);
+    });
+
+    it('carries the lender\'s bank account to the person, and never to a session that has ended', async () => {
+        const { lenderDoc } = await import('./helpers/tenant-fixture.js');
+        const user = lenderDoc({ payAccounts: [{ id: 'a1', bank: 'Commercial Bank', holder: 'N. Perera', number: '8001234567', showTo: 'both', active: true, createdAt: '2026-01-01' }] });
+        const { d, token, cookie, advance } = await signedIn({ user });
+        const out = await call(d, { body: { action: 'pdf', token }, cookie });
+        const text = pageTexts(out.file).join('\n');
+        expect(text).toContain('(8001234567)');
+        expect(text).toContain('(Commercial Bank)');
+        advance(21 * 60e3);
+        const late = await call(d, { body: { action: 'pdf', token }, cookie });
+        expect(late.status).toBe(401);
+        expect(late.file).toBeNull();
     });
 });

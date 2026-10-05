@@ -29,22 +29,24 @@ describe('the page', () => {
         expect(HTML.slice(HTML.lastIndexOf('function syncToCloud', at), at)).toContain('.then(() => {');
     });
 
-    it('the investment form carries the four fields over by hand and validates BEFORE it saves anything', () => {
+    it('the investment form carries its fields over by hand and validates BEFORE it saves anything', () => {
         const start = HTML.indexOf('function saveIncome()');
         const body = HTML.slice(start, HTML.indexOf('function clearIncomeForm()', start));
-        expect(body).toContain("['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'nic'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });");
+        expect(body).toContain("['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'nic', 'personId'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });");
         expect(body.indexOf('WFSms.applyToggle')).toBeGreaterThan(0);
         expect(body.indexOf('WFSms.applyToggle')).toBeLessThan(body.indexOf("DB.set('income', arr)"));
         expect(body).toMatch(/if \(!sms\.ok\) \{[^}]*\breturn; \}/);
+        expect(body).toMatch(/if \(contact && !contact\.ok\) \{[^}]*\breturn; \}/);
     });
 
-    it('the debtor form validates before it saves, and takes the number from its own Phone field', () => {
+    it('the debtor form validates before it saves, and takes the number from the contact fields', () => {
         const start = HTML.indexOf('function openDebtorModal(existing)');
         const body = HTML.slice(start, HTML.indexOf('window.openDebtorModal = openDebtorModal', start));
-        expect(body).toContain("WFSms.blockHtml('_db_sms', { layer: 'B', record: d, showPhone: false })");
+        expect(body).toContain("WFSms.blockHtml('_db_sms', { layer: 'B', record: d })");
+        expect(body).toContain("WP.contactHtml('_db', { kind: 'debtor'");
         expect(body.indexOf('WFSms.applyToggle')).toBeGreaterThan(0);
         expect(body.indexOf('WFSms.applyToggle')).toBeLessThan(body.indexOf("DB.set('debtors', list)"));
-        expect(body).toContain('phone: rec.phone');
+        expect(body).toContain('phone: contact ? contact.phone');
         expect(body).toMatch(/if \(!sms\.ok\) \{[^}]*\breturn; \}/);
     });
 

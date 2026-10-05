@@ -562,6 +562,10 @@
          switched on), the nudge to the server after a save, the "SMS delivered" alert and the log. The server decides what is owed and sends it; this
          file holds no authority and never sees the gateway token. ESM; window.WFSms. -->
     <script type="module" src="wealthflow-sms.js"></script>
+    <!-- The saved-people book and the payment details: country / mobile / NIC-or-passport fields with the phone's own contacts, the "Saved people"
+         picker on the loan and investment forms, the people / payment details / messages screens, and the bank accounts the statement page shows.
+         The rules are wealthflow-people.js and wealthflow-payaccounts.js (also read by the server). ESM; window.WFPeople. -->
+    <script type="module" src="wealthflow-people-ui.js"></script>
     <!-- Dynamic amortization — how many payments are actually left after an
          over- or underpayment, which the fixed l.duration could never answer.
          window.WFAmortize -->
@@ -6144,6 +6148,7 @@
                                 <span class="sb-btn" onclick="sortList('income','rate',this)">Rate</span>
                                 <span class="sb-btn" onclick="sortList('income','date',this)">Date</span>
                             </div>
+                            <button class="btn btn-secondary btn-sm" onclick="if (window.WFPeople) WFPeople.openHub('people')">Saved people</button>
                             <button class="btn btn-secondary btn-sm" onclick="if (window.WFSms) WFSms.openPanel()">Text messages</button>
                             <button class="btn btn-primary btn-sm" onclick="clearIncomeForm(); openModal('mdIncome')"><i data-wfi="plus"></i>
                                 Add Investment</button>
@@ -7008,6 +7013,7 @@
                 <div class="md-title" id="mdIncomeTitle">Add Income / Investment Source</div><button class="md-x" aria-label="Close"
                     onclick="closeModal('mdIncome')"><i data-wfi="x"></i></button>
             </div>
+            <div id="i_pick_host"></div>
             <div class="fr">
                 <div class="fg"><label class="fl">Source Name *</label><input class="fi" id="i_name"
                         placeholder="Fixed Deposit - Commercial Bank" list="dlIncNames"></div>
@@ -8033,6 +8039,9 @@
              * so they sit in _WF_RECORD_KEYS and merge per record across
              * devices like every other ledger here. */
             pawns: [], debtors: [],
+            /* The saved-people book (who the owner lends to or invests with, saved once) and the owner's bank accounts for statements. Record arrays
+             * with ids, so they sit in _WF_RECORD_KEYS and merge per record across devices. DECLARED HERE, or the hydration loops never read them back. */
+            people: [], payAccounts: [],
             cribReports: [], cribAnalyses: {},
             // Money moved out of the current account into a deposit or savings.
             // A record here is NOT a second subtraction from the balance — the
@@ -8091,7 +8100,7 @@
         // by recency (newest wins) with tombstones removing deleted rows. This merge
         // is commutative + idempotent, so every device converges to the union of the
         // newest records — no whole-document clobber, deletes included.
-        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps', 'pawns', 'debtors'];
+        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps', 'pawns', 'debtors', 'people', 'payAccounts'];
         const _WF_TOMB_TTL = 100 * 24 * 3600 * 1000;   // keep tombstones ~100 days, then prune
 
         // A record's effective update time: explicit _ut, else parsed createdAt, else 0.
@@ -17900,8 +17909,19 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             // Populate datalists for income autocomplete
             if (id === 'mdIncome') {
                 try {
+                    const rec = (DB.get('income') || []).find(x => x.id === editMode) || null;
+                    const WP = window.WFPeople;
+                    const top = $('i_pick_host');
+                    if (top) top.innerHTML = WP ? WP.pickerHtml('i', { record: rec, nameId: 'i_company' }) : '';
+                    /* The investor's number, NIC / passport and the text switch are folded away: most investments are a bank's, and only a person has
+                     * these. It opens by itself when the record already has any of them, or when a saved person is picked. */
                     const host = $('i_sms_host');
-                    if (host && window.WFSms) host.innerHTML = WFSms.blockHtml('i_sms', { layer: 'A', record: (DB.get('income') || []).find(x => x.id === editMode) || null });
+                    if (host) {
+                        const open = !!(rec && (rec.phone || rec.nic || rec.personId || rec.sms_notifications_enabled === true));
+                        host.innerHTML = '<details class="wfp-det"' + (open ? ' open' : '') + '><summary>Investor contact &amp; text messages <span>(optional)</span></summary>'
+                            + (WP ? WP.contactHtml('i', { kind: 'investment', record: rec, nameId: 'i_company', phoneHelp: 'Needed for text messages. Works for a mobile number in any country.' }) : '')
+                            + (window.WFSms ? WFSms.blockHtml('i_sms', { layer: 'A', record: rec }) : '') + '</details>';
+                    }
                 } catch (_) { }
                 const incData = DB.get('income');
                 const uniqueNames = [...new Set(incData.map(x => x.name).filter(Boolean))];
@@ -18466,16 +18486,30 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const rec = { id: editMode || uid(), createdAt: prevRec.createdAt || new Date().toISOString(), name, company, amount, rate, start: $('i_start').value, end: $('i_end').value, freq, day: $('i_day').value, monthly: override || calc, notes: $('i_notes').value };
             /* The record is rebuilt from the form, so what the form does not show is carried over by hand — otherwise saving an edit would switch the
              * text messages off and forget who they go to. */
-            ['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'nic'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });
+            ['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'nic', 'personId'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });
+            /* The investor, when this is a person: country, number and NIC / passport are checked together and shown against the fields they belong to. */
+            const WP = window.WFPeople;
+            let contact = null;
+            const openContact = () => { const d = $('i_sms_host'); const sec = d && d.querySelector('details'); if (sec) sec.open = true; };
             try {
                 const form = window.WFSms ? WFSms.readBlock(document, 'i_sms') : null;
+                contact = WP ? WP.collect(document, 'i', { smsOn: !!(form && form.enabled), kind: 'investment' }) : null;
+                if (contact && !contact.ok) { openContact(); notify(Object.values(contact.errors)[0], 'error'); return; }
+                if (contact) {
+                    if (contact.phone) rec.phone = contact.phone; else delete rec.phone;
+                    if (contact.nic) rec.nic = contact.nic; else delete rec.nic;
+                    if (contact.personId) rec.personId = contact.personId; else delete rec.personId;
+                }
                 if (form) {
-                    const sms = WFSms.applyToggle(prevRec, form, Date.now());
-                    if (!sms.ok) { WFSms.showBlockErrors(document, 'i_sms', sms.errors); notify(Object.values(sms.errors)[0], 'error'); return; }
+                    const sms = WFSms.applyToggle(prevRec, { enabled: form.enabled, phone: contact ? contact.phone : (rec.phone || ''), country: contact ? contact.country : undefined, nic: contact ? contact.nic : (rec.nic || ''), idKind: contact ? contact.idKind : undefined }, Date.now());
+                    if (!sms.ok) { if (WP) WP.showErrors(document, 'i', sms.errors); WFSms.showBlockErrors(document, 'i_sms', sms.errors); openContact(); notify(Object.values(sms.errors)[0], 'error'); return; }
                     WFSms.showBlockErrors(document, 'i_sms', {});
                     Object.assign(rec, sms.fields);
                 }
             } catch (e) { console.warn('[saveIncome] sms fields:', e && e.message); }
+            /* The rest runs once the people step is done: it may ask the owner one question (update the saved person everywhere, or this record only), and
+             * it writes a changed name / number / NIC onto the person's OTHER records, so the ledger is read for the write only afterwards. */
+            const commit = () => {
             const arr = DB.get('income');
             const isNewRecord = !editMode;
             if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) arr[i] = rec; } else arr.push(rec);
@@ -18532,6 +18566,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 ? ` ✓ ${autoMarked} past month${autoMarked > 1 ? 's' : ''} auto-marked as historical (before you joined WealthFlow)`
                 : '';
             notify(baseMsg + extraMsg);
+            };
+            if (WP) WP.saveLink({ kind: 'investment', rec, remember: !!(contact && contact.remember), country: contact ? contact.country : '', onDone: commit }); else commit();
         }
         function clearIncomeForm() {
             editMode = null;
@@ -23647,8 +23683,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const dueLine = d.dueISO && open ? `
                         <div class="liq-sub" style="margin-top:2px;color:${lateBy > L.LATE_AFTER_DAYS ? 'var(--red)' : 'var(--text3)'};">
                             Expected by ${_wfEsc(d.dueISO)}${lateBy > 0 ? ' — <b>' + lateBy + ' day' + (lateBy === 1 ? '' : 's') + ' ago</b>' : ''}
-                            ${d.phone ? ' · <a href="tel:' + _wfEsc(String(d.phone).replace(/[^0-9+]/g, '')) + '" style="color:var(--accent);">' + _wfEsc(d.phone) + '</a>' : ''}
-                        </div>` : (d.phone ? `<div class="liq-sub" style="margin-top:2px;"><a href="tel:${_wfEsc(String(d.phone).replace(/[^0-9+]/g, ''))}" style="color:var(--accent);">${_wfEsc(d.phone)}</a></div>` : '');
+                            ${d.phone ? ' · <a href="tel:' + _wfEsc(String(d.phone).replace(/[^0-9+]/g, '')) + '" style="color:var(--accent);">' + _wfEsc(window.WFPeople ? WFPeople.showPhone(d.phone) : d.phone) + '</a>' : ''}
+                        </div>` : (d.phone ? `<div class="liq-sub" style="margin-top:2px;"><a href="tel:${_wfEsc(String(d.phone).replace(/[^0-9+]/g, ''))}" style="color:var(--accent);">${_wfEsc(window.WFPeople ? WFPeople.showPhone(d.phone) : d.phone)}</a></div>` : '');
                     return `
                     <div class="liq-row">
                         <div class="liq-head">
@@ -23683,6 +23719,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 </div>
                             </div>
                             <div class="card-hdr-actions">
+                                <button class="btn btn-secondary btn-sm" id="_liq_people">Saved people</button>
                                 <button class="btn btn-secondary btn-sm" id="_liq_sms">Text messages</button>
                                 <button class="btn btn-primary btn-sm" id="_liq_addd">${(window.WFIcon ? WFIcon('plus') : '')} Add debtor</button>
                             </div>
@@ -23694,6 +23731,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (add) add.onclick = () => openDebtorModal(null);
                 const smsBtn = host.querySelector('#_liq_sms');
                 if (smsBtn) smsBtn.onclick = () => { if (window.WFSms) WFSms.openPanel(); };
+                const peopleBtn = host.querySelector('#_liq_people');
+                if (peopleBtn) peopleBtn.onclick = () => { if (window.WFPeople) WFPeople.openHub('people'); };
                 host.querySelectorAll('[data-liq-pay]').forEach((b) => {
                     b.onclick = () => openDebtorEvent(debtors[Number(b.getAttribute('data-liq-pay'))], 'repayment');
                 });
@@ -24256,18 +24295,22 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         function openDebtorModal(existing) {
             const d = existing || {};
+            const WP = window.WFPeople;
             _liqOverlay(
                 (window.WFIcon ? WFIcon('user') : '') + (existing ? ' Edit debtor' : ' Add debtor'),
-                '<div class="fg"><label class="fl" for="_db_name">Name</label>'
+                /* A person lent to before is picked from the saved list instead of typed again; the picker fills the name, the number and the NIC / passport. */
+                (WP ? WP.pickerHtml('_db', { record: d, nameId: '_db_name' }) : '')
+                + '<div class="fg"><label class="fl" for="_db_name">Name</label>'
                 + '<input class="fi" id="_db_name" placeholder="Nimal" value="' + _wfEsc(d.name || '') + '"></div>'
                 + (existing ? '' : ('<div class="fg"><label class="fl" for="_db_amount">Amount lent</label>'
                     + '<input class="fi money-input" id="_db_amount" inputmode="decimal" placeholder="200000"></div>'
                     + '<div class="fg"><label class="fl" for="_db_date">Date lent</label>'
                     + '<input class="fi" id="_db_date" type="date" value="' + _liqToday() + '"></div>'))
-                + '<div class="fg"><label class="fl" for="_db_phone">Phone</label>'
-                + '<input class="fi" id="_db_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + _wfEsc(d.phone || '') + '">'
-                + '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Optional. Shown on the row as a number you can tap to call, which is what you actually do when a repayment is late.</div></div>'
-                + (window.WFSms ? WFSms.blockHtml('_db_sms', { layer: 'B', record: d, showPhone: false }) : '')
+                + (WP ? WP.contactHtml('_db', { kind: 'debtor', record: d, nameId: '_db_name', phoneHelp: 'Optional. Shown on the row as a number you can tap to call, which is what you actually do when a repayment is late. Needed for text messages, which work for any country.' })
+                    : '<div class="fg"><label class="fl" for="_db_phone">Phone</label>'
+                    + '<input class="fi" id="_db_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + _wfEsc(d.phone || '') + '">'
+                    + '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Optional. Shown on the row as a number you can tap to call, which is what you actually do when a repayment is late.</div></div>')
+                + (window.WFSms ? WFSms.blockHtml('_db_sms', { layer: 'B', record: d }) : '')
                 + '<div class="fg"><label class="fl" for="_db_due">Expected back by</label>'
                 + '<input class="fi" id="_db_due" type="date" value="' + _wfEsc(d.dueISO || '') + '">'
                 + '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Optional. With it, an overdue repayment appears on the dashboard queue. Without it the app stays quiet rather than inventing a deadline.</div></div>'
@@ -24284,7 +24327,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const amount = amountEl ? parseMoney(amountEl.value) : 0;
                         if (!name) { notify('Name the debtor', 'error'); return; }
                         if (!existing && !amount) { notify('How much was lent?', 'error'); return; }
-                        const list = (DB.get('debtors') || []).slice();
+                        /* The person: country, number and NIC / passport are checked together, and a problem is shown under the field it belongs to. */
+                        const smsForm = window.WFSms ? WFSms.readBlock(ov, '_db_sms') : null;
+                        const contact = WP ? WP.collect(ov, '_db', { smsOn: !!(smsForm && smsForm.enabled), kind: 'debtor' }) : null;
+                        if (contact && !contact.ok) { notify(Object.values(contact.errors)[0], 'error'); return; }
                         /* SPREAD FROM THE EXISTING RECORD, not rebuilt from the
                          * form. Rebuilding is how an edit quietly drops a field
                          * the form does not happen to show — and this record
@@ -24296,16 +24342,19 @@ table.amort tbody tr { page-break-inside: avoid; }
                             createdAt: (existing && existing.createdAt) || new Date().toISOString(),
                             name,
                             note: (ov.querySelector('#_db_note').value || '').trim(),
-                            phone: (ov.querySelector('#_db_phone').value || '').trim(),
+                            phone: contact ? contact.phone : ((ov.querySelector('#_db_phone') || {}).value || '').trim(),
                             dueISO: ov.querySelector('#_db_due').value || '',
                             events: (existing && Array.isArray(existing.events)) ? existing.events.slice() : [],
                         };
-                        /* The text-message switch. The number is the Phone field above; the rest is validated and stamped here, before anything is saved. */
+                        if (contact) {
+                            if (contact.nic) rec.nic = contact.nic; else delete rec.nic;
+                            if (contact.personId) rec.personId = contact.personId; else delete rec.personId;
+                        }
+                        /* The text-message switch. The number is the one above; the rest is validated and stamped here, before anything is saved. */
                         try {
-                            const form = window.WFSms ? WFSms.readBlock(ov, '_db_sms') : null;
-                            if (form) {
-                                const sms = WFSms.applyToggle(existing || {}, { ...form, phone: rec.phone }, Date.now());
-                                if (!sms.ok) { WFSms.showBlockErrors(ov, '_db_sms', sms.errors); notify(Object.values(sms.errors)[0], 'error'); return; }
+                            if (smsForm) {
+                                const sms = WFSms.applyToggle(existing || {}, { enabled: smsForm.enabled, phone: rec.phone, country: contact ? contact.country : undefined, nic: contact ? contact.nic : (rec.nic || ''), idKind: contact ? contact.idKind : undefined }, Date.now());
+                                if (!sms.ok) { if (WP) WP.showErrors(ov, '_db', sms.errors); WFSms.showBlockErrors(ov, '_db_sms', sms.errors); notify(Object.values(sms.errors)[0], 'error'); return; }
                                 WFSms.showBlockErrors(ov, '_db_sms', {});
                                 rec = { ...rec, ...sms.fields };
                             }
@@ -24327,13 +24376,19 @@ table.amort tbody tr { page-break-inside: avoid; }
                             });
                             if (r.ok) rec = r.debtor;
                         }
-                        const at = list.findIndex((x) => x && x.id === rec.id);
-                        if (at > -1) list[at] = rec; else list.push(rec);
-                        DB.set('debtors', list);
-                        try { triggerHaptic('success'); } catch (_) {}
-                        notify(existing ? 'Debtor updated' : 'Debtor added', 'success');
-                        close();
-                        renderLiquidity();
+                        /* The people step comes BEFORE the ledger is read for the write: a changed name, number or NIC is carried to this person's other
+                         * loans and investments here, and it may ask the owner one question (update everywhere, or this loan only). */
+                        const commit = () => {
+                            const list = (DB.get('debtors') || []).slice();
+                            const at = list.findIndex((x) => x && x.id === rec.id);
+                            if (at > -1) list[at] = rec; else list.push(rec);
+                            DB.set('debtors', list);
+                            try { triggerHaptic('success'); } catch (_) {}
+                            notify(existing ? 'Debtor updated' : 'Debtor added', 'success');
+                            close();
+                            renderLiquidity();
+                        };
+                        if (WP) WP.saveLink({ kind: 'debtor', rec, remember: !!(contact && contact.remember), country: contact ? contact.country : '', onDone: commit }); else commit();
                     };
                 },
             );
@@ -35023,7 +35078,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
                 cheques: [], expenses: [], targets: [], subscriptions: [], importBatches: [],
                 cribReports: [], sessions: [], subMerchantMap: {}, incomeReceived: {},
-                incomeDelayed: {}, billPaid: {}, billDelayed: {}, pawns: [], debtors: [],
+                incomeDelayed: {}, billPaid: {}, billDelayed: {}, pawns: [], debtors: [], people: [], payAccounts: [],
                 cribAnalyses: {}, balance: { total: 0, flows: [] }, sweeps: [],
                 _tomb: {}, _kut: {}, _wipedAck: _wipeStamp, _wipedAt: _wipeStamp,
                 settings: currentSettings

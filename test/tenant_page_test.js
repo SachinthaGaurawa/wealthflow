@@ -8,7 +8,8 @@
 
 import { describe, it, expect } from 'vitest';
 globalThis.__WF_TENANT_NO_BOOT = true;
-const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, describeFailure, statementView, tokenFromPath, COPY } = await import('../tenant-page.js');
+const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, describeFailure, statementView, tokenFromPath, accountText, COPY } = await import('../tenant-page.js');
+const { makeT } = await import('../tenant-lang.js');
 
 class El {
     constructor(tag) { this.tag = tag; this.attrs = {}; this.kids = []; this._text = ''; this.listeners = {}; }
@@ -117,5 +118,98 @@ describe('the statement view', () => {
         const settled = structuredClone(statement);
         settled.groups[1].status = 'settled'; settled.groups[1].outstanding = 0;
         expect(textOf(statementView(doc, settled))).toContain('Settled');
+    });
+});
+
+describe('what a person needs next: when, and where to pay', () => {
+    const acct = { bank: 'Commercial Bank', holder: 'N. Perera', number: '8001234567', branch: 'Colombo 03', swift: 'CCEYLKLX', note: 'Quote your reference' };
+    const base = {
+        asOf: '2026-10-05T05:00:00.000Z',
+        groups: [
+            { kind: 'investment', ref: 'INV-9990B2', title: 'Investment', currency: 'LKR', lender: 1, capital: 500000, ratePct: 24, frequency: 'monthly', interestPerPeriod: 10000, start: '2026-01-05', end: '', nextInterest: { date: '2026-11-05', amount: 10000 }, totalReceived: 10000, payments: [] },
+            { kind: 'loan', ref: 'DEB-96E5C2', title: 'Loan', currency: 'LKR', lender: 1, lent: 50000, repaid: 20000, outstanding: 30000, status: 'open', due: '2026-10-01', overdueDays: 4, events: [] },
+        ],
+        totals: [{ currency: 'LKR', invested: 500000, interestReceived: 10000, loanOutstanding: 30000 }],
+        lenders: [{ n: 1, accounts: [acct] }], lenderCount: 1, truncated: false,
+    };
+    const textOf = (nodes) => nodes.map((n) => n.textContent).join(' | ');
+    const buttonsOf = (nodes) => { const out = []; nodes.forEach((n) => n.walk((e) => { if (e.tag === 'button') out.push(e); })); return out; };
+
+    it('says when the next interest is due and when a loan is expected back, and how late it is', () => {
+        const text = textOf(statementView(doc, base));
+        expect(text).toContain('Next interest due5 Nov 2026 (LKR 10,000.00)');
+        expect(text).toContain('Expected back by1 Oct 2026 (4 days ago)');
+        const one = structuredClone(base); one.groups[1].overdueDays = 1;
+        expect(textOf(statementView(doc, one))).toContain('Expected back by1 Oct 2026 (1 day ago)');
+        const onTime = structuredClone(base); onTime.groups[1].overdueDays = 0;
+        expect(textOf(statementView(doc, onTime))).toMatch(/Expected back by1 Oct 2026(?! \()/);        // on time: the date, and no "days ago"
+        const none = structuredClone(base); none.groups[0].nextInterest = null; none.groups[1].due = '';
+        expect(textOf(statementView(doc, none))).not.toMatch(/Next interest due|Expected back by/);
+    });
+
+    it('shows the lender\'s bank account before the records, with the account number the biggest thing in it', () => {
+        const nodes = statementView(doc, base);
+        const text = textOf(nodes);
+        for (const want of ['How to pay', 'Commercial Bank', 'N. Perera', '8001234567', 'Colombo 03', 'CCEYLKLX', 'Quote your reference', 'References: INV-9990B2, DEB-96E5C2']) expect(text, want).toContain(want);
+        expect(text.indexOf('How to pay')).toBeLessThan(text.indexOf('Capital'));
+    });
+
+    it('has copy buttons only when the page can copy, one on the number, one on the SWIFT code and one for the lot', () => {
+        expect(buttonsOf(statementView(doc, base))).toHaveLength(0);
+        const copied = [];
+        const nodes = statementView(doc, base, makeT('en'), { copy: (text, b) => copied.push([text, b.tag]) });
+        const buttons = buttonsOf(nodes);
+        expect(buttons).toHaveLength(3);
+        expect(buttons.map((b) => b.attrs['aria-label'])).toEqual(['Copy: Account number', 'Copy: SWIFT / IBAN', 'Copy all details']);
+        buttons.forEach((b) => b.listeners.click());
+        expect(copied.map((c) => c[0])).toEqual(['8001234567', 'CCEYLKLX', 'Bank: Commercial Bank\nAccount name: N. Perera\nAccount number: 8001234567\nBranch: Colombo 03\nSWIFT / IBAN: CCEYLKLX']);
+    });
+
+    it('has no payment section when the lender gave no account, and names each lender when there are several', () => {
+        const none = { ...base, lenders: [] };
+        expect(textOf(statementView(doc, none))).not.toContain('How to pay');
+        const two = structuredClone(base);
+        two.lenderCount = 2; two.groups[1].lender = 2;
+        two.lenders = [{ n: 1, accounts: [acct] }, { n: 2, accounts: [{ ...acct, bank: 'Peoples Bank', number: '9999999999' }] }];
+        const text = textOf(statementView(doc, two));
+        expect(text).toContain('Lender 1');
+        expect(text).toContain('Lender 2');
+        expect(text).toContain('Peoples Bank');
+        expect(text).toContain('References: DEB-96E5C2');
+    });
+
+    it('shows an account\'s words as text, never as markup, and survives a damaged one', () => {
+        const hostile = structuredClone(base);
+        hostile.lenders = [{ n: 1, accounts: [{ bank: BAD, holder: BAD, number: BAD, branch: BAD, swift: BAD, note: BAD }, null, 5, {}] }, null, { n: 2 }];
+        const nodes = statementView(doc, hostile, makeT('en'), { copy: () => {} });
+        const tags = new Set();
+        nodes.forEach((n) => n.walk((e) => tags.add(e.tag)));
+        expect(tags.has('img')).toBe(false);
+        expect(textOf(nodes)).toContain(BAD);
+        for (const odd of [null, {}, { lenders: 'x', groups: [] }, { lenders: [{ accounts: 'x' }], groups: [] }]) expect(() => statementView(doc, odd, makeT('en'), { copy: () => {} }), JSON.stringify(odd)).not.toThrow();
+    });
+
+    it('reads in Sinhala when asked, with the figures, dates and codes untouched', () => {
+        const text = textOf(statementView(doc, base, makeT('si'), { copy: () => {} }));
+        for (const want of ['ගෙවන ආකාරය', 'ඊළඟ පොලිය ලැබිය යුත්තේ', 'ආපසු ගෙවිය යුත්තේ', 'දින 4කට පෙර', 'සියලු විස්තර පිටපත් කරන්න', 'ආයෝජනය', 'ණය']) expect(text, want).toContain(want);
+        for (const same of ['LKR 500,000.00', '5 Nov 2026', 'INV-9990B2', 'DEB-96E5C2', '8001234567', 'Commercial Bank']) expect(text, same).toContain(same);
+    });
+
+    it('turns a refusal into the person\'s language, and the wait with it', () => {
+        const si = makeT('si');
+        expect(describeFailure(429, { error: 'Too many attempts. Please wait a while and try again.', retryAfterSec: 45 }, si)).toBe('උත්සාහ කිරීම් ඕනෑවට වඩා වැඩියි. කරුණාකර මද වේලාවක් රැඳී සිට නැවත උත්සාහ කරන්න. තත්පර 45කින් නැවත උත්සාහ කරන්න.');
+        expect(describeFailure(429, { error: 'Too many attempts.', retryAfterSec: 900 }, si)).toBe('Too many attempts. මිනිත්තු 15කින් පමණ නැවත උත්සාහ කරන්න.');   // a sentence the table does not know stays as the server said it
+        expect(describeFailure(500, null, si)).toBe('යම් දෝෂයක් සිදු විය. කරුණාකර නැවත උත්සාහ කරන්න.');
+    });
+
+    it('writes "as at" with the zone in the person\'s language', () => {
+        expect(fmtAsOf('2026-10-05T05:00:00.000Z', makeT('si'))).toBe('5 Oct 2026, 10:30 (ශ්‍රී ලංකා වේලාව)');
+    });
+
+    it('turns an account into plain lines for pasting into a banking app or a message', () => {
+        expect(accountText(acct)).toBe('Bank: Commercial Bank\nAccount name: N. Perera\nAccount number: 8001234567\nBranch: Colombo 03\nSWIFT / IBAN: CCEYLKLX');
+        expect(accountText({ bank: 'B', holder: 'H', number: '12345' })).toBe('Bank: B\nAccount name: H\nAccount number: 12345');
+        expect(accountText(null)).toBe('Bank: \nAccount name: \nAccount number: ');
+        expect(accountText(acct, makeT('si'))).toContain('ගිණුම් අංකය: 8001234567');
     });
 });

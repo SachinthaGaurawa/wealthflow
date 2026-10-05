@@ -45,7 +45,7 @@
  * ===========================================================================*/
 
 import crypto from 'node:crypto';
-import { normalizeNic } from './wealthflow-nic.js';
+import { normalizeIdentity, identityCandidates } from './wealthflow-nic.js';
 import { normalizePhone, maskPhone } from './wealthflow-phone.js';
 import { otpMessage } from './sms-templates.mjs';
 import { KIND } from './textlk.mjs';
@@ -77,13 +77,14 @@ export const LIMITS = Object.freeze({
     requestsPerIpHour: 30,
     verifiesPerIpHour: 100,
     statementsPerIpHour: 300,
+    pdfsPerIpHour: 30,                                // a download renders a file, so it has a bucket of its own
 });
 export const LOCK = Object.freeze({ fails: 5, windowMs: 15 * 60e3, baseMs: 15 * 60e3, maxMs: DAY });
 
 export const MSG = Object.freeze({
     ACCEPTED: 'If those details match our records, a 6-digit code is on its way to the mobile number we hold. It expires in 3 minutes.',
     BAD_LINK: 'This link is not valid. Please use the link in your text message.',
-    BAD_NIC: 'Enter your NIC as 9 digits followed by V or X, or as 12 digits.',
+    BAD_NIC: 'Enter your NIC as 9 digits followed by V or X, or as 12 digits. If you have no Sri Lankan NIC, enter your passport or ID number.',
     BAD_CODE: 'Enter the 6-digit code from the text message.',
     DENIED: 'The details or the code are not valid, or the code has expired. Request a new code and try again.',
     SLOW_DOWN: 'Too many attempts. Please wait a while and try again.',
@@ -178,6 +179,19 @@ async function noteFailure(db, tenantRef, now) {
     });
 }
 
+/**
+ * Which reading of what was typed is the one the link was made for, or ''. EVERY candidate is compared (no early exit), so the time
+ * taken depends on how the input is shaped, never on whether it matched.
+ */
+export function matchIdentity(candidates, storedHash, secret) {
+    let found = '';
+    for (const c of candidates) {
+        const same = safeEqual(nicHashOf(c, secret), storedHash);
+        if (same && !found) found = c;
+    }
+    return found;
+}
+
 /* ── who the code goes to ─────────────────────────────────────────────────── */
 
 /** The number on the record the lender most recently switched on for this NIC. Server-side only: the caller never names it. */
@@ -186,7 +200,7 @@ export function pickRecipient(user, canonicalNic, secret) {
     let best = null;
     for (const rec of [...arr(u.income), ...arr(u.debtors)]) {
         if (!rec || rec[FIELDS.ENABLED] !== true) continue;
-        const n = normalizeNic(rec[FIELDS.NIC]);
+        const n = normalizeIdentity(rec[FIELDS.NIC]);
         if (!n.ok || n.canonical !== canonicalNic) continue;
         const p = normalizePhone(rec[FIELDS.PHONE]);
         if (!p.ok) continue;
@@ -220,8 +234,9 @@ async function mirrorOtp(db, uid, { ok, masked, kind, message, at }) {
  */
 export async function requestCode({ db, client, token, nic, ip, secret, now, random = crypto.randomInt, pad = async () => {} }) {
     if (!TOKEN_RE.test(s(token))) return result(400, { ok: false, error: MSG.BAD_LINK });
-    const n = normalizeNic(nic);
-    if (!n.ok) return result(400, { ok: false, error: MSG.BAD_NIC });
+    // what was typed can be a Sri Lankan NIC, a passport / ID number, or (a 12-digit string) either: each reading is compared with the link's
+    const candidates = identityCandidates(nic);
+    if (!candidates.length) return result(400, { ok: false, error: MSG.BAD_NIC });
 
     const gate = await hit(db, `rq-${ip}`, LIMITS.requestsPerIpHour, HOUR, now);
     if (!gate.ok) return tooMany(gate.retryAfterMs);
@@ -229,13 +244,13 @@ export async function requestCode({ db, client, token, nic, ip, secret, now, ran
     const tenantRef = db.collection(TENANTS).doc(token);
     const snap = await withDeadline(tenantRef.get(), 8000, 'tenant');
     const tenant = snap.exists ? (snap.data() || {}) : null;
-    const matches = safeEqual(nicHashOf(n.canonical, secret), tenant && typeof tenant.nicHash === 'string' ? tenant.nicHash : DUMMY);
+    const matched = matchIdentity(candidates, tenant && typeof tenant.nicHash === 'string' ? tenant.nicHash : DUMMY, secret);
     if (!tenant || tenant.active === false || !tenant.uid) { await pad(MIN_ANSWER_MS); return accepted(); }
     if (num(tenant.lockedUntil) > now) return tooMany(num(tenant.lockedUntil) - now);
-    if (!matches) { await noteFailure(db, tenantRef, now); await pad(MIN_ANSWER_MS); return accepted(); }
+    if (!matched) { await noteFailure(db, tenantRef, now); await pad(MIN_ANSWER_MS); return accepted(); }
 
     const userSnap = await withDeadline(db.collection('users').doc(s(tenant.uid)).get(), 8000, 'users');
-    const to = pickRecipient(userSnap.exists ? userSnap.data() : {}, n.canonical, secret);
+    const to = pickRecipient(userSnap.exists ? userSnap.data() : {}, matched, secret);
     if (!to) { console.warn('[WF-PORTAL] no recipient for a valid link'); await pad(MIN_ANSWER_MS); return accepted(); }
 
     // The slot is taken BEFORE the gateway is called: two requests in parallel get one text, and a gateway that is slow cannot be used to get more.
@@ -297,8 +312,8 @@ export async function requestCode({ db, client, token, nic, ip, secret, now, ran
  */
 export async function verifyCode({ db, token, nic, code, ip, secret, now, randomBytes = crypto.randomBytes }) {
     if (!TOKEN_RE.test(s(token))) return result(400, { ok: false, error: MSG.BAD_LINK });
-    const n = normalizeNic(nic);
-    if (!n.ok) return result(400, { ok: false, error: MSG.BAD_NIC });
+    const candidates = identityCandidates(nic);
+    if (!candidates.length) return result(400, { ok: false, error: MSG.BAD_NIC });
     if (!/^\d{6}$/.test(s(code))) return result(400, { ok: false, error: MSG.BAD_CODE });
 
     const gate = await hit(db, `vf-${ip}`, LIMITS.verifiesPerIpHour, HOUR, now);
@@ -306,7 +321,6 @@ export async function verifyCode({ db, token, nic, code, ip, secret, now, random
 
     const tenantRef = db.collection(TENANTS).doc(token);
     const otpRef = tenantRef.collection('otp').doc('current');
-    const wanted = nicHashOf(n.canonical, secret);
 
     const out = await db.runTransaction(async (tx) => {
         const t = await tx.get(tenantRef);
@@ -318,7 +332,7 @@ export async function verifyCode({ db, token, nic, code, ip, secret, now, random
         const otp = o.exists ? (o.data() || {}) : {};
         const live = otp.status === 'active' && s(otp.hash).length > 0 && now < num(otp.expiresAt) && num(otp.attemptsLeft) > 0;
         // both are always computed: a wrong NIC and a wrong code cost the same, and say the same
-        const nicOk = safeEqual(wanted, s(tenant.nicHash));
+        const nicOk = matchIdentity(candidates, s(tenant.nicHash), secret) !== '';
         const codeOk = safeEqual(codeProof(secret, token, num(otp.issuedAt), s(code)), live ? s(otp.hash) : DUMMY);
 
         if (nicOk && codeOk && live) {

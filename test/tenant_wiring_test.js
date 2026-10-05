@@ -94,12 +94,13 @@ describe('the page', () => {
         }
     });
 
-    it('talks to one endpoint on its own origin and imports one module', () => {
+    it('talks to one endpoint on its own origin and imports only its two own modules', () => {
         const src = code(PAGE);
         expect(src).not.toMatch(/https?:\/\//);
         expect([...src.matchAll(/\bfetchImpl\(\s*([A-Z_]+)/g)].map((m) => m[1])).toEqual(['ENDPOINT']);
         expect(PAGE).toContain("export const ENDPOINT = '/api/tenant-portal';");
-        expect([...PAGE.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])).toEqual(['./wealthflow-nic.js']);
+        expect([...PAGE.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])).toEqual(['./wealthflow-nic.js', './tenant-lang.js']);
+        expect([...read('tenant-lang.js').matchAll(/^import /gm)]).toHaveLength(0);          // the words are data: they import nothing
     });
 
     it('loads nothing from anywhere else, and sets no inline style', () => {
@@ -115,6 +116,7 @@ describe('the page', () => {
     it('is not a module the build renames: its own file names are what the page and the headers say', () => {
         expect('tenant-page.js').not.toMatch(/^wealthflow-/);
         expect('tenant-page.css').not.toMatch(/^wealthflow-/);
+        expect('tenant-lang.js').not.toMatch(/^wealthflow-/);
     });
 });
 

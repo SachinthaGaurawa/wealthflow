@@ -23,7 +23,7 @@
  * ===========================================================================*/
 
 import { normalizePhone } from './wealthflow-phone.js';
-import { normalizeNic } from './wealthflow-nic.js';
+import { phoneProblem as phoneText, idProblem, storedId, idKindOf } from './wealthflow-people.js';
 
 /** The record fields. The server reads the same four; a test pins that they agree (sms-events.mjs FIELDS). */
 export const SMS_FIELDS = Object.freeze({
@@ -53,22 +53,8 @@ const safeStorage = (st, fn) => { try { return fn(st); } catch (_) { return null
 
 /* ── 1. the switch ────────────────────────────────────────────────────────── */
 
-const PHONE_TEXT = {
-    'empty': 'Enter the mobile number the texts should go to.',
-    'not-a-number': 'A phone number can only contain digits, spaces and a leading +.',
-    'misplaced-plus': 'A + can only come first, as in +94 77 123 4567.',
-    'needs-country-code': 'Add the country code, for example +94 77 123 4567.',
-    'bad-length': 'That number has the wrong number of digits.',
-    'not-a-mobile-number': 'Sri Lankan texts go to mobile numbers (07X XXX XXXX).',
-};
-const NIC_TEXT = {
-    'empty': 'Enter the NIC number.',
-    'bad-format': 'An NIC is 9 digits and V or X (853400937V), or 12 digits (198534000937).',
-    'bad-day': 'The day of the year inside that NIC is not valid.',
-    'bad-year': 'The birth year inside that NIC is not valid.',
-};
-export const phoneProblem = (reason) => PHONE_TEXT[reason] || 'That does not look like a phone number.';
-export const nicProblem = (reason) => NIC_TEXT[reason] || 'That does not look like an NIC number.';
+export const phoneProblem = (reason) => phoneText(reason);
+export const nicProblem = (reason, kind = 'nic') => idProblem(reason, kind);
 
 /** The four fields of a record, as it already has them. A form that rebuilds a record from its inputs must carry these over, or an edit silently switches the texts off. */
 export function carry(prev) {
@@ -81,8 +67,12 @@ export function carry(prev) {
 /**
  * Validate what the owner entered and return the fields to merge into the record.
  *
- *   input: { enabled:boolean, phone:string, nic:string }
+ *   input: { enabled:boolean, phone:string, country?:string, nic:string, idKind?:'nic'|'other' }
  *   -> { ok:true, fields }  or  { ok:false, errors:{ phone?, nic? } }
+ *
+ * `country` is the region a number typed without a country code belongs to (default Sri Lanka). The number is stored as E.164, so it means
+ * the same thing on every device, and to the server, in whatever country it is. `idKind` 'other' is a passport or national ID for somebody
+ * with no Sri Lankan NIC; it is stored as "ID:AB123456".
  *
  * The switch-on stamp is set when the toggle goes from off to on and is KEPT while it stays on, so editing a record never
  * re-announces its history; switching off and on again stamps again, because what happened while it was off is not news.
@@ -92,10 +82,11 @@ export function applyToggle(prev, input, now = Date.now()) {
     if (!input || input.enabled !== true) return { ok: true, fields: { [SMS_FIELDS.ENABLED]: false }, errors: {} };
     const errors = {};
     const phoneRaw = s(input.phone).trim();
-    const phone = normalizePhone(phoneRaw);
+    const phone = normalizePhone(phoneRaw, input.country ? { defaultCountry: input.country } : undefined);
     if (!phone.ok) errors.phone = phoneProblem(phone.reason);
-    const nicRaw = s(input.nic).replace(/[\s.-]+/g, '').toUpperCase();
-    if (nicRaw) { const n = normalizeNic(nicRaw); if (!n.ok) errors.nic = nicProblem(n.reason); }
+    const kind = input.idKind === 'other' || idKindOf(input.nic) === 'other' ? 'other' : 'nic';
+    const id = storedId(input.nic, kind);
+    if (!id.ok) errors.nic = id.text;
     if (Object.keys(errors).length) return { ok: false, errors, fields: {} };
     const keep = p[SMS_FIELDS.ENABLED] === true && num(p[SMS_FIELDS.ENABLED_AT]) > 0;
     return {
@@ -103,8 +94,8 @@ export function applyToggle(prev, input, now = Date.now()) {
         fields: {
             [SMS_FIELDS.ENABLED]: true,
             [SMS_FIELDS.ENABLED_AT]: keep ? num(p[SMS_FIELDS.ENABLED_AT]) : now,
-            [SMS_FIELDS.PHONE]: phoneRaw,
-            [SMS_FIELDS.NIC]: nicRaw,
+            [SMS_FIELDS.PHONE]: phone.e164,
+            [SMS_FIELDS.NIC]: id.stored,
         },
     };
 }
@@ -112,34 +103,27 @@ export function applyToggle(prev, input, now = Date.now()) {
 const COPY = {
     A: 'Texts the investor when capital is recorded, when interest is applied and when a payment is received.',
     B: 'Texts the debtor when a loan is paid out and when a repayment is confirmed. Loans never carry interest, so no interest is ever calculated or sent.',
-    PORTAL: ' With an NIC, each text carries a private link to a statement page; the tenant sees the statement only after entering the NIC and a one-time code sent to this number.',
+    PORTAL: ' Works for a mobile number in any country. With an NIC or a passport / ID number, each text carries a private link to a statement page; the person sees it only after entering that number and a one-time code sent to the mobile number above.',
 };
 
 /**
- * The markup for the switch, the number and the NIC. `showPhone:false` for a form that already has its own phone field.
- * Every value is escaped; the ids all start with `prefix`.
+ * The markup for the switch. The mobile number and the NIC or ID belong to the person, not to the switch: they live in the contact fields
+ * (wealthflow-people-ui.js), which also remember the person for next time. Every value is escaped; the ids all start with `prefix`.
  */
-export function blockHtml(prefix, { layer = 'A', record = null, showPhone = true } = {}) {
+export function blockHtml(prefix, { layer = 'A', record = null } = {}) {
     const r = record && typeof record === 'object' ? record : {};
     const on = r[SMS_FIELDS.ENABLED] === true;
     const id = esc(prefix);
     return '<div class="fg wf-sms" data-wf-sms="' + id + '" style="border:1px solid var(--border,rgba(128,128,128,.25));border-radius:10px;padding:10px 12px;">'
         + '<label for="' + id + '_on" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;">'
-        + '<input type="checkbox" id="' + id + '_on"' + (on ? ' checked' : '') + ' style="width:18px;height:18px;"'
-        + ' onchange="var m=document.getElementById(\'' + id + '_more\');if(m)m.style.display=this.checked?\'block\':\'none\';">'
+        + '<input type="checkbox" id="' + id + '_on"' + (on ? ' checked' : '') + ' style="width:18px;height:18px;">'
         + 'Send SMS notifications</label>'
-        + '<div id="' + id + '_more" style="display:' + (on ? 'block' : 'none') + ';margin-top:8px;">'
-        + (showPhone ? ('<label class="fl" for="' + id + '_phone">Mobile number</label>'
-            + '<input class="fi" id="' + id + '_phone" type="tel" inputmode="tel" autocomplete="off" placeholder="077 123 4567" value="' + esc(r[SMS_FIELDS.PHONE] || '') + '">') : '')
-        + '<label class="fl" for="' + id + '_nic" style="margin-top:8px;">NIC number (for the statement link)</label>'
-        + '<input class="fi" id="' + id + '_nic" autocomplete="off" autocapitalize="characters" placeholder="853400937V or 198534000937" maxlength="16" value="' + esc(r[SMS_FIELDS.NIC] || '') + '">'
         + '<div id="' + id + '_err" role="alert" style="color:var(--red,#e5484d);font-size:12px;margin-top:4px;"></div>'
-        + '</div>'
         + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5;">' + esc(COPY[layer === 'B' ? 'B' : 'A'] + COPY.PORTAL) + '</div>'
         + '</div>';
 }
 
-/** What the owner entered in a block, or null when the block is not on the page. `root` is anything with querySelector. */
+/** What the owner entered in a block, or null when the block is not on the page. `root` is anything with querySelector. The number and the ID come from the contact fields; this reads them only if a block still carries its own. */
 export function readBlock(root, prefix) {
     if (!root || typeof root.querySelector !== 'function') return null;
     const on = root.querySelector('#' + prefix + '_on');
@@ -421,6 +405,7 @@ const ISSUE_TEXT = {
     'phone-needs-country-code': 'has a phone number with no country code',
     'phone-not-a-number': 'has a phone number with characters that are not allowed',
     'phone-misplaced-plus': 'has a phone number with a misplaced +',
+    'phone-unknown-country-code': 'has a phone number with a country code that is not recognised',
     'phone-empty': 'has no phone number, so nothing is sent',
     'no-enable-stamp': 'was switched on without a date; open it and save it again',
     'future-enable-stamp': 'was switched on with a date in the future (check this device\'s clock); open it and save it again',
@@ -435,6 +420,13 @@ export function describeIssue(issue, nameOf) {
     return who + ' ' + (ISSUE_TEXT[i.reason] || 'cannot send texts yet');
 }
 
+/** What a refusal means for the owner, by the kind the gateway client gave it. A kind with no entry shows the gateway's own words. */
+const FAIL_TEXT = {
+    'destination': 'Your Text.lk account cannot send to this country or network yet. Ask Text.lk to enable it; the message is not retried until the number is changed.',
+    'blocked': 'This number cannot receive texts (opted out or blocked). It is not retried.',
+    'invalid-recipient': 'This is not a number the gateway can reach. Correct it on the record and save.',
+};
+
 const STATUS_WORDS = { sent: 'Delivered', queued: 'Waiting', sending: 'Sending', failed: 'Failed', expired: 'Expired', cancelled: 'Cancelled' };
 
 /** The rows of the log, newest first, as plain objects the page can draw. */
@@ -445,7 +437,7 @@ export function rowsOf(docs, nowMs = Date.now()) {
         .map((d) => {
             let note = '';
             if (d.status === 'queued') note = HOLD_TEXT[d.error && d.error.kind] || (num(d.nextAttemptAt) > nowMs ? 'Scheduled for a later time.' : 'Waiting to be sent.');
-            else if (d.status === 'failed') note = s(d.error && d.error.message) || 'The gateway refused this message.';
+            else if (d.status === 'failed') note = FAIL_TEXT[d.error && d.error.kind] || s(d.error && d.error.message) || 'The gateway refused this message.';
             else if (d.status === 'expired') note = 'Held too long to still be news, so it was not sent.';
             else if (d.status === 'cancelled') note = 'Switched off or changed before it was sent.';
             else if (d.status === 'sent' && d.possiblyDuplicated) note = 'May have been delivered twice after a gateway timeout.';
@@ -517,6 +509,7 @@ export function boot(win) {
             return r ? s(r.name || r.company) : '';
         } catch (_) { return ''; }
     };
+    const model = () => ({ rows: rowsOf(live.rows, now()), status: live.status, disabled: !!(live.notifier && live.notifier.state.disabled), lastError: (live.notifier && live.notifier.state.lastError) || '', nameOf });
 
     function start() {
         if (decoy() || !win.currentUser || !win.currentUser.uid || !win.appData) return false;
@@ -561,9 +554,19 @@ export function boot(win) {
         start,
         afterPush() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.afterPush(); } catch (_) { /* never into the sync path */ } },
         kickNow() { if (live.notifier) return live.notifier.run({ force: true, reason: 'manual' }); return Promise.resolve({ skipped: 'not-started' }); },
+        /** The log, drawn into an element the page owns (the people screens carry it as a tab). Returns the function that stops redrawing it. */
+        panelInto(host) {
+            start();
+            const draw = () => { try { host.innerHTML = panelHtml(model()); } catch (_) { /* a stale host is not an error */ } };
+            win.__wfSmsRedraw = draw;
+            draw();
+            return () => { if (win.__wfSmsRedraw === draw) win.__wfSmsRedraw = null; };
+        },
+        /** The log in its own overlay, or in the people screens when the page has them. */
         openPanel() {
             start();
-            return openPanel(win, () => ({ rows: rowsOf(live.rows, now()), status: live.status, disabled: !!(live.notifier && live.notifier.state.disabled), lastError: (live.notifier && live.notifier.state.lastError) || '', nameOf }));
+            if (win.WFPeople && typeof win.WFPeople.openHub === 'function') return win.WFPeople.openHub('messages');
+            return openPanel(win, model);
         },
     };
     // a signed-in page can appear at any time (login screen, a second account): look until it does, then stop looking

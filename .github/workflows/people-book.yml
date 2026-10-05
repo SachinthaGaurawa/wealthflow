@@ -1,0 +1,36 @@
+name: Saved people, payment details and text-message switch in a real browser
+on:
+  pull_request:
+    paths:
+      - index.html
+      - wealthflow-people.js
+      - wealthflow-people-ui.js
+      - wealthflow-payaccounts.js
+      - wealthflow-phone.js
+      - wealthflow-nic.js
+      - wealthflow-sms.js
+      - test/e2e/people-book.mjs
+      - test/e2e/sms-notices.mjs
+      - test/e2e/harness.mjs
+      - test/e2e/firebase-stub.mjs
+      - .github/workflows/people-book.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # The text-message switch and its phone / NIC fields on the real investment and debtor forms.
+      - run: node test/e2e/sms-notices.mjs
+      # The saved-people book end to end: add once and pick later, edit with the one question, delete without touching a ledger,
+      # contacts import, the payment-details editor, and every screen at 320 px.
+      - run: node test/e2e/people-book.mjs

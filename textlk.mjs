@@ -54,6 +54,7 @@ export const KIND = Object.freeze({
     SERVER: 'server',
     SENDER: 'sender',                    // sender id not approved / not active
     BLOCKED: 'blocked',                  // number is blacklisted or can never receive
+    DESTINATION: 'destination',          // this account cannot send to that country (no route, not enabled)
     REJECTED: 'rejected',                // the gateway refused this message
     UNKNOWN: 'unknown',                  // an answer that says neither yes nor no
 });
@@ -127,9 +128,10 @@ export function classifyFailure(httpStatus, message) {
     if (/insufficient|not enough|enough (?:balance|credit|sms)|low (?:balance|credit)|out of (?:credit|units)|no (?:credit|units)|top.?up|sms units?|(?:balance|credit|units?)\b.{0,30}\b(?:low|exhausted|expired|zero|empty)/.test(m) && !/token|unauthor/.test(m)) return KIND.CREDIT;
     if (/unauthori[sz]ed|unauthenticated|invalid (?:api )?token|token .*(?:invalid|expired|revoked|mismatch)|api token|bearer|access denied/.test(m)) return KIND.AUTH;
     if (/sender/.test(m)) return KIND.SENDER;
+    if (/\b(?:country|countries|route|routes|coverage|international|destination)\b.{0,50}\b(?:not|no|unsupported|disabled|restricted|unavailable|available|allowed|enabled|supported|covered)\b|\b(?:not|no|unsupported|disabled|restricted)\b.{0,30}\b(?:country|countries|route|routes|coverage|international|destination)\b/.test(m)) return KIND.DESTINATION;
     if (/blacklist|black list|blocked|opt.?out|dnd|do not disturb/.test(m)) return KIND.BLOCKED;
     if (/too many|rate limit|throttl|slow down/.test(m)) return KIND.RATE_LIMIT;
-    if (/invalid (?:phone|recipient|number)|recipient/.test(m)) return KIND.INVALID_RECIPIENT;
+    if (/invalid (?:phone|recipient|number|destination)|destination (?:number|address)|recipient/.test(m)) return KIND.INVALID_RECIPIENT;
     if (httpStatus === 401 || httpStatus === 403) return KIND.AUTH;
     if (httpStatus === 402) return KIND.CREDIT;
     if (httpStatus === 429) return KIND.RATE_LIMIT;

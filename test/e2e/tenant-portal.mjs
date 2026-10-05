@@ -18,6 +18,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import { launchChromium } from './harness.mjs';
 import { handlePortal } from '../../tenant-portal.js';
 import { ensureTenantToken, portalSecret } from '../../tenant-links.mjs';
@@ -40,9 +41,13 @@ const db = fsx.db;
 { const orig = db.runTransaction.bind(db); let chain = Promise.resolve(); db.runTransaction = (fn) => { const p = chain.then(() => orig(fn)); chain = p.catch(() => {}); return p; }; }
 fsx.data.set('users/owner1', {
     settings: { currency: 'LKR' },
-    income: [{ id: 'inv1', name: 'PRIVATE DEPOSIT NAME', company: 'PRIVATE COMPANY', notes: 'PRIVATE NOTE <b>x</b>', amount: 500000, rate: 24, freq: 'monthly', start: '2026-01-05', sms_notifications_enabled: true, sms_enabled_at: NOW - 30 * 86400e3, nic: NIC, phone: '077 123 4567' }],
+    payAccounts: [
+        { id: 'acc1', bank: 'Commercial Bank', holder: 'N. Perera', number: '8001234567', branch: 'Colombo 03', swift: 'CCEYLKLX', note: 'Please quote your reference', showTo: 'both', active: true, createdAt: '2026-01-01', _ut: 1 },
+        { id: 'acc2', bank: 'Closed Bank', holder: 'Old Account', number: '1111222233', showTo: 'both', active: false, createdAt: '2026-01-02' },
+    ],
+    income: [{ id: 'inv1', name: 'PRIVATE DEPOSIT NAME', company: 'PRIVATE COMPANY', notes: 'PRIVATE NOTE <b>x</b>', amount: 500000, rate: 24, freq: 'monthly', start: '2026-01-05', day: '2026-01-05', sms_notifications_enabled: true, sms_enabled_at: NOW - 30 * 86400e3, nic: NIC, phone: '077 123 4567' }],
     incomeReceived: { 'inv1_2026-08': { amount: 10000, confirmedAt: NOW - 40 * 86400e3 } },
-    debtors: [{ id: 'deb1', name: 'PRIVATE DEBTOR', notes: 'PRIVATE OPINION', phone: '077 123 4567', nic: NIC, sms_notifications_enabled: true, sms_enabled_at: NOW - 30 * 86400e3, events: [
+    debtors: [{ id: 'deb1', name: 'PRIVATE DEBTOR', notes: 'PRIVATE OPINION', dueISO: new Date(NOW + 330 * 60000 - 4 * 86400e3).toISOString().slice(0, 10), phone: '077 123 4567', nic: NIC, sms_notifications_enabled: true, sms_enabled_at: NOW - 30 * 86400e3, events: [
         { id: 'e1', kind: 'lent', amount: 50000, date: '2026-09-01', confirmed: true },
         { id: 'e2', kind: 'repayment', amount: 20000, date: '2026-09-20', confirmed: true },
         { id: 'e3', kind: 'repayment', amount: 777, date: '2026-09-21', confirmed: false }] }],
@@ -70,8 +75,8 @@ const server = http.createServer((req, res) => {
     if (/^\/t\/[A-Za-z0-9_-]{16}$/.test(file)) { file = '/tenant.html'; Object.assign(headers, PAGE_HEADERS); }
     const f = path.resolve(ROOT, '.' + file);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end('not found'); }
-    // the page's own files, the shared NIC module and nothing else
-    if (!/^\/(tenant\.html|tenant-page\.(js|css)|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
+    // the page's own files, its words, the shared NIC module and nothing else
+    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-lang\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', ...headers });
     res.end(fs.readFileSync(f));
 });
@@ -109,12 +114,14 @@ await shot('1-nic');
 
 /* 2. a malformed NIC never reaches the server --------------------------------- */
 const before = sent.length;
-await page.fill('#tp-nic', '12345');
+await page.fill('#tp-nic', '1234');
 await page.click('#tp-send');
 assert.match(await page.textContent('#tp-err'), /9 digits followed by V or X, or as 12 digits/);
+assert.match(await page.textContent('#tp-err'), /passport or ID number/, 'and says what to type if there is no Sri Lankan NIC');
 assert.equal(await page.getAttribute('#tp-nic', 'aria-invalid'), 'true');
 assert.equal(sent.length, before);
 console.log('2. bad NIC            -> refused in the page, nothing sent');
+assert.match(await text(), /passport \/ ID number/, 'the form says a passport or ID number will do');
 
 /* 3. a wrong (but well-formed) NIC looks exactly like a right one ------------- */
 await page.fill('#tp-nic', '198534000999');
@@ -178,6 +185,70 @@ await noOverflow('statement at 320');
 await shot('4-statement-320');
 await page.setViewportSize({ width: 390, height: 800 });
 
+/* 6b. what a person needs next: when, where to pay, a PDF, copy, print, their own language ------ */
+assert.ok(/next interest due/i.test(body), 'the investment says when interest is next due');      // labels are upper-cased by the page's style, and innerText reports that
+assert.match(body, /expected back by\s*\S+ \S+ \d{4} \(4 days ago\)/i, 'the loan says when it was expected back, and how late it is');
+for (const want of ['How to pay', 'Commercial Bank', 'N. Perera', '8001234567', 'Colombo 03', 'CCEYLKLX', 'Please quote your reference']) assert.ok(body.includes(want), `the lender's account shows ${want}`);
+assert.ok(!body.includes('Closed Bank') && !body.includes('1111222233'), 'a switched-off account is not shown');
+assert.ok(!/showTo|acc1|_ut/.test(body), 'no setting or id of the account reaches the page');
+assert.ok(body.toLowerCase().indexOf('how to pay') < body.toLowerCase().indexOf('capital'), 'where to pay comes before the records');
+assert.ok(await page.locator('.tp-copyrow .tp-value').first().evaluate((el) => el.getBoundingClientRect().height < 30), 'the account number stays on one line (it is the thing that is typed into a banking app)');
+await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+await page.locator('.tp-copy').first().click();
+assert.equal(await page.evaluate(() => navigator.clipboard.readText()), '8001234567', 'the copy button puts the account number on the clipboard');
+assert.equal(await page.locator('.tp-copy').first().textContent(), 'Copied');
+assert.match(await page.textContent('#tp-info'), /Copied to the clipboard/);
+await page.waitForFunction(() => document.querySelector('.tp-copy').textContent === 'Copy', null, { timeout: 5000 });
+await page.locator('.tp-copyall').click();
+assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Bank: Commercial Bank\nAccount name: N. Perera\nAccount number: 8001234567\nBranch: Colombo 03\nSWIFT / IBAN: CCEYLKLX');
+console.log('5b. where to pay      -> account shown, copy puts the number (and the lot) on the clipboard');
+await shot('3b-statement-pay');
+
+// the PDF: the browser's own download, under the page's own policy (no blob or data allowance in it)
+const [download] = await Promise.all([page.waitForEvent('download'), page.click('#tp-pdf')]);
+assert.match(download.suggestedFilename(), /^WealthFlow-statement-\d{4}-\d{2}-\d{2}\.pdf$/);
+const pdf = fs.readFileSync(await download.path());
+assert.equal(pdf.subarray(0, 8).toString('latin1'), '%PDF-1.4');
+assert.ok(pdf.subarray(-6).toString('latin1') === '%%EOF\n');
+const pdfText = [...pdf.toString('latin1').matchAll(/stream\n([\s\S]*?)\nendstream/g)].map((m) => zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1')).join('\n');
+for (const want of ['(8001234567)', '(Commercial Bank)', '(500,000.00)', '(30,000.00)', 'Page 1 of']) assert.ok(pdfText.includes(want) || pdfText.includes(want.replace(/[()]/g, '')), `the PDF carries ${want}`);
+assert.match(pdfText, /INV-[0-9A-F]{6}/);
+for (const leak of ['PRIVATE', '853400937', '198534000937', '0771234567', 'Closed Bank', '1111222233']) assert.ok(!pdf.toString('latin1').includes(leak) && !pdfText.includes(leak), `the PDF must not carry ${leak}`);
+await page.waitForFunction(() => /PDF is ready/.test(document.getElementById('tp-info').textContent));
+assert.equal(await page.textContent('#tp-pdf'), 'Download PDF');
+assert.equal(await page.isDisabled('#tp-pdf'), false, 'the button is ready for another download');
+console.log('5c. PDF               ->', download.suggestedFilename(), pdf.length, 'bytes, account and figures inside, nothing private');
+if (process.env.WF_TENANT_SHOTS) { fs.mkdirSync(process.env.WF_TENANT_SHOTS, { recursive: true }); fs.writeFileSync(path.join(process.env.WF_TENANT_SHOTS, 'statement.pdf'), pdf); }
+
+// print: the page asks the browser to print, and the print layout hides the buttons
+await page.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed += 1; }; });
+await page.click('#tp-print');
+assert.equal(await page.evaluate(() => window.__printed), 1);
+await page.emulateMedia({ media: 'print' });
+assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('tp-pdf')).display), 'none', 'the print layout has no buttons');
+assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(255, 255, 255)', 'and prints on white');
+await page.emulateMedia({ media: 'screen' });
+
+// their own language, one tap, nothing remembered
+assert.equal(await page.textContent('#tp-lang'), 'සිංහල');
+await page.click('#tp-lang');
+await page.waitForFunction(() => document.getElementById('tp-lang').textContent === 'English');
+const si = await text();
+for (const want of ['ඔබේ ප්‍රකාශය', 'ගෙවන ආකාරය', 'PDF බාගන්න', 'ණය', 'ආයෝජනය', 'LKR 500,000.00', '8001234567', 'Commercial Bank', 'INV-', 'DEB-']) assert.ok(si.includes(want), `the Sinhala page shows ${want}`);
+assert.equal(await page.evaluate(() => document.documentElement.lang), 'si');
+assert.equal(await page.getAttribute('#tp-lang', 'lang'), 'en');
+assert.equal(await page.evaluate(() => JSON.stringify([Object.keys(localStorage), Object.keys(sessionStorage)])), '[[],[]]', 'the language is not stored');
+await noOverflow('statement in Sinhala');
+await shot('3c-statement-si');
+await page.setViewportSize({ width: 320, height: 700 });
+await noOverflow('statement in Sinhala at 320');
+await page.setViewportSize({ width: 390, height: 800 });
+await page.click('#tp-lang');
+await page.waitForFunction(() => document.getElementById('tp-lang').textContent === 'සිංහල');
+assert.ok((await text()).includes('Your statement'));
+assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+console.log('5d. print and Sinhala -> print layout is white with no buttons; the page reads in Sinhala and back, nothing stored');
+
 /* 7. the cookie is the session, and script cannot read it ---------------------- */
 const cookies = (await context.cookies()).filter((c) => c.name === 'wf_tp');
 assert.equal(cookies.length, 1);
@@ -205,6 +276,12 @@ console.log('8. another link       -> asks for its own NIC and code');
 /* 10. signing out ends it, here and on the server ------------------------------ */
 await page.goto(`${base}/t/${TOKEN}`);
 await page.waitForSelector('#tp-out');
+// a second tab on the same session, left open on the statement
+const twin = await browser.newContext({ viewport: { width: 390, height: 800 } });
+await twin.addCookies(await context.cookies());
+const twinPage = await twin.newPage();
+await twinPage.goto(`${base}/t/${TOKEN}`);
+await twinPage.waitForSelector('#tp-pdf');
 await page.click('#tp-out');
 await page.waitForSelector('#tp-nic');
 assert.match(await page.textContent('#tp-info'), /signed out/);
@@ -213,6 +290,13 @@ await page.reload();
 await page.waitForSelector('#tp-nic');
 assert.ok(!(await text()).includes('LKR 500,000.00'), 'after sign-out a reload shows nothing');
 console.log('9. sign out           -> form, cookie gone, reload shows nothing');
+// the other tab's session died with it: asking for the PDF there is a clean "sign in again", not a file and not an error page
+await twinPage.click('#tp-pdf');
+await twinPage.waitForSelector('#tp-nic');
+assert.match(await twinPage.textContent('#tp-err'), /session has ended/);
+assert.ok(!(await twinPage.evaluate(() => document.body.innerText)).includes('LKR 500,000.00'), 'and the statement is wiped from that tab');
+await twin.close();
+console.log('9b. other tab         -> PDF after sign-out is refused, tab returns to the form');
 
 /* 11. five wrong codes lock the link ------------------------------------------- */
 await page.fill('#tp-nic', NIC);

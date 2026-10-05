@@ -10,12 +10,38 @@ Text.lk HTTP API v3 (`https://app.text.lk/api/v3/`).
 | A | Investments tab, investment form | capital recorded, monthly interest applied, a payment received |
 | B | Liquidity & Credit Hub, debtor form | loan paid out (first advance and further advances), repayment confirmed |
 
+Any country, any person: the number is stored as an international (E.164) number, with a country picked from a list of 240+
+countries (default Sri Lanka, changed once under **Saved people**), and a person with no Sri Lankan NIC is identified by a passport or
+ID number (stored as `ID:XXXX`, so the two can never be mistaken for each other). A recipient's quiet hours (08:00 to 20:00) are
+kept in *their* time zone, and a number the gateway cannot route is reported as a destination problem, not as an outage.
+
 Layer B never calculates or sends interest. The switch is a boolean on the record, `sms_notifications_enabled`; the
 form also stores `phone`, `nic` (optional) and `sms_enabled_at`, the moment the switch went on. Anything that happened
 before that moment is history, not news, and is never texted.
 
 A payment is only announced once the owner has **confirmed** it. A repayment that is still waiting for confirmation, or
 one that is un-confirmed before its text goes, sends nothing.
+
+## Saved people and payment details (Investments tab and Liquidity & Credit Hub)
+
+**Saved people** (button on the Investments tab and on the Debtors card) is one address book for both tabs.
+
+* Add a person once (name, phone with country, NIC or passport / ID, email, notes). On the next loan or investment pick them from the list
+  at the top of the form and everything fills in. A new person typed into a loan or investment form is saved to the book automatically
+  (untick *Remember this person* to skip it).
+* Edit or delete a saved person from the list. Changing a person's name, phone or NIC asks once: update it on every loan and investment
+  they are linked to, on this record only, or cancel. **Deleting a saved person never touches a loan or an investment**: they keep their own
+  copy of the details and are simply unlinked.
+* **Import from contacts** uses the browser's Contact Picker (Android Chrome). Where a device has no Contact Picker (iPhone,
+  desktop) the same button reads **Import contacts file** and takes a `.vcf` file exported from the Contacts app. Contacts are only read
+  after the owner picks them.
+* **Add them to the list** (shown while some loan or investment names somebody who is not in the list yet) files everyone already in the
+  books in one tap; nothing else on those records changes.
+
+**Payment details** (second tab of the same screen) is where the owner enters the bank accounts a debtor repays into or an investor adds
+capital to: bank, name on the account, number, branch, SWIFT / IBAN, a note. Each account says who sees it (debtors, investors or both)
+and can be switched off without deleting it. The statement page and the PDF show only the accounts meant for that kind of record. They
+read six fields (bank, name, number, branch, SWIFT / IBAN, note) and nothing else.
 
 ## Environment variables (Vercel)
 
@@ -67,11 +93,22 @@ same for one lender and one NIC in every message; it only lets the page *ask* fo
 
 1. The tenant opens the link and types their NIC (either shape: `853400937V` and `198534000937` are the same person).
 2. A 6-digit code is texted to the number on the lender's record. The tenant cannot name the number.
-3. With the right NIC **and** the right code the page shows one statement: every investment and loan under that NIC that the
-   lender switched texts on for. Loans show no interest, ever. No names, notes, phone numbers, NICs or record ids are on it, and
+3. With the right NIC (or passport / ID number) **and** the right code the page shows one statement: every investment and loan under that
+   identity that the lender switched texts on for. Loans show no interest, ever. No names, notes, phone numbers, NICs or record ids are on it, and
    a repayment nobody confirmed is not on it. A reload within the session needs no new text; **Sign out** ends it.
+   What a person can do on it: see when the next interest is due or when a loan is expected back, see where to pay (the lender's bank
+   accounts, with a **Copy** button on the account number), **Download PDF**, **Print**, read it in English or Sinhala (one button; nothing
+   is stored), and **Sign out**.
 4. If the same NIC is also a tenant of another WealthFlow lender who texts with links, that lender's records appear too, but only
    those whose recorded phone is the number this code went to (an NIC is not a secret; the phone is the second proof).
+
+### The PDF
+
+`POST /api/tenant-portal { action: 'pdf', token }` with the session cookie returns the same statement as an `application/pdf` attachment
+(`WealthFlow-statement-<date>.pdf`: no name in the file name). It is built from the object the page shows, so it holds the same figures
+and nothing more, plus the lender's payment details. It has its own address limit (30 an hour). The writer (`tenant-pdf.mjs`) is
+dependency-free PDF 1.4 with Helvetica, a few kilobytes. **It prints English letters and digits only**: Sinhala, Tamil and other scripts in
+an account name come out as `?`, so enter the payment details in English.
 
 What a stranger can do: nothing they can see. A request for a code gets the same answer whether the link is real, the NIC is
 right, a number exists or the gateway is down, in about the same time. A wrong NIC and a wrong code are one refusal.

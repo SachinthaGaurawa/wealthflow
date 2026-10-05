@@ -8,8 +8,12 @@ on:
       - tenant-portal.js
       - tenant-portal.mjs
       - tenant-statement.mjs
+      - tenant-pdf.mjs
+      - tenant-lang.js
       - tenant-links.mjs
       - wealthflow-nic.js
+      - wealthflow-phone.js
+      - wealthflow-payaccounts.js
       - vercel.json
       - test/e2e/tenant-portal.mjs
       - test/e2e/harness.mjs
@@ -30,5 +34,5 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       # The page, under the Content-Security-Policy vercel.json sends, against the real endpoint over an in-memory database:
-      # NIC, code, statement, sign-out, lock-out, and no overflow on a 320 px phone.
+      # NIC, code, statement, the PDF download, copy, print, Sinhala, sign-out, lock-out, and no overflow on a 320 px phone.
       - run: node test/e2e/tenant-portal.mjs
