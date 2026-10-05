@@ -278,7 +278,11 @@ function debtorEvents(user, now, currency, out, issues) {
             const due = parseDay(str(d.dueISO));
             const remindAt = num(d[FIELDS.REMIND_AT]) > 0 ? num(d[FIELDS.REMIND_AT]) : enabledAt;
             const outstanding = Math.max(0, debtorSummary(d, new Date(now)).outstanding);
-            if (due && outstanding > 0 && remindAt <= now + CLOCK_SKEW_MS) {
+            // A repayment the owner has logged but not yet confirmed against the bank means the debtor says they have paid. Telling that person
+            // "still outstanding" would be wrong in the very case the owner is in the middle of checking, so nothing is sent until it is settled
+            // one way or the other (confirmed: owed again for what is really left; deleted: owed as before).
+            const awaiting = events.some((e) => !e.confirmed && e.kind === EVENT.REPAYMENT);
+            if (due && outstanding > 0 && !awaiting && remindAt <= now + CLOCK_SKEW_MS) {
                 const tz = Number.isFinite(base.tzMin) ? base.tzMin : LOCAL_OFFSET_MIN;
                 const dueStartUtc = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
                 const floor = Math.floor(Math.max(enabledAt, remindAt) / 86400000) * 86400000;

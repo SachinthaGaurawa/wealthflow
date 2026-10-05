@@ -405,11 +405,11 @@ describe('late-payment reminders (opt-in, a debtor only)', () => {
         expect(r[0]).toMatchObject({ balance: 30000, amount: 30000 });
     });
 
-    it('stops when the money is paid back, and does not count a repayment nobody has confirmed', () => {
+    it('stops when the money is paid back, and a repayment nobody has confirmed neither counts nor is chased (see the held-back case below)', () => {
         const paid = { id: 'e3', kind: 'repayment', amount: 50000, date: '2026-10-09', confirmed: true, at: T('2026-10-09T05:00:00Z') };
         expect(rem(deriveEvents(late({}, [lent, paid]), T('2026-10-11T05:00:00Z')))).toHaveLength(0);
         const claim = { ...paid, confirmed: false };
-        expect(rem(deriveEvents(late({}, [lent, claim]), T('2026-10-11T05:00:00Z')))).toHaveLength(1);
+        expect(rem(deriveEvents(late({}, [lent, claim]), T('2026-10-11T05:00:00Z')))).toHaveLength(0);
     });
 
     it('is off unless the owner ticked it, and needs the texts on, a date, and a number', () => {
@@ -440,5 +440,24 @@ describe('late-payment reminders (opt-in, a debtor only)', () => {
     it('is not a Layer A thing', () => {
         const user = { income: [investment({ [FIELDS.REMIND]: true, dueISO: '2026-10-10' })] };
         expect(rem(deriveEvents(user, T('2026-10-11T05:00:00Z')))).toHaveLength(0);
+    });
+
+    it('is held back while a repayment is waiting for the owner to confirm it: "you owe" to someone who says they paid is the call the owner does not want', () => {
+        const waiting = { id: 'e8', kind: 'repayment', amount: 50000, date: '2026-10-10', confirmed: false, at: T('2026-10-10T09:00:00Z') };
+        const now = T('2026-10-11T05:00:00Z');
+        expect(rem(deriveEvents(late({}, [lent, waiting]), now))).toHaveLength(0);
+        // the owner checks the bank and it is a part payment: the reminder is owed again, for what is really left
+        const part = { ...waiting, amount: 20000, confirmed: true, confirmedAt: T('2026-10-10T20:00:00Z') };
+        const r = rem(deriveEvents(late({}, [lent, part]), now));
+        expect(r).toHaveLength(1);
+        expect(r[0].balance).toBe(30000);
+        // it was never paid and the owner rejects it (deletes the log): the reminder is owed as before
+        expect(rem(deriveEvents(late({}, [lent]), now))).toHaveLength(1);
+    });
+
+    it('a balance the owner asked for is still sent while a repayment waits (it states the confirmed figure and nothing else)', () => {
+        const waiting = { id: 'e8', kind: 'repayment', amount: 50000, date: '2026-10-10', confirmed: false, at: T('2026-10-10T09:00:00Z') };
+        const user = late({ [FIELDS.REQUESTS]: [{ id: 'req-1', at: T('2026-10-11T04:50:00Z') }] }, [lent, waiting]);
+        expect(deriveEvents(user, T('2026-10-11T05:00:00Z')).events.filter((e) => e.kind === KINDS.B_BALANCE)).toHaveLength(1);
     });
 });

@@ -49,6 +49,10 @@ the tick without one). While it is ticked and money is still confirmed as owed:
 * No interest, no penalty and no demand: the figure is the confirmed balance and the date is the one the owner set.
 * Nothing is sent for a day that was over before the box was ticked, and an edit keeps the moment it was ticked (`sms_remind_at`).
 * A reminder whose day has gone by more than 24 hours ago is dropped, not sent late; a payment confirmed before it goes out cancels it.
+* **Held back while a repayment is waiting for your confirmation.** A repayment you have logged but not yet checked against the bank means
+  the debtor says they have paid; "still outstanding" would be wrong exactly then. Once you confirm it, a reminder (if one is still due)
+  carries what is really left; if you delete it, they are reminded as before. A balance you ask for with **Send balance** is not held back:
+  it states the confirmed figure and nothing else.
 * Layer A (investments) has no such box: capital is not a debt.
 
 ## Saved people and payment details (Investments tab and Liquidity & Credit Hub)
