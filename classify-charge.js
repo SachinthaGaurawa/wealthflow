@@ -22,9 +22,12 @@
 //       the deterministic KB is already certain about (so fuel/cash-advance/fees
 //       stay locked and the classifier only ever improves).
 //
-//  PARALLELISM: all ~18 engines are dispatched simultaneously; the request is
-//  bounded by the router's 60s maxDuration and each engine by an 18s fetch timeout,
-//  so one slow provider can never stall the consensus.
+//  PARALLELISM: all ~18 engines are dispatched simultaneously under ONE shared 18 s
+//  deadline that covers each provider's connection, headers AND body read
+//  (fetch-timeout.mjs createDeadline). A provider that sends headers and then
+//  stalls the body used to hold the whole vote until the router's 60 s limit killed
+//  the request (the `[WF-SLOW] /api/classify-charge` timeout of 2026-10-04); now it
+//  is dropped at the deadline and the vote goes on with the engines that answered.
 //
 //  Contract (UNCHANGED — safe for every existing client consumer):
 //    POST { descriptions: ["MORAWAKA FUEL STATION", "DEBIT INTEREST", ...] }
@@ -36,18 +39,12 @@
 // ============================================================================
 
 import { geminiGenerate } from './gemini-client.mjs';
+import { createDeadline } from './fetch-timeout.mjs';
 
 export const config = { maxDuration: 60 }; // Hobby max — covers the full parallel multi-engine vote
 
-const PER_ENGINE_TIMEOUT_MS = 18000; // generous so slow providers still contribute, well under the 60s budget
-const MAX_OUTPUT_TOKENS = 4096;      // headroom so a large ambiguous batch (or a reasoning model) is never truncated
-
-async function fetchWithTimeout(url, options, timeoutMs = PER_ENGINE_TIMEOUT_MS) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try { return await fetch(url, { ...options, signal: controller.signal }); }
-    finally { clearTimeout(timer); }
-}
+export const VOTE_DEADLINE_MS = 18000; // the WHOLE vote (connect + headers + body, every engine): generous so slow providers still contribute, well under the 60s budget
+const MAX_OUTPUT_TOKENS = 4096;        // headroom so a large ambiguous batch (or a reasoning model) is never truncated
 
 // First defined env var among several likely names (lets the owner name keys freely).
 function envAny(...names) { for (const n of names) { const v = process.env[n]; if (v) return v; } return ''; }
@@ -140,13 +137,15 @@ function parseJsonArray(text) {
     try { const arr = JSON.parse(t.slice(a, b + 1)); return Array.isArray(arr) ? arr : null; } catch (_) { return null; }
 }
 
-// One OpenAI-compatible chat call -> array of {i,type,category} (or null on failure).
+// Every engine is `(list, vote) -> array of {i,type,category} (or null)`; `vote` is the shared deadline (createDeadline), and its
+// `fetch` is the ONLY way an engine reaches a provider, so the deadline also covers reading the reply.
+// One OpenAI-compatible chat call.
 // opts.tokenParam lets reasoning models (xAI) use max_completion_tokens instead of max_tokens.
 function makeOAI(name, url, key, model, opts) {
     opts = opts || {};
     const tokenParam = opts.tokenParam || 'max_tokens';
     const extraHeaders = opts.extraHeaders || null;
-    return async function (list) {
+    return async function (list, vote) {
         if (!key) return null;
         const headers = Object.assign({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key }, extraHeaders || {});
         const payload = {
@@ -158,7 +157,7 @@ function makeOAI(name, url, key, model, opts) {
             ]
         };
         payload[tokenParam] = MAX_OUTPUT_TOKENS;
-        const resp = await fetchWithTimeout(url, { method: 'POST', headers, body: JSON.stringify(payload) });
+        const resp = await vote.fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) });
         if (!resp.ok) throw new Error(name + ' ' + resp.status);
         const data = await resp.json();
         const txt = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
@@ -168,18 +167,18 @@ function makeOAI(name, url, key, model, opts) {
 
 // Google Gemini, through the shared client (gemini-client.mjs): a live model, quota-aware, never a retired name.
 function makeGemini(key) {
-    return async function (list) {
+    return async function (list, vote) {
         if (!key) return null;
-        const result = await geminiGenerate({ key, parts: [{ text: buildPrompt(list) }], thinking: 'low', temperature: 0, maxOutputTokens: MAX_OUTPUT_TOKENS, deadlineMs: PER_ENGINE_TIMEOUT_MS, fetcher: fetchWithTimeout });
+        const result = await geminiGenerate({ key, parts: [{ text: buildPrompt(list) }], thinking: 'low', temperature: 0, maxOutputTokens: MAX_OUTPUT_TOKENS, deadlineMs: vote.remaining(), fetcher: vote.fetch });
         return parseJsonArray(result.text);
     };
 }
 
 // Anthropic Claude (Messages API shape — different from OpenAI).
 function makeAnthropic(key, model) {
-    return async function (list) {
+    return async function (list, vote) {
         if (!key) return null;
-        const resp = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+        const resp = await vote.fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
             body: JSON.stringify({
@@ -250,20 +249,41 @@ export default async function handler(req, res) {
             ['anthropic',  makeAnthropic(envAny('ANTHROPIC_API_KEY','CLAUDE_API_KEY'), 'claude-3-5-haiku-latest')]
         ];
 
-        // Fire every configured engine in parallel; ignore the ones that fail/time out/lack a key.
-        const settled = await Promise.allSettled(engines.map(async ([name, fn]) => {
-            const arr = await fn(list);
-            if (!arr) throw new Error(name + ' empty');
-            return { name, arr };
-        }));
+        // Fire every configured engine in parallel under ONE deadline; ignore the ones that fail, lack a key or do not answer in time.
+        // Votes are collected as engines finish (not read from allSettled), so the engines that answered are kept even when the
+        // deadline cuts the rest off: a stalled provider costs a vote, never the request.
+        const answers = [];        // { order, name, arr }: every engine that answered
+        const waiting = new Set(); // engines asked and not finished
+        const slow = new Set();    // engines that ran out of time: still waiting when the vote's deadline passed, or timed out on their own clock
+        let closed = false;
+        const vote = createDeadline(VOTE_DEADLINE_MS, () => waiting.forEach(n => slow.add(n)));
+        try {
+            await Promise.race([
+                Promise.allSettled(engines.map(async ([name, fn], order) => {
+                    waiting.add(name);
+                    try {
+                        const arr = await fn(list, vote);
+                        if (arr && !closed) answers.push({ order, name, arr });
+                    } catch (e) {
+                        if (e && (e.timedOut === true || e.kind === 'deadline')) slow.add(name);   // a provider that is merely refusing (429, no key) is not slow
+                        throw e;
+                    } finally { waiting.delete(name); }
+                })),
+                vote.whenExpired
+            ]);
+        } finally { closed = true; vote.done(); }
+        // Names only (never request text): which provider slowed or stalled this vote, so it can be replaced.
+        const slowNames = engines.map(e => e[0]).filter(n => slow.has(n));
+        if (slowNames.length) console.warn('[WF-VOTE] /api/classify-charge: no answer from ' + slowNames.join(', ') + ' within ' + VOTE_DEADLINE_MS + 'ms; voted without them');
+        // Engine order, as before: a tie between two verdicts goes to whichever the first engine to say it listed first.
+        answers.sort((a, b) => a.order - b.order);
 
         // Tally votes per ambiguous position.
         const tally = list.map(() => ({})); // [{type:count}]
         const catVote = list.map(() => ({}));
-        settled.forEach(s => {
-            if (s.status !== 'fulfilled' || !s.value) return;
-            enginesUsed.push(s.value.name);
-            s.value.arr.forEach(row => {
+        answers.forEach(s => {
+            enginesUsed.push(s.name);
+            s.arr.forEach(row => {
                 if (!row) return;
                 const pos = Number(row.i);
                 if (!(pos >= 0 && pos < list.length)) return;

@@ -23,6 +23,7 @@
  * ===========================================================================*/
 
 import { createModelBook, isModelGone, loadModels } from './ai-models.mjs';
+import { readBody } from './fetch-timeout.mjs';
 
 export const BASE = 'https://generativelanguage.googleapis.com/v1beta';
 /** The model the dashboard shows serving this key today. Used only until the provider's own list says otherwise. */
@@ -33,6 +34,8 @@ const SLOT = { fast: 'Gemini:any', pro: 'Gemini:pro' };
 const PROVIDER = { fast: 'Gemini', pro: 'GeminiPro' };
 const MAX_ATTEMPTS = 7;
 const MIN_ATTEMPT_MS = 1500;
+const MIN_BODY_MS = 1000;
+const ERROR_BODY_MS = 3000;   // an error body is a few lines: if it has not come in 3 s the status alone classifies the failure and another model can be tried
 const DAY_MS = 24 * 3600 * 1000;
 
 const SAFETY = Object.freeze([
@@ -227,8 +230,13 @@ export async function geminiGenerate(o) {
             throw error;
         }
 
+        // The fetcher's own timer is spent once the headers are in, so the body is read under what is left of the call's deadline:
+        // a reply that stalls after its headers fails this call instead of holding the caller (and its whole request) for ever.
+        const bodyMs = () => Math.max(deadlineAt - now(), MIN_BODY_MS);
         if (response.ok) {
-            const data = await response.json();
+            let data;
+            try { data = await readBody(response, 'json', bodyMs()); }
+            catch (error) { if (error && error.timedOut) { tried.push({ model, status: response.status, kind: 'body-stalled' }); note(); } throw error; }
             if (data.promptFeedback && data.promptFeedback.blockReason) { note(); throw new Error('Blocked by Google Safety'); }
             const candidate = (data.candidates || [])[0] || {};
             const text = ((candidate.content && candidate.content.parts) || []).filter((p) => p && typeof p.text === 'string' && !p.thought).map((p) => p.text).join('');
@@ -242,7 +250,7 @@ export async function geminiGenerate(o) {
             throw new Error('Gemini returned an empty response');
         }
 
-        const out = { status: response.status, text: await response.text().catch(() => '') };
+        const out = { status: response.status, text: await readBody(response, 'text', Math.min(bodyMs(), ERROR_BODY_MS)).catch(() => '') };
         const c = classifyGeminiError(out.status, out.text, now());
         tried.push({ model, status: out.status, kind: c.kind });
         last = out; lastClass = c;
