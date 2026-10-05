@@ -9,6 +9,7 @@
  *     { action: 'request',   token, nic }          -> the same answer for every input that is well formed
  *     { action: 'verify',    token, nic, code }    -> 200 + Set-Cookie on success, else one refusal
  *     { action: 'statement', token }               -> the statement, for the cookie's session (which must be this link's)
+ *     { action: 'pdf', token }                     -> the same statement as a PDF file (application/pdf, an attachment), same session rule
  *     { action: 'logout', token }                  -> ends the session
  *
  * WHAT IS CHECKED BEFORE ANYTHING ELSE
@@ -29,6 +30,7 @@ import crypto from 'node:crypto';
 import { getAdminDb } from './admin-db.mjs';
 import { TextLkClient } from './textlk.mjs';
 import { portalSecret } from './tenant-links.mjs';
+import { statementPdf, pdfFileName } from './tenant-pdf.mjs';
 import {
     MSG, LIMITS, requestCode, verifyCode, readSession, loadStatement, endSession, hit, ipKey, clearCookie,
 } from './tenant-portal.mjs';
@@ -51,6 +53,20 @@ function send(res, out) {
 
 /** A log line is a message, never data: digit runs (an NIC, a code, a phone number) are blanked in case an exception ever quotes its input. */
 const scrub = (e) => String((e && e.message) || e).replace(/\d{9}[vVxX]/g, '#').replace(/\d{4,}/g, '#').slice(0, 160);
+
+/** The statement file. It is personal, so it is never cached or indexed, and it always downloads (the browser is told not to sniff it into something else). */
+function sendPdf(res, file, name) {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.setHeader('Content-Length', String(file.length));
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.end(file);
+}
 
 const fail = (status, error, extra = {}) => ({ status, body: { ok: false, error }, ...extra });
 const header = (req, name) => { const v = req.headers && req.headers[name]; return Array.isArray(v) ? v[0] : v; };
@@ -111,6 +127,15 @@ export async function handlePortal(req, res, deps) {
             if (action === 'logout') { await endSession({ db, live }); return send(res, { status: 200, body: { ok: true }, cookie: clearCookie() }); }
             const statement = await loadStatement({ db, live, secret, now });
             return send(res, { status: 200, body: { ok: true, statement, expiresAt: Number(live.session.expiresAt) || 0 } });
+        }
+        if (action === 'pdf') {
+            const gate = await hit(db, `pd-${ip}`, LIMITS.pdfsPerIpHour, HOUR, now);
+            if (!gate.ok) return send(res, { status: 429, body: { ok: false, error: MSG.SLOW_DOWN, retryAfterSec: Math.max(1, Math.ceil(gate.retryAfterMs / 1000)) } });
+            const live = await readSession({ db, cookieHeader: header(req, 'cookie'), now });
+            if (!live) return send(res, fail(401, MSG.NO_SESSION, { cookie: clearCookie() }));
+            if (String(body.token || '') !== live.token) return send(res, fail(401, MSG.NO_SESSION));
+            const statement = await loadStatement({ db, live, secret, now });
+            return sendPdf(res, statementPdf(statement, { generatedAt: now }), pdfFileName(statement.asOf));
         }
         return send(res, fail(400, MSG.FAILED));
     } catch (e) {

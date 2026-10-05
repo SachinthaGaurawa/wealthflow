@@ -56,12 +56,51 @@ export function normalizeNic(input) {
     return { ok: true, canonical, format, birthYear: year, dayOfYear: female ? day - 500 : day, female };
 }
 
+/* ── people who have no Sri Lankan NIC ───────────────────────────────────────
+ * A tenant abroad has a passport or a national ID instead. It plays the NIC's part exactly (an identifier beside the link and the
+ * one-time code, never a password) and is kept in its own canonical form, "ID:" and the number in capitals, so it can never be
+ * mistaken for a Sri Lankan NIC and the two can never collide. Nothing guesses which kind a string is: a stored value carries the
+ * prefix or it does not, and a person typing it at the portal is checked as both (identityCandidates). */
+
+export const OTHER_ID_PREFIX = 'ID:';
+
+/**
+ * @returns {{ok:true, canonical:string, format:'other'} | {ok:false, reason:'empty'|'bad-length'|'bad-shape'}}
+ */
+export function normalizeOtherId(input) {
+    let raw = s(input).trim();
+    if (raw.toUpperCase().startsWith(OTHER_ID_PREFIX)) raw = raw.slice(OTHER_ID_PREFIX.length);
+    raw = raw.replace(/[\s./-]+/g, '').toUpperCase();
+    if (!raw) return { ok: false, reason: 'empty' };
+    if (raw.length < 5 || raw.length > 20) return { ok: false, reason: 'bad-length' };
+    if (!/^[A-Z0-9]+$/.test(raw)) return { ok: false, reason: 'bad-shape' };
+    return { ok: true, canonical: OTHER_ID_PREFIX + raw, format: 'other' };
+}
+
+/** What is STORED on a record: "ID:..." is another kind of identity, anything else must be a Sri Lankan NIC. No guessing. */
+export function normalizeIdentity(input) {
+    return s(input).trim().toUpperCase().startsWith(OTHER_ID_PREFIX) ? normalizeOtherId(input) : normalizeNic(input);
+}
+
+/** What a person TYPED at the portal could mean: a valid NIC, a valid other ID, or both. The portal compares each; the record decides. */
+export function identityCandidates(input) {
+    const out = [];
+    const nic = normalizeNic(input);
+    if (nic.ok) out.push(nic.canonical);
+    const other = normalizeOtherId(input);
+    if (other.ok && !out.includes(other.canonical)) out.push(other.canonical);
+    return out;
+}
+
+/** The stored value as a person would write it: "ID:AB123456" -> "AB123456". */
+export const displayIdentity = (stored) => { const t = s(stored).trim(); return t.toUpperCase().startsWith(OTHER_ID_PREFIX) ? t.slice(OTHER_ID_PREFIX.length) : t; };
+
 /** "198534000937" -> "*********937" — enough for the person to recognise their own number, not enough to use it. */
 export function maskNic(input) {
-    const n = normalizeNic(input);
-    const raw = n.ok ? n.canonical : s(input).replace(/\s+/g, '');
+    const n = normalizeIdentity(input);
+    const raw = n.ok ? displayIdentity(n.canonical) : s(input).replace(/\s+/g, '');
     if (raw.length < 4) return '***';
     return '*'.repeat(Math.max(0, raw.length - 3)) + raw.slice(-3);
 }
 
-export default { normalizeNic, maskNic };
+export default { normalizeNic, normalizeOtherId, normalizeIdentity, identityCandidates, displayIdentity, maskNic, OTHER_ID_PREFIX };

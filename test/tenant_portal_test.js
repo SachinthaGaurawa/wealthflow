@@ -108,7 +108,8 @@ describe('asking for a code', () => {
     it('refuses input that is not shaped like a link and an NIC, with words that reveal nothing', async () => {
         const { db, token } = await ready();
         const gw = gateway();
-        for (const nic of ['', 'abc', '123', '85340093', '8534009377V', '198534000937999', '<script>']) {
+        // not an NIC and not a passport / ID number either (5-20 letters and digits): there is nothing to compare
+        for (const nic of ['', 'abc', '123', '1234', 'x'.repeat(21), 'AB 12!', '<script>']) {
             const out = await ask(db, gw, token, { nic });
             expect(out.status, nic).toBe(400);
             expect(out.body.error).toBe(MSG.BAD_NIC);
@@ -117,6 +118,17 @@ describe('asking for a code', () => {
             expect((await ask(db, gw, bad)).status, bad).toBe(400);
         }
         expect(gw.calls).toBe(0);
+    });
+
+    it('a string that could be a passport or ID number gets the same uniform answer as a wrong NIC, never a different one', async () => {
+        const { db, token } = await ready();
+        const gw = gateway();
+        for (const nic of ['85340093', '8534009377V', 'N1234567', 'ID:N1234567']) {
+            const out = await ask(db, gw, token, { nic });
+            expect(out.status, nic).toBe(200);
+            expect(out.body.message).toBe(MSG.ACCEPTED);
+        }
+        expect(gw.calls).toBe(0);                                  // none of them is this link's identity, so no text goes out
     });
 
     it('accepts either shape of the same NIC', async () => {

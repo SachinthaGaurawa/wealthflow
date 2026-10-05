@@ -305,7 +305,10 @@ export const BUDGETS = {
     // out like the ones the review marked. Comments recording why make up most of it. No new script or request.
     // 2026-10-05 (text-message notices for investors and debtors): 2,199,000 -> 2_203_000 (measured 2,200,879 + ~0.1% headroom). The switch, phone and NIC fields in the investment and debtor forms (the investment form is rebuilt
     // from its inputs, so the four fields are carried over by hand and validated before anything is saved), the Text messages buttons, the sync hook that nudges the server after a push, and one script tag. About a third is comments.
-    htmlBytes: 2_203_000,
+    // 2026-10-05 (saved people, payment details and any-country numbers on top of the text-message switch): 2,203,000 -> 2_209_500 (measured 2,207,231 + ~0.1% headroom). The forms' people picker and the folded contact section
+    // (the investment form is rebuilt from its inputs, so `personId` is carried over by hand), the commit step that asks one question before a shared name, number or ID changes everywhere, the Saved people buttons and one script tag.
+    // About a third is comments.
+    htmlBytes: 2_209_500,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -616,7 +619,11 @@ export const BUDGETS = {
     // 2026-10-05 (text-message notices): 2,243,000 -> 2_285_000 (measured 2,282,852 + ~0.1% headroom). wealthflow-sms.js (new, about 33 KB, a third of it the comments recording why: the switch and its stamp, the nudge, the one-per-delivery
     // alert, the log), wealthflow-phone.js (the one rule for a phone number, shared with the server) and wealthflow-nic.js (the Sri Lankan NIC, old and new shapes, shared with the server). The gateway client, the send engine and
     // the cron are server-only and are not counted here.
-    totalJsBytes: 2_285_000,
+    // 2026-10-05 (saved people, payment details, any country): 2,285,000 -> 2_412_000 (measured 2,409,274 + ~0.1% headroom). wealthflow-people.js (new, about 33 KB: the people book's rules, linking, the safe propagation of a changed name, number or ID,
+    // the device-contacts reader and the .vcf parser), wealthflow-people-ui.js (new, about 68 KB: the Saved people and Payment details screens, the contact fields, the picker and every error and confirmation they show),
+    // wealthflow-payaccounts.js (new, about 6 KB: the owner's bank accounts and the whitelist of what a debtor or investor is shown; shared with the server) and wealthflow-phone.js grown by about 16 KB for the table of 245 countries
+    // (dialling code, national lengths, time zone) that makes a number from anywhere reachable. The statement page, the PDF writer and the page's Sinhala words are served as their own files and are not counted here.
+    totalJsBytes: 2_412_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     largestModuleBytes: 233_000, // measured 232,325
@@ -705,7 +712,8 @@ export const BUDGETS = {
     // 2026-10-03: 78 -> 79 for wealthflow-advisor-research.js (the Advisor looks up the outside world; see totalJsBytes).
     // 2026-10-04: 79 -> 80 for wealthflow-own-money.js (whose money a bank row is; see totalJsBytes).
     // 2026-10-05: 80 -> 83 for wealthflow-sms.js, wealthflow-phone.js and wealthflow-nic.js. The last two are imported by the first and by the server, not loaded by a tag of their own.
-    moduleCount: 83,   // measured 83
+    // 2026-10-05: 83 -> 86 for wealthflow-people.js, wealthflow-people-ui.js and wealthflow-payaccounts.js. The first and the last are imported by the second (and by the server for the last), not loaded by a tag of their own.
+    moduleCount: 86,   // measured 86
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -773,7 +781,8 @@ export const BUDGETS = {
     // 2026-10-03: 76 -> 77 for wealthflow-advisor-research.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-04: 77 -> 78 for wealthflow-own-money.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-05: 78 -> 79 for wealthflow-sms.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
-    scriptTags: 79,              // measured 79; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money and sms modules are nonblocking
+    // 2026-10-05: 79 -> 80 for wealthflow-people-ui.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
+    scriptTags: 80,              // measured 80; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

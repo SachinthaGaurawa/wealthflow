@@ -46,7 +46,7 @@
 import crypto from 'node:crypto';
 import { KIND, maskPhone, analyzeSms } from './textlk.mjs';
 import { buildMessage } from './sms-templates.mjs';
-import { deriveEvents, nextSendWindow, MAX_AGE_MS } from './sms-events.mjs';
+import { deriveEvents, nextSendWindow, MAX_AGE_MS, LOCAL_OFFSET_MIN } from './sms-events.mjs';
 import { linksEnabled, linkFor, ensureTenantToken, portalSecret } from './tenant-links.mjs';
 
 export const ROOT = 'wf-sms';
@@ -69,7 +69,7 @@ export const ADMIN_ALERT = 'Admin Alert: SMS Delivered Successfully to Tenant';
 /** Failures that wait for a person to fix something, so they neither burn attempts nor give up. */
 const HOLD_KINDS = new Set([KIND.CREDIT, KIND.AUTH, KIND.SENDER, KIND.CONFIG]);
 /** Failures no retry can fix. */
-const TERMINAL_KINDS = new Set([KIND.INVALID_RECIPIENT, KIND.INVALID_MESSAGE, KIND.BLOCKED, KIND.REJECTED]);
+const TERMINAL_KINDS = new Set([KIND.INVALID_RECIPIENT, KIND.INVALID_MESSAGE, KIND.BLOCKED, KIND.DESTINATION, KIND.REJECTED]);
 
 const s = (v) => String(v == null ? '' : v);
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -140,6 +140,7 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
         const id = docIdFor(ev.key);
         const ref = col.doc(id);
         const toHash = toHashOf(ev.phone);
+        const tzMin = Number.isFinite(ev.tzMin) ? ev.tzMin : LOCAL_OFFSET_MIN;      // where the recipient is, for scheduled texts
         // The link is minted before the transaction: it is the only part that needs a write of its own, and it is idempotent.
         const link = await linkOf(ev);
         const body = buildMessage(ev.kind, { ...ev, link });
@@ -151,8 +152,8 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
                 const doc = {
                     key: ev.key, layer: ev.layer, kind: ev.kind, recordKind: ev.recordKind, recordId: ev.recordId, ref: ev.ref,
                     status: STATUS.QUEUED, attempts: 0, createdAt: now, occurredAt: ev.occurredAt,
-                    nextAttemptAt: ev.scheduled ? nextSendWindow(Math.max(now, ev.notBefore || 0)) : now, leaseUntil: 0,
-                    to: ev.phone, toHash, toMasked: maskPhone(ev.phone),
+                    nextAttemptAt: ev.scheduled ? nextSendWindow(Math.max(now, ev.notBefore || 0), tzMin) : now, leaseUntil: 0,
+                    to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin,
                     body, segments: a.segments, encoding: a.encoding, amount: ev.amount, currency: ev.currency,
                     scheduled: !!ev.scheduled, linked: !!link, lastError: null, possiblyDuplicated: false,
                 };
@@ -162,13 +163,14 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
             const d = snap.data() || {};
             const phoneChanged = d.toHash !== toHash;
             if (d.status === STATUS.QUEUED && phoneChanged) {
-                const doc = { ...d, to: ev.phone, toHash, toMasked: maskPhone(ev.phone) };
+                // a new number can be in another time zone: a scheduled text waits for ITS morning
+                const doc = { ...d, to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin, ...(d.scheduled ? { nextAttemptAt: nextSendWindow(Math.max(now, ev.notBefore || 0), tzMin) } : {}) };
                 tx.set(ref, doc);
                 return { what: 'rephoned', doc };
             }
             // a number that could never receive was corrected: the message that was refused is owed again
-            if (d.status === STATUS.FAILED && phoneChanged && d.lastError && (d.lastError.kind === KIND.INVALID_RECIPIENT || d.lastError.kind === KIND.BLOCKED)) {
-                const doc = { ...d, status: STATUS.QUEUED, attempts: 0, nextAttemptAt: now, leaseUntil: 0, to: ev.phone, toHash, toMasked: maskPhone(ev.phone), lastError: null };
+            if (d.status === STATUS.FAILED && phoneChanged && d.lastError && (d.lastError.kind === KIND.INVALID_RECIPIENT || d.lastError.kind === KIND.BLOCKED || d.lastError.kind === KIND.DESTINATION)) {
+                const doc = { ...d, status: STATUS.QUEUED, attempts: 0, nextAttemptAt: now, leaseUntil: 0, to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin, lastError: null };
                 tx.set(ref, doc);
                 return { what: 'reopened', doc };
             }
@@ -178,8 +180,8 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
                 const doc = {
                     key: ev.key, layer: ev.layer, kind: ev.kind, recordKind: ev.recordKind, recordId: ev.recordId, ref: ev.ref,
                     status: STATUS.QUEUED, attempts: 0, createdAt: d.createdAt || now, occurredAt: ev.occurredAt,
-                    nextAttemptAt: ev.scheduled ? nextSendWindow(Math.max(now, ev.notBefore || 0)) : now, leaseUntil: 0,
-                    to: ev.phone, toHash, toMasked: maskPhone(ev.phone),
+                    nextAttemptAt: ev.scheduled ? nextSendWindow(Math.max(now, ev.notBefore || 0), tzMin) : now, leaseUntil: 0,
+                    to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin,
                     body, segments: a.segments, encoding: a.encoding, amount: ev.amount, currency: ev.currency,
                     scheduled: !!ev.scheduled, linked: !!link, lastError: null, possiblyDuplicated: false, revivedAt: now,
                 };
@@ -313,7 +315,7 @@ export async function deliver({ db, uid, id, doc, client, now, limits = LIMITS, 
         ...doc, status: STATUS.QUEUED, leaseUntil: 0, lastError, possiblyDuplicated,
         // a hold does not use up an attempt: the message did nothing wrong
         attempts: holding ? Math.max(0, num(doc.attempts) - 1) : num(doc.attempts),
-        nextAttemptAt: doc.scheduled ? nextSendWindow(now + delay) : now + delay,
+        nextAttemptAt: doc.scheduled ? nextSendWindow(now + delay, Number.isFinite(doc.tzMin) ? doc.tzMin : LOCAL_OFFSET_MIN) : now + delay,
     };
     await save(next);
     console.warn(`[WF-SMS] ${holding ? 'held' : 'retry'} kind=${res.kind} ref=${doc.ref} next=${new Date(next.nextAttemptAt).toISOString()}`);

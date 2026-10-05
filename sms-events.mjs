@@ -50,8 +50,8 @@
 
 import { paysInMonth, dueDateFor, dayOfMonth, monthKeyOf, periodMonths, parseDay } from './wealthflow-verify-matrix.js';
 import { debtorSummary, EVENT } from './wealthflow-liquidity.js';
-import { normalizePhone } from './wealthflow-phone.js';
-import { normalizeNic } from './wealthflow-nic.js';
+import { normalizePhone, utcOffsetOf } from './wealthflow-phone.js';
+import { normalizeIdentity } from './wealthflow-nic.js';
 import { KINDS, refCode, currencyOf } from './sms-templates.mjs';
 
 /** The schema fields this feature adds to an investment or a debtor record. */
@@ -73,7 +73,7 @@ export const GRACE_MS = 10 * 60 * 1000;
 export const MAX_AGE_MS = 30 * 24 * 3600 * 1000;
 /** How many past months of interest the derivation looks at. */
 export const INTEREST_LOOKBACK_MONTHS = 3;
-/** Notices that are SCHEDULED (interest) wait for the day, in Sri Lanka: no 3 a.m. text about a monthly figure. UTC+05:30, no daylight saving. */
+/** Notices that are SCHEDULED (interest) wait for the day where the RECIPIENT is (Sri Lanka's, UTC+05:30, for a Sri Lankan number): no 3 a.m. text about a monthly figure. Standard time: an hour of daylight saving still lands inside the window. */
 export const LOCAL_OFFSET_MIN = 330;
 export const WINDOW_START_HOUR = 8;
 export const WINDOW_END_HOUR = 20;
@@ -126,7 +126,7 @@ function eligible(occurredAt, enabledAt, now, { dayGranular = false } = {}) {
 }
 
 function subjectOf(rec) {
-    const n = normalizeNic(rec && rec[FIELDS.NIC]);
+    const n = normalizeIdentity(rec && rec[FIELDS.NIC]);
     return n.ok ? { nic: n.canonical } : null;
 }
 
@@ -145,7 +145,7 @@ function investmentEvents(user, now, currency, out, issues) {
         if (issue) { issues.push(issue); return; }
         const base = {
             layer: LAYER.A, recordKind: 'investment', recordId: str(inv.id), ref: refCode('investment', inv.id),
-            currency, phone, subject: subjectOf(inv), scheduled: false, notBefore: 0,
+            currency, phone, tzMin: utcOffsetOf(phone), subject: subjectOf(inv), scheduled: false, notBefore: 0,
         };
 
         // (a) new capital recorded
@@ -169,7 +169,7 @@ function investmentEvents(user, now, currency, out, issues) {
                 sink.push({
                     ...base, key: `A:${inv.id}:int:${mk}`, kind: KINDS.A_INTEREST, occurredAt, amount: interest, month: mk,
                     dateISO: due.toISOString().slice(0, 10), scheduled: true,
-                    notBefore: nextSendWindow(occurredAt),
+                    notBefore: nextSendWindow(occurredAt, base.tzMin),
                 });
             }
         }
@@ -212,7 +212,7 @@ function debtorEvents(user, now, currency, out, issues) {
         if (issue) { issues.push(issue); return; }
         const base = {
             layer: LAYER.B, recordKind: 'debtor', recordId: str(d.id), ref: refCode('debtor', d.id),
-            currency, phone, subject: subjectOf(d), scheduled: false, notBefore: 0,
+            currency, phone, tzMin: utcOffsetOf(phone), subject: subjectOf(d), scheduled: false, notBefore: 0,
         };
 
         // The raw events carry `at` / `confirmedAt`, which the ledger's own normaliser drops.

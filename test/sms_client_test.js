@@ -29,9 +29,31 @@ describe('the switch', () => {
         expect(applyToggle({}, null).fields).toEqual({ sms_notifications_enabled: false });
     });
 
-    it('on needs a real mobile number and stamps the moment', () => {
+    it('on needs a real mobile number and stamps the moment; the number is stored the way the server and every device read it (E.164)', () => {
         const r = applyToggle({}, { enabled: true, phone: ' 077 123 4567 ', nic: '' }, T0);
-        expect(r).toMatchObject({ ok: true, fields: { sms_notifications_enabled: true, sms_enabled_at: T0, phone: '077 123 4567', nic: '' } });
+        expect(r).toMatchObject({ ok: true, fields: { sms_notifications_enabled: true, sms_enabled_at: T0, phone: '+94771234567', nic: '' } });
+    });
+
+    it('works for a person in any country: an international number, or a local one in the chosen country', () => {
+        expect(applyToggle({}, { enabled: true, phone: '+44 7911 123456' }, T0).fields.phone).toBe('+447911123456');
+        expect(applyToggle({}, { enabled: true, phone: '050 123 4567', country: 'AE' }, T0).fields.phone).toBe('+971501234567');
+        expect(applyToggle({}, { enabled: true, phone: '07911 123456', country: 'GB' }, T0).fields.phone).toBe('+447911123456');
+        expect(applyToggle({}, { enabled: true, phone: '(415) 555-2671', country: 'US' }, T0).fields.phone).toBe('+14155552671');
+    });
+
+    it('a number with no country to read it in is refused with the sentence that tells the owner to add one', () => {
+        const r = applyToggle({}, { enabled: true, phone: '4155552671' }, T0);
+        expect(r.ok).toBe(false);
+        expect(r.errors.phone).toMatch(/country/i);
+    });
+
+    it('a passport or national ID stands in for an NIC, stored with a prefix so the two can never be confused', () => {
+        const r = applyToggle({}, { enabled: true, phone: '+971501234567', nic: ' x-1234 567 ', idKind: 'other' }, T0);
+        expect(r).toMatchObject({ ok: true, fields: { nic: 'ID:X1234567' } });
+        expect(applyToggle({}, { enabled: true, phone: '+971501234567', nic: 'ID:X1234567' }, T0).fields.nic).toBe('ID:X1234567');   // already in its stored form
+        const bad = applyToggle({}, { enabled: true, phone: '+971501234567', nic: 'a', idKind: 'other' }, T0);
+        expect(bad.ok).toBe(false);
+        expect(bad.errors.nic).toMatch(/passport/i);
     });
 
     it('refuses a number that is not a number the gateway can reach, with a sentence the owner can act on', () => {
@@ -71,25 +93,35 @@ describe('the switch', () => {
 });
 
 describe('the markup', () => {
-    it('escapes whatever is in the record', () => {
+    it('is only the switch: the number and the NIC / passport belong to the person and live in the contact fields', () => {
         const html = blockHtml('i_sms', { record: { phone: '"><script>alert(1)</script>', nic: '\'x', sms_notifications_enabled: true } });
         expect(html).not.toContain('<script>');
-        expect(html).toContain('&lt;script&gt;');
+        expect(html).not.toContain('i_sms_phone');
+        expect(html).not.toContain('i_sms_nic');
+        expect(html).not.toContain('alert(1)');
         expect(html).toContain(' checked');
+        expect(blockHtml('i_sms', { record: { sms_notifications_enabled: false } })).not.toContain(' checked');
+    });
+    it('every id starts with the prefix, which is escaped', () => {
+        const html = blockHtml('a"b', { layer: 'A' });
+        expect(html).not.toContain('a"b');
+        expect(html).toContain('a&quot;b_on');
+        expect(html).toContain('a&quot;b_err');
     });
     it('shows the right promise for each layer, and no interest on loans', () => {
         expect(blockHtml('a', { layer: 'A' })).toContain('interest is applied');
-        const b = blockHtml('b', { layer: 'B', showPhone: false });
+        const b = blockHtml('b', { layer: 'B' });
         expect(b).toContain('never carry interest');
         expect(b).not.toContain('b_phone');
     });
-    it('has no emoji, and tells the owner about the statement link now that the page it points at exists', () => {
+    it('has no emoji, and tells the owner it works in any country and about the statement link', () => {
         for (const layer of ['A', 'B']) {
             const html = blockHtml('x', { layer });
             expect(/[\u{1F300}-\u{1FAFF}☀-➿]/u.test(html)).toBe(false);
             expect(html).toMatch(/private link to a statement page/);
             expect(html).toMatch(/one-time code/);
-            expect(html).toContain('NIC number (for the statement link)');
+            expect(html).toMatch(/any country/);
+            expect(html).toMatch(/passport/);
         }
     });
     it('reads a block back, and says null when it is not on the page', () => {
