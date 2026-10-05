@@ -83,10 +83,14 @@ describe('the markup', () => {
         expect(b).toContain('never carry interest');
         expect(b).not.toContain('b_phone');
     });
-    it('has no emoji and nothing about a link that does not exist yet', () => {
-        const html = blockHtml('x', {});
-        expect(/[\u{1F300}-\u{1FAFF}☀-➿]/u.test(html)).toBe(false);
-        expect(html).not.toMatch(/link|portal/i);
+    it('has no emoji, and tells the owner about the statement link now that the page it points at exists', () => {
+        for (const layer of ['A', 'B']) {
+            const html = blockHtml('x', { layer });
+            expect(/[\u{1F300}-\u{1FAFF}☀-➿]/u.test(html)).toBe(false);
+            expect(html).toMatch(/private link to a statement page/);
+            expect(html).toMatch(/one-time code/);
+            expect(html).toContain('NIC number (for the statement link)');
+        }
     });
     it('reads a block back, and says null when it is not on the page', () => {
         const els = { '#x_on': { checked: true }, '#x_phone': { value: '077 1' }, '#x_nic': { value: '8534' } };

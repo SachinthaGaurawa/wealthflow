@@ -54,7 +54,7 @@ describe('every notice, word for word', () => {
         [KINDS.B_DISBURSED, { ...base, amount: 50000, ref: 'DEB-1A2B3C', balance: 50000 }, `Loan LKR 50,000.00 disbursed on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 50,000.00. Statement: ${LINK}`],
         [KINDS.B_DISBURSED, { ...base, amount: 20000, ref: 'DEB-1A2B3C', balance: 70000, further: true }, `Further loan LKR 20,000.00 disbursed on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 70,000.00. Statement: ${LINK}`],
         [KINDS.B_REPAYMENT, { ...base, amount: 20000, ref: 'DEB-1A2B3C', balance: 30000 }, `Repayment LKR 20,000.00 received on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 30,000.00. Statement: ${LINK}`],
-        [KINDS.B_REPAYMENT, { ...base, amount: 30000, ref: 'DEB-1A2B3C', balance: 0, settled: true }, `Repayment LKR 30,000.00 received on 05 Oct 2026, ref DEB-1A2B3C. Loan fully settled, thank you. Statement: ${LINK}`],
+        [KINDS.B_REPAYMENT, { ...base, amount: 30000, ref: 'DEB-1A2B3C', balance: 0, settled: true }, `Repayment LKR 30,000.00 received, ref DEB-1A2B3C. Loan fully settled, thank you. Statement: ${LINK}`],      // the date is dropped: it would cost a second part
     ];
     for (const [kind, ctx, expected] of cases) {
         it(`${kind}${ctx.further ? ' (further)' : ''}${ctx.settled ? ' (settled)' : ''}`, () => {
@@ -62,7 +62,7 @@ describe('every notice, word for word', () => {
             expect(text).toBe(expected);
             const a = analyzeSms(text);
             expect(a.encoding, 'a notice must be plain GSM-7').toBe('GSM-7');
-            expect(a.segments, `${text.length} chars`).toBeLessThanOrEqual(2);
+            expect(a.segments, `${text.length} chars`).toBe(1);
         });
     }
 
@@ -133,5 +133,36 @@ describe('Sri Lankan NIC', () => {
     it('masks all but the last three characters', () => {
         expect(maskNic('853400937V')).toBe('*********937');
         expect(maskNic('x')).toBe('***');
+    });
+});
+
+describe('one part, with the statement link', () => {
+    const link = 'https://wealthflow-personal.vercel.app/t/AbCdEfGhIjKlMnOp';
+    const parts = (m) => analyzeSms(m).segments;
+
+    it('every notice with a typical amount is one part, link included', () => {
+        for (const kind of ['A.capital', 'A.interest', 'A.receipt', 'B.disbursed', 'B.repayment']) {
+            const m = buildMessage(kind, { amount: 250000, currency: 'LKR', ref: 'DEB-96E5C2', ratePct: 24, month: '2026-10', dateISO: '2026-10-05', balance: 250000, link, further: true });
+            expect(parts(m), kind).toBe(1);
+            expect(m, kind).toContain(link);
+        }
+    });
+
+    it('drops the date, and only the date, when a long amount would cost a second part', () => {
+        const ctx = { amount: 1234567.5, currency: 'LKR', ref: 'DEB-96E5C2', dateISO: '2026-10-05', balance: 1234567.5, link, further: true };
+        const m = buildMessage('B.disbursed', ctx);
+        expect(parts(m)).toBe(1);
+        expect(m).toContain(link);
+        expect(m).toContain('DEB-96E5C2');
+        expect(m).not.toContain('2026');
+        // without a link nothing is trimmed
+        expect(buildMessage('B.disbursed', { ...ctx, link: '' })).toContain('05 Oct 2026');
+    });
+
+    it('leaves a message alone when dropping the date would not save a part', () => {
+        const ctx = { amount: 123456789012.5, currency: 'LKR', ref: 'DEB-96E5C2', dateISO: '2026-10-05', balance: 123456789012.5, link, further: true };
+        const m = buildMessage('B.disbursed', ctx);
+        expect(m).toContain(link);
+        expect(parts(m)).toBeLessThanOrEqual(2);
     });
 });

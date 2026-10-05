@@ -1,0 +1,34 @@
+name: Tenant statement portal in a real browser
+on:
+  pull_request:
+    paths:
+      - tenant.html
+      - tenant-page.js
+      - tenant-page.css
+      - tenant-portal.js
+      - tenant-portal.mjs
+      - tenant-statement.mjs
+      - tenant-links.mjs
+      - wealthflow-nic.js
+      - vercel.json
+      - test/e2e/tenant-portal.mjs
+      - test/e2e/harness.mjs
+      - .github/workflows/tenant-portal.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # The page, under the Content-Security-Policy vercel.json sends, against the real endpoint over an in-memory database:
+      # NIC, code, statement, sign-out, lock-out, and no overflow on a 320 px phone.
+      - run: node test/e2e/tenant-portal.mjs

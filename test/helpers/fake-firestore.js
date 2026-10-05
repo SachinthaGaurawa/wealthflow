@@ -27,7 +27,7 @@ export function createFirestore(seed = {}) {
     }
     function query(path, filters = [], max = Infinity, after = '') {
         const rows = () => [...data.keys()]
-            .filter(key => parentOf(key) === path && (!after || idOf(key) > after) && filters.every(([field, op, value]) => (op === '==' ? data.get(key)?.[field] === value : op === 'in' ? Array.isArray(value) && value.includes(data.get(key)?.[field]) : false)))
+            .filter(key => parentOf(key) === path && (!after || idOf(key) > after) && filters.every(([field, op, value]) => (op === '==' ? data.get(key)?.[field] === value : op === 'in' ? Array.isArray(value) && value.includes(data.get(key)?.[field]) : op === '<' ? typeof data.get(key)?.[field] === 'number' && data.get(key)[field] < value : false)))
             .sort().slice(0, max).map(snapshot);
         const q = {
             isQuery: true, path,

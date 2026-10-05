@@ -26,7 +26,7 @@ rules_version = '2';
 //    wf-inbox/**                      SMS bridge relay            Admin SDK only - SEALED
 //    wf-mail/**                       Gmail statement pipeline    Admin SDK only - SEALED
 //    wf-sms/**                        text-message ledger         Admin SDK only - SEALED
-//    wf-tenants/**, wf-tenant-subjects/**  tenant portal links    Admin SDK only - SEALED
+//    wf-tenants/**, wf-tenant-subjects/**, wf-tenant-limits/**  tenant portal    Admin SDK only - SEALED
 //
 //  HOW SERVER ACCESS WORKS (this is what makes the sealed branches possible):
 //   • release-brain.js, approve-release.js, health.js and inbox-store.mjs use
@@ -254,12 +254,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // === 6c. wf-sms, wf-tenants, wf-tenant-subjects - text messages and the tenant portal ===
+    // === 6c. wf-sms, wf-tenants, wf-tenant-subjects, wf-tenant-limits - text messages and the tenant portal ===
     //  SEALED to every client, like wf-mail, and written out so that it is a decision and not an accident of the default-deny.
     //   wf-sms/{uid}/events   the send ledger (recipient number, wording, attempts) - the exactly-once record
     //   wf-sms/{uid}/quota    the day's send counters
     //   wf-tenant-subjects    which person (by an HMAC of their NIC, never the NIC) a portal link belongs to
-    //   wf-tenants            the portal's links, one-time codes and sessions
+    //   wf-tenants            the portal's links, one-time codes (as HMACs, never the code) and sessions (as hashes)
+    //   wf-tenant-limits      the portal's rate-limit counters (callers by HMAC of their address, never the address)
     //  The server reaches all of it with the Admin SDK. What the owner's page may see of the text messages is the mirror at
     //  users/{uid}/smsLog (read-only, above), which carries a MASKED number.
     match /wf-sms/{uid}/{document=**} {
@@ -269,6 +270,9 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /wf-tenant-subjects/{document=**} {
+      allow read, write: if false;
+    }
+    match /wf-tenant-limits/{document=**} {
       allow read, write: if false;
     }
 

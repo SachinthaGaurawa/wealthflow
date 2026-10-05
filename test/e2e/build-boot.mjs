@@ -87,6 +87,30 @@ export async function run({ keep = false } = {}) {
             const unhashed = seen.scripts.filter((s) => /wealthflow-/.test(s) && !/-[0-9a-f]{8}\.m?js$/.test(s));
             if (unhashed.length) failures.push('script tags still unhashed: ' + unhashed.join(', '));
 
+            /* The tenant statement page is a second entry point with its own script, which imports a RENAMED module. It is not listed in
+             * index.html, so nothing above would notice a build that left its import pointing at a name that no longer exists. */
+            {
+                const tp = await app.browser.newPage();
+                const tpErrors = [];
+                const tpFailed = [];
+                tp.on('pageerror', (e) => tpErrors.push(String((e && e.message) || e).slice(0, 200)));
+                tp.on('requestfailed', (r) => tpFailed.push(r.url()));
+                const link = '/t/AbCdEfGhIjKlMnOp';
+                await tp.route('**' + link, (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: fs.readFileSync(path.join(dir, 'tenant.html'), 'utf8') }));
+                await tp.route('**/api/tenant-portal', (route) => route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'no session' }) }));
+                await tp.goto(origin + link, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                const form = await tp.waitForSelector('#tp-nic', { timeout: 15000 }).then(() => true, () => false);
+                const src = fs.readFileSync(path.join(dir, 'tenant-page.js'), 'utf8');
+                const imported = /from\s*['"]\.\/(wealthflow-nic-[0-9a-f]{8}\.js)['"]/.exec(src);
+                await tp.close();
+                if (!form) failures.push('the built tenant page did not render its form');
+                if (!imported) failures.push('the built tenant page still imports an unhashed module');
+                else if (!fs.existsSync(path.join(dir, imported[1]))) failures.push('the built tenant page imports a file that does not exist: ' + imported[1]);
+                if (tpErrors.length) failures.push('tenant page errors: ' + tpErrors.join(' | '));
+                if (tpFailed.filter((u) => String(u).startsWith(origin)).length) failures.push('tenant page requests failed: ' + tpFailed.join(' | '));
+                console.log('  built tenant page rendered its form, importing ' + (imported ? imported[1] : 'nothing'));
+            }
+
             console.log('  built app booted: ' + seen.scripts.length + ' script tags, '
                 + (EXPECTED_GLOBALS.length - seen.missing.length) + '/' + EXPECTED_GLOBALS.length + ' modules live');
         } finally {
