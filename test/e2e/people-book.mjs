@@ -418,8 +418,10 @@ await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forE
 await reset();
 const addInvestment = async (name, company) => {
     await page.evaluate(() => { window.closeModal && window.closeModal('mdIncome'); });
+    await page.waitForFunction(() => !document.getElementById('mdIncome').classList.contains('open'), null, { timeout: 5000 });   // the form that was just saved has finished closing
     await page.evaluate(() => window.openModal('mdIncome'));
     await page.waitForSelector('#i_company');
+    await page.waitForTimeout(350);                      // the form that was just saved re-arms its autocomplete boxes 100 ms after it closes; typing sooner is lost
     await page.fill('#i_name', name);
     await page.fill('#i_company', company);
     await page.fill('#i_amount', '1,000,000');
@@ -554,6 +556,68 @@ assert.match(await page.textContent('.wfp-src .wfp-tips'), /Safari cannot open y
 assert.match(await page.textContent('.wfp-src .wfp-tips'), /touch and hold their number and choose Copy/);
 await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
 console.log('10g. iPhone            -> told exactly what to do on an iPhone');
+
+/* ── 11. a second number, and settling an investment ──────────────────────── */
+await reset();
+await openDebtor(null);
+await page.waitForSelector('#_db_phone2');
+assert.equal(await page.inputValue('#_db_phone2'), '', 'the second number starts empty and is optional');
+await page.fill('#_db_name', 'Kamal Silva');
+await page.fill('#_db_amount', '50000');
+await page.fill('#_db_phone', '077 123 4567');
+await page.fill('#_db_nic', '853400937V');
+await page.fill('#_db_phone2', '077 123 4567');
+await page.dispatchEvent('#_db_phone2', 'change');
+assert.match(await page.textContent('#_db_pv2'), /same as the first number/, 'the same number twice is called out as it is typed');
+await page.check('#_db_sms_on');
+await page.click('#_db_save');
+await page.waitForFunction(() => /same as the first/.test(document.getElementById('_db_pv2').textContent));
+assert.equal(await page.evaluate(() => DB.get('debtors').length), 0, 'the same number twice is not saved');
+await page.fill('#_db_phone2', '071 234 5678');
+await page.dispatchEvent('#_db_phone2', 'change');
+assert.match(await page.textContent('#_db_pv2'), /texts go here as well/);
+await page.click('#_db_save');
+await page.waitForFunction(() => DB.get('debtors').length === 1);
+book = await page.evaluate(() => ({ people: DB.get('people'), debtors: DB.get('debtors') }));
+assert.equal(book.debtors[0].phone2, '+94712345678', 'the second number is stored in E.164');
+assert.equal(book.debtors[0].phone, '+94771234567');
+assert.equal(book.people[0].phone2, '+94712345678', 'and filed with the person');
+console.log('11a. second number     -> same as the first refused, a real one saved in E.164 and filed with the person');
+
+// the same box on the person's own form; an edit there reaches the loan and an investment of theirs
+await page.evaluate(() => { const p = DB.get('people')[0]; DB.set('income', [{ id: 'ik', name: 'FD', company: 'Kamal Silva', amount: 1000000, rate: 12, start: '2026-01-01', end: '', freq: 'monthly', day: '2026-01-01', monthly: 10000, notes: '', phone: p.phone, nic: p.nic, personId: p.id, phone2: p.phone2, createdAt: new Date().toISOString() }]); WFPeople.openHub('people'); });
+await page.waitForSelector('.wfp-hub .wfp-card:has-text("Kamal")');
+await page.click('.wfp-hub .wfp-card:has-text("Kamal")');
+await page.waitForSelector('#_pp_phone2');
+assert.equal(await page.inputValue('#_pp_phone2'), '+94 71 234 5678');
+await page.fill('#_pp_phone2', '+44 7911 123456');
+await page.click('.wfp-hub [data-h="save"]');
+await page.waitForSelector('.wfp-hub [data-h="savego"]');
+await page.click('.wfp-hub [data-h="savego"]');
+await page.waitForFunction(() => DB.get('debtors')[0].phone2 === '+447911123456' && DB.get('income')[0].phone2 === '+447911123456');
+console.log('11b. edit in the book  -> the loan and the investment have the new second number');
+await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
+
+// settling an investment from its card: asks first, closes, moves to Ended; Re-open puts it back
+await page.evaluate(() => { window.renderIncome(); });
+await page.waitForSelector('#incomeList [title="Fully settled"]', { state: 'attached' });
+await page.evaluate(() => document.querySelector('#incomeList [title="Fully settled"]').click());
+await page.waitForSelector('#mdConfirm.open, #mdConfirm.show, #mdConfirm[style*="flex"], #confBtn', { state: 'attached' });
+assert.match(await page.textContent('#confDet'), /moves to Ended/, 'it says what closing does before doing it');
+await page.evaluate(() => document.getElementById('confBtn').click());
+await page.waitForFunction(() => Number((DB.get('income')[0] || {}).closedAt) > 0);
+const closed = await page.evaluate(() => ({ rec: DB.get('income')[0], today: window.WFWhen.today() }));
+assert.equal(closed.rec.end, closed.today, 'the end date is today');
+assert.equal(closed.rec.closedEndWas, '', 'the end date it had is kept');
+assert.match(await page.textContent('#incomeList'), /Settled/, 'it is listed as settled');
+console.log('11c. settle & close    -> asked first, stamped, ended today, listed as Settled');
+await page.evaluate(() => document.querySelector('#incomeList [title="Re-open"]').click());
+await page.waitForFunction(() => !(DB.get('income')[0] || {}).closedAt);
+const reopened = await page.evaluate(() => DB.get('income')[0]);
+assert.equal(reopened.end, '', 'the end date comes back');
+assert.equal(reopened.closedEndWas, undefined);
+console.log('11d. re-open           -> running again, end date restored');
+await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
 
 assert.deepEqual(errors, [], 'no uncaught page errors: ' + errors.join(' | '));
 console.log('the saved-people book behaves on the real page');

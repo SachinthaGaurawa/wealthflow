@@ -36,6 +36,8 @@ export const KINDS = Object.freeze({
     B_REPAYMENT: 'B.repayment',      // a repayment acknowledged
     B_LATE: 'B.late',                // a payment is late: the date the debtor was expected to pay by has passed and money is still owing (opt-in)
     B_BALANCE: 'B.balance',          // the owner asked for the current balance to be sent (a part payment was agreed, or they asked)
+    B_CLOSED: 'B.closed',            // the loan is fully settled: a text of its own, after the receipt for the payment that settled it
+    A_CLOSED: 'A.closed',            // the owner closed the investment as fully settled
     OTP: 'otp',                    // the portal's one-time code
 });
 
@@ -97,7 +99,7 @@ export function asciiOnly(text) {
 
 /**
  * The text for one notice.
- * ctx: { amount, currency, ref, dateISO, month, ratePct, balance, link, settled, further }
+ * ctx: { amount, currency, ref, dateISO, month, ratePct, balance, link, further }
  */
 function render(kind, ctx) {
     const cur = currencyOf(ctx.currency);
@@ -121,9 +123,15 @@ function render(kind, ctx) {
         text = `${ctx.further ? 'Further loan' : 'Loan'} ${amt} disbursed${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}, ref ${ref}. Balance ${fmtMoney(ctx.balance, cur)}.${tail(link)}`;
         break;
     case KINDS.B_REPAYMENT:
-        text = ctx.settled
-            ? `Repayment ${amt} received${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}, ref ${ref}. Loan fully settled, thank you.${tail(link)}`
-            : `Repayment ${amt} received${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}, ref ${ref}. Balance ${fmtMoney(ctx.balance, cur)}.${tail(link)}`;
+        // The payment that settles a loan is acknowledged like any other (the balance is simply nothing); that the loan is closed is the
+        // next text's news (B_CLOSED), so the person is not told the same thing twice.
+        text = `Repayment ${amt} received${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}, ref ${ref}. Balance ${fmtMoney(ctx.balance, cur)}.${tail(link)}`;
+        break;
+    case KINDS.B_CLOSED:
+        text = `Loan ref ${ref} is fully settled and closed${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}. Thank you.${tail(link)}`;
+        break;
+    case KINDS.A_CLOSED:
+        text = `Investment ref ${ref} is fully settled and closed${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}. Thank you.${tail(link)}`;
         break;
     case KINDS.B_LATE:
         text = `Reminder: ${fmtMoney(ctx.balance, cur)} is still outstanding, due ${fmtDay(ctx.dateISO) || 'earlier'}, ref ${ref}.${tail(link)}`;

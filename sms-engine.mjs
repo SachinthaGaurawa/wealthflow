@@ -362,10 +362,21 @@ async function dueIds({ db, uid, now }) {
         for (const doc of snap.docs) {
             const d = doc.data() || {};
             const due = status === STATUS.QUEUED ? num(d.nextAttemptAt) <= now : num(d.leaseUntil) <= now;
-            if (due) out.push({ id: doc.id, at: num(d.occurredAt) });
+            if (due) out.push({ id: doc.id, at: num(d.occurredAt), to: s(d.toHash) });
         }
     }
-    return out.sort((a, b) => a.at - b.at).map((x) => x.id);
+    return out.sort((a, b) => a.at - b.at);
+}
+
+/**
+ * The due texts, grouped by who they go to, each group oldest first. A person's texts are sent one after the other so they arrive in the order
+ * they happened (the repayment receipt before the "loan closed" text that follows it); different people, and a person's second number, are
+ * sent side by side.
+ */
+function dueGroups(due) {
+    const groups = new Map();
+    for (const x of due) { if (!groups.has(x.to)) groups.set(x.to, []); groups.get(x.to).push(x.id); }
+    return [...groups.values()];
 }
 
 /** Write the owner's status card: what is switched on but cannot work, whether the gateway is configured, whether credit is low. */
@@ -390,14 +401,16 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
     summary.enqueued = await enqueue({ db, uid, events, now, env, deps });
 
     if (client.configured) {
-        const ids = await dueIds({ db, uid, now });
-        await pool(ids, CONCURRENCY, async (id) => {
-            if (clock() - startedAt > budgetMs) { summary.remaining += 1; return; }
-            const claimed = await claim({ db, uid, id, now });
-            if (!claimed) return;
-            if (claimed.expired) { await mirror(db, uid, id, mirrorOf(claimed.doc), now); return; }
-            const outcome = await deliver({ db, uid, id, doc: claimed.doc, client, now, limits, deps });
-            summary[outcome] += 1;
+        const groups = dueGroups(await dueIds({ db, uid, now }));
+        await pool(groups, CONCURRENCY, async (ids) => {
+            for (const id of ids) {
+                if (clock() - startedAt > budgetMs) { summary.remaining += 1; continue; }
+                const claimed = await claim({ db, uid, id, now });
+                if (!claimed) continue;
+                if (claimed.expired) { await mirror(db, uid, id, mirrorOf(claimed.doc), now); continue; }
+                const outcome = await deliver({ db, uid, id, doc: claimed.doc, client, now, limits, deps });
+                summary[outcome] += 1;
+            }
         });
     }
     await writeStatus({ db, uid, issues, configured: client.configured, units: deps.units === undefined ? null : deps.units, now });

@@ -54,7 +54,9 @@ describe('every notice, word for word', () => {
         [KINDS.B_DISBURSED, { ...base, amount: 50000, ref: 'DEB-1A2B3C', balance: 50000 }, `Loan LKR 50,000.00 disbursed on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 50,000.00. Statement: ${LINK}`],
         [KINDS.B_DISBURSED, { ...base, amount: 20000, ref: 'DEB-1A2B3C', balance: 70000, further: true }, `Further loan LKR 20,000.00 disbursed on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 70,000.00. Statement: ${LINK}`],
         [KINDS.B_REPAYMENT, { ...base, amount: 20000, ref: 'DEB-1A2B3C', balance: 30000 }, `Repayment LKR 20,000.00 received on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 30,000.00. Statement: ${LINK}`],
-        [KINDS.B_REPAYMENT, { ...base, amount: 30000, ref: 'DEB-1A2B3C', balance: 0, settled: true }, `Repayment LKR 30,000.00 received, ref DEB-1A2B3C. Loan fully settled, thank you. Statement: ${LINK}`],      // the date is dropped: it would cost a second part
+        [KINDS.B_REPAYMENT, { ...base, amount: 30000, ref: 'DEB-1A2B3C', balance: 0, settled: true }, `Repayment LKR 30,000.00 received on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 0.00. Statement: ${LINK}`],      // the final receipt is a receipt: that the loan is closed is the next text
+        [KINDS.B_CLOSED, { ...base, ref: 'DEB-1A2B3C', balance: 0 }, `Loan ref DEB-1A2B3C is fully settled and closed on 05 Oct 2026. Thank you. Statement: ${LINK}`],
+        [KINDS.A_CLOSED, { ...base }, `Investment ref INV-3F9A2B is fully settled and closed on 05 Oct 2026. Thank you. Statement: ${LINK}`],
     ];
     cases.push(
         [KINDS.B_BALANCE, { ...base, ref: 'DEB-1A2B3C', balance: 30000 }, `Balance LKR 30,000.00 as at 05 Oct 2026, ref DEB-1A2B3C. Statement: ${LINK}`],

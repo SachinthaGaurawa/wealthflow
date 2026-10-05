@@ -7,8 +7,8 @@ Text.lk HTTP API v3 (`https://app.text.lk/api/v3/`).
 
 | Layer | Where the switch is | Messages |
 | --- | --- | --- |
-| A | Investments tab, investment form | capital recorded, monthly interest applied, a payment received |
-| B | Liquidity & Credit Hub, debtor form | loan paid out (first advance and further advances), repayment confirmed (with the balance that is left), balance on request |
+| A | Investments tab, investment form | capital recorded, monthly interest applied, a payment received, the investment settled and closed |
+| B | Liquidity & Credit Hub, debtor form | loan paid out (first advance and further advances), repayment confirmed (with the balance that is left), balance on request, the loan settled and closed |
 
 Any country, any person: the number is stored as an international (E.164) number, with a country picked from a list of 240+
 countries (default Sri Lanka, changed once under **Saved people**), and a person with no Sri Lankan NIC is identified by a passport or
@@ -25,7 +25,7 @@ one that is un-confirmed before its text goes, sends nothing.
 ### A debtor who pays in parts
 
 Every confirmed repayment text carries the balance that is left, so a part payment says how much remains:
-`Repayment LKR 20,000.00 received on 05 Oct 2026, ref DEB-8E4EF6. Balance LKR 30,000.00. Statement: <link>`. The final one says the loan is settled.
+`Repayment LKR 20,000.00 received on 05 Oct 2026, ref DEB-8E4EF6. Balance LKR 30,000.00. Statement: <link>`. The payment that settles the loan is acknowledged the same way (`Balance LKR 0.00`); that the loan is closed is a text of its own, below.
 
 On the debtor's card:
 
@@ -37,6 +37,24 @@ On the debtor's card:
   never names an amount or a recipient. A second tap within ten minutes is refused before any question is asked (a text costs a unit).
   The text is written when it is queued, so a request that cannot go out within half an hour (no credit, a rejected token) is dropped and the
   message log says so, rather than sent later with a figure that has moved.
+
+### Settled and closed (a text of its own)
+
+* **A loan** is closed when a *confirmed* repayment brings the balance to nothing after money was lent. The server derives it from the books
+  (key `B:<loan>:<payment>:closed`), so it needs no button and cannot be sent for a payment the owner has not confirmed. It goes after the
+  receipt for that payment, never before it. A loan that is borrowed on again and settled again is closed again.
+* **An investment** is closed by the owner: **Settle & close** on its card (it asks first). That stamps `closedAt`, brings the end date to today when it
+  was empty or ahead (the date it had is kept for **Re-open**) and moves the investment to Ended. The server sends one text keyed by that stamp
+  (`A:<investment>:closed:<closedAt>`) and announces no interest for a day after it. Re-opening and closing again is a new stamp, so a new text.
+* Both read `Loan ref … is fully settled and closed on <date>. Thank you.` (or `Investment ref …`). Each costs one text unit, like any other.
+
+### A second number (optional)
+
+Every person, loan and investment can carry a second mobile number (`phone2`). Every text then goes to **both** numbers: the ledger holds one entry per
+number (the second keyed `<key>:2`), so a failure on one never blocks or repeats the other, and the receipt always leaves before the closing text. The second
+number has to be a real mobile number and not the first one again (the form says so). It is saved in E.164 like the first, shared with the saved person
+like the first, and shown in the message log as "(second number)". The tenant statement's one-time code goes to the **first** number only. Because each text
+is sent per number, a second number doubles the units a record uses.
 
 ### Late-payment reminders (optional, per debtor)
 

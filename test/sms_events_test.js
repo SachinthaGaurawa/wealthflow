@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { deriveEvents, nextSendWindow, periodInterest, interestApplies, hasSmsRecords, GRACE_MS, MAX_AGE_MS, REQUEST_WINDOW_MS, REQUESTS_READ, REMINDER_OFFSETS_DAYS, REMINDER_WINDOW_MS, REMINDER_SHELF_MS, FIELDS, LAYER } from '../sms-events.mjs';
 import { KINDS } from '../sms-templates.mjs';
+import { utcOffsetOf } from '../wealthflow-phone.js';
 
 const T = (iso) => Date.parse(iso);
 const DAY = 86400000;
@@ -459,5 +460,217 @@ describe('late-payment reminders (opt-in, a debtor only)', () => {
         const waiting = { id: 'e8', kind: 'repayment', amount: 50000, date: '2026-10-10', confirmed: false, at: T('2026-10-10T09:00:00Z') };
         const user = late({ [FIELDS.REQUESTS]: [{ id: 'req-1', at: T('2026-10-11T04:50:00Z') }] }, [lent, waiting]);
         expect(deriveEvents(user, T('2026-10-11T05:00:00Z')).events.filter((e) => e.kind === KINDS.B_BALANCE)).toHaveLength(1);
+    });
+});
+
+describe('closing: a separate text when a loan is fully settled or an investment is closed', () => {
+    const lent = { id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-05', confirmed: true, at: T('2026-10-05T09:00:00Z') };
+    const part = { id: 'e2', kind: 'repayment', amount: 20000, date: '2026-10-06', confirmed: true, at: T('2026-10-06T09:00:00Z') };
+    const last = { id: 'e3', kind: 'repayment', amount: 30000, date: '2026-10-07', confirmed: true, at: T('2026-10-07T09:00:00Z') };
+    const now = T('2026-10-07T10:00:00Z');
+    const keys = (r) => r.events.map((e) => e.key);
+
+    it('the repayment that brings the balance to nothing is acknowledged AND followed by its own closing text', () => {
+        const r = deriveEvents({ debtors: [debtor({ events: [lent, part, last] })] }, now);
+        expect(keys(r)).toEqual(['B:d1:e1:out', 'B:d1:e2:in', 'B:d1:e3:in', 'B:d1:e3:closed']);
+        const receipt = r.events.find((e) => e.key === 'B:d1:e3:in');
+        const closed = r.events.find((e) => e.key === 'B:d1:e3:closed');
+        expect(closed).toMatchObject({ kind: KINDS.B_CLOSED, layer: LAYER.B, recordKind: 'debtor', recordId: 'd1', balance: 0, phone: '+94771234567', scheduled: false, dateISO: '2026-10-07', subject: { nic: '198534000937' } });
+        expect(closed.occurredAt).toBe(receipt.occurredAt + 1);                  // after the receipt, never before it
+    });
+
+    it('a part payment closes nothing', () => {
+        expect(keys(deriveEvents({ debtors: [debtor({ events: [lent, part] })] }, now))).toEqual(['B:d1:e1:out', 'B:d1:e2:in']);
+    });
+
+    it('a final repayment nobody has confirmed is neither acknowledged nor called a closing: the books do not say so yet', () => {
+        const r = deriveEvents({ debtors: [debtor({ events: [lent, part, { ...last, confirmed: false }] })] }, now);
+        expect(keys(r)).toEqual(['B:d1:e1:out', 'B:d1:e2:in']);
+    });
+
+    it('confirming it later is what makes the closing news, once', () => {
+        const confirmedLate = { ...last, confirmedAt: T('2026-10-09T08:00:00Z') };
+        const r = deriveEvents({ debtors: [debtor({ events: [lent, part, confirmedLate] })] }, T('2026-10-09T10:00:00Z'));
+        expect(r.events.find((e) => e.key === 'B:d1:e3:closed').occurredAt).toBe(T('2026-10-09T08:00:00Z') + 1);
+    });
+
+    it('borrowing again and settling again is a second closing, with its own key', () => {
+        const again = { id: 'e4', kind: 'lent', amount: 10000, date: '2026-10-08', confirmed: true, at: T('2026-10-08T09:00:00Z') };
+        const back = { id: 'e5', kind: 'repayment', amount: 10000, date: '2026-10-09', confirmed: true, at: T('2026-10-09T09:00:00Z') };
+        const r = deriveEvents({ debtors: [debtor({ events: [lent, part, last, again, back] })] }, T('2026-10-09T10:00:00Z'));
+        expect(keys(r).filter((k) => k.endsWith(':closed'))).toEqual(['B:d1:e3:closed', 'B:d1:e5:closed']);
+    });
+
+    it('a loan that was already settled before the texts were switched on is history, not news', () => {
+        const d = debtor({ [FIELDS.ENABLED_AT]: T('2026-10-08T00:00:00Z'), events: [lent, part, last] });
+        expect(deriveEvents({ debtors: [d] }, T('2026-10-08T10:00:00Z')).events).toEqual([]);
+    });
+
+    it('the same books and clock give the same closing, run after run', () => {
+        const user = { debtors: [debtor({ events: [lent, part, last] })] };
+        expect(JSON.stringify(deriveEvents(user, now))).toBe(JSON.stringify(deriveEvents(user, now)));
+    });
+
+    it('the final receipt no longer says "settled": that is the closing text\'s job', async () => {
+        const { buildMessage } = await import('../sms-templates.mjs');
+        const msg = buildMessage(KINDS.B_REPAYMENT, { amount: 30000, currency: 'LKR', ref: 'DEB-1A2B3C', dateISO: '2026-10-07', balance: 0, settled: true });
+        expect(msg).toBe('Repayment LKR 30,000.00 received on 07 Oct 2026, ref DEB-1A2B3C. Balance LKR 0.00.');
+        expect(buildMessage(KINDS.B_CLOSED, { currency: 'LKR', ref: 'DEB-1A2B3C', dateISO: '2026-10-07', link: 'https://wealthflow-personal.vercel.app/t/AbCdEfGhIjKlMnOp' }))
+            .toBe('Loan ref DEB-1A2B3C is fully settled and closed on 07 Oct 2026. Thank you. Statement: https://wealthflow-personal.vercel.app/t/AbCdEfGhIjKlMnOp');
+        expect(buildMessage(KINDS.A_CLOSED, { currency: 'LKR', ref: 'INV-3F9A2B', dateISO: '2026-10-07' }))
+            .toBe('Investment ref INV-3F9A2B is fully settled and closed on 07 Oct 2026. Thank you.');
+    });
+
+    describe('an investment', () => {
+        const closedAt = T('2026-10-10T08:00:00Z');
+        const closedOn = (over = {}) => ({ income: [investment({ closedAt, end: '2026-10-10', ...over })] });
+        const asOf = T('2026-10-10T10:00:00Z');
+
+        it('closed by the owner: one closing text, keyed by the moment it was closed', () => {
+            const r = deriveEvents(closedOn(), asOf);
+            const c = r.events.find((e) => e.kind === KINDS.A_CLOSED);
+            expect(c).toMatchObject({ key: `A:inv1:closed:${closedAt}`, layer: LAYER.A, recordKind: 'investment', recordId: 'inv1', occurredAt: closedAt, phone: '+94771234567', scheduled: false, dateISO: '2026-10-10', subject: { nic: '198534000937' } });
+        });
+
+        it('not closed, no text', () => {
+            expect(deriveEvents({ income: [investment()] }, asOf).events.some((e) => e.kind === KINDS.A_CLOSED)).toBe(false);
+        });
+
+        it('re-opened (the stamp removed) and closed again later is a second closing', () => {
+            const second = T('2026-10-20T08:00:00Z');
+            const a = deriveEvents(closedOn(), asOf).events.find((e) => e.kind === KINDS.A_CLOSED).key;
+            const b = deriveEvents(closedOn({ closedAt: second }), T('2026-10-20T10:00:00Z')).events.find((e) => e.kind === KINDS.A_CLOSED).key;
+            expect(a).not.toBe(b);
+        });
+
+        it('an investment that was already closed before the texts were switched on is history', () => {
+            const r = deriveEvents(closedOn({ [FIELDS.ENABLED_AT]: T('2026-10-11T00:00:00Z') }), T('2026-10-11T10:00:00Z'));
+            expect(r.events.some((e) => e.kind === KINDS.A_CLOSED)).toBe(false);
+        });
+
+        it('a closing stamp from the future (a phone with the wrong date) is not honoured', () => {
+            const r = deriveEvents(closedOn({ closedAt: asOf + 3 * DAY }), asOf);
+            expect(r.events.some((e) => e.kind === KINDS.A_CLOSED)).toBe(false);
+        });
+
+        it('no interest is announced for a day after the closing, even when the end date was not moved', () => {
+            const late = T('2026-10-20T10:00:00Z');
+            const keysOf = (rec) => deriveEvents({ income: [rec] }, late).events.filter((e) => e.kind === KINDS.A_INTEREST).map((e) => e.key);
+            expect(keysOf(investment())).toContain('A:inv1:int:2026-10');                                // running: the 15th is owed
+            expect(keysOf(investment({ closedAt }))).toEqual([]);                                        // closed on the 10th: it is not
+            expect(keysOf(investment({ closedAt: T('2026-10-16T08:00:00Z') }))).toContain('A:inv1:int:2026-10');   // closed after the 15th: that one was owed
+        });
+
+        it('a text is never owed for a closure with a garbage stamp', () => {
+            for (const bad of ['yesterday', -5, 0, null, {}, NaN]) {
+                expect(deriveEvents(closedOn({ closedAt: bad }), asOf).events.some((e) => e.kind === KINDS.A_CLOSED), String(bad)).toBe(false);
+            }
+        });
+    });
+});
+
+describe('a second number (optional): every text goes to both', () => {
+    const lent = { id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-05', confirmed: true, at: T('2026-10-05T09:00:00Z') };
+    const now = T('2026-10-05T10:00:00Z');
+    const to = (r) => r.events.map((e) => `${e.key}>${e.phone}`);
+
+    it('a debtor with a second number is texted on both, under keys of their own', () => {
+        const r = deriveEvents({ debtors: [debtor({ phone2: '+94712345678', events: [lent] })] }, now);
+        expect(to(r)).toEqual(['B:d1:e1:out>+94771234567', 'B:d1:e1:out:2>+94712345678']);
+        expect(r.events[1]).toMatchObject({ kind: KINDS.B_DISBURSED, amount: 50000, balance: 50000, subject: { nic: '198534000937' }, tzMin: 330 });
+        expect(r.issues).toEqual([]);
+    });
+
+    it('so is an investor', () => {
+        const created = T('2026-10-05T09:58:00Z');
+        const r = deriveEvents({ income: [investment({ phone2: '+94712345678', start: '2026-10-05', day: '2026-10-05', createdAt: new Date(created).toISOString(), [FIELDS.ENABLED_AT]: created + 2000 })] }, now);
+        expect(to(r)).toEqual(['A:inv1:created>+94771234567', 'A:inv1:created:2>+94712345678']);
+    });
+
+    it('the second number may be in another country, and a scheduled text waits for ITS morning', () => {
+        const user = { income: [investment({ phone2: '+14155552671', [FIELDS.ENABLED_AT]: T('2026-10-01T00:00:00Z') })] };
+        const r = deriveEvents(user, T('2026-10-16T10:00:00Z'));
+        const a = r.events.find((e) => e.kind === KINDS.A_INTEREST && e.key.endsWith(':2'));
+        const p = r.events.find((e) => e.kind === KINDS.A_INTEREST && !e.key.endsWith(':2'));
+        expect(a.phone).toBe('+14155552671');
+        expect(a.tzMin).toBe(utcOffsetOf('+14155552671'));
+        expect(a.tzMin).not.toBe(330);
+        expect(a.notBefore).toBe(nextSendWindow(a.occurredAt, a.tzMin));
+        expect(p.notBefore).toBe(nextSendWindow(p.occurredAt, 330));
+        expect(a.scheduled).toBe(true);
+    });
+
+    it('a second number that cannot receive is reported and the first number is still texted', () => {
+        const r = deriveEvents({ debtors: [debtor({ phone2: '+94112345678', events: [lent] })] }, now);
+        expect(to(r)).toEqual(['B:d1:e1:out>+94771234567']);
+        expect(r.issues).toEqual([{ recordKind: 'debtor', recordId: 'd1', reason: 'phone2-not-a-mobile-number' }]);
+    });
+
+    it('the same number twice is one text', () => {
+        const r = deriveEvents({ debtors: [debtor({ phone2: '+94771234567', events: [lent] })] }, now);
+        expect(to(r)).toEqual(['B:d1:e1:out>+94771234567']);
+        expect(r.issues).toEqual([]);
+    });
+
+    it('no second number: the keys are exactly what they always were', () => {
+        expect(deriveEvents({ debtors: [debtor({ events: [lent] })] }, now).events.map((e) => e.key)).toEqual(['B:d1:e1:out']);
+        expect(deriveEvents({ debtors: [debtor({ phone2: '', events: [lent] })] }, now).events.map((e) => e.key)).toEqual(['B:d1:e1:out']);
+    });
+
+    it('a second number without a usable first sends nothing: the first number is the one the person is known by', () => {
+        const r = deriveEvents({ debtors: [debtor({ phone: '', phone2: '+94712345678', events: [lent] })] }, now);
+        expect(r.events).toEqual([]);
+        expect(r.issues).toEqual([{ recordKind: 'debtor', recordId: 'd1', reason: 'no-phone' }]);
+    });
+
+    it('the closing text and a balance on request go to both as well', () => {
+        const full = { id: 'e2', kind: 'repayment', amount: 50000, date: '2026-10-05', confirmed: true, at: T('2026-10-05T09:30:00Z') };
+        const r = deriveEvents({ debtors: [debtor({ phone2: '+94712345678', events: [lent, full] })] }, now);
+        expect(to(r).filter((k) => k.includes(':closed'))).toEqual(['B:d1:e2:closed>+94771234567', 'B:d1:e2:closed:2>+94712345678']);
+    });
+
+    describe('a number added later is not sent the past', () => {
+        const rep1 = { id: 'e2', kind: 'repayment', amount: 10000, date: '2026-10-02', confirmed: true, at: T('2026-10-02T09:00:00Z') };
+        const rep2 = { id: 'e3', kind: 'repayment', amount: 10000, date: '2026-10-05', confirmed: true, at: T('2026-10-05T09:30:00Z') };
+        const base = (over = {}) => ({ debtors: [debtor({ events: [lent, rep1, rep2], ...over })] });
+
+        it('only what happened since it was added goes to it; the first number is unaffected', () => {
+            const r = deriveEvents(base({ phone2: '+94712345678', [FIELDS.PHONE2_AT]: T('2026-10-05T09:15:00Z') }), now);
+            expect(to(r).filter((k) => k.includes('+94771234567')).length).toBe(3);
+            expect(to(r).filter((k) => k.includes('+94712345678'))).toEqual(['B:d1:e3:in:2>+94712345678']);
+        });
+
+        it('added in the same save as the switch, it is treated exactly as the first number is (no stamp: from when the texts went on)', () => {
+            const r = deriveEvents(base({ phone2: '+94712345678' }), now);
+            expect(to(r).filter((k) => k.endsWith('>+94712345678'))).toEqual(to(r).filter((k) => k.endsWith('>+94771234567')).map((k) => k.replace('>+94771234567', ':2>+94712345678')));
+        });
+
+        it('a stamp older than the switch does not reach back past the switch', () => {
+            const r = deriveEvents(base({ phone2: '+94712345678', [FIELDS.PHONE2_AT]: T('2026-09-01T00:00:00Z'), [FIELDS.ENABLED_AT]: T('2026-10-05T09:15:00Z') }), now);
+            expect(to(r).filter((k) => k.endsWith('>+94712345678'))).toEqual(['B:d1:e3:in:2>+94712345678']);
+        });
+
+        it('an interest notice is judged by its day: one due on the day the number was added is still owed to it', () => {
+            const user = { income: [investment({ phone2: '+94712345678', [FIELDS.ENABLED_AT]: T('2026-10-01T00:00:00Z'), [FIELDS.PHONE2_AT]: T('2026-10-15T16:00:00Z') })] };
+            const r = deriveEvents(user, T('2026-10-16T10:00:00Z'));
+            expect(r.events.filter((e) => e.kind === KINDS.A_INTEREST && e.key.endsWith(':2')).map((e) => e.key)).toEqual(['A:inv1:int:2026-10:2']);
+            const before = deriveEvents({ income: [investment({ phone2: '+94712345678', [FIELDS.ENABLED_AT]: T('2026-10-01T00:00:00Z'), [FIELDS.PHONE2_AT]: T('2026-10-16T01:00:00Z') })] }, T('2026-10-16T10:00:00Z'));
+            expect(before.events.filter((e) => e.key.endsWith(':2'))).toEqual([]);                    // added the day after the 15th: that month's interest was already told to the first number alone
+        });
+
+        it('a stamp from a phone with the wrong date does not silence the number for ever', () => {
+            const r = deriveEvents(base({ phone2: '+94712345678', [FIELDS.PHONE2_AT]: now + 30 * DAY }), now);
+            expect(Array.isArray(r.events)).toBe(true);
+            expect(to(r).filter((k) => k.endsWith('>+94771234567')).length).toBe(3);
+        });
+    });
+
+    it('a reminder\'s shelf life follows the second number\'s own window', () => {
+        const d = debtor({ phone2: '+14155552671', dueISO: '2026-10-02', [FIELDS.REMIND]: true, [FIELDS.REMIND_AT]: T('2026-10-01T00:00:00Z'), events: [{ ...lent, date: '2026-10-01', at: T('2026-10-01T09:00:00Z') }] });
+        const r = deriveEvents({ debtors: [d] }, T('2026-10-03T10:00:00Z'));
+        const p = r.events.find((e) => e.kind === KINDS.B_LATE && !e.key.endsWith(':2'));
+        const t = r.events.find((e) => e.kind === KINDS.B_LATE && e.key.endsWith(':2'));
+        expect(t).toBeTruthy();
+        expect(t.maxAgeMs - (t.notBefore - t.occurredAt)).toBe(p.maxAgeMs - (p.notBefore - p.occurredAt));    // the same 24 hours, counted from each one's own window
     });
 });

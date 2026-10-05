@@ -311,7 +311,9 @@ export const BUDGETS = {
     // 2026-10-05 (a debtor who pays in parts is told the balance): 2,209,500 -> 2_216_000 (measured 2,213,525 + ~0.1% headroom). The Log repayment form shows the balance that will be left (and calls out a figure larger than is owed),
     // can count a payment at once when the owner can already see the money and says what the debtor will be texted; Send balance asks first, writes one request on the debtor and refuses a second tap for ten minutes; the two confirmation
     // toasts say a text is queued. About a third is comments.
-    htmlBytes: 2_216_000,
+    // 2026-10-05 (a second number, and Settle & close on an investment): 2,216,000 -> 2_219_000 (measured 2,217,148 + ~0.1% headroom). saveIncome and the debtor form carry and check the second number; the investment card gets a
+    // Settle & close / Re-open button and a Settled badge, and the Ended list counts a closed investment. About a third is comments.
+    htmlBytes: 2_219_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -633,7 +635,9 @@ export const BUDGETS = {
     // 2026-10-05 (people book: investors filed automatically, edits reach every record, contacts import on every device): 2,419,000 -> 2_445_000 (measured 2,442,881 + ~0.1% headroom). wealthflow-people.js carries the
     // one-rule propagation/repair, the vCard/CSV/pasted-text parsers and the per-OS detection; wealthflow-people-ui.js the contact source sheet with on-screen steps for each device; wealthflow-phone.js the input cleaner
     // (copied numbers arrive with tel: prefixes, direction marks and non-Latin digits). About a third is comments.
-    totalJsBytes: 2_445_000,
+    // 2026-10-05 (a second number, and Settle & close): 2,445,000 -> 2_456_000 (measured 2,453,842 + ~0.1% headroom). The contact fields carry the optional second number with its own live line and Contacts button, the book shares it
+    // with every record of the person, and wealthflow-sms.js closes and re-opens an investment.
+    totalJsBytes: 2_456_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     largestModuleBytes: 233_000, // measured 232,325

@@ -18486,7 +18486,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const rec = { id: editMode || uid(), createdAt: prevRec.createdAt || new Date().toISOString(), name, company, amount, rate, start: $('i_start').value, end: $('i_end').value, freq, day: $('i_day').value, monthly: override || calc, notes: $('i_notes').value };
             /* The record is rebuilt from the form, so what the form does not show is carried over by hand — otherwise saving an edit would switch the
              * text messages off and forget who they go to. */
-            ['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'nic', 'personId'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });
+            ['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'phone2', 'phone2_at', 'nic', 'personId', 'closedAt', 'closedEndWas'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });
             /* The investor, when this is a person: country, number and NIC / passport are checked together and shown against the fields they belong to. */
             const WP = window.WFPeople;
             let contact = null;
@@ -18497,16 +18497,20 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 if (contact && !contact.ok) { openContact(); notify(Object.values(contact.errors)[0], 'error'); return; }
                 if (contact) {
                     if (contact.phone) rec.phone = contact.phone; else delete rec.phone;
+                    if (contact.phone2) rec.phone2 = contact.phone2; else { delete rec.phone2; delete rec.phone2_at; }
                     if (contact.nic) rec.nic = contact.nic; else delete rec.nic;
                     if (contact.personId) rec.personId = contact.personId; else delete rec.personId;
                 }
                 if (form) {
-                    const sms = WFSms.applyToggle(prevRec, { enabled: form.enabled, phone: contact ? contact.phone : (rec.phone || ''), country: contact ? contact.country : undefined, nic: contact ? contact.nic : (rec.nic || ''), idKind: contact ? contact.idKind : undefined }, Date.now());
+                    const sms = WFSms.applyToggle(prevRec, { enabled: form.enabled, phone: contact ? contact.phone : (rec.phone || ''), phone2: contact && form.enabled && contact.phone2 ? contact.phone2 : undefined, country: contact ? contact.country : undefined, nic: contact ? contact.nic : (rec.nic || ''), idKind: contact ? contact.idKind : undefined }, Date.now());
                     if (!sms.ok) { if (WP) WP.showErrors(document, 'i', sms.errors); WFSms.showBlockErrors(document, 'i_sms', sms.errors); openContact(); notify(Object.values(sms.errors)[0], 'error'); return; }
                     WFSms.showBlockErrors(document, 'i_sms', {});
                     Object.assign(rec, sms.fields);
                 }
             } catch (e) { console.warn('[saveIncome] sms fields:', e && e.message); }
+            /* A settled investment has ended: an end date that is empty or ahead is brought back to today (the date it had is kept for Re-open), so an
+             * edit cannot leave it counted as running. */
+            if (Number(rec.closedAt) > 0 && (!rec.end || rec.end > today())) { rec.closedEndWas = rec.end || ''; rec.end = today(); notify('This investment is settled, so it ends today. Use Re-open to run it again.', 'info'); }
             /* The rest runs once the people step is done: it may ask the owner one question (update the saved person everywhere, or this record only), and
              * it writes a changed name / number / NIC onto the person's OTHER records, so the ledger is read for the write only afterwards. */
             const commit = () => {
@@ -18593,6 +18597,24 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             showConfirm('🗑️', 'Delete Income Source?', 'This cannot be undone.', 'btn-danger', '🗑️ Delete', () => {
                 DB.set('income', DB.get('income').filter(x => x.id !== id)); renderIncome(); renderDash(); notify('Deleted', 'info');
             });
+        }
+        /* An investment that has been paid out in full is CLOSED: stamped (the server sends one "fully settled" text for it when texts are on), moved to
+         * Ended with today as its end date, and re-openable. The record is rebuilt by WFSms.closeInvestment / reopenInvestment; nothing is deleted. */
+        function settleInvestment(id) {
+            const s = (DB.get('income') || []).find(x => x.id === id); if (!s || !window.WFSms) return;
+            const texts = s.sms_notifications_enabled === true;
+            showConfirm('✅', 'Mark this investment as fully settled?', 'It moves to Ended and no more interest is expected from it. You can re-open it later.' + (texts ? ' The investor is sent one text saying it is settled and closed' + (s.phone2 ? ' (to both of their numbers).' : '.') : ''), 'btn-primary', 'Settle & close', () => {
+                const r = WFSms.closeInvestment(s, { now: Date.now(), todayISO: today() });
+                if (!r.ok) { notify('This investment is already closed', 'info'); return; }
+                DB.set('income', (DB.get('income') || []).map(x => x.id === id ? r.record : x)); renderIncome(); renderDash();
+                notify('Investment settled and closed', 'success');
+            });
+        }
+        function reopenInvestment(id) {
+            const s = (DB.get('income') || []).find(x => x.id === id); if (!s || !window.WFSms) return;
+            const r = WFSms.reopenInvestment(s); if (!r.ok) return;
+            DB.set('income', (DB.get('income') || []).map(x => x.id === id ? r.record : x)); renderIncome(); renderDash();
+            notify('Investment re-opened', 'success');
         }
         /* ════════════════ INCOME TAB (received income) — v7.17.1 ════════════════
            Income is now its OWN tab, structured like Expenses: simple received
@@ -18835,8 +18857,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
             const now = new Date();
             const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
-            const activeArr = arr.filter(src => { const end = src.end ? new Date(src.end + 'T00:00:00') : null; return !end || end >= now; });
-            const endedArr = arr.filter(src => { const end = src.end ? new Date(src.end + 'T00:00:00') : null; return end && end < now; });
+            const isClosed = (src) => Number(src.closedAt) > 0;
+            const activeArr = arr.filter(src => { const end = src.end ? new Date(src.end + 'T00:00:00') : null; return !isClosed(src) && (!end || end >= now); });
+            const endedArr = arr.filter(src => { const end = src.end ? new Date(src.end + 'T00:00:00') : null; return isClosed(src) || (end && end < now); });
 
             const totM = activeArr.reduce((sum, x) => sum + x.monthly, 0);
             const totI = arr.reduce((sum, x) => sum + x.amount, 0);
@@ -18844,7 +18867,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
             const renderCard = (source, isArchived) => {
                 const end = source.end ? new Date(source.end + 'T00:00:00') : null;
-                const active = !end || end > now;
+                const closed = Number(source.closedAt) > 0;
+                const active = !closed && (!end || end > now);
                 const dLeft = end ? Math.ceil((end - now) / 86400000) : null;
                 const freqL = { monthly: 'Monthly', annual: 'Annual', quarterly: 'Quarterly' }[source.freq] || source.freq;
                 const recvKey = source.id + '_' + curMonthStr;
@@ -18870,7 +18894,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 <div><div style="font-size:15px;font-weight:700;">${_wfEsc(source.name)}</div><div style="font-size:12px;color:var(--text3);margin-top:2px;">🏛️ ${_wfEsc(source.company)} · ${fmtDatePretty(source.start)}${source.end ? ' → ' + fmtDatePretty(source.end) : ''}</div></div>
                 <div style="display:flex;gap:10px;align-items:flex-start;">
                     <div style="text-align:right;"><div style="font-size:21px;font-weight:800;font-family:var(--mono);color:var(--green);">${fmt(source.monthly)}</div><div style="font-size:11px;color:var(--text3);">${freqL}</div></div>
-                    <div class="act-btns"><button aria-label="Edit this income source" class="ib e" onclick="editIncome('${_wfJsAttr(source.id)}')"><i data-wfi="edit"></i></button><button aria-label="Delete this income source" class="ib d" onclick="deleteIncome('${_wfJsAttr(source.id)}')"><i data-wfi="trash"></i></button></div>
+                    <div class="act-btns">${closed ? `<button aria-label="Re-open this investment" title="Re-open" class="ib c" onclick="reopenInvestment('${_wfJsAttr(source.id)}')"><i data-wfi="undo"></i></button>` : (active ? `<button aria-label="Mark this investment as fully settled" title="Fully settled" class="ib c" onclick="settleInvestment('${_wfJsAttr(source.id)}')"><i data-wfi="checkCircle"></i></button>` : '')}<button aria-label="Edit this income source" class="ib e" onclick="editIncome('${_wfJsAttr(source.id)}')"><i data-wfi="edit"></i></button><button aria-label="Delete this income source" class="ib d" onclick="deleteIncome('${_wfJsAttr(source.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
 
@@ -18886,7 +18910,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             <div style="display:flex;flex-wrap:wrap;align-items:center;">
                 <div class="ld"><div class="ld-l">INVESTED</div><div class="ld-v" style="color:var(--accent);">${fmt(source.amount)}</div></div>
                 <div class="ld"><div class="ld-l">ANNUAL RATE</div><div class="ld-v">${source.rate}%</div></div>
-                <div class="ld"><div class="ld-l">STATUS</div><div class="ld-v">${active ? '<span class="badge bg-g">● Active</span>' : '<span class="badge bg-gr">Ended</span>'}</div></div>
+                <div class="ld"><div class="ld-l">STATUS</div><div class="ld-v">${closed ? '<span class="badge bg-b">Settled</span>' : active ? '<span class="badge bg-g">● Active</span>' : '<span class="badge bg-gr">Ended</span>'}</div></div>
                 <div class="ld"><div class="ld-l">PAYMENT START</div><div class="ld-v"><span style="color:var(--accent);font-weight:700;background:rgba(212,175,55,0.1);padding:3px 8px;border-radius:4px;">📅 ${fmtDatePretty(source.day)}</span></div></div>
                 ${dLeft !== null ? `<div class="ld"><div class="ld-l">DAYS LEFT</div><div class="ld-v" style="${dLeft < 60 ? 'color:var(--red)' : ''}">${dLeft > 0 ? dLeft + ' days' : 'Ended'}</div></div>` : ''}
             </div>
@@ -24353,13 +24377,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                             events: (existing && Array.isArray(existing.events)) ? existing.events.slice() : [],
                         };
                         if (contact) {
+                            if (contact.phone2) rec.phone2 = contact.phone2; else { delete rec.phone2; delete rec.phone2_at; }
                             if (contact.nic) rec.nic = contact.nic; else delete rec.nic;
                             if (contact.personId) rec.personId = contact.personId; else delete rec.personId;
                         }
                         /* The text-message switch. The number is the one above; the rest is validated and stamped here, before anything is saved. */
                         try {
                             if (smsForm) {
-                                const sms = WFSms.applyToggle(existing || {}, { enabled: smsForm.enabled, phone: rec.phone, country: contact ? contact.country : undefined, nic: contact ? contact.nic : (rec.nic || ''), idKind: contact ? contact.idKind : undefined, remindLate: smsForm.remindLate }, Date.now());
+                                const sms = WFSms.applyToggle(existing || {}, { enabled: smsForm.enabled, phone: rec.phone, phone2: contact && smsForm.enabled && contact.phone2 ? contact.phone2 : undefined, country: contact ? contact.country : undefined, nic: contact ? contact.nic : (rec.nic || ''), idKind: contact ? contact.idKind : undefined, remindLate: smsForm.remindLate }, Date.now());
                                 if (!sms.ok) { if (WP) WP.showErrors(ov, '_db', sms.errors); WFSms.showBlockErrors(ov, '_db_sms', sms.errors); notify(Object.values(sms.errors)[0], 'error'); return; }
                                 WFSms.showBlockErrors(ov, '_db_sms', {});
                                 rec = { ...rec, ...sms.fields };

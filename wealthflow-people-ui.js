@@ -64,6 +64,21 @@ export function phoneNote(raw, iso, commit = true) {
     return commit ? { cls: 'warn', text: r.text } : { cls: '', text: '' };
 }
 
+/**
+ * The line under the second number: a number that can be texted says so, the same number as the first says it is the same, and anything
+ * that is not a mobile number (a landline) says it is kept and not texted. `firstRaw` is what the first box holds.
+ */
+export function phone2Note(raw, firstRaw, iso, commit = true) {
+    const r = People.resolvePhone(raw, iso);
+    if (r.empty) return { cls: '', text: '' };
+    if (r.ok) {
+        const first = People.resolvePhone(firstRaw, iso);
+        if (first.ok && first.e164 === r.e164) return commit ? { cls: 'warn', text: 'This is the same as the first number. Leave it empty or enter a different one.' } : { cls: '', text: '' };
+        return { cls: 'ok', text: r.text + ' · texts go here as well' };
+    }
+    return commit ? { cls: 'warn', text: r.text + ' It is kept as typed and no texts go to it.' } : { cls: '', text: '' };
+}
+
 /** The line under an ID box. */
 export function idNote(raw, kind, commit = true) {
     const t = s(raw).trim();
@@ -79,7 +94,7 @@ const ID_HELP = 'With an NIC or ID number the person can open their own private 
 
 /**
  * The contact fields of a form. Every id starts with `prefix`:
- *   _cc country · _phone mobile · _pv its live line · _idk kind of ID · _nic the ID · _idv its live line · _pid hidden person id ·
+ *   _cc country · _phone mobile · _pv its live line · _phone2 second mobile (optional) · _pv2 its live line · _idk kind of ID · _nic the ID · _idv its live line · _pid hidden person id ·
  *   _remember "Save to my people list" · _linked "Saved person" note
  * opts: { kind:'debtor'|'investment'|'person', record, people, nameId, defaultCountry, remember:boolean, errors:{phone?,nic?}, phoneHelp:string }
  *   `nameId` is the form's own name box, which a picked person or a picked contact fills.
@@ -96,7 +111,10 @@ export function contactHtml(prefix, { kind = 'debtor', record = null, people = [
     const iso = info && info.ok ? info.iso : fallback;
     const idStored = s(r.nic).trim() || (person ? s(person.nic).trim() : '');
     const idKind = idStored ? People.idKindOf(idStored) : (iso === DEFAULT_REGION ? 'nic' : 'other');
+    const phone2Raw = s(r.phone2).trim() || (person ? s(person.phone2).trim() : '');
+    const info2 = phone2Raw ? People.resolvePhone(phone2Raw, iso) : null;
     const pv = errors && errors.phone ? { cls: 'bad', text: errors.phone } : phoneNote(phoneRaw, iso, true);
+    const pv2 = errors && errors.phone2 ? { cls: 'bad', text: errors.phone2 } : phone2Note(phone2Raw, phoneRaw, iso, true);
     const iv = errors && errors.nic ? { cls: 'bad', text: errors.nic } : idNote(displayIdentity(idStored), idKind, true);
     const common = ' data-p="' + p + '" data-name="' + esc(nameId) + '"';
     return '<div class="wfp-contact" data-p="' + p + '" data-kind="' + esc(kind) + '">'
@@ -108,6 +126,12 @@ export function contactHtml(prefix, { kind = 'debtor', record = null, people = [
         + '<button type="button" class="btn btn-secondary btn-sm wfp-btn" data-wfp="contacts"' + common + ' title="Take the number from your contacts, a contacts file, or text you copied">Contacts</button></div>'
         + '<div class="wfp-pv ' + pv.cls + '" id="' + p + '_pv" role="status" aria-live="polite">' + esc(pv.text) + '</div>'
         + (phoneHelp ? '<div class="wfp-help">' + esc(phoneHelp) + '</div>' : '') + '</div>'
+        + '<div class="fg"><label class="fl" for="' + p + '_phone2">Second mobile number <span class="wfp-opt">(optional)</span></label>'
+        + '<div class="wfp-row"><input class="fi" id="' + p + '_phone2" type="tel" inputmode="tel" autocomplete="off" maxlength="' + People.LIMITS.phone2 + '" data-wfp="phone2"' + common
+        + ' placeholder="Optional. Every text goes to this number too" value="' + esc(info2 && info2.ok ? info2.pretty : phone2Raw) + '">'
+        + '<button type="button" class="btn btn-secondary btn-sm wfp-btn" data-wfp="contacts2"' + common + ' title="Take the second number from your contacts, a contacts file, or text you copied">Contacts</button></div>'
+        + '<div class="wfp-pv ' + pv2.cls + '" id="' + p + '_pv2" role="status" aria-live="polite">' + esc(pv2.text) + '</div>'
+        + '<div class="wfp-help">Another country? Start it with + and the country code.</div></div>'
         + '<div class="fg"><label class="fl" for="' + p + '_nic" id="' + p + '_nic_l">' + ID_LABEL[idKind] + '</label>'
         + '<div class="wfp-row"><select class="fs wfp-idk" id="' + p + '_idk" data-wfp="idk"' + common + ' aria-label="Kind of ID">'
         + '<option value="nic"' + (idKind === 'nic' ? ' selected' : '') + '>NIC</option><option value="other"' + (idKind === 'other' ? ' selected' : '') + '>Passport / ID</option></select>'
@@ -146,11 +170,13 @@ export function readContact(root, prefix) {
     const q = (suffix) => root.querySelector('#' + prefix + '_' + suffix);
     const phone = q('phone');
     if (!phone) return null;
-    const cc = q('cc'); const idk = q('idk'); const nic = q('nic'); const pid = q('pid'); const rem = q('remember');
+    const cc = q('cc'); const idk = q('idk'); const nic = q('nic'); const pid = q('pid'); const rem = q('remember'); const phone2 = q('phone2');
     return {
         personId: pid ? s(pid.value) : '',
         country: cc ? s(cc.value) : DEFAULT_REGION,
         phone: s(phone.value).trim(),
+        phone2: phone2 ? s(phone2.value).trim() : '',
+        hasPhone2: !!phone2,
         idKind: idk && idk.value === 'other' ? 'other' : 'nic',
         nic: nic ? s(nic.value).trim() : '',
         remember: rem ? !!rem.checked : false,
@@ -159,7 +185,7 @@ export function readContact(root, prefix) {
 
 /**
  * Check what was read and decide what the record stores.
- *   -> { ok, errors:{phone?, nic?}, phone, nic, country, idKind, personId, remember }
+ *   -> { ok, errors:{phone?, phone2?, nic?}, phone, phone2, nic, country, idKind, personId, remember }
  * The ID must be right whenever one is given (a typo here is a statement that never opens). The number must be a mobile number that can be
  * texted only when texts are on; with them off it is kept as typed, because it may be a landline the owner rings.
  */
@@ -169,10 +195,18 @@ export function collectContact(c, { smsOn = false } = {}) {
     const phone = People.resolvePhone(x.phone, x.country);
     if (!phone.empty && !phone.ok && smsOn) errors.phone = phone.text;
     if (phone.empty && smsOn) errors.phone = People.phoneProblem('empty');
+    // The second number is optional. Given, it must be a mobile number that can be texted when texts are on (with them off it is kept as typed, like the
+    // first), and it must not be the first number again: that would send every text twice to one phone.
+    const phone2 = People.resolvePhone(x.phone2, x.country);
+    if (!phone2.empty) {
+        if (phone2.ok && phone.ok && phone2.e164 === phone.e164) errors.phone2 = 'The second number is the same as the first. Leave it empty or enter a different number.';
+        else if (!phone2.ok && smsOn) errors.phone2 = 'Second number: ' + phone2.text;
+    }
     const id = People.storedId(x.nic, x.idKind);
     if (!id.ok) errors.nic = id.text;
     return {
         ok: Object.keys(errors).length === 0, errors,
+        phone2: phone2.ok ? phone2.e164 : s(x.phone2).trim(),
         phone: phone.ok ? phone.e164 : s(x.phone).trim(),
         nic: id.ok ? id.stored : '',
         country: phone.ok ? phone.iso : x.country,
@@ -228,7 +262,7 @@ export function personRowHtml(person, use) {
     const phone = person.phone ? showPhone(person.phone) : '';
     const bits = [];
     if (phone) bits.push(phone);
-    if (person.phone2) bits.push(person.phone2);
+    if (person.phone2) bits.push(showPhone(person.phone2));
     const id = s(person.nic).trim();
     const used = [];
     if (use.loans) used.push(plural(use.loans, 'loan', 'loans'));
@@ -270,9 +304,8 @@ const fieldError = (errors, key) => (errors && errors[key] ? '<div class="wfp-pv
 export function personFormHtml({ person = null, draft = null, errors = {}, people = [], use = null, confirm = null, askDelete = false } = {}) {
     const d = draft || (person ? { name: person.name, phone: person.phone, nic: person.nic, country: person.country, phone2: person.phone2, email: person.email, address: person.address, note: person.note } : {});
     const nameIn = '<div class="fg"><label class="fl" for="_pp_name">Name</label><input class="fi" id="_pp_name" maxlength="' + People.LIMITS.name + '" autocomplete="off" value="' + esc(d.name) + '">' + fieldError(errors, 'name') + '</div>';
-    const contact = contactHtml('_pp', { kind: 'person', record: { phone: d.phone, nic: d.nic }, people, nameId: '_pp_name', defaultCountry: d.country || DEFAULT_REGION, remember: false, errors });
-    const more = '<div class="fg"><label class="fl" for="_pp_phone2">Another number</label><input class="fi" id="_pp_phone2" type="tel" inputmode="tel" maxlength="' + People.LIMITS.phone2 + '" autocomplete="off" placeholder="A landline, or a family member’s number" value="' + esc(d.phone2) + '">' + fieldError(errors, 'phone2') + '</div>'
-        + '<div class="fg"><label class="fl" for="_pp_email">Email</label><input class="fi" id="_pp_email" type="email" maxlength="' + People.LIMITS.email + '" autocomplete="off" value="' + esc(d.email) + '">' + fieldError(errors, 'email') + '</div>'
+    const contact = contactHtml('_pp', { kind: 'person', record: { phone: d.phone, phone2: d.phone2, nic: d.nic }, people, nameId: '_pp_name', defaultCountry: d.country || DEFAULT_REGION, remember: false, errors });
+    const more = '<div class="fg"><label class="fl" for="_pp_email">Email</label><input class="fi" id="_pp_email" type="email" maxlength="' + People.LIMITS.email + '" autocomplete="off" value="' + esc(d.email) + '">' + fieldError(errors, 'email') + '</div>'
         + '<div class="fg"><label class="fl" for="_pp_address">Address</label><input class="fi" id="_pp_address" maxlength="' + People.LIMITS.address + '" autocomplete="off" value="' + esc(d.address) + '"></div>'
         + '<div class="fg"><label class="fl" for="_pp_note">Note</label><input class="fi" id="_pp_note" maxlength="' + People.LIMITS.note + '" autocomplete="off" placeholder="Anything worth remembering" value="' + esc(d.note) + '"></div>';
     let banner = '';
@@ -362,6 +395,7 @@ const STYLE = `
 .wfp-row{display:flex;gap:8px;align-items:stretch}.wfp-row>.fi,.wfp-row>.fs{flex:1;min-width:0}.wfp-row>.wfp-idk{flex:0 0 134px}.wfp-btn{flex:none;white-space:nowrap;min-height:40px}
 .wfp-pv{font-size:12px;min-height:16px;margin-top:4px;line-height:1.45}.wfp-pv.ok{color:var(--green,#30a46c)}.wfp-pv.warn{color:var(--amber,#b7791f)}.wfp-pv.bad{color:var(--red,#e5484d)}
 .wfp-help{display:block;font-size:11px;color:var(--text3);margin-top:3px;line-height:1.5}
+.wfp-opt{font-weight:400;color:var(--text3);font-size:11px}
 .wfp-check{display:block;cursor:pointer;font-weight:600;margin:6px 0 10px}.wfp-check input{width:18px;height:18px;vertical-align:-3px;margin-right:8px}
 .wfp-linked{font-size:12px;line-height:1.5;margin:6px 0 10px;padding:8px 10px;border-radius:10px;background:rgba(48,164,108,.10)}
 .wfp-tabs{display:flex;gap:6px;margin:0 0 12px}.wfp-tab{flex:1;min-height:40px;padding:8px 10px;border-radius:10px;border:1px solid var(--border,rgba(128,128,128,.3));background:transparent;color:var(--text);font-weight:600;cursor:pointer;font-size:13px}
@@ -449,6 +483,13 @@ export function boot(win) {
         // an international number says which country it is; the box on top follows it, so what is shown is always what will be used
         if (r.ok && r.iso && r.iso !== cc.value && /^\s*(\+|00)/.test(box.value)) cc.value = r.iso;
         setNote(at(root, p + '_pv'), phoneNote(box.value, cc.value, commit));
+        refreshPhone2(root, p, commit);                                          // the second number is judged against this one
+    }
+
+    function refreshPhone2(root, p, commit) {
+        const box = at(root, p + '_phone2'); const first = at(root, p + '_phone'); const cc = at(root, p + '_cc');
+        if (!box || !cc) return;
+        setNote(at(root, p + '_pv2'), phone2Note(box.value, first ? first.value : '', cc.value, commit));
     }
 
     function refreshId(root, p, commit, kindChanged) {
@@ -476,6 +517,7 @@ export function boot(win) {
         const iso = regionByIso(person && person.country) ? person.country : homeCountry();
         set(p + '_cc', iso);
         set(p + '_phone', person && person.phone ? showPhone(person.phone) : '');
+        set(p + '_phone2', person && person.phone2 ? showPhone(person.phone2) : '');
         const kind = person && person.nic ? People.idKindOf(person.nic) : (iso === DEFAULT_REGION ? 'nic' : 'other');
         set(p + '_idk', kind);
         set(p + '_nic', person ? displayIdentity(person.nic) : '');
@@ -497,22 +539,25 @@ export function boot(win) {
 
     /* ── device contacts ── */
 
-    function applyNumber(root, p, nameId, name, number) {
-        const box = at(root, p + '_phone'); const cc = at(root, p + '_cc');
-        if (box) box.value = number.pretty;
-        if (cc && number.iso) cc.value = number.iso;
-        const nm = at(root, nameId);
-        if (nm && !s(nm.value).trim() && name) nm.value = name;
-        refreshPhone(root, p, true);
-        toast('Number taken from your contacts' + (name ? ': ' + name : ''), 'success');
+    /** `field` is which box the number goes in: the first number also sets the country and fills an empty name; the second only fills its own box. */
+    function applyNumber(root, p, nameId, name, number, field = 'phone') {
+        const box = at(root, p + '_' + field); const cc = at(root, p + '_cc');
+        if (box) box.value = number.pretty;                                        // always written with its + and country code, so it reads the same whatever the country box says
+        if (field === 'phone') {
+            if (cc && number.iso) cc.value = number.iso;
+            const nm = at(root, nameId);
+            if (nm && !s(nm.value).trim() && name) nm.value = name;
+            refreshPhone(root, p, true);
+        } else refreshPhone2(root, p, true);
+        toast((field === 'phone2' ? 'Second number taken from your contacts' : 'Number taken from your contacts') + (name ? ': ' + name : ''), 'success');
     }
 
-    function useContact(root, p, nameId, contact) {
+    function useContact(root, p, nameId, contact, field = 'phone') {
         const iso = (at(root, p + '_cc') || {}).value || homeCountry();
         const draft = People.draftFromContact(contact, iso);
-        if (draft.numbers.length === 1) return applyNumber(root, p, nameId, draft.name, draft.numbers[0]);
+        if (draft.numbers.length === 1) return applyNumber(root, p, nameId, draft.name, draft.numbers[0], field);
         if (draft.numbers.length === 0) return toast(draft.others.length ? 'None of that contact’s numbers can receive texts (' + draft.others.map((o) => o.raw).join(', ') + ')' : 'That contact has no phone number', 'error');
-        return openNumberChooser(draft, (n) => applyNumber(root, p, nameId, draft.name, n));
+        return openNumberChooser(draft, (n) => applyNumber(root, p, nameId, draft.name, n, field));
     }
 
     /**
@@ -600,11 +645,11 @@ export function boot(win) {
      * The "Contacts" button on a form. Where the browser has a contact picker (Chrome on Android) it opens at once, as one tap; if that fails
      * (permission refused, an embedded browser) or there is none, the sheet with every other way in opens instead.
      */
-    function chooseContact(root, p, nameId) {
+    function chooseContact(root, p, nameId, field = 'phone') {
         const iso = () => (at(root, p + '_cc') || {}).value || homeCountry();
         const onCards = (cards) => {
-            if (cards.length === 1) return useContact(root, p, nameId, cards[0]);
-            return openContactChooser(cards, iso(), (name, number) => applyNumber(root, p, nameId, name, number));
+            if (cards.length === 1) return useContact(root, p, nameId, cards[0], field);
+            return openContactChooser(cards, iso(), (name, number) => applyNumber(root, p, nameId, name, number, field));
         };
         if (People.contactPickerSupported(win)) {
             People.pickContacts(win, { multiple: false }).then((picked) => { if (picked.length) onCards(picked); })
@@ -672,7 +717,7 @@ export function boot(win) {
 
     /** "Update everywhere / this record only / cancel": asked when a form changes a saved person's name, number or ID. */
     function askUpdate({ person, diff, others, kind }, done) {
-        const what = diff.map((f) => ({ name: 'name', phone: 'number', nic: 'NIC / ID' }[f])).join(', ');
+        const what = diff.map((f) => ({ name: 'name', phone: 'number', phone2: 'second number', nic: 'NIC / ID' }[f])).join(', ');
         const more = others.loans + others.investments;
         const where = [others.loans ? plural(others.loans, 'other loan', 'other loans') : '', others.investments ? plural(others.investments, 'other investment', 'other investments') : ''].filter(Boolean).join(' and ');
         const o = overlay('<div class="md" style="max-width:440px;"><div class="md-hdr"><div class="md-title">Update ' + esc(person.name) + '’s saved details?</div>' + xButton + '</div>'
@@ -904,7 +949,7 @@ export function boot(win) {
         },
         showErrors(root, prefix, errors) {
             const set = (suffix, key) => { const el = root && root.querySelector ? root.querySelector('#' + prefix + '_' + suffix) : null; if (el && errors && errors[key]) { el.className = 'wfp-pv bad'; el.textContent = errors[key]; } };
-            set('pv', 'phone'); set('idv', 'nic');
+            set('pv', 'phone'); set('pv2', 'phone2'); set('idv', 'nic');
         },
         /**
          * The form has been checked and is about to be saved: file the person, link the record, keep everybody in step.
@@ -961,6 +1006,7 @@ export function boot(win) {
             const a = attr(e.target, 'data-wfp'); if (!a) return;
             const p = attr(e.target, 'data-p'); const root = rootOf(e.target);
             if (a === 'phone') refreshPhone(root, p, false);
+            else if (a === 'phone2') refreshPhone2(root, p, false);
             else if (a === 'nic') refreshId(root, p, false, false);
         });
         doc.addEventListener('change', (e) => {
@@ -973,6 +1019,7 @@ export function boot(win) {
                 if (nic && idk && !nic.value.trim()) { idk.value = e.target.value === DEFAULT_REGION ? 'nic' : 'other'; refreshId(root, p, true, true); }
             }
             else if (a === 'phone') refreshPhone(root, p, true);
+            else if (a === 'phone2') refreshPhone2(root, p, true);
             else if (a === 'idk') refreshId(root, p, true, true);
             else if (a === 'nic') refreshId(root, p, true, false);
         });
@@ -981,6 +1028,7 @@ export function boot(win) {
             if (!b) return;
             const a = b.getAttribute('data-wfp');
             if (a === 'contacts') { e.preventDefault(); chooseContact(rootOf(b), b.getAttribute('data-p'), b.getAttribute('data-name')); }
+            else if (a === 'contacts2') { e.preventDefault(); chooseContact(rootOf(b), b.getAttribute('data-p'), b.getAttribute('data-name'), 'phone2'); }
             else if (a === 'manage') { e.preventDefault(); openHub('people'); }
         });
     }
@@ -1002,4 +1050,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFPeople = boot(window); } catch (e) { console.warn('[WF-PEOPLE] the people screens did not start:', e && e.message); }
 }
 
-export default { countrySelectHtml, contactTips, contactSourceHtml, contactHtml, pickerHtml, readContact, collectContact, phoneNote, idNote, showPhone, personRowHtml, peopleListHtml, peopleTabHtml, personFormHtml, importHtml, accountsTabHtml, accountFormHtml, accountCardHtml, boot };
+export default { countrySelectHtml, phone2Note, contactTips, contactSourceHtml, contactHtml, pickerHtml, readContact, collectContact, phoneNote, idNote, showPhone, personRowHtml, peopleListHtml, peopleTabHtml, personFormHtml, importHtml, accountsTabHtml, accountFormHtml, accountCardHtml, boot };

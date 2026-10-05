@@ -175,7 +175,7 @@ describe('searching the book', () => {
 
 describe('how a loan and an investment keep the person', () => {
     it('a loan keeps the name in `name`, an investment in `company`', () => {
-        expect(readShared('debtor', { name: ' Nimal ', phone: ' +94771234567', nic: '853400937V' })).toEqual({ name: 'Nimal', phone: '+94771234567', nic: '853400937V' });
+        expect(readShared('debtor', { name: ' Nimal ', phone: ' +94771234567', nic: '853400937V' })).toEqual({ name: 'Nimal', phone: '+94771234567', phone2: '', nic: '853400937V' });
         expect(readShared('investment', { company: 'Nimal', name: 'Fixed deposit' }).name).toBe('Nimal');
         const loan = { name: 'a', phone: 'x' };
         expect(writeShared('debtor', loan, { name: 'b', phone: 'x' })).toBe(true);
@@ -453,7 +453,7 @@ describe('the default export carries the same names', () => {
     it('is the module', () => {
         expect(P.PEOPLE_KEY).toBe(PEOPLE_KEY);
         expect(P.SHARED).toEqual(SHARED);
-        expect(SHARED).toEqual(['name', 'phone', 'nic']);
+        expect(SHARED).toEqual(['name', 'phone', 'phone2', 'nic']);
         expect(typeof P.linkRecord).toBe('function');
     });
 });
@@ -802,5 +802,122 @@ describe('a person the owner deleted is not filed again behind their back', () =
         const s = store({ people: [], debtors: [{ id: 'd1', name: 'Nimal Perera', phone: '+94771234567', personId: 'p-from-device-a' }], income: [] });
         expect(harvestPeople(s, { now: NOW, orphans: false })).toEqual({ added: 0, linked: 0 });
         expect(s.data.people).toEqual([]);
+    });
+});
+
+describe('a second number for one person (optional, texted as well as the first)', () => {
+    const LOAN = (over = {}) => ({ id: 'd1', name: 'Nimal Perera', phone: '+94771234567', nic: '', ...over });
+    const person = (over = {}) => ({ id: 'p1', name: 'Nimal Perera', phone: '+94771234567', phone2: '', country: 'LK', nic: '', email: '', address: '', note: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...over });
+
+    it('is read the way the first one is: any real mobile number, saved in E.164 in the region of the person', () => {
+        expect(P.secondNumberOf('0712345678', 'LK')).toBe('+94712345678');
+        expect(P.secondNumberOf('+44 7911 123456', 'LK')).toBe('+447911123456');
+        expect(P.secondNumberOf('tel:+971 50 123 4567', 'LK')).toBe('+971501234567');
+        expect(P.secondNumberOf('', 'LK')).toBe('');
+        expect(P.secondNumberOf(undefined, 'LK')).toBe('');
+        expect(P.secondNumberOf('011 234 5678', 'LK')).toBe('');            // a landline cannot be texted
+        expect(P.secondNumberOf('call me', 'LK')).toBe('');
+    });
+
+    it('the book saves a texted second number as E.164, keeps a landline as typed, and refuses the first number twice', () => {
+        expect(cleanPerson({ name: 'A', phone: '0771234567', phone2: '071 234 5678', country: 'LK' }).fields.phone2).toBe('+94712345678');
+        expect(cleanPerson({ name: 'A', phone: '0771234567', phone2: '‎+94 71 234 5678‎', country: 'LK' }).fields.phone2).toBe('+94712345678');
+        const same = cleanPerson({ name: 'A', phone: '0771234567', phone2: '+94 77 123 4567', country: 'LK' });
+        expect(same.ok).toBe(false);
+        expect(same.errors.phone2).toMatch(/same as the first/);
+        expect(same.fields.phone2).toBe('');
+        expect(cleanPerson({ name: 'A', phone: '0771234567', phone2: '011 234 5678', country: 'LK' }).fields.phone2).toBe('011 234 5678');
+        expect(cleanPerson({ name: 'A', phone2: 'abc' }).errors.phone2).toBeTruthy();
+    });
+
+    it('is one of the shared fields, so records keep it as they keep the number', () => {
+        expect(SHARED).toContain('phone2');
+        expect(readShared('debtor', LOAN({ phone2: ' +94712345678 ' })).phone2).toBe('+94712345678');
+        expect(readShared('investment', { company: 'Nimal', phone2: '+94712345678' }).phone2).toBe('+94712345678');
+        const rec = LOAN();
+        expect(writeShared('debtor', rec, { phone2: '+94712345678' })).toBe(true);
+        expect(rec.phone2).toBe('+94712345678');
+        expect(writeShared('debtor', rec, { phone2: '+94712345678' })).toBe(false);
+        expect(writeShared('debtor', LOAN(), { phone2: '' })).toBe(false);          // nothing there, nothing written
+    });
+
+    it('a second number typed on a new loan is saved with the person it files', () => {
+        const s = store({ debtors: [], income: [], people: [] });
+        const rec = LOAN({ phone2: '+94712345678' });
+        const r = linkRecord({ store: s, kind: 'debtor', rec, remember: true, country: 'LK', now: NOW, newId: counter() });
+        expect(r.created).toBe(true);
+        expect(r.person.phone2).toBe('+94712345678');
+    });
+
+    it('a second number added on one loan reaches the person and their other loan and investment', () => {
+        const s = store({
+            people: [person()],
+            debtors: [LOAN({ personId: 'p1' }), LOAN({ id: 'd2', personId: 'p1' })],
+            income: [{ id: 'i1', company: 'Nimal Perera', phone: '+94771234567', personId: 'p1' }],
+        });
+        const rec = LOAN({ personId: 'p1', phone2: '+94712345678' });
+        const r = linkRecord({ store: s, kind: 'debtor', rec, remember: true, country: 'LK', now: NOW });
+        expect(r.updated).toBe(true);
+        expect(s.data.people[0].phone2).toBe('+94712345678');
+        expect(s.data.debtors[1].phone2).toBe('+94712345678');
+        expect(s.data.income[0].phone2).toBe('+94712345678');
+        expect(r.siblings.loans + r.siblings.investments).toBe(2);                  // the other loan and the investment: the saved record's own copy is its caller's to write
+    });
+
+    it('removing it on one record removes it everywhere', () => {
+        const s = store({
+            people: [person({ phone2: '+94712345678' })],
+            debtors: [LOAN({ personId: 'p1', phone2: '+94712345678' }), LOAN({ id: 'd2', personId: 'p1', phone2: '+94712345678' })],
+            income: [],
+        });
+        const rec = LOAN({ personId: 'p1', phone2: '' });
+        linkRecord({ store: s, kind: 'debtor', rec, remember: true, country: 'LK', now: NOW });
+        expect(s.data.people[0].phone2).toBe('');
+        expect(s.data.debtors[1].phone2).toBe('');
+    });
+
+    it('a landline kept on the person is not copied onto records and is not lost when a record says nothing about a second number', () => {
+        const s = store({ people: [person({ phone2: '011 234 5678' })], debtors: [LOAN({ personId: 'p1' }), LOAN({ id: 'd2', personId: 'p1' })], income: [] });
+        const r = linkRecord({ store: s, kind: 'debtor', rec: LOAN({ personId: 'p1' }), remember: true, country: 'LK', now: NOW });
+        expect(r.updated).toBe(false);
+        expect(s.data.people[0].phone2).toBe('011 234 5678');
+        expect(s.data.debtors[1].phone2).toBeUndefined();
+    });
+
+    it('editing the second number in the book reaches the records, and the confirmation counts them', () => {
+        const s = store({ people: [person()], debtors: [LOAN({ personId: 'p1', sms_notifications_enabled: true })], income: [{ id: 'i1', company: 'Nimal Perera', phone: '+94771234567', personId: 'p1' }] });
+        const input = { name: 'Nimal Perera', phone: '0771234567', phone2: '0712345678', country: 'LK', nic: '' };
+        expect(previewUpdate(s, 'p1', input)).toEqual({ loans: 1, investments: 1, smsOn: 1 });
+        const r = updatePerson(s, 'p1', input, { now: NOW });
+        expect(r.ok).toBe(true);
+        expect(s.data.debtors[0].phone2).toBe('+94712345678');
+        expect(s.data.income[0].phone2).toBe('+94712345678');
+        expect(previewUpdate(s, 'p1', input)).toEqual({ loans: 0, investments: 0, smsOn: 0 });   // nothing left to change
+    });
+
+    it('a record that has no second number is given the person\'s, but never the one it already has as its first', () => {
+        const s = store({ people: [person({ phone2: '+94712345678' })], debtors: [LOAN({ personId: 'p1' }), LOAN({ id: 'd2', personId: 'p1', phone: '+94712345678' })], income: [] });
+        propagate(s, 'p1', s.data.people[0], s.data.people[0]);
+        expect(s.data.debtors[0].phone2).toBe('+94712345678');
+        expect(s.data.debtors[1].phone2).toBeUndefined();
+    });
+
+    it('a second number written onto a record is stamped as new to it, and the stamp goes when the number does', () => {
+        const rec = LOAN();
+        expect(writeShared('debtor', rec, { phone2: '+94712345678' }, NOW)).toBe(true);
+        expect(rec.phone2_at).toBe(NOW);
+        expect(writeShared('debtor', rec, { phone2: '+94712345678' }, NOW + 5)).toBe(false);          // the same number again is not new
+        expect(rec.phone2_at).toBe(NOW);
+        expect(writeShared('debtor', rec, { phone2: '' }, NOW + 9)).toBe(true);
+        expect(rec).not.toHaveProperty('phone2_at');
+        const s = store({ people: [person()], debtors: [LOAN({ id: 'd2', personId: 'p1' })], income: [] });
+        updatePerson(s, 'p1', { name: 'Nimal Perera', phone: '0771234567', phone2: '0712345678', country: 'LK', nic: '' }, { now: NOW });
+        expect(s.data.debtors[0]).toMatchObject({ phone2: '+94712345678', phone2_at: NOW });
+    });
+
+    it('people filed from the ledgers bring their second number', () => {
+        const s = store({ people: [], debtors: [LOAN({ phone2: '+94712345678' })], income: [] });
+        harvestPeople(s, { now: NOW });
+        expect(s.data.people[0].phone2).toBe('+94712345678');
     });
 });

@@ -26,8 +26,10 @@
  *
  *   LAYER B — money lent to people (`debtors[]`, Liquidity & Credit Hub). With the
  *     toggle on: capital disbursed; repayment acknowledged (with the balance that is
- *     left, so a part payment says how much remains); and the balance on request, when
- *     the owner presses "Send balance" (`sms_requests`). INTEREST IS NEVER
+ *     left, so a part payment says how much remains); the balance on request, when
+ *     the owner presses "Send balance" (`sms_requests`); and, when a confirmed
+ *     repayment brings the balance to nothing, a closing text of its own after that
+ *     receipt. An investment the owner closes as settled (`closedAt`) gets the same. INTEREST IS NEVER
  *     COMPUTED for this layer, whatever fields a record carries — `interestApplies`
  *     says so in one place and the derivation below does not even call the accrual.
  *
@@ -42,6 +44,10 @@
  *     is noise.
  *   - A message to a phone that is not a valid mobile number — reported as an issue so
  *     the owner sees "SMS is on but this number cannot receive", instead of silence.
+ *
+ * A SECOND NUMBER. A record may carry `phone2`, an optional second mobile number. Every notice is owed to both numbers, as two ledger entries
+ * (the second under the same key plus `:2`), so each can be sent, held, retried and counted on its own; one number failing never costs the other
+ * its text. A second number that cannot receive is reported as an issue and the first still gets everything; the same number twice is one text.
  *
  * NOTHING HERE WRITES TO THE BOOKS. An interest notice is a notice; it does not mark
  * anything received. (The owner's standing rule: income is never marked received by a
@@ -61,6 +67,9 @@ export const FIELDS = Object.freeze({
     ENABLED: 'sms_notifications_enabled',   // boolean — the persistent toggle
     ENABLED_AT: 'sms_enabled_at',           // epoch ms when it was last switched on
     PHONE: 'phone',                         // any shape; normalised to E.164 here
+    PHONE2: 'phone2',                       // an optional second mobile number: every text goes to it as well
+    PHONE2_AT: 'phone2_at',                 // epoch ms the second number was added or changed: what happened before is history for it, not news
+    CLOSED_AT: 'closedAt',                  // epoch ms when the record was closed as fully settled (an investment the owner closed; a debtor's own closing is derived from its books)
     NIC: 'nic',                             // old or new Sri Lankan NIC; the portal's key
     REQUESTS: 'sms_requests',               // [{ id, at }] — the owner pressed "Send balance"; a debtor only
     REMIND: 'sms_remind_late',              // boolean — also text a debtor when the date they were expected to pay by has passed; a debtor only, off unless the owner ticks it
@@ -135,6 +144,46 @@ function phoneIssue(rec, recordKind) {
     return { issue: { recordKind, recordId: str(rec && rec.id), reason: str(rec && rec[FIELDS.PHONE]) ? `phone-${p.reason}` : 'no-phone' } };
 }
 
+/**
+ * The second number of a record, as E.164, or '' when there is none to send to. One that cannot receive is reported (the first number is
+ * unaffected); the same number as the first is one text, not two.
+ */
+function secondNumber(rec, primary, recordKind, issues) {
+    const raw = str(rec && rec[FIELDS.PHONE2]);
+    if (!raw) return '';
+    const p = normalizePhone(raw);
+    if (!p.ok) { issues.push({ recordKind, recordId: str(rec && rec.id), reason: `phone2-${p.reason}` }); return ''; }
+    return p.e164 === primary ? '' : p.e164;
+}
+
+/** The same notice, owed to the second number: its own ledger key, its own time zone, and (for a scheduled text) its own morning and shelf life. */
+function twinFor(ev, phone2) {
+    const tzMin = utcOffsetOf(phone2);
+    const out = { ...ev, key: `${ev.key}:2`, phone: phone2, tzMin };
+    if (ev.scheduled) {
+        const open = nextSendWindow(ev.occurredAt, tzMin);
+        out.notBefore = open;
+        if (num(ev.maxAgeMs) > 0) out.maxAgeMs = num(ev.maxAgeMs) - (num(ev.notBefore) - ev.occurredAt) + (open - ev.occurredAt);
+    }
+    return out;
+}
+
+/**
+ * The record's notices, and each of them again for the second number when there is one, but only those that happened since the second number
+ * was added (`since`): a number added today is not sent last month's receipts. A scheduled notice (interest) is judged by its day, like the first number's.
+ */
+function withSecondNumber(sink, phone2, since) {
+    if (!phone2) return sink;
+    const news = sink.filter((ev) => ev.occurredAt >= (ev.scheduled ? Math.floor(since / 86400000) * 86400000 : since - GRACE_MS));
+    return [...sink, ...news.map((ev) => twinFor(ev, phone2))];
+}
+
+/** From when the second number is owed texts: when it was added, but never before the texts were switched on, and never later than "now" (a phone with the wrong date). */
+function secondSince(rec, now) {
+    const at = Math.max(num(rec && rec[FIELDS.PHONE2_AT]), num(rec && rec[FIELDS.ENABLED_AT]));
+    return Math.min(at, now + CLOCK_SKEW_MS);
+}
+
 /** How far ahead of the server's clock a device's "switched on at" may be: a phone with the wrong date must not hold a record's notices back for days. */
 export const CLOCK_SKEW_MS = 5 * 60000;
 const stampIssue = (enabledAt, now) => (!(enabledAt > 0) ? 'no-enable-stamp' : enabledAt > now + CLOCK_SKEW_MS ? 'future-enable-stamp' : '');
@@ -189,12 +238,19 @@ function investmentEvents(user, now, currency, out, issues) {
                 const mk = monthKeyOf(due);
                 const occurredAt = due.getTime();
                 if (!eligible(occurredAt, enabledAt, now, { dayGranular: true })) continue;
+                if (num(inv[FIELDS.CLOSED_AT]) > 0 && occurredAt > num(inv[FIELDS.CLOSED_AT])) continue;     // closed as settled: no interest falls due after that
                 sink.push({
                     ...base, key: `A:${inv.id}:int:${mk}`, kind: KINDS.A_INTEREST, occurredAt, amount: interest, month: mk,
                     dateISO: due.toISOString().slice(0, 10), scheduled: true,
                     notBefore: nextSendWindow(occurredAt, base.tzMin),
                 });
             }
+        }
+
+        // (d) the owner closed the investment as fully settled
+        const closedAt = num(inv[FIELDS.CLOSED_AT]);
+        if (closedAt > 0 && closedAt <= now + CLOCK_SKEW_MS && eligible(closedAt, enabledAt, now)) {
+            sink.push({ ...base, key: `A:${inv.id}:closed:${closedAt}`, kind: KINDS.A_CLOSED, occurredAt: closedAt, amount: 0, dateISO: new Date(closedAt + base.tzMin * 60000).toISOString().slice(0, 10) });
         }
 
         // (c) a payment the owner confirmed. `auto` and `historical` marks are bookkeeping for pre-join months, never a payment to acknowledge.
@@ -220,7 +276,7 @@ function investmentEvents(user, now, currency, out, issues) {
         if (!inv || !inv.id || !isOn(inv)) continue;
         // one record that cannot be read must not stop every other tenant's notices; and a record that fails half-way contributes nothing
         const sink = [];
-        try { one(inv, sink); out.push(...sink); } catch (_) { issues.push({ recordKind: 'investment', recordId: str(inv.id), reason: 'unreadable-record' }); }
+        try { one(inv, sink); out.push(...withSecondNumber(sink, sink.length ? secondNumber(inv, sink[0].phone, 'investment', issues) : '', secondSince(inv, now))); } catch (_) { issues.push({ recordKind: 'investment', recordId: str(inv.id), reason: 'unreadable-record' }); }
     }
 }
 
@@ -254,6 +310,11 @@ function debtorEvents(user, now, currency, out, issues) {
             sink.push(isOut
                 ? { ...base, key: `B:${d.id}:${e.id}:out`, kind: KINDS.B_DISBURSED, occurredAt, amount: e.amount, balance, dateISO: str(e.date).slice(0, 10), further: e.kind === EVENT.TOPUP || outs > 1 }
                 : { ...base, key: `B:${d.id}:${e.id}:in`, kind: KINDS.B_REPAYMENT, occurredAt, amount: e.amount, balance, dateISO: str(e.date).slice(0, 10), settled: balance <= 0 });
+            // The payment that brings the balance to nothing also closes the loan: that is news of its own, a text of its own, one tick after the
+            // receipt so it never arrives first. Keyed by the payment, so a loan that is borrowed on again and settled again is closed again.
+            if (!isOut && balance <= 0 && lent > 0) {
+                sink.push({ ...base, key: `B:${d.id}:${e.id}:closed`, kind: KINDS.B_CLOSED, occurredAt: occurredAt + 1, amount: 0, balance: 0, dateISO: str(e.date).slice(0, 10) });
+            }
         }
         // The owner asked for the balance to be sent: a part payment was agreed, or the person asked how much is left. The figure is the
         // CONFIRMED outstanding now (money nobody has confirmed is not in it, like every other figure here).
@@ -303,7 +364,7 @@ function debtorEvents(user, now, currency, out, issues) {
     for (const d of arr(user.debtors)) {
         if (!d || !d.id || !isOn(d)) continue;
         const sink = [];
-        try { one(d, sink); out.push(...sink); } catch (_) { issues.push({ recordKind: 'debtor', recordId: str(d.id), reason: 'unreadable-record' }); }
+        try { one(d, sink); out.push(...withSecondNumber(sink, sink.length ? secondNumber(d, sink[0].phone, 'debtor', issues) : '', secondSince(d, now))); } catch (_) { issues.push({ recordKind: 'debtor', recordId: str(d.id), reason: 'unreadable-record' }); }
     }
 }
 
