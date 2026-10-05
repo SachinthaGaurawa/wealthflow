@@ -25,7 +25,9 @@
  *     message can never disagree about WHEN a period pays.
  *
  *   LAYER B — money lent to people (`debtors[]`, Liquidity & Credit Hub). With the
- *     toggle on: capital disbursed; repayment acknowledged. INTEREST IS NEVER
+ *     toggle on: capital disbursed; repayment acknowledged (with the balance that is
+ *     left, so a part payment says how much remains); and the balance on request, when
+ *     the owner presses "Send balance" (`sms_requests`). INTEREST IS NEVER
  *     COMPUTED for this layer, whatever fields a record carries — `interestApplies`
  *     says so in one place and the derivation below does not even call the accrual.
  *
@@ -60,7 +62,28 @@ export const FIELDS = Object.freeze({
     ENABLED_AT: 'sms_enabled_at',           // epoch ms when it was last switched on
     PHONE: 'phone',                         // any shape; normalised to E.164 here
     NIC: 'nic',                             // old or new Sri Lankan NIC; the portal's key
+    REQUESTS: 'sms_requests',               // [{ id, at }] — the owner pressed "Send balance"; a debtor only
+    REMIND: 'sms_remind_late',              // boolean — also text a debtor when the date they were expected to pay by has passed; a debtor only, off unless the owner ticks it
+    REMIND_AT: 'sms_remind_at',             // epoch ms when that box was last ticked
 });
+
+/**
+ * LATE-PAYMENT REMINDERS (opt-in, a debtor only). With `dueISO` ("expected back by") set, money still owing and the box ticked, a debtor gets at most
+ * four reminders: the day after the date, then one a week later each time. Each is a SCHEDULED notice (08:00-20:00 where the debtor is), carries the
+ * balance as it was when it was queued, and is good for a day only, so a reminder that could not go out is dropped rather than sent stale.
+ */
+export const REMINDER_OFFSETS_DAYS = Object.freeze([1, 8, 15, 22]);
+export const REMINDER_WINDOW_MS = 3 * 86400000;      // a reminder whose day was more than this long ago is not sent late
+export const REMINDER_SHELF_MS = 24 * 3600000;
+
+/**
+ * A "send the balance now" request is good for this long. The figure is written into the text when it is queued, so a request
+ * that cannot go out soon (no credit, a rejected token) is dropped rather than sent hours later with a balance that has moved.
+ */
+export const REQUEST_WINDOW_MS = 30 * 60 * 1000;
+/** Newest requests read per debtor: a stuck key or a runaway loop on a device cannot become a stream of texts. */
+export const REQUESTS_READ = 3;
+const REQUEST_ID_RE = /^[A-Za-z0-9_-]{4,40}$/;
 
 export const LAYER = Object.freeze({ A: 'A', B: 'B' });
 
@@ -231,6 +254,48 @@ function debtorEvents(user, now, currency, out, issues) {
             sink.push(isOut
                 ? { ...base, key: `B:${d.id}:${e.id}:out`, kind: KINDS.B_DISBURSED, occurredAt, amount: e.amount, balance, dateISO: str(e.date).slice(0, 10), further: e.kind === EVENT.TOPUP || outs > 1 }
                 : { ...base, key: `B:${d.id}:${e.id}:in`, kind: KINDS.B_REPAYMENT, occurredAt, amount: e.amount, balance, dateISO: str(e.date).slice(0, 10), settled: balance <= 0 });
+        }
+        // The owner asked for the balance to be sent: a part payment was agreed, or the person asked how much is left. The figure is the
+        // CONFIRMED outstanding now (money nobody has confirmed is not in it, like every other figure here).
+        const requests = arr(d[FIELDS.REQUESTS])
+            .filter((r) => r && typeof r === 'object' && REQUEST_ID_RE.test(str(r.id)) && num(r.at) > 0)
+            .sort((a, b) => num(b.at) - num(a.at))
+            .slice(0, REQUESTS_READ);
+        if (requests.length) {
+            const outstanding = Math.max(0, debtorSummary(d, new Date(now)).outstanding);
+            for (const r of requests) {
+                const at = num(r.at);
+                if (at > now + CLOCK_SKEW_MS || now - at > REQUEST_WINDOW_MS) continue;     // from the future (a wrong clock) or no longer news
+                if (at < enabledAt - GRACE_MS) continue;                                    // pressed before the texts were switched on
+                sink.push({
+                    ...base, key: `B:${d.id}:bal:${str(r.id)}`, kind: KINDS.B_BALANCE, occurredAt: at, amount: outstanding, balance: outstanding,
+                    dateISO: new Date(at + (Number.isFinite(base.tzMin) ? base.tzMin : LOCAL_OFFSET_MIN) * 60000).toISOString().slice(0, 10), maxAgeMs: REQUEST_WINDOW_MS,
+                });
+            }
+        }
+        // A late-payment reminder, when the owner asked for them for this debtor: the money is still owing, the date they were expected to pay by has passed.
+        if (d[FIELDS.REMIND] === true && /^\d{4}-\d{2}-\d{2}$/.test(str(d.dueISO))) {
+            const due = parseDay(str(d.dueISO));
+            const remindAt = num(d[FIELDS.REMIND_AT]) > 0 ? num(d[FIELDS.REMIND_AT]) : enabledAt;
+            const outstanding = Math.max(0, debtorSummary(d, new Date(now)).outstanding);
+            // A repayment the owner has logged but not yet confirmed against the bank means the debtor says they have paid. Telling that person
+            // "still outstanding" would be wrong in the very case the owner is in the middle of checking, so nothing is sent until it is settled
+            // one way or the other (confirmed: owed again for what is really left; deleted: owed as before).
+            const awaiting = events.some((e) => !e.confirmed && e.kind === EVENT.REPAYMENT);
+            if (due && outstanding > 0 && !awaiting && remindAt <= now + CLOCK_SKEW_MS) {
+                const tz = Number.isFinite(base.tzMin) ? base.tzMin : LOCAL_OFFSET_MIN;
+                const dueStartUtc = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
+                const floor = Math.floor(Math.max(enabledAt, remindAt) / 86400000) * 86400000;
+                REMINDER_OFFSETS_DAYS.forEach((days, i) => {
+                    const dayStart = dueStartUtc + days * 86400000 - tz * 60000;      // that day begins, where the debtor is
+                    if (dayStart > now || now - dayStart > REMINDER_WINDOW_MS) return;
+                    if (dayStart + 86400000 < floor) return;                            // a day that was over before the reminders were switched on
+                    sink.push({
+                        ...base, key: `B:${d.id}:late:${str(d.dueISO)}:${i + 1}`, kind: KINDS.B_LATE, occurredAt: dayStart, amount: outstanding, balance: outstanding,
+                        dateISO: str(d.dueISO), scheduled: true, notBefore: nextSendWindow(dayStart, tz), maxAgeMs: REMINDER_SHELF_MS + (nextSendWindow(dayStart, tz) - dayStart),
+                    });
+                });
+            }
         }
         // LAYER B COMPUTES NO INTEREST. Not "skips if zero": the accrual is never reached, so a stray `rate` on a record cannot produce a notice.
     };

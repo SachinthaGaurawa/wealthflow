@@ -11,15 +11,15 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-    SMS_FIELDS, CLIENT, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, watchSmsLog, rowsOf, panelHtml, describeIssue, ALERT_TITLE, boot,
+    SMS_FIELDS, CLIENT, BALANCE, balanceWaitMs, requestBalance, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue, ALERT_TITLE, boot,
 } from '../wealthflow-sms.js';
 import { FIELDS } from '../sms-events.mjs';
 
 const T0 = Date.parse('2026-10-05T05:00:00Z');
 
 describe('the fields are the server\'s fields', () => {
-    it('the page and the server read and write the same four names', () => {
-        expect(SMS_FIELDS).toEqual({ ENABLED: FIELDS.ENABLED, ENABLED_AT: FIELDS.ENABLED_AT, PHONE: FIELDS.PHONE, NIC: FIELDS.NIC });
+    it('the page and the server read and write the same seven names', () => {
+        expect(SMS_FIELDS).toEqual({ ENABLED: FIELDS.ENABLED, ENABLED_AT: FIELDS.ENABLED_AT, PHONE: FIELDS.PHONE, NIC: FIELDS.NIC, REQUESTS: FIELDS.REQUESTS, REMIND: FIELDS.REMIND, REMIND_AT: FIELDS.REMIND_AT });
     });
 });
 
@@ -514,5 +514,226 @@ describe('the file itself', () => {
         expect(src).not.toMatch(/process\.env|require\(/);
         expect(src).not.toMatch(/Bearer [A-Za-z0-9]{20,}/);
         for (const m of src.matchAll(/from\s+'(\.[^']+)'/g)) expect(m[1]).toMatch(/^\.\/wealthflow-[a-z-]+\.js$/);
+    });
+});
+
+describe('"Send balance": the owner asks for the balance to be texted', () => {
+    const debtor = (over = {}) => ({ id: 'd1', name: 'Nimal', phone: '+94771234567', [SMS_FIELDS.ENABLED]: true, [SMS_FIELDS.ENABLED_AT]: T0 - 1e6, ...over });
+
+    it('adds one request row, keeps the rest of the record exactly as it was, and never names an amount or a recipient', () => {
+        const rec = debtor({ events: [{ id: 'e1' }], note: 'x' });
+        const out = requestBalance(rec, { now: T0, newId: () => 'req-abc1' });
+        expect(out).toEqual({ ok: true, record: { ...rec, [SMS_FIELDS.REQUESTS]: [{ id: 'req-abc1', at: T0 }] } });
+        expect(JSON.stringify(out.record[SMS_FIELDS.REQUESTS])).not.toMatch(/amount|balance|phone|077|94/);
+        expect(rec[SMS_FIELDS.REQUESTS]).toBeUndefined();                                    // the record it was given is not changed
+    });
+
+    it('makes ids the server accepts, different every time, even when random numbers are not available', () => {
+        const ids = new Set();
+        for (let i = 0; i < 50; i += 1) {
+            const out = requestBalance(debtor(), { now: T0 + i * BALANCE.COOLDOWN_MS * 2 });
+            const id = out.record[SMS_FIELDS.REQUESTS][0].id;
+            expect(id).toMatch(/^[A-Za-z0-9_-]{4,40}$/);
+            ids.add(id);
+        }
+        expect(ids.size).toBe(50);
+    });
+
+    it('refuses when the texts are off for this debtor, and says what to do', () => {
+        for (const rec of [debtor({ [SMS_FIELDS.ENABLED]: false }), debtor({ [SMS_FIELDS.ENABLED]: undefined }), {}, null, undefined, 5]) {
+            const out = requestBalance(rec, { now: T0 });
+            expect(out.ok).toBe(false);
+            expect(out.reason).toBe('off');
+            expect(out.text).toMatch(/Send SMS notifications/);
+        }
+    });
+
+    it('refuses when there is no number the text could reach', () => {
+        for (const phone of ['', undefined, '12', 'abc', '+']) {
+            const out = requestBalance(debtor({ phone }), { now: T0 });
+            expect(out, String(phone)).toMatchObject({ ok: false, reason: 'phone' });
+        }
+    });
+
+    it('waits ten minutes between two requests for the same debtor: a double tap spends one unit, not two', () => {
+        const first = requestBalance(debtor(), { now: T0, newId: () => 'req-0001' });
+        const again = requestBalance(first.record, { now: T0 + 60000 });
+        expect(again).toMatchObject({ ok: false, reason: 'wait', waitMs: BALANCE.COOLDOWN_MS - 60000 });
+        expect(again.text).toMatch(/9 min/);
+        expect(balanceWaitMs(first.record, T0 + BALANCE.COOLDOWN_MS)).toBe(0);
+        expect(requestBalance(first.record, { now: T0 + BALANCE.COOLDOWN_MS, newId: () => 'req-0002' }).ok).toBe(true);
+        expect(BALANCE.COOLDOWN_MS).toBe(10 * 60000);
+    });
+
+    it('keeps only the last few requests on the record, newest last', () => {
+        let rec = debtor();
+        for (let i = 0; i < 9; i += 1) rec = requestBalance(rec, { now: T0 + i * BALANCE.COOLDOWN_MS, newId: () => `req-${String(i).padStart(4, '0')}` }).record;
+        const ids = rec[SMS_FIELDS.REQUESTS].map((r) => r.id);
+        expect(ids).toHaveLength(BALANCE.KEEP);
+        expect(ids[ids.length - 1]).toBe('req-0008');
+        expect(ids).not.toContain('req-0000');
+    });
+
+    it('a request stamped in the future (a wrong clock) does not lock the button for hours', () => {
+        const rec = debtor({ [SMS_FIELDS.REQUESTS]: [{ id: 'req-0001', at: T0 + 5 * 3600e3 }] });
+        expect(balanceWaitMs(rec, T0)).toBe(0);
+        expect(requestBalance(rec, { now: T0 }).ok).toBe(true);
+    });
+
+    it('garbage in the request list changes nothing and throws nothing', () => {
+        for (const bad of ['x', 5, {}, [null, 3, 'a', {}, { at: 'no' }]]) {
+            const rec = debtor({ [SMS_FIELDS.REQUESTS]: bad });
+            expect(() => balanceWaitMs(rec, T0)).not.toThrow();
+            expect(balanceWaitMs(rec, T0)).toBe(0);
+            expect(requestBalance(rec, { now: T0 }).ok).toBe(true);
+        }
+    });
+
+    it('an edit of the record carries the requests on with the other switches', () => {
+        const rec = debtor({ [SMS_FIELDS.REQUESTS]: [{ id: 'req-0001', at: T0 }] });
+        expect(carry(rec)[SMS_FIELDS.REQUESTS]).toEqual([{ id: 'req-0001', at: T0 }]);
+    });
+
+    it('is a change the nudge notices, so the server is asked to look', () => {
+        const before = { debtors: [debtor()] };
+        const after = { debtors: [requestBalance(debtor(), { now: T0, newId: () => 'req-0001' }).record] };
+        expect(signatureOf(before)).not.toBe(signatureOf(after));
+    });
+
+    it('the message log explains a balance that could not go out in time, in words an owner can act on', () => {
+        const rows = rowsOf([
+            { id: 'a', status: 'expired', kind: 'B.balance', occurredAt: T0, to: '+94*****4567', ref: 'DEB-1', body: 'Balance' },
+            { id: 'b', status: 'cancelled', kind: 'B.balance', occurredAt: T0 + 1, to: '+94*****4567', ref: 'DEB-1', body: 'Balance' },
+            { id: 'c', status: 'cancelled', kind: 'B.repayment', occurredAt: T0 + 2, to: '+94*****4567', ref: 'DEB-1', body: 'Repayment' },
+        ], T0 + 3);
+        expect(rows.find((r) => r.id === 'a').note).toMatch(/Press Send balance again/);
+        expect(rows.find((r) => r.id === 'b').note).toMatch(/Press Send balance again/);
+        expect(rows.find((r) => r.id === 'c').note).toMatch(/Switched off or changed/);
+    });
+
+    it('a reminder that is waiting or was dropped says why, not "held too long"', () => {
+        const rows = rowsOf([
+            { id: 'w', status: 'queued', kind: 'B.late', scheduled: true, nextAttemptAt: T0 + 3600e3, occurredAt: T0, to: '+94*****4567', ref: 'DEB-1', body: 'Reminder' },
+            { id: 'x', status: 'expired', kind: 'B.late', scheduled: true, occurredAt: T0 - 86400e3, to: '+94*****4567', ref: 'DEB-1', body: 'Reminder' },
+            { id: 'y', status: 'expired', kind: 'A.interest', occurredAt: T0 - 86400e3, to: '+94*****4567', ref: 'INV-1', body: 'Interest' },
+            { id: 'z', status: 'queued', kind: 'A.capital', nextAttemptAt: T0 + 3600e3, occurredAt: T0, to: '+94*****4567', ref: 'INV-1', body: 'Capital' },
+        ], T0);
+        expect(rows.find((r) => r.id === 'w').note).toMatch(/morning where the recipient is/);
+        expect(rows.find((r) => r.id === 'x').note).toMatch(/dropped rather than sent late/);
+        expect(rows.find((r) => r.id === 'y').note).toMatch(/Held too long/);
+        expect(rows.find((r) => r.id === 'z').note).toBe('Scheduled for a later time.');
+    });
+});
+
+describe('texts that are waiting for the owner are announced, once, instead of sitting in a quiet log', () => {
+    const q = (id, kind) => ({ id, status: 'queued', error: kind ? { kind, message: 'x' } : null });
+
+    it('out of credit, a rejected token, an unapproved sender and a missing token each say what to do, with how many are waiting', () => {
+        for (const [kind, words] of [['credit', /SMS credit/], ['auth', /rejected the API token/], ['sender', /sender ID/], ['config', /not connected/]]) {
+            const out = heldAlerts([q('a', kind), q('b', kind)], { configured: true }, new Set());
+            expect(out.toasts, kind).toHaveLength(1);
+            expect(out.toasts[0].text).toMatch(words);
+            expect(out.toasts[0].tone).toBe('error');
+            expect(out.toasts[0].detail).toMatch(/^2 texts are waiting\./);
+            expect([...out.told]).toEqual([kind]);
+        }
+        expect(heldAlerts([q('a', 'credit')], null, new Set()).toasts[0].detail).toMatch(/^1 text is waiting\./);
+    });
+
+    it('a gateway that was never connected queues without trying: that is announced too, and names the variable to add', () => {
+        const out = heldAlerts([q('a', null)], { configured: false }, new Set());
+        expect(out.toasts).toHaveLength(1);
+        expect(out.toasts[0].detail).toMatch(/TEXTLK_API_TOKEN/);
+        expect(heldAlerts([q('a', null)], { configured: true }, new Set()).toasts).toEqual([]);           // queued for a moment: nothing to say
+    });
+
+    it('says nothing for a retry in the ordinary course, a delivered or a cancelled text, or the status card itself', () => {
+        const rows = [q('a', 'rate-limit'), q('b', 'network'), q('c', 'cap'), { id: 'd', status: 'sent' }, { id: 'e', status: 'cancelled', error: { kind: 'credit' } }, { id: 'f', status: 'failed', error: { kind: 'credit' } }, { id: '_status', status: 'queued', error: { kind: 'credit' } }];
+        expect(heldAlerts(rows, { configured: true }, new Set()).toasts).toEqual([]);
+    });
+
+    it('announces a problem once while it lasts, and again if it clears and comes back', () => {
+        const first = heldAlerts([q('a', 'credit')], { configured: true }, new Set());
+        expect(first.toasts).toHaveLength(1);
+        const again = heldAlerts([q('a', 'credit'), q('b', 'credit')], { configured: true }, first.told);
+        expect(again.toasts).toEqual([]);
+        const cleared = heldAlerts([], { configured: true }, again.told);
+        expect(cleared.toasts).toEqual([]);
+        expect(cleared.told.size).toBe(0);
+        expect(heldAlerts([q('c', 'credit')], { configured: true }, cleared.told).toasts).toHaveLength(1);
+    });
+
+    it('a low balance is a heads-up (not an error), with the units that are left', () => {
+        const out = heldAlerts([], { configured: true, lowCredit: true, units: 3 }, new Set());
+        expect(out.toasts).toHaveLength(1);
+        expect(out.toasts[0].tone).toBe('info');
+        expect(out.toasts[0].detail).toMatch(/\(3 units left\)/);
+        expect(heldAlerts([], { configured: true, lowCredit: false, units: 90 }, new Set()).toasts).toEqual([]);
+    });
+
+    it('survives rows and status that are not what they should be', () => {
+        for (const bad of [null, undefined, 'x', 5, [null, 7, 'a', {}, { id: 'x' }]]) {
+            expect(() => heldAlerts(bad, 'nope', 'nope')).not.toThrow();
+            expect(heldAlerts(bad, null, undefined).toasts).toEqual([]);
+        }
+    });
+
+    it('every wording is plain text, never markup', () => {
+        for (const [a, b] of Object.values(HELD_NOTICE)) { expect(a).not.toMatch(/[<>]/); expect(b).not.toMatch(/[<>]/); }
+    });
+
+    it('the live listener passes them to the page\'s toast once, as the snapshots arrive', () => {
+        const toasts = []; let push = null;
+        const q2 = { orderBy() { return this; }, limit() { return this; }, onSnapshot(cb) { push = cb; return () => {}; } };
+        const fsx = { collection: () => ({ doc: () => ({ collection: () => q2 }) }) };
+        watchSmsLog({ firestore: fsx, uid: 'u1', storage: null, onToast: (x) => toasts.push(x) });
+        const snap = (docs) => ({ docs: docs.map((d) => ({ id: d.id, data: () => { const { id, ...rest } = d; return rest; } })) });
+        push(snap([{ id: 'a', status: 'queued', error: { kind: 'credit' }, updatedAt: 1 }, { id: '_status', configured: true, updatedAt: 2 }]));
+        push(snap([{ id: 'a', status: 'queued', error: { kind: 'credit' }, updatedAt: 3 }, { id: '_status', configured: true, updatedAt: 4 }]));
+        expect(toasts.filter((x) => /SMS credit/.test(x.text))).toHaveLength(1);
+    });
+});
+
+describe('the late-payment reminder box (a debtor only)', () => {
+    const on = { enabled: true, phone: '0771234567', nic: '' };
+
+    it('is a debtor\'s box: the investor\'s block does not show it, the debtor\'s does, and it reads back as the owner left it', () => {
+        expect(blockHtml('i_sms', { layer: 'A' })).not.toMatch(/_late/);
+        const b = blockHtml('_db_sms', { layer: 'B', record: {} });
+        expect(b).toMatch(/id="_db_sms_late"/);
+        expect(b).not.toMatch(/_late"[^>]*checked/);                                                      // off unless the owner ticks it
+        expect(blockHtml('_db_sms', { layer: 'B', record: { [SMS_FIELDS.REMIND]: true } })).toMatch(/id="_db_sms_late" checked/);
+        expect(b).toMatch(/Needs that date/);
+        const root = { querySelector: (sel) => ({ '#_db_sms_on': { checked: true }, '#_db_sms_late': { checked: true } }[sel] || null) };
+        expect(readBlock(root, '_db_sms')).toMatchObject({ enabled: true, remindLate: true });
+        const noBox = { querySelector: (sel) => ({ '#i_sms_on': { checked: true } }[sel] || null) };
+        expect(readBlock(noBox, 'i_sms').remindLate).toBeUndefined();
+    });
+
+    it('stamps the moment it was ticked, and keeps that stamp while it stays ticked, so an edit never revives a day that was over', () => {
+        const first = applyToggle({}, { ...on, remindLate: true }, T0);
+        expect(first.fields).toMatchObject({ [SMS_FIELDS.REMIND]: true, [SMS_FIELDS.REMIND_AT]: T0, [SMS_FIELDS.ENABLED_AT]: T0 });
+        const edit = applyToggle({ ...first.fields }, { ...on, remindLate: true }, T0 + 5 * 86400000);
+        expect(edit.fields[SMS_FIELDS.REMIND_AT]).toBe(T0);
+        const unticked = applyToggle({ ...first.fields }, { ...on, remindLate: false }, T0 + 1000);
+        expect(unticked.fields[SMS_FIELDS.REMIND]).toBe(false);
+        expect(unticked.fields[SMS_FIELDS.REMIND_AT]).toBeUndefined();
+        const again = applyToggle({ ...first.fields, ...unticked.fields }, { ...on, remindLate: true }, T0 + 9 * 86400000);
+        expect(again.fields[SMS_FIELDS.REMIND_AT]).toBe(T0 + 9 * 86400000);                            // ticked again: a new moment
+    });
+
+    it('a form that does not carry the box (an investment) adds nothing, and switching the texts off touches nothing else', () => {
+        expect(applyToggle({}, on, T0).fields).not.toHaveProperty(SMS_FIELDS.REMIND);
+        expect(applyToggle({ [SMS_FIELDS.REMIND]: true }, { enabled: false }, T0).fields).toEqual({ [SMS_FIELDS.ENABLED]: false });
+    });
+
+    it('an edit of the record carries both fields on', () => {
+        expect(carry({ [SMS_FIELDS.REMIND]: true, [SMS_FIELDS.REMIND_AT]: T0 })).toMatchObject({ [SMS_FIELDS.REMIND]: true, [SMS_FIELDS.REMIND_AT]: T0 });
+    });
+
+    it('ticking it is a change the nudge notices', () => {
+        const a = { debtors: [{ id: 'd', [SMS_FIELDS.ENABLED]: true }] };
+        const b = { debtors: [{ id: 'd', [SMS_FIELDS.ENABLED]: true, [SMS_FIELDS.REMIND]: true, [SMS_FIELDS.REMIND_AT]: T0 }] };
+        expect(signatureOf(a)).not.toBe(signatureOf(b));
     });
 });

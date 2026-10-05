@@ -25,12 +25,15 @@
 import { normalizePhone } from './wealthflow-phone.js';
 import { phoneProblem as phoneText, idProblem, storedId, idKindOf } from './wealthflow-people.js';
 
-/** The record fields. The server reads the same four; a test pins that they agree (sms-events.mjs FIELDS). */
+/** The record fields. The server reads the same seven; a test pins that they agree (sms-events.mjs FIELDS). */
 export const SMS_FIELDS = Object.freeze({
     ENABLED: 'sms_notifications_enabled',
     ENABLED_AT: 'sms_enabled_at',
     PHONE: 'phone',
     NIC: 'nic',
+    REQUESTS: 'sms_requests',
+    REMIND: 'sms_remind_late',
+    REMIND_AT: 'sms_remind_at',
 });
 
 export const CLIENT = Object.freeze({
@@ -56,7 +59,7 @@ const safeStorage = (st, fn) => { try { return fn(st); } catch (_) { return null
 export const phoneProblem = (reason) => phoneText(reason);
 export const nicProblem = (reason, kind = 'nic') => idProblem(reason, kind);
 
-/** The four fields of a record, as it already has them. A form that rebuilds a record from its inputs must carry these over, or an edit silently switches the texts off. */
+/** The SMS fields of a record, as it already has them. A form that rebuilds a record from its inputs must carry these over, or an edit silently switches the texts off. */
 export function carry(prev) {
     const p = prev && typeof prev === 'object' ? prev : {};
     const out = {};
@@ -89,20 +92,63 @@ export function applyToggle(prev, input, now = Date.now()) {
     if (!id.ok) errors.nic = id.text;
     if (Object.keys(errors).length) return { ok: false, errors, fields: {} };
     const keep = p[SMS_FIELDS.ENABLED] === true && num(p[SMS_FIELDS.ENABLED_AT]) > 0;
-    return {
-        ok: true, errors: {},
-        fields: {
-            [SMS_FIELDS.ENABLED]: true,
-            [SMS_FIELDS.ENABLED_AT]: keep ? num(p[SMS_FIELDS.ENABLED_AT]) : now,
-            [SMS_FIELDS.PHONE]: phone.e164,
-            [SMS_FIELDS.NIC]: id.stored,
-        },
+    const fields = {
+        [SMS_FIELDS.ENABLED]: true,
+        [SMS_FIELDS.ENABLED_AT]: keep ? num(p[SMS_FIELDS.ENABLED_AT]) : now,
+        [SMS_FIELDS.PHONE]: phone.e164,
+        [SMS_FIELDS.NIC]: id.stored,
     };
+    // Late-payment reminders (a debtor only: the caller passes the box). The moment it was ticked is kept while it stays ticked, so editing a record
+    // never brings back a reminder for a day that was over before the owner asked for them.
+    if (input.remindLate !== undefined) {
+        const was = p[SMS_FIELDS.REMIND] === true && num(p[SMS_FIELDS.REMIND_AT]) > 0;
+        fields[SMS_FIELDS.REMIND] = input.remindLate === true;
+        if (input.remindLate === true) fields[SMS_FIELDS.REMIND_AT] = was ? num(p[SMS_FIELDS.REMIND_AT]) : now;
+    }
+    return { ok: true, errors: {}, fields };
+}
+
+/* ── the balance on request ───────────────────────────────────────────────── */
+
+export const BALANCE = Object.freeze({ COOLDOWN_MS: 10 * 60000, KEEP: 5 });
+
+/** An id the server accepts (4-40 letters, digits, - and _). */
+function newRequestId(now) {
+    let rnd = '';
+    try {
+        const c = typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.getRandomValues ? globalThis.crypto : null;
+        if (c) { const a = new Uint32Array(2); c.getRandomValues(a); rnd = a[0].toString(36) + a[1].toString(36); }
+    } catch (_) { rnd = ''; }
+    if (!rnd) rnd = Math.random().toString(36).slice(2, 12);
+    return ('b' + now.toString(36) + rnd).slice(0, 32);
+}
+
+/** Milliseconds until the balance may be sent again for this record (0 when it may be sent now). A text costs a unit, and a double tap is the commonest way to spend two. */
+export function balanceWaitMs(rec, now = Date.now()) {
+    const reqs = Array.isArray(rec && rec[SMS_FIELDS.REQUESTS]) ? rec[SMS_FIELDS.REQUESTS] : [];
+    let last = 0;
+    for (const r of reqs) if (r && typeof r === 'object' && num(r.at) > last && num(r.at) <= now + 60000) last = num(r.at);
+    return last > 0 ? Math.max(0, last + BALANCE.COOLDOWN_MS - now) : 0;
+}
+
+/**
+ * The owner pressed "Send balance". The request is a row on the debtor, like everything else the server acts on: it derives the text
+ * from the books (the confirmed balance at that moment), so nothing here names an amount or a recipient.
+ *   -> { ok:true, record } | { ok:false, reason:'off'|'phone'|'wait', waitMs?, text }
+ */
+export function requestBalance(rec, { now = Date.now(), newId = newRequestId } = {}) {
+    const r = rec && typeof rec === 'object' ? rec : {};
+    if (r[SMS_FIELDS.ENABLED] !== true) return { ok: false, reason: 'off', text: 'Switch "Send SMS notifications" on for this debtor first.' };
+    if (!normalizePhone(s(r[SMS_FIELDS.PHONE])).ok) return { ok: false, reason: 'phone', text: 'This debtor has no mobile number the texts can go to. Add one and save.' };
+    const waitMs = balanceWaitMs(r, now);
+    if (waitMs > 0) return { ok: false, reason: 'wait', waitMs, text: 'The balance was sent a moment ago. You can send it again in ' + Math.max(1, Math.ceil(waitMs / 60000)) + ' min.' };
+    const kept = (Array.isArray(r[SMS_FIELDS.REQUESTS]) ? r[SMS_FIELDS.REQUESTS] : []).filter((x) => x && typeof x === 'object' && num(x.at) > 0).slice(-(BALANCE.KEEP - 1));
+    return { ok: true, record: { ...r, [SMS_FIELDS.REQUESTS]: [...kept, { id: newId(now), at: now }] } };
 }
 
 const COPY = {
     A: 'Texts the investor when capital is recorded, when interest is applied and when a payment is received.',
-    B: 'Texts the debtor when a loan is paid out and when a repayment is confirmed. Loans never carry interest, so no interest is ever calculated or sent.',
+    B: 'Texts the debtor when a loan is paid out and when a repayment is confirmed (with the balance that is left). Loans never carry interest, so no interest is ever calculated or sent.',
     PORTAL: ' Works for a mobile number in any country. With an NIC or a passport / ID number, each text carries a private link to a statement page; the person sees it only after entering that number and a one-time code sent to the mobile number above.',
 };
 
@@ -118,6 +164,11 @@ export function blockHtml(prefix, { layer = 'A', record = null } = {}) {
         + '<label for="' + id + '_on" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;">'
         + '<input type="checkbox" id="' + id + '_on"' + (on ? ' checked' : '') + ' style="width:18px;height:18px;">'
         + 'Send SMS notifications</label>'
+        + (layer === 'B'
+            ? '<label for="' + id + '_late" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12.5px;margin-top:8px;">'
+              + '<input type="checkbox" id="' + id + '_late"' + (r[SMS_FIELDS.REMIND] === true ? ' checked' : '') + ' style="width:18px;height:18px;margin-top:1px;flex:0 0 auto;">'
+              + '<span>Also remind when a payment is late. One text the day after the \u201cExpected back by\u201d date, then one a week later, at most four, only while money is still owed. Needs that date.</span></label>'
+            : '')
         + '<div id="' + id + '_err" role="alert" style="color:var(--red,#e5484d);font-size:12px;margin-top:4px;"></div>'
         + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5;">' + esc(COPY[layer === 'B' ? 'B' : 'A'] + COPY.PORTAL) + '</div>'
         + '</div>';
@@ -129,7 +180,8 @@ export function readBlock(root, prefix) {
     const on = root.querySelector('#' + prefix + '_on');
     if (!on) return null;
     const val = (suffix) => { const el = root.querySelector('#' + prefix + '_' + suffix); return el ? s(el.value) : ''; };
-    return { enabled: !!on.checked, phone: val('phone'), nic: val('nic'), hasPhone: !!root.querySelector('#' + prefix + '_phone') };
+    const late = root.querySelector('#' + prefix + '_late');
+    return { enabled: !!on.checked, phone: val('phone'), nic: val('nic'), hasPhone: !!root.querySelector('#' + prefix + '_phone'), ...(late ? { remindLate: !!late.checked } : {}) };
 }
 
 /** Put a validation message in the block. */
@@ -362,12 +414,49 @@ export function announce(rows, memory = {}) {
 }
 
 /**
+ * What the owner must be told even though nothing was delivered: texts that are WAITING for something only they can fix. Without this the
+ * only sign is a quiet message log, and a debtor is never told about a payment because the account ran out of its ten units.
+ *   rows:   mirror documents (not the status card); status: the status card or null; told: the problems already announced on this page
+ * -> { toasts:[{tone,text,detail}], told:Set<string> }
+ * A problem is announced once while it lasts; when it clears and comes back it is announced again.
+ */
+export const HELD_NOTICE = Object.freeze({
+    credit: ['Texts are waiting for SMS credit', 'Top up your Text.lk account and they go out by themselves.'],
+    auth: ['Texts are waiting: Text.lk rejected the API token', 'Check TEXTLK_API_TOKEN in the Vercel settings.'],
+    sender: ['Texts are waiting for the sender ID', 'Text.lk has to approve the WEALTHFLOW sender ID first.'],
+    config: ['Texts are waiting: Text.lk is not connected', 'Add TEXTLK_API_TOKEN in the Vercel settings.'],
+    unconfigured: ['Texts are waiting: Text.lk is not connected', 'Add TEXTLK_API_TOKEN in the Vercel settings and they go out by themselves.'],
+    low: ['SMS credit is running low', 'When it runs out, texts are held, not lost, until you top up.'],
+});
+
+export function heldAlerts(rows, status, told = new Set()) {
+    const waiting = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id && r.id !== '_status' && r.status === 'queued');
+    const now = new Set();
+    const counts = {};
+    for (const r of waiting) {
+        const k = s(r.error && r.error.kind);
+        const key = Object.prototype.hasOwnProperty.call(HELD_NOTICE, k) && k !== 'low' && k !== 'unconfigured' ? k : (status && status.configured === false && !k ? 'unconfigured' : '');
+        if (!key) continue;
+        now.add(key); counts[key] = (counts[key] || 0) + 1;
+    }
+    if (status && status.lowCredit === true) now.add('low');
+    const toasts = [];
+    for (const key of ['credit', 'auth', 'sender', 'config', 'unconfigured', 'low']) {
+        if (!now.has(key) || (told instanceof Set && told.has(key))) continue;
+        const [text, detail] = HELD_NOTICE[key];
+        const n = counts[key];
+        toasts.push({ tone: key === 'low' ? 'info' : 'error', text, detail: (n ? n + (n === 1 ? ' text is' : ' texts are') + ' waiting. ' : '') + detail + (key === 'low' && num(status && status.units) ? ' (' + num(status.units) + ' units left)' : '') });
+    }
+    return { toasts, told: now };
+}
+
+/**
  * Listen to the mirror and announce. Returns the unsubscribe function.
  *   deps: { firestore, uid, storage, onToast(t), onRows(rows, status), onError(e) }
  */
 export function watchSmsLog(deps) {
     const key = 'wf_sms_seen_' + deps.uid;
-    let memory = { seenSentAt: num(safeStorage(deps.storage, (x) => (x ? x.getItem(key) : 0))), boundaryIds: new Set(), knownFailed: new Set(), first: true };
+    let memory = { seenSentAt: num(safeStorage(deps.storage, (x) => (x ? x.getItem(key) : 0))), boundaryIds: new Set(), knownFailed: new Set(), first: true, told: new Set() };
     let q;
     try {
         q = deps.firestore.collection('users').doc(deps.uid).collection('smsLog').orderBy('updatedAt', 'desc').limit(CLIENT.LOG_LIMIT);
@@ -376,9 +465,10 @@ export function watchSmsLog(deps) {
         try {
             const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
             const out = announce(rows, memory);
-            memory = { seenSentAt: out.seenSentAt, boundaryIds: out.boundaryIds, knownFailed: out.knownFailed, first: false };
+            const held = heldAlerts(rows, rows.find((r) => r.id === '_status') || null, memory.told);
+            memory = { seenSentAt: out.seenSentAt, boundaryIds: out.boundaryIds, knownFailed: out.knownFailed, first: false, told: held.told };
             if (out.seenSentAt > 0) safeStorage(deps.storage, (x) => { if (x) x.setItem(key, String(out.seenSentAt)); });
-            for (const t of out.toasts) if (deps.onToast) deps.onToast(t);
+            for (const t of out.toasts.concat(held.toasts)) if (deps.onToast) deps.onToast(t);
             if (deps.onRows) deps.onRows(rows.filter((r) => r.id !== '_status'), rows.find((r) => r.id === '_status') || null);
         } catch (e) { if (deps.onError) deps.onError(e); }
     }, (e) => { if (deps.onError) deps.onError(e); });
@@ -436,9 +526,9 @@ export function rowsOf(docs, nowMs = Date.now()) {
         .sort((a, b) => num(b.occurredAt) - num(a.occurredAt))
         .map((d) => {
             let note = '';
-            if (d.status === 'queued') note = HOLD_TEXT[d.error && d.error.kind] || (num(d.nextAttemptAt) > nowMs ? 'Scheduled for a later time.' : 'Waiting to be sent.');
+            if (d.status === 'queued') note = HOLD_TEXT[d.error && d.error.kind] || (num(d.nextAttemptAt) > nowMs ? (d.scheduled ? 'Scheduled for the morning where the recipient is (08:00-20:00).' : 'Scheduled for a later time.') : 'Waiting to be sent.');
             else if (d.status === 'failed') note = FAIL_TEXT[d.error && d.error.kind] || s(d.error && d.error.message) || 'The gateway refused this message.';
-            else if (d.status === 'expired') note = 'Held too long to still be news, so it was not sent.';
+            else if (d.status === 'expired' || (d.status === 'cancelled' && d.kind === 'B.balance')) note = d.kind === 'B.balance' ? 'The balance could not be sent within half an hour, so it was dropped rather than sent with a figure that may have moved. Press Send balance again.' : d.kind === 'B.late' ? 'The reminder\'s day passed before it could go out (no credit, or outside the debtor\'s sending hours), so it was dropped rather than sent late.' : 'Held too long to still be news, so it was not sent.';
             else if (d.status === 'cancelled') note = 'Switched off or changed before it was sent.';
             else if (d.status === 'sent' && d.possiblyDuplicated) note = 'May have been delivered twice after a gateway timeout.';
             return {
@@ -501,7 +591,7 @@ export function boot(win) {
     const live = { uid: null, unsub: null, notifier: null, rows: [], status: null, timer: null, bound: false, told: false };
     const decoy = () => win._isDecoyMode === true;
     const storage = (() => { try { return win.localStorage; } catch (_) { return null; } })();
-    const toast = (t) => { try { if (typeof win.notify === 'function') win.notify(t.text + (t.detail ? ' (' + t.detail + ')' : ''), t.tone === 'error' ? 'error' : 'success'); } catch (_) { /* a toast is a courtesy */ } };
+    const toast = (t) => { try { if (typeof win.notify === 'function') win.notify(t.text + (t.detail ? ' (' + t.detail + ')' : ''), t.tone === 'error' ? 'error' : (t.tone === 'info' ? 'info' : 'success')); } catch (_) { /* a toast is a courtesy */ } };
     const nameOf = (kind, id) => {
         try {
             const list = kind === 'debtor' ? win.appData.debtors : win.appData.income;
@@ -550,7 +640,7 @@ export function boot(win) {
         live.unsub = null; live.notifier = null; live.uid = null; live.rows = []; live.status = null;
     }
     const api = {
-        applyToggle, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, SMS_FIELDS,
+        applyToggle, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, SMS_FIELDS, BALANCE, balanceWaitMs, requestBalance,
         start,
         afterPush() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.afterPush(); } catch (_) { /* never into the sync path */ } },
         kickNow() { if (live.notifier) return live.notifier.run({ force: true, reason: 'manual' }); return Promise.resolve({ skipped: 'not-started' }); },
@@ -578,4 +668,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFSms = boot(window); } catch (e) { console.warn('[WF-SMS] page side did not start:', e && e.message); }
 }
 
-export default { SMS_FIELDS, CLIENT, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, watchSmsLog, rowsOf, panelHtml, describeIssue };
+export default { SMS_FIELDS, CLIENT, BALANCE, balanceWaitMs, requestBalance, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue };

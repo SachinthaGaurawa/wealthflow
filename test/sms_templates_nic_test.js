@@ -56,6 +56,15 @@ describe('every notice, word for word', () => {
         [KINDS.B_REPAYMENT, { ...base, amount: 20000, ref: 'DEB-1A2B3C', balance: 30000 }, `Repayment LKR 20,000.00 received on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 30,000.00. Statement: ${LINK}`],
         [KINDS.B_REPAYMENT, { ...base, amount: 30000, ref: 'DEB-1A2B3C', balance: 0, settled: true }, `Repayment LKR 30,000.00 received, ref DEB-1A2B3C. Loan fully settled, thank you. Statement: ${LINK}`],      // the date is dropped: it would cost a second part
     ];
+    cases.push(
+        [KINDS.B_BALANCE, { ...base, ref: 'DEB-1A2B3C', balance: 30000 }, `Balance LKR 30,000.00 as at 05 Oct 2026, ref DEB-1A2B3C. Statement: ${LINK}`],
+        [KINDS.B_BALANCE, { ...base, ref: 'DEB-1A2B3C', balance: 0 }, `No balance outstanding on ref DEB-1A2B3C as at 05 Oct 2026, thank you. Statement: ${LINK}`],
+        [KINDS.B_BALANCE, { ...base, ref: 'DEB-1A2B3C', balance: 12750000.5, dateISO: '' }, `Balance LKR 12,750,000.50, ref DEB-1A2B3C. Statement: ${LINK}`],
+    );
+    cases.push(
+        [KINDS.B_LATE, { ...base, ref: 'DEB-1A2B3C', balance: 25000, dateISO: '2026-10-10' }, `Reminder: LKR 25,000.00 is still outstanding, due 10 Oct 2026, ref DEB-1A2B3C. Statement: ${LINK}`],
+        [KINDS.B_LATE, { ...base, ref: 'DEB-1A2B3C', balance: 987654321.99, dateISO: '2026-10-10' }, `Reminder: LKR 987,654,321.99 is still outstanding, due 10 Oct 2026, ref DEB-1A2B3C. Statement: ${LINK}`],
+    );
     for (const [kind, ctx, expected] of cases) {
         it(`${kind}${ctx.further ? ' (further)' : ''}${ctx.settled ? ' (settled)' : ''}`, () => {
             const text = buildMessage(kind, ctx);

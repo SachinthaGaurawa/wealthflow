@@ -9,7 +9,12 @@ on:
       - wealthflow-phone.js
       - wealthflow-nic.js
       - wealthflow-sms.js
+      - wealthflow-liquidity.js
+      - sms-events.mjs
+      - sms-templates.mjs
+      - sms-engine.mjs
       - test/e2e/people-book.mjs
+      - test/e2e/part-payment.mjs
       - test/e2e/sms-notices.mjs
       - test/e2e/harness.mjs
       - test/e2e/firebase-stub.mjs
@@ -34,3 +39,6 @@ jobs:
       # The saved-people book end to end: add once and pick later, edit with the one question, delete without touching a ledger,
       # contacts import, the payment-details editor, and every screen at 320 px.
       - run: node test/e2e/people-book.mjs
+      # A debtor who pays in parts: the repayment form shows the balance that will be left, Send balance asks first and pauses between taps,
+      # and what the page saved is handed to the server's own wording so the text a debtor would receive is checked word for word.
+      - run: node test/e2e/part-payment.mjs

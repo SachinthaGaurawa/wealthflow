@@ -308,7 +308,10 @@ export const BUDGETS = {
     // 2026-10-05 (saved people, payment details and any-country numbers on top of the text-message switch): 2,203,000 -> 2_209_500 (measured 2,207,231 + ~0.1% headroom). The forms' people picker and the folded contact section
     // (the investment form is rebuilt from its inputs, so `personId` is carried over by hand), the commit step that asks one question before a shared name, number or ID changes everywhere, the Saved people buttons and one script tag.
     // About a third is comments.
-    htmlBytes: 2_209_500,
+    // 2026-10-05 (a debtor who pays in parts is told the balance): 2,209,500 -> 2_216_000 (measured 2,213,525 + ~0.1% headroom). The Log repayment form shows the balance that will be left (and calls out a figure larger than is owed),
+    // can count a payment at once when the owner can already see the money and says what the debtor will be texted; Send balance asks first, writes one request on the debtor and refuses a second tap for ten minutes; the two confirmation
+    // toasts say a text is queued. About a third is comments.
+    htmlBytes: 2_216_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -623,7 +626,11 @@ export const BUDGETS = {
     // the device-contacts reader and the .vcf parser), wealthflow-people-ui.js (new, about 68 KB: the Saved people and Payment details screens, the contact fields, the picker and every error and confirmation they show),
     // wealthflow-payaccounts.js (new, about 6 KB: the owner's bank accounts and the whitelist of what a debtor or investor is shown; shared with the server) and wealthflow-phone.js grown by about 16 KB for the table of 245 countries
     // (dialling code, national lengths, time zone) that makes a number from anywhere reachable. The statement page, the PDF writer and the page's Sinhala words are served as their own files and are not counted here.
-    totalJsBytes: 2_412_000,
+    // 2026-10-05 (a debtor who pays in parts is told the balance): 2,412,000 -> 2_415_000 (measured 2,412,254 + ~0.1% headroom). wealthflow-sms.js carries the Send balance request: the pause between two requests, the record it
+    // adds and the words the message log shows when a balance could not go out in time.
+    // 2026-10-05 (late-payment reminders and held-text alerts): 2,415,000 -> 2_419_000 (measured 2,416,330 + ~0.1% headroom). wealthflow-sms.js carries the reminder box and its stamp, and the alert that says texts are waiting
+    // (no credit, a rejected token) so the owner hears about it on the page rather than from the debtor.
+    totalJsBytes: 2_419_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     largestModuleBytes: 233_000, // measured 232,325

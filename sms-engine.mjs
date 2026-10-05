@@ -104,7 +104,7 @@ const mirrorOf = (d, extra = {}) => ({
     status: d.status, to: d.toMasked, body: d.body, segments: d.segments, attempts: d.attempts,
     amount: d.amount, currency: d.currency, occurredAt: d.occurredAt, nextAttemptAt: d.nextAttemptAt || null,
     error: d.lastError ? { kind: d.lastError.kind, message: d.lastError.message } : null,
-    sentAt: d.sentAt || null, possiblyDuplicated: !!d.possiblyDuplicated,
+    sentAt: d.sentAt || null, possiblyDuplicated: !!d.possiblyDuplicated, scheduled: !!d.scheduled,
     ...extra,
 });
 
@@ -156,6 +156,7 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
                     to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin,
                     body, segments: a.segments, encoding: a.encoding, amount: ev.amount, currency: ev.currency,
                     scheduled: !!ev.scheduled, linked: !!link, lastError: null, possiblyDuplicated: false,
+                    ...(ev.maxAgeMs > 0 ? { maxAgeMs: ev.maxAgeMs } : {}),
                 };
                 tx.set(ref, doc);
                 return { what: 'created', doc };
@@ -184,6 +185,7 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
                     to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin,
                     body, segments: a.segments, encoding: a.encoding, amount: ev.amount, currency: ev.currency,
                     scheduled: !!ev.scheduled, linked: !!link, lastError: null, possiblyDuplicated: false, revivedAt: now,
+                    ...(ev.maxAgeMs > 0 ? { maxAgeMs: ev.maxAgeMs } : {}),
                 };
                 tx.set(ref, doc);
                 return { what: 'reopened', doc };
@@ -225,10 +227,19 @@ export async function claim({ db, uid, id, now }) {
         const crashed = d.status === STATUS.SENDING && num(d.leaseUntil) <= now;
         if (d.status !== STATUS.QUEUED && !crashed) return null;
         if (d.status === STATUS.QUEUED && num(d.nextAttemptAt) > now) return null;
-        if (now - num(d.occurredAt) > MAX_AGE_MS) {
+        // a notice that carries its own shelf life (the balance the owner asked for) expires on that, not on the month every other one gets
+        if (now - num(d.occurredAt) > (num(d.maxAgeMs) > 0 ? num(d.maxAgeMs) : MAX_AGE_MS)) {
             const doc = { ...d, status: STATUS.EXPIRED, expiredAt: now, lastError: { kind: 'expired', message: 'held too long to still be news', at: now } };
             tx.set(ref, doc);
             return { expired: true, doc };
+        }
+        // A scheduled text is one that is not news the moment it happens (a reminder, a monthly interest notice), so it only ever goes out in the
+        // recipient's 08:00-20:00. "Due" is not enough: the daily sweep and a page nudge run at any hour, and a text that was queued for the
+        // morning must not go at 03:00 just because that is when a sweep got to it. Outside the window it waits for the next one.
+        if (d.status === STATUS.QUEUED && d.scheduled === true) {
+            const tz = Number.isFinite(d.tzMin) ? d.tzMin : LOCAL_OFFSET_MIN;
+            const open = nextSendWindow(now, tz);
+            if (open > now) { tx.set(ref, { ...d, nextAttemptAt: open }); return null; }
         }
         const doc = { ...d, status: STATUS.SENDING, leaseUntil: now + LEASE_MS, attempts: num(d.attempts) + 1, possiblyDuplicated: !!d.possiblyDuplicated || crashed };
         tx.set(ref, doc);
@@ -348,9 +359,10 @@ async function dueIds({ db, uid, now }) {
 
 /** Write the owner's status card: what is switched on but cannot work, whether the gateway is configured, whether credit is low. */
 export async function writeStatus({ db, uid, issues, configured, units = null, now }) {
-    await mirror(db, uid, '_status', {
-        kind: 'status', configured: !!configured, issues: issues.slice(0, 50), units, lowCredit: units !== null && units <= LOW_CREDIT_UNITS,
-    }, now);
+    // A sweep that did not ask the gateway for the balance (the page's nudge after a save) knows nothing about it, and must not erase what the
+    // last one that did (the daily sweep) found: writing `units: null` here made the low-credit warning vanish at the owner's next save.
+    const credit = units === null || units === undefined ? {} : { units, lowCredit: units <= LOW_CREDIT_UNITS, unitsAt: now };
+    await mirror(db, uid, '_status', { kind: 'status', configured: !!configured, issues: issues.slice(0, 50), ...credit }, now);
 }
 
 /**

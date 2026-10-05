@@ -8,7 +8,7 @@ Text.lk HTTP API v3 (`https://app.text.lk/api/v3/`).
 | Layer | Where the switch is | Messages |
 | --- | --- | --- |
 | A | Investments tab, investment form | capital recorded, monthly interest applied, a payment received |
-| B | Liquidity & Credit Hub, debtor form | loan paid out (first advance and further advances), repayment confirmed |
+| B | Liquidity & Credit Hub, debtor form | loan paid out (first advance and further advances), repayment confirmed (with the balance that is left), balance on request |
 
 Any country, any person: the number is stored as an international (E.164) number, with a country picked from a list of 240+
 countries (default Sri Lanka, changed once under **Saved people**), and a person with no Sri Lankan NIC is identified by a passport or
@@ -21,6 +21,39 @@ before that moment is history, not news, and is never texted.
 
 A payment is only announced once the owner has **confirmed** it. A repayment that is still waiting for confirmation, or
 one that is un-confirmed before its text goes, sends nothing.
+
+### A debtor who pays in parts
+
+Every confirmed repayment text carries the balance that is left, so a part payment says how much remains:
+`Repayment LKR 20,000.00 received on 05 Oct 2026, ref DEB-8E4EF6. Balance LKR 30,000.00. Statement: <link>`. The final one says the loan is settled.
+
+On the debtor's card:
+
+* **Log repayment** shows what is owed now, then the balance that will be left as the amount is typed, and calls out a figure larger than is
+  owed before it is saved. It says what the debtor will be texted, and when. A repayment is still logged as *waiting for confirmation* unless
+  the owner ticks **I can already see this money in my bank, count it now** (the box starts unticked: nothing posts itself).
+* **Send balance** (shown when the texts are on and something is still owed) texts the *confirmed* balance and the statement link on request.
+  It asks first, then writes one `{ id, at }` request on the debtor (`sms_requests`); the server derives the text from the books, so the page
+  never names an amount or a recipient. A second tap within ten minutes is refused before any question is asked (a text costs a unit).
+  The text is written when it is queued, so a request that cannot go out within half an hour (no credit, a rejected token) is dropped and the
+  message log says so, rather than sent later with a figure that has moved.
+
+### Late-payment reminders (optional, per debtor)
+
+Off unless the owner ticks **Also remind when a payment is late** on that debtor's form (it needs an *Expected back by* date; the form refuses
+the tick without one). While it is ticked and money is still confirmed as owed:
+
+* One text the day after the date (the debtor's own calendar day, from their number's country), then one a week later, then 15 and 22 days
+  after: at most four. Each is sent between 08:00 and 20:00 where the debtor is, never overnight.
+  `Reminder: LKR 50,000.00 is still outstanding, due 02 Oct 2026, ref DEB-7E1E60. Statement: <link>`
+* No interest, no penalty and no demand: the figure is the confirmed balance and the date is the one the owner set.
+* Nothing is sent for a day that was over before the box was ticked, and an edit keeps the moment it was ticked (`sms_remind_at`).
+* A reminder whose day has gone by more than 24 hours ago is dropped, not sent late; a payment confirmed before it goes out cancels it.
+* **Held back while a repayment is waiting for your confirmation.** A repayment you have logged but not yet checked against the bank means
+  the debtor says they have paid; "still outstanding" would be wrong exactly then. Once you confirm it, a reminder (if one is still due)
+  carries what is really left; if you delete it, they are reminded as before. A balance you ask for with **Send balance** is not held back:
+  it states the confirmed figure and nothing else.
+* Layer A (investments) has no such box: capital is not a debt.
 
 ## Saved people and payment details (Investments tab and Liquidity & Credit Hub)
 
@@ -62,8 +95,10 @@ allowed account also sees `lowCredit`.
 
 The books are the source of truth. `sms-events.mjs` derives, from the user's document, which notices are owed, each with a
 deterministic key. `sms-engine.mjs` puts each key into the ledger `wf-sms/{uid}/events/{sha256(key)}` once, in a
-transaction, renders the words once, and sends it. The page nudges `/api/sms-notify` after a save; a daily cron
-(`/api/sms-sweep`, 04:00 UTC = 09:30 in Colombo) derives the same notices again, so a missed nudge loses nothing.
+transaction, renders the words once, and sends it. The page nudges `/api/sms-notify` after a save; the cron
+(`/api/sms-sweep`, at 04:00, 12:00 and 18:00 UTC) derives the same notices again, so a missed nudge loses nothing. The three
+times are there for the window below: 04:00 UTC is 09:30 in Colombo (Asia and the Pacific), 12:00 the Gulf, Europe and the
+eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends nothing and costs nothing.
 
 * **Hold, don't fail.** Out of credit, a rejected token or an unapproved sender holds the message and retries every six
   hours without using attempts. The account this was built for had ten units.
@@ -72,7 +107,11 @@ transaction, renders the words once, and sends it. The page nudges `/api/sms-not
 * **Exactly once, honestly.** The ledger makes a second queueing impossible. The gateway has no idempotency key, so a
   worker that dies mid-send can cause a second attempt; that message is flagged `possiblyDuplicated`.
 * **Limits.** 300 texts per account per day, 12 per number per day, reserved before sending so concurrent sends cannot
-  overshoot. Interest notices only go out between 08:00 and 20:00 in Sri Lanka.
+  overshoot. **Scheduled** texts (monthly interest, late-payment reminders) go out only between 08:00 and 20:00 where the
+  *recipient* is (the country of the number), and the engine checks that when it claims a text, not only when it queues one:
+  a text queued for the morning is never sent at 03:00 because that is when a sweep got to it. It waits for the next window
+  (reminders are dropped after a day, interest notices after a month). A text that is news the moment it happens (a receipt,
+  a disbursement, a balance you asked for, a one-time code) is sent at once, at any hour.
 * **Cost.** Plain GSM-7 only (no names, no symbols), one part when it can be, so a notice costs one unit.
 * **The owner sees it.** Every state change is mirrored to `users/{uid}/smsLog` (read-only to the page); the page shows
   "Admin Alert: SMS Delivered Successfully to Tenant" when a delivery lands, and the **Text messages** button opens the log,

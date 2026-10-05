@@ -9,7 +9,7 @@
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
-import { deriveEvents, nextSendWindow, periodInterest, interestApplies, hasSmsRecords, GRACE_MS, MAX_AGE_MS, FIELDS, LAYER } from '../sms-events.mjs';
+import { deriveEvents, nextSendWindow, periodInterest, interestApplies, hasSmsRecords, GRACE_MS, MAX_AGE_MS, REQUEST_WINDOW_MS, REQUESTS_READ, REMINDER_OFFSETS_DAYS, REMINDER_WINDOW_MS, REMINDER_SHELF_MS, FIELDS, LAYER } from '../sms-events.mjs';
 import { KINDS } from '../sms-templates.mjs';
 
 const T = (iso) => Date.parse(iso);
@@ -282,5 +282,182 @@ describe('the sending window (Sri Lanka, UTC+05:30)', () => {
     it('after 20:00 local waits for 08:00 the next day', () => {
         expect(nextSendWindow(T('2026-10-05T14:30:00Z'))).toBe(T('2026-10-06T02:30:00Z'));     // 20:00 -> 08:00 tomorrow
         expect(nextSendWindow(T('2026-10-05T18:00:00Z'))).toBe(T('2026-10-06T02:30:00Z'));     // 23:30
+    });
+});
+
+describe('the balance on request (a part payment was agreed, or the person asked)', () => {
+    const lent = { id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-05', confirmed: true, at: T('2026-10-05T09:00:00Z') };
+    const part = { id: 'e2', kind: 'repayment', amount: 20000, date: '2026-10-06', confirmed: true, at: T('2026-10-06T05:00:00Z') };
+    const asked = T('2026-10-06T10:00:00Z');
+    const books = (over = {}, events = [lent, part]) => ({ debtors: [debtor({ events, [FIELDS.REQUESTS]: [{ id: 'req-1', at: asked }], ...over })] });
+    const bal = (r) => r.events.filter((e) => e.kind === KINDS.B_BALANCE);
+
+    it('names the confirmed balance as it is now, and the day it is as at', () => {
+        const r = deriveEvents(books(), asked + 60000);
+        expect(bal(r)).toHaveLength(1);
+        expect(bal(r)[0]).toMatchObject({ key: 'B:d1:bal:req-1', kind: KINDS.B_BALANCE, layer: LAYER.B, balance: 30000, amount: 30000, occurredAt: asked, dateISO: '2026-10-06', maxAgeMs: REQUEST_WINDOW_MS, scheduled: false });
+    });
+
+    it('does not count money nobody has confirmed, however much is waiting', () => {
+        const pending = { id: 'e3', kind: 'repayment', amount: 25000, date: '2026-10-06', confirmed: false, at: T('2026-10-06T08:00:00Z') };
+        expect(bal(deriveEvents(books({}, [lent, part, pending]), asked + 1000))[0].balance).toBe(30000);
+    });
+
+    it('a debtor who owes nothing is told so, with a balance of zero (never a negative one)', () => {
+        const over = { id: 'e9', kind: 'repayment', amount: 60000, date: '2026-10-06', confirmed: true, at: T('2026-10-06T06:00:00Z') };
+        expect(bal(deriveEvents(books({}, [lent, over]), asked + 1000))[0].balance).toBe(0);
+    });
+
+    it('is good for half an hour and no longer: the figure goes into the text when it is queued, so a late one is dropped, not sent stale', () => {
+        expect(bal(deriveEvents(books(), asked + REQUEST_WINDOW_MS))).toHaveLength(1);
+        expect(bal(deriveEvents(books(), asked + REQUEST_WINDOW_MS + 1))).toHaveLength(0);
+        expect(REQUEST_WINDOW_MS).toBe(30 * 60 * 1000);
+    });
+
+    it('a request from the future (a device with the wrong clock) is not honoured early or at all', () => {
+        expect(bal(deriveEvents(books(), asked - 10 * 60000))).toHaveLength(0);
+        expect(bal(deriveEvents(books(), asked - 60000))).toHaveLength(1);            // within the allowed skew
+    });
+
+    it('a request pressed before the texts were switched on is not news', () => {
+        expect(bal(deriveEvents(books({ [FIELDS.ENABLED_AT]: asked + 3600e3 }), asked + 60000))).toHaveLength(0);
+    });
+
+    it('needs the switch on, and a number it can reach (the same issues as every other notice)', () => {
+        expect(bal(deriveEvents(books({ [FIELDS.ENABLED]: false }), asked + 1000))).toHaveLength(0);
+        const noPhone = deriveEvents(books({ phone: '' }), asked + 1000);
+        expect(bal(noPhone)).toHaveLength(0);
+        expect(noPhone.issues.some((i) => i.reason === 'no-phone')).toBe(true);
+    });
+
+    it('reads only well-formed requests: an id the server accepts and a real time', () => {
+        const reqs = [{ id: 'ok-1', at: asked }, { id: '', at: asked }, { id: 'a b', at: asked }, { id: 'x'.repeat(41), at: asked }, { id: 'no-time' }, { id: 'neg', at: -5 }, null, 7, 'x', { id: '<b>', at: asked }];
+        const r = deriveEvents(books({ [FIELDS.REQUESTS]: reqs }), asked + 1000);
+        expect(bal(r).map((e) => e.key)).toEqual(['B:d1:bal:ok-1']);
+    });
+
+    it('reads no more than the newest few, so a stuck loop on a device cannot become a stream of texts', () => {
+        const reqs = Array.from({ length: 12 }, (_, i) => ({ id: `r${i}-aaaa`, at: asked + i * 1000 }));
+        const keys = bal(deriveEvents(books({ [FIELDS.REQUESTS]: reqs }), asked + 20000)).map((e) => e.key);
+        expect(keys).toHaveLength(REQUESTS_READ);
+        expect(keys).toContain('B:d1:bal:r11-aaaa');
+        expect(keys).not.toContain('B:d1:bal:r0-aaaa');
+    });
+
+    it('is not a Layer A thing: an investment never carries one, whatever field a record is given', () => {
+        const user = { income: [investment({ [FIELDS.REQUESTS]: [{ id: 'req-1', at: asked }] })] };
+        expect(bal(deriveEvents(user, asked + 1000))).toHaveLength(0);
+    });
+
+    it('still sends the repayment text with the balance left, which is how a part payment says what remains', () => {
+        const r = deriveEvents(books({ [FIELDS.REQUESTS]: [] }), T('2026-10-06T06:00:00Z'));
+        expect(r.events.find((e) => e.kind === KINDS.B_REPAYMENT)).toMatchObject({ amount: 20000, balance: 30000, settled: false });
+    });
+
+    it('computes no interest: a stray rate on the record changes nothing', () => {
+        const r = deriveEvents(books({ rate: 24 }), asked + 1000);
+        expect(bal(r)[0].balance).toBe(30000);
+        expect(r.events.some((e) => e.layer === LAYER.B && e.kind === KINDS.A_INTEREST)).toBe(false);
+    });
+});
+
+describe('late-payment reminders (opt-in, a debtor only)', () => {
+    const lent = { id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-01', confirmed: true, at: T('2026-10-01T05:00:00Z') };
+    const part = { id: 'e2', kind: 'repayment', amount: 20000, date: '2026-10-05', confirmed: true, at: T('2026-10-05T05:00:00Z') };
+    const late = (over = {}, events = [lent]) => ({ debtors: [debtor({ dueISO: '2026-10-10', events, [FIELDS.REMIND]: true, [FIELDS.REMIND_AT]: T('2026-10-02T00:00:00Z'), ...over })] });
+    const rem = (r) => r.events.filter((e) => e.kind === KINDS.B_LATE);
+
+    it('nothing until the day after the date has begun where the debtor is (Colombo, UTC+05:30), and then a scheduled reminder for 08:00', () => {
+        expect(rem(deriveEvents(late(), T('2026-10-10T18:00:00Z')))).toHaveLength(0);               // still the 10th in Colombo
+        const r = rem(deriveEvents(late(), T('2026-10-10T19:00:00Z')));                               // 00:30 on the 11th
+        expect(r).toHaveLength(1);
+        expect(r[0]).toMatchObject({ key: 'B:d1:late:2026-10-10:1', kind: KINDS.B_LATE, layer: LAYER.B, balance: 50000, amount: 50000, dateISO: '2026-10-10', scheduled: true, occurredAt: T('2026-10-10T18:30:00Z') });
+        expect(r[0].notBefore).toBe(T('2026-10-11T02:30:00Z'));                                       // 08:00 Colombo
+        expect(r[0].maxAgeMs).toBe(REMINDER_SHELF_MS + (T('2026-10-11T02:30:00Z') - T('2026-10-10T18:30:00Z')));
+    });
+
+    it('the day is the recipient\'s: a number in Dubai (UTC+04:00) is reminded on its own morning', () => {
+        const r = rem(deriveEvents(late({ phone: '+971501234567' }), T('2026-10-10T21:00:00Z')));     // 01:00 on the 11th in Dubai
+        expect(r).toHaveLength(1);
+        expect(r[0].occurredAt).toBe(T('2026-10-10T20:00:00Z'));
+        expect(r[0].notBefore).toBe(T('2026-10-11T04:00:00Z'));                                       // 08:00 Dubai
+    });
+
+    it('then one a week later each time, at most four, and never more than one a day', () => {
+        expect(REMINDER_OFFSETS_DAYS).toEqual([1, 8, 15, 22]);
+        const keys = (now) => rem(deriveEvents(late({ [FIELDS.ENABLED_AT]: T('2026-10-01T00:00:00Z') }), now)).map((e) => e.key.split(':').pop());
+        expect(keys(T('2026-10-18T05:00:00Z'))).toEqual(['2']);                                       // the first one's day is more than three days gone: not sent late
+        expect(keys(T('2026-10-25T05:00:00Z'))).toEqual(['3']);
+        expect(keys(T('2026-11-01T05:00:00Z'))).toEqual(['4']);
+        expect(keys(T('2026-11-20T05:00:00Z'))).toEqual([]);                                          // four is the end
+    });
+
+    it('a reminder whose day was a few days ago is still owed (the sweep was down), but not one from last week', () => {
+        expect(rem(deriveEvents(late(), T('2026-10-11T05:00:00Z')))).toHaveLength(1);
+        expect(rem(deriveEvents(late(), T('2026-10-13T18:00:00Z')))).toHaveLength(1);                 // two days and 23 hours after its day began
+        expect(rem(deriveEvents(late(), T('2026-10-13T19:00:00Z')))).toHaveLength(0);                 // three days and a half: too late to be useful
+        expect(rem(deriveEvents(late(), T('2026-10-17T05:00:00Z')))).toHaveLength(0);
+        expect(REMINDER_WINDOW_MS).toBe(3 * 86400000);
+    });
+
+    it('says the balance that is still owed after a part payment, never the original loan, and no interest', () => {
+        const r = rem(deriveEvents(late({ rate: 24 }, [lent, part]), T('2026-10-11T05:00:00Z')));
+        expect(r[0]).toMatchObject({ balance: 30000, amount: 30000 });
+    });
+
+    it('stops when the money is paid back, and a repayment nobody has confirmed neither counts nor is chased (see the held-back case below)', () => {
+        const paid = { id: 'e3', kind: 'repayment', amount: 50000, date: '2026-10-09', confirmed: true, at: T('2026-10-09T05:00:00Z') };
+        expect(rem(deriveEvents(late({}, [lent, paid]), T('2026-10-11T05:00:00Z')))).toHaveLength(0);
+        const claim = { ...paid, confirmed: false };
+        expect(rem(deriveEvents(late({}, [lent, claim]), T('2026-10-11T05:00:00Z')))).toHaveLength(0);
+    });
+
+    it('is off unless the owner ticked it, and needs the texts on, a date, and a number', () => {
+        const now = T('2026-10-11T05:00:00Z');
+        expect(rem(deriveEvents(late({ [FIELDS.REMIND]: false }), now))).toHaveLength(0);
+        expect(rem(deriveEvents(late({ [FIELDS.REMIND]: undefined }), now))).toHaveLength(0);
+        expect(rem(deriveEvents(late({ [FIELDS.REMIND]: 'true' }), now))).toHaveLength(0);          // only a real boolean
+        expect(rem(deriveEvents(late({ [FIELDS.ENABLED]: false }), now))).toHaveLength(0);
+        expect(rem(deriveEvents(late({ dueISO: '' }), now))).toHaveLength(0);
+        expect(rem(deriveEvents(late({ dueISO: 'soon' }), now))).toHaveLength(0);
+        expect(rem(deriveEvents(late({ phone: '' }), now))).toHaveLength(0);
+    });
+
+    it('a day that was over before the box was ticked is not brought back (ticked on the 12th: nothing for the 11th)', () => {
+        expect(rem(deriveEvents(late({ [FIELDS.REMIND_AT]: T('2026-10-12T09:00:00Z') }), T('2026-10-13T05:00:00Z')))).toHaveLength(0);
+        expect(rem(deriveEvents(late({ [FIELDS.REMIND_AT]: T('2026-10-12T09:00:00Z') }), T('2026-10-18T05:00:00Z')))).toHaveLength(1);   // the next one, a week on
+    });
+
+    it('a new date is a new set of reminders, under new keys, so the old ones are no longer owed', () => {
+        const now = T('2026-10-20T05:00:00Z');
+        const a = rem(deriveEvents(late({ dueISO: '2026-10-10' }), now)).map((e) => e.key);
+        const b = rem(deriveEvents(late({ dueISO: '2026-10-19' }), now)).map((e) => e.key);
+        expect(a).toEqual(['B:d1:late:2026-10-10:2']);
+        expect(b).toEqual(['B:d1:late:2026-10-19:1']);
+        expect(a.some((k) => b.includes(k))).toBe(false);                                            // changing the date never repeats or collides
+    });
+
+    it('is not a Layer A thing', () => {
+        const user = { income: [investment({ [FIELDS.REMIND]: true, dueISO: '2026-10-10' })] };
+        expect(rem(deriveEvents(user, T('2026-10-11T05:00:00Z')))).toHaveLength(0);
+    });
+
+    it('is held back while a repayment is waiting for the owner to confirm it: "you owe" to someone who says they paid is the call the owner does not want', () => {
+        const waiting = { id: 'e8', kind: 'repayment', amount: 50000, date: '2026-10-10', confirmed: false, at: T('2026-10-10T09:00:00Z') };
+        const now = T('2026-10-11T05:00:00Z');
+        expect(rem(deriveEvents(late({}, [lent, waiting]), now))).toHaveLength(0);
+        // the owner checks the bank and it is a part payment: the reminder is owed again, for what is really left
+        const part = { ...waiting, amount: 20000, confirmed: true, confirmedAt: T('2026-10-10T20:00:00Z') };
+        const r = rem(deriveEvents(late({}, [lent, part]), now));
+        expect(r).toHaveLength(1);
+        expect(r[0].balance).toBe(30000);
+        // it was never paid and the owner rejects it (deletes the log): the reminder is owed as before
+        expect(rem(deriveEvents(late({}, [lent]), now))).toHaveLength(1);
+    });
+
+    it('a balance the owner asked for is still sent while a repayment waits (it states the confirmed figure and nothing else)', () => {
+        const waiting = { id: 'e8', kind: 'repayment', amount: 50000, date: '2026-10-10', confirmed: false, at: T('2026-10-10T09:00:00Z') };
+        const user = late({ [FIELDS.REQUESTS]: [{ id: 'req-1', at: T('2026-10-11T04:50:00Z') }] }, [lent, waiting]);
+        expect(deriveEvents(user, T('2026-10-11T05:00:00Z')).events.filter((e) => e.kind === KINDS.B_BALANCE)).toHaveLength(1);
     });
 });

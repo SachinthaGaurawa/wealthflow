@@ -375,13 +375,20 @@ describe('the owner can actually get to it', () => {
         expect(body).toMatch(/window\.confirm\([^)]*\)\)\s*\{\s*if\s*\(cb\)\s*cb\(\);/);
     });
 
-    it('A LOGGED REPAYMENT ARRIVES UNCONFIRMED, and money handed over does not', () => {
+    it('A LOGGED REPAYMENT ARRIVES UNCONFIRMED unless the owner says they can see the money, and money handed over does not', () => {
         /* The rule, at the two places that write. A repayment is a claim about
          * the bank; a further advance is something the owner just did, and
          * asking them to verify their own action is the ceremony this app
-         * exists to remove. */
+         * exists to remove. The one way a repayment is counted at once is the
+         * owner's own tick on "I can already see this money in my bank" (what lets
+         * a part payment be texted with its balance in one step): the box starts
+         * unticked, so nothing is ever counted by default or by anything but them. */
         const body = fn('openDebtorEvent');
-        expect(body).toContain('confirmed: !isPay');
+        expect(body).toContain('const countedNow = !isPay || !!(nowEl && nowEl.checked);');
+        expect(body).toContain('confirmed: countedNow,');
+        expect(body).toMatch(/id="_ev_now" style="[^"]*">/);
+        expect(body).not.toMatch(/id="_ev_now"[^>]*checked/);
+        expect(body).not.toContain('confirmed: true');
         expect(fn('openDebtorModal')).toContain('confirmed: true');
     });
 
