@@ -25,12 +25,13 @@
 import { normalizePhone } from './wealthflow-phone.js';
 import { phoneProblem as phoneText, idProblem, storedId, idKindOf } from './wealthflow-people.js';
 
-/** The record fields. The server reads the same four; a test pins that they agree (sms-events.mjs FIELDS). */
+/** The record fields. The server reads the same five; a test pins that they agree (sms-events.mjs FIELDS). */
 export const SMS_FIELDS = Object.freeze({
     ENABLED: 'sms_notifications_enabled',
     ENABLED_AT: 'sms_enabled_at',
     PHONE: 'phone',
     NIC: 'nic',
+    REQUESTS: 'sms_requests',
 });
 
 export const CLIENT = Object.freeze({
@@ -56,7 +57,7 @@ const safeStorage = (st, fn) => { try { return fn(st); } catch (_) { return null
 export const phoneProblem = (reason) => phoneText(reason);
 export const nicProblem = (reason, kind = 'nic') => idProblem(reason, kind);
 
-/** The four fields of a record, as it already has them. A form that rebuilds a record from its inputs must carry these over, or an edit silently switches the texts off. */
+/** The SMS fields of a record, as it already has them. A form that rebuilds a record from its inputs must carry these over, or an edit silently switches the texts off. */
 export function carry(prev) {
     const p = prev && typeof prev === 'object' ? prev : {};
     const out = {};
@@ -98,6 +99,44 @@ export function applyToggle(prev, input, now = Date.now()) {
             [SMS_FIELDS.NIC]: id.stored,
         },
     };
+}
+
+/* ── the balance on request ───────────────────────────────────────────────── */
+
+export const BALANCE = Object.freeze({ COOLDOWN_MS: 10 * 60000, KEEP: 5 });
+
+/** An id the server accepts (4-40 letters, digits, - and _). */
+function newRequestId(now) {
+    let rnd = '';
+    try {
+        const c = typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.getRandomValues ? globalThis.crypto : null;
+        if (c) { const a = new Uint32Array(2); c.getRandomValues(a); rnd = a[0].toString(36) + a[1].toString(36); }
+    } catch (_) { rnd = ''; }
+    if (!rnd) rnd = Math.random().toString(36).slice(2, 12);
+    return ('b' + now.toString(36) + rnd).slice(0, 32);
+}
+
+/** Milliseconds until the balance may be sent again for this record (0 when it may be sent now). A text costs a unit, and a double tap is the commonest way to spend two. */
+export function balanceWaitMs(rec, now = Date.now()) {
+    const reqs = Array.isArray(rec && rec[SMS_FIELDS.REQUESTS]) ? rec[SMS_FIELDS.REQUESTS] : [];
+    let last = 0;
+    for (const r of reqs) if (r && typeof r === 'object' && num(r.at) > last && num(r.at) <= now + 60000) last = num(r.at);
+    return last > 0 ? Math.max(0, last + BALANCE.COOLDOWN_MS - now) : 0;
+}
+
+/**
+ * The owner pressed "Send balance". The request is a row on the debtor, like everything else the server acts on: it derives the text
+ * from the books (the confirmed balance at that moment), so nothing here names an amount or a recipient.
+ *   -> { ok:true, record } | { ok:false, reason:'off'|'phone'|'wait', waitMs?, text }
+ */
+export function requestBalance(rec, { now = Date.now(), newId = newRequestId } = {}) {
+    const r = rec && typeof rec === 'object' ? rec : {};
+    if (r[SMS_FIELDS.ENABLED] !== true) return { ok: false, reason: 'off', text: 'Switch "Send SMS notifications" on for this debtor first.' };
+    if (!normalizePhone(s(r[SMS_FIELDS.PHONE])).ok) return { ok: false, reason: 'phone', text: 'This debtor has no mobile number the texts can go to. Add one and save.' };
+    const waitMs = balanceWaitMs(r, now);
+    if (waitMs > 0) return { ok: false, reason: 'wait', waitMs, text: 'The balance was sent a moment ago. You can send it again in ' + Math.max(1, Math.ceil(waitMs / 60000)) + ' min.' };
+    const kept = (Array.isArray(r[SMS_FIELDS.REQUESTS]) ? r[SMS_FIELDS.REQUESTS] : []).filter((x) => x && typeof x === 'object' && num(x.at) > 0).slice(-(BALANCE.KEEP - 1));
+    return { ok: true, record: { ...r, [SMS_FIELDS.REQUESTS]: [...kept, { id: newId(now), at: now }] } };
 }
 
 const COPY = {
@@ -438,7 +477,7 @@ export function rowsOf(docs, nowMs = Date.now()) {
             let note = '';
             if (d.status === 'queued') note = HOLD_TEXT[d.error && d.error.kind] || (num(d.nextAttemptAt) > nowMs ? 'Scheduled for a later time.' : 'Waiting to be sent.');
             else if (d.status === 'failed') note = FAIL_TEXT[d.error && d.error.kind] || s(d.error && d.error.message) || 'The gateway refused this message.';
-            else if (d.status === 'expired') note = 'Held too long to still be news, so it was not sent.';
+            else if (d.status === 'expired' || (d.status === 'cancelled' && d.kind === 'B.balance')) note = d.kind === 'B.balance' ? 'The balance could not be sent within half an hour, so it was dropped rather than sent with a figure that may have moved. Press Send balance again.' : 'Held too long to still be news, so it was not sent.';
             else if (d.status === 'cancelled') note = 'Switched off or changed before it was sent.';
             else if (d.status === 'sent' && d.possiblyDuplicated) note = 'May have been delivered twice after a gateway timeout.';
             return {
@@ -550,7 +589,7 @@ export function boot(win) {
         live.unsub = null; live.notifier = null; live.uid = null; live.rows = []; live.status = null;
     }
     const api = {
-        applyToggle, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, SMS_FIELDS,
+        applyToggle, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, SMS_FIELDS, BALANCE, balanceWaitMs, requestBalance,
         start,
         afterPush() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.afterPush(); } catch (_) { /* never into the sync path */ } },
         kickNow() { if (live.notifier) return live.notifier.run({ force: true, reason: 'manual' }); return Promise.resolve({ skipped: 'not-started' }); },
@@ -578,4 +617,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFSms = boot(window); } catch (e) { console.warn('[WF-SMS] page side did not start:', e && e.message); }
 }
 
-export default { SMS_FIELDS, CLIENT, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, watchSmsLog, rowsOf, panelHtml, describeIssue };
+export default { SMS_FIELDS, CLIENT, BALANCE, balanceWaitMs, requestBalance, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, watchSmsLog, rowsOf, panelHtml, describeIssue };

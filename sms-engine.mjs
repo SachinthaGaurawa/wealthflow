@@ -156,6 +156,7 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
                     to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin,
                     body, segments: a.segments, encoding: a.encoding, amount: ev.amount, currency: ev.currency,
                     scheduled: !!ev.scheduled, linked: !!link, lastError: null, possiblyDuplicated: false,
+                    ...(ev.maxAgeMs > 0 ? { maxAgeMs: ev.maxAgeMs } : {}),
                 };
                 tx.set(ref, doc);
                 return { what: 'created', doc };
@@ -184,6 +185,7 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
                     to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin,
                     body, segments: a.segments, encoding: a.encoding, amount: ev.amount, currency: ev.currency,
                     scheduled: !!ev.scheduled, linked: !!link, lastError: null, possiblyDuplicated: false, revivedAt: now,
+                    ...(ev.maxAgeMs > 0 ? { maxAgeMs: ev.maxAgeMs } : {}),
                 };
                 tx.set(ref, doc);
                 return { what: 'reopened', doc };
@@ -225,7 +227,8 @@ export async function claim({ db, uid, id, now }) {
         const crashed = d.status === STATUS.SENDING && num(d.leaseUntil) <= now;
         if (d.status !== STATUS.QUEUED && !crashed) return null;
         if (d.status === STATUS.QUEUED && num(d.nextAttemptAt) > now) return null;
-        if (now - num(d.occurredAt) > MAX_AGE_MS) {
+        // a notice that carries its own shelf life (the balance the owner asked for) expires on that, not on the month every other one gets
+        if (now - num(d.occurredAt) > (num(d.maxAgeMs) > 0 ? num(d.maxAgeMs) : MAX_AGE_MS)) {
             const doc = { ...d, status: STATUS.EXPIRED, expiredAt: now, lastError: { kind: 'expired', message: 'held too long to still be news', at: now } };
             tx.set(ref, doc);
             return { expired: true, doc };

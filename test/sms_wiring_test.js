@@ -102,3 +102,44 @@ describe('what ships is what is named', () => {
         expect(read('sms-access.mjs')).toContain('SMS_ALLOWED_EMAILS');
     });
 });
+
+describe('the Debtors screen: a part payment and the balance', () => {
+    const fn = (name, next) => { const a = HTML.indexOf(`function ${name}(`); expect(a, name).toBeGreaterThan(0); const b = HTML.indexOf(next, a); return HTML.slice(a, b > a ? b : a + 8000); };
+
+    it('offers Send balance only for a debtor whose texts are on and who still owes something, and routes it to one function', () => {
+        expect(HTML).toMatch(/d\.sms_notifications_enabled === true && su\.outstanding > 0\) \? `<button[^`]*data-liq-bal=/);
+        expect(HTML).toContain("b.onclick = () => _sendBalance(debtors[Number(b.getAttribute('data-liq-bal'))]);");
+    });
+
+    it('Send balance checks the pause BEFORE it asks, asks before it writes, reads the record again when the owner agrees, and writes only the request', () => {
+        const body = fn('_sendBalance', 'function _settleDebtor');
+        expect(body.indexOf('requestBalance(fresh')).toBeGreaterThan(0);
+        expect(body.indexOf('requestBalance(fresh')).toBeLessThan(body.indexOf('showConfirm('));
+        expect(body).toContain("DB.get('debtors')");
+        expect(body).toContain('requestBalance(list[at]');
+        expect(body).toContain('list[at] = r.record;');
+        expect(body).not.toMatch(/addEvent|confirmEvent|events\s*[:=]/);                 // a request moves no money and changes no ledger
+        expect(body).not.toMatch(/fetch\(|kickNow|sms-notify/);                          // the push that carries it nudges the server; asking early would read the old copy
+    });
+
+    it('a repayment is still logged as waiting unless the owner ticks that they can see the money, and the box starts unticked', () => {
+        const body = fn('openDebtorEvent', 'window.openDebtorEvent');
+        expect(body).toMatch(/id="_ev_now" style="[^"]*">/);
+        expect(body).not.toMatch(/id="_ev_now"[^>]*checked/);
+        expect(body).toContain('confirmed: countedNow,');
+        expect(body).toContain("const countedNow = !isPay || !!(nowEl && nowEl.checked);");
+        expect(body).toContain('waiting for your confirmation');
+    });
+
+    it('tells the owner what will be texted only when the texts are on', () => {
+        const body = fn('openDebtorEvent', 'window.openDebtorEvent');
+        expect(body).toContain("const smsOn = d.sms_notifications_enabled === true;");
+        expect(body).toMatch(/\(smsOn \?/);
+        expect(body).toContain('texted the amount and the balance that is left');
+    });
+
+    it('both ways of confirming say a text is queued, and only for a repayment on a debtor with the texts on', () => {
+        expect(HTML).toMatch(/const texted = d\.sms_notifications_enabled === true && ev && ev\.kind === 'repayment';/);
+        expect(HTML).toMatch(/const textedRow = list\[at\]\.sms_notifications_enabled === true && evRaw && evRaw\.kind === 'repayment';/);
+    });
+});

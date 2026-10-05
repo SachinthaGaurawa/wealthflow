@@ -23700,6 +23700,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         ${tl ? '<div class="liq-tl">' + tl + '</div>' : ''}
                         <div class="liq-acts">
                             <button class="btn btn-primary btn-sm" data-liq-pay="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('coins') : '')} Log repayment</button>
+                            ${(d.sms_notifications_enabled === true && su.outstanding > 0) ? `<button class="btn btn-secondary btn-sm" data-liq-bal="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('send') : '')} Send balance</button>` : ''}
                             <button class="btn btn-secondary btn-sm" data-liq-top="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('plus') : '')} Lend more</button>
                             ${su.outstanding > 0 ? `<button class="btn btn-secondary btn-sm" data-liq-settle="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('checkCircle') : '')} Settle in full</button>` : ''}
                             ${!open ? `<button class="btn btn-secondary btn-sm" data-liq-dreopen="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('undo') : '')} Reopen</button>` : ''}
@@ -23738,6 +23739,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 });
                 host.querySelectorAll('[data-liq-top]').forEach((b) => {
                     b.onclick = () => openDebtorEvent(debtors[Number(b.getAttribute('data-liq-top'))], 'topup');
+                });
+                host.querySelectorAll('[data-liq-bal]').forEach((b) => {
+                    b.onclick = () => _sendBalance(debtors[Number(b.getAttribute('data-liq-bal'))]);
                 });
                 host.querySelectorAll('[data-liq-settle]').forEach((b) => {
                     b.onclick = () => _settleDebtor(debtors[Number(b.getAttribute('data-liq-settle'))]);
@@ -24406,49 +24410,119 @@ table.amort tbody tr { page-break-inside: avoid; }
         function openDebtorEvent(d, kind) {
             if (!d) return;
             const isPay = kind === 'repayment';
+            const L0 = window.WFLiquidity;
+            const su0 = L0.debtorSummary(d, new Date());
+            const smsOn = d.sms_notifications_enabled === true;
             _liqOverlay(
                 (window.WFIcon ? WFIcon(isPay ? 'coins' : 'plus') : '')
                     + (isPay ? ' Repayment from ' : ' Lend more to ') + _wfEsc(d.name || 'debtor'),
-                '<div class="fg"><label class="fl" for="_ev_amount">Amount</label>'
+                '<div class="liq-sub" style="margin:0 0 10px;">Outstanding now: <b>' + _wfEsc(fmtS(su0.outstanding)) + '</b>'
+                + (su0.pending ? ' · ' + _wfEsc(String(su0.pending)) + ' unconfirmed, not counted' : '') + '</div>'
+                + '<div class="fg"><label class="fl" for="_ev_amount">Amount</label>'
                 + '<input class="fi money-input" id="_ev_amount" inputmode="decimal"></div>'
+                + '<div id="_ev_after" class="liq-sub" aria-live="polite" style="margin:-4px 0 10px;min-height:1.4em;"></div>'
                 + '<div class="fg"><label class="fl" for="_ev_date">Date</label>'
                 + '<input class="fi" id="_ev_date" type="date" value="' + _liqToday() + '"></div>'
                 + '<div class="fg"><label class="fl" for="_ev_note">Note</label>'
                 + '<input class="fi" id="_ev_note" maxlength="200"></div>'
-                + '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:2px 0 10px;">'
                 + (isPay
-                    ? 'This is logged as waiting for your confirmation — it will not reduce what is outstanding until you confirm it on the dashboard.'
-                    : 'Money you have handed over is recorded straight away, and the outstanding balance rises by it.')
-                + '</div>'
+                    ? '<label for="_ev_now" style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;cursor:pointer;margin:2px 0 8px;">'
+                    + '<input type="checkbox" id="_ev_now" style="width:18px;height:18px;margin-top:1px;flex:0 0 auto;">'
+                    + '<span>I can already see this money in my bank, count it now.</span></label>'
+                    : '')
+                + '<div id="_ev_note_hint" style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:2px 0 10px;"></div>'
                 + '<div class="md-ftr"><button class="btn btn-primary" id="_ev_save" style="width:100%;">Save</button></div>',
                 (ov, close) => {
+                    const amountEl = ov.querySelector('#_ev_amount');
+                    const nowEl = ov.querySelector('#_ev_now');
+                    const afterEl = ov.querySelector('#_ev_after');
+                    const hintEl = ov.querySelector('#_ev_note_hint');
+                    /* What the books will say once this is counted: the part payment and the balance that is left. A figure typed wrong shows here,
+                     * before it is saved and before it is texted to somebody. */
+                    const refresh = () => {
+                        const a = parseMoney(amountEl.value);
+                        if (isPay && a > 0) {
+                            const left = su0.outstanding - a;
+                            afterEl.style.color = left < -0.005 ? 'var(--red)' : 'var(--text3)';
+                            afterEl.textContent = left < -0.005
+                                ? 'That is ' + fmtS(-left) + ' more than the ' + fmtS(su0.outstanding) + ' outstanding.'
+                                : (left <= 0.005 ? 'That settles the loan.' : 'Balance after this payment: ' + fmtS(left));
+                        } else if (!isPay && a > 0) {
+                            afterEl.style.color = 'var(--text3)';
+                            afterEl.textContent = 'Balance after this advance: ' + fmtS(su0.outstanding + a);
+                        } else { afterEl.textContent = ''; }
+                        const counted = !isPay || (nowEl && nowEl.checked);
+                        hintEl.textContent = (isPay
+                            ? (counted ? '' : 'This is logged as waiting for your confirmation — it will not reduce what is outstanding until you confirm it on the dashboard.')
+                            : 'Money you have handed over is recorded straight away, and the outstanding balance rises by it.')
+                            + (smsOn ? (isPay ? (counted ? ' ' : ' Once it is confirmed, ') : ' ') + (d.name || 'The debtor') + ' is texted the amount and the balance that is left.' : '');
+                    };
+                    amountEl.addEventListener('input', refresh);
+                    if (nowEl) nowEl.addEventListener('change', refresh);
+                    refresh();
                     ov.querySelector('#_ev_save').onclick = () => {
-                        const amount = parseMoney(ov.querySelector('#_ev_amount').value);
+                        const amount = parseMoney(amountEl.value);
                         if (!amount) { notify('How much?', 'error'); return; }
                         const list = (DB.get('debtors') || []).slice();
                         const at = list.findIndex((x) => x && x.id === d.id);
                         if (at < 0) return;
+                        const countedNow = !isPay || !!(nowEl && nowEl.checked);
                         const r = window.WFLiquidity.addEvent(list[at], {
                             kind: isPay ? 'repayment' : 'topup',
                             amount,
                             date: ov.querySelector('#_ev_date').value || _liqToday(),
                             note: (ov.querySelector('#_ev_note').value || '').trim(),
                             id: uid(), now: Date.now(),
-                            confirmed: !isPay,
+                            confirmed: countedNow,
                         });
                         if (!r.ok) { notify('That could not be recorded', 'error'); return; }
                         list[at] = r.debtor;
                         DB.set('debtors', list);
                         try { triggerHaptic('success'); } catch (_) {}
-                        notify(isPay ? 'Logged — confirm it on the dashboard once it is in the bank' : 'Recorded', 'success');
+                        notify(isPay
+                            ? (countedNow ? 'Repayment counted' + (smsOn ? ' · a text with the new balance is queued' : '') : 'Logged — confirm it on the dashboard once it is in the bank')
+                            : 'Recorded' + (smsOn ? ' · a text is queued' : ''), 'success');
                         close();
                         renderLiquidity();
                         try { renderVerifyQueue(); } catch (_) {}
+                        try { renderDash(); } catch (_) {}
                     };
                 },
             );
         }
         window.openDebtorEvent = openDebtorEvent;
+
+        /**
+         * Text a debtor the balance, on the owner's say-so (a part payment was agreed, or they asked how much is left).
+         * The request is a row on the debtor; the server writes the text from the books, so the figure is the confirmed balance at that moment.
+         * The page does not hit the server itself: the push that carries the request is what nudges it.
+         */
+        function _sendBalance(d0) {
+            if (!d0 || !window.WFLiquidity || !window.WFSms) return;
+            const fresh = (DB.get('debtors') || []).find((x) => x && x.id === d0.id);
+            if (!fresh) return;
+            const check = window.WFSms.requestBalance(fresh, { now: Date.now() });
+            if (!check.ok) { notify(check.text, check.reason === 'wait' ? 'info' : 'error'); return; }
+            const su = window.WFLiquidity.debtorSummary(fresh, new Date());
+            showConfirm(
+                'send', 'Text the balance to ' + (fresh.name || 'this debtor') + '?',
+                'One text goes out saying ' + fmtS(su.outstanding) + ' is outstanding, with the link to their statement.'
+                    + (su.pending ? ' ' + su.pending + ' unconfirmed ' + (su.pending === 1 ? 'entry is' : 'entries are') + ' not counted.' : ''),
+                'btn-primary', 'Send',
+                () => {
+                    const list = (DB.get('debtors') || []).slice();
+                    const at = list.findIndex((x) => x && x.id === d0.id);
+                    if (at < 0) return;
+                    const r = window.WFSms.requestBalance(list[at], { now: Date.now() });
+                    if (!r.ok) { notify(r.text, r.reason === 'wait' ? 'info' : 'error'); return; }
+                    list[at] = r.record;
+                    DB.set('debtors', list);
+                    try { triggerHaptic('success'); } catch (_) {}
+                    notify('Balance text queued — the delivery alert appears here when it goes out', 'success');
+                    renderLiquidity();
+                },
+            );
+        }
 
         function _settleDebtor(d) {
             if (!d) return;
@@ -24517,7 +24591,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 try { triggerHaptic(what === 'remove' ? 'light' : 'success'); } catch (_) {}
                 notify(msg, tone || 'success');
             };
-            if (what === 'confirm') return run(L.confirmEvent(d, eventId, { now: Date.now() }), 'Confirmed');
+            if (what === 'confirm') {
+                const ev = (Array.isArray(d.events) ? d.events : []).find((x) => x && x.id === eventId);
+                const texted = d.sms_notifications_enabled === true && ev && ev.kind === 'repayment';
+                return run(L.confirmEvent(d, eventId, { now: Date.now() }), 'Confirmed' + (texted ? ' · a text with the new balance is queued' : ''));
+            }
             if (what === 'unconfirm') return run(L.unconfirmEvent(d, eventId), 'Back to unconfirmed', 'info');
             if (what === 'reopen') return run(L.reopenDebtor(d), 'Reopened', 'info');
             return showConfirm(
@@ -24794,7 +24872,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (!r.ok) { notify('That entry is no longer there', 'info'); renderVerifyQueue(); return; }
                 list[at] = r.debtor;
                 DB.set('debtors', list);
-                notify(fmtS(row.amount) + ' confirmed for ' + (row.name || 'this debtor'), 'success');
+                const evRaw = (Array.isArray(list[at].events) ? list[at].events : []).find((x) => x && x.id === row.eventId);
+                const textedRow = list[at].sms_notifications_enabled === true && evRaw && evRaw.kind === 'repayment';
+                notify(fmtS(row.amount) + ' confirmed for ' + (row.name || 'this debtor') + (textedRow ? ' · a text with the new balance is queued' : ''), 'success');
                 renderVerifyQueue();
                 try { if (window._wfActivePage === 'liquidity') renderLiquidity(); } catch (_) {}
                 try { renderDash(); } catch (_) {}

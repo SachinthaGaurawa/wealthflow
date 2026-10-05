@@ -9,7 +9,7 @@
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
-import { deriveEvents, nextSendWindow, periodInterest, interestApplies, hasSmsRecords, GRACE_MS, MAX_AGE_MS, FIELDS, LAYER } from '../sms-events.mjs';
+import { deriveEvents, nextSendWindow, periodInterest, interestApplies, hasSmsRecords, GRACE_MS, MAX_AGE_MS, REQUEST_WINDOW_MS, REQUESTS_READ, FIELDS, LAYER } from '../sms-events.mjs';
 import { KINDS } from '../sms-templates.mjs';
 
 const T = (iso) => Date.parse(iso);
@@ -282,5 +282,81 @@ describe('the sending window (Sri Lanka, UTC+05:30)', () => {
     it('after 20:00 local waits for 08:00 the next day', () => {
         expect(nextSendWindow(T('2026-10-05T14:30:00Z'))).toBe(T('2026-10-06T02:30:00Z'));     // 20:00 -> 08:00 tomorrow
         expect(nextSendWindow(T('2026-10-05T18:00:00Z'))).toBe(T('2026-10-06T02:30:00Z'));     // 23:30
+    });
+});
+
+describe('the balance on request (a part payment was agreed, or the person asked)', () => {
+    const lent = { id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-05', confirmed: true, at: T('2026-10-05T09:00:00Z') };
+    const part = { id: 'e2', kind: 'repayment', amount: 20000, date: '2026-10-06', confirmed: true, at: T('2026-10-06T05:00:00Z') };
+    const asked = T('2026-10-06T10:00:00Z');
+    const books = (over = {}, events = [lent, part]) => ({ debtors: [debtor({ events, [FIELDS.REQUESTS]: [{ id: 'req-1', at: asked }], ...over })] });
+    const bal = (r) => r.events.filter((e) => e.kind === KINDS.B_BALANCE);
+
+    it('names the confirmed balance as it is now, and the day it is as at', () => {
+        const r = deriveEvents(books(), asked + 60000);
+        expect(bal(r)).toHaveLength(1);
+        expect(bal(r)[0]).toMatchObject({ key: 'B:d1:bal:req-1', kind: KINDS.B_BALANCE, layer: LAYER.B, balance: 30000, amount: 30000, occurredAt: asked, dateISO: '2026-10-06', maxAgeMs: REQUEST_WINDOW_MS, scheduled: false });
+    });
+
+    it('does not count money nobody has confirmed, however much is waiting', () => {
+        const pending = { id: 'e3', kind: 'repayment', amount: 25000, date: '2026-10-06', confirmed: false, at: T('2026-10-06T08:00:00Z') };
+        expect(bal(deriveEvents(books({}, [lent, part, pending]), asked + 1000))[0].balance).toBe(30000);
+    });
+
+    it('a debtor who owes nothing is told so, with a balance of zero (never a negative one)', () => {
+        const over = { id: 'e9', kind: 'repayment', amount: 60000, date: '2026-10-06', confirmed: true, at: T('2026-10-06T06:00:00Z') };
+        expect(bal(deriveEvents(books({}, [lent, over]), asked + 1000))[0].balance).toBe(0);
+    });
+
+    it('is good for half an hour and no longer: the figure goes into the text when it is queued, so a late one is dropped, not sent stale', () => {
+        expect(bal(deriveEvents(books(), asked + REQUEST_WINDOW_MS))).toHaveLength(1);
+        expect(bal(deriveEvents(books(), asked + REQUEST_WINDOW_MS + 1))).toHaveLength(0);
+        expect(REQUEST_WINDOW_MS).toBe(30 * 60 * 1000);
+    });
+
+    it('a request from the future (a device with the wrong clock) is not honoured early or at all', () => {
+        expect(bal(deriveEvents(books(), asked - 10 * 60000))).toHaveLength(0);
+        expect(bal(deriveEvents(books(), asked - 60000))).toHaveLength(1);            // within the allowed skew
+    });
+
+    it('a request pressed before the texts were switched on is not news', () => {
+        expect(bal(deriveEvents(books({ [FIELDS.ENABLED_AT]: asked + 3600e3 }), asked + 60000))).toHaveLength(0);
+    });
+
+    it('needs the switch on, and a number it can reach (the same issues as every other notice)', () => {
+        expect(bal(deriveEvents(books({ [FIELDS.ENABLED]: false }), asked + 1000))).toHaveLength(0);
+        const noPhone = deriveEvents(books({ phone: '' }), asked + 1000);
+        expect(bal(noPhone)).toHaveLength(0);
+        expect(noPhone.issues.some((i) => i.reason === 'no-phone')).toBe(true);
+    });
+
+    it('reads only well-formed requests: an id the server accepts and a real time', () => {
+        const reqs = [{ id: 'ok-1', at: asked }, { id: '', at: asked }, { id: 'a b', at: asked }, { id: 'x'.repeat(41), at: asked }, { id: 'no-time' }, { id: 'neg', at: -5 }, null, 7, 'x', { id: '<b>', at: asked }];
+        const r = deriveEvents(books({ [FIELDS.REQUESTS]: reqs }), asked + 1000);
+        expect(bal(r).map((e) => e.key)).toEqual(['B:d1:bal:ok-1']);
+    });
+
+    it('reads no more than the newest few, so a stuck loop on a device cannot become a stream of texts', () => {
+        const reqs = Array.from({ length: 12 }, (_, i) => ({ id: `r${i}-aaaa`, at: asked + i * 1000 }));
+        const keys = bal(deriveEvents(books({ [FIELDS.REQUESTS]: reqs }), asked + 20000)).map((e) => e.key);
+        expect(keys).toHaveLength(REQUESTS_READ);
+        expect(keys).toContain('B:d1:bal:r11-aaaa');
+        expect(keys).not.toContain('B:d1:bal:r0-aaaa');
+    });
+
+    it('is not a Layer A thing: an investment never carries one, whatever field a record is given', () => {
+        const user = { income: [investment({ [FIELDS.REQUESTS]: [{ id: 'req-1', at: asked }] })] };
+        expect(bal(deriveEvents(user, asked + 1000))).toHaveLength(0);
+    });
+
+    it('still sends the repayment text with the balance left, which is how a part payment says what remains', () => {
+        const r = deriveEvents(books({ [FIELDS.REQUESTS]: [] }), T('2026-10-06T06:00:00Z'));
+        expect(r.events.find((e) => e.kind === KINDS.B_REPAYMENT)).toMatchObject({ amount: 20000, balance: 30000, settled: false });
+    });
+
+    it('computes no interest: a stray rate on the record changes nothing', () => {
+        const r = deriveEvents(books({ rate: 24 }), asked + 1000);
+        expect(bal(r)[0].balance).toBe(30000);
+        expect(r.events.some((e) => e.layer === LAYER.B && e.kind === KINDS.A_INTEREST)).toBe(false);
     });
 });

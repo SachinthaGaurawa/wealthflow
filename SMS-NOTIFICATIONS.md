@@ -8,7 +8,7 @@ Text.lk HTTP API v3 (`https://app.text.lk/api/v3/`).
 | Layer | Where the switch is | Messages |
 | --- | --- | --- |
 | A | Investments tab, investment form | capital recorded, monthly interest applied, a payment received |
-| B | Liquidity & Credit Hub, debtor form | loan paid out (first advance and further advances), repayment confirmed |
+| B | Liquidity & Credit Hub, debtor form | loan paid out (first advance and further advances), repayment confirmed (with the balance that is left), balance on request |
 
 Any country, any person: the number is stored as an international (E.164) number, with a country picked from a list of 240+
 countries (default Sri Lanka, changed once under **Saved people**), and a person with no Sri Lankan NIC is identified by a passport or
@@ -21,6 +21,22 @@ before that moment is history, not news, and is never texted.
 
 A payment is only announced once the owner has **confirmed** it. A repayment that is still waiting for confirmation, or
 one that is un-confirmed before its text goes, sends nothing.
+
+### A debtor who pays in parts
+
+Every confirmed repayment text carries the balance that is left, so a part payment says how much remains:
+`Repayment LKR 20,000.00 received on 05 Oct 2026, ref DEB-8E4EF6. Balance LKR 30,000.00. Statement: <link>`. The final one says the loan is settled.
+
+On the debtor's card:
+
+* **Log repayment** shows what is owed now, then the balance that will be left as the amount is typed, and calls out a figure larger than is
+  owed before it is saved. It says what the debtor will be texted, and when. A repayment is still logged as *waiting for confirmation* unless
+  the owner ticks **I can already see this money in my bank, count it now** (the box starts unticked: nothing posts itself).
+* **Send balance** (shown when the texts are on and something is still owed) texts the *confirmed* balance and the statement link on request.
+  It asks first, then writes one `{ id, at }` request on the debtor (`sms_requests`); the server derives the text from the books, so the page
+  never names an amount or a recipient. A second tap within ten minutes is refused before any question is asked (a text costs a unit).
+  The text is written when it is queued, so a request that cannot go out within half an hour (no credit, a rejected token) is dropped and the
+  message log says so, rather than sent later with a figure that has moved.
 
 ## Saved people and payment details (Investments tab and Liquidity & Credit Hub)
 

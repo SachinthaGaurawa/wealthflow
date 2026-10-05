@@ -549,3 +549,71 @@ describe('the owner sees it', () => {
         expect(ledger(fs).every((d) => d.status === STATUS.SENT)).toBe(true);
     });
 });
+
+describe('the balance the owner asked for', () => {
+    const ASKED = NOW - 60e3;
+    const asking = (extra = {}) => { const u = books(); u.debtors[0][FIELDS.REQUESTS] = [{ id: 'req-0001', at: ASKED }]; Object.assign(u.debtors[0], extra); return u; };
+
+    it('goes out once, now (not held for the morning), worded from the books, carrying its own shelf life', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        const night = T('2026-10-05T19:30:00Z');                     // 01:00 in Colombo: a scheduled notice would wait, a request does not
+        const user = asking(); user.debtors[0][FIELDS.REQUESTS] = [{ id: 'req-0001', at: night - 60e3 }];
+        const a = await run(db, user, gw, { now: night });
+        expect(a.sent).toBeGreaterThanOrEqual(1);
+        const doc = ledger(fs).find((d) => d.key === 'B:d1:bal:req-0001');
+        expect(doc).toMatchObject({ status: STATUS.SENT, kind: 'B.balance', maxAgeMs: 30 * 60 * 1000, scheduled: false });
+        expect(doc.body).toMatch(/^Balance LKR 30,000\.00 as at 06 Oct 2026, ref DEB-[0-9A-F]{6}\. Statement: https:/);
+        const again = await run(db, user, gw, { now: night + 5 * 60e3 });
+        expect(again.sent).toBe(0);
+        expect(gw.sent.filter((m) => m.message.startsWith('Balance'))).toHaveLength(1);
+    });
+
+    it('five sweeps racing for it still send one text', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        await Promise.all([1, 2, 3, 4, 5].map(() => run(db, asking(), gw)));
+        expect(gw.sent.filter((m) => m.message.startsWith('Balance'))).toHaveLength(1);
+        expect(ledger(fs).filter((d) => d.kind === 'B.balance')).toHaveLength(1);
+    });
+
+    it('held for credit, it is dropped after half an hour rather than sent later with a figure that has moved', async () => {
+        const { fs, db } = makeDb();
+        const broke = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: false, message: 'out of units' }));
+        await run(db, asking(), broke);
+        expect(ledger(fs).find((d) => d.key === 'B:d1:bal:req-0001')).toMatchObject({ status: STATUS.QUEUED, lastError: { kind: KIND.CREDIT } });
+        // the owner tops up an hour later: the repayment texts go, the stale balance does not
+        const gw = gateway();
+        const later = await run(db, asking(), gw, { now: NOW + 3600e3 });
+        expect(gw.sent.some((m) => m.message.startsWith('Balance'))).toBe(false);
+        expect(ledger(fs).find((d) => d.key === 'B:d1:bal:req-0001').status).toBe(STATUS.CANCELLED);
+        expect(later.cancelled).toBeGreaterThanOrEqual(1);
+    });
+
+    it('a notice with no shelf life of its own keeps the month every other notice gets', async () => {
+        const { fs, db } = makeDb();
+        const broke = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: false, message: 'out of units' }));
+        await run(db, books(), broke);
+        const doc = ledger(fs).find((d) => d.key === 'B:d1:e2:in');
+        expect(doc.maxAgeMs).toBeUndefined();
+        const gw = gateway();
+        await run(db, books(), gw, { now: NOW + 7 * 86400e3 });
+        expect(ledger(fs).find((d) => d.key === 'B:d1:e2:in').status).toBe(STATUS.SENT);
+    });
+
+    it('turning the debtor\'s texts off before it goes cancels it like any other notice', async () => {
+        const { fs, db } = makeDb();
+        const broke = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: false, message: 'out of units' }));
+        await run(db, asking(), broke);
+        const off = asking({ [FIELDS.ENABLED]: false });
+        await run(db, off, gateway(), { now: NOW + 60e3 });
+        expect(ledger(fs).find((d) => d.key === 'B:d1:bal:req-0001').status).toBe(STATUS.CANCELLED);
+    });
+
+    it('the daily limit for one number holds for balance texts too', async () => {
+        const { db } = makeDb(); const gw = gateway();
+        const user = asking();
+        user.debtors[0][FIELDS.REQUESTS] = [{ id: 'req-0001', at: ASKED }, { id: 'req-0002', at: ASKED + 1000 }, { id: 'req-0003', at: ASKED + 2000 }];
+        await run(db, user, gw, { limits: { ...LIMITS, perRecipientPerDay: 3 } });        // the loan text and the repayment text are two of the three
+        expect(gw.sent.length).toBe(3);
+        expect(gw.sent.filter((m) => m.message.startsWith('Balance'))).toHaveLength(1);
+    });
+});

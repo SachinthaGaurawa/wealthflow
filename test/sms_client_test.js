@@ -11,15 +11,15 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-    SMS_FIELDS, CLIENT, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, watchSmsLog, rowsOf, panelHtml, describeIssue, ALERT_TITLE, boot,
+    SMS_FIELDS, CLIENT, BALANCE, balanceWaitMs, requestBalance, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, watchSmsLog, rowsOf, panelHtml, describeIssue, ALERT_TITLE, boot,
 } from '../wealthflow-sms.js';
 import { FIELDS } from '../sms-events.mjs';
 
 const T0 = Date.parse('2026-10-05T05:00:00Z');
 
 describe('the fields are the server\'s fields', () => {
-    it('the page and the server read and write the same four names', () => {
-        expect(SMS_FIELDS).toEqual({ ENABLED: FIELDS.ENABLED, ENABLED_AT: FIELDS.ENABLED_AT, PHONE: FIELDS.PHONE, NIC: FIELDS.NIC });
+    it('the page and the server read and write the same five names', () => {
+        expect(SMS_FIELDS).toEqual({ ENABLED: FIELDS.ENABLED, ENABLED_AT: FIELDS.ENABLED_AT, PHONE: FIELDS.PHONE, NIC: FIELDS.NIC, REQUESTS: FIELDS.REQUESTS });
     });
 });
 
@@ -514,5 +514,100 @@ describe('the file itself', () => {
         expect(src).not.toMatch(/process\.env|require\(/);
         expect(src).not.toMatch(/Bearer [A-Za-z0-9]{20,}/);
         for (const m of src.matchAll(/from\s+'(\.[^']+)'/g)) expect(m[1]).toMatch(/^\.\/wealthflow-[a-z-]+\.js$/);
+    });
+});
+
+describe('"Send balance": the owner asks for the balance to be texted', () => {
+    const debtor = (over = {}) => ({ id: 'd1', name: 'Nimal', phone: '+94771234567', [SMS_FIELDS.ENABLED]: true, [SMS_FIELDS.ENABLED_AT]: T0 - 1e6, ...over });
+
+    it('adds one request row, keeps the rest of the record exactly as it was, and never names an amount or a recipient', () => {
+        const rec = debtor({ events: [{ id: 'e1' }], note: 'x' });
+        const out = requestBalance(rec, { now: T0, newId: () => 'req-abc1' });
+        expect(out).toEqual({ ok: true, record: { ...rec, [SMS_FIELDS.REQUESTS]: [{ id: 'req-abc1', at: T0 }] } });
+        expect(JSON.stringify(out.record[SMS_FIELDS.REQUESTS])).not.toMatch(/amount|balance|phone|077|94/);
+        expect(rec[SMS_FIELDS.REQUESTS]).toBeUndefined();                                    // the record it was given is not changed
+    });
+
+    it('makes ids the server accepts, different every time, even when random numbers are not available', () => {
+        const ids = new Set();
+        for (let i = 0; i < 50; i += 1) {
+            const out = requestBalance(debtor(), { now: T0 + i * BALANCE.COOLDOWN_MS * 2 });
+            const id = out.record[SMS_FIELDS.REQUESTS][0].id;
+            expect(id).toMatch(/^[A-Za-z0-9_-]{4,40}$/);
+            ids.add(id);
+        }
+        expect(ids.size).toBe(50);
+    });
+
+    it('refuses when the texts are off for this debtor, and says what to do', () => {
+        for (const rec of [debtor({ [SMS_FIELDS.ENABLED]: false }), debtor({ [SMS_FIELDS.ENABLED]: undefined }), {}, null, undefined, 5]) {
+            const out = requestBalance(rec, { now: T0 });
+            expect(out.ok).toBe(false);
+            expect(out.reason).toBe('off');
+            expect(out.text).toMatch(/Send SMS notifications/);
+        }
+    });
+
+    it('refuses when there is no number the text could reach', () => {
+        for (const phone of ['', undefined, '12', 'abc', '+']) {
+            const out = requestBalance(debtor({ phone }), { now: T0 });
+            expect(out, String(phone)).toMatchObject({ ok: false, reason: 'phone' });
+        }
+    });
+
+    it('waits ten minutes between two requests for the same debtor: a double tap spends one unit, not two', () => {
+        const first = requestBalance(debtor(), { now: T0, newId: () => 'req-0001' });
+        const again = requestBalance(first.record, { now: T0 + 60000 });
+        expect(again).toMatchObject({ ok: false, reason: 'wait', waitMs: BALANCE.COOLDOWN_MS - 60000 });
+        expect(again.text).toMatch(/9 min/);
+        expect(balanceWaitMs(first.record, T0 + BALANCE.COOLDOWN_MS)).toBe(0);
+        expect(requestBalance(first.record, { now: T0 + BALANCE.COOLDOWN_MS, newId: () => 'req-0002' }).ok).toBe(true);
+        expect(BALANCE.COOLDOWN_MS).toBe(10 * 60000);
+    });
+
+    it('keeps only the last few requests on the record, newest last', () => {
+        let rec = debtor();
+        for (let i = 0; i < 9; i += 1) rec = requestBalance(rec, { now: T0 + i * BALANCE.COOLDOWN_MS, newId: () => `req-${String(i).padStart(4, '0')}` }).record;
+        const ids = rec[SMS_FIELDS.REQUESTS].map((r) => r.id);
+        expect(ids).toHaveLength(BALANCE.KEEP);
+        expect(ids[ids.length - 1]).toBe('req-0008');
+        expect(ids).not.toContain('req-0000');
+    });
+
+    it('a request stamped in the future (a wrong clock) does not lock the button for hours', () => {
+        const rec = debtor({ [SMS_FIELDS.REQUESTS]: [{ id: 'req-0001', at: T0 + 5 * 3600e3 }] });
+        expect(balanceWaitMs(rec, T0)).toBe(0);
+        expect(requestBalance(rec, { now: T0 }).ok).toBe(true);
+    });
+
+    it('garbage in the request list changes nothing and throws nothing', () => {
+        for (const bad of ['x', 5, {}, [null, 3, 'a', {}, { at: 'no' }]]) {
+            const rec = debtor({ [SMS_FIELDS.REQUESTS]: bad });
+            expect(() => balanceWaitMs(rec, T0)).not.toThrow();
+            expect(balanceWaitMs(rec, T0)).toBe(0);
+            expect(requestBalance(rec, { now: T0 }).ok).toBe(true);
+        }
+    });
+
+    it('an edit of the record carries the requests on with the other switches', () => {
+        const rec = debtor({ [SMS_FIELDS.REQUESTS]: [{ id: 'req-0001', at: T0 }] });
+        expect(carry(rec)[SMS_FIELDS.REQUESTS]).toEqual([{ id: 'req-0001', at: T0 }]);
+    });
+
+    it('is a change the nudge notices, so the server is asked to look', () => {
+        const before = { debtors: [debtor()] };
+        const after = { debtors: [requestBalance(debtor(), { now: T0, newId: () => 'req-0001' }).record] };
+        expect(signatureOf(before)).not.toBe(signatureOf(after));
+    });
+
+    it('the message log explains a balance that could not go out in time, in words an owner can act on', () => {
+        const rows = rowsOf([
+            { id: 'a', status: 'expired', kind: 'B.balance', occurredAt: T0, to: '+94*****4567', ref: 'DEB-1', body: 'Balance' },
+            { id: 'b', status: 'cancelled', kind: 'B.balance', occurredAt: T0 + 1, to: '+94*****4567', ref: 'DEB-1', body: 'Balance' },
+            { id: 'c', status: 'cancelled', kind: 'B.repayment', occurredAt: T0 + 2, to: '+94*****4567', ref: 'DEB-1', body: 'Repayment' },
+        ], T0 + 3);
+        expect(rows.find((r) => r.id === 'a').note).toMatch(/Press Send balance again/);
+        expect(rows.find((r) => r.id === 'b').note).toMatch(/Press Send balance again/);
+        expect(rows.find((r) => r.id === 'c').note).toMatch(/Switched off or changed/);
     });
 });
