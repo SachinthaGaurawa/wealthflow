@@ -79,6 +79,32 @@ describe('phone numbers: any way a person types them, one way on the wire', () =
         });
     }
 
+    // what comes with a number copied out of a contacts app, a chat or a contacts file
+    const copied = [
+        ['tel:+94771234567', '+94771234567'],                                   // a vCard writes its numbers as links
+        ['TEL:+94 77 123 4567', '+94771234567'],
+        ['callto:0771234567', '+94771234567'],
+        ['\u200e+94 77 123 4567\u200f', '+94771234567'],                          // left-to-right / right-to-left marks around a number
+        ['\u202a+94 77 123 4567\u202c', '+94771234567'],
+        ['\u200b077 123 4567', '+94771234567'],                                 // a zero-width space
+        ['+94\u00a077\u00a0123\u00a04567', '+94771234567'],                      // non-breaking spaces
+        ['\u0660\u0667\u0667\u0661\u0662\u0663\u0664\u0665\u0666\u0667', '+94771234567'],   // Arabic-Indic digits
+        ['\u06f0\u06f7\u06f7 \u06f1\u06f2\u06f3 \u06f4\u06f5\u06f6\u06f7', '+94771234567'],  // Persian digits
+        ['\u0de6\u0ded\u0ded\u0de7\u0de8\u0de9\u0dea\u0deb\u0dec\u0ded', '+94771234567'],   // Sinhala Lith digits (0 7 7 1 2 3 4 5 6 7)
+        ['\uff0b\uff19\uff14\uff17\uff17\uff11\uff12\uff13\uff14\uff15\uff16\uff17', '+94771234567'],   // full-width
+        ['\u0966\u096d\u096d\u0967\u0968\u0969\u096a\u096b\u096c\u096d', '+94771234567'],   // Devanagari digits
+    ];
+    for (const [input, e164] of copied) {
+        it(`copied as ${JSON.stringify(input)} -> ${e164}`, () => {
+            const p = normalizePhone(input);
+            expect(p.ok, JSON.stringify(p)).toBe(true);
+            expect(p.e164).toBe(e164);
+        });
+    }
+    it('cleaning never guesses: an extension, a second number or a word is still refused', () => {
+        for (const input of ['077 123 4567 ext 12', '+94771234567;ext=12', '077 123 4567 / 071 111 1111', '077 123 4567 mobile']) expect(normalizePhone(input).ok, input).toBe(false);
+    });
+
     it('accepts a different default country for bare local numbers', () => {
         expect(normalizePhone('0501234567', { defaultCountry: '971' }).e164).toBe('+971501234567');
     });

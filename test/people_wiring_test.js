@@ -69,7 +69,7 @@ describe('the page', () => {
         expect(HTML).toContain("WP.pickerHtml('_db', { record: d, nameId: '_db_name' })");
     });
 
-    it('the investment form folds the contact fields away (most investments are a bank\'s) and opens them for a person', () => {
+    it('the investment form folds the contact fields away until they are wanted, and opens them for a person', () => {
         expect(HTML).toContain('<summary>Investor contact &amp; text messages <span>(optional)</span></summary>');
         expect(HTML).toContain("rec.phone || rec.nic || rec.personId || rec.sms_notifications_enabled === true");
     });
