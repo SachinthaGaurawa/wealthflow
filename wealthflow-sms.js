@@ -526,9 +526,9 @@ export function rowsOf(docs, nowMs = Date.now()) {
         .sort((a, b) => num(b.occurredAt) - num(a.occurredAt))
         .map((d) => {
             let note = '';
-            if (d.status === 'queued') note = HOLD_TEXT[d.error && d.error.kind] || (num(d.nextAttemptAt) > nowMs ? 'Scheduled for a later time.' : 'Waiting to be sent.');
+            if (d.status === 'queued') note = HOLD_TEXT[d.error && d.error.kind] || (num(d.nextAttemptAt) > nowMs ? (d.scheduled ? 'Scheduled for the morning where the recipient is (08:00-20:00).' : 'Scheduled for a later time.') : 'Waiting to be sent.');
             else if (d.status === 'failed') note = FAIL_TEXT[d.error && d.error.kind] || s(d.error && d.error.message) || 'The gateway refused this message.';
-            else if (d.status === 'expired' || (d.status === 'cancelled' && d.kind === 'B.balance')) note = d.kind === 'B.balance' ? 'The balance could not be sent within half an hour, so it was dropped rather than sent with a figure that may have moved. Press Send balance again.' : 'Held too long to still be news, so it was not sent.';
+            else if (d.status === 'expired' || (d.status === 'cancelled' && d.kind === 'B.balance')) note = d.kind === 'B.balance' ? 'The balance could not be sent within half an hour, so it was dropped rather than sent with a figure that may have moved. Press Send balance again.' : d.kind === 'B.late' ? 'The reminder\'s day passed before it could go out (no credit, or outside the debtor\'s sending hours), so it was dropped rather than sent late.' : 'Held too long to still be news, so it was not sent.';
             else if (d.status === 'cancelled') note = 'Switched off or changed before it was sent.';
             else if (d.status === 'sent' && d.possiblyDuplicated) note = 'May have been delivered twice after a gateway timeout.';
             return {

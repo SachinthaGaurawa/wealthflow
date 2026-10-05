@@ -721,6 +721,15 @@ describe('late-payment reminders through the queue', () => {
         expect(['cancelled', 'expired']).toContain(lateDocs(fs)[0].status);
     });
 
+    it('the owner\'s message log is told the text is a scheduled one, so it can say why it is waiting', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        await run(db, due(), gw, { now: T('2026-10-04T20:00:00Z') });
+        const row = mirrorDocs(fs).find((m) => m.kind === 'B.late');
+        expect(row).toMatchObject({ status: STATUS.QUEUED, scheduled: true });
+        await run(db, due(), gw, { now: T('2026-10-05T03:00:00Z') });
+        expect(mirrorDocs(fs).find((m) => m.kind === 'B.late')).toMatchObject({ status: STATUS.SENT, scheduled: true });
+    });
+
     it('five sweeps racing for the same reminder send one text', async () => {
         const { db } = makeDb(); const gw = gateway();
         await Promise.all([1, 2, 3, 4, 5].map(() => run(db, due(), gw, { now: T('2026-10-05T03:00:00Z') })));

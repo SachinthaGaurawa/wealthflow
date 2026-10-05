@@ -610,6 +610,19 @@ describe('"Send balance": the owner asks for the balance to be texted', () => {
         expect(rows.find((r) => r.id === 'b').note).toMatch(/Press Send balance again/);
         expect(rows.find((r) => r.id === 'c').note).toMatch(/Switched off or changed/);
     });
+
+    it('a reminder that is waiting or was dropped says why, not "held too long"', () => {
+        const rows = rowsOf([
+            { id: 'w', status: 'queued', kind: 'B.late', scheduled: true, nextAttemptAt: T0 + 3600e3, occurredAt: T0, to: '+94*****4567', ref: 'DEB-1', body: 'Reminder' },
+            { id: 'x', status: 'expired', kind: 'B.late', scheduled: true, occurredAt: T0 - 86400e3, to: '+94*****4567', ref: 'DEB-1', body: 'Reminder' },
+            { id: 'y', status: 'expired', kind: 'A.interest', occurredAt: T0 - 86400e3, to: '+94*****4567', ref: 'INV-1', body: 'Interest' },
+            { id: 'z', status: 'queued', kind: 'A.capital', nextAttemptAt: T0 + 3600e3, occurredAt: T0, to: '+94*****4567', ref: 'INV-1', body: 'Capital' },
+        ], T0);
+        expect(rows.find((r) => r.id === 'w').note).toMatch(/morning where the recipient is/);
+        expect(rows.find((r) => r.id === 'x').note).toMatch(/dropped rather than sent late/);
+        expect(rows.find((r) => r.id === 'y').note).toMatch(/Held too long/);
+        expect(rows.find((r) => r.id === 'z').note).toBe('Scheduled for a later time.');
+    });
 });
 
 describe('texts that are waiting for the owner are announced, once, instead of sitting in a quiet log', () => {

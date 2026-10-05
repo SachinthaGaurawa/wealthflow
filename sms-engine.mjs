@@ -104,7 +104,7 @@ const mirrorOf = (d, extra = {}) => ({
     status: d.status, to: d.toMasked, body: d.body, segments: d.segments, attempts: d.attempts,
     amount: d.amount, currency: d.currency, occurredAt: d.occurredAt, nextAttemptAt: d.nextAttemptAt || null,
     error: d.lastError ? { kind: d.lastError.kind, message: d.lastError.message } : null,
-    sentAt: d.sentAt || null, possiblyDuplicated: !!d.possiblyDuplicated,
+    sentAt: d.sentAt || null, possiblyDuplicated: !!d.possiblyDuplicated, scheduled: !!d.scheduled,
     ...extra,
 });
 
