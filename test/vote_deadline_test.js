@@ -38,12 +38,15 @@ const enc = new TextEncoder();
 
 /** A provider that sends headers and the first bytes of a JSON body, then nothing, ever. */
 function stalledServer() {
+    const state = { closed: 0 };
     const server = http.createServer((_req, res) => {
+        res.on('close', () => { state.closed++; });          // the provider's side of the connection going away
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.write('{"choices":[{"message":{"content":"');
     });
     return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
         url: `http://127.0.0.1:${server.address().port}/`,
+        state,
         close: () => { server.closeAllConnections && server.closeAllConnections(); server.close(); },
     })));
 }
@@ -93,6 +96,15 @@ describe('THE BUG, reproduced against a real socket: headers arrive, the body ne
         expect(how).toBe('rejected:TimeoutError');
         expect(ms).toBeLessThan(1500);
     });
+
+    it('readBody gives the connection back: the provider sees it close, instead of a half-read body living on', async () => {
+        // response.json() locks the stream, and a locked stream cannot be cancelled — so the read goes through a reader the timeout can cancel
+        const r = await fetch(srv.url);
+        expect(srv.state.closed).toBe(0);
+        await readBody(r, 'json', 150).catch(() => {});
+        for (let i = 0; i < 40 && srv.state.closed === 0; i++) await new Promise((res) => setTimeout(res, 25));
+        expect(srv.state.closed, 'the socket was left open after the body read timed out').toBe(1);
+    });
 });
 
 describe('the helpers', () => {
@@ -103,6 +115,25 @@ describe('the helpers', () => {
         expect(await readBody(new Response('{"a":1}'), 'json', 500)).toEqual({ a: 1 });
         expect(await readBody(new Response('plain'), 'text', 500)).toBe('plain');
         await expect(readBody(new Response('not json'), 'json', 500)).rejects.toThrow(SyntaxError);
+    });
+
+    it('readBody reads exactly what .json()/.text() would: multi-byte text across chunks, a BOM, a body in many pieces', async () => {
+        const word = 'රුපියල් ₨ 1,250.00 — café';
+        const bytes = new TextEncoder().encode(JSON.stringify({ w: word }));
+        // split inside a multi-byte character on purpose
+        const pieces = [bytes.slice(0, 9), bytes.slice(9, 10), bytes.slice(10, 17), bytes.slice(17)];
+        const chunked = () => new Response(new ReadableStream({ start(c) { pieces.forEach((p) => c.enqueue(p)); c.close(); } }));
+        expect(await readBody(chunked(), 'json', 500)).toEqual({ w: word });
+        expect(await readBody(chunked(), 'text', 500)).toBe(JSON.stringify({ w: word }));
+        const bom = new Response(new Uint8Array([0xEF, 0xBB, 0xBF, ...new TextEncoder().encode('{"a":1}')]));
+        expect(await readBody(bom, 'json', 500)).toEqual({ a: 1 });
+        expect(await readBody(new Response(''), 'text', 500)).toBe('');
+    });
+
+    it('readBody on a body that was already taken still reads (or fails) like the response itself', async () => {
+        const used = new Response('{"a":1}');
+        await used.text();
+        await expect(readBody(used, 'json', 200)).rejects.toThrow();     // .json() on a used body throws; the timeout does not mask it
     });
 
     it('readBody names a timeout distinctly, and works on a bare object with no stream (a test double)', async () => {
@@ -172,6 +203,15 @@ describe('the other places a body is read under a call deadline', () => {
         const settled = run.then(() => 'resolved', (e) => `${e.kind}:${e.status}`);
         await vi.advanceTimersByTimeAsync(3200);                                    // an error body is allowed 3 s, not the whole call
         expect(await settled).toBe('key:401');
+    });
+
+    it('loadModels spends ONE 8 s on the request and the body together, not 8 s on each', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        // a fetcher that only bounds the headers and takes 7 s to give them, then a body that never arrives
+        const fetcher = async () => { await new Promise((r) => setTimeout(r, 7000)); return { ok: true, status: 200, json: () => new Promise(() => {}) }; };
+        const p = loadModels({ kind: 'openai', url: 'https://example.test/models', key: 'k', fetcher });
+        await vi.advanceTimersByTimeAsync(8200);
+        expect(await p).toEqual([]);                                                // not still waiting at 15 s
     });
 
     it('loadModels treats a model list that stalls after its headers as "no list", not a wait', async () => {

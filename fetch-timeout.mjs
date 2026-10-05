@@ -141,10 +141,11 @@ function timeoutError(what, budget) {
 }
 
 /**
- * Read a response body (`'json'` or `'text'`) for at most `ms`. The race is what
- * bounds it for a response that cannot be aborted (a test double, a fetcher that
- * does not pass a signal on); a real response also has its stream cancelled so
- * the socket is freed. Rejects with a TimeoutError (`timedOut: true`).
+ * Read a response body (`'json'` or `'text'`) for at most `ms`. A real response is read through a reader of our own, because
+ * `response.json()` locks the stream and a locked stream cannot be cancelled: on a stall the reader IS cancelled, which tears the
+ * connection down instead of leaving the half-read body, its socket and its buffers alive in a warm process. Anything that is not a
+ * readable `Response` (a test double, a body already taken) is read by calling `response[kind]()` under the same race. Rejects
+ * with a TimeoutError (`timedOut: true`); a body that is not valid JSON rejects with the SyntaxError `.json()` would have thrown.
  *
  * @param {Response} response
  * @param {'json'|'text'} kind
@@ -152,15 +153,30 @@ function timeoutError(what, budget) {
  */
 export async function readBody(response, kind, ms = DEFAULT_TIMEOUT_MS) {
     const budget = Number(ms) > 0 ? Number(ms) : DEFAULT_TIMEOUT_MS;
+    const stream = response && response.body;
+    const reader = stream && typeof stream.getReader === 'function' && !stream.locked && !response.bodyUsed ? stream.getReader() : null;
     let timer;
     const stalled = new Promise((_, reject) => {
         timer = setTimeout(() => {
-            try { const p = response && response.body && response.body.cancel && response.body.cancel(); if (p && p.catch) p.catch(() => {}); } catch (_) { /* a locked stream: the race already moved on */ }
+            if (reader) reader.cancel().catch(() => {});
             reject(timeoutError('response body read', budget));
         }, budget);
     });
-    try { return await Promise.race([response[kind](), stalled]); }
+    const read = reader ? drain(reader).then((text) => (kind === 'json' ? JSON.parse(text) : text)) : response[kind]();
+    try { return await Promise.race([read, stalled]); }
     finally { clearTimeout(timer); }
+}
+
+/** The whole body as text (UTF-8, a leading BOM dropped, as `Response.text()` does). */
+async function drain(reader) {
+    const decoder = new TextDecoder('utf-8');
+    let text = '';
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
 }
 
 /** fetch with `signal` = the budget, plus any signals the caller or a group brings. The budget is `AbortSignal.timeout`,
