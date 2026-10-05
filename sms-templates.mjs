@@ -22,6 +22,7 @@
  * ===========================================================================*/
 
 import { createHash } from 'node:crypto';
+import { analyzeSms } from './textlk.mjs';
 
 const s = (v) => String(v == null ? '' : v);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -96,7 +97,7 @@ export function asciiOnly(text) {
  * The text for one notice.
  * ctx: { amount, currency, ref, dateISO, month, ratePct, balance, link, settled, further }
  */
-export function buildMessage(kind, ctx = {}) {
+function render(kind, ctx) {
     const cur = currencyOf(ctx.currency);
     const amt = fmtMoney(ctx.amount, cur);
     const ref = s(ctx.ref);
@@ -126,6 +127,17 @@ export function buildMessage(kind, ctx = {}) {
         return '';
     }
     return asciiOnly(text);
+}
+
+/**
+ * The text for one notice. With the statement link a long amount can push a loan notice into a second part, which costs a second
+ * unit; the date is the one piece the statement repeats, so it is the one dropped, and only when that saves a part.
+ */
+export function buildMessage(kind, ctx = {}) {
+    const full = render(kind, ctx);
+    if (!full || !s(ctx.link) || analyzeSms(full).segments <= 1) return full;
+    const compact = render(kind, { ...ctx, dateISO: '' });
+    return compact && analyzeSms(compact).segments < analyzeSms(full).segments ? compact : full;
 }
 
 /** The portal's one-time code. Says what it is for, how long it lives and never to share it. */

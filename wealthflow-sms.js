@@ -112,6 +112,7 @@ export function applyToggle(prev, input, now = Date.now()) {
 const COPY = {
     A: 'Texts the investor when capital is recorded, when interest is applied and when a payment is received.',
     B: 'Texts the debtor when a loan is paid out and when a repayment is confirmed. Loans never carry interest, so no interest is ever calculated or sent.',
+    PORTAL: ' With an NIC, each text carries a private link to a statement page; the tenant sees the statement only after entering the NIC and a one-time code sent to this number.',
 };
 
 /**
@@ -130,11 +131,11 @@ export function blockHtml(prefix, { layer = 'A', record = null, showPhone = true
         + '<div id="' + id + '_more" style="display:' + (on ? 'block' : 'none') + ';margin-top:8px;">'
         + (showPhone ? ('<label class="fl" for="' + id + '_phone">Mobile number</label>'
             + '<input class="fi" id="' + id + '_phone" type="tel" inputmode="tel" autocomplete="off" placeholder="077 123 4567" value="' + esc(r[SMS_FIELDS.PHONE] || '') + '">') : '')
-        + '<label class="fl" for="' + id + '_nic" style="margin-top:8px;">NIC number (optional)</label>'
+        + '<label class="fl" for="' + id + '_nic" style="margin-top:8px;">NIC number (for the statement link)</label>'
         + '<input class="fi" id="' + id + '_nic" autocomplete="off" autocapitalize="characters" placeholder="853400937V or 198534000937" maxlength="16" value="' + esc(r[SMS_FIELDS.NIC] || '') + '">'
         + '<div id="' + id + '_err" role="alert" style="color:var(--red,#e5484d);font-size:12px;margin-top:4px;"></div>'
         + '</div>'
-        + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5;">' + esc(COPY[layer === 'B' ? 'B' : 'A']) + '</div>'
+        + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5;">' + esc(COPY[layer === 'B' ? 'B' : 'A'] + COPY.PORTAL) + '</div>'
         + '</div>';
 }
 

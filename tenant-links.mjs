@@ -52,11 +52,12 @@ export function publicOrigin(env = process.env) {
 }
 
 /**
- * Are links injected into messages? OFF unless TENANT_PORTAL_LINKS=on. A text that links to a page that does not exist yet is worse
- * than a text with no link, so until the portal route ships nothing carries one; the portal's own change turns the default on.
+ * Are links injected into messages? ON, unless TENANT_PORTAL_LINKS says off|false|0|no: the portal page and its endpoint ship with
+ * the links (tenant.html, /api/tenant-portal), so every text points at a page that exists. The switch stays as the owner's way to
+ * stop putting links in texts without a deploy (it also keeps a text to one segment on the day a very long reference makes it two).
  */
 export function linksEnabled(env = process.env) {
-    return ['on', 'true', '1', 'yes'].includes(s(env && env.TENANT_PORTAL_LINKS).trim().toLowerCase());
+    return !['off', 'false', '0', 'no'].includes(s(env && env.TENANT_PORTAL_LINKS).trim().toLowerCase());
 }
 
 export const newToken = (randomBytes = crypto.randomBytes) => randomBytes(TOKEN_BYTES).toString('base64url');
@@ -83,6 +84,11 @@ export function nicHashOf(canonicalNic, secret) {
     return crypto.createHmac('sha256', secret).update(`nic|${s(canonicalNic)}`).digest('hex').slice(0, 40);
 }
 
+/** HMAC of the E.164 number: what the other lenders' records are matched on, so the portal never holds a number it was not given. */
+export function phoneHashOf(e164, secret) {
+    return crypto.createHmac('sha256', secret).update(`phone|${s(e164)}`).digest('hex').slice(0, 40);
+}
+
 const subjectDocId = (uid, canonicalNic) => crypto.createHash('sha256').update(`wf-tenant-subject|${s(uid)}|${s(canonicalNic)}`).digest('hex').slice(0, 40);
 
 /**
@@ -97,7 +103,16 @@ export async function ensureTenantToken({ db, uid, canonicalNic, secret, randomB
         const tenantRef = db.collection(TENANTS).doc(fresh);
         const token = await db.runTransaction(async (tx) => {
             const sub = await tx.get(subjectRef);
-            if (sub.exists && sub.data() && TOKEN_RE.test(s(sub.data().token))) return sub.data().token;
+            if (sub.exists && sub.data() && TOKEN_RE.test(s(sub.data().token))) {
+                const have = sub.data();
+                // The secret was changed since the link was made (TENANT_PORTAL_SECRET added, OTP_SECRET rotated): every stored hash is now
+                // for a key nobody holds, and the portal would turn the tenant away. The next text re-keys the link; the link itself stays.
+                if (have.nicHash !== nicHash) {
+                    tx.set(db.collection(TENANTS).doc(have.token), { nicHash }, { merge: true });
+                    tx.set(subjectRef, { nicHash }, { merge: true });
+                }
+                return have.token;
+            }
             const taken = await tx.get(tenantRef);
             if (taken.exists) return null;                                    // astronomically unlikely; draw again
             tx.set(tenantRef, { uid, nicHash, active: true, createdAt: now });
@@ -109,4 +124,4 @@ export async function ensureTenantToken({ db, uid, canonicalNic, secret, randomB
     throw new Error('could not mint a tenant token');
 }
 
-export default { TENANTS, SUBJECTS, PORTAL_PATH, DEFAULT_ORIGIN, TOKEN_RE, publicOrigin, linksEnabled, newToken, linkFor, portalSecret, nicHashOf, ensureTenantToken };
+export default { TENANTS, SUBJECTS, PORTAL_PATH, DEFAULT_ORIGIN, TOKEN_RE, publicOrigin, linksEnabled, newToken, linkFor, portalSecret, nicHashOf, phoneHashOf, ensureTenantToken };

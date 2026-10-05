@@ -500,17 +500,20 @@ describe('the portal link in every message', () => {
         expect(gw.sent.every((s) => !s.message.includes('http'))).toBe(true);
     });
 
-    it('links are off until switched on: a text must not point at a page that is not there yet', async () => {
+    it('links are on unless the owner switches them off: the portal ships with them', async () => {
         const { db } = makeDb(); const gw = gateway();
         const { TENANT_PORTAL_LINKS, ...bare } = env;
         await run(db, books(), gw, { env: bare });
-        expect(gw.sent.every((m) => !m.message.includes('Statement:'))).toBe(true);
+        expect(gw.sent.length).toBeGreaterThan(0);
+        expect(gw.sent.every((m) => /Statement: https:\/\/wealthflow-personal\.vercel\.app\/t\/[A-Za-z0-9_-]{16}$/.test(m.message))).toBe(true);
     });
 
-    it('TENANT_PORTAL_LINKS=off sends without links', async () => {
-        const { db } = makeDb(); const gw = gateway();
-        await run(db, books(), gw, { env: { ...env, TENANT_PORTAL_LINKS: 'off' } });
+    it.each(['off', 'OFF', 'false', '0', 'no', ' off '])('TENANT_PORTAL_LINKS=%j sends without links', async (value) => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        await run(db, books(), gw, { env: { ...env, TENANT_PORTAL_LINKS: value } });
+        expect(gw.sent.length).toBeGreaterThan(0);
         expect(gw.sent.every((s) => !s.message.includes('http'))).toBe(true);
+        expect([...fs.data.keys()].filter((k) => k.startsWith('wf-tenants/') || k.startsWith('wf-tenant-subjects/'))).toEqual([]);   // and no link is minted for nothing
     });
 });
 

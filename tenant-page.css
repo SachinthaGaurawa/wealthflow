@@ -1,0 +1,137 @@
+/* =============================================================================
+ * tenant-page.css — the statement page a text message links to
+ * Mobile first (most tenants open it from the text on a phone), dark like the app,
+ * touch targets of at least 48px, inputs at 18px so a phone does not zoom, and no inline
+ * styles anywhere: the page's policy refuses them.
+ * ===========================================================================*/
+
+:root {
+    color-scheme: dark;
+    --bg: #0a0e1a;
+    --card: #14182a;
+    --card-2: #1a1f2e;
+    --line: rgba(255, 255, 255, 0.12);
+    --ink: #e6e7eb;
+    --mute: #a4adbf;
+    --green: #10b981;
+    --gold: #d4af37;
+    --red: #fca5a5;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Sinhala", sans-serif;
+    min-height: 100vh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.tp-wrap { width: 100%; max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
+
+.tp-brand { margin: 8px 0 20px; font-size: 15px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); font-weight: 800; }
+
+.tp-card {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.07), var(--card));
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+h2 { margin: 0 0 8px; font-size: 22px; line-height: 1.25; }
+h2:focus { outline: none; }
+h3 { margin: 0; font-size: 18px; }
+p { margin: 0 0 12px; }
+.tp-note { color: var(--mute); font-size: 14px; }
+.tp-small { color: var(--mute); font-size: 13px; margin: 12px 0 0; }
+
+label { display: block; margin: 16px 0 6px; font-weight: 600; font-size: 14px; }
+
+input {
+    width: 100%;
+    min-height: 52px;
+    padding: 12px 14px;
+    font: inherit;
+    font-size: 18px;
+    color: var(--ink);
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+}
+input:focus-visible, button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+input[aria-invalid="true"] { border-color: var(--red); }
+.tp-code { letter-spacing: 0.5em; text-align: center; font-variant-numeric: tabular-nums; font-size: 24px; }
+
+.tp-btn {
+    display: block;
+    width: 100%;
+    min-height: 52px;
+    margin-top: 16px;
+    padding: 12px 16px;
+    font: inherit;
+    font-weight: 800;
+    color: #0a0e1a;
+    background: linear-gradient(135deg, var(--green), var(--gold));
+    border: 0;
+    border-radius: 12px;
+    cursor: pointer;
+}
+.tp-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.tp-btn.tp-ghost { color: var(--ink); background: transparent; border: 1px solid var(--line); margin-top: 10px; font-weight: 600; }
+
+.tp-error { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; color: var(--red); background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.35); font-size: 14px; }
+.tp-error:empty { display: none; }
+.tp-info { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; color: var(--ink); background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.35); font-size: 14px; }
+
+.tp-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
+.tp-head .tp-btn { width: auto; min-width: 120px; margin-top: 0; }
+
+.tp-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.tp-total { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); min-width: 0; }
+.tp-total .tp-label { color: var(--mute); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.tp-total .tp-figure { display: block; margin-top: 4px; font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tp-cur { margin: 16px 0 8px; font-size: 13px; color: var(--gold); font-weight: 800; letter-spacing: 0.08em; }
+
+.tp-group-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.tp-chip { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--mute); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tp-chip.tp-ok { color: var(--green); border-color: rgba(16, 185, 129, 0.5); }
+
+dl.tp-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin: 0 0 12px; }
+dl.tp-facts > div { min-width: 0; }
+dl.tp-facts dt { color: var(--mute); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+dl.tp-facts dd { margin: 2px 0 0; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.tp-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+caption { text-align: left; color: var(--mute); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; padding: 4px 0 6px; }
+th, td { padding: 8px 6px; text-align: left; border-top: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
+.tp-sub { display: block; color: var(--mute); font-size: 12px; }
+th { color: var(--mute); font-weight: 600; font-size: 12px; }
+td.tp-num, th.tp-num { text-align: right; }
+
+.tp-foot { color: var(--mute); font-size: 13px; text-align: center; margin-top: 24px; }
+
+@media (max-width: 360px) {
+    .tp-wrap { padding-left: 12px; padding-right: 12px; }
+    .tp-card { padding: 16px; }
+    dl.tp-facts { grid-template-columns: 1fr; }
+    table { font-size: 13px; }
+    th, td { padding: 8px 4px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .tp-card { animation: tp-in 0.2s ease-out; }
+    @keyframes tp-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+}
+
+@media print {
+    body { background: #fff; color: #000; }
+    .tp-btn, .tp-brand { display: none; }
+    .tp-card, .tp-total { box-shadow: none; background: #fff; border-color: #999; }
+}
