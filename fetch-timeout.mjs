@@ -106,6 +106,143 @@ function describe(url) {
     }
 }
 
+/* =============================================================================
+ * A DEADLINE THAT OUTLIVES THE HEADERS
+ * -----------------------------------------------------------------------------
+ * `fetchWithTimeout` above clears its timer the moment the response HEADERS
+ * arrive. That is right for a caller that only looks at `r.status`, and wrong for
+ * one that goes on to `await r.json()`: a provider that sends headers (and maybe
+ * the first bytes) and then goes quiet leaves that read with no deadline at all.
+ * Reproduced with a local server that writes `200` and half a JSON body and
+ * stops: the old helper's promise is still pending minutes later, which inside a
+ * `maxDuration: 60` function is FUNCTION_INVOCATION_TIMEOUT. It was the one
+ * remaining `/api/router` timeout in the 24 h to 2026-10-05 (`[WF-SLOW]
+ * /api/classify-charge`, one request): a vote over ~18 providers is held up by
+ * its slowest member, so one stalled body held the whole request.
+ *
+ * Three tools, from the narrowest to the widest:
+ *   readBody()            bound one `.json()` / `.text()` that is already in hand
+ *   fetchWithBodyDeadline one call, deadline covers connect + headers + body
+ *   createDeadline()      ONE deadline for a group of calls that run together
+ *                         (a vote): every fetch AND body read shares it, and the
+ *                         group can be awaited with `Promise.race([..., whenExpired])`
+ *                         so a member that ignores the abort is still left behind
+ *
+ * `fetchWithTimeout` itself is unchanged on purpose: its callers are many and its
+ * test pins "clears its timer". These are for the paths that read a body.
+ * ===========================================================================*/
+
+function timeoutError(what, budget) {
+    const err = new Error(`${what} timed out after ${budget}ms`);
+    err.name = 'TimeoutError';
+    err.timedOut = true;
+    err.timeoutMs = budget;
+    return err;
+}
+
+/**
+ * Read a response body (`'json'` or `'text'`) for at most `ms`. The race is what
+ * bounds it for a response that cannot be aborted (a test double, a fetcher that
+ * does not pass a signal on); a real response also has its stream cancelled so
+ * the socket is freed. Rejects with a TimeoutError (`timedOut: true`).
+ *
+ * @param {Response} response
+ * @param {'json'|'text'} kind
+ * @param {number} [ms]
+ */
+export async function readBody(response, kind, ms = DEFAULT_TIMEOUT_MS) {
+    const budget = Number(ms) > 0 ? Number(ms) : DEFAULT_TIMEOUT_MS;
+    let timer;
+    const stalled = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            try { const p = response && response.body && response.body.cancel && response.body.cancel(); if (p && p.catch) p.catch(() => {}); } catch (_) { /* a locked stream: the race already moved on */ }
+            reject(timeoutError('response body read', budget));
+        }, budget);
+    });
+    try { return await Promise.race([response[kind](), stalled]); }
+    finally { clearTimeout(timer); }
+}
+
+/** fetch with `signal` = the budget, plus any signals the caller or a group brings. The budget is `AbortSignal.timeout`,
+ *  which is not cleared on headers, so aborting it also aborts a body that is still being read. Inside a group with no
+ *  budget of its own (`ms` 0) the group's deadline is the only clock. */
+async function boundedFetch(url, init, ms, group) {
+    const budget = Number(ms) > 0 ? Number(ms) : (group ? 0 : DEFAULT_TIMEOUT_MS);
+    // a group that has already expired starts nothing: no socket is opened for an answer nobody is waiting for
+    if (group && group.expired()) throw timeoutError(`shared deadline (${group.totalMs}ms) already passed: ${describe(url)}`, group.totalMs);
+    const own = budget > 0 ? AbortSignal.timeout(budget) : null;
+    const others = [init && init.signal, group && group.signal].filter(Boolean);
+    const all = own ? [own, ...others] : others;
+    const signal = all.length > 1 ? AbortSignal.any(all) : all[0];
+    try {
+        return await fetch(url, { ...(init || {}), ...(signal ? { signal } : {}) });
+    } catch (e) {
+        if (group && group.expired()) throw timeoutError(`shared deadline (${group.totalMs}ms): ${describe(url)}`, group.totalMs);
+        if (own && own.aborted && !others.some((s) => s.aborted)) throw timeoutError(`fetch: ${describe(url)}`, budget);
+        throw e;
+    }
+}
+
+/**
+ * `fetchWithTimeout`, except the deadline keeps running while the caller reads
+ * the body: `await r.json()` after this rejects at the deadline instead of
+ * hanging. Same arguments and return value; same non-throwing 4xx/5xx.
+ *
+ * @param {string|URL|Request} url
+ * @param {object} [init]
+ * @param {number} [ms]
+ * @returns {Promise<Response>}
+ */
+export function fetchWithBodyDeadline(url, init, ms = DEFAULT_TIMEOUT_MS) {
+    return boundedFetch(url, init, ms, null);
+}
+
+/**
+ * One deadline for a group of calls that run together.
+ *
+ *   const vote = createDeadline(18_000);
+ *   try {
+ *     await Promise.race([Promise.allSettled(voters.map((v) => v(vote))), vote.whenExpired]);
+ *   } finally { vote.done(); }
+ *
+ * At `ms` the group's signal aborts: every `vote.fetch` still connecting, waiting
+ * for headers or reading a body rejects at once, and `whenExpired` resolves so
+ * the caller stops waiting even for a member that never looks at a signal. Calls
+ * made after expiry reject immediately. `vote.fetch(url, init, perCallMs?)` has
+ * `fetchWithTimeout`'s signature; `perCallMs` can only shorten the budget.
+ *
+ * @param {number} ms
+ * @param {() => void} [onExpire]  called once, synchronously, just before the abort
+ */
+export function createDeadline(ms, onExpire) {
+    const totalMs = Number(ms) > 0 ? Number(ms) : DEFAULT_TIMEOUT_MS;
+    const startedAt = Date.now();
+    const ctl = new AbortController();
+    let expired = false;
+    let wake;
+    const whenExpired = new Promise((resolve) => { wake = resolve; });
+    // `onExpire` runs BEFORE the abort, in the same tick: the abort makes every member reject on later microtasks, so this is the one
+    // moment at which "who was still waiting" can be read without racing their own cleanup.
+    const timer = setTimeout(() => { expired = true; try { if (typeof onExpire === 'function') onExpire(); } catch (_) { /* advice only */ } ctl.abort(); wake(); }, totalMs);
+    const remaining = () => Math.max(0, totalMs - (Date.now() - startedAt));
+    const group = {
+        totalMs,
+        signal: ctl.signal,
+        whenExpired,
+        expired: () => expired,
+        remaining,
+        /** Stop the timer. Call in a `finally`: a vote that finished early must not leave it armed. */
+        done() { clearTimeout(timer); },
+        fetch(url, init, perCallMs) {
+            // a per-call budget that is shorter than what is left is its own clock; otherwise the group's deadline is the only one,
+            // so "who was still waiting when it passed" is decided by one timer and not by two that fire in the same millisecond
+            const per = Number(perCallMs) > 0 && Number(perCallMs) < remaining() ? Number(perCallMs) : 0;
+            return boundedFetch(url, init, per, group);
+        },
+    };
+    return group;
+}
+
 /**
  * Run `fn(signal)` under a deadline. The shape statement-store.js already uses,
  * exported here so the two idioms in this repo are one implementation rather

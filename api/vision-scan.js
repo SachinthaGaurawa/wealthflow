@@ -16,6 +16,7 @@
 //   OCR_SPACE_API_KEY
 
 import { geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
+import { fetchWithBodyDeadline } from '../fetch-timeout.mjs';
 
 export const config = {
     maxDuration: 60,
@@ -38,12 +39,9 @@ export const config = {
  * Unset, it is simply not in the fan-out — there are fifteen other engines, and
  * a missing one costs a vote rather than an answer. */
 
-async function fetchWithTimeout(url, options, timeoutMs = 22000) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try { return await fetch(url, { ...options, signal: controller.signal }); }
-    finally { clearTimeout(timer); }
-}
+// Each provider call is bounded to its budget from connect THROUGH the body read (fetch-timeout.mjs). The local helper that stood here cleared its
+// timer as soon as the headers arrived, so one provider that stalled mid-reply held the whole `Promise.all` vote until the router's 60 s limit.
+const fetchWithTimeout = (url, options, timeoutMs = 22000) => fetchWithBodyDeadline(url, options, timeoutMs);
 
 function extractJSON(text) {
     if (!text || typeof text !== 'string') return null;

@@ -18,7 +18,7 @@
  * ===========================================================================*/
 
 import { geminiGenerate, geminiKeyOf } from './gemini-client.mjs';
-import { fetchWithTimeout } from './fetch-timeout.mjs';
+import { fetchWithBodyDeadline } from './fetch-timeout.mjs'; // the deadline also covers reading the reply (a search API that stalls after its headers must not hold the answer)
 
 export const RESEARCH_VERSION = 1;
 export const RULES = Object.freeze({
@@ -202,7 +202,7 @@ function redact(message, env) {
  */
 export const PROBE_QUESTION = 'Central Bank of Sri Lanka overnight policy rate';
 export async function probe(o = {}) {
-    const { env = (typeof process !== 'undefined' && process.env) || {}, fetcher = fetchWithTimeout, generate = geminiGenerate, now = Date.now } = o;
+    const { env = (typeof process !== 'undefined' && process.env) || {}, fetcher = fetchWithBodyDeadline, generate = geminiGenerate, now = Date.now } = o;
     const names = configured(env);
     const runners = runnersFor(PROBE_QUESTION, env, fetcher, generate);
     const results = await Promise.all(names.map(async (name) => {
@@ -225,7 +225,7 @@ export async function probe(o = {}) {
  * `no-question`, `not-configured`, `empty` (a provider answered with nothing usable), `failed` or `timeout`.
  */
 export async function search(question, o = {}) {
-    const { env = (typeof process !== 'undefined' && process.env) || {}, fetcher = fetchWithTimeout, generate = geminiGenerate, now = Date.now, log = () => {} } = o;
+    const { env = (typeof process !== 'undefined' && process.env) || {}, fetcher = fetchWithBodyDeadline, generate = geminiGenerate, now = Date.now, log = () => {} } = o;
     const query = scrubQuery(question);
     if (query.length < 3) return { ok: false, reason: 'no-question' };
     const names = configured(env);
@@ -241,7 +241,7 @@ export async function search(question, o = {}) {
                 return { ok: true, via: name, query, at: new Date(now()).toISOString(), sources: got.sources, notes: String(got.notes || '').split('\n').map((l) => cleanText(l, 420)).filter(Boolean).slice(0, 8).join('\n') };
             }
         } catch (e) {
-            reason = e && (e.name === 'AbortError' || /timeout|deadline/i.test(String(e && e.message))) ? 'timeout' : 'failed';
+            reason = e && (e.name === 'AbortError' || e.name === 'TimeoutError' || e.timedOut === true || /timeout|deadline/i.test(String(e && e.message))) ? 'timeout' : 'failed';
             try { log(`[research] ${name} ${reason}: ${cleanText(e && e.message, 120)}`); } catch (_) { /* a log is advice */ }
         }
     }

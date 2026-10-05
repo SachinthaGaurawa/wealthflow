@@ -12,8 +12,11 @@
  * is not chosen again for as long as it is remembered as bad. Gemini's quota is per model: a 429 on one flash model moves to
  * another flash model, which has its own.
  *
- * Pure but for the injected `load` (a fetch of the provider's list). Nothing here throws: no answer from the list, no change.
+ * Pure but for the injected `load` (a fetch of the provider's list; its body is read under the same 8 s as the request, so a list that
+ * stalls after its headers is no answer rather than a wait). Nothing here throws: no answer from the list, no change.
  * ===========================================================================*/
+
+import { readBody } from './fetch-timeout.mjs';
 
 export const TTL_MS = 6 * 3600 * 1000;
 export const QUOTA_BAD_MS = 2 * 60 * 1000;
@@ -166,6 +169,6 @@ export async function loadModels({ kind, url, key, headers = {}, fetcher }) {
         const auth = kind === 'gemini' ? {} : { Authorization: `Bearer ${key}` };
         const response = await fetcher(target, { method: 'GET', headers: { Accept: 'application/json', ...auth, ...headers } }, 8000);
         if (!response || !response.ok) return [];
-        return modelsOf(kind, await response.json());
+        return modelsOf(kind, await readBody(response, 'json', 8000));
     } catch (_) { return []; }
 }
