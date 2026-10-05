@@ -60,16 +60,23 @@ the tick without one). While it is ticked and money is still confirmed as owed:
 **Saved people** (button on the Investments tab and on the Debtors card) is one address book for both tabs.
 
 * Add a person once (name, phone with country, NIC or passport / ID, email, notes). On the next loan or investment pick them from the list
-  at the top of the form and everything fills in. A new person typed into a loan or investment form is saved to the book automatically
-  (untick *Remember this person* to skip it).
+  at the top of the form and everything fills in. **Everybody named on a loan or an investment is saved to the book automatically**, an
+  investor typed by name alone included (untick *Save to my people list* on a form to skip it). People already named on existing loans and
+  investments are filed the same way as soon as the app is open, with no button to press; the same name is the same person (two
+  investments for one investor are one investor), and two devices that do this before they sync end up with the same people.
 * Edit or delete a saved person from the list. Changing a person's name, phone or NIC asks once: update it on every loan and investment
-  they are linked to, on this record only, or cancel. **Deleting a saved person never touches a loan or an investment**: they keep their own
-  copy of the details and are simply unlinked.
-* **Import from contacts** uses the browser's Contact Picker (Android Chrome). Where a device has no Contact Picker (iPhone,
-  desktop) the same button reads **Import contacts file** and takes a `.vcf` file exported from the Contacts app. Contacts are only read
-  after the owner picks them.
-* **Add them to the list** (shown while some loan or investment names somebody who is not in the list yet) files everyone already in the
-  books in one tap; nothing else on those records changes.
+  they are linked to, on this record only, or cancel. Every save of a person also puts right a linked record that had fallen out of step
+  (a number or ID it lacked), and a number a record already holds is never blanked by an unrelated edit. **Deleting a saved person never
+  touches a loan or an investment**: they keep their own copy of the details and are simply unlinked.
+* **Contacts** (the button beside every mobile-number box, and **Import contacts** in the book). Only Chrome on Android lets a web page open the
+  address book, and there the button opens it at once. On every other device (iPhone, iPad, Mac, Windows, Linux, other browsers) it opens a
+  sheet with the ways that do work there, and says which steps fit the device it is on:
+  a contacts file chosen or dropped on the sheet (**vCard** `.vcf` from Contacts, Google or iCloud; **CSV** from Google Contacts or Outlook,
+  with `;`, `,` or tab as the separator and several numbers in one cell), or text copied from a contacts app and pasted (a bare number,
+  `Name: number`, a whole contact card, a list) or read from the clipboard. One pasted number fills the form with no second tap. Numbers
+  copied with a `tel:` link, invisible direction marks or digits in another script (Arabic, Sinhala, Tamil, Devanagari) are read as the same
+  number. Contacts are read in the page, nothing is uploaded, and only what the owner taps is used.
+* **Add them to the list** (shown only if something could not be filed automatically, such as a full book) files everyone in the books in one tap.
 
 **Payment details** (second tab of the same screen) is where the owner enters the bank accounts a debtor repays into or an investor adds
 capital to: bank, name on the account, number, branch, SWIFT / IBAN, a note. Each account says who sees it (debtors, investors or both)

@@ -71,6 +71,13 @@ for (const payload of PAYLOADS) {
             expect(danger(UI.importHtml({ rows, q: payload, shown: 1, total: 1, source: payload }))).toEqual([]);
         });
 
+        it('the sheet that brings a contact in, on every kind of device, with a hostile status line', () => {
+            for (const platform of ['android', 'ios', 'mac', 'windows', 'linux', 'other', payload]) {
+                for (const picker of [true, false]) expect(danger(UI.contactSourceHtml({ platform, picker, clipboard: picker, multiple: !picker, status: payload }))).toEqual([]);
+            }
+            expect(UI.contactSourceHtml({ status: payload })).not.toContain(payload);
+        });
+
         it('the bank accounts: list, card and form', () => {
             const account = { id: 'a1', bank: payload, holder: payload, number: '8001234567', branch: payload, swift: 'CCEYLKLX', note: payload, showTo: 'both', active: true };
             expect(danger(UI.accountCardHtml(account))).toEqual([]);

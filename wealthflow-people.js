@@ -200,6 +200,19 @@ export function findDuplicate(people, candidate) {
     return null;
 }
 
+/**
+ * The one person a name alone can mean: the only person with that name, or, when several have it, the only one saved with nothing but the name
+ * (the "bare" one an earlier name-only record made). More than one candidate means we cannot tell, and the answer is nobody.
+ */
+export function sameNameOnly(people, name) {
+    const key = nameKey(name);
+    if (!key) return null;
+    const same = (Array.isArray(people) ? people : []).filter((p) => p && p.id && nameKey(p.name) === key);
+    if (same.length === 1) return same[0];
+    const bare = same.filter((p) => !str(p.phone).trim() && !str(p.nic).trim());
+    return bare.length === 1 ? bare[0] : null;
+}
+
 /** People matching what was typed (name, any number, NIC, email), best first; everybody, A to Z, when nothing was typed. */
 export function searchPeople(people, query) {
     const list = (Array.isArray(people) ? people : []).filter((p) => p && p.id);
@@ -239,6 +252,14 @@ export function writeShared(kind, rec, values) {
     return changed;
 }
 
+/** What a record lacks of its person, from the person: only fields the record has nothing in. A number or ID the record already carries is never replaced. */
+function fillBlanks(kind, rec, person) {
+    const have = readShared(kind, rec);
+    const gift = {};
+    for (const f of ['phone', 'nic']) if (!have[f] && str(person && person[f]).trim()) gift[f] = str(person[f]).trim();
+    return Object.keys(gift).length ? writeShared(kind, rec, gift) : false;
+}
+
 /**
  * How many loans and investments point at this person, and how many of those have texts on.
  * `skipId` leaves out the record being saved right now, for "and N others".
@@ -268,7 +289,10 @@ export function sharedDiff(kind, rec, person) {
 }
 
 /**
- * Bring every record linked to `personId` in step with `next` for the fields that changed from `prev`.
+ * Bring every record linked to `personId` in step with `next`.
+ * A field that CHANGED from `prev` goes to every linked record whatever it holds (a deliberately cleared number clears everywhere); a field
+ * that did not change goes only where a record has nothing in it, so a record that had fallen out of step (linked by an older version, edited on
+ * another device) is put right by the next save of its person, and a number a record holds is never blanked by an unrelated edit.
  * `skipId` is the record being saved right now (its caller saves it). Records are replaced, not edited in place, and a store is only
  * written when something changed, so an untouched ledger is never re-stamped.
  * @returns {{loans:number, investments:number, smsOn:number}} what was changed
@@ -277,14 +301,14 @@ export function propagate(store, personId, prev, next, skipId = '') {
     const out = { loans: 0, investments: 0, smsOn: 0 };
     const diff = {};
     for (const f of SHARED) if (str(prev && prev[f]) !== str(next && next[f])) diff[f] = str(next[f]);
-    if (!Object.keys(diff).length) return out;
     for (const [key, kind, counter] of [['debtors', 'debtor', 'loans'], ['income', 'investment', 'investments']]) {
         const list = store.get(key) || [];
         let touched = false;
         const updated = list.map((r) => {
             if (!r || r[LINK_FIELD] !== personId || (skipId && r.id === skipId)) return r;
             const copy = { ...r };
-            if (!writeShared(kind, copy, diff)) return r;
+            const changed = writeShared(kind, copy, diff) | fillBlanks(kind, copy, next);
+            if (!changed) return r;
             touched = true;
             out[counter] += 1;
             if (r.sms_notifications_enabled === true) out.smsOn += 1;
@@ -323,7 +347,11 @@ export function linkRecord({ store, kind, rec, remember = false, country = '', n
         for (const f of SHARED) if (f !== 'name' || shared.name) next[f] = shared[f];
         if (iso && iso !== existing.country) next.country = iso;
         const changed = SHARED.some((f) => str(next[f]) !== str(existing[f])) || (next.country || '') !== (existing.country || '');
-        if (!changed) return { ...none, person: existing };
+        if (!changed) {
+            // nothing to teach the person, but a record of theirs that fell out of step is put right
+            const repaired = propagate(store, existing.id, existing, existing, rec.id);
+            return { ...none, person: existing, siblings: repaired };
+        }
         next.updatedAt = stamp;
         store.set(PEOPLE_KEY, people.map((p) => (p.id === existing.id ? next : p)));
         const siblings = propagate(store, existing.id, existing, next, rec.id);
@@ -334,7 +362,8 @@ export function linkRecord({ store, kind, rec, remember = false, country = '', n
     if (people.length >= LIMITS.people) return none;
 
     const candidate = { name: shared.name, phone: shared.phone, nic: shared.nic, country: iso || DEFAULT_REGION };
-    const dup = findDuplicate(people, candidate);
+    // Somebody typed by name alone is the person already saved under that name (an investor who is also a borrower), when there is one to mean.
+    const dup = findDuplicate(people, candidate) || (!shared.phone && !shared.nic ? sameNameOnly(people, shared.name) : null);
     if (dup) {
         // The same person. They keep the name they are saved under (a second spelling does not rename them, or every loan of theirs);
         // a number or an ID typed on THIS form is the freshest word the owner has, so it replaces the saved one and the person's other
@@ -349,7 +378,8 @@ export function linkRecord({ store, kind, rec, remember = false, country = '', n
         }
         const siblings = changed ? propagate(store, dup.id, dup, next, rec.id) : none.siblings;
         rec[LINK_FIELD] = dup.id;
-        writeShared(kind, rec, { name: next.name, phone: next.phone, nic: next.nic });
+        writeShared(kind, rec, { name: next.name });
+        fillBlanks(kind, rec, next);
         return { person: changed ? next : dup, created: false, matched: true, updated: changed, siblings };
     }
 
@@ -436,20 +466,23 @@ export function removePerson(store, id) {
 /* ── people who are already in the ledgers but not in the book ───────────── */
 
 /**
- * Loans and investments that name somebody the book does not know. A loan always names a person; an investment's "company" is often a
- * bank, so it counts only when somebody gave it a number, an ID or the text switch (the things only a person has).
+ * Loans and investments that name somebody the book does not know. A loan names a person, and so does an investment ("Company / Person"):
+ * every one that has a name counts, whether or not it also has a number, an ID or the text switch.
+ * `orphans: false` leaves out records that point at a person who is not in the book (a deleted person stays deleted; see harvestPeople).
  * @returns {{key:'debtors'|'income', kind:'debtor'|'investment', id:string, name:string, phone:string, nic:string}[]}
  */
-export function unfiledRecords(store) {
+export function unfiledRecords(store, { orphans = true } = {}) {
     const people = listPeople(store);
     const out = [];
     for (const [key, kind] of [['debtors', 'debtor'], ['income', 'investment']]) {
         for (const r of (store && store.get(key)) || []) {
             if (!r || typeof r !== 'object' || !r.id) continue;
             if (personById(people, r[LINK_FIELD])) continue;
+            // a record that still points at somebody who is no longer in the book is an orphan: the owner deleted that person (or their entry has not
+            // arrived from another device yet). Filing them again by itself would undo a delete, so only the owner's own "file everybody" does that
+            if (!orphans && r[LINK_FIELD]) continue;
             const shared = readShared(kind, r);
             if (!shared.name) continue;
-            if (kind === 'investment' && !shared.phone && !shared.nic && r.sms_notifications_enabled !== true) continue;
             out.push({ key, kind, id: r.id, ...shared });
         }
     }
@@ -462,8 +495,8 @@ export function unfiledRecords(store) {
  * nothing else on a ledger is touched.
  * @returns {{added:number, linked:number}}
  */
-export function harvestPeople(store, { now = Date.now(), newId = defaultId } = {}) {
-    const unfiled = unfiledRecords(store);
+export function harvestPeople(store, { now = Date.now(), newId = null, orphans = true } = {}) {
+    const unfiled = unfiledRecords(store, { orphans });
     const people = listPeople(store).slice();
     const point = { debtors: new Map(), income: new Map() };
     let added = 0;
@@ -471,10 +504,12 @@ export function harvestPeople(store, { now = Date.now(), newId = defaultId } = {
     for (const u of unfiled) {
         const iso = isoOfPhone(u.phone);
         let hit = findDuplicate(people, { name: u.name, phone: u.phone, nic: u.nic, country: iso });
-        if (!hit && !u.phone && !u.nic) hit = people.find((p) => nameKey(p.name) === nameKey(u.name) && !str(p.phone).trim() && !str(p.nic).trim()) || null;
+        if (!hit && !u.phone && !u.nic) hit = sameNameOnly(people, u.name);
         if (!hit) {
             if (people.length >= LIMITS.people) continue;
-            hit = newPerson({ name: u.name.slice(0, LIMITS.name), phone: u.phone, phone2: '', country: iso, nic: u.nic, email: '', address: '', note: '' }, { now, newId });
+            // a number that is a number is saved the way every device and the server read it (E.164); one that is not is kept as it was written
+            const pn = u.phone ? resolvePhone(u.phone, iso) : null;
+            hit = newPerson({ name: u.name.slice(0, LIMITS.name), phone: pn && pn.ok ? pn.e164 : u.phone, phone2: '', country: pn && pn.ok ? pn.iso : iso, nic: u.nic, email: '', address: '', note: '' }, { now, newId: newId || (() => harvestId(u)) });
             people.push(hit);
             added += 1;
         }
@@ -483,11 +518,34 @@ export function harvestPeople(store, { now = Date.now(), newId = defaultId } = {
     }
     if (!linked) return { added: 0, linked: 0 };
     if (added) store.set(PEOPLE_KEY, people);
+    const byId = new Map(people.map((p) => [p.id, p]));
     for (const key of ['debtors', 'income']) {
         if (!point[key].size) continue;
-        store.set(key, (store.get(key) || []).map((r) => (r && point[key].has(r.id) ? { ...r, [LINK_FIELD]: point[key].get(r.id) } : r)));
+        const kind = key === 'debtors' ? 'debtor' : 'investment';
+        store.set(key, (store.get(key) || []).map((r) => {
+            if (!r || !point[key].has(r.id)) return r;
+            const copy = { ...r, [LINK_FIELD]: point[key].get(r.id) };
+            fillBlanks(kind, copy, byId.get(copy[LINK_FIELD]));         // a number or ID the record lacked comes from the person; nothing it holds is replaced
+            return copy;
+        }));
     }
     return { added, linked };
+}
+
+/**
+ * An id for a person filed from the ledgers, derived from WHO they are (NIC, else name and number), so two devices that each file the same
+ * ledger before they have synced arrive at the same people and the cloud merge, which joins by id, does not double them.
+ */
+function harvestId(u) {
+    const id = u.nic ? normalizeIdentity(u.nic) : null;
+    const phone = u.phone ? normalizePhone(u.phone, { defaultCountry: DEFAULT_REGION }) : null;
+    const key = id && id.ok ? 'n|' + id.canonical : 'p|' + nameKey(u.name) + '|' + (phone && phone.ok ? phone.e164 : '');
+    // cyrb53: a small, well-spread hash that needs no async crypto and is the same in every browser and in node
+    let h1 = 0xdeadbeef; let h2 = 0x41c6ce57;
+    for (let i = 0; i < key.length; i += 1) { const ch = key.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return 'ph' + (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
 /* ── contacts from the phone ──────────────────────────────────────────────── */
@@ -576,6 +634,153 @@ export function parseVCards(text) {
     return out;
 }
 
+/* ── contacts from a spreadsheet export, or copied text ──────────────────── */
+
+/** Rows of a CSV, whatever the delimiter: quoted cells (with the delimiter, a line break or doubled quotes inside), CRLF, a byte-order mark. */
+function csvTable(text, delim) {
+    const rows = [];
+    let row = []; let cell = ''; let quoted = false;
+    const src = str(text).replace(/^﻿/, '');
+    const endCell = () => { row.push(cell); cell = ''; };
+    const endRow = () => { endCell(); if (row.some((c) => str(c).trim())) rows.push(row); row = []; };
+    for (let i = 0; i < src.length; i += 1) {
+        const ch = src[i];
+        if (quoted) {
+            if (ch === '"') { if (src[i + 1] === '"') { cell += '"'; i += 1; } else quoted = false; } else cell += ch;
+        } else if (ch === '"' && !cell) quoted = true;
+        else if (ch === delim) endCell();
+        else if (ch === '\n' || ch === '\r') { if (ch === '\r' && src[i + 1] === '\n') i += 1; endRow(); }
+        else cell += ch;
+        if (rows.length > LIMITS.vcfCards + 1) break;
+    }
+    if (cell || row.length) endRow();
+    return rows;
+}
+
+/** The delimiter a sheet uses, read from its first line (outside quotes). */
+function sniffDelimiter(text) {
+    const first = str(text).replace(/^﻿/, '').split(/\r\n|\n|\r/).find((l) => l.trim()) || '';
+    const count = (d) => { let n = 0; let q = false; for (const ch of first) { if (ch === '"') q = !q; else if (!q && ch === d) n += 1; } return n; };
+    const best = [',', ';', '\t'].map((d) => [d, count(d)]).sort((a, b) => b[1] - a[1])[0];
+    return best[1] > 0 ? best[0] : ',';
+}
+
+const HEADER = {
+    full: /^(name|full name|display name|file as|nickname|contact name)$/,
+    first: /^(first name|given name|forename)$/,
+    middle: /^(middle name|additional name)$/,
+    last: /^(last name|family name|surname)$/,
+    org: /^(organi[sz]ation(?: name| 1 - name)?|company)$/,
+    phone: /(phone|mobile|\bcell\b|cellular|telephone|\btel\b|\bgsm\b|contact no|contact number|^number$)/,
+    notPhone: /(label|type|fax|pager|\bext\b|extension|phonetic|\bcode\b|\bcountry\b)/,
+};
+
+/** Cells of a contacts sheet often hold several numbers: Google joins them with " ::: ", others with ";" or a line break. */
+const splitNumbers = (cell) => str(cell).split(/\s*(?::::|;|\n)\s*/).map((x) => squash(x)).filter(Boolean);
+
+/**
+ * The contacts in a spreadsheet export (CSV) from Google Contacts, Outlook, a phone's export or a hand-made sheet. A sheet is a contacts sheet when
+ * it has a phone column; names come from a name column, or first + middle + last, or the company.
+ * @returns {{name:string, tels:string[]}[]}
+ */
+export function parseContactsCsv(text) {
+    const src = str(text);
+    if (!src.trim()) return [];
+    const rows = csvTable(src.length > LIMITS.vcfBytes ? src.slice(0, LIMITS.vcfBytes) : src, sniffDelimiter(src));
+    if (rows.length < 2) return [];
+    const head = rows[0].map((h) => squash(h).toLowerCase());
+    const phones = head.map((h, i) => (HEADER.phone.test(h) && !HEADER.notPhone.test(h) ? i : -1)).filter((i) => i >= 0);
+    if (!phones.length) return [];
+    const at = (re) => head.findIndex((h) => re.test(h));
+    const full = at(HEADER.full); const first = at(HEADER.first); const middle = at(HEADER.middle); const last = at(HEADER.last); const org = at(HEADER.org);
+    const out = [];
+    for (const row of rows.slice(1)) {
+        const cell = (i) => (i >= 0 ? squash(row[i]) : '');
+        let name = cell(full) || squash([cell(first), cell(middle), cell(last)].filter(Boolean).join(' ')) || cell(org);
+        name = name.slice(0, LIMITS.name);
+        const tels = [...new Set(phones.flatMap((i) => splitNumbers(row[i])))];
+        if (tels.length) out.push({ name, tels });
+        if (out.length >= LIMITS.vcfCards) break;
+    }
+    return out;
+}
+
+const LABEL_LINE = /^(?:mobile|cell|cellphone|home|work|office|business|main|other|phone|tel|telephone|iphone|fax|whatsapp|primary|mobile \d|home \d|work \d)\s*:?$/i;
+const PHONE_LIKE = /(?:\+|00)?\p{Nd}[\p{Nd}\s().\-–]{5,}\p{Nd}/gu;
+const DATE_LIKE = /^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$|^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/;
+
+/**
+ * Contacts from text a person copied: a bare number, "Name: number", a contact card laid out on lines (with the label lines a phone adds), or
+ * a list of those. A date or an amount is not a number; a name is only what sits beside or just above a number, never a sentence.
+ * @returns {{name:string, tels:string[]}[]}
+ */
+export function parseContactsText(text) {
+    const src = str(text);
+    const out = [];
+    const byName = new Map();
+    let pending = '';
+    const push = (name, tel) => {
+        const key = nameKey(name);
+        const hit = key ? byName.get(key) : null;
+        if (hit) { if (!hit.tels.includes(tel)) hit.tels.push(tel); return; }
+        const card = { name: name.slice(0, LIMITS.name), tels: [tel] };
+        out.push(card);
+        if (key) byName.set(key, card);
+    };
+    for (const line of (src.length > LIMITS.vcfBytes ? src.slice(0, LIMITS.vcfBytes) : src).split(/\r\n|\n|\r/)) {
+        const t = squash(line);
+        if (!t) { pending = ''; continue; }
+        const found = [...t.matchAll(PHONE_LIKE)].map((m) => ({ raw: m[0].trim().replace(/[\s.\-–(]+$/, ''), at: m.index, len: m[0].length })).filter((m) => !DATE_LIKE.test(m.raw) && m.raw.replace(/\P{Nd}/gu, '').length >= 7 && m.raw.replace(/\P{Nd}/gu, '').length <= 15);
+        if (!found.length) {
+            if (!LABEL_LINE.test(t) && !/@/.test(t) && t.length <= 60 && !/\p{Nd}/u.test(t)) pending = t;
+            continue;
+        }
+        // what is left of the line once the numbers are taken out is the name, if it is short enough to be one
+        let rest = t;
+        for (const m of [...found].sort((a, b) => b.at - a.at)) rest = rest.slice(0, m.at) + ' ' + rest.slice(m.at + m.len);
+        rest = squash(rest.replace(/^[\s:,;|\-–—()[\]]+|[\s:,;|\-–—()[\]]+$/g, ''));
+        const label = LABEL_LINE.test(rest) || /^(?:tel|phone|mobile|call|contact|number|no)\b[.:]?$/i.test(rest);
+        const lineName = !label && rest && rest.length <= 60 && rest.split(' ').length <= 6 && !/@/.test(rest) ? rest : '';
+        const name = lineName || pending;
+        for (const m of found) { push(name, m.raw); if (out.length >= LIMITS.vcfCards) return out; }
+        if (lineName) pending = lineName;
+    }
+    return out;
+}
+
+/**
+ * Whatever a person brought: the text of a vCard, a CSV export or plain copied text. The content decides, not the file name.
+ * @returns {{kind:'vcard'|'csv'|'text'|'empty', cards:{name:string, tels:string[]}[]}}
+ */
+export function parseContacts(text, fileName = '') {
+    const src = str(text);
+    if (!src.trim()) return { kind: 'empty', cards: [] };
+    const control = (src.slice(0, 2000).match(/[\u0000-\u0008\u000E-\u001F]/g) || []).length;
+    if (control > 8) return { kind: 'empty', cards: [] };                         // a photo or a zip chosen by mistake is not a contact
+    if (/BEGIN:VCARD/i.test(src)) { const cards = parseVCards(src); return { kind: cards.length ? 'vcard' : 'empty', cards }; }
+    const firstLine = src.replace(/^﻿/, '').split(/\r\n|\n|\r/).find((l) => l.trim()) || '';
+    if (/[,;\t]/.test(firstLine) && (/\.csv$/i.test(str(fileName)) || HEADER.phone.test(firstLine.toLowerCase()) || /\bname\b/i.test(firstLine))) {
+        const cards = parseContactsCsv(src);
+        if (cards.length) return { kind: 'csv', cards };
+    }
+    const cards = parseContactsText(src);
+    return { kind: cards.length ? 'text' : 'empty', cards };
+}
+
+/** The kind of device a page is on, for the instructions that differ between them. */
+export function platformOf(win) {
+    const n = win && win.navigator;
+    if (!n) return 'other';
+    const ua = str(n.userAgent); const pf = str(n.platform); const touch = Number(n.maxTouchPoints) || 0;
+    if (/android/i.test(ua)) return 'android';
+    if (/iPhone|iPad|iPod/i.test(ua) || (/Mac/i.test(pf) && touch > 1)) return 'ios';       // an iPad asking for the desktop site says "Mac" and has a touch screen
+    if (/CrOS/i.test(ua)) return 'linux';
+    if (/Win/i.test(pf) || /Windows/i.test(ua)) return 'windows';
+    if (/Mac/i.test(pf) || /Macintosh/i.test(ua)) return 'mac';
+    if (/Linux|X11/i.test(pf + ' ' + ua)) return 'linux';
+    return 'other';
+}
+
 /**
  * A contact (from the picker or a file) as something a form can use: its name and the numbers that can be texted, in E.164, with the
  * country a bare local number is read in. Numbers that are not valid are kept (`others`) so nothing a person sees is silently dropped.
@@ -593,6 +798,6 @@ export function draftFromContact(contact, iso = DEFAULT_REGION) {
 
 export default {
     PEOPLE_KEY, LINK_FIELD, LIMITS, SHARED, phoneProblem, idProblem, resolvePhone, isoOfPhone, storedId, idKindOf, cleanPerson, newPerson, defaultId,
-    personById, listPeople, findDuplicate, searchPeople, readShared, writeShared, usageOf, booksOf, sharedDiff, propagate, linkRecord, updatePerson, previewUpdate, addPerson, addPeople, removePerson,
-    unfiledRecords, harvestPeople, contactPickerSupported, pickContacts, parseVCards, draftFromContact,
+    personById, listPeople, findDuplicate, sameNameOnly, searchPeople, readShared, writeShared, usageOf, booksOf, sharedDiff, propagate, linkRecord, updatePerson, previewUpdate, addPerson, addPeople, removePerson,
+    unfiledRecords, harvestPeople, contactPickerSupported, pickContacts, parseVCards, parseContactsCsv, parseContactsText, parseContacts, platformOf, draftFromContact,
 };

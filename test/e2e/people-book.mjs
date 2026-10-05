@@ -158,9 +158,11 @@ const vcf = [
     'BEGIN:VCARD', 'VERSION:3.0', 'FN:Dilan Fernando', 'TEL;TYPE=CELL:0712345678', 'END:VCARD',
     'BEGIN:VCARD', 'VERSION:3.0', 'FN:Sara Smith', 'TEL;TYPE=CELL:+1 (415) 555-2671', 'END:VCARD',
 ].join('\r\n');
+await page.click('button[data-wfp="contacts"][data-p="_db"]');
+await page.waitForSelector('.wfp-src [data-c="file"]');
 const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.click('button[data-wfp="contacts"][data-p="_db"]'),
+    page.click('.wfp-src [data-c="file"]'),
 ]);
 await chooser.setFiles({ name: 'contacts.vcf', mimeType: 'text/vcard', buffer: Buffer.from(vcf) });
 await page.waitForSelector('.wfp-chooser [data-c="q"]');
@@ -187,20 +189,22 @@ await page.evaluate(() => {
     WFPeople.openHub('people');
 });
 await page.waitForSelector('.wfp-hub #wfp_list');
-assert.match(await page.textContent('.wfp-hub .wfp-note'), /4 loans and investments name somebody who is not in this list yet/, 'three loans and an investor with a number are named; a bank is not a person');
-await page.click('.wfp-hub [data-h="harvest"]');
-await page.waitForFunction(() => DB.get('people').length === 3);
+// nobody has to press anything: opening the book files whoever the ledgers already name, investors included
+await page.waitForFunction(() => DB.get('people').length === 4, null, { timeout: 8000 });
 book = await page.evaluate(() => ({ people: DB.get('people'), debtors: DB.get('debtors'), income: DB.get('income') }));
-assert.deepEqual(book.people.map((p) => p.name).sort(), ['Ahmed Khan', 'Kamal', 'Nimal Perera'], 'two loans to Nimal (one NIC in two shapes) are one Nimal');
+assert.deepEqual(book.people.map((p) => p.name).sort(), ['Ahmed Khan', 'Commercial Bank', 'Kamal', 'Nimal Perera'], 'two loans to Nimal (one NIC in two shapes) are one Nimal; an investor with only a name is a person too');
 assert.equal(book.debtors[0].personId, book.debtors[1].personId);
-assert.equal(book.income[0].personId, undefined, 'the bank is left alone');
-assert.equal(book.debtors[0].phone, '077 123 4567', 'a ledger record keeps every other field exactly as it was');
+assert.ok(book.income[0].personId && book.income[1].personId, 'both investments are linked');
+assert.equal(book.debtors[0].phone, '077 123 4567', 'a ledger record keeps the fields it already had exactly as they were');
+assert.equal(book.debtors[1].phone, '+94771234567', 'the second Nimal loan had no number: it now carries the saved person\'s');
+await page.waitForSelector('.wfp-hub #wfp_list .wfp-card');
 assert.equal(await page.isVisible('.wfp-hub .wfp-note'), false, 'nothing left to file');
-console.log('5a. file the ledgers   -> 3 people from 4 records, bank untouched');
+console.log('5a. file the ledgers   -> 4 people from 5 records by themselves, investors included');
+
 
 // the list: who they are and what they are on
 const rows = await page.$$eval('.wfp-hub .wfp-card .wfp-name', (e) => e.map((x) => x.textContent));
-assert.deepEqual(rows, ['Ahmed Khan', 'Kamal', 'Nimal Perera'], 'A to Z');
+assert.deepEqual(rows, ['Ahmed Khan', 'Commercial Bank', 'Kamal', 'Nimal Perera'], 'A to Z');
 assert.match(await page.textContent('.wfp-hub .wfp-card:has-text("Nimal")'), /2 loans/);
 await page.fill('#wfp_q', '771234');
 assert.deepEqual(await page.$$eval('.wfp-hub .wfp-card .wfp-name', (e) => e.map((x) => x.textContent)), ['Nimal Perera'], 'search by part of a number');
@@ -290,7 +294,9 @@ const vcf2 = ['A:1'].join('');
 const bulk = [
     ['Dilan Fernando', '0712345678'], ['Sara Smith', '+1 (415) 555-2671'], ['Landline Only', '011 234 5678'], ['Maria Garcia', '+34 612 345 678'],
 ].map(([n, t]) => `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${n}\r\nTEL:${t}\r\nEND:VCARD`).join('\r\n');
-const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('.wfp-hub [data-h="import"]')]);
+await page.click('.wfp-hub [data-h="import"]');
+await page.waitForSelector('.wfp-src [data-c="file"]');
+const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('.wfp-src [data-c="file"]')]);
 await fc.setFiles({ name: 'all.vcf', mimeType: 'text/vcard', buffer: Buffer.from(bulk) });
 await page.waitForSelector('.wfp-hub [data-h="impgo"]');
 assert.equal(await page.isDisabled('.wfp-hub [data-h="impgo"]'), true, 'nothing is added until the owner ticks it');
@@ -300,7 +306,7 @@ assert.match(await page.textContent('.wfp-hub [data-h="impgo"]'), /Add 3 people/
 await page.click('.wfp-hub [data-h="impgo"]');
 await page.waitForFunction(() => DB.get('people').some((p) => p.name === 'Dilan Fernando'));
 const after = await page.evaluate(() => DB.get('people').map((p) => p.name).sort());
-assert.deepEqual(after, ['Ahmed Khan', 'Dilan Fernando', 'Kamal Silva', 'Maria Garcia', 'Sara Smith'], 'Maria was already in the list: she is counted, not doubled');
+assert.deepEqual(after, ['Ahmed Khan', 'Commercial Bank', 'Dilan Fernando', 'Kamal Silva', 'Maria Garcia', 'Sara Smith'], 'Maria was already in the list: she is counted, not doubled');
 assert.ok((await toasts()).some(([m]) => /Added 2 people \(1 already in your list\)/.test(m)), 'and the owner is told');
 console.log('5e. import             -> 2 added, 1 duplicate skipped, landline refused');
 await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
@@ -406,6 +412,148 @@ await openDebtor(null);
 await page.waitForSelector('#_db_phone');
 await overflow('debtor form');
 console.log('8.  320 px             -> no sideways scroll in the list, the forms or the account editor');
+
+/* ── 9. an investor typed by name saves by itself, and an edit reaches every record ───── */
+await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
+await reset();
+const addInvestment = async (name, company) => {
+    await page.evaluate(() => { window.closeModal && window.closeModal('mdIncome'); });
+    await page.evaluate(() => window.openModal('mdIncome'));
+    await page.waitForSelector('#i_company');
+    await page.fill('#i_name', name);
+    await page.fill('#i_company', company);
+    await page.fill('#i_amount', '1,000,000');
+    await page.fill('#i_rate', '12');
+    await page.fill('#i_start', '2026-10-01');
+    await page.fill('#i_day', '2026-10-01');
+    await page.click('#mdIncome .btn-primary');
+};
+await addInvestment('Fixed deposit', 'Harsha Aiya');
+await page.waitForFunction(() => DB.get('income').length === 1);
+book = await page.evaluate(() => ({ people: DB.get('people'), income: DB.get('income') }));
+assert.equal(book.people.length, 1, 'a new investor typed by name alone is saved to the people list');
+assert.equal(book.people[0].name, 'Harsha Aiya');
+assert.equal(book.income[0].personId, book.people[0].id, 'and the investment is linked to them');
+assert.ok((await toasts()).some(([m]) => /Harsha Aiya saved to your people list/.test(m)), 'the owner is told');
+console.log('9a. new investor       -> saved to the people list, investment linked');
+
+await addInvestment('Second deposit', 'harsha  aiya');
+await page.waitForFunction(() => DB.get('income').length === 2);
+book = await page.evaluate(() => ({ people: DB.get('people'), income: DB.get('income') }));
+assert.equal(book.people.length, 1, 'the same name typed again is the same person, not a second Harsha');
+assert.equal(book.income[1].personId, book.people[0].id);
+console.log('9b. same investor      -> found again, no duplicate');
+
+await page.evaluate(() => { window.closeModal('mdIncome'); window.openModal('mdIncome'); });
+await page.waitForSelector('#i_pick');
+assert.deepEqual(await page.$$eval('#i_pick option', (o) => o.map((x) => x.textContent)), ['New person (type the details below)', 'Harsha Aiya'], 'the saved investor is on the picker of the next investment');
+await page.evaluate(() => window.closeModal('mdIncome'));
+
+await page.evaluate(() => { DB.set('debtors', [{ id: 'dh', name: 'Harsha Aiya', phone: '', nic: '', events: [], createdAt: new Date().toISOString() }]); WFPeople.openHub('people'); });
+await page.waitForSelector('.wfp-hub .wfp-card:has-text("Harsha")');
+await page.waitForFunction(() => DB.get('debtors')[0].personId === DB.get('people')[0].id, null, { timeout: 8000 });
+assert.equal(await page.evaluate(() => DB.get('people').length), 1, 'a loan to the same Harsha is linked to the same person');
+await page.click('.wfp-hub .wfp-card:has-text("Harsha")');
+await page.waitForSelector('#_pp_phone');
+await page.fill('#_pp_phone', '071 555 6666');
+await page.fill('#_pp_nic', '853400937V');
+await page.click('.wfp-hub [data-h="save"]');
+await page.waitForSelector('.wfp-hub [data-h="savego"]');
+assert.match(await page.textContent('.wfp-hub .wfp-warn'), /This also updates 1 loan and 2 investments/);
+await page.click('.wfp-hub [data-h="savego"]');
+await page.waitForFunction(() => DB.get('income').every((i) => i.phone === '+94715556666'));
+book = await page.evaluate(() => ({ income: DB.get('income'), debtors: DB.get('debtors') }));
+assert.ok(book.income.every((i) => i.phone === '+94715556666' && i.nic === '853400937V'), 'every investment of theirs has the new number and ID');
+assert.ok(book.debtors[0].phone === '+94715556666' && book.debtors[0].nic === '853400937V', 'and so does their loan');
+console.log('9c. edit the person    -> the loan and both investments follow');
+await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
+
+/* ── 10. the Contacts button on a device with no contact picker: paste, file, drop ─── */
+await reset();
+await page.evaluate(() => { Object.defineProperty(navigator, 'contacts', { configurable: true, value: undefined }); });
+await openDebtor(null);
+await page.waitForSelector('#_db_phone');
+const openSheet = async () => { await page.click('button[data-wfp="contacts"][data-p="_db"]'); await page.waitForSelector('.wfp-src [data-c="paste"]'); };
+await openSheet();
+assert.equal(await page.isVisible('.wfp-src [data-c="device"]'), false, 'no picker here, so no button for one');
+assert.ok(await page.isVisible('.wfp-src [data-c="file"]'), 'a file can always be chosen');
+assert.match(await page.textContent('.wfp-src .wfp-tips'), /Google or iCloud contacts/, 'the steps are written out where the owner is looking');
+assert.equal(await page.isDisabled('.wfp-src [data-c="use"]'), true);
+
+await page.fill('.wfp-src [data-c="paste"]', 'hello there');
+assert.match(await page.textContent('.wfp-src [data-c="status"]'), /No phone number found/);
+assert.equal(await page.isDisabled('.wfp-src [data-c="use"]'), true, 'nothing to use yet');
+
+await page.fill('.wfp-src [data-c="paste"]', 'Nimal Perera: 077 123 4567');
+assert.match(await page.textContent('.wfp-src [data-c="status"]'), /Found 1 contact with 1 number/);
+await page.click('.wfp-src [data-c="use"]');
+await page.waitForFunction(() => document.getElementById('_db_phone').value === '+94 77 123 4567');
+assert.equal(await page.inputValue('#_db_name'), 'Nimal Perera', 'the name comes with it');
+console.log('10a. typed paste       -> name and number fill the form');
+
+await page.fill('#_db_name', ''); await page.fill('#_db_phone', '');
+await openSheet();
+await page.evaluate(() => { const t = document.querySelector('.wfp-src [data-c="paste"]'); t.value = '‎+94 77 555 1212‏'; t.dispatchEvent(new Event('paste', { bubbles: true })); });
+await page.waitForFunction(() => document.getElementById('_db_phone').value === '+94 77 555 1212');
+assert.equal(await page.isVisible('.wfp-src'), false, 'one pasted number needs no second tap');
+console.log('10b. pasted number     -> fills at once, even with the hidden marks a chat adds');
+
+await page.fill('#_db_phone', '');
+await openSheet();
+const card = 'Kamal Silva\nmobile\n+94 71 111 1111\nhome\n+44 7911 123456\nkamal@example.com';
+await page.fill('.wfp-src [data-c="paste"]', card);
+await page.click('.wfp-src [data-c="use"]');
+await page.waitForSelector('.wfp-chooser [data-c="num"]');
+assert.deepEqual(await page.$$eval('.wfp-chooser [data-c="num"]', (b) => b.map((x) => x.textContent)), ['+94 71 111 1111', '+44 791 112 3456'], 'a pasted contact card with two numbers asks which');
+await page.click('.wfp-chooser [data-c="num"][data-i="0"]');
+await page.waitForFunction(() => document.getElementById('_db_phone').value === '+94 71 111 1111');
+console.log('10c. pasted card       -> number chooser');
+
+await page.fill('#_db_phone', ''); await page.fill('#_db_name', '');
+await openSheet();
+const csv = 'First Name,Last Name,Phone 1 - Label,Phone 1 - Value\nDilan,Fernando,Mobile,0712345678\nSara,Smith,Mobile,+1 (415) 555-2671\n';
+const [fc2] = await Promise.all([page.waitForEvent('filechooser'), page.click('.wfp-src [data-c="file"]')]);
+await fc2.setFiles({ name: 'contacts.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+await page.waitForSelector('.wfp-chooser [data-c="q"]');
+await page.fill('.wfp-chooser [data-c="q"]', 'dilan');
+await page.click('.wfp-chooser [data-c="num"]');
+await page.waitForFunction(() => document.getElementById('_db_phone').value === '+94 71 234 5678');
+assert.equal(await page.inputValue('#_db_name'), 'Dilan Fernando');
+console.log('10d. Google CSV file   -> searched, applied');
+
+await page.fill('#_db_phone', ''); await page.fill('#_db_name', '');
+await openSheet();
+await page.evaluate(() => {
+    const sheet = document.querySelector('.wfp-src');
+    const dt = new DataTransfer();
+    dt.items.add(new File(['BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ahmed Khan\r\nTEL;TYPE=CELL:+971 50 123 4567\r\nEND:VCARD'], 'ahmed.vcf', { type: 'text/vcard' }));
+    sheet.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+});
+await page.waitForFunction(() => document.getElementById('_db_phone').value === '+971 501 234 567');
+assert.equal(await page.inputValue('#_db_cc'), 'AE', 'the country follows the dropped number');
+console.log('10e. dropped vCard     -> applied, country follows');
+
+await page.fill('#_db_phone', ''); await page.fill('#_db_name', '');
+await openSheet();
+const [fc3] = await Promise.all([page.waitForEvent('filechooser'), page.click('.wfp-src [data-c="file"]')]);
+await fc3.setFiles({ name: 'photo.xlsx', mimeType: 'application/octet-stream', buffer: Buffer.from([0x50, 0x4b, 3, 4, 0, 1, 2, 3]) });
+await page.waitForFunction(() => /spreadsheet or archive/.test(document.querySelector('.wfp-src [data-c="status"]').textContent));
+assert.ok(await page.isVisible('.wfp-src'), 'a file that is not a contacts file says so and leaves the sheet open');
+await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
+console.log('10f. wrong file        -> says what to export instead');
+
+// an iPhone: the sheet speaks to it
+await page.evaluate(() => {
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Version/17.5 Mobile/15E148 Safari/604.1' });
+    Object.defineProperty(navigator, 'platform', { configurable: true, value: 'iPhone' });
+});
+await openDebtor(null);
+await page.waitForSelector('#_db_phone');
+await openSheet();
+assert.match(await page.textContent('.wfp-src .wfp-tips'), /Safari cannot open your Contacts/);
+assert.match(await page.textContent('.wfp-src .wfp-tips'), /touch and hold their number and choose Copy/);
+await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
+console.log('10g. iPhone            -> told exactly what to do on an iPhone');
 
 assert.deepEqual(errors, [], 'no uncaught page errors: ' + errors.join(' | '));
 console.log('the saved-people book behaves on the real page');

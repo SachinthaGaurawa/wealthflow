@@ -15,10 +15,12 @@
  *                    debtors and investors, each for debtors, investors or both, each switchable off.
  *   MESSAGES         the text-message log, as the third tab.
  *
- * DEVICE CONTACTS. Chrome on Android has a contact picker (navigator.contacts); Safari on iPhone and desktop browsers
- * do not. There the same button takes a .vcf file (any phone's "share contact" or an exported address book) and
- * shows the same chooser. Nothing leaves the device: the contacts are read in the page and only what the owner
- * taps is used.
+ * DEVICE CONTACTS. Only Chrome on Android lets a web page open the address book (navigator.contacts); no other browser on any
+ * system does, whatever the device. So every "Contacts" button opens one sheet with every way that works: the phone's own
+ * picker where there is one, a contacts file (vCard from any phone, Mac, Google or iCloud; CSV from Google or Outlook), a file
+ * dropped on the sheet, or text copied from a contacts app (a number, "Name: number", a whole card) pasted or read from the
+ * clipboard. The sheet tells each kind of device (Android, iPhone, Mac, Windows, other) the exact steps. Nothing leaves the
+ * device: the contacts are read in the page and only what the owner taps is used.
  *
  * Nothing here throws into the app: if this file fails to load, the forms keep working without it. ESM; window.WFPeople.
  * ===========================================================================*/
@@ -87,10 +89,12 @@ export function contactHtml(prefix, { kind = 'debtor', record = null, people = [
     const r = record && typeof record === 'object' ? record : {};
     const person = People.personById(people, r.personId);
     const fallback = regionByIso(person && person.country) ? person.country : (regionByIso(defaultCountry) ? s(defaultCountry).toUpperCase() : DEFAULT_REGION);
-    const phoneRaw = s(r.phone).trim();
+    // a record linked to a saved person that holds no number or ID of its own (it was filed from the ledger, or edited elsewhere) shows the
+    // person's: saving the form must not read an empty box as "this person has no number" and clear it for everybody
+    const phoneRaw = s(r.phone).trim() || (person ? s(person.phone).trim() : '');
     const info = phoneRaw ? People.resolvePhone(phoneRaw, fallback) : null;
     const iso = info && info.ok ? info.iso : fallback;
-    const idStored = s(r.nic).trim();
+    const idStored = s(r.nic).trim() || (person ? s(person.nic).trim() : '');
     const idKind = idStored ? People.idKindOf(idStored) : (iso === DEFAULT_REGION ? 'nic' : 'other');
     const pv = errors && errors.phone ? { cls: 'bad', text: errors.phone } : phoneNote(phoneRaw, iso, true);
     const iv = errors && errors.nic ? { cls: 'bad', text: errors.nic } : idNote(displayIdentity(idStored), idKind, true);
@@ -101,7 +105,7 @@ export function contactHtml(prefix, { kind = 'debtor', record = null, people = [
         + '<div class="fg"><label class="fl" for="' + p + '_phone">Mobile number</label>'
         + '<div class="wfp-row"><input class="fi" id="' + p + '_phone" type="tel" inputmode="tel" autocomplete="off" maxlength="40" data-wfp="phone"' + common
         + ' placeholder="077 123 4567 or +44 7911 123456" value="' + esc(info && info.ok ? info.pretty : phoneRaw) + '">'
-        + '<button type="button" class="btn btn-secondary btn-sm wfp-btn" data-wfp="contacts"' + common + ' title="Take the number from your contacts">Contacts</button></div>'
+        + '<button type="button" class="btn btn-secondary btn-sm wfp-btn" data-wfp="contacts"' + common + ' title="Take the number from your contacts, a contacts file, or text you copied">Contacts</button></div>'
         + '<div class="wfp-pv ' + pv.cls + '" id="' + p + '_pv" role="status" aria-live="polite">' + esc(pv.text) + '</div>'
         + (phoneHelp ? '<div class="wfp-help">' + esc(phoneHelp) + '</div>' : '') + '</div>'
         + '<div class="fg"><label class="fl" for="' + p + '_nic" id="' + p + '_nic_l">' + ID_LABEL[idKind] + '</label>'
@@ -159,7 +163,7 @@ export function readContact(root, prefix) {
  * The ID must be right whenever one is given (a typo here is a statement that never opens). The number must be a mobile number that can be
  * texted only when texts are on; with them off it is kept as typed, because it may be a landline the owner rings.
  */
-export function collectContact(c, { smsOn = false, kind = 'debtor' } = {}) {
+export function collectContact(c, { smsOn = false } = {}) {
     const x = c || { personId: '', country: DEFAULT_REGION, phone: '', idKind: 'nic', nic: '', remember: false };
     const errors = {};
     const phone = People.resolvePhone(x.phone, x.country);
@@ -167,16 +171,56 @@ export function collectContact(c, { smsOn = false, kind = 'debtor' } = {}) {
     if (phone.empty && smsOn) errors.phone = People.phoneProblem('empty');
     const id = People.storedId(x.nic, x.idKind);
     if (!id.ok) errors.nic = id.text;
-    // a loan always names a person; an investment's "company" is often a bank, so it is filed only when the owner gave a number, an ID or the texts
-    const detail = !!(s(x.phone).trim() || (id.ok && id.stored) || smsOn);
     return {
         ok: Object.keys(errors).length === 0, errors,
         phone: phone.ok ? phone.e164 : s(x.phone).trim(),
         nic: id.ok ? id.stored : '',
         country: phone.ok ? phone.iso : x.country,
-        idKind: x.idKind, personId: x.personId, remember: !!x.remember && (kind !== 'investment' || detail),
+        idKind: x.idKind, personId: x.personId, remember: !!x.remember,
     };
 }
+
+/* ── bringing a contact in: the sheet, and what it says on each kind of device ── */
+
+/**
+ * What is true on each device, said once: which of the ways in work there and how to get a contact to them. No web page can read an address
+ * book except through Chrome on Android, so on every other device the way in is a file the device can export, or text the person copies.
+ */
+export function contactTips(platform, picker = false) {
+    const share = {
+        android: 'On Android, Chrome opens your contacts directly. In another browser, open the Contacts app, touch the person, choose Share or Copy, then paste it into the box below.',
+        ios: 'iPhone and iPad: Safari cannot open your Contacts. Open the Contacts app, touch the person, touch and hold their number and choose Copy, then paste it into the box below. To bring a whole contact: Contacts, touch the person, Share Contact, Save to Files, then choose that file here.',
+        mac: 'Mac: browsers cannot open your Contacts. In the Contacts app select the person (or several), choose File, Export, Export vCard, then choose or drop that file here. Or select a person, press Command-C, and paste into the box below.',
+        windows: 'Windows: browsers cannot open your contacts. In Outlook or the People app export your contacts (vCard or CSV) and choose that file here, or copy a number and paste it into the box below.',
+        linux: 'Browsers cannot open the contacts on this device. Export them as vCard or CSV and choose that file here, or copy a number and paste it into the box below.',
+        other: 'Browsers cannot open the contacts on this device. Export them as vCard or CSV and choose that file here, or copy a number and paste it into the box below.',
+    };
+    const lines = [share[platform] || share.other];
+    lines.push('Google or iCloud contacts: on contacts.google.com or icloud.com choose Export (vCard or CSV), then choose that file here.');
+    if (!picker && platform === 'android') lines.unshift('This browser has no contact picker, so use one of these instead.');
+    return lines;
+}
+
+/** The sheet that brings a contact in: the phone's picker where there is one, a file, a dropped file, or pasted text. Every dynamic value is escaped. */
+export function contactSourceHtml({ platform = 'other', picker = false, clipboard = false, multiple = false, status = '' } = {}) {
+    const tips = contactTips(platform, picker);
+    return '<div class="md wfp-src"><div class="md-hdr"><div class="md-title">' + (multiple ? 'Import contacts' : 'Bring in a contact') + '</div>' + xButtonHtml + '</div>'
+        + (picker ? '<button type="button" class="btn btn-primary wfp-wide" data-c="device">Choose from this device’s contacts</button><div class="wfp-or">or</div>' : '')
+        + '<button type="button" class="btn ' + (picker ? 'btn-secondary' : 'btn-primary') + ' wfp-wide" data-c="file">Choose a contacts file</button>'
+        + '<div class="wfp-help wfp-center">vCard (.vcf) or spreadsheet (.csv) exported from your phone, Google, iCloud or Outlook. You can also drop the file here.</div>'
+        + '<input type="file" data-c="fileinput" accept=".vcf,.vcard,.csv,.txt,text/vcard,text/x-vcard,text/directory,text/csv,text/plain" ' + (multiple ? 'multiple ' : '') + 'hidden aria-label="Contacts file">'
+        + '<div class="wfp-or">or</div>'
+        + '<label class="fl" for="wfp_paste">Paste a number or a contact</label>'
+        + '<textarea class="fi wfp-paste" id="wfp_paste" data-c="paste" rows="3" maxlength="200000" autocomplete="off" spellcheck="false" placeholder="+94 77 123 4567, or Nimal Perera 077 123 4567, or a whole contact card"></textarea>'
+        + '<div class="wfp-actions" style="margin-top:6px;">'
+        + (clipboard ? '<button type="button" class="btn btn-secondary btn-sm" data-c="clip">Paste from clipboard</button>' : '')
+        + '<button type="button" class="btn btn-primary btn-sm" data-c="use" disabled>Use this</button></div>'
+        + '<div class="wfp-pv" data-c="status" role="status" aria-live="polite">' + esc(status) + '</div>'
+        + '<details class="wfp-det wfp-tips"' + (picker ? '' : ' open') + '><summary>How do I get my contact in here?</summary>'
+        + tips.map((t) => '<p class="wfp-help" style="margin:0 0 8px;">' + esc(t) + '</p>').join('') + '</details>'
+        + '</div>';
+}
+const xButtonHtml = '<button class="md-x" aria-label="Close" data-c="close"><i data-wfi="x"></i></button>';
 
 /* ── 2. the book's screens, as strings ───────────────────────────────────── */
 
@@ -336,7 +380,7 @@ const STYLE = `
 .wfp-imp{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--border,rgba(128,128,128,.2));cursor:pointer}.wfp-imp input[type=checkbox]{width:20px;height:20px;flex:none}.wfp-imp.wfp-off{opacity:.55;cursor:default}
 .wfp-num{margin-top:4px;min-height:36px}.wfp-implist{margin:0 0 10px}
 .wfp-acct{border:1px solid var(--border,rgba(128,128,128,.25));border-radius:12px;padding:10px 12px;margin:8px 0}.wfp-kv{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:3px 0}.wfp-kv span{color:var(--text3)}.wfp-kv b{text-align:right;word-break:break-word}
-.wfp-chooser .md{max-width:460px}.wfp-pick{margin-bottom:10px}.wfp-home{margin:16px 0 4px;padding-top:12px;border-top:1px solid var(--border,rgba(128,128,128,.2))}
+.wfp-chooser .md{max-width:460px}.wfp-wide{width:100%;min-height:46px;margin:0 0 6px}.wfp-or{text-align:center;color:var(--text3);font-size:12px;margin:8px 0}.wfp-center{text-align:center;margin:0 0 4px}.wfp-paste{width:100%;min-height:64px;resize:vertical;font-family:inherit}.wfp-src.wfp-drop{outline:2px dashed var(--accent,#4f8cff);outline-offset:-6px}.wfp-tips{margin-top:12px}.wfp-pick{margin-bottom:10px}.wfp-home{margin:16px 0 4px;padding-top:12px;border-top:1px solid var(--border,rgba(128,128,128,.2))}
 .wfp-det{border:1px solid var(--border,rgba(128,128,128,.25));border-radius:12px;padding:0 12px;margin:0 0 10px}.wfp-det>summary{cursor:pointer;font-weight:700;padding:12px 0;min-height:24px}.wfp-det[open]>summary{border-bottom:1px solid var(--border,rgba(128,128,128,.2));margin-bottom:10px}.wfp-det>summary span{font-weight:500;color:var(--text3)}
 `;
 
@@ -357,6 +401,29 @@ export function boot(win) {
     const homeCountry = () => { try { const v = s(win.DB.getObj('settings', {}).homeCountry).toUpperCase(); return regionByIso(v) ? v : DEFAULT_REGION; } catch (_) { return DEFAULT_REGION; } };
     const setHomeCountry = (iso) => { try { if (!regionByIso(iso)) return false; win.DB.set('settings', { ...win.DB.getObj('settings', {}), homeCountry: s(iso).toUpperCase() }); return true; } catch (_) { return false; } };
     const smsPanel = () => (win.WFSms && typeof win.WFSms.panelInto === 'function' ? win.WFSms : null);
+
+    /* ── everybody the ledgers already name goes into the saved list by itself ──
+     * An investor typed on the Investments tab, or a loan made before the book existed, is a person the owner will want to pick again. Once the
+     * books are on screen (and again whenever the owner comes back to the app, or opens a form or the book) anybody named on a loan or an
+     * investment who is not in the list is filed and the record linked to them. Records only gain their link and what they lacked of the
+     * person; ids are derived from who the person is, so two devices doing this before they sync arrive at the same people. */
+    const filed = { told: false };
+    function autoFile() {
+        try {
+            if (win._isDecoyMode === true) return;                                  // the decoy books are not the owner's: never written
+            if (!win.currentUser || !win.currentUser.uid || !win.appData) return;
+            const sx = store();
+            if (!People.unfiledRecords(sx, { orphans: false }).length) return;
+            const r = People.harvestPeople(sx, { orphans: false });             // a person the owner deleted is not filed again behind their back
+            if (r.linked && !filed.told) { filed.told = true; toast(r.added ? 'Saved ' + plural(r.added, 'person', 'people') + ' from your loans and investments to your people list' : 'Linked ' + plural(r.linked, 'loan or investment', 'loans and investments') + ' to people in your list', 'success'); }
+        } catch (e) { console.warn('[WF-PEOPLE] filing the people already in the books failed (nothing was lost):', e && e.message); }
+    }
+
+    /** The record as the ledger holds it NOW: filing people just above may have linked it, and the form must open on the link. */
+    function freshRecord(rec) {
+        if (!rec || !rec.id) return rec;
+        try { const sx = store(); return [...sx.get('income'), ...sx.get('debtors')].find((r) => r && r.id === rec.id) || rec; } catch (_) { return rec; }
+    }
 
     function ensureStyle() {
         if (doc.getElementById('wfp-style')) return;
@@ -448,35 +515,103 @@ export function boot(win) {
         return openNumberChooser(draft, (n) => applyNumber(root, p, nameId, draft.name, n));
     }
 
-    function readFile(accept, done) {
-        const input = doc.createElement('input');
-        input.type = 'file'; input.accept = accept; input.style.display = 'none';
-        doc.body.appendChild(input);
-        const cleanup = () => { if (input.parentNode) input.parentNode.removeChild(input); };
-        input.addEventListener('cancel', cleanup);
-        input.addEventListener('change', async () => {
-            try {
-                const f = input.files && input.files[0];
-                if (!f) return;
-                if (f.size > People.LIMITS.vcfBytes) { toast('That file is too large to be a contacts file', 'error'); return; }
-                done(await f.text(), f.name);
-            } catch (_) { toast('Could not read that file', 'error'); } finally { cleanup(); }
+    /**
+     * The sheet every "Contacts" button opens. It reports the contacts it found through onCards(cards, source) and closes; it never decides what
+     * to do with them (a form takes one number, the book imports many).
+     */
+    function openContactSource({ multiple = false, onCards }) {
+        const platform = People.platformOf(win);
+        const picker = People.contactPickerSupported(win);
+        const clipboard = !!(win.navigator && win.navigator.clipboard && typeof win.navigator.clipboard.readText === 'function');
+        const o = overlay(contactSourceHtml({ platform, picker, clipboard, multiple }), 'wfp-chooser');
+        const q = (c) => o.el.querySelector('[data-c="' + c + '"]');
+        const status = q('status'); const paste = q('paste'); const use = q('use'); const fileInput = q('fileinput');
+        const say = (text, cls = '') => { if (status) { status.className = 'wfp-pv ' + cls; status.textContent = text; } };
+        let found = null;
+        const arrive = (cards, source) => {
+            if (!cards.length) return false;
+            o.close();
+            try { onCards(cards.slice(0, People.LIMITS.vcfCards), source); } catch (e) { console.warn('[WF-PEOPLE] contacts:', e && e.message); }
+            return true;
+        };
+        const read = (text, name, source) => {
+            const r = People.parseContacts(text, name);
+            if (!r.cards.length) { say(source === 'pasted text' ? 'No phone number found in that text yet.' : 'No contacts found in ' + (name || 'that file') + '. Export your contacts as vCard (.vcf) or CSV and choose that file.', 'warn'); return null; }
+            return r.cards;
+        };
+        const sync = () => {
+            const text = s(paste && paste.value);
+            found = text.trim() ? People.parseContacts(text, '').cards : [];
+            if (use) use.disabled = !found.length;
+            if (!text.trim()) say('');
+            else if (!found.length) say('No phone number found in that text yet.', 'warn');
+            else say('Found ' + plural(found.length, 'contact', 'contacts') + ' with ' + plural(found.reduce((n, c) => n + c.tels.length, 0), 'number', 'numbers') + '.', 'ok');
+        };
+        const readFiles = async (files) => {
+            const list = Array.from(files || []).slice(0, 5);
+            if (!list.length) return;
+            const texts = [];
+            for (const f of list) {
+                if (/\.(xlsx?|numbers|ods|zip|pdf)$/i.test(f.name)) { say(f.name + ' is a spreadsheet or archive. Save or export it as CSV or vCard first.', 'warn'); return; }
+                if (f.size > People.LIMITS.vcfBytes) { say(f.name + ' is too large to be a contacts file.', 'warn'); return; }
+                try { texts.push(await f.text()); } catch (_) { say('Could not read ' + f.name + '.', 'warn'); return; }
+            }
+            const cards = read(texts.join('\n'), list[0].name, list[0].name);
+            if (cards) arrive(cards, list.length > 1 ? list.length + ' files' : list[0].name);
+        };
+        o.el.addEventListener('click', (e) => {
+            const t = e.target.closest ? e.target.closest('[data-c]') : null; if (!t) return;
+            const a = t.getAttribute('data-c');
+            if (a === 'close') o.close();
+            else if (a === 'file' && fileInput) fileInput.click();
+            else if (a === 'device') {
+                People.pickContacts(win, { multiple }).then((picked) => { if (picked.length) arrive(picked, 'your contacts'); else say('No contact was chosen.', ''); })
+                    .catch((err) => say((err && err.userMessage) || 'Could not open your contacts. Try a file, or paste the number.', 'warn'));
+            }
+            else if (a === 'clip') {
+                win.navigator.clipboard.readText().then((text) => { if (paste) { paste.value = s(text).slice(0, 200000); sync(); if (found && found.length === 1 && found[0].tels.length === 1) arrive(found, 'pasted text'); } })
+                    .catch(() => say('The browser did not allow reading the clipboard. Long-press or press Ctrl/Command-V in the box instead.', 'warn'));
+            }
+            else if (a === 'use') { sync(); if (found && found.length) arrive(found, 'pasted text'); }
         });
-        input.click();
+        if (fileInput) fileInput.addEventListener('change', () => { readFiles(fileInput.files); fileInput.value = ''; });
+        if (paste) {
+            paste.addEventListener('input', sync);
+            // one pasted number needs no second tap
+            paste.addEventListener('paste', () => win.setTimeout(() => { sync(); if (found && found.length === 1 && found[0].tels.length === 1 && s(paste.value).length < 80) arrive(found, 'pasted text'); }, 0));
+        }
+        // a file dropped anywhere on the sheet
+        const sheet = o.el.querySelector('.md');
+        if (sheet) {
+            sheet.addEventListener('dragover', (e) => { e.preventDefault(); sheet.classList.add('wfp-drop'); });
+            sheet.addEventListener('dragleave', () => sheet.classList.remove('wfp-drop'));
+            sheet.addEventListener('drop', (e) => {
+                e.preventDefault(); sheet.classList.remove('wfp-drop');
+                const dt = e.dataTransfer;
+                if (dt && dt.files && dt.files.length) readFiles(dt.files);
+                else if (dt) { const text = dt.getData('text/vcard') || dt.getData('text/x-vcard') || dt.getData('text/plain'); if (text && paste) { paste.value = text.slice(0, 200000); sync(); } }
+            });
+        }
+        win.setTimeout(() => { try { (picker ? q('device') : q('file')).focus(); } catch (_) { /* focus is a courtesy */ } }, 60);
+        return o;
     }
 
+    /**
+     * The "Contacts" button on a form. Where the browser has a contact picker (Chrome on Android) it opens at once, as one tap; if that fails
+     * (permission refused, an embedded browser) or there is none, the sheet with every other way in opens instead.
+     */
     function chooseContact(root, p, nameId) {
+        const iso = () => (at(root, p + '_cc') || {}).value || homeCountry();
+        const onCards = (cards) => {
+            if (cards.length === 1) return useContact(root, p, nameId, cards[0]);
+            return openContactChooser(cards, iso(), (name, number) => applyNumber(root, p, nameId, name, number));
+        };
         if (People.contactPickerSupported(win)) {
-            People.pickContacts(win, { multiple: false }).then((picked) => { if (picked.length) useContact(root, p, nameId, picked[0]); })
-                .catch((e) => toast((e && e.userMessage) || 'Could not open your contacts', 'error'));
+            People.pickContacts(win, { multiple: false }).then((picked) => { if (picked.length) onCards(picked); })
+                .catch((e) => { toast((e && e.userMessage) || 'Could not open your contacts. Choose a file or paste the number instead.', 'info'); openContactSource({ multiple: false, onCards }); });
             return;
         }
-        toast('This browser cannot open your contacts directly. Choose a contacts file (.vcf) instead.', 'info');
-        readFile('.vcf,.vcard,text/vcard,text/x-vcard,text/directory', (text) => {
-            const cards = People.parseVCards(text);
-            if (!cards.length) { toast('No contacts found in that file', 'error'); return; }
-            openContactChooser(cards, (at(root, p + '_cc') || {}).value || homeCountry(), (name, number) => applyNumber(root, p, nameId, name, number));
-        });
+        openContactSource({ multiple: false, onCards });
     }
 
     /* ── overlays ── */
@@ -560,7 +695,7 @@ export function boot(win) {
     /* ── the hub ── */
 
     function openHub(tab = 'people') {
-        ensureStyle();
+        ensureStyle(); autoFile();
         const st = { tab: ['people', 'pay', 'messages'].includes(tab) ? tab : 'people', view: 'list', id: '', draft: null, errors: {}, confirm: null, askDelete: false, q: '', imp: null, stopMsgs: null };
         const o = overlay('<div class="md" style="max-width:540px;"><div class="md-hdr"><div class="md-title">Saved people &amp; payments</div><button class="md-x" aria-label="Close" data-h="close"><i data-wfi="x"></i></button></div>'
             + '<div class="wfp-tabs" role="tablist">'
@@ -691,14 +826,14 @@ export function boot(win) {
                 case 'del': st.draft = asDraft(readPerson()); st.askDelete = true; render(); break;
                 case 'delgo': { const sx = store(); const person = People.personById(People.listPeople(sx), id); People.removePerson(sx, id); toast((person ? person.name : 'The person') + ' was removed from your list. Their loans and investments are unchanged.', 'success'); st.view = 'list'; st.id = ''; st.draft = null; st.askDelete = false; render(); break; }
                 case 'harvest': { const r = People.harvestPeople(store(), {}); toast(r.linked ? 'Added ' + plural(r.added, 'person', 'people') + ' and linked ' + plural(r.linked, 'loan or investment', 'loans and investments') : 'Everybody is already in your list', 'success'); render(); break; }
-                case 'import':
+                case 'import': {
+                    const onCards = (cards, source) => startImport(cards, source || 'your contacts');
                     if (People.contactPickerSupported(win)) {
-                        People.pickContacts(win, { multiple: true }).then((picked) => { if (picked.length) startImport(picked, 'your contacts'); else toast('No contacts were chosen', 'info'); })
-                            .catch((err) => toast((err && err.userMessage) || 'Could not open your contacts', 'error'));
-                    } else {
-                        readFile('.vcf,.vcard,text/vcard,text/x-vcard,text/directory', (text, name) => { const cards = People.parseVCards(text); if (!cards.length) toast('No contacts found in that file', 'error'); else startImport(cards, name || 'a contacts file'); });
-                    }
+                        People.pickContacts(win, { multiple: true }).then((picked) => { if (picked.length) onCards(picked, 'your contacts'); else toast('No contacts were chosen', 'info'); })
+                            .catch((err) => { toast((err && err.userMessage) || 'Could not open your contacts. Choose a file or paste them instead.', 'info'); openContactSource({ multiple: true, onCards }); });
+                    } else openContactSource({ multiple: true, onCards });
                     break;
+                }
                 case 'impall': { const m = importModel(); const shown = new Set(m.rows.map((r) => r.i)); st.imp.rows.forEach((r) => { if (shown.has(r.i) && r.numbers.length) r.on = true; }); render(); break; }
                 case 'impnone': st.imp.rows.forEach((r) => { r.on = false; }); render(); break;
                 case 'impgo': runImport(); break;
@@ -754,16 +889,16 @@ export function boot(win) {
         ready: true,
         showPhone,
         /** The "Saved people" picker for the top of a form. `record` is the loan or investment being edited, or null. */
-        pickerHtml(prefix, { record = null, nameId = '' } = {}) { ensureStyle(); return pickerHtml(prefix, { people: People.listPeople(store()), record, nameId }); },
+        pickerHtml(prefix, { record = null, nameId = '' } = {}) { ensureStyle(); autoFile(); return pickerHtml(prefix, { people: People.listPeople(store()), record: freshRecord(record), nameId }); },
         /** The country / number / ID fields. */
         contactHtml(prefix, { kind = 'debtor', record = null, nameId = '', remember = true, phoneHelp = '' } = {}) {
-            ensureStyle();
-            return contactHtml(prefix, { kind, record, people: People.listPeople(store()), nameId, defaultCountry: homeCountry(), remember, phoneHelp });
+            ensureStyle(); autoFile();
+            return contactHtml(prefix, { kind, record: freshRecord(record), people: People.listPeople(store()), nameId, defaultCountry: homeCountry(), remember, phoneHelp });
         },
         readContact,
         /** Validate and show the problems under the fields. -> collectContact's answer. */
         collect(root, prefix, { smsOn = false, kind = 'debtor' } = {}) {
-            const c = collectContact(readContact(root, prefix), { smsOn, kind });
+            const c = collectContact(readContact(root, prefix), { smsOn });
             api.showErrors(root, prefix, c.errors);
             return c;
         },
@@ -805,6 +940,7 @@ export function boot(win) {
             }
         },
         openHub,
+        autoFile,
     };
 
     function announce(res, kind) {
@@ -848,6 +984,17 @@ export function boot(win) {
             else if (a === 'manage') { e.preventDefault(); openHub('people'); }
         });
     }
+    // once signed in and the books are in, file whoever is not filed yet; and again each time the owner comes back to the app
+    if (!win.__wfpFiling) {
+        win.__wfpFiling = true;
+        let waited = 0;
+        const timer = win.setInterval(() => {
+            waited += 4000;
+            if (win.currentUser && win.currentUser.uid && win.appData) { win.clearInterval(timer); win.setTimeout(autoFile, 6000); }
+            else if (waited > 10 * 60000) win.clearInterval(timer);
+        }, 4000);
+        win.document.addEventListener('visibilitychange', () => { if (win.document.visibilityState === 'visible') win.setTimeout(autoFile, 1500); });
+    }
     return api;
 }
 
@@ -855,4 +1002,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFPeople = boot(window); } catch (e) { console.warn('[WF-PEOPLE] the people screens did not start:', e && e.message); }
 }
 
-export default { countrySelectHtml, contactHtml, pickerHtml, readContact, collectContact, phoneNote, idNote, showPhone, personRowHtml, peopleListHtml, peopleTabHtml, personFormHtml, importHtml, accountsTabHtml, accountFormHtml, accountCardHtml, boot };
+export default { countrySelectHtml, contactTips, contactSourceHtml, contactHtml, pickerHtml, readContact, collectContact, phoneNote, idNote, showPhone, personRowHtml, peopleListHtml, peopleTabHtml, personFormHtml, importHtml, accountsTabHtml, accountFormHtml, accountCardHtml, boot };

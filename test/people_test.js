@@ -18,6 +18,7 @@ import P, {
     PEOPLE_KEY, LINK_FIELD, LIMITS, SHARED, resolvePhone, isoOfPhone, storedId, idKindOf, cleanPerson, newPerson, listPeople, findDuplicate, searchPeople,
     readShared, writeShared, usageOf, propagate, linkRecord, updatePerson, previewUpdate, addPerson, removePerson, personById,
     contactPickerSupported, pickContacts, parseVCards, draftFromContact, phoneProblem, idProblem, sharedDiff, unfiledRecords, harvestPeople, booksOf,
+    parseContactsCsv, parseContactsText, parseContacts, platformOf,
 } from '../wealthflow-people.js';
 
 const NOW = Date.parse('2026-10-05T08:00:00Z');
@@ -491,21 +492,21 @@ describe('filing the people the ledgers already name', () => {
             { id: 'd7', name: 'Linked', personId: 'p0' },                                 // already linked to a person that exists
         ],
         income: [
-            { id: 'i1', name: 'Fixed deposit', company: 'Commercial Bank' },              // a bank: no number, no ID, no texts
+            { id: 'i1', name: 'Fixed deposit', company: 'Commercial Bank' },              // named, nothing else: still somebody the owner may want to pick again
             { id: 'i2', name: 'Loan from Ahmed', company: 'Ahmed Khan', phone: '+971501234567', nic: 'ID:X1234567' },
             { id: 'i3', name: 'Loan from Dilan', company: 'Dilan', sms_notifications_enabled: true },
         ],
     });
-    it('finds who is not filed: a person is anybody named on a loan, or on an investment that carries a number, an ID or the texts', () => {
+    it('finds who is not filed: anybody named on a loan or on an investment, whether or not they have a number, an ID or texts on', () => {
         const un = unfiledRecords(books());
-        expect(un.map((u) => u.id)).toEqual(['d1', 'd2', 'd3', 'd4', 'd5', 'i2', 'i3']);
+        expect(un.map((u) => u.id)).toEqual(['d1', 'd2', 'd3', 'd4', 'd5', 'i1', 'i2', 'i3']);
         expect(un.find((u) => u.id === 'i2')).toMatchObject({ kind: 'investment', name: 'Ahmed Khan', key: 'income' });
     });
     it('files them once each, links the records, and touches nothing else on a ledger', () => {
         const s = books();
         const out = harvestPeople(s, { now: NOW, newId: counter() });
-        expect(out).toEqual({ added: 4, linked: 7 });                                     // Nimal, Sunil, Ahmed, Dilan; Kamal was already there
-        expect(s.data.people.map((p) => p.name)).toEqual(['Kamal Silva', 'Nimal Perera', 'Sunil', 'Ahmed Khan', 'Dilan']);
+        expect(out).toEqual({ added: 5, linked: 8 });                                     // Nimal, Sunil, Commercial Bank, Ahmed, Dilan; Kamal was already there
+        expect(s.data.people.map((p) => p.name)).toEqual(['Kamal Silva', 'Nimal Perera', 'Sunil', 'Commercial Bank', 'Ahmed Khan', 'Dilan']);
         const ids = Object.fromEntries(s.data.people.map((p) => [p.name, p.id]));
         expect(s.data.debtors.find((d) => d.id === 'd1').personId).toBe(ids['Nimal Perera']);
         expect(s.data.debtors.find((d) => d.id === 'd2').personId).toBe(ids['Nimal Perera']);
@@ -513,7 +514,7 @@ describe('filing the people the ledgers already name', () => {
         expect(s.data.debtors.find((d) => d.id === 'd4').personId).toBe(ids.Sunil);
         expect(s.data.debtors.find((d) => d.id === 'd5').personId).toBe(ids.Sunil);
         expect(s.data.debtors.find((d) => d.id === 'd6').personId).toBeUndefined();
-        expect(s.data.income.find((i) => i.id === 'i1').personId).toBeUndefined();
+        expect(s.data.income.find((i) => i.id === 'i1').personId).toBe(ids['Commercial Bank']);
         expect(s.data.income.find((i) => i.id === 'i2').personId).toBe(ids['Ahmed Khan']);
         // a record keeps every other field exactly
         expect(s.data.debtors.find((d) => d.id === 'd1')).toMatchObject({ name: 'Nimal Perera', phone: '077 123 4567', nic: '853400937V' });
@@ -532,5 +533,274 @@ describe('filing the people the ledgers already name', () => {
         const s = store({ people, debtors: [{ id: 'd1', name: 'Brand New' }], income: [] });
         expect(harvestPeople(s, { now: NOW, newId: counter() })).toEqual({ added: 0, linked: 0 });
         expect(s.data.people).toHaveLength(LIMITS.people);
+    });
+});
+
+
+describe('investors are people too: filed on their own, and found again', () => {
+    const nid = () => counter();
+    it('a new investment that names somebody (and nothing else) files them and links the record', () => {
+        const s = store({ people: [], debtors: [], income: [] });
+        const rec = { id: 'i1', name: 'Fixed deposit', company: 'Harsha Aiya', phone: '', nic: '' };
+        const r = linkRecord({ store: s, kind: 'investment', rec, remember: true, country: 'LK', now: NOW, newId: nid() });
+        expect(r.created).toBe(true);
+        expect(rec[LINK_FIELD]).toBe('p1');
+        expect(s.data.people[0]).toMatchObject({ name: 'Harsha Aiya', phone: '', nic: '' });
+    });
+
+    it('somebody typed by name only is the person already saved under that name, not a second one', () => {
+        const s = store({
+            people: [{ id: 'p9', name: 'Harsha Aiya', phone: '+94771234567', country: 'LK', nic: '853400937V' }],
+            debtors: [{ id: 'd1', name: 'Harsha Aiya', phone: '+94771234567', nic: '853400937V', personId: 'p9' }], income: [],
+        });
+        const rec = { id: 'i1', name: 'Fixed deposit', company: 'harsha  aiya', phone: '', nic: '' };
+        const r = linkRecord({ store: s, kind: 'investment', rec, remember: true, country: 'LK', now: NOW, newId: nid() });
+        expect(r.matched).toBe(true);
+        expect(s.data.people).toHaveLength(1);
+        expect(rec[LINK_FIELD]).toBe('p9');
+        // what the form left blank comes from the person, so a text can reach them and the record is in step
+        expect(rec).toMatchObject({ company: 'Harsha Aiya', phone: '+94771234567', nic: '853400937V' });
+    });
+
+    it('two saved people with the same name are not guessed between: a new one is filed instead', () => {
+        const s = store({
+            people: [{ id: 'a', name: 'Nimal', phone: '+94771111111', country: 'LK', nic: '' }, { id: 'b', name: 'Nimal', phone: '+94772222222', country: 'LK', nic: '' }],
+            debtors: [], income: [],
+        });
+        const rec = { id: 'i1', company: 'Nimal', name: 'FD', phone: '', nic: '' };
+        const r = linkRecord({ store: s, kind: 'investment', rec, remember: true, country: 'LK', now: NOW, newId: nid() });
+        expect(r.created).toBe(true);
+        expect(s.data.people).toHaveLength(3);
+    });
+
+    it('a name typed WITH a different number is a different person, even when the name is the same', () => {
+        const s = store({ people: [{ id: 'a', name: 'Nimal', phone: '+94771111111', country: 'LK', nic: '' }], debtors: [], income: [] });
+        const rec = { id: 'i1', company: 'Nimal', name: 'FD', phone: '+94779999999', nic: '' };
+        const r = linkRecord({ store: s, kind: 'investment', rec, remember: true, country: 'LK', now: NOW, newId: nid() });
+        expect(r.created).toBe(true);
+        expect(rec[LINK_FIELD]).not.toBe('a');
+    });
+
+    it('filing the existing ledgers links a name-only record to the one person who has that name, and fills what the record lacked', () => {
+        const s = store({
+            people: [{ id: 'p9', name: 'Harsha Aiya', phone: '+94771234567', country: 'LK', nic: '853400937V' }],
+            debtors: [{ id: 'd1', name: 'Harsha Aiya', phone: '+94771234567', nic: '853400937V', personId: 'p9' }],
+            income: [{ id: 'i1', name: 'FD', company: 'Harsha Aiya', phone: '', nic: '' }],
+        });
+        expect(harvestPeople(s, { now: NOW, newId: counter() })).toEqual({ added: 0, linked: 1 });
+        expect(s.data.income[0]).toMatchObject({ personId: 'p9', company: 'Harsha Aiya', phone: '+94771234567', nic: '853400937V', name: 'FD' });
+        expect(s.data.people).toHaveLength(1);
+    });
+
+    it('filing never overwrites a number the record already has', () => {
+        const s = store({
+            people: [{ id: 'p9', name: 'Harsha Aiya', phone: '+94771234567', country: 'LK', nic: '' }], debtors: [],
+            income: [{ id: 'i1', name: 'FD', company: 'Harsha Aiya', phone: '+94779999999', nic: '' }],
+        });
+        harvestPeople(s, { now: NOW, newId: counter() });
+        expect(s.data.income[0].phone).toBe('+94779999999');
+        expect(s.data.income[0].personId).not.toBe('p9');          // a different number under the same name: somebody else
+        expect(s.data.people).toHaveLength(2);
+    });
+
+    it('two devices that each file the same ledger arrive at the same people, so the cloud merge does not double them', () => {
+        const ledgers = () => ({
+            debtors: [{ id: 'd1', name: 'Nimal Perera', phone: '077 123 4567', nic: '853400937V' }, { id: 'd2', name: 'Sunil', phone: '', nic: '' }],
+            income: [{ id: 'i1', name: 'FD', company: 'Harsha Aiya', phone: '', nic: '' }, { id: 'i2', name: 'FD 2', company: 'harsha aiya', phone: '', nic: '' }],
+        });
+        const a = store({ people: [], ...ledgers() });
+        const b = store({ people: [], ...ledgers() });
+        harvestPeople(a, { now: NOW });                    // default ids: derived from who the person is, not from a counter or the clock
+        harvestPeople(b, { now: NOW + 5000 });
+        expect(a.data.people.map((p) => p.id).sort()).toEqual(b.data.people.map((p) => p.id).sort());
+        expect(new Set(a.data.people.map((p) => p.id)).size).toBe(3);
+    });
+});
+
+describe('editing a person reaches every record that carries them', () => {
+    const books = () => store({
+        people: [{ id: 'p1', name: 'Harsha Aiya', phone: '+94771234567', phone2: '', country: 'LK', nic: '853400937V', email: '', address: '', note: '' }],
+        debtors: [{ id: 'd1', name: 'Harsha Aiya', phone: '+94771234567', nic: '853400937V', personId: 'p1', sms_notifications_enabled: true }],
+        income: [
+            { id: 'i1', name: 'FD 1', company: 'Harsha Aiya', phone: '+94771234567', nic: '853400937V', personId: 'p1' },
+            { id: 'i2', name: 'FD 2', company: 'Harsha Aiya', phone: '', nic: '', personId: 'p1' },                  // linked, but carries nothing of its own: stale
+        ],
+    });
+    it('a new number, a new name and a corrected ID land on the loan and on every investment', () => {
+        const s = books();
+        const r = updatePerson(s, 'p1', { name: 'Harsha Aiya Perera', phone: '071 555 6666', country: 'LK', nic: '198534000937' }, { now: NOW });
+        expect(r.ok).toBe(true);
+        expect(s.data.debtors[0]).toMatchObject({ name: 'Harsha Aiya Perera', phone: '+94715556666', nic: '198534000937' });
+        for (const i of s.data.income) expect(i).toMatchObject({ company: 'Harsha Aiya Perera', phone: '+94715556666', nic: '198534000937' });
+        expect(s.data.income.map((i) => i.name)).toEqual(['FD 1', 'FD 2']);          // an investment's own name is its own
+        expect(r.siblings).toEqual({ loans: 1, investments: 2, smsOn: 1 });
+    });
+    it('saving the person for another reason (a note) also repairs a linked record that had fallen out of step', () => {
+        const s = books();
+        const r = updatePerson(s, 'p1', { name: 'Harsha Aiya', phone: '+94771234567', country: 'LK', nic: '853400937V', note: 'family' }, { now: NOW });
+        expect(r.ok).toBe(true);
+        expect(s.data.income[1]).toMatchObject({ phone: '+94771234567', nic: '853400937V' });
+        expect(r.siblings.investments).toBe(1);
+    });
+    it('a record that is already in step is the same object afterwards, and its ledger is not written', () => {
+        const s = store({
+            people: [{ id: 'p1', name: 'A', phone: '+94771234567', phone2: '', country: 'LK', nic: '', email: '', address: '', note: '' }],
+            debtors: [{ id: 'd1', name: 'A', phone: '+94771234567', nic: '', personId: 'p1' }], income: [],
+        });
+        const before = s.data.debtors;
+        updatePerson(s, 'p1', { name: 'A', phone: '+94771234567', country: 'LK', note: 'x' }, { now: NOW });
+        expect(s.data.debtors).toBe(before);
+    });
+    it('a form saved for a linked record that was never given a number does not erase the person\'s number everywhere', () => {
+        const s = books();
+        // the form opens on the record's own (empty) number: the person's number is shown instead, so saving it back changes nothing
+        const rec = { id: 'i2', name: 'FD 2', company: 'Harsha Aiya', phone: '+94771234567', nic: '853400937V', personId: 'p1' };
+        const r = linkRecord({ store: s, kind: 'investment', rec, remember: true, country: 'LK', now: NOW });
+        expect(r.updated).toBe(false);
+        expect(s.data.people[0].phone).toBe('+94771234567');
+        expect(s.data.debtors[0].phone).toBe('+94771234567');
+    });
+});
+
+
+describe('bringing a contact in from anywhere: a file, a spreadsheet export, or text copied from a contacts app', () => {
+    const numbers = (cards) => cards.map((c) => [c.name, ...c.tels]);
+
+    describe('a Google Contacts export (CSV)', () => {
+        const csv = [
+            'First Name,Middle Name,Last Name,Phonetic First Name,Notes,Phone 1 - Label,Phone 1 - Value,Phone 2 - Label,Phone 2 - Value',
+            'Nimal,,Perera,,,Mobile,+94 77 123 4567,Home,0112 345 678',
+            'Kamal,,Silva,,,Mobile,071 111 1111 ::: +44 7911 123456,,',
+            ',,,,,Mobile,0779998888,,',
+            '"Silva, Dr.",,,,"likes, commas",Mobile,"+971 50 123 4567",,',
+        ].join('\n');
+        it('reads names and every number, however the export separates several in one cell', () => {
+            expect(numbers(parseContactsCsv(csv))).toEqual([
+                ['Nimal Perera', '+94 77 123 4567', '0112 345 678'],
+                ['Kamal Silva', '071 111 1111', '+44 7911 123456'],
+                ['', '0779998888'],
+                ['Silva, Dr.', '+971 50 123 4567'],
+            ]);
+        });
+        it('is recognised without being told', () => {
+            expect(parseContacts(csv, 'contacts.csv').kind).toBe('csv');
+            expect(parseContacts(csv, '').kind).toBe('csv');
+        });
+    });
+
+    describe('an Outlook export (CSV)', () => {
+        const csv = 'First Name,Last Name,Home Phone,Mobile Phone,Business Fax,Business Phone\r\nAhmed,Khan,,+971501234567,+97144444444,\r\n';
+        it('reads the phone columns and not the fax', () => {
+            expect(numbers(parseContactsCsv(csv))).toEqual([['Ahmed Khan', '+971501234567']].map((r) => r));
+        });
+    });
+
+    describe('other spreadsheets', () => {
+        it('semicolons (a Sri Lankan Excel writes them) and tabs separate columns the same way', () => {
+            expect(numbers(parseContactsCsv('Name;Mobile\nNimal;0771234567\nKamal;0711111111'))).toEqual([['Nimal', '0771234567'], ['Kamal', '0711111111']]);
+            expect(numbers(parseContactsCsv('Name\tPhone\nNimal\t0771234567'))).toEqual([['Nimal', '0771234567']]);
+        });
+        it('a byte-order mark, a quoted newline and doubled quotes do not break a row', () => {
+            const csv = '﻿Name,Phone\n"Nimal ""Nim"" Perera",0771234567\n"A\nB",0711111111\n';
+            expect(numbers(parseContactsCsv(csv))).toEqual([['Nimal "Nim" Perera', '0771234567'], ['A B', '0711111111']]);
+        });
+        it('a row with no number is skipped, and a file that is not a contacts sheet gives nothing', () => {
+            expect(parseContactsCsv('Name,Phone\nNimal,\nKamal,0711111111')).toHaveLength(1);
+            expect(parseContactsCsv('Date,Amount\n2026-10-05,1500')).toEqual([]);
+            expect(parseContactsCsv('')).toEqual([]);
+        });
+    });
+
+    describe('text copied out of a contacts app, a chat, or a page', () => {
+        it('a bare number', () => {
+            expect(numbers(parseContactsText('+94 77 123 4567'))).toEqual([['', '+94 77 123 4567']]);
+            expect(numbers(parseContactsText('  0771234567\n'))).toEqual([['', '0771234567']]);
+            expect(numbers(parseContactsText('tel:+94771234567'))).toEqual([['', '+94771234567']]);
+        });
+        it('a name beside the number, either way round', () => {
+            expect(numbers(parseContactsText('Nimal Perera: 077 123 4567'))).toEqual([['Nimal Perera', '077 123 4567']]);
+            expect(numbers(parseContactsText('Nimal Perera - +94771234567'))).toEqual([['Nimal Perera', '+94771234567']]);
+            expect(numbers(parseContactsText('0771234567 Nimal Perera'))).toEqual([['Nimal Perera', '0771234567']]);
+        });
+        it('a contact card laid out on separate lines, with the label lines a phone adds', () => {
+            const card = 'Nimal Perera\nmobile\n+94 77 123 4567\nhome\n+94 11 234 5678\nnimal@example.com';
+            expect(numbers(parseContactsText(card))).toEqual([['Nimal Perera', '+94 77 123 4567', '+94 11 234 5678']]);
+        });
+        it('several people, one per line, and the same name twice is one person with two numbers', () => {
+            const text = 'Nimal 0771234567\nKamal 0711111111\nNimal 0779999999';
+            expect(numbers(parseContactsText(text))).toEqual([['Nimal', '0771234567', '0779999999'], ['Kamal', '0711111111']]);
+        });
+        it('a date or an amount is not a phone number', () => {
+            expect(parseContactsText('Paid 2026-10-05 an amount of 1,500.00')).toEqual([]);
+            expect(parseContactsText('Meet on 05/10/2026')).toEqual([]);
+        });
+        it('digits in another script are still digits', () => {
+            expect(numbers(parseContactsText('නිමල් ٠٧٧١٢٣٤٥٦٧'))).toEqual([['නිමල්', '٠٧٧١٢٣٤٥٦٧']]);
+        });
+        it('is bounded: a huge paste is read as far as the limit and no further', () => {
+            const text = Array.from({ length: LIMITS.vcfCards + 50 }, (_, i) => `Person ${i} 07712345${String(i % 100).padStart(2, '0')}`).join('\n');
+            expect(parseContactsText(text).length).toBeLessThanOrEqual(LIMITS.vcfCards);
+        });
+    });
+
+    describe('parseContacts decides what it was given', () => {
+        it('a vCard, by its content and not only by the file name', () => {
+            const vcf = 'BEGIN:VCARD\nVERSION:3.0\nFN:Nimal Perera\nTEL;TYPE=CELL:+94 77 123 4567\nEND:VCARD';
+            const r = parseContacts(vcf, 'whatever.txt');
+            expect(r.kind).toBe('vcard');
+            expect(numbers(r.cards)).toEqual([['Nimal Perera', '+94 77 123 4567']]);
+        });
+        it('plain text otherwise, and nothing for an empty or binary-looking paste', () => {
+            expect(parseContacts('Nimal 0771234567', 'note.txt').kind).toBe('text');
+            expect(parseContacts('', '')).toEqual({ kind: 'empty', cards: [] });
+            expect(parseContacts('\u0000\u0001\u0002\u0003'.repeat(50), 'x.bin').cards).toEqual([]);
+        });
+    });
+
+    describe('the device', () => {
+        const nav = (userAgent, platform = '', maxTouchPoints = 0) => ({ navigator: { userAgent, platform, maxTouchPoints } });
+        it('is recognised from what the browser says about itself', () => {
+            expect(platformOf(nav('Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/126 Mobile Safari/537.36'))).toBe('android');
+            expect(platformOf(nav('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605 Safari/604', 'iPhone', 5))).toBe('ios');
+            expect(platformOf(nav('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605 Safari/605', 'MacIntel', 5))).toBe('ios');     // an iPad asking for the desktop site
+            expect(platformOf(nav('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/126 Safari/537', 'MacIntel', 0))).toBe('mac');
+            expect(platformOf(nav('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126', 'Win32'))).toBe('windows');
+            expect(platformOf(nav('Mozilla/5.0 (X11; Linux x86_64) Firefox/127', 'Linux x86_64'))).toBe('linux');
+            expect(platformOf(nav('Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) Chrome/126', 'Linux x86_64'))).toBe('linux');
+            expect(platformOf(null)).toBe('other');
+            expect(platformOf({})).toBe('other');
+        });
+    });
+});
+
+describe('a person the owner deleted is not filed again behind their back', () => {
+    const books = () => store({
+        people: [],
+        debtors: [{ id: 'd1', name: 'Nimal Perera', phone: '+94771234567', personId: 'gone' }, { id: 'd2', name: 'Kamal', phone: '' }],
+        income: [{ id: 'i1', company: 'Commercial Bank', personId: 'also-gone' }],
+    });
+
+    it('the automatic pass leaves out records that point at nobody in the book, and still files the ones never filed', () => {
+        const s = books();
+        expect(unfiledRecords(s, { orphans: false }).map((u) => u.id)).toEqual(['d2']);
+        const r = harvestPeople(s, { now: NOW, orphans: false });
+        expect(r).toEqual({ added: 1, linked: 1 });
+        expect(s.data.people.map((p) => p.name)).toEqual(['Kamal']);
+        expect(s.data.debtors[0].personId).toBe('gone');                           // untouched: still an orphan
+        expect(s.data.income[0].personId).toBe('also-gone');
+    });
+
+    it('the owner\'s own "file everybody" still takes them, because it was asked for', () => {
+        const s = books();
+        expect(unfiledRecords(s).map((u) => u.id).sort()).toEqual(['d1', 'd2', 'i1']);
+        expect(harvestPeople(s, { now: NOW })).toEqual({ added: 3, linked: 3 });
+        expect(s.data.people.map((p) => p.name).sort()).toEqual(['Commercial Bank', 'Kamal', 'Nimal Perera']);
+    });
+
+    it('a record that arrived before its person did is not given a second person by this device', () => {
+        // two devices: the record syncs first, the people list a moment later
+        const s = store({ people: [], debtors: [{ id: 'd1', name: 'Nimal Perera', phone: '+94771234567', personId: 'p-from-device-a' }], income: [] });
+        expect(harvestPeople(s, { now: NOW, orphans: false })).toEqual({ added: 0, linked: 0 });
+        expect(s.data.people).toEqual([]);
     });
 });

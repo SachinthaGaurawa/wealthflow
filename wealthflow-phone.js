@@ -334,8 +334,29 @@ function dialPrefixOf(digits) {
  * the number without the plus, which is how Text.lk wants it. A number that is not unambiguously a number is REFUSED rather than
  * guessed at: an SMS to the wrong person is worse than an SMS not sent, and the refusal is shown to the owner.
  */
+/** The first code point (the digit zero) of every script whose digits people type, so a number written in them reads as the same number. */
+const DIGIT_ZEROS = [0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6, 0x0D66, 0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x17E0, 0x1810, 0xFF10];
+
+/**
+ * What a number looks like once the noise that comes with copying it is gone: a "tel:" / "callto:" link (a contacts file writes them that way),
+ * the invisible direction marks a chat or an address book adds around a number, a non-breaking space, and digits written in another script
+ * (Arabic-Indic, Sinhala, Tamil, Devanagari, full-width ...). Nothing that carries meaning is dropped: letters, an extension or a second number
+ * are still refused by the rules below, because guessing which digits they are would text somebody else.
+ */
+export function cleanPhoneInput(input) {
+    let t = s(input).normalize('NFKC');
+    t = t.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF\u00AD]/g, '').replace(/[\u00A0\u2007\u202F\u3000]/g, ' ');
+    t = t.replace(/^\s*(?:tel|callto|sms|whatsapp):\/{0,2}/i, '');
+    t = t.replace(/\p{Nd}/gu, (ch) => {
+        const cp = ch.codePointAt(0);
+        for (const z of DIGIT_ZEROS) if (cp >= z && cp <= z + 9) return String(cp - z);
+        return ch;
+    });
+    return t.trim();
+}
+
 export function normalizePhone(input, { defaultCountry = DEFAULT_COUNTRY } = {}) {
-    const raw = s(input).trim();
+    const raw = cleanPhoneInput(input);
     if (!raw) return { ok: false, reason: 'empty' };
     if (/[^\d+\s().-]/.test(raw)) return { ok: false, reason: 'not-a-number' };
     if (raw.indexOf('+') > 0 || (raw.match(/\+/g) || []).length > 1) return { ok: false, reason: 'misplaced-plus' };
@@ -417,4 +438,4 @@ export function maskPhone(e164) {
     return '+' + d.slice(0, Math.min(2, d.length - 4)) + '*'.repeat(Math.max(3, d.length - 6)) + d.slice(-4);
 }
 
-export default { DEFAULT_COUNTRY, DEFAULT_REGION, COUNTRIES, normalizePhone, maskPhone, formatPhone, countryNameOf, utcOffsetOf, dialOf, regionByIso, regionOfDial, isDialCode };
+export default { DEFAULT_COUNTRY, DEFAULT_REGION, COUNTRIES, cleanPhoneInput, normalizePhone, maskPhone, formatPhone, countryNameOf, utcOffsetOf, dialOf, regionByIso, regionOfDial, isDialCode };
