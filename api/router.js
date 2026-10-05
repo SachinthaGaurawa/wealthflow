@@ -131,6 +131,9 @@ const HANDLERS = {
     'send-otp': () => import('../send-otp.js'),
     'shorten': () => import('../shorten.js'),
     'sms-ingest': () => import('../sms-ingest.js'),
+    // Text-message notices to the people on the owner's investment and lending records (Text.lk). The app nudges it on a save; the cron below it is the net. Recipient, amount and wording are read from the caller's own books on the server, never taken from the request.
+    'sms-notify': () => import('../sms-notify.js'),
+    'sms-sweep': () => import('../sms-sweep.js'),
     // One statement, filed once: the manual-upload door of the statement registry (statement-registry.mjs).
     'statement-guard': () => import('../statement-guard.js'),
     'statement-store': () => import('../statement-store.js'),

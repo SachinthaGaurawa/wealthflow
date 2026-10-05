@@ -558,6 +558,10 @@
          ESM; window.WFPawn. -->
     <script type="module" src="wealthflow-pawn.js"></script>
     <script type="module" src="wealthflow-liquidity.js"></script>
+    <!-- Text-message notices to the people the owner has invested for or lent to: the switch on a record (a boolean, the phone, the NIC, when it was
+         switched on), the nudge to the server after a save, the "SMS delivered" alert and the log. The server decides what is owed and sends it; this
+         file holds no authority and never sees the gateway token. ESM; window.WFSms. -->
+    <script type="module" src="wealthflow-sms.js"></script>
     <!-- Dynamic amortization — how many payments are actually left after an
          over- or underpayment, which the fixed l.duration could never answer.
          window.WFAmortize -->
@@ -6140,6 +6144,7 @@
                                 <span class="sb-btn" onclick="sortList('income','rate',this)">Rate</span>
                                 <span class="sb-btn" onclick="sortList('income','date',this)">Date</span>
                             </div>
+                            <button class="btn btn-secondary btn-sm" onclick="if (window.WFSms) WFSms.openPanel()">Text messages</button>
                             <button class="btn btn-primary btn-sm" onclick="clearIncomeForm(); openModal('mdIncome')"><i data-wfi="plus"></i>
                                 Add Investment</button>
                         </div>
@@ -7041,6 +7046,7 @@
             <div class="fcalc" id="i_calc"></div>
             <div class="fg"><label class="fl">Notes</label><textarea class="fta" id="i_notes"
                     placeholder="Additional details..."></textarea></div>
+            <div id="i_sms_host"></div>
             <div class="md-ftr"><button class="btn btn-ghost" onclick="closeModal('mdIncome')">Cancel</button><button
                     class="btn btn-primary" onclick="saveIncome()">💾 Save Source</button></div>
         </div>
@@ -9446,6 +9452,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 console.log('[SYNC] ✅ Pushed to cloud at', new Date().toLocaleTimeString());
                 setTimeout(() => setSyncStatus('online'), 300);
                 try { _wfPaintCloudChange(seen); } catch (_) { }
+                // The text-message notices are derived on the server from what this push just wrote; tell it to look again if anything it cares about changed.
+                try { if (window.WFSms) window.WFSms.afterPush(); } catch (_) { }
                 return true;
             }).catch(err => {
                 console.error('[SYNC] ❌ Push failed:', err && err.code, err && err.message);
@@ -17891,6 +17899,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             triggerHaptic('medium');
             // Populate datalists for income autocomplete
             if (id === 'mdIncome') {
+                try {
+                    const host = $('i_sms_host');
+                    if (host && window.WFSms) host.innerHTML = WFSms.blockHtml('i_sms', { layer: 'A', record: (DB.get('income') || []).find(x => x.id === editMode) || null });
+                } catch (_) { }
                 const incData = DB.get('income');
                 const uniqueNames = [...new Set(incData.map(x => x.name).filter(Boolean))];
                 const uniqueCompanies = [...new Set(incData.map(x => x.company).filter(Boolean))];
@@ -18450,7 +18462,20 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const freq = $('i_freq').value;
             let calc = freq === 'monthly' ? amount * rate / 100 / 12 : freq === 'annual' ? amount * rate / 100 : amount * rate / 100 / 4;
             const override = parseMoney($('i_override').value);
-            const rec = { id: editMode || uid(), createdAt: ((DB.get('income') || []).find(x => x.id === editMode) || {}).createdAt || new Date().toISOString(), name, company, amount, rate, start: $('i_start').value, end: $('i_end').value, freq, day: $('i_day').value, monthly: override || calc, notes: $('i_notes').value };
+            const prevRec = (DB.get('income') || []).find(x => x.id === editMode) || {};
+            const rec = { id: editMode || uid(), createdAt: prevRec.createdAt || new Date().toISOString(), name, company, amount, rate, start: $('i_start').value, end: $('i_end').value, freq, day: $('i_day').value, monthly: override || calc, notes: $('i_notes').value };
+            /* The record is rebuilt from the form, so what the form does not show is carried over by hand — otherwise saving an edit would switch the
+             * text messages off and forget who they go to. */
+            ['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'nic'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });
+            try {
+                const form = window.WFSms ? WFSms.readBlock(document, 'i_sms') : null;
+                if (form) {
+                    const sms = WFSms.applyToggle(prevRec, form, Date.now());
+                    if (!sms.ok) { WFSms.showBlockErrors(document, 'i_sms', sms.errors); notify(Object.values(sms.errors)[0], 'error'); return; }
+                    WFSms.showBlockErrors(document, 'i_sms', {});
+                    Object.assign(rec, sms.fields);
+                }
+            } catch (e) { console.warn('[saveIncome] sms fields:', e && e.message); }
             const arr = DB.get('income');
             const isNewRecord = !editMode;
             if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) arr[i] = rec; } else arr.push(rec);
@@ -23632,7 +23657,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <div style="font-weight:800;font-size:14px;color:${open ? 'var(--accent)' : 'var(--text3)'};">${fmtS(su.outstanding)}</div>
                         </div>
                         <div class="liq-sub" style="margin-top:3px;">
-                            ${fmtS(su.lent)} lent · ${fmtS(su.repaid)} repaid${d.note ? ' · ' + _wfEsc(d.note) : ''}
+                            ${fmtS(su.lent)} lent · ${fmtS(su.repaid)} repaid${d.note ? ' · ' + _wfEsc(d.note) : ''}${d.sms_notifications_enabled === true ? ' · SMS on' : ''}
                             ${su.pending ? ' · <b style="color:var(--amber,#f59e0b);">' + su.pending + ' unconfirmed, not counted above</b>' : ''}
                         </div>
                         ${dueLine}
@@ -23658,6 +23683,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 </div>
                             </div>
                             <div class="card-hdr-actions">
+                                <button class="btn btn-secondary btn-sm" id="_liq_sms">Text messages</button>
                                 <button class="btn btn-primary btn-sm" id="_liq_addd">${(window.WFIcon ? WFIcon('plus') : '')} Add debtor</button>
                             </div>
                         </div>
@@ -23666,6 +23692,8 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                 const add = host.querySelector('#_liq_addd');
                 if (add) add.onclick = () => openDebtorModal(null);
+                const smsBtn = host.querySelector('#_liq_sms');
+                if (smsBtn) smsBtn.onclick = () => { if (window.WFSms) WFSms.openPanel(); };
                 host.querySelectorAll('[data-liq-pay]').forEach((b) => {
                     b.onclick = () => openDebtorEvent(debtors[Number(b.getAttribute('data-liq-pay'))], 'repayment');
                 });
@@ -24239,6 +24267,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + '<div class="fg"><label class="fl" for="_db_phone">Phone</label>'
                 + '<input class="fi" id="_db_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + _wfEsc(d.phone || '') + '">'
                 + '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Optional. Shown on the row as a number you can tap to call, which is what you actually do when a repayment is late.</div></div>'
+                + (window.WFSms ? WFSms.blockHtml('_db_sms', { layer: 'B', record: d, showPhone: false }) : '')
                 + '<div class="fg"><label class="fl" for="_db_due">Expected back by</label>'
                 + '<input class="fi" id="_db_due" type="date" value="' + _wfEsc(d.dueISO || '') + '">'
                 + '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Optional. With it, an overdue repayment appears on the dashboard queue. Without it the app stays quiet rather than inventing a deadline.</div></div>'
@@ -24271,6 +24300,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                             dueISO: ov.querySelector('#_db_due').value || '',
                             events: (existing && Array.isArray(existing.events)) ? existing.events.slice() : [],
                         };
+                        /* The text-message switch. The number is the Phone field above; the rest is validated and stamped here, before anything is saved. */
+                        try {
+                            const form = window.WFSms ? WFSms.readBlock(ov, '_db_sms') : null;
+                            if (form) {
+                                const sms = WFSms.applyToggle(existing || {}, { ...form, phone: rec.phone }, Date.now());
+                                if (!sms.ok) { WFSms.showBlockErrors(ov, '_db_sms', sms.errors); notify(Object.values(sms.errors)[0], 'error'); return; }
+                                WFSms.showBlockErrors(ov, '_db_sms', {});
+                                rec = { ...rec, ...sms.fields };
+                            }
+                        } catch (e) { console.warn('[debtor] sms fields:', e && e.message); }
                         /* Only on the way IN. The amount field is blank when
                          * editing, but a stray keystroke in it used to write a
                          * second advance onto somebody's ledger every time

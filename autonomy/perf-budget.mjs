@@ -303,7 +303,9 @@ export const BUDGETS = {
     // 2026-10-04 (rows of one statement filed by two doors are counted once): 2,196,000 -> 2_199_000 (measured 2,196,419 + ~0.1% headroom). The Save step's own duplicate check (_dupIn) now counts rows against the books
     // as they were before the upload (so three identical payments on one day stay three, and a row the books already hold is skipped), and the rows the claim says the books took while the review was open are left
     // out like the ones the review marked. Comments recording why make up most of it. No new script or request.
-    htmlBytes: 2_199_000,
+    // 2026-10-05 (text-message notices for investors and debtors): 2,199,000 -> 2_203_000 (measured 2,200,879 + ~0.1% headroom). The switch, phone and NIC fields in the investment and debtor forms (the investment form is rebuilt
+    // from its inputs, so the four fields are carried over by hand and validated before anything is saved), the Text messages buttons, the sync hook that nudges the server after a push, and one script tag. About a third is comments.
+    htmlBytes: 2_203_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -611,7 +613,10 @@ export const BUDGETS = {
     // 2026-10-04 (the owner's own card is the owner's own money): 2,233,000 -> 2_243_000 (measured 2,241,110 + ~0.1% headroom). wealthflow-own-money.js (new, about 7 KB, over half of it the comments recording why a cash advance arriving in
     // the account is not income and why a number the owner has not registered is not claimed) is the one rule the email worker and the manual upload both ask; wealthflow-route.js routes a credit by it, and index.html loads it and
     // teaches the merchant memory what the owner corrected. statement-merchant-name.mjs (the worker's copy of the page's merchant isolation) is server-only and is not counted here.
-    totalJsBytes: 2_243_000,
+    // 2026-10-05 (text-message notices): 2,243,000 -> 2_285_000 (measured 2,282,852 + ~0.1% headroom). wealthflow-sms.js (new, about 33 KB, a third of it the comments recording why: the switch and its stamp, the nudge, the one-per-delivery
+    // alert, the log), wealthflow-phone.js (the one rule for a phone number, shared with the server) and wealthflow-nic.js (the Sri Lankan NIC, old and new shapes, shared with the server). The gateway client, the send engine and
+    // the cron are server-only and are not counted here.
+    totalJsBytes: 2_285_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     largestModuleBytes: 233_000, // measured 232,325
@@ -699,7 +704,8 @@ export const BUDGETS = {
     // 2026-10-03: 77 -> 78 for wealthflow-advisor-briefing.js (the card of what the books say today; see totalJsBytes).
     // 2026-10-03: 78 -> 79 for wealthflow-advisor-research.js (the Advisor looks up the outside world; see totalJsBytes).
     // 2026-10-04: 79 -> 80 for wealthflow-own-money.js (whose money a bank row is; see totalJsBytes).
-    moduleCount: 80,   // measured 80
+    // 2026-10-05: 80 -> 83 for wealthflow-sms.js, wealthflow-phone.js and wealthflow-nic.js. The last two are imported by the first and by the server, not loaded by a tag of their own.
+    moduleCount: 83,   // measured 83
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -766,7 +772,8 @@ export const BUDGETS = {
     // 2026-10-03: 75 -> 76 for wealthflow-advisor-briefing.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-03: 76 -> 77 for wealthflow-advisor-research.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-04: 77 -> 78 for wealthflow-own-money.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
-    scriptTags: 78,              // measured 78; the progress, fact-sheet, scenario, answer-check, briefing, research and own-money modules are nonblocking
+    // 2026-10-05: 78 -> 79 for wealthflow-sms.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
+    scriptTags: 79,              // measured 79; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money and sms modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
