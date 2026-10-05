@@ -413,8 +413,8 @@ export function boot(win) {
             if (win._isDecoyMode === true) return;                                  // the decoy books are not the owner's: never written
             if (!win.currentUser || !win.currentUser.uid || !win.appData) return;
             const sx = store();
-            if (!People.unfiledRecords(sx).length) return;
-            const r = People.harvestPeople(sx, {});
+            if (!People.unfiledRecords(sx, { orphans: false }).length) return;
+            const r = People.harvestPeople(sx, { orphans: false });             // a person the owner deleted is not filed again behind their back
             if (r.linked && !filed.told) { filed.told = true; toast(r.added ? 'Saved ' + plural(r.added, 'person', 'people') + ' from your loans and investments to your people list' : 'Linked ' + plural(r.linked, 'loan or investment', 'loans and investments') + ' to people in your list', 'success'); }
         } catch (e) { console.warn('[WF-PEOPLE] filing the people already in the books failed (nothing was lost):', e && e.message); }
     }

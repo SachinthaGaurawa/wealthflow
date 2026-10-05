@@ -150,7 +150,7 @@ assert.equal(invEdited.sms_notifications_enabled, true, 'saving an edit does not
 assert.equal(invEdited.sms_enabled_at, invStamp);
 assert.equal(invEdited.phone, '+94771234567');
 
-/* a record that never had the switch is left exactly as it was, and a bank is not a person */
+/* a record that never had the switch is left exactly as it was (and filing a name in the people list never switches texts on) */
 await page.evaluate(() => { DB.set('people', []); DB.set('income', [{ id: 'old1', name: 'Old', company: 'Bank', amount: 1000, rate: 10, start: '2025-01-01', end: '', freq: 'monthly', day: '2025-01-01', monthly: 8.33, notes: '' }]); window.editIncome('old1'); });
 await page.waitForSelector('#i_sms_host summary');
 assert.equal(await page.evaluate(() => document.querySelector('#i_sms_host details').open), false, 'no number, no ID, no switch: the section stays folded');
@@ -159,7 +159,9 @@ await page.waitForFunction(() => (DB.get('income') || [])[0].sms_notifications_e
 const untouched = await page.evaluate(() => (DB.get('income') || [])[0]);
 assert.equal(untouched.sms_notifications_enabled, false, 'saving it with the switch off records "off", not a stamp');
 assert.equal(untouched.sms_enabled_at, undefined);
-assert.equal(await page.evaluate(() => DB.get('people').length), 0, 'a bank with no number or ID is not filed as a person');
+// whoever is named on an investment is filed (a bank too: nothing tells a bank from an investor, and a person missing from the list is the worse mistake); deleting the entry sticks
+assert.equal(await page.evaluate(() => DB.get('people').filter((p) => p.name === 'Bank').length), 1, 'the name on an investment is filed in the people list');
+assert.equal(await page.evaluate(() => (DB.get('income') || [])[0].sms_notifications_enabled), false, 'filing a person never switches texts on');
 
 /* ── the alert and the log ────────────────────────────────────────────────── */
 const alert = await page.evaluate(async () => {

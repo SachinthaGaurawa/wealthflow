@@ -772,3 +772,35 @@ describe('bringing a contact in from anywhere: a file, a spreadsheet export, or 
         });
     });
 });
+
+describe('a person the owner deleted is not filed again behind their back', () => {
+    const books = () => store({
+        people: [],
+        debtors: [{ id: 'd1', name: 'Nimal Perera', phone: '+94771234567', personId: 'gone' }, { id: 'd2', name: 'Kamal', phone: '' }],
+        income: [{ id: 'i1', company: 'Commercial Bank', personId: 'also-gone' }],
+    });
+
+    it('the automatic pass leaves out records that point at nobody in the book, and still files the ones never filed', () => {
+        const s = books();
+        expect(unfiledRecords(s, { orphans: false }).map((u) => u.id)).toEqual(['d2']);
+        const r = harvestPeople(s, { now: NOW, orphans: false });
+        expect(r).toEqual({ added: 1, linked: 1 });
+        expect(s.data.people.map((p) => p.name)).toEqual(['Kamal']);
+        expect(s.data.debtors[0].personId).toBe('gone');                           // untouched: still an orphan
+        expect(s.data.income[0].personId).toBe('also-gone');
+    });
+
+    it('the owner\'s own "file everybody" still takes them, because it was asked for', () => {
+        const s = books();
+        expect(unfiledRecords(s).map((u) => u.id).sort()).toEqual(['d1', 'd2', 'i1']);
+        expect(harvestPeople(s, { now: NOW })).toEqual({ added: 3, linked: 3 });
+        expect(s.data.people.map((p) => p.name).sort()).toEqual(['Commercial Bank', 'Kamal', 'Nimal Perera']);
+    });
+
+    it('a record that arrived before its person did is not given a second person by this device', () => {
+        // two devices: the record syncs first, the people list a moment later
+        const s = store({ people: [], debtors: [{ id: 'd1', name: 'Nimal Perera', phone: '+94771234567', personId: 'p-from-device-a' }], income: [] });
+        expect(harvestPeople(s, { now: NOW, orphans: false })).toEqual({ added: 0, linked: 0 });
+        expect(s.data.people).toEqual([]);
+    });
+});

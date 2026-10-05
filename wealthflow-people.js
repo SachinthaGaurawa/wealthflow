@@ -468,15 +468,19 @@ export function removePerson(store, id) {
 /**
  * Loans and investments that name somebody the book does not know. A loan names a person, and so does an investment ("Company / Person"):
  * every one that has a name counts, whether or not it also has a number, an ID or the text switch.
+ * `orphans: false` leaves out records that point at a person who is not in the book (a deleted person stays deleted; see harvestPeople).
  * @returns {{key:'debtors'|'income', kind:'debtor'|'investment', id:string, name:string, phone:string, nic:string}[]}
  */
-export function unfiledRecords(store) {
+export function unfiledRecords(store, { orphans = true } = {}) {
     const people = listPeople(store);
     const out = [];
     for (const [key, kind] of [['debtors', 'debtor'], ['income', 'investment']]) {
         for (const r of (store && store.get(key)) || []) {
             if (!r || typeof r !== 'object' || !r.id) continue;
             if (personById(people, r[LINK_FIELD])) continue;
+            // a record that still points at somebody who is no longer in the book is an orphan: the owner deleted that person (or their entry has not
+            // arrived from another device yet). Filing them again by itself would undo a delete, so only the owner's own "file everybody" does that
+            if (!orphans && r[LINK_FIELD]) continue;
             const shared = readShared(kind, r);
             if (!shared.name) continue;
             out.push({ key, kind, id: r.id, ...shared });
@@ -491,8 +495,8 @@ export function unfiledRecords(store) {
  * nothing else on a ledger is touched.
  * @returns {{added:number, linked:number}}
  */
-export function harvestPeople(store, { now = Date.now(), newId = null } = {}) {
-    const unfiled = unfiledRecords(store);
+export function harvestPeople(store, { now = Date.now(), newId = null, orphans = true } = {}) {
+    const unfiled = unfiledRecords(store, { orphans });
     const people = listPeople(store).slice();
     const point = { debtors: new Map(), income: new Map() };
     let added = 0;
