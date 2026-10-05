@@ -46,11 +46,16 @@ export const ACTIVE_PAGE = 500;
 export const ACTIVE_SCAN_MAX = 2000;
 const AUTH_DEADLINE_MS = 6000;
 
-async function readActive(db) {
+async function readActive(db, admin) {
     const docs = [];
     let after = null;
+    // The cursor only means something under a fixed order. With one equality filter that order is the document id, which Firestore applies by
+    // default; it is named here anyway so the paging does not rest on a default (and needs no index: an equality filter plus the id order is built in).
+    const byId = admin && admin.firestore && admin.firestore.FieldPath && typeof admin.firestore.FieldPath.documentId === 'function' ? admin.firestore.FieldPath.documentId() : null;
     while (docs.length < ACTIVE_SCAN_MAX) {
-        let q = db.collection(ROOT).where('active', '==', true).limit(ACTIVE_PAGE);
+        let q = db.collection(ROOT).where('active', '==', true);
+        if (byId) q = q.orderBy(byId);
+        q = q.limit(ACTIVE_PAGE);
         if (after) q = q.startAfter(after);
         const snap = await withDeadline(q.get(), 10000, 'wf-sms');
         docs.push(...snap.docs);
@@ -107,7 +112,7 @@ export async function handleSweep(req, res, deps) {
     const allowed = deps.accountAllowed || ((uid) => accountStillAllowed({ admin, uid, env: deps.env }));
     const switchOff = (uid, why) => db.collection(ROOT).doc(uid).set({ active: false, deactivatedAt: now, deactivatedReason: String(why || '').slice(0, 120) }, { merge: true });
 
-    const active = await readActive(db);
+    const active = await readActive(db, admin);
     const accounts = active
         .map((d) => ({ uid: d.id, lastSweepAt: Number((d.data() || {}).lastSweepAt || 0) }))
         .sort((a, b) => a.lastSweepAt - b.lastSweepAt)

@@ -454,6 +454,26 @@ describe('/api/sms-sweep: who is still allowed, and who is looked at', () => {
         expect(r.body.accounts).toBeLessThanOrEqual(MAX_USERS);
     });
 
+    it('names the order the pages are read in (the document id) and walks them with a cursor, so the paging does not rest on a default', async () => {
+        const w = cronWorld();
+        for (let i = 0; i < ACTIVE_PAGE + 3; i += 1) w.fs.data.set(`wf-sms/b${String(i).padStart(5, '0')}`, { active: true, lastSweepAt: NOW - 1000 });
+        const seen = { order: [], after: 0, limits: [] };
+        const orig = w.fs.db.collection.bind(w.fs.db);
+        w.fs.db.collection = (name) => {
+            const c = orig(name);
+            if (name !== 'wf-sms') return c;
+            const wrap = (q) => ({ ...q, orderBy: (f) => { seen.order.push(f); return wrap(q.orderBy(f)); }, startAfter: (d) => { seen.after += 1; return wrap(q.startAfter(d)); }, limit: (n) => { seen.limits.push(n); return wrap(q.limit(n)); }, where: (...a) => wrap(q.where(...a)) });
+            return { ...wrap(c), doc: c.doc };
+        };
+        const base = w.deps.getAdminDb;
+        w.deps.getAdminDb = async () => { const r = await base(); return { ...r, admin: { ...r.admin, firestore: { FieldPath: { documentId: () => '__id__' } } } }; };
+        await handleSweep(cron(), res(), w.deps);
+        expect(seen.order.length).toBeGreaterThanOrEqual(2);
+        expect(seen.order.every((f) => f === '__id__')).toBe(true);
+        expect(seen.after).toBeGreaterThanOrEqual(1);
+        expect(seen.limits.every((n) => n === ACTIVE_PAGE)).toBe(true);
+    });
+
     it('accountStillAllowed answers from Firebase Auth alone, and says "could not tell" for anything but a definite answer', async () => {
         const env = { SMS_ALLOWED_EMAILS: OWNER.email };
         const asks = (user) => accountStillAllowed({ admin: { auth: () => ({ getUser: async () => user }) }, uid: 'x', env });
