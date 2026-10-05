@@ -163,15 +163,26 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
             }
             const d = snap.data() || {};
             const phoneChanged = d.toHash !== toHash;
-            if (d.status === STATUS.QUEUED && phoneChanged) {
+            // The words carry a link to a statement that is keyed by NIC. A held text whose NIC was corrected still holds the OLD person's link,
+            // and the corrected number would be sent somebody else's statement: so when the link the books call for is not the one in the
+            // words, the words are written again (only a link that can be minted counts: no link now is not a reason to drop the old one).
+            const staleLink = !!link && !s(d.body).includes(link);
+            if (d.status === STATUS.QUEUED && (phoneChanged || staleLink)) {
                 // a new number can be in another time zone: a scheduled text waits for ITS morning
-                const doc = { ...d, to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin, ...(d.scheduled ? { nextAttemptAt: nextSendWindow(Math.max(now, ev.notBefore || 0), tzMin) } : {}) };
+                const doc = {
+                    ...d, to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin,
+                    body, segments: a.segments, encoding: a.encoding, amount: ev.amount, currency: ev.currency, linked: !!link,
+                    ...(phoneChanged && d.scheduled ? { nextAttemptAt: nextSendWindow(Math.max(now, ev.notBefore || 0), tzMin) } : {}),
+                };
                 tx.set(ref, doc);
                 return { what: 'rephoned', doc };
             }
             // a number that could never receive was corrected: the message that was refused is owed again
             if (d.status === STATUS.FAILED && phoneChanged && d.lastError && (d.lastError.kind === KIND.INVALID_RECIPIENT || d.lastError.kind === KIND.BLOCKED || d.lastError.kind === KIND.DESTINATION)) {
-                const doc = { ...d, status: STATUS.QUEUED, attempts: 0, nextAttemptAt: now, leaseUntil: 0, to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin, lastError: null };
+                const doc = {
+                    ...d, status: STATUS.QUEUED, attempts: 0, nextAttemptAt: now, leaseUntil: 0, to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin, lastError: null,
+                    body, segments: a.segments, encoding: a.encoding, amount: ev.amount, currency: ev.currency, linked: !!link,
+                };
                 tx.set(ref, doc);
                 return { what: 'reopened', doc };
             }

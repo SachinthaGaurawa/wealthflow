@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { createFirestore } from './helpers/fake-firestore.js';
 import { handleNotify, MIN_KICK_GAP_MS, HEALTH_TTL_MS, gatewayHealth } from '../sms-notify.js';
-import { handleSweep, MAX_USERS, TOTAL_BUDGET_MS } from '../sms-sweep.js';
+import { handleSweep, MAX_USERS, TOTAL_BUDGET_MS, ACTIVE_PAGE, accountStillAllowed } from '../sms-sweep.js';
 import { allowedEmails, smsAllowed } from '../sms-access.mjs';
 import { FIELDS } from '../sms-events.mjs';
 import { KIND } from '../textlk.mjs';
@@ -46,10 +46,18 @@ function books() {
     };
 }
 
-function world({ tokens, env = {}, client = gateway(), now = NOW, noDb = false } = {}) {
+// `authUsers` is what Firebase Auth says about a uid when the cron asks again: the owner's verified account unless the test says otherwise
+// (an object is that account's record, null is "deleted", an Error is an outage).
+function world({ tokens, env = {}, client = gateway(), now = NOW, noDb = false, authUsers = {} } = {}) {
     const fs = createFirestore();
     const tokenTable = tokens || { 'good-token': { ...OWNER, email_verified: true } };
-    const admin = { auth: () => ({ verifyIdToken: async (t) => { if (!tokenTable[t]) throw new Error('bad token'); return tokenTable[t]; } }) };
+    const getUser = async (uid) => {
+        const u = authUsers[uid];
+        if (u === null) throw Object.assign(new Error('no such user'), { code: 'auth/user-not-found' });
+        if (u instanceof Error) throw u;
+        return { uid, email: OWNER.email, emailVerified: true, disabled: false, ...(u || {}) };
+    };
+    const admin = { auth: () => ({ getUser, verifyIdToken: async (t) => { if (!tokenTable[t]) throw new Error('bad token'); return tokenTable[t]; } }) };
     const deps = {
         client: () => client,
         getAdminDb: async () => (noDb ? { db: null, reason: 'no service account' } : { db: fs.db, admin }),
@@ -350,5 +358,129 @@ describe('/api/sms-sweep, the cron', () => {
         const w = cronWorld({ noDb: true });
         const r = res(); await handleSweep(cron(), r, w.deps);
         expect(r.statusCode).toBe(503);
+    });
+});
+
+describe('/api/sms-sweep: who is still allowed, and who is looked at', () => {
+    const cron = (over = {}) => req({ method: 'GET', url: '/api/sms-sweep', headers: { authorization: 'Bearer cron-secret' }, ...over });
+    const cronWorld = (o = {}) => world({ ...o, env: { CRON_SECRET: 'cron-secret', ...(o.env || {}) } });
+    const register = async (w, uid, extra = {}) => { await putUser(w.fs, uid, books()); await w.fs.db.collection('wf-sms').doc(uid).set({ active: true, lastSweepAt: 0, ...extra }); };
+    const root = (w, uid) => w.fs.data.get(`wf-sms/${uid}`);
+
+    it('an account that is no longer on the allow-list is switched off and sends nothing, with the reason kept for the owner', async () => {
+        const w = cronWorld({ authUsers: { gone: { email: 'former@example.com' } } });
+        await register(w, 'gone'); await register(w, 'kept');
+        const r = res(); await handleSweep(cron(), r, w.deps);
+        expect(w.client.sent).toHaveLength(1);                                    // only the owner's
+        expect(root(w, 'gone')).toMatchObject({ active: false, deactivatedAt: NOW });
+        expect(root(w, 'gone').deactivatedReason).toMatch(/not enabled for this account/);
+        expect(root(w, 'kept').active).toBe(true);
+        expect(r.body.results.find((x) => x.uid === 'gone')).toEqual({ uid: 'gone', deactivated: true });
+        expect([...w.fs.data.keys()].filter((k) => k.startsWith('wf-sms/gone/events/'))).toHaveLength(0);      // nothing was even queued
+        const again = res(); await handleSweep(cron(), again, w.deps);
+        expect(again.body.accounts).toBe(1);                                      // and it is not looked at again
+    });
+
+    it('is switched back on by the owner\'s next visit once the account is allowed again', async () => {
+        const w = cronWorld({ authUsers: { owner1: { email: 'former@example.com' } } });
+        await register(w, 'owner1');
+        await handleSweep(cron(), res(), w.deps);
+        expect(root(w, 'owner1').active).toBe(false);
+        const back = world({ env: { CRON_SECRET: 'cron-secret' } });             // the allow-list has the owner again
+        for (const [k, v] of w.fs.data) back.fs.data.set(k, v);
+        const r = res(); await handleNotify(req({ body: { force: true } }), r, back.deps);
+        expect(r.statusCode).toBe(200);
+        expect(back.fs.data.get('wf-sms/owner1').active).toBe(true);
+    });
+
+    it('keeps an account the admin claim allows even when its email is not on the list', async () => {
+        const w = cronWorld({ env: { SMS_ALLOWED_EMAILS: '' }, authUsers: { boss: { email: 'boss@else.org', customClaims: { admin: true } } } });
+        await register(w, 'boss');
+        await handleSweep(cron(), res(), w.deps);
+        expect(root(w, 'boss').active).toBe(true);
+        expect(w.client.sent).toHaveLength(1);
+    });
+
+    it('switches off an account whose sign-in is disabled, deleted, or has no verified email', async () => {
+        const w = cronWorld({ authUsers: { off: { disabled: true }, del: null, unv: { emailVerified: false }, fine: {} } });
+        for (const uid of ['off', 'del', 'unv', 'fine']) await register(w, uid);
+        await handleSweep(cron(), res(), w.deps);
+        expect(['off', 'del', 'unv'].map((u) => root(w, u).active)).toEqual([false, false, false]);
+        expect(root(w, 'del').deactivatedReason).toMatch(/no longer exists/);
+        expect(root(w, 'fine').active).toBe(true);
+        expect(w.client.sent).toHaveLength(1);
+    });
+
+    it('an outage of the sign-in service is not a verdict: the account is skipped this run and left exactly as it was', async () => {
+        const w = cronWorld({ authUsers: { owner1: new Error('auth backend 503') } });
+        await register(w, 'owner1');
+        const r = res(); await handleSweep(cron(), r, w.deps);
+        expect(r.statusCode).toBe(200);
+        expect(w.client.sent).toHaveLength(0);                                    // nothing is sent on an identity nobody could confirm
+        expect(root(w, 'owner1')).toEqual({ active: true, lastSweepAt: 0 });
+        expect(r.body.results[0]).toMatchObject({ skipped: true });
+        expect(JSON.stringify(r.body)).not.toContain('503');
+    });
+
+    it('without the sign-in service at all nothing is sent and nothing is switched off', async () => {
+        const w = cronWorld();
+        await register(w, 'owner1');
+        w.deps.getAdminDb = async () => ({ db: w.fs.db, admin: {} });
+        const r = res(); await handleSweep(cron(), r, w.deps);
+        expect(w.client.sent).toHaveLength(0);
+        expect(root(w, 'owner1').active).toBe(true);
+    });
+
+    it('switches off a registration whose data document is gone, so it cannot hold a place for ever', async () => {
+        const w = cronWorld();
+        await w.fs.db.collection('wf-sms').doc('ghost').set({ active: true, lastSweepAt: 0 });
+        await register(w, 'owner1');
+        const r = res(); await handleSweep(cron(), r, w.deps);
+        expect(root(w, 'ghost')).toMatchObject({ active: false });
+        expect(root(w, 'ghost').deactivatedReason).toMatch(/no data document/);
+        const again = res(); await handleSweep(cron(), again, w.deps);
+        expect(again.body.accounts).toBe(1);
+    });
+
+    it('reads past the first page of registered accounts, so one that sorts late is still swept', async () => {
+        const w = cronWorld();
+        // more registered accounts than one page holds, every one already swept recently, plus three that never were and sort last
+        for (let i = 0; i < ACTIVE_PAGE * 2 + 5; i += 1) w.fs.data.set(`wf-sms/a${String(i).padStart(5, '0')}`, { active: true, lastSweepAt: NOW - 1000 });
+        for (const uid of ['zz1', 'zz2', 'zz3']) { await register(w, uid); }
+        const r = res(); await handleSweep(cron(), r, w.deps);
+        expect(r.statusCode).toBe(200);
+        const swept = (u) => root(w, u).lastSweepAt === NOW;
+        expect(['zz1', 'zz2', 'zz3'].every(swept)).toBe(true);
+        expect(r.body.accounts).toBeLessThanOrEqual(MAX_USERS);
+    });
+
+    it('names the order the pages are read in (the document id) and walks them with a cursor, so the paging does not rest on a default', async () => {
+        const w = cronWorld();
+        for (let i = 0; i < ACTIVE_PAGE + 3; i += 1) w.fs.data.set(`wf-sms/b${String(i).padStart(5, '0')}`, { active: true, lastSweepAt: NOW - 1000 });
+        const seen = { order: [], after: 0, limits: [] };
+        const orig = w.fs.db.collection.bind(w.fs.db);
+        w.fs.db.collection = (name) => {
+            const c = orig(name);
+            if (name !== 'wf-sms') return c;
+            const wrap = (q) => ({ ...q, orderBy: (f) => { seen.order.push(f); return wrap(q.orderBy(f)); }, startAfter: (d) => { seen.after += 1; return wrap(q.startAfter(d)); }, limit: (n) => { seen.limits.push(n); return wrap(q.limit(n)); }, where: (...a) => wrap(q.where(...a)) });
+            return { ...wrap(c), doc: c.doc };
+        };
+        const base = w.deps.getAdminDb;
+        w.deps.getAdminDb = async () => { const r = await base(); return { ...r, admin: { ...r.admin, firestore: { FieldPath: { documentId: () => '__id__' } } } }; };
+        await handleSweep(cron(), res(), w.deps);
+        expect(seen.order.length).toBeGreaterThanOrEqual(2);
+        expect(seen.order.every((f) => f === '__id__')).toBe(true);
+        expect(seen.after).toBeGreaterThanOrEqual(1);
+        expect(seen.limits.every((n) => n === ACTIVE_PAGE)).toBe(true);
+    });
+
+    it('accountStillAllowed answers from Firebase Auth alone, and says "could not tell" for anything but a definite answer', async () => {
+        const env = { SMS_ALLOWED_EMAILS: OWNER.email };
+        const asks = (user) => accountStillAllowed({ admin: { auth: () => ({ getUser: async () => user }) }, uid: 'x', env });
+        expect(await asks({ email: OWNER.email, emailVerified: true })).toEqual({ ok: true });
+        expect((await asks({ email: OWNER.email, emailVerified: 'true' })).ok).toBe(false);          // only a real boolean
+        expect((await asks({ email: OWNER.email, emailVerified: true, disabled: true })).ok).toBe(false);
+        expect((await asks(null)).transient).toBe(true);
+        expect((await accountStillAllowed({ admin: null, uid: 'x', env })).transient).toBe(true);
     });
 });

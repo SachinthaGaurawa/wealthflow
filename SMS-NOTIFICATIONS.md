@@ -100,6 +100,14 @@ transaction, renders the words once, and sends it. The page nudges `/api/sms-not
 times are there for the window below: 04:00 UTC is 09:30 in Colombo (Asia and the Pacific), 12:00 the Gulf, Europe and the
 eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends nothing and costs nothing.
 
+* **Who is swept.** An account is on the cron's list because it registered, but that is not a licence for ever: before an account's
+  texts are sent the sweep asks Firebase Auth again whether the sign-in may still use SMS (not disabled, a verified email, on
+  `SMS_ALLOWED_EMAILS` or carrying the `admin` claim). One that may not is switched off (`active: false` on its `wf-sms/{uid}` document,
+  with `deactivatedReason`; nothing is queued, retried or sent for it, and its tenants can no longer be sent one-time codes), and the
+  owner's next visit registers it again once it is allowed. A sign-in service that does not answer is not a verdict: the account is
+  skipped for that run and left as it is. A registration whose data document no longer exists is switched off too, so it cannot hold one of
+  the 40 places in a run. The registered accounts are read in pages of 500 (up to 2,000) and ordered by when each was last swept, so a long
+  list is covered across runs.
 * **Hold, don't fail.** Out of credit, a rejected token or an unapproved sender holds the message and retries every six
   hours without using attempts. The account this was built for had ten units.
 * **Backoff.** Rate limits and network errors retry at 1 min, 5, 20, 60, 3 h, 6 h, 12 h, 24 h, or the gateway's own
@@ -164,6 +172,6 @@ right, a number exists or the gateway is down, in about the same time. A wrong N
 
 The owner's **Text messages** log shows each code sent ("Admin Alert: SMS Delivered Successfully to Tenant") or why it could not
 be (out of credit, for instance), never the code. A tenant who cannot get a code is not told why: if nothing arrives, the lender
-may have no number for them, or the account may be out of credit.
+may have no number for them, the account may be out of credit, or the lender may no longer be allowed to send texts.
 
 `wf-tenant-limits` joins the sealed collections: publish the rules with `firebase deploy --only firestore:rules`.

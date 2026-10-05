@@ -50,7 +50,7 @@ import { normalizePhone, maskPhone } from './wealthflow-phone.js';
 import { otpMessage } from './sms-templates.mjs';
 import { KIND } from './textlk.mjs';
 import { FIELDS } from './sms-events.mjs';
-import { ADMIN_ALERT } from './sms-engine.mjs';
+import { ADMIN_ALERT, ROOT as SMS_ROOT } from './sms-engine.mjs';
 import { TENANTS, SUBJECTS, TOKEN_RE, nicHashOf, phoneHashOf } from './tenant-links.mjs';
 import { buildStatement } from './tenant-statement.mjs';
 import { withDeadline } from './admin-db.mjs';
@@ -248,6 +248,11 @@ export async function requestCode({ db, client, token, nic, ip, secret, now, ran
     if (!tenant || tenant.active === false || !tenant.uid) { await pad(MIN_ANSWER_MS); return accepted(); }
     if (num(tenant.lockedUntil) > now) return tooMany(num(tenant.lockedUntil) - now);
     if (!matched) { await noteFailure(db, tenantRef, now); await pad(MIN_ANSWER_MS); return accepted(); }
+
+    // A lender the owner has since stopped (access removed, sign-in disabled or deleted: the daily sweep records that as `active: false`) must not
+    // go on spending the owner's units through this door either. Only an explicit false stops it; no registration document is just "not registered yet".
+    const lenderRoot = await withDeadline(db.collection(SMS_ROOT).doc(s(tenant.uid)).get(), 8000, 'wf-sms');
+    if (lenderRoot.exists && (lenderRoot.data() || {}).active === false) { await pad(MIN_ANSWER_MS); return accepted(); }
 
     const userSnap = await withDeadline(db.collection('users').doc(s(tenant.uid)).get(), 8000, 'users');
     const to = pickRecipient(userSnap.exists ? userSnap.data() : {}, matched, secret);
