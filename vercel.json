@@ -233,11 +233,11 @@
       "schedule": "0 4 * * *"
     },
     {
-      "path": "/api/sms-sweep?at=midday",
+      "path": "/api/sms-sweep",
       "schedule": "0 12 * * *"
     },
     {
-      "path": "/api/sms-sweep?at=evening",
+      "path": "/api/sms-sweep",
       "schedule": "0 18 * * *"
     }
   ]
