@@ -628,6 +628,50 @@ describe('the balance the owner asked for', () => {
     });
 });
 
+describe('a scheduled text never goes out outside the recipient\'s 08:00-20:00, whenever the sweep happens to run', () => {
+    // A debtor in the United Kingdom (UTC+0 here): the daily 04:00 UTC sweep is 04:00 their time, the owner's page nudges at any hour.
+    const uk = () => {
+        const u = books();
+        Object.assign(u.debtors[0], { phone: '+447911123456', dueISO: '2026-10-04', [FIELDS.REMIND]: true, [FIELDS.REMIND_AT]: NOW - 86400e3 * 3, [FIELDS.ENABLED_AT]: NOW - 86400e3 * 3 });
+        u.debtors[0].events = [{ id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-01', confirmed: true, at: NOW - 3 * 86400e3 }];
+        return u;
+    };
+    const docs = (fs) => ledger(fs).filter((d) => d.kind === 'B.late');
+    const reminders = (gw) => gw.sent.filter((m) => m.message.startsWith('Reminder'));
+
+    it('a sweep that runs late at night leaves it queued for the next morning instead of sending it then', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        await run(db, uk(), gw, { now: T('2026-10-05T03:00:00Z') });                 // 03:00 UK: queued for 08:00
+        expect(docs(fs)[0].nextAttemptAt).toBe(T('2026-10-05T08:00:00Z'));
+        await run(db, uk(), gw, { now: T('2026-10-05T21:30:00Z') });                 // 21:30 UK: the due time has passed, the window has closed
+        expect(reminders(gw)).toHaveLength(0);
+        expect(docs(fs)[0]).toMatchObject({ status: STATUS.QUEUED, nextAttemptAt: T('2026-10-06T08:00:00Z') });
+    });
+
+    it('goes out when a sweep next runs inside the window, once', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        await run(db, uk(), gw, { now: T('2026-10-05T03:00:00Z') });
+        await run(db, uk(), gw, { now: T('2026-10-05T21:30:00Z') });
+        await run(db, uk(), gw, { now: T('2026-10-06T07:30:00Z') });                 // still before 08:00
+        expect(reminders(gw)).toHaveLength(0);
+        await run(db, uk(), gw, { now: T('2026-10-06T08:00:00Z') });                 // the window opens: 32 h after the day began, still inside its shelf life
+        expect(reminders(gw)).toHaveLength(1);
+        await run(db, uk(), gw, { now: T('2026-10-06T09:00:00Z') });
+        expect(reminders(gw)).toHaveLength(1);
+        expect(docs(fs)[0].status).toBe(STATUS.SENT);
+    });
+
+    it('a text that is news the moment it happens (a receipt) is not held for the morning', async () => {
+        const { db } = makeDb(); const gw = gateway();
+        const u = books();
+        u.debtors[0][FIELDS.ENABLED_AT] = T('2026-10-04T00:00:00Z');
+        u.debtors[0].events[0].at = T('2026-10-04T10:00:00Z');
+        u.debtors[0].events[1].at = T('2026-10-05T01:00:00Z');                       // 06:30 in Colombo: before the window, but a receipt is not scheduled
+        await run(db, u, gw, { now: T('2026-10-05T01:05:00Z') });
+        expect(gw.sent.some((m) => m.message.startsWith('Repayment'))).toBe(true);
+    });
+});
+
 describe('late-payment reminders through the queue', () => {
     const due = (extra = {}) => {
         const u = books();

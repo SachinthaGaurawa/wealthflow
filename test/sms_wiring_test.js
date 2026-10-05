@@ -64,13 +64,22 @@ describe('the server', () => {
         expect(ROUTER).toMatch(/'sms-sweep': \(\) => import\('\.\.\/sms-sweep\.js'\)/);
     });
 
-    it('runs the sweep once a day, inside the sending window in Sri Lanka', () => {
-        const cron = JSON.parse(read('vercel.json')).crons.find((c) => c.path === '/api/sms-sweep');
-        expect(cron).toBeTruthy();
-        const [min, hour] = cron.schedule.split(' ').map(Number);
-        const colombo = (hour * 60 + min + 330) % 1440;                  // UTC+5:30
+    it('runs the sweep inside the sending window in Sri Lanka, and often enough that a number anywhere meets a run inside its own 08:00-20:00', () => {
+        const crons = JSON.parse(read('vercel.json')).crons.filter((c) => c.path.split('?')[0] === '/api/sms-sweep');
+        expect(crons.length).toBeGreaterThanOrEqual(1);
+        const main = crons.find((c) => c.path === '/api/sms-sweep');
+        expect(main).toBeTruthy();
+        const [min0, hour0] = main.schedule.split(' ').map(Number);
+        const colombo = (hour0 * 60 + min0 + 330) % 1440;                // UTC+5:30
         expect(colombo).toBeGreaterThanOrEqual(8 * 60);
         expect(colombo).toBeLessThan(20 * 60);
+        // once a day each (a daily schedule is valid on every Vercel plan), and none of them a wildcard
+        for (const c of crons) expect(c.schedule).toMatch(/^\d+ \d+ \* \* \*$/);
+        const zones = { Auckland: 720, Sydney: 600, Tokyo: 540, Colombo: 330, Dubai: 240, Riyadh: 180, Paris: 60, London: 0, 'New York': -300, Chicago: -360, 'Los Angeles': -480, Honolulu: -600 };
+        for (const [name, off] of Object.entries(zones)) {
+            const inWindow = crons.some((c) => { const [m, h] = c.schedule.split(' ').map(Number); const local = (((h * 60 + m + off) % 1440) + 1440) % 1440; return local >= 8 * 60 && local < 20 * 60; });
+            expect(inWindow, `${name} meets a sweep inside its window`).toBe(true);
+        }
     });
 
     it('the sweep and the page-facing endpoint each say who may call them, in their own header', () => {

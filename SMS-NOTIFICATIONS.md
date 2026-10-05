@@ -91,8 +91,10 @@ allowed account also sees `lowCredit`.
 
 The books are the source of truth. `sms-events.mjs` derives, from the user's document, which notices are owed, each with a
 deterministic key. `sms-engine.mjs` puts each key into the ledger `wf-sms/{uid}/events/{sha256(key)}` once, in a
-transaction, renders the words once, and sends it. The page nudges `/api/sms-notify` after a save; a daily cron
-(`/api/sms-sweep`, 04:00 UTC = 09:30 in Colombo) derives the same notices again, so a missed nudge loses nothing.
+transaction, renders the words once, and sends it. The page nudges `/api/sms-notify` after a save; the cron
+(`/api/sms-sweep`, at 04:00, 12:00 and 18:00 UTC) derives the same notices again, so a missed nudge loses nothing. The three
+times are there for the window below: 04:00 UTC is 09:30 in Colombo (Asia and the Pacific), 12:00 the Gulf, Europe and the
+eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends nothing and costs nothing.
 
 * **Hold, don't fail.** Out of credit, a rejected token or an unapproved sender holds the message and retries every six
   hours without using attempts. The account this was built for had ten units.
@@ -101,7 +103,11 @@ transaction, renders the words once, and sends it. The page nudges `/api/sms-not
 * **Exactly once, honestly.** The ledger makes a second queueing impossible. The gateway has no idempotency key, so a
   worker that dies mid-send can cause a second attempt; that message is flagged `possiblyDuplicated`.
 * **Limits.** 300 texts per account per day, 12 per number per day, reserved before sending so concurrent sends cannot
-  overshoot. Interest notices only go out between 08:00 and 20:00 in Sri Lanka.
+  overshoot. **Scheduled** texts (monthly interest, late-payment reminders) go out only between 08:00 and 20:00 where the
+  *recipient* is (the country of the number), and the engine checks that when it claims a text, not only when it queues one:
+  a text queued for the morning is never sent at 03:00 because that is when a sweep got to it. It waits for the next window
+  (reminders are dropped after a day, interest notices after a month). A text that is news the moment it happens (a receipt,
+  a disbursement, a balance you asked for, a one-time code) is sent at once, at any hour.
 * **Cost.** Plain GSM-7 only (no names, no symbols), one part when it can be, so a notice costs one unit.
 * **The owner sees it.** Every state change is mirrored to `users/{uid}/smsLog` (read-only to the page); the page shows
   "Admin Alert: SMS Delivered Successfully to Tenant" when a delivery lands, and the **Text messages** button opens the log,

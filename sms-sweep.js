@@ -7,9 +7,12 @@
  * missed because a page closed, a function was cold or the gateway was down is sent
  * on the next run without anybody being asked.
  *
- * It is also the day's SCHEDULED worker: the monthly interest notices are derived
- * here from the investment's cadence, then held to the 08:00-20:00 Sri Lanka window.
- * The schedule (04:00 UTC = 09:30 in Colombo) is inside that window.
+ * It is also the day's SCHEDULED worker: the monthly interest notices and the late-payment
+ * reminders are derived here, then held to 08:00-20:00 where the RECIPIENT is (the engine
+ * enforces that when it claims a text, not only when it queues one). One daily run cannot be
+ * inside that window for every country, so it runs three times a day: 04:00 UTC (09:30 in
+ * Colombo; Asia and the Pacific), 12:00 UTC (the Gulf, Europe, Africa, the eastern Americas)
+ * and 18:00 UTC (the Americas). A run with nothing owed sends nothing and costs nothing.
  *
  * One call to the gateway's balance endpoint per run (free) records whether credit
  * is running low, which the owner's dashboard shows before a message is held for it.

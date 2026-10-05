@@ -233,6 +233,14 @@ export async function claim({ db, uid, id, now }) {
             tx.set(ref, doc);
             return { expired: true, doc };
         }
+        // A scheduled text is one that is not news the moment it happens (a reminder, a monthly interest notice), so it only ever goes out in the
+        // recipient's 08:00-20:00. "Due" is not enough: the daily sweep and a page nudge run at any hour, and a text that was queued for the
+        // morning must not go at 03:00 just because that is when a sweep got to it. Outside the window it waits for the next one.
+        if (d.status === STATUS.QUEUED && d.scheduled === true) {
+            const tz = Number.isFinite(d.tzMin) ? d.tzMin : LOCAL_OFFSET_MIN;
+            const open = nextSendWindow(now, tz);
+            if (open > now) { tx.set(ref, { ...d, nextAttemptAt: open }); return null; }
+        }
         const doc = { ...d, status: STATUS.SENDING, leaseUntil: now + LEASE_MS, attempts: num(d.attempts) + 1, possiblyDuplicated: !!d.possiblyDuplicated || crashed };
         tx.set(ref, doc);
         return { doc };
