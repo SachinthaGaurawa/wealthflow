@@ -39,7 +39,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 /** The globals each shipped module installs. If one is missing it did not run. */
 const EXPECTED_GLOBALS = [
     'WFWhen', 'WFVerify', 'WFReactive', 'WFMoneyInput', 'WFPwShapes',
-    'WFIcon', 'WFVault', 'WFLiquidity', 'WFInsights', 'WFRoute',
+    'WFIcon', 'WFVault', 'WFLiquidity', 'WFInsights', 'WFRoute', 'WFSms',
 ];
 
 /** Copy the files the browser is served. Not node_modules, not the tests. */

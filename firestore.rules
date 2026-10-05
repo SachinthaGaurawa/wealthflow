@@ -25,6 +25,8 @@ rules_version = '2';
 //    shared_stmts/{id}, links/{id}    legacy public SHARE maps    read-only
 //    wf-inbox/**                      SMS bridge relay            Admin SDK only - SEALED
 //    wf-mail/**                       Gmail statement pipeline    Admin SDK only - SEALED
+//    wf-sms/**                        text-message ledger         Admin SDK only - SEALED
+//    wf-tenants/**, wf-tenant-subjects/**  tenant portal links    Admin SDK only - SEALED
 //
 //  HOW SERVER ACCESS WORKS (this is what makes the sealed branches possible):
 //   • release-brain.js, approve-release.js, health.js and inbox-store.mjs use
@@ -80,12 +82,14 @@ service cloud.firestore {
       allow read, write: if isOwner(uid);
     }
     // Settlement identities, reviews, learned layouts and the statement registry (one statement, filed once) are server-owned.
+    // So is smsLog, the mirror of the text-message ledger the owner's page reads (read-only here): a page that could write it could
+    // show itself a "delivered" alert for a message that was never sent.
     // A more-specific deny cannot override a recursive allow, so exclude these
     // collections from the ordinary client write rule itself.
     match /users/{uid}/{collection}/{document=**} {
       allow read: if isOwner(uid);
       allow write: if isOwner(uid)
-        && !(collection in ['statementLedger', 'statementReview', 'statementLayouts', 'statementRegistry']);
+        && !(collection in ['smsLog', 'statementLedger', 'statementReview', 'statementLayouts', 'statementRegistry']);
     }
 
     // --- 1b. LEGACY ?ustmt= SHARE LINKS (narrow, deliberate exception) ------
@@ -247,6 +251,24 @@ service cloud.firestore {
     //  gets a vote, which is why those checks are covered by
     //  test/gmail_link_test.js and the file is under the sensitive-path gate.
     match /wf-mail/{userKey}/{document=**} {
+      allow read, write: if false;
+    }
+
+    // === 6c. wf-sms, wf-tenants, wf-tenant-subjects - text messages and the tenant portal ===
+    //  SEALED to every client, like wf-mail, and written out so that it is a decision and not an accident of the default-deny.
+    //   wf-sms/{uid}/events   the send ledger (recipient number, wording, attempts) - the exactly-once record
+    //   wf-sms/{uid}/quota    the day's send counters
+    //   wf-tenant-subjects    which person (by an HMAC of their NIC, never the NIC) a portal link belongs to
+    //   wf-tenants            the portal's links, one-time codes and sessions
+    //  The server reaches all of it with the Admin SDK. What the owner's page may see of the text messages is the mirror at
+    //  users/{uid}/smsLog (read-only, above), which carries a MASKED number.
+    match /wf-sms/{uid}/{document=**} {
+      allow read, write: if false;
+    }
+    match /wf-tenants/{document=**} {
+      allow read, write: if false;
+    }
+    match /wf-tenant-subjects/{document=**} {
       allow read, write: if false;
     }
 

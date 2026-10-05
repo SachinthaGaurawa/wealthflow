@@ -1,0 +1,577 @@
+/* =============================================================================
+ * wealthflow-sms.js — the page's side of the tenant text messages
+ * -----------------------------------------------------------------------------
+ * The server decides what is owed and sends it (sms-events.mjs / sms-engine.mjs): the
+ * books are the source of truth, and nothing a page says can name a recipient, an
+ * amount or a word. So this file has four small jobs and no authority:
+ *
+ *   1. THE SWITCH. A persistent boolean `sms_notifications_enabled` on the record, the
+ *      phone number it is for, the tenant's NIC (for the statement link), and the moment
+ *      it was switched on (`sms_enabled_at`), which is what keeps the past from being
+ *      announced as news. applyToggle() validates and returns exactly the fields to merge.
+ *   2. THE NUDGE. After a push to the cloud, if what the server cares about has changed
+ *      (signatureOf), ask it to look again (/api/sms-notify). Debounced, retried with
+ *      backoff, quiet when the account is not allowed to send. Missing a nudge loses
+ *      nothing: the daily sweep derives the same notices from the books.
+ *   3. THE ALERT. A realtime listener on users/{uid}/smsLog, the server-written mirror of
+ *      the ledger, shows "Admin Alert: SMS Delivered Successfully to Tenant" when a
+ *      notice goes out, once per message, and a quiet summary after time away.
+ *   4. THE LOG. A panel of what was sent, what is waiting and why, and what cannot work.
+ *
+ * Nothing here throws into the app: a failure of any of it is a quieter page, never a
+ * broken one. ESM; window.WFSms.
+ * ===========================================================================*/
+
+import { normalizePhone } from './wealthflow-phone.js';
+import { normalizeNic } from './wealthflow-nic.js';
+
+/** The record fields. The server reads the same four; a test pins that they agree (sms-events.mjs FIELDS). */
+export const SMS_FIELDS = Object.freeze({
+    ENABLED: 'sms_notifications_enabled',
+    ENABLED_AT: 'sms_enabled_at',
+    PHONE: 'phone',
+    NIC: 'nic',
+});
+
+export const CLIENT = Object.freeze({
+    ENDPOINT: '/api/sms-notify',
+    DEBOUNCE_MS: 2500,
+    THROTTLE_RETRY_MS: 7000,                 // the server holds kicks closer together than 6 s
+    RETRY_MS: Object.freeze([8000, 40000, 180000]),
+    OPEN_DELAY_MS: 6000,                     // after the page opens, once the cloud copy has had time to land
+    DRAIN_MS: 10 * 60000,                    // while the page is open and something is waiting
+    MAX_DRAINS: 12,
+    FETCH_TIMEOUT_MS: 25000,
+    LOG_LIMIT: 40,
+    MAX_TOASTS: 3,
+});
+
+const s = (v) => String(v == null ? '' : v);
+const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const esc = (v) => s(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]));
+const safeStorage = (st, fn) => { try { return fn(st); } catch (_) { return null; } };
+
+/* ── 1. the switch ────────────────────────────────────────────────────────── */
+
+const PHONE_TEXT = {
+    'empty': 'Enter the mobile number the texts should go to.',
+    'not-a-number': 'A phone number can only contain digits, spaces and a leading +.',
+    'misplaced-plus': 'A + can only come first, as in +94 77 123 4567.',
+    'needs-country-code': 'Add the country code, for example +94 77 123 4567.',
+    'bad-length': 'That number has the wrong number of digits.',
+    'not-a-mobile-number': 'Sri Lankan texts go to mobile numbers (07X XXX XXXX).',
+};
+const NIC_TEXT = {
+    'empty': 'Enter the NIC number.',
+    'bad-format': 'An NIC is 9 digits and V or X (853400937V), or 12 digits (198534000937).',
+    'bad-day': 'The day of the year inside that NIC is not valid.',
+    'bad-year': 'The birth year inside that NIC is not valid.',
+};
+export const phoneProblem = (reason) => PHONE_TEXT[reason] || 'That does not look like a phone number.';
+export const nicProblem = (reason) => NIC_TEXT[reason] || 'That does not look like an NIC number.';
+
+/** The four fields of a record, as it already has them. A form that rebuilds a record from its inputs must carry these over, or an edit silently switches the texts off. */
+export function carry(prev) {
+    const p = prev && typeof prev === 'object' ? prev : {};
+    const out = {};
+    for (const k of Object.values(SMS_FIELDS)) if (p[k] !== undefined) out[k] = p[k];
+    return out;
+}
+
+/**
+ * Validate what the owner entered and return the fields to merge into the record.
+ *
+ *   input: { enabled:boolean, phone:string, nic:string }
+ *   -> { ok:true, fields }  or  { ok:false, errors:{ phone?, nic? } }
+ *
+ * The switch-on stamp is set when the toggle goes from off to on and is KEPT while it stays on, so editing a record never
+ * re-announces its history; switching off and on again stamps again, because what happened while it was off is not news.
+ */
+export function applyToggle(prev, input, now = Date.now()) {
+    const p = prev && typeof prev === 'object' ? prev : {};
+    if (!input || input.enabled !== true) return { ok: true, fields: { [SMS_FIELDS.ENABLED]: false }, errors: {} };
+    const errors = {};
+    const phoneRaw = s(input.phone).trim();
+    const phone = normalizePhone(phoneRaw);
+    if (!phone.ok) errors.phone = phoneProblem(phone.reason);
+    const nicRaw = s(input.nic).replace(/[\s.-]+/g, '').toUpperCase();
+    if (nicRaw) { const n = normalizeNic(nicRaw); if (!n.ok) errors.nic = nicProblem(n.reason); }
+    if (Object.keys(errors).length) return { ok: false, errors, fields: {} };
+    const keep = p[SMS_FIELDS.ENABLED] === true && num(p[SMS_FIELDS.ENABLED_AT]) > 0;
+    return {
+        ok: true, errors: {},
+        fields: {
+            [SMS_FIELDS.ENABLED]: true,
+            [SMS_FIELDS.ENABLED_AT]: keep ? num(p[SMS_FIELDS.ENABLED_AT]) : now,
+            [SMS_FIELDS.PHONE]: phoneRaw,
+            [SMS_FIELDS.NIC]: nicRaw,
+        },
+    };
+}
+
+const COPY = {
+    A: 'Texts the investor when capital is recorded, when interest is applied and when a payment is received.',
+    B: 'Texts the debtor when a loan is paid out and when a repayment is confirmed. Loans never carry interest, so no interest is ever calculated or sent.',
+};
+
+/**
+ * The markup for the switch, the number and the NIC. `showPhone:false` for a form that already has its own phone field.
+ * Every value is escaped; the ids all start with `prefix`.
+ */
+export function blockHtml(prefix, { layer = 'A', record = null, showPhone = true } = {}) {
+    const r = record && typeof record === 'object' ? record : {};
+    const on = r[SMS_FIELDS.ENABLED] === true;
+    const id = esc(prefix);
+    return '<div class="fg wf-sms" data-wf-sms="' + id + '" style="border:1px solid var(--border,rgba(128,128,128,.25));border-radius:10px;padding:10px 12px;">'
+        + '<label for="' + id + '_on" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;">'
+        + '<input type="checkbox" id="' + id + '_on"' + (on ? ' checked' : '') + ' style="width:18px;height:18px;"'
+        + ' onchange="var m=document.getElementById(\'' + id + '_more\');if(m)m.style.display=this.checked?\'block\':\'none\';">'
+        + 'Send SMS notifications</label>'
+        + '<div id="' + id + '_more" style="display:' + (on ? 'block' : 'none') + ';margin-top:8px;">'
+        + (showPhone ? ('<label class="fl" for="' + id + '_phone">Mobile number</label>'
+            + '<input class="fi" id="' + id + '_phone" type="tel" inputmode="tel" autocomplete="off" placeholder="077 123 4567" value="' + esc(r[SMS_FIELDS.PHONE] || '') + '">') : '')
+        + '<label class="fl" for="' + id + '_nic" style="margin-top:8px;">NIC number (optional)</label>'
+        + '<input class="fi" id="' + id + '_nic" autocomplete="off" autocapitalize="characters" placeholder="853400937V or 198534000937" maxlength="16" value="' + esc(r[SMS_FIELDS.NIC] || '') + '">'
+        + '<div id="' + id + '_err" role="alert" style="color:var(--red,#e5484d);font-size:12px;margin-top:4px;"></div>'
+        + '</div>'
+        + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5;">' + esc(COPY[layer === 'B' ? 'B' : 'A']) + '</div>'
+        + '</div>';
+}
+
+/** What the owner entered in a block, or null when the block is not on the page. `root` is anything with querySelector. */
+export function readBlock(root, prefix) {
+    if (!root || typeof root.querySelector !== 'function') return null;
+    const on = root.querySelector('#' + prefix + '_on');
+    if (!on) return null;
+    const val = (suffix) => { const el = root.querySelector('#' + prefix + '_' + suffix); return el ? s(el.value) : ''; };
+    return { enabled: !!on.checked, phone: val('phone'), nic: val('nic'), hasPhone: !!root.querySelector('#' + prefix + '_phone') };
+}
+
+/** Put a validation message in the block. */
+export function showBlockErrors(root, prefix, errors) {
+    const el = root && root.querySelector ? root.querySelector('#' + prefix + '_err') : null;
+    if (el) el.textContent = Object.values(errors || {}).join(' ');
+}
+
+/* ── 2. the nudge: when has anything the server cares about changed? ──────── */
+
+/** Stable JSON, so the same record is the same string on every device. Long strings (a pasted note) count by length. */
+function stable(v, depth = 0) {
+    if (v === null || v === undefined) return 'null';
+    if (typeof v === 'string') return v.length > 300 ? 's' + v.length : JSON.stringify(v);
+    if (typeof v !== 'object') return JSON.stringify(v);
+    if (depth > 6) return '"~"';
+    if (Array.isArray(v)) return '[' + v.map((x) => stable(x, depth + 1)).join(',') + ']';
+    return '{' + Object.keys(v).filter((k) => k[0] !== '_').sort().map((k) => JSON.stringify(k) + ':' + stable(v[k], depth + 1)).join(',') + '}';
+}
+function fnv(str, seed) {
+    let h = seed >>> 0;
+    for (let i = 0; i < str.length; i += 1) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h.toString(16).padStart(8, '0');
+}
+
+/**
+ * A short fingerprint of everything the server derives notices from, or '' when no record has ever carried the switch.
+ * Records that have the field (on OR off) count, so switching one off is a change; a payment the owner confirmed counts, so
+ * confirming one is a change; an expense or a note elsewhere in the books is not.
+ */
+export function signatureOf(user) {
+    const u = user && typeof user === 'object' ? user : {};
+    const parts = [];
+    const recv = u.incomeReceived && typeof u.incomeReceived === 'object' ? u.incomeReceived : {};
+    for (const rec of Array.isArray(u.income) ? u.income : []) {
+        if (!rec || rec[SMS_FIELDS.ENABLED] === undefined) continue;
+        parts.push('I' + stable(rec));
+        const prefix = s(rec.id) + '_';
+        for (const k of Object.keys(recv).sort()) if (k.startsWith(prefix)) parts.push('R' + k + stable(recv[k]));
+    }
+    for (const rec of Array.isArray(u.debtors) ? u.debtors : []) {
+        if (!rec || rec[SMS_FIELDS.ENABLED] === undefined) continue;
+        parts.push('D' + stable(rec));
+    }
+    if (!parts.length) return '';
+    parts.push('C' + s(u.settings && u.settings.currency));
+    const text = parts.join('\n');
+    return fnv(text, 2166136261) + fnv(text, 0x9747b28c) + '-' + text.length.toString(36);
+}
+
+/** How many records have the switch on. */
+export function countOn(user) {
+    const u = user && typeof user === 'object' ? user : {};
+    const on = (r) => !!r && r[SMS_FIELDS.ENABLED] === true;
+    return (Array.isArray(u.income) ? u.income.filter(on).length : 0) + (Array.isArray(u.debtors) ? u.debtors.filter(on).length : 0);
+}
+
+/**
+ * The page's notifier. Everything it touches is injected, so every branch runs without a browser.
+ *   deps: { getUser, getUid, getIdToken(forceRefresh), fetchImpl, now, storage, setTimer, clearTimer, onState, abort }
+ */
+export function createNotifier(deps) {
+    const now = deps.now || (() => Date.now());
+    const setTimer = deps.setTimer || ((fn, ms) => setTimeout(fn, ms));
+    const clearTimer = deps.clearTimer || ((t) => clearTimeout(t));
+    const st = { timer: null, inFlight: false, disabled: false, retries: 0, throttled: 0, drains: 0, lastKickAt: 0, lastSummary: null, lastError: null, pending: null };
+    const emit = () => { try { if (deps.onState) deps.onState({ disabled: st.disabled, lastSummary: st.lastSummary, lastError: st.lastError, busy: st.inFlight }); } catch (_) { /* a listener must not break the notifier */ } };
+    const sigKey = (uid) => 'wf_sms_sig_' + uid;
+    const readSig = (uid) => safeStorage(deps.storage, (x) => (x ? x.getItem(sigKey(uid)) : '') || '') || '';
+    const writeSig = (uid, sig) => safeStorage(deps.storage, (x) => { if (x) x.setItem(sigKey(uid), sig); });
+
+    function schedule(ms, ctx) {
+        if (st.timer) clearTimer(st.timer);
+        st.pending = ctx;
+        st.timer = setTimer(() => { st.timer = null; const c = st.pending; st.pending = null; run(c); }, ms);
+    }
+
+    async function post(token, body) {
+        const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+        const timer = ctl ? setTimeout(() => ctl.abort(), CLIENT.FETCH_TIMEOUT_MS) : null;
+        try {
+            const r = await deps.fetchImpl(CLIENT.ENDPOINT, {
+                method: 'POST',
+                headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                ...(ctl ? { signal: ctl.signal } : {}),
+            });
+            let json = null;
+            try { json = await r.json(); } catch (_) { json = null; }
+            return { status: r.status, body: json };
+        } finally { if (timer) clearTimeout(timer); }
+    }
+
+    /** One look. Never throws. */
+    async function run(ctx = {}) {
+        if (st.disabled) return { skipped: 'disabled' };
+        const uid = deps.getUid();
+        if (!uid) return { skipped: 'no-user' };
+        if (st.inFlight) { schedule(CLIENT.DEBOUNCE_MS, ctx); return { skipped: 'busy' }; }
+        const sig = ctx.sig !== undefined ? ctx.sig : signatureOf(deps.getUser());
+        st.inFlight = true; emit();
+        try {
+            let res = null;
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                let token = null;
+                try { token = await deps.getIdToken(attempt > 0); } catch (_) { token = null; }
+                if (!token) { st.lastError = 'not signed in'; res = null; break; }
+                res = await post(token, { force: !!ctx.force, reason: s(ctx.reason).slice(0, 20) });
+                if (res.status !== 401) break;                          // a stale token gets one forced refresh
+            }
+            st.lastKickAt = now();
+            if (!res) { backoff(ctx, sig); return { failed: 'no-token' }; }
+            if (res.status === 403) { st.disabled = true; st.lastError = 'This account is not enabled for SMS notifications.'; return { disabled: true }; }
+            if (res.status === 200 && res.body && res.body.throttled) {
+                if (st.throttled < 2) { st.throttled += 1; schedule(CLIENT.THROTTLE_RETRY_MS, { ...ctx, sig }); }
+                return { throttled: true };
+            }
+            if (res.status === 200 && res.body && res.body.ok) {
+                st.retries = 0; st.throttled = 0; st.lastError = null;
+                st.lastSummary = res.body.summary || null;
+                writeSig(uid, sig);
+                const sm = st.lastSummary || {};
+                const waiting = num(sm.held) + num(sm.retry) + num(sm.remaining);
+                if (waiting > 0 && st.drains < CLIENT.MAX_DRAINS) { st.drains += 1; schedule(CLIENT.DRAIN_MS, { sig, reason: 'drain' }); }
+                return { ok: true, summary: st.lastSummary };
+            }
+            st.lastError = 'The server answered ' + res.status + '.';
+            backoff(ctx, sig);
+            return { failed: res.status };
+        } catch (e) {
+            st.lastError = 'Could not reach the server.';
+            backoff(ctx, sig);
+            return { failed: 'network' };
+        } finally { st.inFlight = false; emit(); }
+    }
+
+    function backoff(ctx, sig) {
+        if (st.retries >= CLIENT.RETRY_MS.length) return;                 // the daily sweep is the net from here
+        const wait = CLIENT.RETRY_MS[st.retries];
+        st.retries += 1;
+        schedule(wait, { ...ctx, sig });
+    }
+
+    return {
+        state: st,
+        run,
+        /** Call after every successful push to the cloud. Cheap when nothing relevant changed. */
+        afterPush() {
+            try {
+                if (st.disabled) return false;
+                const uid = deps.getUid();
+                if (!uid) return false;
+                const sig = signatureOf(deps.getUser());
+                const prev = readSig(uid);
+                if (sig === prev) return false;
+                schedule(CLIENT.DEBOUNCE_MS, { sig, reason: 'save' });
+                return true;
+            } catch (_) { return false; }
+        },
+        /** Once when the page opens, and when it comes back to the front after a while: drain anything held. */
+        onOpen(reason = 'open') {
+            try {
+                if (st.disabled) return false;
+                const uid = deps.getUid();
+                if (!uid) return false;
+                const sig = signatureOf(deps.getUser());
+                if (!sig && !readSig(uid)) return false;                      // this account has never used SMS: no request at all
+                if (st.timer) return false;
+                schedule(reason === 'open' ? CLIENT.OPEN_DELAY_MS : CLIENT.DEBOUNCE_MS, { sig, reason });
+                return true;
+            } catch (_) { return false; }
+        },
+        cancel() { if (st.timer) clearTimer(st.timer); st.timer = null; st.pending = null; },
+        resetFor() { st.disabled = false; st.retries = 0; st.throttled = 0; st.drains = 0; st.lastSummary = null; st.lastError = null; },
+    };
+}
+
+/* ── 3. the alert ─────────────────────────────────────────────────────────── */
+
+export const ALERT_TITLE = 'Admin Alert: SMS Delivered Successfully to Tenant';
+
+/** The line the page shows for one mirror document, or null when there is nothing to say. */
+export function toastFor(doc) {
+    if (!doc || typeof doc !== 'object') return null;
+    const where = s(doc.to);
+    const ref = s(doc.ref);
+    if (doc.status === 'sent') return { tone: 'success', text: s(doc.alert) || ALERT_TITLE, detail: [where && 'to ' + where, ref].filter(Boolean).join(', ') };
+    if (doc.status === 'failed') return { tone: 'error', text: 'SMS could not be delivered', detail: [where && 'to ' + where, ref, doc.error && doc.error.message].filter(Boolean).join(', ') };
+    return null;
+}
+
+/**
+ * Decide what to announce for a snapshot of the log. Pure.
+ *   rows:   mirror documents, each with its `id`
+ *   memory: { seenSentAt:number, boundaryIds:Set<string>, knownFailed:Set<string>, first:boolean }
+ * -> { toasts:[{tone,text,detail}], seenSentAt, boundaryIds, knownFailed }
+ *
+ * A delivery is announced once (by its sentAt, which only grows); after time away the first look gives one summary rather than
+ * a pile. A failure is announced when it BECOMES a failure while the page is open, not for every old one on every load.
+ */
+export function announce(rows, memory = {}) {
+    const seen = num(memory.seenSentAt);
+    const boundary = new Set(memory.boundaryIds || []);
+    const known = new Set(memory.knownFailed || []);
+    const list = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id && r.id !== '_status');
+    // A sweep stamps every message it sends with ONE time, so several deliveries share a sentAt, and the snapshots that report them
+    // arrive one write at a time. "Newer than the last one announced" alone would announce the first and swallow the rest, so the
+    // ids already announced at the boundary time are remembered too.
+    const isFresh = (r) => r.status === 'sent' && (num(r.sentAt) > seen || (num(r.sentAt) === seen && seen > 0 && !memory.first && !boundary.has(r.id)));
+    const fresh = list.filter(isFresh).sort((a, b) => num(a.sentAt) - num(b.sentAt));
+    const toasts = [];
+    if (fresh.length > CLIENT.MAX_TOASTS) {
+        toasts.push({ tone: 'success', text: ALERT_TITLE, detail: fresh.length + ' messages were delivered' + (memory.first ? ' since you were last here' : '') });
+    } else {
+        for (const r of fresh) toasts.push(toastFor(r));
+    }
+    let newest = seen;
+    for (const r of fresh) newest = Math.max(newest, num(r.sentAt));
+    const nextBoundary = newest > seen ? new Set() : boundary;
+    for (const r of fresh) if (num(r.sentAt) === newest) nextBoundary.add(r.id);
+    // after a reload the ids announced at the boundary time are not remembered; what the log already holds at that time was announced (or is accepted as old)
+    if (memory.first && newest === seen) for (const r of list) if (r.status === 'sent' && num(r.sentAt) === seen) nextBoundary.add(r.id);
+    const failedNow = list.filter((r) => r.status === 'failed');
+    for (const r of failedNow) {
+        const k = r.id + ':' + num(r.updatedAt);
+        if (!known.has(k) && !memory.first) toasts.push(toastFor(r));
+        known.add(k);
+    }
+    return { toasts: toasts.filter(Boolean), seenSentAt: newest, boundaryIds: nextBoundary, knownFailed: known };
+}
+
+/**
+ * Listen to the mirror and announce. Returns the unsubscribe function.
+ *   deps: { firestore, uid, storage, onToast(t), onRows(rows, status), onError(e) }
+ */
+export function watchSmsLog(deps) {
+    const key = 'wf_sms_seen_' + deps.uid;
+    let memory = { seenSentAt: num(safeStorage(deps.storage, (x) => (x ? x.getItem(key) : 0))), boundaryIds: new Set(), knownFailed: new Set(), first: true };
+    let q;
+    try {
+        q = deps.firestore.collection('users').doc(deps.uid).collection('smsLog').orderBy('updatedAt', 'desc').limit(CLIENT.LOG_LIMIT);
+    } catch (e) { if (deps.onError) deps.onError(e); return () => {}; }
+    return q.onSnapshot((snap) => {
+        try {
+            const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const out = announce(rows, memory);
+            memory = { seenSentAt: out.seenSentAt, boundaryIds: out.boundaryIds, knownFailed: out.knownFailed, first: false };
+            if (out.seenSentAt > 0) safeStorage(deps.storage, (x) => { if (x) x.setItem(key, String(out.seenSentAt)); });
+            for (const t of out.toasts) if (deps.onToast) deps.onToast(t);
+            if (deps.onRows) deps.onRows(rows.filter((r) => r.id !== '_status'), rows.find((r) => r.id === '_status') || null);
+        } catch (e) { if (deps.onError) deps.onError(e); }
+    }, (e) => { if (deps.onError) deps.onError(e); });
+}
+
+/* ── 4. the log panel ─────────────────────────────────────────────────────── */
+
+const HOLD_TEXT = {
+    'credit': 'Waiting for SMS credit. It will go out after the top-up.',
+    'auth': 'Waiting for the gateway token to be fixed.',
+    'sender': 'Waiting for the sender ID to be approved.',
+    'config': 'The SMS gateway is not set up yet.',
+    'cap': 'Daily sending limit reached. It will go out tomorrow.',
+    'rate-limit': 'The gateway asked us to slow down. Trying again.',
+    'network': 'Could not reach the gateway. Trying again.',
+    'timeout': 'The gateway was slow to answer. Trying again.',
+    'server': 'The gateway had a problem. Trying again.',
+    'unknown': 'The gateway gave an unclear answer. Trying again.',
+};
+const ISSUE_TEXT = {
+    'no-phone': 'has no phone number, so nothing is sent',
+    'phone-bad-length': 'has a phone number with the wrong number of digits',
+    'phone-not-a-mobile-number': 'has a phone number that is not a mobile number',
+    'phone-needs-country-code': 'has a phone number with no country code',
+    'phone-not-a-number': 'has a phone number with characters that are not allowed',
+    'phone-misplaced-plus': 'has a phone number with a misplaced +',
+    'phone-empty': 'has no phone number, so nothing is sent',
+    'no-enable-stamp': 'was switched on without a date; open it and save it again',
+    'future-enable-stamp': 'was switched on with a date in the future (check this device\'s clock); open it and save it again',
+};
+
+/** One line for the status card: what is switched on but cannot work. `nameOf(kind, id)` supplies the record's name. */
+export function describeIssue(issue, nameOf) {
+    const i = issue || {};
+    let name = '';
+    try { name = nameOf ? s(nameOf(i.recordKind, i.recordId)) : ''; } catch (_) { name = ''; }
+    const who = name || (i.recordKind === 'debtor' ? 'A debtor' : 'An investment');
+    return who + ' ' + (ISSUE_TEXT[i.reason] || 'cannot send texts yet');
+}
+
+const STATUS_WORDS = { sent: 'Delivered', queued: 'Waiting', sending: 'Sending', failed: 'Failed', expired: 'Expired', cancelled: 'Cancelled' };
+
+/** The rows of the log, newest first, as plain objects the page can draw. */
+export function rowsOf(docs, nowMs = Date.now()) {
+    return (Array.isArray(docs) ? docs : [])
+        .filter((d) => d && d.id && d.id !== '_status')
+        .sort((a, b) => num(b.occurredAt) - num(a.occurredAt))
+        .map((d) => {
+            let note = '';
+            if (d.status === 'queued') note = HOLD_TEXT[d.error && d.error.kind] || (num(d.nextAttemptAt) > nowMs ? 'Scheduled for a later time.' : 'Waiting to be sent.');
+            else if (d.status === 'failed') note = s(d.error && d.error.message) || 'The gateway refused this message.';
+            else if (d.status === 'expired') note = 'Held too long to still be news, so it was not sent.';
+            else if (d.status === 'cancelled') note = 'Switched off or changed before it was sent.';
+            else if (d.status === 'sent' && d.possiblyDuplicated) note = 'May have been delivered twice after a gateway timeout.';
+            return {
+                id: d.id, status: d.status, label: STATUS_WORDS[d.status] || s(d.status), to: s(d.to), ref: s(d.ref), body: s(d.body),
+                at: num(d.sentAt) || num(d.occurredAt), note, layer: s(d.layer),
+            };
+        });
+}
+
+/** The whole panel as markup. Everything is escaped. */
+export function panelHtml({ rows = [], status = null, disabled = false, lastError = '', nameOf = null, fmtWhen = null } = {}) {
+    const when = (ms) => { if (!ms) return ''; try { return fmtWhen ? fmtWhen(ms) : new Date(ms).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
+    const colour = { sent: 'var(--green,#30a46c)', failed: 'var(--red,#e5484d)', queued: 'var(--amber,#f5a623)', sending: 'var(--amber,#f5a623)' };
+    const lines = [];
+    if (disabled) lines.push('SMS notifications are not enabled for this account. Ask the administrator to add your email to SMS_ALLOWED_EMAILS.');
+    if (status && status.configured === false) lines.push('The SMS gateway is not connected yet: texts are queued and nothing is lost. Add TEXTLK_API_TOKEN to the deployment settings.');
+    if (status && status.lowCredit) lines.push('SMS credit is running low' + (num(status.units) ? ' (' + num(status.units) + ' units left)' : '') + '. Messages are held, not dropped, when it runs out.');
+    for (const i of (status && Array.isArray(status.issues) ? status.issues : []).slice(0, 8)) lines.push(describeIssue(i, nameOf));
+    if (lastError) lines.push(lastError);
+    const notes = lines.length
+        ? '<div style="background:rgba(245,166,35,.12);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;line-height:1.6;">' + lines.map((l) => '<div>' + esc(l) + '</div>').join('') + '</div>'
+        : '';
+    const body = rows.length
+        ? rows.map((r) => '<div style="padding:10px 0;border-top:1px solid var(--border,rgba(128,128,128,.2));">'
+            + '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;">'
+            + '<span style="font-weight:700;color:' + (colour[r.status] || 'inherit') + ';">' + esc(r.label) + '</span>'
+            + '<span style="color:var(--text3);">' + esc(when(r.at)) + '</span></div>'
+            + '<div style="font-size:12px;color:var(--text3);margin-top:2px;">' + esc([r.to && 'to ' + r.to, r.ref].filter(Boolean).join('  ')) + '</div>'
+            + '<div style="font-size:12.5px;margin-top:4px;word-break:break-word;">' + esc(r.body) + '</div>'
+            + (r.note ? '<div style="font-size:11.5px;color:var(--text3);margin-top:4px;">' + esc(r.note) + '</div>' : '')
+            + '</div>').join('')
+        : '<div style="padding:18px 0;text-align:center;color:var(--text3);font-size:13px;">No text messages yet. Switch "Send SMS notifications" on for an investment or a debtor and the notices appear here.</div>';
+    return notes + body;
+}
+
+/* ── the browser glue ─────────────────────────────────────────────────────── */
+
+/** Show the log in the app's own overlay. */
+export function openPanel(win, getModel) {
+    const doc = win.document;
+    const overlay = doc.createElement('div');
+    overlay.className = 'mo';
+    const draw = () => { const host = overlay.querySelector('#_wf_sms_body'); if (host) host.innerHTML = panelHtml(getModel()); };
+    overlay.innerHTML = '<div class="md" style="max-width:480px;"><div class="md-hdr"><div class="md-title">Text messages</div>'
+        + '<button class="md-x" aria-label="Close" id="_wf_sms_x"><i data-wfi="x"></i></button></div><div id="_wf_sms_body" style="max-height:65vh;overflow:auto;"></div></div>';
+    doc.body.appendChild(overlay);
+    win.requestAnimationFrame(() => overlay.classList.add('open'));
+    const close = () => { overlay.classList.remove('open'); win.setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230); win.__wfSmsRedraw = null; };
+    overlay.querySelector('#_wf_sms_x').onclick = close;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    try { if (win.WFIcon && win.WFIcon.paint) win.WFIcon.paint(overlay); } catch (_) { /* icons are decoration */ }
+    win.__wfSmsRedraw = draw;
+    draw();
+    return overlay;
+}
+
+/** Wire the notifier and the listener to the running app. Safe to call more than once; never throws. */
+export function boot(win) {
+    const now = () => Date.now();
+    const live = { uid: null, unsub: null, notifier: null, rows: [], status: null, timer: null, bound: false, told: false };
+    const decoy = () => win._isDecoyMode === true;
+    const storage = (() => { try { return win.localStorage; } catch (_) { return null; } })();
+    const toast = (t) => { try { if (typeof win.notify === 'function') win.notify(t.text + (t.detail ? ' (' + t.detail + ')' : ''), t.tone === 'error' ? 'error' : 'success'); } catch (_) { /* a toast is a courtesy */ } };
+    const nameOf = (kind, id) => {
+        try {
+            const list = kind === 'debtor' ? win.appData.debtors : win.appData.income;
+            const r = (list || []).find((x) => x && x.id === id);
+            return r ? s(r.name || r.company) : '';
+        } catch (_) { return ''; }
+    };
+
+    function start() {
+        if (decoy() || !win.currentUser || !win.currentUser.uid || !win.appData) return false;
+        const uid = win.currentUser.uid;
+        if (live.uid === uid) return true;
+        stop();
+        live.uid = uid;
+        live.notifier = createNotifier({
+            getUser: () => (decoy() ? null : win.appData),
+            getUid: () => (decoy() ? '' : (win.currentUser && win.currentUser.uid) || ''),
+            getIdToken: (force) => win.currentUser.getIdToken(!!force),
+            fetchImpl: (...a) => win.fetch(...a),
+            storage,
+            onState: (state) => {
+                if (state.disabled && !live.told) { live.told = true; toast({ tone: 'error', text: 'SMS notifications are not enabled for this account', detail: '' }); }
+                if (win.__wfSmsRedraw) win.__wfSmsRedraw();
+            },
+        });
+        try {
+            live.unsub = watchSmsLog({
+                firestore: win.firebase.firestore(), uid, storage, onToast: toast,
+                onRows: (rows, status) => { live.rows = rows; live.status = status; if (win.__wfSmsRedraw) win.__wfSmsRedraw(); },
+                onError: () => { /* the listener is the alert, not the delivery: a denied read costs the toast only */ },
+            });
+        } catch (_) { live.unsub = null; }
+        live.notifier.onOpen('open');
+        if (!live.bound) {
+            live.bound = true;
+            const again = () => { if (live.notifier && win.document.visibilityState !== 'hidden' && now() - (live.notifier.state.lastKickAt || 0) > CLIENT.DRAIN_MS) live.notifier.onOpen('resume'); };
+            win.document.addEventListener('visibilitychange', again);
+            win.addEventListener('online', again);
+        }
+        return true;
+    }
+    function stop() {
+        try { if (live.unsub) live.unsub(); } catch (_) { /* already gone */ }
+        if (live.notifier) live.notifier.cancel();
+        live.unsub = null; live.notifier = null; live.uid = null; live.rows = []; live.status = null;
+    }
+    const api = {
+        applyToggle, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, SMS_FIELDS,
+        start,
+        afterPush() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.afterPush(); } catch (_) { /* never into the sync path */ } },
+        kickNow() { if (live.notifier) return live.notifier.run({ force: true, reason: 'manual' }); return Promise.resolve({ skipped: 'not-started' }); },
+        openPanel() {
+            start();
+            return openPanel(win, () => ({ rows: rowsOf(live.rows, now()), status: live.status, disabled: !!(live.notifier && live.notifier.state.disabled), lastError: (live.notifier && live.notifier.state.lastError) || '', nameOf }));
+        },
+    };
+    // a signed-in page can appear at any time (login screen, a second account): look until it does, then stop looking
+    live.timer = win.setInterval(() => { if (start()) { win.clearInterval(live.timer); live.timer = null; } }, 4000);
+    return api;
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.__WF_SMS_NO_BOOT) {
+    try { window.WFSms = boot(window); } catch (e) { console.warn('[WF-SMS] page side did not start:', e && e.message); }
+}
+
+export default { SMS_FIELDS, CLIENT, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, watchSmsLog, rowsOf, panelHtml, describeIssue };

@@ -189,6 +189,10 @@
     {
       "path": "/api/statement-sync",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/sms-sweep",
+      "schedule": "0 4 * * *"
     }
   ]
 }
