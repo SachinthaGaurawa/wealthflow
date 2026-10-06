@@ -25,11 +25,14 @@
 import { normalizePhone } from './wealthflow-phone.js';
 import { phoneProblem as phoneText, idProblem, storedId, idKindOf } from './wealthflow-people.js';
 
-/** The record fields. The server reads the same seven; a test pins that they agree (sms-events.mjs FIELDS). */
+/** The record fields. The server reads the same ten; a test pins that they agree (sms-events.mjs FIELDS). */
 export const SMS_FIELDS = Object.freeze({
     ENABLED: 'sms_notifications_enabled',
     ENABLED_AT: 'sms_enabled_at',
     PHONE: 'phone',
+    PHONE2: 'phone2',
+    PHONE2_AT: 'phone2_at',
+    CLOSED_AT: 'closedAt',
     NIC: 'nic',
     REQUESTS: 'sms_requests',
     REMIND: 'sms_remind_late',
@@ -70,8 +73,11 @@ export function carry(prev) {
 /**
  * Validate what the owner entered and return the fields to merge into the record.
  *
- *   input: { enabled:boolean, phone:string, country?:string, nic:string, idKind?:'nic'|'other' }
- *   -> { ok:true, fields }  or  { ok:false, errors:{ phone?, nic? } }
+ *   input: { enabled:boolean, phone:string, country?:string, phone2?:string, country2?:string, nic:string, idKind?:'nic'|'other' }
+ *   -> { ok:true, fields }  or  { ok:false, errors:{ phone?, phone2?, nic? } }
+ *
+ * `phone2` is an optional second mobile number: every text goes to it as well. Left out, the record keeps the one it has; blank, it is removed.
+ * It must be a real mobile number and not the first number again. `country2` is its region when it is typed without a country code (default: `country`).
  *
  * `country` is the region a number typed without a country code belongs to (default Sri Lanka). The number is stored as E.164, so it means
  * the same thing on every device, and to the server, in whatever country it is. `idKind` 'other' is a passport or national ID for somebody
@@ -87,6 +93,18 @@ export function applyToggle(prev, input, now = Date.now()) {
     const phoneRaw = s(input.phone).trim();
     const phone = normalizePhone(phoneRaw, input.country ? { defaultCountry: input.country } : undefined);
     if (!phone.ok) errors.phone = phoneProblem(phone.reason);
+    let phone2 = null;                                          // undefined in the input: leave what the record has
+    if (input.phone2 !== undefined) {
+        const raw2 = s(input.phone2).trim();
+        if (!raw2) phone2 = '';
+        else {
+            const c2 = input.country2 || input.country;
+            const n2 = normalizePhone(raw2, c2 ? { defaultCountry: c2 } : undefined);
+            if (!n2.ok) errors.phone2 = 'Second number: ' + phoneProblem(n2.reason);
+            else if (phone.ok && n2.e164 === phone.e164) errors.phone2 = 'The second number is the same as the first. Leave it empty or enter a different number.';
+            else phone2 = n2.e164;
+        }
+    }
     const kind = input.idKind === 'other' || idKindOf(input.nic) === 'other' ? 'other' : 'nic';
     const id = storedId(input.nic, kind);
     if (!id.ok) errors.nic = id.text;
@@ -96,6 +114,12 @@ export function applyToggle(prev, input, now = Date.now()) {
         [SMS_FIELDS.ENABLED]: true,
         [SMS_FIELDS.ENABLED_AT]: keep ? num(p[SMS_FIELDS.ENABLED_AT]) : now,
         [SMS_FIELDS.PHONE]: phone.e164,
+        ...(phone2 === null ? {} : {
+            [SMS_FIELDS.PHONE2]: phone2,
+            // when this number was added: what happened before is history for it, so a number added today is not sent last month's receipts.
+            // Kept while the number stays the same, restamped when it changes; 0 when there is none. Without a stamp the server counts from the switch-on.
+            [SMS_FIELDS.PHONE2_AT]: phone2 ? (s(p[SMS_FIELDS.PHONE2]) === phone2 && num(p[SMS_FIELDS.PHONE2_AT]) > 0 ? num(p[SMS_FIELDS.PHONE2_AT]) : now) : 0,
+        }),
         [SMS_FIELDS.NIC]: id.stored,
     };
     // Late-payment reminders (a debtor only: the caller passes the box). The moment it was ticked is kept while it stays ticked, so editing a record
@@ -106,6 +130,37 @@ export function applyToggle(prev, input, now = Date.now()) {
         if (input.remindLate === true) fields[SMS_FIELDS.REMIND_AT] = was ? num(p[SMS_FIELDS.REMIND_AT]) : now;
     }
     return { ok: true, errors: {}, fields };
+}
+
+/* ── closing an investment ────────────────────────────────────────────────── */
+
+/** What an investment remembers about being closed, besides the `closedAt` stamp the server reads: the end date it had before, so re-opening puts it back. */
+export const CLOSED_END_WAS = 'closedEndWas';
+
+/**
+ * The owner has been settled in full: stamp the investment closed. The stamp is the news (the server sends the investor one "fully settled" text for it,
+ * once, if texts are on), and the end date is brought to today when it was empty or still ahead, so the investment moves to Ended and no more interest is
+ * expected from it. The end date it had is kept (`closedEndWas`) for re-opening. Returns a NEW record; the one passed in is not changed.
+ *   -> { ok:true, record } | { ok:false, reason:'already-closed'|'no-record'|'no-date' }
+ */
+export function closeInvestment(rec, { now = Date.now(), todayISO = '' } = {}) {
+    if (!rec || typeof rec !== 'object') return { ok: false, reason: 'no-record' };
+    if (num(rec[SMS_FIELDS.CLOSED_AT]) > 0) return { ok: false, reason: 'already-closed' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s(todayISO))) return { ok: false, reason: 'no-date' };
+    const out = { ...rec, [SMS_FIELDS.CLOSED_AT]: now };
+    const end = s(rec.end).slice(0, 10);
+    if (!end || end > todayISO) { out[CLOSED_END_WAS] = end; out.end = todayISO; }
+    return { ok: true, record: out };
+}
+
+/** Undo closeInvestment: the investment is running again and the end date it had comes back. A later close is news again (a new stamp, a new text). */
+export function reopenInvestment(rec) {
+    if (!rec || typeof rec !== 'object') return { ok: false, reason: 'no-record' };
+    if (!(num(rec[SMS_FIELDS.CLOSED_AT]) > 0)) return { ok: false, reason: 'not-closed' };
+    const out = { ...rec };
+    delete out[SMS_FIELDS.CLOSED_AT];
+    if (CLOSED_END_WAS in out) { out.end = s(out[CLOSED_END_WAS]); delete out[CLOSED_END_WAS]; }
+    return { ok: true, record: out };
 }
 
 /* ── the balance on request ───────────────────────────────────────────────── */
@@ -147,8 +202,9 @@ export function requestBalance(rec, { now = Date.now(), newId = newRequestId } =
 }
 
 const COPY = {
-    A: 'Texts the investor when capital is recorded, when interest is applied and when a payment is received.',
-    B: 'Texts the debtor when a loan is paid out and when a repayment is confirmed (with the balance that is left). Loans never carry interest, so no interest is ever calculated or sent.',
+    A: 'Texts the investor when capital is recorded, when interest is applied, when a payment is received and, separately, when you close the investment as fully settled.',
+    B: 'Texts the debtor when a loan is paid out and when a repayment is confirmed (with the balance that is left), and sends one more, separate text when the loan is fully settled and closed. Loans never carry interest, so no interest is ever calculated or sent.',
+    SECOND: ' An optional second mobile number gets every one of these texts too (each text costs a unit per number).',
     PORTAL: ' Works for a mobile number in any country. With an NIC or a passport / ID number, each text carries a private link to a statement page; the person sees it only after entering that number and a one-time code sent to the mobile number above.',
 };
 
@@ -170,7 +226,7 @@ export function blockHtml(prefix, { layer = 'A', record = null } = {}) {
               + '<span>Also remind when a payment is late. One text the day after the \u201cExpected back by\u201d date, then one a week later, at most four, only while money is still owed. Needs that date.</span></label>'
             : '')
         + '<div id="' + id + '_err" role="alert" style="color:var(--red,#e5484d);font-size:12px;margin-top:4px;"></div>'
-        + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5;">' + esc(COPY[layer === 'B' ? 'B' : 'A'] + COPY.PORTAL) + '</div>'
+        + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5;">' + esc(COPY[layer === 'B' ? 'B' : 'A'] + COPY.SECOND + COPY.PORTAL) + '</div>'
         + '</div>';
 }
 
@@ -501,6 +557,11 @@ const ISSUE_TEXT = {
     'future-enable-stamp': 'was switched on with a date in the future (check this device\'s clock); open it and save it again',
 };
 
+// the second number has the same ways to be wrong; the first number's texts are not held back by it
+for (const k of Object.keys(ISSUE_TEXT)) {
+    if (k.startsWith('phone-') && k !== 'phone-empty') ISSUE_TEXT['phone2-' + k.slice(6)] = ISSUE_TEXT[k].replace('has a phone number', 'has a second phone number') + ' (the first number still gets its texts)';
+}
+
 /** One line for the status card: what is switched on but cannot work. `nameOf(kind, id)` supplies the record's name. */
 export function describeIssue(issue, nameOf) {
     const i = issue || {};
@@ -533,7 +594,7 @@ export function rowsOf(docs, nowMs = Date.now()) {
             else if (d.status === 'sent' && d.possiblyDuplicated) note = 'May have been delivered twice after a gateway timeout.';
             return {
                 id: d.id, status: d.status, label: STATUS_WORDS[d.status] || s(d.status), to: s(d.to), ref: s(d.ref), body: s(d.body),
-                at: num(d.sentAt) || num(d.occurredAt), note, layer: s(d.layer),
+                at: num(d.sentAt) || num(d.occurredAt), note, layer: s(d.layer), second: /:2$/.test(s(d.key)),
             };
         });
 }
@@ -556,7 +617,7 @@ export function panelHtml({ rows = [], status = null, disabled = false, lastErro
             + '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;">'
             + '<span style="font-weight:700;color:' + (colour[r.status] || 'inherit') + ';">' + esc(r.label) + '</span>'
             + '<span style="color:var(--text3);">' + esc(when(r.at)) + '</span></div>'
-            + '<div style="font-size:12px;color:var(--text3);margin-top:2px;">' + esc([r.to && 'to ' + r.to, r.ref].filter(Boolean).join('  ')) + '</div>'
+            + '<div style="font-size:12px;color:var(--text3);margin-top:2px;">' + esc([r.to && 'to ' + r.to + (r.second ? ' (second number)' : ''), r.ref].filter(Boolean).join('  ')) + '</div>'
             + '<div style="font-size:12.5px;margin-top:4px;word-break:break-word;">' + esc(r.body) + '</div>'
             + (r.note ? '<div style="font-size:11.5px;color:var(--text3);margin-top:4px;">' + esc(r.note) + '</div>' : '')
             + '</div>').join('')
@@ -640,7 +701,7 @@ export function boot(win) {
         live.unsub = null; live.notifier = null; live.uid = null; live.rows = []; live.status = null;
     }
     const api = {
-        applyToggle, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, SMS_FIELDS, BALANCE, balanceWaitMs, requestBalance,
+        applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, SMS_FIELDS, BALANCE, balanceWaitMs, requestBalance,
         start,
         afterPush() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.afterPush(); } catch (_) { /* never into the sync path */ } },
         kickNow() { if (live.notifier) return live.notifier.run({ force: true, reason: 'manual' }); return Promise.resolve({ skipped: 'not-started' }); },
@@ -668,4 +729,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFSms = boot(window); } catch (e) { console.warn('[WF-SMS] page side did not start:', e && e.message); }
 }
 
-export default { SMS_FIELDS, CLIENT, BALANCE, balanceWaitMs, requestBalance, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue };
+export default { SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue };

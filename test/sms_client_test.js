@@ -11,15 +11,15 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-    SMS_FIELDS, CLIENT, BALANCE, balanceWaitMs, requestBalance, applyToggle, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue, ALERT_TITLE, boot,
+    SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue, ALERT_TITLE, boot,
 } from '../wealthflow-sms.js';
 import { FIELDS } from '../sms-events.mjs';
 
 const T0 = Date.parse('2026-10-05T05:00:00Z');
 
 describe('the fields are the server\'s fields', () => {
-    it('the page and the server read and write the same seven names', () => {
-        expect(SMS_FIELDS).toEqual({ ENABLED: FIELDS.ENABLED, ENABLED_AT: FIELDS.ENABLED_AT, PHONE: FIELDS.PHONE, NIC: FIELDS.NIC, REQUESTS: FIELDS.REQUESTS, REMIND: FIELDS.REMIND, REMIND_AT: FIELDS.REMIND_AT });
+    it('the page and the server read and write the same ten names', () => {
+        expect(SMS_FIELDS).toEqual({ ENABLED: FIELDS.ENABLED, ENABLED_AT: FIELDS.ENABLED_AT, PHONE: FIELDS.PHONE, PHONE2: FIELDS.PHONE2, PHONE2_AT: FIELDS.PHONE2_AT, CLOSED_AT: FIELDS.CLOSED_AT, NIC: FIELDS.NIC, REQUESTS: FIELDS.REQUESTS, REMIND: FIELDS.REMIND, REMIND_AT: FIELDS.REMIND_AT });
     });
 });
 
@@ -486,6 +486,11 @@ describe('starting up in a page', () => {
         expect(typeof api.afterPush).toBe('function');
     });
 
+    it('hands the page everything its forms call, closing an investment included', () => {
+        const api = boot(fakeWindow().win);
+        for (const name of ['applyToggle', 'closeInvestment', 'reopenInvestment', 'carry', 'blockHtml', 'readBlock', 'showBlockErrors']) expect(typeof api[name], name).toBe('function');
+    });
+
     it('never starts under the duress PIN: the decoy books are not the owner\'s', () => {
         const f = fakeWindow({ _isDecoyMode: true, currentUser: user() });
         const api = boot(f.win);
@@ -735,5 +740,99 @@ describe('the late-payment reminder box (a debtor only)', () => {
         const a = { debtors: [{ id: 'd', [SMS_FIELDS.ENABLED]: true }] };
         const b = { debtors: [{ id: 'd', [SMS_FIELDS.ENABLED]: true, [SMS_FIELDS.REMIND]: true, [SMS_FIELDS.REMIND_AT]: T0 }] };
         expect(signatureOf(a)).not.toBe(signatureOf(b));
+    });
+});
+
+
+describe('the second number', () => {
+    const on = (extra) => applyToggle({}, { enabled: true, phone: '077 123 4567', ...extra }, T0);
+
+    it('is optional: left out it changes nothing, blank it is removed', () => {
+        expect(on({}).fields).not.toHaveProperty('phone2');
+        expect(applyToggle({ phone2: '+94712345678' }, { enabled: true, phone: '077 123 4567' }, T0).fields).not.toHaveProperty('phone2');   // not mentioned: kept by the record
+        expect(on({ phone2: '' }).fields.phone2).toBe('');
+        expect(on({ phone2: '   ' }).fields.phone2).toBe('');
+    });
+
+    it('is stored the way the first one is, in any country', () => {
+        expect(on({ phone2: '071 234 5678' }).fields).toMatchObject({ phone: '+94771234567', phone2: '+94712345678' });
+        expect(on({ phone2: '+44 7911 123456' }).fields.phone2).toBe('+447911123456');
+        expect(on({ phone2: '050 123 4567', country2: 'AE' }).fields.phone2).toBe('+971501234567');
+    });
+
+    it('must be a real mobile number, and not the first number again', () => {
+        const bad = on({ phone2: '011 234 5678' });
+        expect(bad.ok).toBe(false);
+        expect(bad.errors.phone2).toMatch(/^Second number: /);
+        const same = on({ phone2: '+94 77 123 4567' });
+        expect(same.ok).toBe(false);
+        expect(same.errors.phone2).toMatch(/same as the first/);
+        expect(on({ phone2: '0771234567' }).ok).toBe(false);                          // the same number written the local way
+    });
+
+    it('stamps when the number was added: kept while it stays, restamped when it changes, zero when removed', () => {
+        const first = on({ phone2: '071 234 5678' });
+        expect(first.fields.phone2_at).toBe(T0);
+        const later = applyToggle({ ...first.fields }, { enabled: true, phone: '077 123 4567', phone2: '071 234 5678' }, T0 + 5e6);
+        expect(later.fields.phone2_at).toBe(T0);                                                    // an edit that leaves it alone does not make it new
+        const changed = applyToggle({ ...first.fields }, { enabled: true, phone: '077 123 4567', phone2: '+44 7911 123456' }, T0 + 5e6);
+        expect(changed.fields.phone2_at).toBe(T0 + 5e6);
+        expect(applyToggle({ ...first.fields }, { enabled: true, phone: '077 123 4567', phone2: '' }, T0 + 5e6).fields).toMatchObject({ phone2: '', phone2_at: 0 });
+        expect(on({}).fields).not.toHaveProperty('phone2_at');                                      // not mentioned: not touched
+    });
+
+    it('with the switch off nothing about the second number is read or changed', () => {
+        expect(applyToggle({}, { enabled: false, phone2: 'garbage' }).fields).toEqual({ sms_notifications_enabled: false });
+    });
+
+    it('is carried along with the rest when a record is rebuilt', () => {
+        expect(carry({ phone2: '+94712345678', closedAt: 5, name: 'x' })).toEqual({ phone2: '+94712345678', closedAt: 5 });
+    });
+});
+
+describe('closing an investment as fully settled', () => {
+    const inv = (over = {}) => ({ id: 'i1', name: 'FD', company: 'Nimal', amount: 100000, rate: 12, start: '2025-01-01', end: '', ...over });
+
+    it('stamps the moment and moves the end date to today when it was empty or still ahead', () => {
+        const r = closeInvestment(inv(), { now: T0, todayISO: '2026-10-05' });
+        expect(r.ok).toBe(true);
+        expect(r.record).toMatchObject({ closedAt: T0, end: '2026-10-05', closedEndWas: '' });
+        const ahead = closeInvestment(inv({ end: '2027-03-01' }), { now: T0, todayISO: '2026-10-05' });
+        expect(ahead.record).toMatchObject({ closedAt: T0, end: '2026-10-05', closedEndWas: '2027-03-01' });
+    });
+
+    it('leaves an end date that has already passed alone', () => {
+        const r = closeInvestment(inv({ end: '2026-06-30' }), { now: T0, todayISO: '2026-10-05' });
+        expect(r.record).toMatchObject({ closedAt: T0, end: '2026-06-30' });
+        expect(r.record).not.toHaveProperty('closedEndWas');
+    });
+
+    it('never changes the record it was given, and never closes twice', () => {
+        const rec = inv();
+        const r = closeInvestment(rec, { now: T0, todayISO: '2026-10-05' });
+        expect(rec).toEqual(inv());
+        expect(closeInvestment(r.record, { now: T0 + 1, todayISO: '2026-10-05' })).toEqual({ ok: false, reason: 'already-closed' });
+        expect(closeInvestment(null, { now: T0, todayISO: '2026-10-05' }).ok).toBe(false);
+        expect(closeInvestment(rec, { now: T0, todayISO: 'today' })).toEqual({ ok: false, reason: 'no-date' });
+    });
+
+    it('re-opening puts the end date back, and a later close is news again', () => {
+        const closed = closeInvestment(inv({ end: '2027-03-01' }), { now: T0, todayISO: '2026-10-05' }).record;
+        const again = reopenInvestment(closed);
+        expect(again.ok).toBe(true);
+        expect(again.record).toEqual(inv({ end: '2027-03-01' }));
+        const second = closeInvestment(again.record, { now: T0 + 86400e3, todayISO: '2026-10-06' });
+        expect(second.record.closedAt).toBe(T0 + 86400e3);                            // a new stamp: the server's key for the text is new too
+        expect(reopenInvestment(inv())).toEqual({ ok: false, reason: 'not-closed' });
+    });
+
+    it('an investment that was closed after its own end date comes back with that date', () => {
+        const closed = closeInvestment(inv({ end: '2026-06-30' }), { now: T0, todayISO: '2026-10-05' }).record;
+        expect(reopenInvestment(closed).record.end).toBe('2026-06-30');
+    });
+
+    it('CLOSED_END_WAS is the only extra field, and the server does not read it', () => {
+        expect(CLOSED_END_WAS).toBe('closedEndWas');
+        expect(Object.values(FIELDS)).not.toContain(CLOSED_END_WAS);
     });
 });

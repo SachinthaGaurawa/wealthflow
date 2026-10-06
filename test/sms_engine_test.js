@@ -784,3 +784,112 @@ describe('late-payment reminders through the queue', () => {
         expect(lateDocs(fs)).toHaveLength(0);
     });
 });
+
+describe('a second number: every text goes to both, each tracked on its own', () => {
+    const with2 = (phone2 = '+44 7911 123456') => { const u = books(); u.debtors[0][FIELDS.PHONE2] = phone2; return u; };
+    const settled = (phone2) => {
+        const u = with2(phone2);
+        u.debtors[0].events[1] = { id: 'e2', kind: 'repayment', amount: 50000, date: '2026-10-05', confirmed: true, at: NOW - 600e3 };
+        return u;
+    };
+
+    it('both numbers get each text, once, and a second sweep sends nothing', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        const a = await run(db, with2(), gw);
+        expect(a).toMatchObject({ derived: 4, sent: 4 });
+        expect(gw.sent.filter((m) => m.to === '+94771234567')).toHaveLength(2);
+        expect(gw.sent.filter((m) => m.to === '+447911123456')).toHaveLength(2);
+        expect(ledger(fs).filter((d) => d.key.endsWith(':2'))).toHaveLength(2);
+        const b = await run(db, with2(), gw);
+        expect(b.sent).toBe(0);
+        expect(gw.sent).toHaveLength(4);
+    });
+
+    it('five sweeps racing still send each text to each number once', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        await Promise.all([1, 2, 3, 4, 5].map(() => run(db, with2(), gw)));
+        expect(gw.sent).toHaveLength(4);
+        expect(ledger(fs).every((d) => d.status === STATUS.SENT && d.attempts === 1)).toBe(true);
+    });
+
+    it('the second number is cancelled before it is sent when the owner takes it off, and the first number is untouched', async () => {
+        const { fs, db } = makeDb();
+        const gw = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: true, message: 'Insufficient balance' }));
+        await run(db, with2(), gw);
+        expect(ledger(fs).every((d) => d.status === STATUS.QUEUED)).toBe(true);
+        const gw2 = gateway();
+        const r = await run(db, books(), gw2, { now: NOW + HOLD_MS + 1000 });
+        expect(r.cancelled).toBe(2);
+        expect(ledger(fs).filter((d) => d.key.endsWith(':2')).every((d) => d.status === STATUS.CANCELLED)).toBe(true);
+        expect(gw2.sent.map((m) => m.to)).toEqual(['+94771234567', '+94771234567']);
+    });
+
+    it('a corrected second number reaches only the second number\'s held texts', async () => {
+        const { fs, db } = makeDb();
+        const gw = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: true, message: 'Insufficient balance' }));
+        await run(db, with2('+44 7911 123456'), gw);
+        const before = ledger(fs).find((d) => d.key === 'B:d1:e1:out');
+        const r = await enqueue({ db, uid: UID, events: deriveEvents(with2('+971 50 123 4567'), NOW).events, now: NOW + 60e3, env, deps: {} });
+        expect(r.rephoned).toBe(2);
+        const after = ledger(fs);
+        expect(after.filter((d) => d.key.endsWith(':2')).every((d) => d.to === '+971501234567')).toBe(true);
+        expect(after.find((d) => d.key === 'B:d1:e1:out')).toEqual(before);
+    });
+
+    it('a number that can never receive fails on its own: the other number still gets its text and nothing is retried', async () => {
+        const { fs, db } = makeDb();
+        const gw = gateway(({ to }) => (to === '+447911123456' ? { ok: false, kind: KIND.DESTINATION, retryable: false, message: 'no route to this country' } : { ok: true, gatewayId: 'g', cost: 1, segments: 1 }));
+        const a = await run(db, with2(), gw);
+        expect(a).toMatchObject({ sent: 2, failed: 2, retry: 0 });
+        expect(ledger(fs).filter((d) => d.to === '+94771234567').every((d) => d.status === STATUS.SENT)).toBe(true);
+        expect(ledger(fs).filter((d) => d.to === '+447911123456').every((d) => d.status === STATUS.FAILED && d.lastError.kind === KIND.DESTINATION)).toBe(true);
+        const calls = gw.sent.length;
+        await run(db, with2(), gw, { now: NOW + 3 * 3600e3 });
+        expect(gw.sent.length).toBe(calls);
+    });
+
+    it('the day\'s limit per number is counted per number: two numbers each get their first text under a limit of one', async () => {
+        const { db } = makeDb(); const gw = gateway();
+        const u = with2();
+        u.debtors[0].events = [{ id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-05', confirmed: true, at: NOW - 1800e3 }];
+        const a = await run(db, u, gw, { limits: { ...LIMITS, perRecipientPerDay: 1 } });
+        expect(a.sent).toBe(2);
+        expect(gw.sent.map((m) => m.to).sort()).toEqual(['+447911123456', '+94771234567']);
+    });
+
+    it('the second number is never given a text the first number was not owed (an unconfirmed repayment is neither)', async () => {
+        const { db } = makeDb(); const gw = gateway();
+        const u = with2();
+        u.debtors[0].events[1].confirmed = false;
+        await run(db, u, gw);
+        expect(gw.sent.filter((m) => m.to === '+447911123456').map((m) => m.message)).toEqual(gw.sent.filter((m) => m.to === '+94771234567').map((m) => m.message));
+        expect(gw.sent.every((m) => !/^Repayment/.test(m.message))).toBe(true);
+    });
+
+    it('the receipt reaches each number before the "loan closed" text, even when the receipt is the slow one', async () => {
+        const { db } = makeDb();
+        const arrived = [];
+        const gw = {
+            configured: true, senderId: 'WEALTHFLOW',
+            async send({ to, message }) {
+                await new Promise((r) => setTimeout(r, /^Repayment/.test(message) ? 25 : 1));        // the receipt is the slow one
+                arrived.push({ to, kind: /^Repayment/.test(message) ? 'receipt' : /settled and closed/.test(message) ? 'closed' : 'other' });
+                return { ok: true, gatewayId: 'g', cost: 1, segments: 1 };
+            },
+        };
+        await run(db, settled(), gw);
+        for (const to of ['+94771234567', '+447911123456']) {
+            const mine = arrived.filter((a) => a.to === to && a.kind !== 'other').map((a) => a.kind);
+            expect(mine).toEqual(['receipt', 'closed']);
+        }
+    });
+
+    it('a loan settled in full sends its closing text to both numbers, and once', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        await run(db, settled(), gw);
+        await run(db, settled(), gw, { now: NOW + 3600e3 });
+        const closing = gw.sent.filter((m) => /settled and closed/.test(m.message));
+        expect(closing.map((m) => m.to).sort()).toEqual(['+447911123456', '+94771234567']);
+        expect(ledger(fs).filter((d) => d.kind === 'B.closed')).toHaveLength(2);
+    });
+});

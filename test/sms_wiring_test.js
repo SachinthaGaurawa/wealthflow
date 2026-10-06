@@ -32,7 +32,7 @@ describe('the page', () => {
     it('the investment form carries its fields over by hand and validates BEFORE it saves anything', () => {
         const start = HTML.indexOf('function saveIncome()');
         const body = HTML.slice(start, HTML.indexOf('function clearIncomeForm()', start));
-        expect(body).toContain("['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'nic', 'personId'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });");
+        expect(body).toContain("['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'phone2', 'phone2_at', 'nic', 'personId', 'closedAt', 'closedEndWas'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });");
         expect(body.indexOf('WFSms.applyToggle')).toBeGreaterThan(0);
         expect(body.indexOf('WFSms.applyToggle')).toBeLessThan(body.indexOf("DB.set('income', arr)"));
         expect(body).toMatch(/if \(!sms\.ok\) \{[^}]*\breturn; \}/);
@@ -48,6 +48,31 @@ describe('the page', () => {
         expect(body.indexOf('WFSms.applyToggle')).toBeLessThan(body.indexOf("DB.set('debtors', list)"));
         expect(body).toContain('phone: contact ? contact.phone');
         expect(body).toMatch(/if \(!sms\.ok\) \{[^}]*\breturn; \}/);
+    });
+
+    it('both forms take the second number from the contact fields and hand it to the same check as the first', () => {
+        for (const [from, to] of [['function saveIncome()', 'function clearIncomeForm()'], ['function openDebtorModal(existing)', 'window.openDebtorModal = openDebtorModal']]) {
+            const start = HTML.indexOf(from);
+            const body = HTML.slice(start, HTML.indexOf(to, start));
+            expect(body, from).toContain('if (contact.phone2) rec.phone2 = contact.phone2; else { delete rec.phone2; delete rec.phone2_at; }');
+            expect(body, from).toMatch(/phone2: contact && (form|smsForm)\.enabled && contact\.phone2 \? contact\.phone2 : undefined/);
+        }
+    });
+
+    it('an investment can be settled and closed, and re-opened, from its card; a closed one is listed as ended', () => {
+        expect(HTML).toContain('function settleInvestment(id)');
+        expect(HTML).toContain('function reopenInvestment(id)');
+        const settle = HTML.slice(HTML.indexOf('function settleInvestment(id)'), HTML.indexOf('function reopenInvestment(id)'));
+        expect(settle).toContain('showConfirm(');                                              // asks first: closing sends a text
+        expect(settle).toContain('WFSms.closeInvestment(s, { now: Date.now(), todayISO: today() })');
+        const list = HTML.slice(HTML.indexOf('function renderIncome()'), HTML.indexOf('async function confirmIncomeReceived'));
+        expect(list).toContain("onclick=\"settleInvestment('");
+        expect(list).toContain("onclick=\"reopenInvestment('");
+        expect(list).toContain('const isClosed = (src) => Number(src.closedAt) > 0;');
+        expect(list).toMatch(/activeArr = arr\.filter\(src => \{[^}]*!isClosed\(src\)/);
+        expect(list).toMatch(/endedArr = arr\.filter\(src => \{[^}]*isClosed\(src\)/);
+        const save = HTML.slice(HTML.indexOf('function saveIncome()'), HTML.indexOf('function clearIncomeForm()'));
+        expect(save).toContain("rec.closedEndWas = rec.end || ''; rec.end = today();");        // an edit cannot leave a settled investment running
     });
 
     it('never mentions the gateway token: that name exists on the server only', () => {

@@ -21,14 +21,14 @@
  * Pure: no DOM, no clock (`now` and `newId` are passed), the stores are injected. ESM.
  * ===========================================================================*/
 
-import { normalizePhone, formatPhone, countryNameOf, regionByIso, DEFAULT_REGION } from './wealthflow-phone.js';
+import { normalizePhone, cleanPhoneInput, formatPhone, countryNameOf, regionByIso, DEFAULT_REGION } from './wealthflow-phone.js';
 import { normalizeNic, normalizeOtherId, normalizeIdentity, displayIdentity, OTHER_ID_PREFIX } from './wealthflow-nic.js';
 
 export const PEOPLE_KEY = 'people';
 export const LINK_FIELD = 'personId';
 export const LIMITS = Object.freeze({ name: 80, phone2: 24, email: 120, address: 200, note: 300, people: 2000, vcfBytes: 2 * 1024 * 1024, vcfCards: 2000 });
 /** What a person shares with every record linked to them: the rest of a loan or an investment is that record's own. */
-export const SHARED = Object.freeze(['name', 'phone', 'nic']);
+export const SHARED = Object.freeze(['name', 'phone', 'phone2', 'nic']);
 
 const str = (v) => String(v == null ? '' : v);
 /** Collapses runs of whitespace and drops control characters: a name pasted from a chat or a contacts export is not trusted to be tidy. */
@@ -83,6 +83,18 @@ export function isoOfPhone(stored, fallback = DEFAULT_REGION) {
     return p.ok ? p.iso : fallback;
 }
 
+/**
+ * The second number as texts use it: the E.164 form when it is a mobile number that can be texted, '' otherwise. A person's "other number" may be
+ * a landline or a family member's line typed as the owner likes; only a number that passes the same check as the first one is shared with the records
+ * and texted, so a record never carries a second number the gateway would reject.
+ */
+export function secondNumberOf(raw, iso = DEFAULT_REGION) {
+    const t = str(raw).trim();
+    if (!t) return '';
+    const p = normalizePhone(t, { defaultCountry: regionByIso(iso) ? str(iso).toUpperCase() : DEFAULT_REGION });
+    return p.ok ? p.e164 : '';
+}
+
 /** How an identity is stored on a record, from what was typed and which kind it is. */
 export function storedId(raw, kind) {
     const t = str(raw).trim();
@@ -125,8 +137,17 @@ export function cleanPerson(input) {
         if (p.ok) phone = p.e164; else errors.phone = p.text;
     }
 
-    let phone2 = squash(i.phone2).slice(0, LIMITS.phone2);
+    // The second number: a real mobile number is saved in E.164 (it is texted as well as the first one); anything else that looks like a number
+    // (a landline, a family member's line) is kept as typed and is not texted.
+    let phone2 = squash(cleanPhoneInput(i.phone2)).slice(0, LIMITS.phone2);
     if (phone2 && /[^\d+\s().-]/.test(phone2)) { errors.phone2 = 'The other number can only contain digits, spaces and a leading +.'; phone2 = ''; }
+    else if (phone2) {
+        const q = resolvePhone(phone2, country);
+        if (q.ok) {
+            if (phone && q.e164 === phone) { errors.phone2 = 'The second number is the same as the first. Leave it empty or enter a different number.'; phone2 = ''; }
+            else phone2 = q.e164;
+        }
+    }
 
     let nic = '';
     const idRaw = str(i.nic).trim();
@@ -239,25 +260,35 @@ export function searchPeople(people, query) {
 /** The shared fields as a record keeps them. An investment keeps the person's name in `company` ("Company / Person"), a loan in `name`. */
 export function readShared(kind, rec) {
     const r = rec || {};
-    return { name: squash(kind === 'debtor' ? r.name : r.company), phone: str(r.phone).trim(), nic: str(r.nic).trim() };
+    return { name: squash(kind === 'debtor' ? r.name : r.company), phone: str(r.phone).trim(), phone2: str(r.phone2).trim(), nic: str(r.nic).trim() };
 }
 
+/** One shared field as a person holds it. The second number counts only when it can be texted (a landline in "other number" is the person's own business). */
+const personValue = (person, f) => (f === 'phone2' ? secondNumberOf(person && person.phone2, person && person.country) : str(person && person[f]));
+
 /** Write shared values onto a record. Returns true when anything changed. */
-export function writeShared(kind, rec, values) {
+export function writeShared(kind, rec, values, now = Date.now()) {
     let changed = false;
-    const set = (field, value) => { if (str(rec[field]) !== str(value)) { rec[field] = value; changed = true; } };
+    const set = (field, value) => { if (str(rec[field]) !== str(value)) { rec[field] = value; changed = true; return true; } return false; };
     if (values.name !== undefined && values.name !== '') set(kind === 'debtor' ? 'name' : 'company', values.name);
     if (values.phone !== undefined) set('phone', values.phone);
+    // a second number written onto a record is new to that record: what happened before is history for it (see sms-events.mjs PHONE2_AT)
+    if (values.phone2 !== undefined && set('phone2', values.phone2)) { if (values.phone2) rec.phone2_at = now; else delete rec.phone2_at; }
     if (values.nic !== undefined) set('nic', values.nic);
     return changed;
 }
 
 /** What a record lacks of its person, from the person: only fields the record has nothing in. A number or ID the record already carries is never replaced. */
-function fillBlanks(kind, rec, person) {
+function fillBlanks(kind, rec, person, now = Date.now()) {
     const have = readShared(kind, rec);
     const gift = {};
-    for (const f of ['phone', 'nic']) if (!have[f] && str(person && person[f]).trim()) gift[f] = str(person[f]).trim();
-    return Object.keys(gift).length ? writeShared(kind, rec, gift) : false;
+    for (const f of ['phone', 'phone2', 'nic']) {
+        const v = personValue(person, f).trim();
+        if (!have[f] && v) gift[f] = v;
+    }
+    // a second number that is the record's own first number is no gift
+    if (gift.phone2 && gift.phone2 === (gift.phone || have.phone)) delete gift.phone2;
+    return Object.keys(gift).length ? writeShared(kind, rec, gift, now) : false;
 }
 
 /**
@@ -285,7 +316,7 @@ export const booksOf = (store) => ({
  */
 export function sharedDiff(kind, rec, person) {
     const shared = readShared(kind, rec);
-    return SHARED.filter((f) => (f !== 'name' || shared.name) && str(shared[f]) !== str(person && person[f]));
+    return SHARED.filter((f) => (f !== 'name' || shared.name) && str(shared[f]) !== personValue(person, f));
 }
 
 /**
@@ -297,17 +328,17 @@ export function sharedDiff(kind, rec, person) {
  * written when something changed, so an untouched ledger is never re-stamped.
  * @returns {{loans:number, investments:number, smsOn:number}} what was changed
  */
-export function propagate(store, personId, prev, next, skipId = '') {
+export function propagate(store, personId, prev, next, skipId = '', now = Date.now()) {
     const out = { loans: 0, investments: 0, smsOn: 0 };
     const diff = {};
-    for (const f of SHARED) if (str(prev && prev[f]) !== str(next && next[f])) diff[f] = str(next[f]);
+    for (const f of SHARED) if (personValue(prev, f) !== personValue(next, f)) diff[f] = personValue(next, f);
     for (const [key, kind, counter] of [['debtors', 'debtor', 'loans'], ['income', 'investment', 'investments']]) {
         const list = store.get(key) || [];
         let touched = false;
         const updated = list.map((r) => {
             if (!r || r[LINK_FIELD] !== personId || (skipId && r.id === skipId)) return r;
             const copy = { ...r };
-            const changed = writeShared(kind, copy, diff) | fillBlanks(kind, copy, next);
+            const changed = writeShared(kind, copy, diff, now) | fillBlanks(kind, copy, next, now);
             if (!changed) return r;
             touched = true;
             out[counter] += 1;
@@ -344,17 +375,22 @@ export function linkRecord({ store, kind, rec, remember = false, country = '', n
     const existing = personById(people, rec[LINK_FIELD]);
     if (existing) {
         const next = { ...existing };
-        for (const f of SHARED) if (f !== 'name' || shared.name) next[f] = shared[f];
+        for (const f of SHARED) {
+            if (f === 'name' && !shared.name) continue;
+            // the person's other number is kept as typed (a landline) unless the form says something different about the TEXTABLE one
+            if (f === 'phone2' && shared.phone2 === personValue(existing, 'phone2')) continue;
+            next[f] = shared[f];
+        }
         if (iso && iso !== existing.country) next.country = iso;
         const changed = SHARED.some((f) => str(next[f]) !== str(existing[f])) || (next.country || '') !== (existing.country || '');
         if (!changed) {
             // nothing to teach the person, but a record of theirs that fell out of step is put right
-            const repaired = propagate(store, existing.id, existing, existing, rec.id);
+            const repaired = propagate(store, existing.id, existing, existing, rec.id, now);
             return { ...none, person: existing, siblings: repaired };
         }
         next.updatedAt = stamp;
         store.set(PEOPLE_KEY, people.map((p) => (p.id === existing.id ? next : p)));
-        const siblings = propagate(store, existing.id, existing, next, rec.id);
+        const siblings = propagate(store, existing.id, existing, next, rec.id, now);
         return { ...none, person: next, updated: true, siblings };
     }
 
@@ -370,16 +406,16 @@ export function linkRecord({ store, kind, rec, remember = false, country = '', n
         // records follow; what this form left blank is filled in from the person.
         const next = { ...dup };
         let changed = false;
-        for (const f of ['phone', 'nic']) if (shared[f] && str(dup[f]) !== shared[f]) { next[f] = shared[f]; changed = true; }
+        for (const f of ['phone', 'phone2', 'nic']) if (shared[f] && personValue(dup, f) !== shared[f]) { next[f] = shared[f]; changed = true; }
         if (iso && !dup.country) { next.country = iso; changed = true; }
         if (changed) {
             next.updatedAt = stamp;
             store.set(PEOPLE_KEY, people.map((p) => (p.id === dup.id ? next : p)));
         }
-        const siblings = changed ? propagate(store, dup.id, dup, next, rec.id) : none.siblings;
+        const siblings = changed ? propagate(store, dup.id, dup, next, rec.id, now) : none.siblings;
         rec[LINK_FIELD] = dup.id;
         writeShared(kind, rec, { name: next.name });
-        fillBlanks(kind, rec, next);
+        fillBlanks(kind, rec, next, now);
         return { person: changed ? next : dup, created: false, matched: true, updated: changed, siblings };
     }
 
@@ -387,7 +423,7 @@ export function linkRecord({ store, kind, rec, remember = false, country = '', n
     // place that insists on a clean one
     const fields = {
         name: shared.name.slice(0, LIMITS.name),
-        phone: shared.phone, phone2: '',
+        phone: shared.phone, phone2: shared.phone2,
         country: iso || isoOfPhone(shared.phone),
         nic: shared.nic,
         email: '', address: '', note: '',
@@ -410,7 +446,7 @@ export function updatePerson(store, id, input, { now = Date.now() } = {}) {
     if (!clean.ok) return { ok: false, errors: clean.errors };
     const next = { ...prev, ...clean.fields, id: prev.id, createdAt: prev.createdAt, updatedAt: new Date(now).toISOString() };
     store.set(PEOPLE_KEY, people.map((p) => (p.id === id ? next : p)));
-    return { ok: true, person: next, siblings: propagate(store, id, prev, next) };
+    return { ok: true, person: next, siblings: propagate(store, id, prev, next, '', now) };
 }
 
 /** What editing a person would change elsewhere, for the confirmation that precedes it. */
@@ -419,7 +455,7 @@ export function previewUpdate(store, id, input) {
     const clean = cleanPerson(input);
     if (!prev || !clean.ok) return { loans: 0, investments: 0, smsOn: 0 };
     const next = { ...prev, ...clean.fields };
-    const diff = SHARED.filter((f) => str(prev[f]) !== str(next[f]));
+    const diff = SHARED.filter((f) => personValue(prev, f) !== personValue(next, f));
     if (!diff.length) return { loans: 0, investments: 0, smsOn: 0 };
     return usageOf(prev, booksOf(store));
 }
@@ -509,7 +545,7 @@ export function harvestPeople(store, { now = Date.now(), newId = null, orphans =
             if (people.length >= LIMITS.people) continue;
             // a number that is a number is saved the way every device and the server read it (E.164); one that is not is kept as it was written
             const pn = u.phone ? resolvePhone(u.phone, iso) : null;
-            hit = newPerson({ name: u.name.slice(0, LIMITS.name), phone: pn && pn.ok ? pn.e164 : u.phone, phone2: '', country: pn && pn.ok ? pn.iso : iso, nic: u.nic, email: '', address: '', note: '' }, { now, newId: newId || (() => harvestId(u)) });
+            hit = newPerson({ name: u.name.slice(0, LIMITS.name), phone: pn && pn.ok ? pn.e164 : u.phone, phone2: secondNumberOf(u.phone2, iso), country: pn && pn.ok ? pn.iso : iso, nic: u.nic, email: '', address: '', note: '' }, { now, newId: newId || (() => harvestId(u)) });
             people.push(hit);
             added += 1;
         }
@@ -525,7 +561,7 @@ export function harvestPeople(store, { now = Date.now(), newId = null, orphans =
         store.set(key, (store.get(key) || []).map((r) => {
             if (!r || !point[key].has(r.id)) return r;
             const copy = { ...r, [LINK_FIELD]: point[key].get(r.id) };
-            fillBlanks(kind, copy, byId.get(copy[LINK_FIELD]));         // a number or ID the record lacked comes from the person; nothing it holds is replaced
+            fillBlanks(kind, copy, byId.get(copy[LINK_FIELD]), now);         // a number or ID the record lacked comes from the person; nothing it holds is replaced
             return copy;
         }));
     }
@@ -797,7 +833,7 @@ export function draftFromContact(contact, iso = DEFAULT_REGION) {
 }
 
 export default {
-    PEOPLE_KEY, LINK_FIELD, LIMITS, SHARED, phoneProblem, idProblem, resolvePhone, isoOfPhone, storedId, idKindOf, cleanPerson, newPerson, defaultId,
+    PEOPLE_KEY, LINK_FIELD, LIMITS, SHARED, phoneProblem, idProblem, resolvePhone, isoOfPhone, secondNumberOf, storedId, idKindOf, cleanPerson, newPerson, defaultId,
     personById, listPeople, findDuplicate, sameNameOnly, searchPeople, readShared, writeShared, usageOf, booksOf, sharedDiff, propagate, linkRecord, updatePerson, previewUpdate, addPerson, addPeople, removePerson,
     unfiledRecords, harvestPeople, contactPickerSupported, pickContacts, parseVCards, parseContactsCsv, parseContactsText, parseContacts, platformOf, draftFromContact,
 };
