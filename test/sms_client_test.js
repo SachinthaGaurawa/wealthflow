@@ -449,6 +449,14 @@ describe('the log panel', () => {
         expect(panelHtml({ rows: [] })).toMatch(/No text messages yet/);
         expect(panelHtml({ disabled: true })).toMatch(/not enabled for this account/);
     });
+
+    it('says plainly that late-payment reminders are paused under the credit reserve, and only then', () => {
+        const paused = panelHtml({ rows: [], status: { configured: true, units: 12, reserve: 20, creditPaused: true } });
+        expect(paused).toMatch(/Late-payment reminders are paused: only 12 units are left \(the reserve is 20\)/);
+        expect(paused).toMatch(/Receipts and closing notices still go out/);
+        expect(panelHtml({ rows: [], status: { configured: true, units: 90, reserve: 20, creditPaused: false } })).not.toMatch(/paused/);
+        expect(panelHtml({ rows: [], status: { configured: true, units: 12 } })).not.toMatch(/paused/);
+    });
 });
 
 describe('starting up in a page', () => {
