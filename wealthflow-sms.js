@@ -607,6 +607,7 @@ export function panelHtml({ rows = [], status = null, disabled = false, lastErro
     if (disabled) lines.push('SMS notifications are not enabled for this account. Ask the administrator to add your email to SMS_ALLOWED_EMAILS.');
     if (status && status.configured === false) lines.push('The SMS gateway is not connected yet: texts are queued and nothing is lost. Add TEXTLK_API_TOKEN to the deployment settings.');
     if (status && status.lowCredit) lines.push('SMS credit is running low' + (num(status.units) ? ' (' + num(status.units) + ' units left)' : '') + '. Messages are held, not dropped, when it runs out.');
+    if (status && status.creditPaused === true) lines.push('Late-payment reminders are paused' + (num(status.units) ? ': only ' + num(status.units) + ' units are left' : '') + (num(status.reserve) ? ' (the reserve is ' + num(status.reserve) + ')' : '') + '. Receipts and closing notices still go out, and the reminders follow once credit is topped up.');
     for (const i of (status && Array.isArray(status.issues) ? status.issues : []).slice(0, 8)) lines.push(describeIssue(i, nameOf));
     if (lastError) lines.push(lastError);
     const notes = lines.length

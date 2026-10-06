@@ -24,6 +24,15 @@
  * verdict: the account is skipped this run and left as it is. A registration whose user document is gone is switched off too, so it cannot
  * hold one of the MAX_USERS places run after run.
  *
+ * WHEN AUTH DOES NOT ANSWER. Each check is tried twice (a quick failure, not a timeout, is tried once more after a short pause). An account that still
+ * could not be checked is skipped and left as it is. Three such accounts in a row open a breaker for the rest of the run: the remaining accounts are
+ * left for the next run instead of each waiting out its own deadline, and the response says `authDegraded`. Nothing is sent on a remembered "it was
+ * allowed last time", because that would let an account whose access has just been taken away keep spending the balance. Queued texts stay queued.
+ *
+ * WHEN CREDIT IS SHORT. Under SMS_CREDIT_RESERVE units (20 unless set) the late-payment reminders wait (sms-engine.mjs / sms-guard.mjs); receipts,
+ * closing notices and requested balances still go. With SMS_ALERT_WEBHOOK_URL set the owner is also told, once a day at most, for this and for a
+ * sign-in service that has not answered several runs in a row.
+ *
  * Auth: Authorization: Bearer <CRON_SECRET>, constant-time, refusing everything when
  * unset (cron-auth.mjs).
  * ===========================================================================*/
@@ -33,6 +42,7 @@ import { cronAuthorized } from './cron-auth.mjs';
 import { TextLkClient } from './textlk.mjs';
 import { smsAllowed } from './sms-access.mjs';
 import { sweepUser, ROOT, LOW_CREDIT_UNITS } from './sms-engine.mjs';
+import { SignInBreaker, creditReserve, creditPaused, decideAlerts, markAlerted, normalizeState, postAlert, SYSTEM_DOC } from './sms-guard.mjs';
 
 /** Accounts handled per run. The oldest-swept go first, so a long list is covered across runs. */
 export const MAX_USERS = 40;
@@ -44,7 +54,9 @@ export const TOTAL_BUDGET_MS = 50000;
  */
 export const ACTIVE_PAGE = 500;
 export const ACTIVE_SCAN_MAX = 2000;
-const AUTH_DEADLINE_MS = 6000;
+export const AUTH_DEADLINE_MS = 5000;
+export const AUTH_RETRY_PAUSE_MS = 250;
+const sleepFor = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function readActive(db, admin) {
     const docs = [];
@@ -67,21 +79,50 @@ async function readActive(db, admin) {
 
 /**
  * May this sign-in still use SMS? Asked of Firebase Auth, not of what was true when the account registered.
+ * An answer that is not definite is tried once more when it came back quickly (a reset connection, a 5xx); one that ran out of time is not (the
+ * service is slow, and a second wait of the same length only doubles the cost of finding out).
  * @returns {Promise<{ok:true}|{ok:false, transient?:true, reason:string}>} `transient` means "could not tell", never "no".
  */
-export async function accountStillAllowed({ admin, uid, env }) {
+export async function accountStillAllowed({ admin, uid, env, sleep = sleepFor, retries = 1 }) {
     if (!admin || typeof admin.auth !== 'function') return { ok: false, transient: true, reason: 'sign-in service unavailable' };
     let user;
-    try { user = await withDeadline(admin.auth().getUser(uid), AUTH_DEADLINE_MS, 'auth'); }
-    catch (e) {
-        if (e && e.code === 'auth/user-not-found') return { ok: false, reason: 'the sign-in account no longer exists' };
-        return { ok: false, transient: true, reason: 'sign-in service did not answer' };
+    for (let attempt = 0; ; attempt += 1) {
+        try { user = await withDeadline(admin.auth().getUser(uid), AUTH_DEADLINE_MS, 'auth'); break; }
+        catch (e) {
+            const code = e && e.code;
+            if (code === 'auth/user-not-found') return { ok: false, reason: 'the sign-in account no longer exists' };
+            if (code === 'auth/invalid-uid') return { ok: false, reason: 'the sign-in id is not valid' };          // no such account can exist, and asking again will not change that
+            if ((e && e.timedOut) || attempt >= retries) return { ok: false, transient: true, reason: 'sign-in service did not answer' };
+            await sleep(AUTH_RETRY_PAUSE_MS * (attempt + 1));
+        }
     }
     if (!user) return { ok: false, transient: true, reason: 'sign-in service gave no account' };
     if (user.disabled === true) return { ok: false, reason: 'the sign-in account is disabled' };
     if (user.emailVerified !== true) return { ok: false, reason: 'the sign-in email is not verified' };
     const access = smsAllowed({ email: user.email, claims: user.customClaims }, env);
     return access.ok ? { ok: true } : { ok: false, reason: access.reason };
+}
+
+/**
+ * Tell the owner when credit is under the reserve or sign-in has been down for several runs, and remember that they were told. Never throws, and
+ * does nothing when the run has used up its time: the next run does it.
+ */
+async function recordHealth({ db, deps, now, units, reserve, authDegraded, authAnswered, startedAt }) {
+    const told = [];
+    try {
+        if (deps.clock() - startedAt > TOTAL_BUDGET_MS - 10000) return told;           // the read, the post and the write take 10 s at worst, and the function has 60
+        const ref = db.collection(ROOT).doc(SYSTEM_DOC);
+        const snap = await withDeadline(ref.get(), 3000, 'wf-sms');
+        const state = (snap.exists && snap.data()) || {};
+        const { alerts, next } = decideAlerts(state, { now, units, reserve, authDegraded, authAnswered });
+        for (const a of alerts) {
+            const r = await postAlert({ env: deps.env, text: a.text, extra: { ...a.extra, at: new Date(now).toISOString() }, fetchImpl: deps.fetch });
+            if (r.sent) { markAlerted(next, a.key, now); told.push(a.key); }
+        }
+        // written only when something changed, so a quiet run leaves no trace
+        if (told.length || JSON.stringify(next) !== JSON.stringify(normalizeState(state))) await withDeadline(ref.set({ credit: next.credit, auth: next.auth, updatedAt: now }, { merge: true }), 3000, 'wf-sms');
+    } catch (e) { console.warn('[WF-SMS] health record failed:', String((e && e.message) || e).slice(0, 120)); }
+    return told;
 }
 
 function j(res, code, body) {
@@ -109,7 +150,7 @@ export async function handleSweep(req, res, deps) {
         if (b.ok) units = b.units; else balanceKind = b.kind;
     }
 
-    const allowed = deps.accountAllowed || ((uid) => accountStillAllowed({ admin, uid, env: deps.env }));
+    const allowed = deps.accountAllowed || ((uid) => accountStillAllowed({ admin, uid, env: deps.env, sleep: deps.sleep }));
     const switchOff = (uid, why) => db.collection(ROOT).doc(uid).set({ active: false, deactivatedAt: now, deactivatedReason: String(why || '').slice(0, 120) }, { merge: true });
 
     const active = await readActive(db, admin);
@@ -119,13 +160,21 @@ export async function handleSweep(req, res, deps) {
         .slice(0, MAX_USERS);
 
     const results = [];
-    for (const a of accounts) {
+    const breaker = new SignInBreaker();
+    let authSkipped = 0;
+    for (let i = 0; i < accounts.length; i += 1) {
+        const a = accounts[i];
         const spent = deps.clock() - startedAt;
         if (spent > TOTAL_BUDGET_MS) { results.push({ uid: '(skipped)', skipped: true }); break; }
         try {
             const verdict = await allowed(a.uid);
+            breaker.record(verdict);
             if (!verdict.ok) {
-                if (verdict.transient) { results.push({ uid: a.uid.slice(0, 6), skipped: true, why: 'sign-in check unavailable' }); continue; }
+                if (verdict.transient) {
+                    results.push({ uid: a.uid.slice(0, 6), skipped: true, why: 'sign-in check unavailable' });
+                    if (breaker.open) { authSkipped = accounts.length - i - 1; break; }
+                    continue;
+                }
                 await switchOff(a.uid, verdict.reason);
                 results.push({ uid: a.uid.slice(0, 6), deactivated: true });
                 continue;
@@ -143,15 +192,23 @@ export async function handleSweep(req, res, deps) {
             results.push({ uid: a.uid.slice(0, 6), error: true });
         }
     }
+    // "Degraded": the breaker opened, or every check that was made failed (an owner with one or two accounts never reaches three in a row).
+    const authDegraded = breaker.open || (breaker.failed > 0 && breaker.answered === 0);
+    if (authDegraded) console.warn(`[WF-SMS] sign-in service is not answering (${breaker.failed} checks failed, ${authSkipped} accounts left for the next run)`);
+    const reserve = creditReserve(deps.env);
+    const paused = creditPaused(units, reserve);
+    if (paused) console.warn(`[WF-SMS] credit is under the reserve (${units} of ${reserve} units): late reminders are paused`);
+    const alerts = await recordHealth({ db, deps, now, units, reserve, authDegraded, authAnswered: breaker.answered > 0, startedAt });
     if (units !== null && units <= LOW_CREDIT_UNITS) console.warn(`[WF-SMS] gateway balance is low (${units} units)`);
     if (balanceKind) console.warn(`[WF-SMS] gateway balance check failed kind=${balanceKind}`);
-    return j(res, 200, { ok: true, accounts: results.length, lowCredit: units !== null && units <= LOW_CREDIT_UNITS, balanceCheck: balanceKind || 'ok', results });
+    return j(res, 200, { ok: true, accounts: results.length, lowCredit: units !== null && units <= LOW_CREDIT_UNITS, creditPaused: paused, authDegraded, authSkipped, alerts, balanceCheck: balanceKind || 'ok', results });
 }
 
 export const defaultDeps = () => ({
     client: () => TextLkClient.fromEnv(process.env),
     getAdminDb,
     env: process.env,
+    fetch: (...a) => globalThis.fetch(...a),
     now: () => Date.now(),
     clock: () => Date.now(),
 });

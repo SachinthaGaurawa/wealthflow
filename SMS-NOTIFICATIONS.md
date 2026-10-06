@@ -108,6 +108,8 @@ read six fields (bank, name, number, branch, SWIFT / IBAN, note) and nothing els
 | `TEXTLK_API_TOKEN` | to send | the Text.lk API token (Bearer). Never logged, never sent to the page |
 | `SMS_ALLOWED_EMAILS` | to send | comma-separated verified emails allowed to use it (or a Firebase `admin` claim). Unset means nobody |
 | `TEXTLK_SENDER_ID` | no | defaults to `WEALTHFLOW` |
+| `SMS_CREDIT_RESERVE` | no | units kept for the texts people are waiting for; defaults to `20`, `0` switches the rule off. Under it, late-payment reminders wait (see *Credit reserve* below) |
+| `SMS_ALERT_WEBHOOK_URL` | no | an `https` endpoint (a Slack or Discord incoming webhook, or anything that takes JSON) told when credit falls under the reserve and when Firebase sign-in has not answered on two runs in a row; at most once a day each. Addresses that only mean something inside a network (`localhost`, IPs, `*.internal`, a port) are refused |
 | `CRON_SECRET` | for the daily sweep | already used by the other crons |
 | `WEALTHFLOW_PUBLIC_ORIGIN` | no | origin for links in the text, defaults to the production alias |
 | `TENANT_PORTAL_LINKS` | no | the statement link is in every text with an NIC; set `off` to stop putting it there |
@@ -133,6 +135,22 @@ eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends 
   skipped for that run and left as it is. A registration whose data document no longer exists is switched off too, so it cannot hold one of
   the 40 places in a run. The registered accounts are read in pages of 500 (up to 2,000) and ordered by when each was last swept, so a long
   list is covered across runs.
+* **Credit reserve.** The sweep reads the gateway balance once per run (free). Under `SMS_CREDIT_RESERVE` units (20 unless set) the
+  late-payment reminders, and only those, are not queued or sent: they stay owed by the books, and the first sweep that sees the
+  balance back at the reserve queues and sends them, once. Receipts, closing notices, disbursements and a balance you asked for
+  still go, because someone is waiting for them. A reminder that waited past its own shelf life expires, as it always did, instead of
+  going out late. A run that did not read the balance itself (the page's nudge after a save) reads it only if a reminder is in play.
+  An unreadable balance never stops a text. The panel says "Late-payment reminders are paused" and the sweep logs
+  `[WF-SMS] credit is under the reserve`. With `SMS_ALERT_WEBHOOK_URL` set the owner is also told, once a day at most, and told again
+  at once if credit recovers and falls again. Reminders are not bundled into a digest: one text per reminder keeps each one worded from
+  the books as they are when it is sent.
+* **When sign-in does not answer.** Each Firebase Auth check is tried twice (a quick failure once more after 250 ms; a timeout is not
+  repeated). An account that still could not be checked is skipped and left exactly as it is. Three such accounts in a row open a
+  breaker for the rest of the run: the remaining accounts wait for the next run instead of each spending its whole deadline, and the
+  response says `authDegraded` and how many were `authSkipped`. Nothing is sent on a remembered "it was allowed last time": an account
+  whose access has just been removed must not keep spending the balance because Auth happened to be down. Queued texts stay queued
+  and go out as soon as Auth answers; nothing is switched off by an outage. The page's own save-time nudge is unaffected (it uses the
+  signed-in user's own token). After two degraded runs in a row the webhook (if set) says so.
 * **Hold, don't fail.** Out of credit, a rejected token or an unapproved sender holds the message and retries every six
   hours without using attempts. The account this was built for had ten units.
 * **Backoff.** Rate limits and network errors retry at 1 min, 5, 20, 60, 3 h, 6 h, 12 h, 24 h, or the gateway's own

@@ -48,6 +48,7 @@ import { KIND, maskPhone, analyzeSms } from './textlk.mjs';
 import { buildMessage } from './sms-templates.mjs';
 import { deriveEvents, nextSendWindow, MAX_AGE_MS, LOCAL_OFFSET_MIN } from './sms-events.mjs';
 import { linksEnabled, linkFor, ensureTenantToken, portalSecret } from './tenant-links.mjs';
+import { creditReserve, creditPaused, isPausedKind } from './sms-guard.mjs';
 
 export const ROOT = 'wf-sms';
 export const MIRROR = 'smsLog';
@@ -112,8 +113,9 @@ const mirrorOf = (d, extra = {}) => ({
  * Put every owed notice into the ledger once. Returns what happened to each.
  * @returns {{created:number, existing:number, rephoned:number, reopened:number, linked:number, noLink:number}}
  */
-export async function enqueue({ db, uid, events, now, env = process.env, deps = {} }) {
+export async function enqueue({ db, uid, events, now, env = process.env, deps = {}, pause = false }) {
     const out = { created: 0, existing: 0, rephoned: 0, reopened: 0, linked: 0, noLink: 0 };
+    if (pause) out.paused = 0;
     const col = eventsCol(db, uid);
     let secret = null;
     const wantLinks = linksEnabled(env);
@@ -136,6 +138,8 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
     let looked = 0;
     for (const ev of events) {
         if (out.created + out.reopened >= ENQUEUE_PER_RUN || looked >= SCAN_PER_RUN) break;
+        // Under the credit reserve the reminders nobody is waiting for are left owed, not queued (see sms-guard.mjs): they are put in once the balance is back.
+        if (pause && isPausedKind(ev.kind)) { out.paused += 1; continue; }
         looked += 1;
         const id = docIdFor(ev.key);
         const ref = col.doc(id);
@@ -362,7 +366,7 @@ async function dueIds({ db, uid, now }) {
         for (const doc of snap.docs) {
             const d = doc.data() || {};
             const due = status === STATUS.QUEUED ? num(d.nextAttemptAt) <= now : num(d.leaseUntil) <= now;
-            if (due) out.push({ id: doc.id, at: num(d.occurredAt), to: s(d.toHash) });
+            if (due) out.push({ id: doc.id, at: num(d.occurredAt), to: s(d.toHash), kind: s(d.kind) });
         }
     }
     return out.sort((a, b) => a.at - b.at);
@@ -380,10 +384,10 @@ function dueGroups(due) {
 }
 
 /** Write the owner's status card: what is switched on but cannot work, whether the gateway is configured, whether credit is low. */
-export async function writeStatus({ db, uid, issues, configured, units = null, now }) {
+export async function writeStatus({ db, uid, issues, configured, units = null, now, reserve = 0 }) {
     // A sweep that did not ask the gateway for the balance (the page's nudge after a save) knows nothing about it, and must not erase what the
     // last one that did (the daily sweep) found: writing `units: null` here made the low-credit warning vanish at the owner's next save.
-    const credit = units === null || units === undefined ? {} : { units, lowCredit: units <= LOW_CREDIT_UNITS, unitsAt: now };
+    const credit = units === null || units === undefined ? {} : { units, lowCredit: units <= LOW_CREDIT_UNITS, unitsAt: now, reserve, creditPaused: creditPaused(units, reserve) };
     await mirror(db, uid, '_status', { kind: 'status', configured: !!configured, issues: issues.slice(0, 50), ...credit }, now);
 }
 
@@ -397,11 +401,35 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
     const owned = new Set(events.map((e) => e.key));
     const summary = { derived: events.length, issues: issues.length, configured: client.configured, enqueued: {}, cancelled: 0, sent: 0, held: 0, retry: 0, failed: 0, remaining: 0 };
 
+    // THE CREDIT RESERVE (sms-guard.mjs). The sweep reads the balance once for every account; a run that did not (the page's nudge after a save) reads it
+    // here, and only if there is a reminder it would otherwise queue or send, so most nudges cost no call. The call is free; an unreadable balance
+    // is "unknown", and unknown never stops anything.
+    const reserve = creditReserve(env);
+    let units = deps.units === undefined ? null : deps.units;
+    let creditAsked = units !== null;
+    const paused = async (needed) => {
+        if (!reserve || !needed) return false;
+        if (!creditAsked) {
+            creditAsked = true;
+            if (client.configured && typeof client.balance === 'function') {
+                try { const b = await client.balance(); if (b && b.ok && Number.isFinite(Number(b.units))) units = Number(b.units); } catch (_) { /* unknown */ }
+            }
+        }
+        return creditPaused(units, reserve);
+    };
+
     summary.cancelled = await cancelUnowed({ db, uid, ownedKeys: owned, now });
-    summary.enqueued = await enqueue({ db, uid, events, now, env, deps });
+    const hold = await paused(events.some((e) => isPausedKind(e.kind)));
+    summary.enqueued = await enqueue({ db, uid, events, now, env, deps, pause: hold });
 
     if (client.configured) {
-        const groups = dueGroups(await dueIds({ db, uid, now }));
+        let due = await dueIds({ db, uid, now });
+        const holdDue = hold || await paused(due.some((x) => isPausedKind(x.kind)));
+        if (holdDue) {
+            summary.paused = due.filter((x) => isPausedKind(x.kind)).length;
+            due = due.filter((x) => !isPausedKind(x.kind));
+        }
+        const groups = dueGroups(due);
         await pool(groups, CONCURRENCY, async (ids) => {
             for (const id of ids) {
                 if (clock() - startedAt > budgetMs) { summary.remaining += 1; continue; }
@@ -413,7 +441,7 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
             }
         });
     }
-    await writeStatus({ db, uid, issues, configured: client.configured, units: deps.units === undefined ? null : deps.units, now });
+    await writeStatus({ db, uid, issues, configured: client.configured, units, now, reserve });
     return summary;
 }
 
