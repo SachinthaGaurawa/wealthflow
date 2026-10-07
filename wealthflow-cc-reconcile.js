@@ -1,9 +1,9 @@
-/*  wealthflow-cc-reconcile.js  —  Credit-card auto-✅ reconciliation: card payments settle charges OLDEST FIRST, to the cent
+/*  wealthflow-cc-reconcile.js  —  Credit-card auto-@checkCircle@ reconciliation: card payments settle charges OLDEST FIRST, to the cent
  *
  *  The rule (the same one the worker applies — cc-fifo.mjs; test/cc_fifo_test.js keeps the two equal):
  *    • Every payment made to a card goes into ONE pool (the sum of the credits). Charges are walked from the oldest date to the newest
  *      (the smaller amount first within the same date).
- *    • A charge is auto-settled (✅) ONLY when the pool can FULLY cover it — never partially — and the pool shrinks by its amount.
+ *    • A charge is auto-settled (@checkCircle@) ONLY when the pool can FULLY cover it — never partially — and the pool shrinks by its amount.
  *    • The first charge the pool cannot cover FREEZES the walk: it and every newer charge stay unpaid (Pending / Overdue). What is left in the
  *      pool is CARRIED forward (`carry`), together with how much more the frozen charge needs (`blocked.needs`).
  *    • It is recomputed from the whole timeline on every change, never patched, so the answer never depends on the order things arrived in.
@@ -12,8 +12,8 @@
  *
  *  Worked example (verified in tests):
  *    Debits: Apr20 100k, Apr20 15k, Apr25 20k, May10 50k
- *    +50k credit  → only the 15k is ✅ (50k can't cover the 100k, which blocks the rest); 35k is carried, the 100k needs 65k more
- *    +100k credit → 100k ✅, then 20k ✅ (150k total covers 15k+100k+20k = 135k); 15k carried
+ *    +50k credit  → only the 15k is @checkCircle@ (50k can't cover the 100k, which blocks the rest); 35k is carried, the 100k needs 65k more
+ *    +100k credit → 100k @checkCircle@, then 20k @checkCircle@ (150k total covers 15k+100k+20k = 135k); 15k carried
  *
  *  Exposes window.WFReconcile = { reconcileCard, parseCardSms, toCents, fromCents, _dateMs }.
  *  Pure + deterministic. Run it whenever a CC credit or debit is added/scanned, then persist the returned settled flags.
@@ -170,5 +170,5 @@
     }
 
     window.WFReconcile = { reconcileCard: reconcileCard, parseCardSms: parseCardSms, toCents: toCents, fromCents: fromCents, _dateMs: _dateMs };
-    try { console.log('[WFReconcile] ✓ credit-card auto-✅ reconciliation ready'); } catch (_) {}
+    try { console.log('[WFReconcile] @info@ credit-card auto-@checkCircle@ reconciliation ready'); } catch (_) {}
 })();

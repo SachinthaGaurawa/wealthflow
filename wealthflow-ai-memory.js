@@ -265,5 +265,5 @@
         document.addEventListener('DOMContentLoaded', () => { setTimeout(_load, 300); });
     } else { _load(); }
 
-    console.log('[wfMemory] ✓ Self-learning merchant intelligence ready');
+    console.log('[wfMemory] @info@ Self-learning merchant intelligence ready');
 })();

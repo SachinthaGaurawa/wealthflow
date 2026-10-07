@@ -89,9 +89,9 @@
         });
 
         // ── callouts (warning / success / info) ─────────────────────────────────
-        f = f.replace(/(^|\n)(?:⚠️|⚠)\s*(.+)/g, '$1<div class="ai-callout warning"><span class="ai-callout-icon">⚠️</span><span>$2</span></div>');
-        f = f.replace(/(^|\n)✅\s*(.+)/g, '$1<div class="ai-callout success"><span class="ai-callout-icon">✅</span><span>$2</span></div>');
-        f = f.replace(/(^|\n)💡\s*(.+)/g, '$1<div class="ai-callout info"><span class="ai-callout-icon">💡</span><span>$2</span></div>');
+        f = f.replace(/(^|\n)(?:@alert@|@alert@)\s*(.+)/g, '$1<div class="ai-callout warning"><span class="ai-callout-icon">@alert@</span><span>$2</span></div>');
+        f = f.replace(/(^|\n)@checkCircle@\s*(.+)/g, '$1<div class="ai-callout success"><span class="ai-callout-icon">@checkCircle@</span><span>$2</span></div>');
+        f = f.replace(/(^|\n)@sparkles@\s*(.+)/g, '$1<div class="ai-callout info"><span class="ai-callout-icon">@sparkles@</span><span>$2</span></div>');
 
         // ── bullets (-, •, *) at line start ─────────────────────────────────────
         f = f.replace(/(^|\n)[ \t]*[\-•]\s+(.+)/g, '$1<div class="ai-bullet">$2</div>');

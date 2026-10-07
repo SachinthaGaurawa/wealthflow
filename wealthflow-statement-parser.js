@@ -613,5 +613,5 @@
         moneyTokens: moneyTokens,
         VERDICT_TEXT: VERDICT_TEXT
     };
-    try { console.log('[WFStatementParser] ✓ text-layer statement parser ready'); } catch (_) {}
+    try { console.log('[WFStatementParser] @info@ text-layer statement parser ready'); } catch (_) {}
 })();

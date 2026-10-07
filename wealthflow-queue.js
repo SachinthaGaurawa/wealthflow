@@ -250,10 +250,10 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         if (s.total === 0) return;
         // summary toast
         const bits = [];
-        if (s.filed) bits.push('✓ ' + s.filed + ' filed');
-        if (s.review) bits.push('🛟 ' + s.review + ' to review');
+        if (s.filed) bits.push('@info@ ' + s.filed + ' filed');
+        if (s.review) bits.push('@shield@ ' + s.review + ' to review');
         if (s.duplicate) bits.push('⊘ ' + s.duplicate + ' duplicate' + (s.duplicate === 1 ? '' : 's'));
-        if (s.error) bits.push('⚠ ' + s.error + ' error' + (s.error === 1 ? '' : 's'));
+        if (s.error) bits.push('@alert@ ' + s.error + ' error' + (s.error === 1 ? '' : 's'));
         if (s.unparsed) bits.push('? ' + s.unparsed + ' unreadable');
         if (bits.length) _notify('AI finished: ' + bits.join(' · '), s.error ? 'warn' : 'success');
         // if items went to review, surface the banner
@@ -382,11 +382,11 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         if (fill) fill.style.width = pct + '%';
         if (pctEl) pctEl.textContent = pct + '%';
         if (inFlight > 0) {
-            if (title) title.textContent = '🤖 AI is filing your transactions';
+            if (title) title.textContent = '@bot@ AI is filing your transactions';
             if (sub) sub.textContent = s.done + ' of ' + s.total + ' done · ' + inFlight + ' to go';
             if (spin) spin.style.display = '';
         } else {
-            if (title) title.textContent = '✓ All done';
+            if (title) title.textContent = '@info@ All done';
             if (sub) sub.textContent = s.total + ' processed';
             if (spin) spin.style.display = 'none';
             // Auto-hide the floating bar a few seconds after everything is done
@@ -408,10 +408,10 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         }
         if (tall) {
             const chips = [];
-            if (s.filed) chips.push('<span class="qb-chip" style="background:rgba(16,185,129,.15);color:#10b981;">✓ ' + s.filed + ' filed</span>');
-            if (s.review) chips.push('<span class="qb-chip" style="background:rgba(245,158,11,.15);color:#f59e0b;">🛟 ' + s.review + ' review</span>');
+            if (s.filed) chips.push('<span class="qb-chip" style="background:rgba(16,185,129,.15);color:#10b981;">@info@ ' + s.filed + ' filed</span>');
+            if (s.review) chips.push('<span class="qb-chip" style="background:rgba(245,158,11,.15);color:#f59e0b;">@shield@ ' + s.review + ' review</span>');
             if (s.duplicate) chips.push('<span class="qb-chip" style="background:rgba(139,148,168,.15);color:#8b95a8;">⊘ ' + s.duplicate + ' dup</span>');
-            if (s.error) chips.push('<span class="qb-chip" style="background:rgba(239,68,68,.15);color:#ef4444;">⚠ ' + s.error + '</span>');
+            if (s.error) chips.push('<span class="qb-chip" style="background:rgba(239,68,68,.15);color:#ef4444;">@alert@ ' + s.error + '</span>');
             if (s.unparsed) chips.push('<span class="qb-chip" style="background:rgba(139,148,168,.15);color:#8b95a8;">? ' + s.unparsed + '</span>');
             tall.innerHTML = chips.join('');
         }
@@ -426,5 +426,5 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         });
     }
 
-    console.log('[wfQueue] ✓ Autonomous background processing engine loaded');
+    console.log('[wfQueue] @info@ Autonomous background processing engine loaded');
 })();

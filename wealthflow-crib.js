@@ -87,7 +87,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         var code = s.aiResponseLang || 'en';
         if (code === 'auto' || !code) return 'English';
         var n = names[code] || 'English';
-        return String(n).replace(/\s*\(.*\)\s*$/, '').replace(/^🌐\s*/, '').trim() || 'English';
+        return String(n).replace(/\s*\(.*\)\s*$/, '').replace(/^@globe@\s*/, '').trim() || 'English';
     }
 
     /* ── dual fingerprints (bullet-proof de-duplication) ─────────────────────── */

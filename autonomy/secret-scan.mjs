@@ -207,10 +207,10 @@ if (invokedDirectly) {
     if (process.argv.includes('--json')) {
         console.log(JSON.stringify({ ok: findings.length === 0, findings }, null, 2));
     } else if (findings.length === 0) {
-        console.log('✅ secret-scan: no provider credentials found in tracked files.');
+        console.log('[OK] secret-scan: no provider credentials found in tracked files.');
         console.log(`   (${ALLOWLIST.length} documented exception: the public Firebase Web apiKey.)`);
     } else {
-        console.error(`❌ secret-scan: ${findings.length} credential(s) found in tracked files.\n`);
+        console.error(`[ERROR] secret-scan: ${findings.length} credential(s) found in tracked files.\n`);
         for (const f of findings) {
             console.error(`   ${f.file}:${f.line}  ${f.label}  ${f.masked}`);
         }
@@ -221,11 +221,11 @@ if (invokedDirectly) {
 
     if (process.env.GITHUB_STEP_SUMMARY) {
         const md = findings.length
-            ? `### ❌ Secret scan — ${findings.length} credential(s) committed\n\n`
+            ? `### [ERROR] Secret scan — ${findings.length} credential(s) committed\n\n`
               + '| File | Line | Kind | Value |\n|---|---|---|---|\n'
               + findings.map((f) => `| \`${f.file}\` | ${f.line} | ${f.label} | \`${f.masked}\` |`).join('\n')
               + '\n\nMove each to an environment variable, and **rotate it** — a committed key is in git history forever.\n'
-            : '### ✅ Secret scan — clean\n\nNo provider credentials in tracked files.\n';
+            : '### [OK] Secret scan — clean\n\nNo provider credentials in tracked files.\n';
         try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n'); } catch { /* ignore */ }
     }
 

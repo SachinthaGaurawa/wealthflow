@@ -890,18 +890,18 @@ if ((process.argv[1] || '').endsWith('perf-budget.mjs')) {
     const m = measure();
     const r = check(m);
     const kb = (n) => (n / 1024).toFixed(0) + ' KB';
-    console.log('\n📦 WealthFlow payload\n');
+    console.log('\n[REPORT] WealthFlow payload\n');
     console.log(`  index.html            ${kb(m.htmlBytes).padStart(10)}   (budget ${kb(BUDGETS.htmlBytes)})`);
     console.log(`  modules (${String(m.moduleCount).padStart(2)} files)   ${kb(m.totalJsBytes).padStart(10)}   (budget ${kb(BUDGETS.totalJsBytes)})`);
     console.log(`  largest module        ${kb(m.largestModuleBytes).padStart(10)}   ${m.largestModule.file}`);
     console.log(`  script requests       ${String(m.scriptTags).padStart(10)}`);
     console.log(`  render-blocking       ${String(m.renderBlockingScripts).padStart(10)}`);
-    for (const s of m.renderBlockingList) console.log(`      ⛔ ${s}`);
+    for (const s of m.renderBlockingList) console.log(`      [ERROR] ${s}`);
     console.log(`\n  total shipped         ${kb(m.htmlBytes + m.totalJsBytes).padStart(10)}\n`);
     if (r.ok) {
-        console.log('✅ within budget (ceilings held at the measured baseline)\n');
+        console.log('[OK] within budget (ceilings held at the measured baseline)\n');
     } else {
-        for (const v of r.violations) console.log(`❌ ${v.key}: ${v.value} exceeds ${v.limit} by ${v.over}`);
+        for (const v of r.violations) console.log(`[ERROR] ${v.key}: ${v.value} exceeds ${v.limit} by ${v.over}`);
         console.log('');
     }
     process.exit(r.ok ? 0 : 1);

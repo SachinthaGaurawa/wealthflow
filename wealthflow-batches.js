@@ -193,5 +193,5 @@
     }
 
     window.WFBatch = { begin: begin, tag: tag, record: record, recordSub: recordSub, recordLoan: recordLoan, commit: commit, list: list, undo: undo, _key: KEY, MAX: MAX };
-    try { console.log('[WFBatch] ✓ statement import-batch + full undo ready (v7.49.0 — subscription headline restore on undo)'); } catch (_) {}
+    try { console.log('[WFBatch] @info@ statement import-batch + full undo ready (v7.49.0 — subscription headline restore on undo)'); } catch (_) {}
 })();

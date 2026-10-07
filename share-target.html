@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>WealthFlow — Quick Capture</title>
 <link rel="manifest" href="manifest.json">
+<script src="wealthflow-icons.js" defer></script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -36,7 +37,7 @@
     font-size: 15px; font-weight: 800; cursor: pointer; margin-top: 12px;
   }
   .btn-secondary {
-    background: transparent; border: 1px solid rgba(255,255,255,.2); color: #e6e7eb;
+    background: #14182a; border: 1px solid rgba(255,255,255,.3); color: #e6e7eb;
   }
   .result {
     margin-top: 16px; padding: 14px; border-radius: 10px;
@@ -45,19 +46,19 @@
   }
   .result.ok { display: block; border-left: 3px solid #10b981; }
   .result.err { display: block; border-left: 3px solid #ef4444; color: #fca5a5; }
-  .hint { font-size: 12px; color: rgba(230,231,235,.55); margin-top: 8px; line-height: 1.5; }
+  .hint { font-size: 12px; color: rgba(230,231,235,.72); margin-top: 8px; line-height: 1.5; }
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>📲 Quick Capture</h1>
+  <h1>@devices@ Quick Capture</h1>
   <div class="hint" style="margin-bottom:14px;">
     Text shared from your SMS app or pasted below will be auto-classified by AutoPilot
     and routed to the right WealthFlow module.
   </div>
   <textarea id="txt" class="input" placeholder="SMS text appears here automatically when shared from iMessage / Messages app…"></textarea>
-  <button class="btn" id="goBtn">🤖 Classify &amp; Save</button>
-  <button class="btn btn-secondary" id="openBtn">↗ Open WealthFlow</button>
+  <button class="btn" id="goBtn">@bot@ Classify &amp; Save</button>
+  <button class="btn btn-secondary" id="openBtn">@info@ Open WealthFlow</button>
   <div class="result" id="result"></div>
 </div>
 
@@ -105,7 +106,7 @@
       return;
     }
     res.className = 'result';
-    res.textContent = '🤖 Brain processing…';
+    res.textContent = '@bot@ Brain processing…';
     res.style.display = 'block';
 
     try {
@@ -136,15 +137,15 @@
         const m = data.routed && data.routed.module;
         const f = data.routed && data.routed.suggested_fields || {};
         const labels = {
-          income: '💰 Income',
-          expenses: '💸 Expense',
-          subscriptions: '🔁 Subscription',
-          cconetime: '💳 CC One-Time',
-          cc_payment: '✅ CC Payment (FIFO)'
+          income: '@wallet@ Income',
+          expenses: '@coins@ Expense',
+          subscriptions: '@refresh@ Subscription',
+          cconetime: '@card@ CC One-Time',
+          cc_payment: '@checkCircle@ CC Payment (FIFO)'
         };
         res.className = 'result ok';
         res.innerHTML = `
-          <div style="font-weight:800;color:#10b981;margin-bottom:6px;">✅ Logged as ${labels[m] || m}</div>
+          <div style="font-weight:800;color:#10b981;margin-bottom:6px;">@checkCircle@ Logged as ${labels[m] || m}</div>
           <div style="font-family:ui-monospace,monospace;">
             ${f.desc || f.source || f.name || ''}<br>
             <b>${(data.parsed && data.parsed.currency) || 'LKR'} ${(f.amount || 0).toLocaleString()}</b>
@@ -158,14 +159,14 @@
         } catch (_) {}
       } else if (data.ok && data.classified === false) {
         res.className = 'result err';
-        res.textContent = '⚠ ' + (data.reason || "Doesn't look like a bank SMS. Try again with a bank/credit-card message.");
+        res.textContent = '@alert@ ' + (data.reason || "Doesn't look like a bank SMS. Try again with a bank/credit-card message.");
       } else {
         res.className = 'result err';
-        res.textContent = '⚠ ' + (data.error || data.reason || 'Could not classify.');
+        res.textContent = '@alert@ ' + (data.error || data.reason || 'Could not classify.');
       }
     } catch (e) {
       res.className = 'result err';
-      res.textContent = '⚠ Network error: ' + e.message;
+      res.textContent = '@alert@ Network error: ' + e.message;
     }
   }
 

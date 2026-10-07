@@ -6,7 +6,7 @@
  *   threw `GEMINI_API_KEY not set` — but the key configured on this project is
  *   named `WealthFlow_API_Key`. One name mismatch silently disabled the entire
  *   autonomous update system for months, and because the workflow step was
- *   `continue-on-error: true` the run still reported ✅ success.
+ *   `continue-on-error: true` the run still reported [OK] success.
  *
  * THE FIX
  *   One router, every provider, real failover. The system now works if ANY

@@ -344,7 +344,7 @@ describe('the screens built under this rule carry no emoji at all', () => {
  * glyphs for warm / professional / aggressive / analytical / visionary. Mapping
  * them would make six personas look identical — worse than the emoji. They need
  * drawn icons, which is a design task, not a substitution. */
-const EMOJI_CEILING = 1065;
+const EMOJI_CEILING = 0;
 
 describe('the rest of the app can only get less emoji, never more', () => {
     it('is at or below the ceiling', () => {
@@ -364,23 +364,18 @@ describe('the rest of the app can only get less emoji, never more', () => {
             .toBeLessThanOrEqual(EMOJI_CEILING);
     });
 
-    it('the icons-table exclusion is exactly that table, and nothing else', () => {
-        /* An exemption is a hole. This one has to be small enough to see through:
-         * the keys of MAP in wealthflow-icons.js, and not one character more. A
-         * glyph written anywhere else in that file is still counted. */
+    it('uses source-level icon tokens instead of an emoji translation table', () => {
         const real = read('wealthflow-icons.js');
-        expect(countIn(real, 'wealthflow-icons.js')).toBeLessThan(countIn(real));
+        expect(real).not.toMatch(/\bvar MAP\s*=\s*\{/);
+        expect(real).toContain('var rx = /@([A-Za-z]');
+        expect(countIn(real, 'wealthflow-icons.js')).toBe(0);
+    });
 
-        const smuggled = real.replace(
-            /window\.WFIconStripEmoji = replaceIn;/,
-            "window.WFIconStripEmoji = replaceIn; var sneaky = '\u{1F600}\u{1F601}\u{1F602}';");
-        expect(smuggled).not.toBe(real);                       // the anchor still exists
-        expect(countIn(smuggled, 'wealthflow-icons.js'))
-            .toBe(countIn(real, 'wealthflow-icons.js') + 3);
-
-        // And the exemption applies to that file only.
-        const asOther = countIn(real, 'index.html');
-        expect(asOther).toBeGreaterThan(countIn(real, 'wealthflow-icons.js'));
+    it('preserves unknown at-delimited user text while stripping known icons from text-only controls', () => {
+        const real = read('wealthflow-icons.js');
+        expect(real).toContain("window.WFIcon.has(name) ? '' : all");
+        expect(real).toContain('document.createTextNode(m[0])');
+        expect(real).toContain('last = m.index + m[0].length');
     });
 
     it('keeps the ceiling honest by failing if it is set above the real count', () => {
@@ -392,8 +387,7 @@ describe('the rest of the app can only get less emoji, never more', () => {
         const total = files.reduce((t, f) => {
             try { return t + countIn(read(f), f); } catch (_) { return t; }
         }, 0);
-        expect(EMOJI_CEILING - total, 'the ceiling has drifted above the measurement — lower it')
-            .toBeLessThanOrEqual(Math.ceil(total * 0.05));
+        expect(total, 'the application source must remain at hard zero').toBe(EMOJI_CEILING);
     });
 
     it('the icon set covers what the remaining migration needs', () => {

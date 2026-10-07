@@ -69,7 +69,7 @@ jobs:
       #
       # WHY A DISPATCH ON A NON-DEFAULT BRANCH STILL FAILS
       # A check run is keyed on (name, SHA). If a manual run could report
-      # "Risk gate ✓" on an arbitrary branch, then dispatching it against a
+      # "Risk gate " on an arbitrary branch, then dispatching it against a
       # pull request's head would mint exactly the check that branch
       # protection is waiting for — turning "no PR to gate" into a way to
       # certify a PR without ever gating it. Anyone with write access could
@@ -313,7 +313,7 @@ jobs:
           #   it was blind to .github/, policy/, autonomy/, release.cjs and CODEOWNERS
           #   — the files that DEFINE every gate in this repository, including this
           #   one. A PR editing wealthflow-ci.yml, even one deleting this very step,
-          #   was told "✓ No sensitive paths touched — eligible for auto-merge".
+          #   was told " No sensitive paths touched — eligible for auto-merge".
           #
           #   It was caught because auto-merge.yml's classifier and policy/*.rego both
           #   cover those paths, so nothing shipped unreviewed. But those are the
@@ -347,7 +347,7 @@ jobs:
           # is exact-line so no other path can be removed by it.
           if [ "${INDEX_VERDICT:-sensitive}" = "safe" ]; then
             HITS=$(echo "$HITS" | grep -vx 'index\.html' || true)
-            echo "✓ index.html cleared by the content classifier: ${INDEX_REASON:-}"
+            echo " index.html cleared by the content classifier: ${INDEX_REASON:-}"
             {
               echo "### index.html: classified, not waved through"
               echo ""
@@ -395,14 +395,14 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
 
             if [ "$HAS_HUMAN_APPROVAL" = "true" ]; then
-              echo "✓ Sensitive change is carrying the 'human-approved' label — checking that the label is not older than the change."
+              echo " Sensitive change is carrying the 'human-approved' label — checking that the label is not older than the change."
             else
               echo "::error::This PR changes money/auth/security/data-rule files. It must be reviewed and labelled 'human-approved' before merge. Auto-merge is blocked for these paths by design."
               exit 1
             fi
           else
             echo "sensitive=no" >> "$GITHUB_OUTPUT"
-            echo "✓ No sensitive paths touched — eligible for auto-merge once tests are green."
+            echo " No sensitive paths touched — eligible for auto-merge once tests are green."
           fi
 
       # ── AN APPROVAL CANNOT COVER CODE THAT DID NOT EXIST WHEN IT WAS GIVEN ──
@@ -414,7 +414,7 @@ jobs:
       # Not hypothetical. On PR #127 the label was applied at 12:03; two commits
       # after it changed index.html and autonomy/perf-budget.mjs, and the step
       # above printed
-      #     ✓ Sensitive change is carrying the 'human-approved' label — allowed.
+      #      Sensitive change is carrying the 'human-approved' label — allowed.
       # for a head the approver had never seen. That is the same family as every
       # other defect this file's history records: a control that is present,
       # reports cleanly, and does not hold.
@@ -487,7 +487,7 @@ jobs:
             echo "::error::These sensitive files changed after 'human-approved' was applied, so the label covers code the approver never saw. Remove the label and re-apply it to approve the current head."
             exit 1
           fi
-          echo "✓ Every sensitive file predates the approval — the label covers this head."
+          echo " Every sensitive file predates the approval — the label covers this head."
 
       # ── ONE TAP INSTEAD OF A LAPTOP ──────────────────────────────────────
       #

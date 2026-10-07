@@ -108,7 +108,7 @@ jobs:
           fi
 
           {
-            echo "### 🔎 Preview updated"
+            echo "### [REVIEW] Preview updated"
             echo ""
             echo "PR #$PR → \`${SHA:0:7}\`"
             echo ""

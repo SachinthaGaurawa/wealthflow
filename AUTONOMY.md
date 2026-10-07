@@ -14,7 +14,7 @@ repository, not inferred.
 |---|---|---|
 | 1 | **Fake releases.** `merchant-sync` pushes a `chore(merchants)` commit every hour. `auto-release` only asked *"are there commits since the last tag?"* — always yes — so it bumped v7.69.10 → .11 → .12 with zero functional change. The app announced an update, the user installed an identical app. | `node autonomy/substantive.cjs <v7.69.11> <v7.69.12>` reports **NOT substantive**: merchant data and version strings only. The self-check finds **10** such empty bumps in recent history. |
 | 2 | **The agent crashed on startup.** Its first statement was `JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)` on an unset variable. | Actions run `30200095048`: step *"Run the fix agent"* **started and completed on the same second**, logged `agent error: Unexpected end of JSON input`, exited 78. |
-| 3 | **The crash looked like success.** The workflow step carried `continue-on-error: true`. | Every run for months: ✅ green. |
+| 3 | **The crash looked like success.** The workflow step carried `continue-on-error: true`. | Every run for months: [OK] green. |
 | 4 | **Wrong key name.** The agent read `GEMINI_API_KEY`; the configured secret is `WealthFlow_API_Key`. | Job log shows `GEMINI_API_KEY:` empty. |
 | 5 | **No work queue.** Its only input was Firestore `system/pendingRelease`, which nothing populated. | — |
 | 6 | **Feedback never reached the pipeline.** `/api/feedback-triage` — the only path from feedback to an actionable issue — was never called by any client code. | No reference to it outside its own file. |
@@ -72,7 +72,7 @@ and `GITHUB_REPO=SachinthaGaurawa/wealthflow`.
 | `AGENT_MAX_ATTEMPTS` | var | Default 3. |
 | `FIREBASE_SERVICE_ACCOUNT` | secret | Optional enrichment only. Its absence can no longer stall anything. |
 
-### ⚠️ Vercel environment variables — REQUIRED after the security fix
+### [WARNING] Vercel environment variables — REQUIRED after the security fix
 
 Four live provider credentials used to be hardcoded in this repo. They are now
 read from the environment, so these **must** be set in
@@ -89,7 +89,7 @@ return a clear `503` instead of working:
 Each endpoint fails loudly with a named error if its variable is missing, rather
 than issuing requests with `key=undefined`.
 
-### 🔑 Also restrict the Firebase key
+### Key Also restrict the Firebase key
 
 The Firebase Web `apiKey` in `index.html` is public by design and cannot be
 hidden — the browser SDK needs it. But the old client vision code also used that
@@ -119,7 +119,7 @@ npm run autonomy:status       # the honest health report
 ## 3. How a report becomes a shipped fix
 
 ```
-You type feedback in Settings  ──▶  /api/feedback-triage
+You type feedback in Settings  ──  /api/feedback-triage
                                       classifies it, attaches your real
                                       diagnostics, opens a GitHub issue
                                               │
@@ -143,12 +143,12 @@ You type feedback in Settings  ──▶  /api/feedback-triage
                                               ▼
                                   auto-merge (no human)
                                               ▼
-                    auto-release  ──  substantive-change gate  ──▶ Vercel
+                    auto-release  ──  substantive-change gate  ── Vercel
                                       (refuses to ship a fake update)
                                               ▼
                         your device pulls it via /api/version
                                               ▼
-                    "✅ Your feedback is done — shipped in v7.70.0"
+                    "[OK] Your feedback is done — shipped in v7.70.0"
 ```
 
 ---

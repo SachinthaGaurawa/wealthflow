@@ -424,7 +424,7 @@ async function _runAutoBackupFromSW(triggerKind) {
         if (r.ok) {
             console.log('[SW] cloud-only backup succeeded (' + triggerKind + ')');
             try {
-                await self.registration.showNotification('☁️ Auto-Backup Complete', {
+                await self.registration.showNotification('Auto-Backup Complete', {
                     body: 'Your WealthFlow data was backed up automatically while the app was closed.',
                     icon: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
                     badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',

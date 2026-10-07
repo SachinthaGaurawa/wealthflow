@@ -174,5 +174,5 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
 
     window.wfVisionSms = { readImage, readImages, ready };
 
-    console.log('[wfVisionSms] ✓ Screenshot→SMS OCR module loaded (client-side Tesseract primary)');
+    console.log('[wfVisionSms] @info@ Screenshot→SMS OCR module loaded (client-side Tesseract primary)');
 })();

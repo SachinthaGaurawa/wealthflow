@@ -210,7 +210,7 @@
         bar.id = 'wfReviewBanner';
         bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99990;padding:12px 16px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#1a1205;display:flex;align-items:center;gap:12px;box-shadow:0 -6px 24px rgba(0,0,0,0.35);font-weight:700;';
         bar.innerHTML =
-            '<span style="font-size:20px;">🛟</span>' +
+            '<span style="font-size:20px;">@shield@</span>' +
             '<span style="flex:1;min-width:0;font-size:14px;">' + n + ' transaction' + (n === 1 ? '' : 's') + ' need a quick decision before filing.</span>' +
             '<button id="wfReviewOpenBtn" style="background:#1a1205;color:#ffd591;border:none;border-radius:9px;padding:9px 16px;font-weight:800;font-size:13px;cursor:pointer;">Review now</button>' +
             '<button id="wfReviewLaterBtn" style="background:transparent;border:none;color:#1a1205;font-size:20px;cursor:pointer;padding:4px 8px;">×</button>';
@@ -231,8 +231,8 @@
         goal: ['Savings']
     };
     const MODULE_LABELS = {
-        expenses: '💸 Expense', income: '💰 Income', subscriptions: '🔁 Subscription',
-        cconetime: '💳 Card (one-time)', ccinstall: '🗓 Card (installment)', loan: '🏦 Loan', goal: '🎯 Goal'
+        expenses: '@coins@ Expense', income: '@wallet@ Income', subscriptions: '@refresh@ Subscription',
+        cconetime: '@card@ Card (one-time)', ccinstall: '@calendar@ Card (installment)', loan: '@bank@ Loan', goal: '@target@ Goal'
     };
 
     function _money(a, c) { try { return (c || 'LKR') + ' ' + (Number(a) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); } catch { return (c || 'LKR') + ' ' + a; } }
@@ -249,12 +249,12 @@
         ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:0;';
 
         const rows = pending.length ? pending.map(_renderItem).join('') :
-            '<div style="text-align:center;padding:50px 20px;color:#8b95a8;"><div style="font-size:40px;opacity:.5;margin-bottom:10px;">✅</div><div style="font-weight:700;">All clear — nothing needs review.</div></div>';
+            '<div style="text-align:center;padding:50px 20px;color:#8b95a8;"><div style="font-size:40px;opacity:.5;margin-bottom:10px;">@checkCircle@</div><div style="font-weight:700;">All clear — nothing needs review.</div></div>';
 
         ov.innerHTML =
             '<div style="background:var(--card,#0f1320);border:1px solid var(--border2,#1f2638);width:100%;height:100%;max-width:680px;max-height:100vh;display:flex;flex-direction:column;border-radius:0;">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;padding:18px 20px;padding-top:max(18px, calc(env(safe-area-inset-top, 0px) + 14px));border-bottom:1px solid var(--border,#1f2638);">' +
-                '<div style="font-weight:800;font-size:16px;color:var(--text,#e6e7eb);">🛟 Needs Your Decision <span style="color:#f59e0b;">(' + pending.length + ')</span></div>' +
+                '<div style="font-weight:800;font-size:16px;color:var(--text,#e6e7eb);">@shield@ Needs Your Decision <span style="color:#f59e0b;">(' + pending.length + ')</span></div>' +
                 '<button id="wfReviewClose" style="background:transparent;border:none;color:#8b95a8;font-size:26px;cursor:pointer;padding:4px 10px;">×</button>' +
               '</div>' +
               '<div style="padding:8px 14px 4px;font-size:12px;color:#8b95a8;line-height:1.5;">The AI filed everything it was sure about. These few are ambiguous — pick the right place and the AI will remember your choice forever.</div>' +
@@ -341,7 +341,7 @@
             const res = await resolve(id, { module: it.suggestedModule, cat: it.suggestedCat });
             const card = btn.closest('.wfrv-card');
             if (card) { card.style.transition = 'opacity .3s'; card.style.opacity = '0'; setTimeout(() => card.remove(), 300); }
-            _notify(res && res.ok !== false ? '✓ Filed & learned — won\'t ask again' : 'Could not file', res && res.ok !== false ? 'success' : 'warn');
+            _notify(res && res.ok !== false ? '@info@ Filed & learned — won\'t ask again' : 'Could not file', res && res.ok !== false ? 'success' : 'warn');
             if ((await count()) === 0) setTimeout(() => { const ov = document.getElementById('wfReviewOverlay'); if (ov) ov.remove(); }, 400);
         } else if (act === 'skip') {
             _haptic('light');             // deferred, not decided
@@ -369,5 +369,5 @@
         });
     }
 
-    console.log('[wfReview] ✓ Persistent ask-me-later queue loaded');
+    console.log('[wfReview] @info@ Persistent ask-me-later queue loaded');
 })();

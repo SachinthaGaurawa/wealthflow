@@ -442,7 +442,7 @@ export async function runIntake({ env = process.env, apply = false, max = MAX_MI
 
 export function formatPlan(decisions) {
     const s = summarisePlan(decisions);
-    const icon = { skip: '·', enrich: '+', mint: '★', defer: '⏸', unresolvable: '?' };
+    const icon = { skip: '·', enrich: '+', mint: '[UPDATE]', defer: '[WAIT]', unresolvable: '?' };
     const lines = [
         `${s.total} proposal(s): ${s.mint} mint, ${s.enrich} enrich, ${s.skip} skip, `
         + `${s.defer} deferred, ${s.unresolvable} unresolvable`,
@@ -469,19 +469,19 @@ export function formatPlan(decisions) {
  */
 export function emptyReport(status, reason) {
     const map = {
-        ok: ['✅', 'Proposal intake — nothing to do',
+        ok: ['OK', 'Proposal intake — nothing to do',
             'Firestore was read successfully and `proposedChanges` is empty. This is a clean result.'],
-        no_credentials: ['⚠️', 'Proposal intake — NOT RUN, no credentials',
+        no_credentials: ['WARNING', 'Proposal intake — NOT RUN, no credentials',
             'Firestore was **never contacted**. This is not an empty queue; the intake is inert until the '
             + '`FIREBASE_SERVICE_ACCOUNT` secret is provisioned.'],
-        bad_credentials: ['⚠️', 'Proposal intake — NOT RUN, credentials unreadable',
+        bad_credentials: ['WARNING', 'Proposal intake — NOT RUN, credentials unreadable',
             'Firestore was **never contacted** because the credential could not be parsed.'],
-        empty_document: ['✅', 'Proposal intake — nothing to do',
+        empty_document: ['OK', 'Proposal intake — nothing to do',
             'Firestore was read successfully; there is nothing queued to project.'],
-        unreachable: ['❌', 'Proposal intake — COULD NOT READ Firestore',
+        unreachable: ['ERROR', 'Proposal intake — COULD NOT READ Firestore',
             'The read failed. This is an outage, **not** an empty queue — treat it as unknown, not as clear.'],
     };
-    const [icon, title, body] = map[status] || ['❔', 'Proposal intake — unknown state',
+    const [icon, title, body] = map[status] || ['INFO', 'Proposal intake — unknown state',
         'The source reported a status this reporter does not recognise.'];
     return { icon, title, body, reason };
 }
@@ -494,8 +494,8 @@ if (invokedDirectly) {
     let md;
 
     if (r.error) {
-        console.error(`✗ ${r.error} — nothing was written (fail closed).`);
-        md = `### ✗ Proposal intake failed closed\n\n${r.error}\n\nNothing was written.\n`;
+        console.error(`[INFO] ${r.error} — nothing was written (fail closed).`);
+        md = `### [INFO] Proposal intake failed closed\n\n${r.error}\n\nNothing was written.\n`;
     } else if (!r.proposals) {
         // NOT one sentence for four different situations. See emptyReport().
         const e = emptyReport(r.status, r.reason);
@@ -508,7 +508,7 @@ if (invokedDirectly) {
         console.log(apply ? '── APPLIED ──' : '── DRY RUN — nothing was written ──');
         console.log(formatPlan(r.decisions));
         const s = summarisePlan(r.decisions);
-        md = `### ${apply ? '✅' : '🔎'} Proposal intake — ${apply ? 'applied' : 'dry run (nothing written)'}\n\n`
+        md = `### ${apply ? '[OK]' : '[REVIEW]'} Proposal intake — ${apply ? 'applied' : 'dry run (nothing written)'}\n\n`
             + `**${s.mint}** mint · **${s.enrich}** enrich · **${s.skip}** skip · **${s.defer}** deferred`
             + ` · **${s.unresolvable}** unresolvable\n\n`
             + '```\n' + formatPlan(r.decisions) + '\n```\n';

@@ -683,12 +683,12 @@ export function renderSummary({ findings = [], ui = { ran: false, reason: 'not a
             : '\n**Coverage:** every detector ran, including the browser sweep.\n';
 
     const heading = uiDisabled
-        ? `### ✅ Autonomous discovery — static detectors only${findings.length ? `, ${findings.length} finding(s)` : ''}`
+        ? `### [OK] Autonomous discovery — static detectors only${findings.length ? `, ${findings.length} finding(s)` : ''}`
         : !ui.ran
-            ? `### ⚠️ Autonomous discovery — incomplete${findings.length ? `, ${findings.length} finding(s)` : ''}`
+            ? `### [WARNING] Autonomous discovery — incomplete${findings.length ? `, ${findings.length} finding(s)` : ''}`
             : findings.length
-                ? `### 🔎 Autonomous discovery — ${findings.length} verified finding(s)`
-                : '### ✅ Autonomous discovery — nothing actionable';
+                ? `### [REVIEW] Autonomous discovery — ${findings.length} verified finding(s)`
+                : '### [OK] Autonomous discovery — nothing actionable';
 
     const body = findings.length
         ? '| Severity | Kind | Where |\n|---|---|---|\n'
@@ -718,9 +718,9 @@ if (invokedDirectly) {
         console.log(JSON.stringify({ count: findings.length, findings }, null, 2));
     } else {
         if (!findings.length) {
-            console.log('✅ discover: nothing actionable found. The queue stays empty on purpose.');
+            console.log('[OK] discover: nothing actionable found. The queue stays empty on purpose.');
         } else {
-            console.log(`🔎 discover: ${findings.length} verified finding(s)\n`);
+            console.log(`[REVIEW] discover: ${findings.length} verified finding(s)\n`);
             for (const f of findings) {
                 console.log(`   [${String(f.severity).toUpperCase().padEnd(8)}] ${f.kind.padEnd(22)} ${f.key}`);
             }
@@ -732,7 +732,7 @@ if (invokedDirectly) {
         for (const x of res.filed) console.log(`   filed #${x.number}: ${x.title}`);
         console.log(`\n   ${res.filed.length} filed, ${res.skipped} skipped (already known or over the per-run cap).`);
         if (res.quarantined) console.log(`   ${res.quarantined} withheld from quarantined detector(s).`);
-        console.log(`\n📊 Detector accuracy\n${formatLedger(res.ledger || [])}`);
+        console.log(`\n[INFO] Detector accuracy\n${formatLedger(res.ledger || [])}`);
     }
 
     if (process.env.GITHUB_STEP_SUMMARY) {

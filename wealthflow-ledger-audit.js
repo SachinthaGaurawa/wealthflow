@@ -241,5 +241,5 @@
         inputVocabulary: inputVocabulary,
         AUDITED: AUDITED
     };
-    try { W.console && W.console.log('[WFLedgerAudit] ✓ v' + VERSION + ' — read-only ledger audit ready'); } catch (_) {}
+    try { W.console && W.console.log('[WFLedgerAudit] @info@ v' + VERSION + ' — read-only ledger audit ready'); } catch (_) {}
 })();

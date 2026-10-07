@@ -291,7 +291,7 @@
 
         // Universal output-format capability — every response, not just vision.
         var formatRule =
-            '\n\n📊 OUTPUT FORMAT — give the user EXACTLY what they ask for:\n' +
+            '\n\n@chartLine@ OUTPUT FORMAT — give the user EXACTLY what they ask for:\n' +
             '• "table" / "compare" → a proper GitHub-flavoured Markdown table WITH the | --- | separator row after the header.\n' +
             '• "chart" / "graph" / "diagram" → fenced ```chart blocks with JSON ' +
             '{"type":"bar|line|pie|radar|doughnut","title":"...","labels":[...],"datasets":[{"label":"...","data":[...]}]}. ' +
@@ -388,7 +388,7 @@
                     setTimeout(res, 14000);
                 });
             } catch (_) {}
-            return '🎨 Here is the image I generated for "**' + g.prompt + '**":\n\n' +
+            return '@sparkles@ Here is the image I generated for "**' + g.prompt + '**":\n\n' +
                 '<img src="' + g.url + '" alt="generated" style="max-width:100%;border-radius:14px;border:1px solid var(--border);box-shadow:0 4px 18px rgba(0,0,0,.3);cursor:pointer;" onclick="window.open(this.src,\'_blank\')" />\n\n' +
                 '<span style="font-size:11px;opacity:.7;">Tap image to open full size. Ask me to "regenerate" for a new variation.</span>';
         }
@@ -421,7 +421,7 @@
         _origCallAI = window.callAI;
         callAIv6.__v6 = true;
         window.callAI = callAIv6;
-        log('window.callAI guard installed ✓');
+        log('window.callAI guard installed @info@');
         return true;
     }
     var tries = 0;

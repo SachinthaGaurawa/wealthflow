@@ -96,13 +96,13 @@ jobs:
               let md;
               if (r.filed) {
                 console.log("proposed #" + r.filed.number + ": " + r.filed.title);
-                md = "### 💡 Proposal filed\n\n#" + r.filed.number + " — " + r.filed.title
+                md = "### [IDEA] Proposal filed\n\n#" + r.filed.number + " — " + r.filed.title
                    + "\n\nNothing will be built from it unless you add `approved-feature`.\n";
               } else {
                 // Declining is a SUCCESS, not a failure. A generator that must
                 // produce something every week produces filler.
                 console.log("no proposal this run: " + r.reason);
-                md = "### 💡 No proposal this run\n\n" + r.reason + "\n";
+                md = "### [IDEA] No proposal this run\n\n" + r.reason + "\n";
                 if (r.proposal) md += "\n<details><summary>dry-run draft</summary>\n\n```json\n"
                    + JSON.stringify(r.proposal, null, 2) + "\n```\n</details>\n";
               }

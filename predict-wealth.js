@@ -191,14 +191,14 @@ function generateInsights({ forecast: f, recurring, anomalies, expenses, income 
         if (f.prob_negative_in_12mo > 0.30) {
             out.push({
                 kind: 'warning', severity: 'high',
-                icon: '⚠️',
+                icon: '@alert@',
                 title: 'Cashflow risk detected',
                 body: `Based on the last ${f.history_months} months, there's a ${Math.round(f.prob_negative_in_12mo*100)}% probability that your net wealth will be negative within 12 months. Consider trimming discretionary spending.`
             });
         } else if (f.mu_net > 0) {
             out.push({
                 kind: 'positive', severity: 'low',
-                icon: '📈',
+                icon: '@trendUp@',
                 title: 'Healthy cashflow',
                 body: `You average a net positive of LKR ${f.mu_net.toLocaleString()} per month. At this rate, your 12-month median wealth gain is LKR ${(f.future[Math.min(11, f.future.length-1)].p50).toLocaleString()}.`
             });
@@ -208,7 +208,7 @@ function generateInsights({ forecast: f, recurring, anomalies, expenses, income 
     if (recurring.length) {
         out.push({
             kind: 'suggestion', severity: 'medium',
-            icon: '🔁',
+            icon: '@refresh@',
             title: `${recurring.length} undocumented recurring charge${recurring.length>1?'s':''} found`,
             body: `Charges like "${recurring[0].name}" (LKR ${recurring[0].amount.toLocaleString()}/mo) appear monthly but aren't in your Subscriptions tab. Adding them gives you better forecasting accuracy.`,
             payload: recurring
@@ -218,7 +218,7 @@ function generateInsights({ forecast: f, recurring, anomalies, expenses, income 
     for (const a of anomalies.slice(0, 3)) {
         out.push({
             kind: 'anomaly', severity: a.severity,
-            icon: a.direction === 'spike' ? '🚨' : '🌡️',
+            icon: a.direction === 'spike' ? '@alert@' : '@info@',
             title: `${a.direction === 'spike' ? 'Spike' : 'Drop'} in ${a.category}`,
             body: `This month's ${a.category} spend is LKR ${a.amount.toLocaleString()}, which is ${Math.abs(a.z_score).toFixed(1)}σ ${a.direction === 'spike' ? 'above' : 'below'} your ${a.baseline_avg.toLocaleString()} baseline.`,
             payload: a

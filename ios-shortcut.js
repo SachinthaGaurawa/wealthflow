@@ -29,7 +29,6 @@ export default async function handler(req) {
     // The Shortcut JSON template — a user-friendly visual description
     const recipe = {
         title: 'WealthFlow SMS Auto-Capture',
-        icon: '💸',
         webhook_url: webhook,
         device_token: token,
         steps: [
@@ -37,13 +36,11 @@ export default async function handler(req) {
                 step: 1,
                 title: 'Open the Shortcuts app',
                 detail: 'Pre-installed on every iPhone. Look for the colourful icon shaped like overlapping circles.',
-                action_emoji: '📱'
             },
             {
                 step: 2,
                 title: 'Tap "Automation" tab → "+" → "Personal Automation"',
                 detail: 'Choose "Message" as the trigger. Set "Sender" to your bank\'s sender ID (e.g. "ComBank") or leave it set to "Any" to catch every bank SMS.',
-                action_emoji: '⚡'
             },
             {
                 step: 3,
@@ -63,14 +60,12 @@ export default async function handler(req) {
                         received_at_ms: '[Current Date → unix epoch × 1000]',
                         device_id: 'iphone'
                     }
-                },
-                action_emoji: '🔗'
+                }
             },
             {
                 step: 4,
                 title: 'Toggle off "Ask Before Running" → Done',
-                detail: 'This makes the shortcut fully silent. Every bank SMS now triggers an automatic POST to WealthFlow — works even when WealthFlow is closed.',
-                action_emoji: '✅'
+                detail: 'This makes the shortcut fully silent. Every bank SMS now triggers an automatic POST to WealthFlow — works even when WealthFlow is closed.'
             }
         ],
         deep_links: {

@@ -84,5 +84,5 @@
         // exposed for tests/inspection
         _state: function () { return { fails: _num('wf_boot_fails'), pending: _get('wf_boot_pending', '0'), resets: _num('wf_reset_count'), autoheal: _get('wf_autoheal', '0') }; }
     };
-    try { console.log('[wfRecovery] ✓ self-heal ready (escape hatch + opt-in auto-heal)'); } catch (_) {}
+    try { console.log('[wfRecovery] @info@ self-heal ready (escape hatch + opt-in auto-heal)'); } catch (_) {}
 })();

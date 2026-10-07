@@ -240,5 +240,5 @@
         KEYWORDS, INCOME_PATTERNS, INVESTMENT_PATTERNS,
         version: '1.0'
     };
-    if (typeof console !== 'undefined' && console.log) console.log('[wfCategoryAI] ✓ shared category intelligence loaded (v1.0)');
+    if (typeof console !== 'undefined' && console.log) console.log('[wfCategoryAI] @info@ shared category intelligence loaded (v1.0)');
 })(typeof window !== 'undefined' ? window : globalThis);

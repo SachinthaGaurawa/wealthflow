@@ -356,7 +356,7 @@
                     try {
                         opened = await _vTask.promise;
                         if (opened) {
-                            if (typeof window.notify === 'function') window.notify('🔓 Locked PDF opened automatically with your Vault keys', 'success');
+                            if (typeof window.notify === 'function') window.notify('@lock@ Locked PDF opened automatically with your Vault keys', 'success');
                             break;
                         }
                     } catch (pe) {
@@ -854,16 +854,16 @@
     function buildSmartNote(result, isPdf, pageCount) {
         if (!result) return '';
         var parts = [];
-        if (result.items && result.items.length) parts.push('📦 ' + result.items.slice(0, 5).join(', '));
+        if (result.items && result.items.length) parts.push('@receipt@ ' + result.items.slice(0, 5).join(', '));
         if (result.payment_method) {
             var pm = String(result.payment_method).toLowerCase();
-            var label = pm === 'card' ? '💳 Card' : pm === 'cash' ? '💵 Cash' :
-                pm === 'digital' ? '📲 Digital' : null;
+            var label = pm === 'card' ? '@card@ Card' : pm === 'cash' ? '@wallet@ Cash' :
+                pm === 'digital' ? '@devices@ Digital' : null;
             if (label) parts.push(label);
         }
-        if (result.receipt_number) parts.push('🧾 ' + result.receipt_number);
-        if (result.tax && typeof result.tax === 'number') parts.push('🧮 Tax LKR ' + result.tax.toLocaleString());
-        if (isPdf) parts.push('📄 PDF · ' + pageCount + 'pg');
+        if (result.receipt_number) parts.push('@receipt@ ' + result.receipt_number);
+        if (result.tax && typeof result.tax === 'number') parts.push('@ruler@ Tax LKR ' + result.tax.toLocaleString());
+        if (isPdf) parts.push('@fileText@ PDF · ' + pageCount + 'pg');
         return parts.join(' · ');
     }
 
@@ -918,11 +918,11 @@
             var cleaned = existing.split('|').map(function (p) {
                 p = p.trim();
                 if (!p) return '';
-                if (/^(📦|🔤|💳|💵|📲|🧾|🧮|📄|🤖 Recurring)/.test(p)) return '';
+                if (/^(@receipt@|@info@|@card@|@wallet@|@devices@|@receipt@|@ruler@|@fileText@|@bot@ Recurring)/.test(p)) return '';
                 return p;
             }).filter(Boolean).join(' | ');
             var note = buildSmartNote(result, opts.isPdf, opts.pageCount);
-            if (prior) note = (note ? note + ' · ' : '') + '🤖 Recurring (same as ' + (prior.month || 'previous') + ')';
+            if (prior) note = (note ? note + ' · ' : '') + '@bot@ Recurring (same as ' + (prior.month || 'previous') + ')';
             $('e_notes').value = cleaned ? (cleaned + ' | ' + note) : note;
         }
         return filled;
@@ -1009,7 +1009,7 @@
             var existing = $('ot_notes').value || '';
             var note = (typeof buildSmartNote === 'function')
                 ? buildSmartNote(result, opts.isPdf, opts.pageCount)
-                : ('🤖 AI-scanned · ' + (opts.isPdf ? 'PDF' : 'image'));
+                : ('@bot@ AI-scanned · ' + (opts.isPdf ? 'PDF' : 'image'));
             $('ot_notes').value = existing ? (existing + ' | ' + note) : note;
         }
 
@@ -1106,7 +1106,7 @@
         }
         if ($('sub_notes')) {
             var note = buildSmartNote(result, opts.isPdf, opts.pageCount);
-            if (matchedSub) note = (note ? note + ' · ' : '') + '🔁 Updates existing: ' + matchedSub.name;
+            if (matchedSub) note = (note ? note + ' · ' : '') + '@refresh@ Updates existing: ' + matchedSub.name;
             $('sub_notes').value = note;
         }
         result._matchedSub = matchedSub;
@@ -2068,11 +2068,11 @@
         var isPdf = imgBundle.isPdf;
         if (typeof window.appendAIMessage === 'function') {
             window.appendAIMessage('user',
-                '📎 *Attached ' + (isPdf ? 'PDF (' + imgBundle.pageCount + ' page' + (imgBundle.pageCount > 1 ? 's' : '') + ')' : 'image') +
+                '@link@ *Attached ' + (isPdf ? 'PDF (' + imgBundle.pageCount + ' page' + (imgBundle.pageCount > 1 ? 's' : '') + ')' : 'image') +
                 ': ' + (file.name || 'file') + '*');
         }
         if (typeof window.showAITyping === 'function') window.showAITyping(true);
-        if (typeof window.notify === 'function') window.notify('🔍 Deep scanning…', 'info');
+        if (typeof window.notify === 'function') window.notify('@search@ Deep scanning…', 'info');
 
         try {
             var hints = { currency: 'LKR', today: window.WFWhen.today() };
@@ -2101,7 +2101,7 @@
             var prompt = "You are WealthFlow AI — a warm, friendly advisor talking to " + userName + ". " +
                 "They just shared a document with you. Respond entirely in " + lang + ", naturally and conversationally. " +
                 "Give a brief 2-5 sentence summary. If financial, bold the key numbers as **LKR X,XXX**. " +
-                "If it's a recurring bill, gently suggest tapping 📸 AI Scan in Monthly Expenses to log it.\n\n" +
+                "If it's a recurring bill, gently suggest tapping @scan@ AI Scan in Monthly Expenses to log it.\n\n" +
                 "STRUCTURED DATA:\n" + structured + "\n\n" +
                 (rawText ? "RAW OCR TEXT:\n" + rawText.substring(0, 2500) + "\n\n" : "");
 
@@ -2117,15 +2117,15 @@
 
             if (typeof window.getAIHistory === 'function' && typeof window.saveAIHistory === 'function') {
                 var hist = window.getAIHistory();
-                hist.push({ role: 'user', content: '📎 [shared a ' + (isPdf ? 'PDF' : 'image') + ': ' + (file.name || 'file') + ']', ts: Date.now() });
+                hist.push({ role: 'user', content: '@link@ [shared a ' + (isPdf ? 'PDF' : 'image') + ': ' + (file.name || 'file') + ']', ts: Date.now() });
                 hist.push({ role: 'assistant', content: reply, ts: Date.now() });
                 window.saveAIHistory(hist);
             }
-            if (typeof window.notify === 'function') window.notify('✅ Analysed', 'success');
+            if (typeof window.notify === 'function') window.notify('@checkCircle@ Analysed', 'success');
         } catch (e) {
             console.error('[' + V + '] AI chat attachment failed:', e);
             if (typeof window.appendAIMessage === 'function') {
-                window.appendAIMessage('bot', '⚠️ I had trouble reading that file: ' + e.message);
+                window.appendAIMessage('bot', '@alert@ I had trouble reading that file: ' + e.message);
             }
         } finally {
             if (typeof window.showAITyping === 'function') window.showAITyping(false);
@@ -2137,7 +2137,7 @@
      * ========================================================================= */
     function newClearAIChat() {
         showBeautifulConfirm({
-            icon: '🗑️',
+            icon: '@trash@',
             title: 'Clear Chat History?',
             message: 'I\'ll forget the messages on screen but keep what I\'ve learned about you. For a full memory wipe, use Settings → Reset AI Memory.',
             confirmText: 'Clear Chat', cancelText: 'Cancel', accent: 'amber',
@@ -2152,14 +2152,14 @@
                         welcome.className = 'ai-welcome-msg';
                         welcome.innerHTML =
                             '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">' +
-                            '<div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🤖</div>' +
+                            '<div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">@bot@</div>' +
                             '<div><div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI</div>' +
-                            '<div style="font-size:10px;color:var(--text3);">Memory intact 🧠 · Ready to chat</div></div></div>' +
+                            '<div style="font-size:10px;color:var(--text3);">Memory intact @bot@ · Ready to chat</div></div></div>' +
                             '<div style="font-size:14px;color:var(--text);line-height:1.7;">' +
-                            '👋 Chat cleared. I still remember your style, goals, and finances. Just nothing to scroll through 💫</div>';
+                            '@user@ Chat cleared. I still remember your style, goals, and finances. Just nothing to scroll through @info@</div>';
                         container.appendChild(welcome);
                     }
-                    if (typeof window.notify === 'function') window.notify('🗑️ Chat cleared (memory kept).', 'success');
+                    if (typeof window.notify === 'function') window.notify('@trash@ Chat cleared (memory kept).', 'success');
                     if (typeof window.initAISuggestionPills === 'function') window.initAISuggestionPills();
                 } catch (e) { console.error(e); }
             }
@@ -2168,11 +2168,11 @@
 
     function newConfirmResetAIMemory() {
         showPinGatedConfirm({
-            icon: '🧠',
+            icon: '@bot@',
             title: 'Erase ALL AI Memory?',
             message: 'Permanently deletes EVERYTHING the AI knows about you — chat, persona, learned patterns. This cannot be undone.',
-            warning: '⚠️ You\'ll be starting over from scratch.',
-            confirmText: '🗑️ Erase Forever', cancelText: 'Keep My Memory',
+            warning: '@alert@ You\'ll be starting over from scratch.',
+            confirmText: '@trash@ Erase Forever', cancelText: 'Keep My Memory',
             onConfirm: async function () {
                 try {
                     localStorage.removeItem('wf_ai_history');
@@ -2193,17 +2193,17 @@
                         welcome.className = 'ai-welcome-msg';
                         welcome.innerHTML =
                             '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">' +
-                            '<div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🤖</div>' +
+                            '<div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">@bot@</div>' +
                             '<div><div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI</div>' +
                             '<div style="font-size:10px;color:var(--text3);">Ready to learn you again</div></div></div>' +
                             '<div style="font-size:14px;color:var(--text);line-height:1.7;">' +
-                            '👋 Memory reset. I don\'t know anything yet — but I\'m a quick learner. Ask me anything! 💫</div>';
+                            '@user@ Memory reset. I don\'t know anything yet — but I\'m a quick learner. Ask me anything! @info@</div>';
                         container.appendChild(welcome);
                     }
                     if (typeof window.triggerHaptic === 'function') window.triggerHaptic('heavy');
-                    if (typeof window.notify === 'function') window.notify('🧠 AI memory fully erased.', 'success');
+                    if (typeof window.notify === 'function') window.notify('@bot@ AI memory fully erased.', 'success');
                 } catch (e) {
-                    if (typeof window.notify === 'function') window.notify('⚠️ Reset failed: ' + e.message, 'error');
+                    if (typeof window.notify === 'function') window.notify('@alert@ Reset failed: ' + e.message, 'error');
                 }
             }
         });
@@ -2263,7 +2263,7 @@
         c.innerHTML =
             '<div class="wf4-overlay" id="wf4OverlayCurr">' +
             '<div class="wf4-modal">' +
-            '<div class="wf4-modal-header"><div class="wf4-modal-icon">' + (opts.icon || '⚠️') + '</div>' +
+            '<div class="wf4-modal-header"><div class="wf4-modal-icon">' + (opts.icon || '@alert@') + '</div>' +
             '<div class="wf4-modal-title">' + opts.title + '</div>' +
             '<div class="wf4-modal-msg">' + opts.message + '</div></div>' +
             '<div class="wf4-modal-actions">' +
@@ -2283,15 +2283,15 @@
         var pinBuffer = '';
         c.innerHTML =
             '<div class="wf4-overlay" id="wf4OverlayCurr"><div class="wf4-modal">' +
-            '<div class="wf4-modal-header"><div class="wf4-modal-icon">' + (opts.icon || '🔐') + '</div>' +
+            '<div class="wf4-modal-header"><div class="wf4-modal-icon">' + (opts.icon || '@lock@') + '</div>' +
             '<div class="wf4-modal-title">' + opts.title + '</div>' +
             '<div class="wf4-modal-msg">' + opts.message + '</div></div>' +
             (opts.warning ? '<div class="wf4-modal-warn">' + opts.warning + '</div>' : '') +
-            '<div class="wf4-modal-body"><div class="wf4-pin-label">🔐 Enter your 6-digit Master PIN</div>' +
+            '<div class="wf4-modal-body"><div class="wf4-pin-label">@lock@ Enter your 6-digit Master PIN</div>' +
             '<div class="wf4-pin-dots" id="wf4PinDots">' +
             '<div class="wf4-pin-dot"></div><div class="wf4-pin-dot"></div><div class="wf4-pin-dot"></div>' +
             '<div class="wf4-pin-dot"></div><div class="wf4-pin-dot"></div><div class="wf4-pin-dot"></div></div>' +
-            '<button class="wf4-pin-trigger" id="wf4PinTrigger" type="button">⌨️ Tap to type PIN</button>' +
+            '<button class="wf4-pin-trigger" id="wf4PinTrigger" type="button">@devices@ Tap to type PIN</button>' +
             '<input class="wf4-pin-input" id="wf4PinInput" type="password" inputmode="numeric" maxlength="6" autocomplete="off">' +
             '<div class="wf4-pin-err" id="wf4PinErr"></div></div>' +
             '<div class="wf4-modal-actions">' +
@@ -2325,7 +2325,7 @@
         confirmBtn.onclick = async function () {
             if (pinBuffer.length !== 6) return;
             confirmBtn.disabled = true;
-            confirmBtn.textContent = '⏳ Verifying…';
+            confirmBtn.textContent = '@clock@ Verifying…';
             try {
                 if (typeof window.sha256 !== 'function' || typeof window.DB === 'undefined') {
                     throw new Error('PIN verification unavailable');
@@ -2336,7 +2336,7 @@
                 var hash = await window.sha256(pinBuffer + 'wf_salt_sg2026');
                 if (hash === stored) { close(); if (opts.onConfirm) opts.onConfirm(); }
                 else {
-                    errEl.textContent = '❌ Incorrect PIN. Try again.';
+                    errEl.textContent = '@x@ Incorrect PIN. Try again.';
                     for (var i = 0; i < 6; i++) dots[i].classList.add('error');
                     setTimeout(function () {
                         pinBuffer = ''; pinInput.value = ''; renderDots(); pinInput.focus();
@@ -2346,7 +2346,7 @@
                     if (typeof window.triggerHaptic === 'function') window.triggerHaptic('error');
                 }
             } catch (e) {
-                errEl.textContent = '⚠️ ' + e.message;
+                errEl.textContent = '@alert@ ' + e.message;
                 confirmBtn.disabled = false;
                 confirmBtn.textContent = opts.confirmText || 'Confirm';
             }
@@ -2447,16 +2447,16 @@
         var c = _ensureModalContainer();
         c.innerHTML =
             '<div class="wf4-overlay" id="wf4OverlayCurr"><div class="wf4-modal">' +
-            '<div class="wf4-modal-header"><div class="wf4-modal-icon">📸</div>' +
+            '<div class="wf4-modal-header"><div class="wf4-modal-icon">@scan@</div>' +
             '<div class="wf4-modal-title">AI Scanner Settings</div>' +
             '<div class="wf4-modal-msg">Tune for accuracy vs speed. Powered by <strong>19 AI engines</strong> including Gemini 3.1 Pro, GPT-4o, Claude 3.5 Sonnet, Grok 2 Vision, Pixtral, and Llama 3.2 90B Vision.</div></div>' +
             '<div class="wf4-modal-body">' +
             '<label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:6px;text-transform:uppercase;font-weight:600;letter-spacing:0.5px;">Scan Mode</label>' +
             '<select id="wf4SetMode" style="width:100%;padding:11px;background:#0a0f1c;border:1px solid #1e293b;border-radius:9px;color:#e5e7eb;font-size:14px;font-family:inherit;margin-bottom:14px;">' +
-            '<option value="quick">🚀 Quick — 1 engine, ~2s</option>' +
-            '<option value="deep">🔬 Deep — 3-5 engines vote, ~4s (default)</option>' +
-            '<option value="ultra">💎 Ultra — 10+ engines + OCR, ~8s</option>' +
-            '<option value="frontier">🌟 Frontier — Gemini 3.1 Pro + Claude 3.5 + 12 more, ~14s</option>' +
+            '<option value="quick">@trendUp@ Quick — 1 engine, ~2s</option>' +
+            '<option value="deep">@search@ Deep — 3-5 engines vote, ~4s (default)</option>' +
+            '<option value="ultra">@gem@ Ultra — 10+ engines + OCR, ~8s</option>' +
+            '<option value="frontier">@sparkles@ Frontier — Gemini 3.1 Pro + Claude 3.5 + 12 more, ~14s</option>' +
             '</select>' +
             '<label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:6px;text-transform:uppercase;font-weight:600;letter-spacing:0.5px;">Default Currency</label>' +
             '<select id="wf4SetCurr" style="width:100%;padding:11px;background:#0a0f1c;border:1px solid #1e293b;border-radius:9px;color:#e5e7eb;font-size:14px;font-family:inherit;margin-bottom:14px;">' +
@@ -2469,7 +2469,7 @@
             '<input type="checkbox" id="wf4SetDbg" style="width:18px;height:18px;accent-color:#fbbf24;">' +
             '<span style="font-size:13px;color:#e5e7eb;">Show engine debug in console</span></label>' +
             '<div style="margin-top:14px;padding:11px 13px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:9px;font-size:11.5px;color:#a5b4fc;line-height:1.7;">' +
-            '<div style="font-weight:700;color:#c7d2fe;margin-bottom:6px;">⚡ Available AI Engines (v4.0)</div>' +
+            '<div style="font-weight:700;color:#c7d2fe;margin-bottom:6px;">@sparkles@ Available AI Engines (v4.0)</div>' +
             '<div><strong>Google:</strong> Gemini 3.1 Pro, 3 Flash, 2.5 Flash, 2.5 Pro, 2.0 Flash</div>' +
             '<div><strong>OpenAI:</strong> GPT-4o (via GitHub Models, FREE)</div>' +
             '<div><strong>Anthropic:</strong> Claude 3.5 Sonnet (vision)</div>' +
@@ -2477,12 +2477,12 @@
             '<div><strong>xAI:</strong> Grok 2 Vision</div>' +
             '<div><strong>Microsoft:</strong> Phi-3 Vision (Fireworks)</div>' +
             '<div><strong>OCR.space + Text-LLM chain:</strong> Gemini → Cerebras → SambaNova → GitHub DeepSeek-R1 → NVIDIA Nemotron → Cohere → DeepSeek → Groq → OpenRouter</div>' +
-            '<div style="margin-top:7px;padding-top:7px;border-top:1px solid rgba(99,102,241,0.2);"><strong>💡 Frontier mode</strong> uses Google\'s most advanced reasoning model (Feb 2026).</div>' +
+            '<div style="margin-top:7px;padding-top:7px;border-top:1px solid rgba(99,102,241,0.2);"><strong>@sparkles@ Frontier mode</strong> uses Google\'s most advanced reasoning model (Feb 2026).</div>' +
             '</div>' +
             '</div>' +
             '<div class="wf4-modal-actions">' +
             '<button class="wf4-btn wf4-btn-cancel" id="wf4Cancel">Cancel</button>' +
-            '<button class="wf4-btn wf4-btn-primary" id="wf4Save">💾 Save Settings</button>' +
+            '<button class="wf4-btn wf4-btn-primary" id="wf4Save">@download@ Save Settings</button>' +
             '</div></div></div>';
         document.getElementById('wf4SetMode').value = s.mode;
         document.getElementById('wf4SetCurr').value = s.currency;
@@ -2500,7 +2500,7 @@
             };
             _saveScanSettings();
             close();
-            if (typeof window.notify === 'function') window.notify('✅ Scanner settings saved', 'success');
+            if (typeof window.notify === 'function') window.notify('@checkCircle@ Scanner settings saved', 'success');
         };
     };
     }  // end: if (typeof window.openScannerSettings !== 'function')
@@ -2536,7 +2536,7 @@
             window.confirmResetAIMemory = newConfirmResetAIMemory;
             patchBuildSystemPrompt();
             patchFileInputsV5();   // single accept patcher; see mergeAcceptV5
-            console.log('[' + V + '] all patches applied ✓');
+            console.log('[' + V + '] all patches applied @info@');
             console.log('[' + V + '] Settings: WF_SCAN_SETTINGS =', window.WF_SCAN_SETTINGS);
         } catch (e) {
             console.error('[' + V + '] patch error:', e);
@@ -2654,7 +2654,7 @@
         window._wfV5TrackWrite = function (k, v) {
             try { _trackLocalWrite(k, v); } catch (_) {}
         };
-        console.log('[' + V5 + '] DB.set guard installed ✓');
+        console.log('[' + V5 + '] DB.set guard installed @info@');
         return true;
     }
 
@@ -2709,7 +2709,7 @@
                         return x && x.id && !currentIds.has(x.id);
                     });
                     if (missingFromCurrent.length > 0) {
-                        console.warn('[' + V5 + '] 🛡️ Restoring ' + missingFromCurrent.length +
+                        console.warn('[' + V5 + '] @shield@ Restoring ' + missingFromCurrent.length +
                                      ' entries to ' + collection + ' (snapshot race detected)');
                         var restored = current.concat(missingFromCurrent);
                         window.appData[collection] = restored;
@@ -2736,7 +2736,7 @@
                             if (typeof window._wfMarkLocalWrite === 'function') window._wfMarkLocalWrite();
                         } catch (_) {}
                         if (typeof window.notify === 'function') {
-                            window.notify('🛡️ Restored ' + missingFromCurrent.length + ' entries (cloud sync race protected)', 'info');
+                            window.notify('@shield@ Restored ' + missingFromCurrent.length + ' entries (cloud sync race protected)', 'info');
                         }
                     }
                 }
@@ -2887,7 +2887,7 @@
     /* =========================================================================
      * 23. MULTI-FILE ATTACHMENT UI FOR AI ADVISOR (up to 15 files)
      *
-     *  When user clicks 📎 in AI chat, they can now pick multiple images/PDFs.
+     *  When user clicks @link@ in AI chat, they can now pick multiple images/PDFs.
      *  Each shows as a thumbnail with a remove button. Clicking send transmits
      *  all of them to the multi-engine vision pipeline.
      * ========================================================================= */
@@ -2959,7 +2959,7 @@
         rail.style.display = 'flex';
         rail.innerHTML = _aiChatAttachments.map(function (att, idx) {
             var thumb = att.isPdf ?
-                '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1e293b,#0f172a);color:#fbbf24;font-size:20px;font-weight:700;">📄</div>' :
+                '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1e293b,#0f172a);color:#fbbf24;font-size:20px;font-weight:700;">@fileText@</div>' :
                 (att.preview ? '<img src="' + att.preview + '" style="width:100%;height:100%;object-fit:cover;">' :
                  '<div style="width:100%;height:100%;background:#0f172a;"></div>');
             var progress = (att.uploading ? _progressRing(att.progress || 0) : '');
@@ -2984,7 +2984,7 @@
         if (!files.length) return;
         var slotsLeft = 15 - _aiChatAttachments.length;
         if (slotsLeft <= 0) {
-            if (typeof window.notify === 'function') window.notify('⚠️ Maximum 15 files. Remove some first.', 'warning');
+            if (typeof window.notify === 'function') window.notify('@alert@ Maximum 15 files. Remove some first.', 'warning');
             return;
         }
         files = files.slice(0, slotsLeft);
@@ -3035,7 +3035,7 @@
         _setSendLock(false); // unlock — files ready, user can send now
         if (e.target) e.target.value = '';
         if (typeof window.notify === 'function')
-            window.notify('📎 Attached ' + files.length + ' file' + (files.length > 1 ? 's' : '') + ' — ready to send', 'success');
+            window.notify('@link@ Attached ' + files.length + ' file' + (files.length > 1 ? 's' : '') + ' — ready to send', 'success');
     }
 
     /* =========================================================================
@@ -3199,7 +3199,7 @@
         if (typeof window.appendAIMessage === 'function') {
             var thumbsHtml = _aiChatAttachments.map(function (att) {
                 if (att.isPdf) {
-                    return '<div style="display:inline-block;width:80px;height:80px;border-radius:8px;background:linear-gradient(135deg,#1e293b,#0f172a);color:#fbbf24;display:inline-flex;align-items:center;justify-content:center;font-size:24px;margin:2px;border:1px solid rgba(212,175,55,0.3);"><div style="text-align:center;"><div>📄</div><div style="font-size:8px;color:#94a3b8;margin-top:2px;">' + (att.name || 'PDF').substring(0, 12) + '</div></div></div>';
+                    return '<div style="display:inline-block;width:80px;height:80px;border-radius:8px;background:linear-gradient(135deg,#1e293b,#0f172a);color:#fbbf24;display:inline-flex;align-items:center;justify-content:center;font-size:24px;margin:2px;border:1px solid rgba(212,175,55,0.3);"><div style="text-align:center;"><div>@fileText@</div><div style="font-size:8px;color:#94a3b8;margin-top:2px;">' + (att.name || 'PDF').substring(0, 12) + '</div></div></div>';
                 }
                 return '<img src="' + att.preview + '" style="display:inline-block;width:80px;height:80px;object-fit:cover;border-radius:8px;margin:2px;border:1px solid rgba(212,175,55,0.3);">';
             }).join('');
@@ -3225,7 +3225,7 @@
 
         try {
             // Step 1: extract images from all attachments (PDFs → first 2 pages each, max 15 images total)
-            _updateThinking('🖼️ Optimising images…');
+            _updateThinking('@camera@ Optimising images…');
             var allImages = [];
             for (var i = 0; i < attachments.length && allImages.length < 15; i++) {
                 try {
@@ -3247,7 +3247,7 @@
             if (allImages.length === 0) throw new Error('No images could be extracted from attached files');
 
             // Step 2: build universal prompt
-            _updateThinking('🧠 Thinking deeply with frontier AI…');
+            _updateThinking('@bot@ Thinking deeply with frontier AI…');
             var visionPrompt = buildUniversalVisionPrompt(msg, intent);
 
             // Step 3: call AI — frontier mode if user wants high accuracy / deep analysis
@@ -3261,7 +3261,7 @@
             // Save to history
             if (typeof window.getAIHistory === 'function' && typeof window.saveAIHistory === 'function') {
                 var hist = window.getAIHistory();
-                var summary = (msg || '(no text)') + ' [📎 ' + attachments.length + ' file' + (attachments.length > 1 ? 's' : '') + ']';
+                var summary = (msg || '(no text)') + ' [@link@ ' + attachments.length + ' file' + (attachments.length > 1 ? 's' : '') + ']';
                 hist.push({ role: 'user', content: summary, ts: Date.now() });
                 hist.push({ role: 'assistant', content: reply, ts: Date.now() });
                 window.saveAIHistory(hist);
@@ -3270,7 +3270,7 @@
             _hideThinking();
             console.error('[' + V5 + '] AI chat send failed:', err);
             if (typeof window.appendAIMessage === 'function') {
-                window.appendAIMessage('bot', '⚠️ I had trouble processing those files: ' + err.message);
+                window.appendAIMessage('bot', '@alert@ I had trouble processing those files: ' + err.message);
             }
         }
     }
@@ -3388,17 +3388,17 @@
         console.log('[' + V5 + '] vision cascade start — ' + images.length + ' image(s), first b64 len=' + (images[0].base64 ? images[0].base64.length : 0));
 
         // Engine 1: the user's OWN Gemini key, if they entered one in Settings
-        if (onProgress) onProgress('🔍 Analysing the image…');
+        if (onProgress) onProgress('@search@ Analysing the image…');
         var out = await _userKeyVision(images, prompt);
         if (out) return out;
 
         // Engine 2: server-side vision (/api/ai-vision) — keys stay on the server
-        if (onProgress) onProgress('🔎 Cross-checking with a second vision engine…');
+        if (onProgress) onProgress('@search@ Cross-checking with a second vision engine…');
         out = await _serverVision(images, prompt);
         if (out) return out;
 
         // Engine 3: Vercel backend (server-side keys, more providers)
-        if (onProgress) onProgress('🛰️ Trying the secure backend…');
+        if (onProgress) onProgress('@globe@ Trying the secure backend…');
         out = await _backendVision(images, prompt);
         if (out) return out;
 
@@ -3406,7 +3406,7 @@
         try {
             var hasVS = await isEndpointAvailable('/vision-scan');
             if (hasVS) {
-                if (onProgress) onProgress('🧬 Deep OCR pass…');
+                if (onProgress) onProgress('@bot@ Deep OCR pass…');
                 var rr = await fetch(_apiBase() + '/vision-scan', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ image: images[0].base64, mode: 'frontier',
@@ -3437,7 +3437,7 @@
 
         if (images.length === 1) {
             // Single image path — use frontier or deep mode
-            if (onProgress) onProgress('🔍 Frontier vision analysing…');
+            if (onProgress) onProgress('@search@ Frontier vision analysing…');
             try {
                 var r = await fetch(_apiBase() + '/vision-scan', {
                     method: 'POST',
@@ -3457,7 +3457,7 @@
                     var data = await r.json();
                     // If we got structured receipt data AND it wasn't asked for, fall through to chat
                     if (data.result && data.result.raw_text) {
-                        if (onProgress) onProgress('💭 Reasoning over what I saw…');
+                        if (onProgress) onProgress('@message@ Reasoning over what I saw…');
                         // Pass the OCR text + structured info + user's question to chat AI
                         var chatPrompt = prompt + '\n\nWhat I saw in the image (extracted by vision OCR):\n' +
                                           'Raw text:\n' + data.result.raw_text + '\n\nStructured data:\n' +
@@ -3478,7 +3478,7 @@
         }
 
         // Multi-image path: send each to vision OCR, gather text, then synthesise
-        if (onProgress) onProgress('🔄 Reading ' + images.length + ' images in parallel…');
+        if (onProgress) onProgress('@refresh@ Reading ' + images.length + ' images in parallel…');
         var ocrPromises = images.map(function (img, idx) {
             return fetch(_apiBase() + '/vision-scan', {
                 method: 'POST',
@@ -3493,7 +3493,7 @@
         });
         var results = await Promise.all(ocrPromises);
 
-        if (onProgress) onProgress('🧬 Synthesising findings…');
+        if (onProgress) onProgress('@bot@ Synthesising findings…');
         var summary = results.map(function (res, idx) {
             if (!res || !res.result) return 'Image ' + (idx + 1) + ' (' + images[idx].sourceFile + '): could not be read';
             return 'Image ' + (idx + 1) + ' (' + images[idx].sourceFile +
@@ -3519,7 +3519,7 @@
             _originalSendAIMessage = window.sendAIMessage;
             window.sendAIMessage = sendAIMessageV5;
             window.sendAIMessage._v5patched = true;
-            console.log('[' + V5 + '] sendAIMessage patched ✓');
+            console.log('[' + V5 + '] sendAIMessage patched @info@');
         }
     }
 
@@ -3567,7 +3567,7 @@
             try { _installAIDropZone(); } catch (_) {}
             // 6. Patch sendAIMessage
             patchSendAIMessageV5();
-            console.log('[' + V5 + '] All v5 patches installed ✓');
+            console.log('[' + V5 + '] All v5 patches installed @info@');
         } catch (e) {
             console.error('[' + V5 + '] install error:', e);
         }
@@ -3615,7 +3615,7 @@
         overlay.style.cssText = 'position:absolute;inset:0;z-index:50;display:none;align-items:center;justify-content:center;' +
             'background:rgba(13,29,60,0.82);backdrop-filter:blur(3px);border:2.5px dashed #d4af37;border-radius:14px;' +
             'font-size:17px;font-weight:700;color:#fff;pointer-events:none;text-align:center;';
-        overlay.innerHTML = '<div>📎 Drop your image or file here<br><span style="font-size:12px;font-weight:500;opacity:.85;">Photos, screenshots, PDFs — I\'ll read them</span></div>';
+        overlay.innerHTML = '<div>@link@ Drop your image or file here<br><span style="font-size:12px;font-weight:500;opacity:.85;">Photos, screenshots, PDFs — I\'ll read them</span></div>';
         // The chat messages box needs a positioned parent for the overlay.
         var host = zone.parentElement || zone;
         if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
@@ -3646,7 +3646,7 @@
             // Reuse the exact same attach pipeline (progress ring + send lock).
             handleAIChatMultiAttach({ target: { files: files, value: '' } });
         });
-        console.log('[' + V5 + '] drag & drop zone installed ✓');
+        console.log('[' + V5 + '] drag & drop zone installed @info@');
     }
 
     // Expose the attach handler globally so the host's inline bridge can
@@ -3661,7 +3661,7 @@
             return;
         }
         if (atts.some(function (a) { return a && a.uploading; })) {
-            if (window.notify) window.notify('⏳ Files still uploading…', 'info');
+            if (window.notify) window.notify('@clock@ Files still uploading…', 'info');
             return;
         }
 
@@ -3671,7 +3671,7 @@
         // Show the user's message with image thumbnails
         if (typeof window.appendAIMessage === 'function') {
             var thumbs = atts.map(function (a) {
-                if (a.isPdf) return '<div style="display:inline-block;width:78px;height:78px;border-radius:8px;background:linear-gradient(135deg,#1e293b,#0f172a);color:#fbbf24;display:inline-flex;align-items:center;justify-content:center;font-size:22px;margin:2px;border:1px solid rgba(212,175,55,0.3);">📄</div>';
+                if (a.isPdf) return '<div style="display:inline-block;width:78px;height:78px;border-radius:8px;background:linear-gradient(135deg,#1e293b,#0f172a);color:#fbbf24;display:inline-flex;align-items:center;justify-content:center;font-size:22px;margin:2px;border:1px solid rgba(212,175,55,0.3);">@fileText@</div>';
                 return '<img src="' + a.preview + '" style="display:inline-block;width:78px;height:78px;object-fit:cover;border-radius:8px;margin:2px;border:1px solid rgba(212,175,55,0.3);">';
             }).join('');
             var uhtml = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">' + thumbs + '</div>' +
@@ -3684,7 +3684,7 @@
         _renderAttachmentRail();
         _setSendLock(false);
 
-        _showThinking('👁️ Looking at your ' + (atts.length > 1 ? atts.length + ' files' : 'image') + '…');
+        _showThinking('@eye@ Looking at your ' + (atts.length > 1 ? atts.length + ' files' : 'image') + '…');
 
         try {
             // Extract base64 images (compress, PDFs → pages)
@@ -3699,7 +3699,7 @@
             }
             if (imgs.length === 0) throw new Error('Could not read the attached image(s)');
 
-            _updateThinking('🧠 Analysing in depth…');
+            _updateThinking('@bot@ Analysing in depth…');
 
             // Build a STRONG vision instruction so the model never ignores it.
             var uName = (window.currentUser && window.currentUser.displayName)
@@ -3720,7 +3720,7 @@
                 '• High-end / cutting-edge technology → identify it precisely: EVs & hybrids (battery kWh, range, motor kW, charging), dot-matrix / LED / LCD / e-ink displays, dot-matrix printers & their printout, semiconductors & chips (markings, package), industrial/medical/aerospace equipment, drones, robotics, lab instruments, network gear, server hardware. Read any model/serial/part numbers exactly.\n' +
                 '• Objects/scenes → describe precisely with materials, brands, context.\n' +
                 'Be confident and specific; only say "unclear" for genuinely illegible parts. Never claim you cannot see images.\n\n' +
-                '⚙️ OUTPUT FORMAT — OBEY THE USER\'S REQUEST EXACTLY:\n' +
+                '@settings@ OUTPUT FORMAT — OBEY THE USER\'S REQUEST EXACTLY:\n' +
                 '• If they ask for a TABLE or "compare" → output a proper GitHub-flavoured Markdown table. ALWAYS include the separator row (| --- | --- |) after the header.\n' +
                 '• If they ask for CHARTS / diagrams / graphs → output one or more fenced ```chart code blocks containing JSON: ' +
                 '{"type":"bar|line|pie|radar","title":"...","labels":[...],"datasets":[{"label":"...","data":[...]}]}. ' +
@@ -3747,7 +3747,7 @@
             try {
                 if (window.getAIHistory && window.saveAIHistory) {
                     var h = window.getAIHistory();
-                    h.push({ role: 'user', content: (userMsg || '(image)') + ' [📎 ' + atts.length + ' file' + (atts.length > 1 ? 's' : '') + ']', ts: Date.now() });
+                    h.push({ role: 'user', content: (userMsg || '(image)') + ' [@link@ ' + atts.length + ' file' + (atts.length > 1 ? 's' : '') + ']', ts: Date.now() });
                     h.push({ role: 'assistant', content: reply, ts: Date.now() });
                     window.saveAIHistory(h);
                 }
@@ -3765,13 +3765,13 @@
             var emsg = (err && err.message) ? err.message : 'unknown error';
             var friendly;
             if (emsg === 'VISION_ALL_FAILED') {
-                friendly = '😔 I tried several vision engines but none could read the image right now ' +
+                friendly = '@user@ I tried several vision engines but none could read the image right now ' +
                     '(the AI vision services may be temporarily rate-limited). Your image was received correctly — ' +
                     'please try again in a minute, or describe what you\'d like me to look at and I\'ll do my best.';
             } else if (/Could not read|extract/i.test(emsg)) {
-                friendly = '⚠️ I couldn\'t decode that file. Please try a JPG/PNG photo or a clearer image.';
+                friendly = '@alert@ I couldn\'t decode that file. Please try a JPG/PNG photo or a clearer image.';
             } else {
-                friendly = '⚠️ I had trouble reading that image: ' + emsg + '. Please try again, or send a clearer photo.';
+                friendly = '@alert@ I had trouble reading that image: ' + emsg + '. Please try again, or send a clearer photo.';
             }
             if (typeof window.appendAIMessage === 'function') window.appendAIMessage('bot', friendly);
         }

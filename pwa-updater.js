@@ -89,7 +89,7 @@
                     var t = document.getElementById('wfVerText');
                     if (t) t.textContent = 'v' + newVer;
                     var p = document.getElementById('wfVerPill');
-                    if (p) p.textContent = 'v' + newVer + ' ✓';
+                    if (p) p.textContent = 'v' + newVer;
                 }
             } catch (_) {}
 

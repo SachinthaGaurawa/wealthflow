@@ -454,19 +454,19 @@ describe('an empty read names WHY it was empty', () => {
         const bad = emptyReport('no_credentials');
         expect(bad.body).toMatch(/never contacted/i);
         expect(bad.body).not.toMatch(/clean result/i);
-        expect(bad.icon).not.toBe('✅');
+        expect(bad.icon).not.toBe('OK');
     });
 
     it('never lets an unreachable Firestore read as an empty queue', () => {
         const down = emptyReport('unreachable');
         expect(down.body).toMatch(/not.{0,3}\*{0,2}an empty queue/i);
         expect(down.body).toMatch(/unknown, not as clear/i);
-        expect(down.icon).toBe('❌');
+        expect(down.icon).toBe('ERROR');
     });
 
     it('calls a genuine empty document a clean result, because it is one', () => {
         for (const s of ['ok', 'empty_document']) {
-            expect(emptyReport(s).icon).toBe('✅');
+            expect(emptyReport(s).icon).toBe('OK');
             expect(emptyReport(s).body).toMatch(/read successfully/i);
         }
     });
@@ -474,7 +474,7 @@ describe('an empty read names WHY it was empty', () => {
     it('does not invent a headline for a status it does not know', () => {
         const r = emptyReport('something_new');
         expect(r.title).toMatch(/unknown state/i);
-        expect(r.icon).not.toBe('✅');
+        expect(r.icon).not.toBe('OK');
     });
 });
 
