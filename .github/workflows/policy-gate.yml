@@ -133,7 +133,7 @@ jobs:
           R=$(node -e 'try{process.stdout.write(String(JSON.parse(require("fs").readFileSync("verdict.json","utf8")).reason||""))}catch(e){}')
           if [ "$V" = "safe" ]; then
             echo "verdict=safe" >> "$GITHUB_OUTPUT"
-            echo " index.html: $R"
+            echo "✓ index.html: $R"
           else
             echo "index.html stays gated: ${R:-no verdict could be read}"
           fi

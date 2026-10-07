@@ -225,10 +225,10 @@ jobs:
             --description "Validated non-sensitive change — eligible for auto-merge" 2>/dev/null || true
           if [ "$SAFE" = "yes" ]; then
             gh pr edit "$PR" --repo "$REPO" --add-label auto-safe
-            echo "### [OK] Marked auto-safe" >> "$GITHUB_STEP_SUMMARY"
+            echo "### ✅ Marked auto-safe" >> "$GITHUB_STEP_SUMMARY"
           else
             gh pr edit "$PR" --repo "$REPO" --remove-label auto-safe 2>/dev/null || true
-            echo "### [REVIEW] Needs a human" >> "$GITHUB_STEP_SUMMARY"
+            echo "### 🖐️ Needs a human" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "$REASON" >> "$GITHUB_STEP_SUMMARY"

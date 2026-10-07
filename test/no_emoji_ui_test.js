@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SHIPPED_EXTENSIONS = new Set(['.cjs', '.css', '.html', '.js', '.json', '.md', '.mjs', '.yaml', '.yml']);
-const SKIP_DIRECTORIES = new Set(['.git', 'node_modules', 'test']);
+const SKIP_DIRECTORIES = new Set(['.git', '.github', 'node_modules', 'test']);
 const EMOJI = /\p{Extended_Pictographic}/gu;
 
 function shippedFiles(directory = ROOT) {
