@@ -40,6 +40,11 @@ describe('the public WealthFlow identity', () => {
         expect(publicUrl('/t/AbC_123', { WEALTHFLOW_PUBLIC_ORIGIN: 'https://preview.example.test/' }))
             .toBe('https://preview.example.test/t/AbC_123');
     });
+
+    it('treats a network-path reference as a path, never as another origin', () => {
+        expect(publicUrl('//evil.example/steal?s=Eight888'))
+            .toBe('https://www.wealthflow.lk/evil.example/steal?s=Eight888');
+    });
 });
 
 describe('legacy public links', () => {

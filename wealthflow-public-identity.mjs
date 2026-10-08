@@ -30,9 +30,9 @@ export function publicOrigin(env = process.env) {
 /** Build an absolute public URL without making ordinary API fetches absolute. */
 export function publicUrl(path = '/', env = process.env) {
     const value = stringOf(path).trim();
-    const relative = value.startsWith('/') || value.startsWith('?') || value.startsWith('#')
+    const relative = value.startsWith('?') || value.startsWith('#')
         ? value
-        : `/${value}`;
+        : `/${value.replace(/^\/+/, '')}`;
     return new URL(relative, `${publicOrigin(env)}/`).href;
 }
 

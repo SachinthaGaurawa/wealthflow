@@ -7724,7 +7724,7 @@
         window.WF_PUBLIC_ORIGIN = 'https://www.wealthflow.lk';
         window._wfPublicUrl = function (path) {
             var value = String(path == null ? '/' : path);
-            if (value.charAt(0) !== '/' && value.charAt(0) !== '?' && value.charAt(0) !== '#') value = '/' + value;
+            if (value.charAt(0) !== '?' && value.charAt(0) !== '#') value = '/' + value.replace(/^\/+/, '');
             return new URL(value, window.WF_PUBLIC_ORIGIN + '/').href;
         };
         window._wfCanonicalizePublicUrl = function (value) {
@@ -7744,7 +7744,7 @@
         };
         window._wfApiUrl = function (path) {
             var value = String(path || '/api');
-            if (value.charAt(0) !== '/') value = '/' + value;
+            value = '/' + value.replace(/^\/+/, '');
             var host = String(window.location.hostname || '').toLowerCase();
             return host === 'sachinthagaurawa.github.io' ? window.WF_PUBLIC_ORIGIN + value : value;
         };

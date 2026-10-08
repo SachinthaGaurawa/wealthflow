@@ -120,4 +120,3 @@ The full unit suite, production build, built-tree browser boot, and live HTTP
 redirect matrix must pass. Live checks must demonstrate that both legacy Vercel
 hosts redirect directly to the official domain and that GitHub Pages reaches the
 official domain without first loading the application.
-

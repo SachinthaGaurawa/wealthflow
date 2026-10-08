@@ -49,6 +49,8 @@ describe('the pre-boot canonical-host guard', () => {
         const { window, replaced } = boot('https://www.wealthflow.lk/dashboard?month=2026-10');
         expect(replaced).toEqual([]);
         expect(window._wfPublicUrl('/?s=Eight888')).toBe('https://www.wealthflow.lk/?s=Eight888');
+        expect(window._wfPublicUrl('//evil.example/steal?s=Eight888'))
+            .toBe('https://www.wealthflow.lk/evil.example/steal?s=Eight888');
         expect(window._wfCanonicalizePublicUrl(
             'https://wealthflow-personal.vercel.app/t/Token_123?lang=si#balance',
         )).toBe('https://www.wealthflow.lk/t/Token_123?lang=si#balance');
@@ -59,6 +61,8 @@ describe('the pre-boot canonical-host guard', () => {
     it('keeps local and preview API calls relative, while GitHub Pages targets the official API', () => {
         expect(boot('http://localhost:3000/').window._wfApiUrl('/api/ai')).toBe('/api/ai');
         expect(boot('https://preview-123.vercel.app/').window._wfApiUrl('/api/ai')).toBe('/api/ai');
+        expect(boot('https://preview-123.vercel.app/').window._wfApiUrl('//evil.example/ai'))
+            .toBe('/evil.example/ai');
         expect(boot('https://sachinthagaurawa.github.io/wealthflow/').window._wfApiUrl('/api/ai'))
             .toBe('https://www.wealthflow.lk/api/ai');
     });
