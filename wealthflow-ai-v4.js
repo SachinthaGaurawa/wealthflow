@@ -13,7 +13,7 @@
  *       wrapped body exceeds Vercel's 4.5 MB serverless body limit, returning
  *       HTTP 413. We now adaptively scale DOWN until the encoded payload is
  *       under 3.5 MB.
- *    C. On *.github.io the cross-origin call to wealthflow-personal.vercel.app
+ *    C. On *.github.io the cross-origin call to the official WealthFlow API
  *       was failing without a clear error. We now do a preflight HEAD with
  *       short timeout and gracefully fall back to /api/ai (the legacy endpoint)
  *       if vision-scan isn't reachable.
@@ -411,8 +411,8 @@
      * ========================================================================= */
     var _endpointCache = {};
     function _apiBase() {
-        var isLocalOrGitHub = window.location.hostname.includes('github.io') || window.location.hostname === 'localhost';
-        return isLocalOrGitHub ? 'https://wealthflow-personal.vercel.app/api' : '/api';
+        try { if (typeof window._wfApiUrl === 'function') return window._wfApiUrl('/api'); } catch (_) {}
+        return window.location.hostname === 'sachinthagaurawa.github.io' ? 'https://www.wealthflow.lk/api' : '/api';
     }
 
     async function isEndpointAvailable(path) {
@@ -3795,4 +3795,3 @@
         }
     };
 })();
-

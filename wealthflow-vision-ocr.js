@@ -50,7 +50,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         try { if (typeof window._apiBase === 'function') return window._apiBase(); } catch (_) {}
         try {
             var h = window.location.hostname || '';
-            if (h.indexOf('github.io') >= 0 || h === 'localhost') return 'https://wealthflow-personal.vercel.app/api';
+            if (h === 'sachinthagaurawa.github.io') return 'https://www.wealthflow.lk/api';
         } catch (_) {}
         return '/api';
     }

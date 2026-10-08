@@ -7717,26 +7717,55 @@
         // WEALTHFLOW v5.1 - Infinity Cloud Financial System
         // =====================================================
 
-        // v7.5.7 — HARD redirect from github.io → Vercel.
-        // The user must NEVER see "sachinthagaurawa.github.io" anywhere.
-        // If the app loads on github.io (legacy bookmarks, old shared
-        // links, search-engine hits), we immediately redirect to the
-        // canonical Vercel domain, preserving query params + hash so
-        // the share-URL parameter (?s=, ?dp=, ?tstmt=, etc.) and the
-        // deep-link state survive the redirect. `location.replace` is
-        // used (not assign) so the github.io entry never enters the
-        // browser back-stack — the user can't accidentally go back to
-        // the github.io URL.
+        // Canonical public identity. This runs before Firebase, service workers,
+        // or application code so a legacy host never boots a second copy of the
+        // app. Public links always use wealthflow.lk; ordinary API calls stay
+        // relative except on the legacy GitHub Pages host.
+        window.WF_PUBLIC_ORIGIN = 'https://www.wealthflow.lk';
+        window._wfPublicUrl = function (path) {
+            var value = String(path == null ? '/' : path);
+            if (value.charAt(0) !== '/' && value.charAt(0) !== '?' && value.charAt(0) !== '#') value = '/' + value;
+            return new URL(value, window.WF_PUBLIC_ORIGIN + '/').href;
+        };
+        window._wfCanonicalizePublicUrl = function (value) {
+            var original = String(value == null ? '' : value), parsed;
+            try { parsed = new URL(original); } catch (_) { return original; }
+            if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password) return original;
+            var host = parsed.hostname.toLowerCase();
+            var path = parsed.pathname;
+            if (host === 'wealthflow-personal.vercel.app' || host === 'wealthflow-peach.vercel.app') {
+                return window.WF_PUBLIC_ORIGIN + path + parsed.search + parsed.hash;
+            }
+            if (host === 'sachinthagaurawa.github.io' && (path === '/wealthflow' || path.indexOf('/wealthflow/') === 0)) {
+                path = path.slice('/wealthflow'.length) || '/';
+                return window.WF_PUBLIC_ORIGIN + path + parsed.search + parsed.hash;
+            }
+            return original;
+        };
+        window._wfApiUrl = function (path) {
+            var value = String(path || '/api');
+            if (value.charAt(0) !== '/') value = '/' + value;
+            var host = String(window.location.hostname || '').toLowerCase();
+            return host === 'sachinthagaurawa.github.io' ? window.WF_PUBLIC_ORIGIN + value : value;
+        };
+
         var _WF_REDIRECTING = false;
         try {
             var _h = (window.location.hostname || '').toLowerCase();
-            if (_h.includes('github.io')) {
+            var _legacyPath = window.location.pathname || '/';
+            var _target = null;
+            if (_h === 'wealthflow-personal.vercel.app' || _h === 'wealthflow-peach.vercel.app') {
+                _target = window.WF_PUBLIC_ORIGIN + _legacyPath
+                    + (window.location.search || '') + (window.location.hash || '');
+            } else if (_h === 'sachinthagaurawa.github.io'
+                && (_legacyPath === '/wealthflow' || _legacyPath.indexOf('/wealthflow/') === 0)) {
+                _target = window.WF_PUBLIC_ORIGIN
+                    + (_legacyPath.slice('/wealthflow'.length) || '/')
+                    + (window.location.search || '') + (window.location.hash || '');
+            }
+            if (_target) {
                 _WF_REDIRECTING = true;
-                var _target = 'https://wealthflow-personal.vercel.app'
-                            + window.location.pathname.replace(/^\/wealthflow\/?/, '/')
-                            + (window.location.search || '')
-                            + (window.location.hash || '');
-                console.log('[WF] Redirecting github.io → Vercel:', _target);
+                console.log('[WF] Redirecting legacy host to wealthflow.lk:', _target);
                 window.location.replace(_target);
             }
         } catch (e) {
@@ -10446,8 +10475,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
 
             // 1. Try Vercel Backend First (Handles multi-engine securely)
             try {
-                const isLocalOrGitHub = window.location.hostname.includes('github.io') || window.location.hostname === 'localhost';
-                const vercelUrl = isLocalOrGitHub ? 'https://wealthflow-personal.vercel.app/api/ai' : '/api/ai';
+                const vercelUrl = window._wfApiUrl('/api/ai');
 
                 const body = { prompt };
                 if (image) body.image = image;
@@ -10543,13 +10571,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (opts.temperature != null) body.temperature = opts.temperature;
             if (opts.maxTokens != null) body.maxTokens = opts.maxTokens;
             if (opts.itemwise && typeof opts.itemwise === 'object') body.itemwise = opts.itemwise;
-            var base = (function () {
-                try {
-                    var h = location.hostname || '';
-                    if (h.indexOf('github.io') >= 0 || h === 'localhost') return 'https://wealthflow-personal.vercel.app/api/ai';
-                } catch (_) {}
-                return '/api/ai';
-            })();
+            var base = window._wfApiUrl('/api/ai');
             try {
                 var r = await fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 if (r.ok) {
@@ -13352,7 +13374,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             // Flush any pending local changes FIRST so the browser instance loads the
             // very latest data before it writes the bridge back — no round-trip clobber.
             try { if (typeof syncToCloud === 'function') syncToCloud(); } catch (_) {}
-            const url = location.origin + '/?drivelink=1';
+            const url = window._wfPublicUrl('/?drivelink=1');
             showConfirm('cloud', 'Finish Google Drive sign-in in your browser',
                 'Your installed app cannot complete Google sign-in because Google blocks the sign-in cookies inside installed apps. Tap below to finish it once in your browser — sign in with the SAME Google account and approve Drive access. Your app will then connect automatically within a few seconds and stay connected.',
                 'btn-primary', 'Open sign-in in browser', function () {
@@ -13711,11 +13733,8 @@ window._wfJsAttr = _wfJsAttr;
 
 // ---- small utilities -----------------------------------------------------
 function _wfApiBase() {
-    try {
-        var h = location.hostname;
-        if (h.indexOf('github.io') >= 0 || h === 'localhost') return 'https://wealthflow-personal.vercel.app';
-        return '';
-    } catch (_) { return ''; }
+    try { return window._wfApiUrl('/api').replace(/\/api$/, ''); }
+    catch (_) { return ''; }
 }
 function _wfRandId() {
     try {
@@ -13821,7 +13840,7 @@ try { window._wfEnsureDriveTokenDurable = _wfEnsureDriveTokenDurable; window._wf
 function _wfStartDriveDurableAuth() {
     if (window._wfIsDriveLinkInstance) { _wfBeginDriveAuthStart(); return; }
     try { if (typeof syncToCloud === 'function') syncToCloud(); } catch (_) {}
-    var url = location.origin + '/?driveauth=1';
+    var url = window._wfPublicUrl('/?driveauth=1');
     showConfirm('cloud', 'Connect Google Drive — stays connected',
         'Finish a one-time Google sign-in in your browser with the SAME Google account and approve Drive. Your installed app then stays connected permanently — no cookies, no repeat sign-ins.',
         'btn-primary', 'Open sign-in in browser', function () {
@@ -13879,7 +13898,7 @@ async function _wfRedirectToGoogleForCode() {
         var usedS256 = (challenge !== verifier);
         var state = 'wfdrive_' + _wfRandId();
         try { localStorage.setItem('wf_drive_pkce', JSON.stringify({ v: verifier, s: state, t: Date.now() })); } catch (_) {}
-        var redirectUri = location.origin + '/';
+        var redirectUri = window._wfPublicUrl('/');
         var scope = 'https://www.googleapis.com/auth/drive.file';
         try { if (localStorage.getItem('wf_clean_drive_browser') === '1') scope += ' https://www.googleapis.com/auth/drive.readonly'; } catch (_) {}
         var q = {
@@ -13910,7 +13929,7 @@ async function _wfCompleteDriveAuthCallback(code, state) {
             try { _wfShowDriveLinkConsent(); } catch (_) {}
             return;
         }
-        var redirectUri = location.origin + '/';
+        var redirectUri = window._wfPublicUrl('/');
         var resp = await _wfDriveServerExchange(code, saved.v, redirectUri);
         try { localStorage.removeItem('wf_drive_pkce'); } catch (_) {}
         if (resp && resp.ok && resp.access_token) {
@@ -15769,7 +15788,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     return;
                 }
                 const actionCodeSettings = {
-                    url: window.location.origin + window.location.pathname + '?recovery=1',
+                    url: window._wfPublicUrl('/?recovery=1'),
                     handleCodeInApp: true
                 };
                 await firebase.auth().sendSignInLinkToEmail(emailIn, actionCodeSettings);
@@ -16982,20 +17001,16 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         const _hist = JSON.parse(_raw);
                         if (Array.isArray(_hist)) {
                             let _changed = 0;
-                            const _vercel = 'https://wealthflow-personal.vercel.app';
                             for (let i = 0; i < _hist.length; i++) {
-                                if (_hist[i] && typeof _hist[i].url === 'string'
-                                    && /github\.io/i.test(_hist[i].url)) {
-                                    _hist[i].url = _hist[i].url.replace(
-                                        /https?:\/\/[^\/\s]*github\.io(?:\/wealthflow)?/gi,
-                                        _vercel
-                                    );
-                                    _changed++;
+                                if (_hist[i] && typeof _hist[i].url === 'string') {
+                                    const _before = _hist[i].url;
+                                    _hist[i].url = window._wfCanonicalizePublicUrl(_before);
+                                    if (_hist[i].url !== _before) _changed++;
                                 }
                             }
                             if (_changed > 0) {
                                 _persistLocal('wf_shared_statements', _hist);
-                                console.log('[WF v7.5.7] Migrated', _changed, 'history URLs github.io → vercel');
+                                console.log('[WF] Migrated', _changed, 'history URLs to wealthflow.lk');
                             }
                         }
                     }
@@ -21044,7 +21059,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         // SINGLE reliable strategy: POST to /api/statement-store which writes
         // to Firestore (your own infrastructure) and returns a ~50-char URL.
         //
-        // URL format: https://wealthflow-personal.vercel.app/?s=AbCdEfGh
+        // URL format: https://www.wealthflow.lk/?s=AbCdEfGh
         //
         // The 191,000-char data-URL fallback has been PERMANENTLY REMOVED.
         // All client-side Firestore writes, TmpFiles, hash URLs, and fake
@@ -21053,7 +21068,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         // Privacy: Zero personal data in URLs or stored documents. Ever.
         // =====================================================================
 
-        const _WF_APP_URL = 'https://wealthflow-personal.vercel.app';
+        const _WF_APP_URL = window.WF_PUBLIC_ORIGIN;
 
         // Fetch with timeout helper
         function _fetchWithTimeout(url, options, timeoutMs) {
@@ -21194,16 +21209,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const result = await _uploadStatementForSharing(statementHTML, l.name);
                 if (cancelled) return;
 
-                // v7.5.7 — bulletproof URL sanitiser at the result level.
-                // Same protection as the Elite Report flow: rewrite any
-                // github.io URL to Vercel BEFORE display/share/save.
-                if (result && result.url && /github\.io/i.test(result.url)) {
+                // Upgrade a URL returned by an old deployment before display,
+                // storage, copying, or QR generation.
+                if (result && result.url) {
                     const _before = result.url;
-                    result.url = result.url.replace(
-                        /https?:\/\/[^\/\s]*github\.io(?:\/wealthflow)?/gi,
-                        'https://wealthflow-personal.vercel.app'
-                    );
-                    console.log('[v7.5.7] Sanitised Loan URL:', _before, '→', result.url);
+                    result.url = window._wfCanonicalizePublicUrl(_before);
+                    if (result.url !== _before) console.log('[WF] Canonicalised Loan URL:', _before, '→', result.url);
                 }
 
                 const shareUrl = result.url;
@@ -21615,7 +21626,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 if (h.shortId && (h.via === 'server' || h.via === 'client-firestore' || h.via === 'firestore')) {
                                     serverGone = false;
                                     try {
-                                        const r = await fetch('https://wealthflow-personal.vercel.app/api/statement-store?id=' + h.shortId, { method: 'DELETE' });
+                                        const r = await fetch(window._wfPublicUrl('/api/statement-store?id=' + h.shortId), { method: 'DELETE' });
                                         // fetch does not reject on 4xx/5xx, so the status
                                         // has to be read: the endpoint answers 502 when a
                                         // target survived.
@@ -30327,8 +30338,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const manual = !!opts.manual;
             _setEngineBadge(manual ? '● Testing…' : '● Checking…', 'bg-gr');
             try {
-                const isLocalOrGitHub = location.hostname.includes('github.io') || location.hostname === 'localhost';
-                const url = isLocalOrGitHub ? 'https://wealthflow-personal.vercel.app/api/ai' : '/api/ai';
+                const url = window._wfApiUrl('/api/ai');
                 const ctrl = new AbortController();
                 const to = setTimeout(() => ctrl.abort(), 30000);
                 let r;
@@ -31772,7 +31782,7 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
 
             // Upload via server-side statement-store and show share dialog.
             // This is the SAME endpoint used by loan statements, so the URL
-            // is the wealthflow-personal.vercel.app domain (matching the
+            // is the www.wealthflow.lk domain (matching the
             // loan flow). The server stores the PDF base64 in Firestore and
             // returns a /api/statement-view?id=… URL that serves the PDF
             // with Content-Type: application/pdf — iOS, Android, WhatsApp,
@@ -31791,14 +31801,14 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                     });
 
                     if (cancelled) return;
-                    const proxyBase = 'https://wealthflow-personal.vercel.app';
+                    const proxyBase = window.WF_PUBLIC_ORIGIN;
                     const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
 
                     // ONE path, on WealthFlow's own servers. POST the PDF to
                     // /api/statement-store, which stores it in Firestore — inline
                     // when it fits one document, chunked across sibling documents
                     // when it does not — and returns a branded
-                    // wealthflow-personal.vercel.app link that /api/statement-view
+                    // www.wealthflow.lk link that /api/statement-view
                     // serves as a native PDF (rendered directly by iOS Safari,
                     // Chrome, WhatsApp, Gmail).
                     //
@@ -31850,18 +31860,12 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                         throw new Error("Failed to generate URL");
                     }
 
-                    // v7.5.7 — bulletproof sanitiser. If any code path
-                    // (backend, legacy cache, redirect chain) returned a
-                    // github.io URL, rewrite it to the canonical Vercel
-                    // domain BEFORE we display, save to history, or
-                    // generate a QR code. Users must NEVER see github.io.
-                    if (result.url && /github\.io/i.test(result.url)) {
+                    // Upgrade a URL returned by an old deployment before it is
+                    // displayed, saved, copied, or turned into a QR code.
+                    if (result.url) {
                         const _before = result.url;
-                        result.url = result.url.replace(
-                            /https?:\/\/[^\/\s]*github\.io(?:\/wealthflow)?/gi,
-                            'https://wealthflow-personal.vercel.app'
-                        );
-                        console.log('[v7.5.7] Sanitised Elite URL:', _before, '→', result.url);
+                        result.url = window._wfCanonicalizePublicUrl(_before);
+                        if (result.url !== _before) console.log('[WF] Canonicalised Elite URL:', _before, '→', result.url);
                     }
 
                     setProgress(90, 'Finalising…');

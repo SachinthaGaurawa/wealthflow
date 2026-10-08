@@ -17,6 +17,7 @@
 
 import { geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
 import { fetchWithBodyDeadline } from '../fetch-timeout.mjs';
+import { OFFICIAL_ORIGIN } from '../wealthflow-public-identity.mjs';
 
 export const config = {
     maxDuration: 60,
@@ -317,7 +318,7 @@ async function callOpenRouterVision(image, prompt, openrouterKey) {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${openrouterKey}`, 'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://wealthflow-personal.vercel.app', 'X-Title': 'WealthFlow'
+            'HTTP-Referer': OFFICIAL_ORIGIN, 'X-Title': 'WealthFlow'
         },
         body: JSON.stringify({
             model: 'qwen/qwen-2.5-vl-72b-instruct:free',
@@ -472,7 +473,7 @@ ${rawText.slice(0, 4000)}
             const r = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${keys.openrouterKey}`, 'Content-Type': 'application/json',
-                           'HTTP-Referer': 'https://wealthflow-personal.vercel.app', 'X-Title': 'WealthFlow' },
+                           'HTTP-Referer': OFFICIAL_ORIGIN, 'X-Title': 'WealthFlow' },
                 body: JSON.stringify({ model: 'deepseek/deepseek-chat:free',
                   messages: [{ role: 'user', content: sysPrompt }],
                   temperature: 0.05, max_tokens: 1024,
