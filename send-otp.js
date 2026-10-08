@@ -2,10 +2,15 @@ import nodemailer from 'nodemailer';
 import crypto from 'node:crypto';
 import { getAdminDb } from './admin-db.mjs';
 import { identify } from './gmail-link.mjs';
+import { OFFICIAL_EMAIL } from './wealthflow-public-identity.mjs';
 import {
     OTP_TTL_MS, authenticateAccount, canonicalEmail, calendarDateFor,
     otpSecret, recoveryProof,
 } from './otp-recovery.mjs';
+
+export function otpSender() {
+    return `WealthFlow Security <${OFFICIAL_EMAIL}>`;
+}
 
 function cors(res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -43,7 +48,8 @@ export default async function handler(req, res) {
         });
 
         await transporter.sendMail({
-            from: `"WealthFlow Security" <${process.env.SMTP_USER || 'noreply@wealthflow.com'}>`,
+            from: otpSender(),
+            replyTo: OFFICIAL_EMAIL,
             to: account.email,
             subject: 'WealthFlow - Your 6-Digit Verification Code',
             html: `

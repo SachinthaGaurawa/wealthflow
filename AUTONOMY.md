@@ -67,7 +67,7 @@ and `GITHUB_REPO=SachinthaGaurawa/wealthflow`.
 |---|---|---|
 | `EDENAI_API_KEY` | secret | Better feedback classification. Without it a local keyword classifier is used — nothing is lost. |
 | `VERCEL_TOKEN` | secret | Enables automatic rollback on a health-check failure. |
-| `HEALTH_URL` | var | e.g. `https://wealthflow-personal.vercel.app/api/health` |
+| `HEALTH_URL` | var | e.g. `https://www.wealthflow.lk/api/health` |
 | `AUTONOMY_LEVEL` | var | Leave **unset** (recommended). See §4. |
 | `AGENT_MAX_ATTEMPTS` | var | Default 3. |
 | `FIREBASE_SERVICE_ACCOUNT` | secret | Optional enrichment only. Its absence can no longer stall anything. |

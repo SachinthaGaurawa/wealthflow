@@ -20,6 +20,7 @@ import { geminiBook, geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
 import { askChat, chatError } from '../ai-chat.mjs';
 import { getAdminDb, withDeadline } from '../admin-db.mjs';
 import { resetHealthMemory, serveHealth } from '../ai-health.mjs';
+import { OFFICIAL_ORIGIN } from '../wealthflow-public-identity.mjs';
 
 /* What each provider serves NOW, remembered for hours: a retired model is replaced by one the provider itself lists (ai-models.mjs).
  * One book for the whole process: Gemini's slots are shared with every other endpoint that asks Gemini (gemini-client.mjs). */
@@ -358,7 +359,7 @@ export default async function handler(req, res) {
     const fetchMistral = makeOAI({ name: 'Mistral', provider: 'mistral', key: mistralKey, url: 'https://api.mistral.ai/v1/chat/completions', list: 'https://api.mistral.ai/v1/models', textModel: 'mistral-small-latest', visionModel: 'pixtral-12b-2409', jsonMode: true });
     const fetchTogether = makeOAI({ name: 'Together', provider: 'together', key: togetherKey, url: 'https://api.together.xyz/v1/chat/completions', list: 'https://api.together.xyz/v1/models', textModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', visionModel: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo' });
     const fetchFireworks = makeOAI({ name: 'Fireworks', provider: 'fireworks', key: fireworksKey, url: 'https://api.fireworks.ai/inference/v1/chat/completions', list: 'https://api.fireworks.ai/inference/v1/models', textModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct', visionModel: 'accounts/fireworks/models/llama-v3p2-90b-vision-instruct' });
-    const openRouterHeaders = { 'HTTP-Referer': 'https://wealthflow-personal.vercel.app', 'X-Title': 'WealthFlow' };
+    const openRouterHeaders = { 'HTTP-Referer': OFFICIAL_ORIGIN, 'X-Title': 'WealthFlow' };
     const fetchOpenRouterFinance = makeOAI({ name: 'OpenRouterFinance', provider: 'openrouter:ling-fin-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Finance', textModel: 'inclusionai/ling-3.0-flash-fin:free', visionModel: null, extraHeaders: openRouterHeaders });
     const fetchOpenRouterQwen = makeOAI({ name: 'OpenRouterQwen', provider: 'openrouter:qwen-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Qwen', textModel: 'qwen/qwen3.8-27b:free', visionModel: 'qwen/qwen3.8-27b:free', jsonMode: false, extraHeaders: openRouterHeaders });
     const fetchOpenRouterNemotron = makeOAI({ name: 'OpenRouterNemotron', provider: 'openrouter:nemotron-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Nemotron', textModel: 'nvidia/nemotron-3-ultra-550b-a55b:free', visionModel: null, extraHeaders: openRouterHeaders });

@@ -737,7 +737,8 @@
     function loadCache() { try { return JSON.parse(root.localStorage.getItem(CACHE_KEY) || '{}') || {}; } catch (_) { return {}; } }
     function saveCache(o) { try { root.localStorage.setItem(CACHE_KEY, JSON.stringify(o)); } catch (_) {} }
     function apiBase() {
-        try { var h = location.hostname; if (h.indexOf('github.io') >= 0 || h === 'localhost') return 'https://wealthflow-personal.vercel.app'; } catch (_) {}
+        try { if (typeof root._wfApiUrl === 'function') return root._wfApiUrl('/api').replace(/\/api$/, ''); } catch (_) {}
+        try { if (location.hostname === 'sachinthagaurawa.github.io') return 'https://www.wealthflow.lk'; } catch (_) {}
         return '';
     }
     var WFChargeIntel = {

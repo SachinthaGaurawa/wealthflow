@@ -6,7 +6,7 @@ name: Merchant List Sync (WealthFlow)
 #
 # SETUP - one repo VARIABLE, no secret:
 #   Settings -> Secrets and variables -> Actions -> Variables:
-#     APP_URL = https://wealthflow-personal.vercel.app
+#     APP_URL = https://www.wealthflow.lk
 # =============================================================================
 
 on:
