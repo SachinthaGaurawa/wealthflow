@@ -1,15 +1,15 @@
 // ==================== WealthFlow → Statement Store v3.0 ====================
 //
 // Stores a loan statement OR an Elite Report PDF in Firestore and returns a
-// TINY shareable URL that lives on the wealthflow-personal.vercel.app domain.
+// TINY shareable URL that lives on the official WealthFlow domain.
 //
 // HTML mode (loans):
 //   POST { html, name }
-//   → { url: "https://wealthflow-personal.vercel.app/?s=ABC123", id, days, via }
+//   → { url: "https://www.wealthflow.lk/?s=ABC123", id, days, via }
 //
 // PDF mode (Elite Reports):
 //   POST { pdfBase64, name }
-//   → { url: "https://wealthflow-personal.vercel.app/api/statement-view?id=ABC123",
+//   → { url: "https://www.wealthflow.lk/api/statement-view?id=ABC123",
 //       id, days, via, kind: 'pdf' }
 //   The /api/statement-view endpoint serves the PDF directly with
 //   Content-Type: application/pdf so iOS Safari / Chrome / WhatsApp etc.
@@ -26,6 +26,7 @@
 import { randomFillSync } from 'node:crypto';
 import { withTimeout } from './fetch-timeout.mjs';
 import { getAdminDb, withDeadline } from './admin-db.mjs';
+import { publicUrl } from './wealthflow-public-identity.mjs';
 
 export const config = {
     maxDuration: 25,
@@ -40,7 +41,6 @@ export const config = {
 // the public Web key would 503 this endpoint over a credential it does not use;
 // a missing service account is reported by getAdminDb() at the point of use, with
 // a reason. statement-view.js still reads over REST and still needs the Web key.
-const APP_URL     = 'https://wealthflow-personal.vercel.app/';
 const MAX_DOC_FS  = 900 * 1024;     // Firestore single-document soft cap
 const EXPIRY_DAYS = 30;
 
@@ -335,8 +335,8 @@ export default async function handler(req, res) {
                 //   - PDF   → /api/statement-view?id=ID (direct PDF response,
                 //             native rendering on iOS / Android / WhatsApp)
                 return isPdf
-                    ? `${APP_URL}api/statement-view?id=${id}`
-                    : `${APP_URL}?s=${id}`;
+                    ? publicUrl(`/api/statement-view?id=${id}`)
+                    : publicUrl(`/?s=${id}`);
             }, 22000);
             return res.status(200).json({
                 url: link, id, days: EXPIRY_DAYS,
@@ -355,8 +355,8 @@ export default async function handler(req, res) {
                 else { fields.html = wrapHtml(html, cleanName); }
                 await fsCreateDoc('shared_statements', id, fields);
                 return isPdf
-                    ? `${APP_URL}api/statement-view?id=${id}`
-                    : `${APP_URL}?s=${id}`;
+                    ? publicUrl(`/api/statement-view?id=${id}`)
+                    : publicUrl(`/?s=${id}`);
             }, 12000);
             return res.status(200).json({
                 url: link, id, days: EXPIRY_DAYS,

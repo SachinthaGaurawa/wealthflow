@@ -29,27 +29,19 @@
  * ===========================================================================*/
 
 import crypto from 'node:crypto';
+import { OFFICIAL_ORIGIN, publicOrigin, publicUrl } from './wealthflow-public-identity.mjs';
 
 export const TENANTS = 'wf-tenants';
 export const SUBJECTS = 'wf-tenant-subjects';
 /** The link a text message points at; vercel.json rewrites it to the portal page. */
 export const PORTAL_PATH = '/t/';
-/** Where the app is served. The Vercel project's production alias; overridable with WEALTHFLOW_PUBLIC_ORIGIN. */
-export const DEFAULT_ORIGIN = 'https://wealthflow-personal.vercel.app';
+/** Where the app is served; retained as a compatibility export for existing callers. */
+export const DEFAULT_ORIGIN = OFFICIAL_ORIGIN;
 export const TOKEN_BYTES = 12;                         // 96 bits -> 16 url-safe characters
 export const TOKEN_RE = /^[A-Za-z0-9_-]{16}$/;
 
 const s = (v) => String(v == null ? '' : v);
-
-/** The origin links are built on: an https origin with no path, query or credentials; anything else falls back to the production alias. */
-export function publicOrigin(env = process.env) {
-    const raw = s(env && env.WEALTHFLOW_PUBLIC_ORIGIN).trim().replace(/\/+$/, '');
-    try {
-        const u = new URL(raw);
-        if (u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash && (u.pathname === '/' || u.pathname === '')) return u.origin;
-    } catch (_) { /* not a URL */ }
-    return DEFAULT_ORIGIN;
-}
+export { publicOrigin };
 
 /**
  * Are links injected into messages? ON, unless TENANT_PORTAL_LINKS says off|false|0|no: the portal page and its endpoint ship with
@@ -61,7 +53,7 @@ export function linksEnabled(env = process.env) {
 }
 
 export const newToken = (randomBytes = crypto.randomBytes) => randomBytes(TOKEN_BYTES).toString('base64url');
-export const linkFor = (token, env = process.env) => `${publicOrigin(env)}${PORTAL_PATH}${token}`;
+export const linkFor = (token, env = process.env) => publicUrl(`${PORTAL_PATH}${token}`, env);
 
 /**
  * The server secret the portal's hashes and sessions are keyed with. TENANT_PORTAL_SECRET, else OTP_SECRET (already required to be 32+
