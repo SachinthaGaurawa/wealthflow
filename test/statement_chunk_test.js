@@ -128,6 +128,8 @@ describe('a small PDF is stored inline in one document and served back', () => {
         expect(s.status).toBe(200);
         expect(s.body.kind).toBe('pdf');
         const id = s.body.id;
+        expect(s.body.url).toBe(`https://www.wealthflow.lk/r/${id}`);
+        expect(s.body.url.length).toBe(36);
 
         // exactly one document, inline, not chunked
         expect(fake.order).toEqual([`s/${id}`]);

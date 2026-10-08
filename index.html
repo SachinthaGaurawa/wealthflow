@@ -20774,11 +20774,11 @@ table.amort tbody tr { page-break-inside: avoid; }
 </head>
 <body>
 <div class="toolbar no-print">
-    <h2>@fileText@ Loan Statement — ${esc(l.name)}</h2>
+    <h2>${WFIcon.inline('fileText')}Loan Statement — ${esc(l.name)}</h2>
     <div style="display:flex;gap:8px;">
-        <button onclick="window.print()" id="btnPrint" title="Print or save as PDF (use 'Save as PDF' destination)">@fileText@ Print / Save PDF</button>
-        <button onclick="window.__wfShareStatement && window.__wfShareStatement()" id="btnShare" class="btn-secondary" title="Share this statement">@link@ Share</button>
-        <button onclick="window.close()" class="btn-secondary">@x@ Close</button>
+        <button onclick="window.print()" id="btnPrint" title="Print or save as PDF (use 'Save as PDF' destination)">${WFIcon.inline('fileText')}Print / Save PDF</button>
+        <button onclick="window.__wfShareStatement && window.__wfShareStatement()" id="btnShare" class="btn-secondary" title="Share this statement">${WFIcon.inline('link')}Share</button>
+        <button onclick="window.close()" class="btn-secondary">${WFIcon.inline('x')}Close</button>
     </div>
 </div>
 
@@ -20814,12 +20814,12 @@ table.amort tbody tr { page-break-inside: avoid; }
 <!-- Quick visual summary so reader sees Paid vs Remaining at a glance -->
 <div style="margin-top:24px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
     <div style="padding:14px 16px;border:1px solid ${colorBorder};border-left:4px solid ${colorPaid};border-radius:6px;background:#f4faf6;">
-        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">@info@ Paid Installments</div>
+        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">Paid Installments</div>
         <div style="font-size:22px;font-weight:700;color:${colorPaid};margin-top:4px;font-variant-numeric:tabular-nums;">${paidRows.length} <span style="font-size:13px;color:${colorMuted};font-weight:500;">of ${proj.schedule.length}</span></div>
         <div style="font-size:11.5px;color:${colorText};margin-top:3px;">Total paid: <b>${fmtPay(paidTotals.amount)}</b></div>
     </div>
     <div style="padding:14px 16px;border:1px solid ${colorBorder};border-left:4px solid ${colorAccent};border-radius:6px;background:${colorBalanceFill};">
-        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">@clock@ Remaining (To Be Paid)</div>
+        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">Remaining (To Be Paid)</div>
         <div style="font-size:22px;font-weight:700;color:${colorAccent};margin-top:4px;font-variant-numeric:tabular-nums;">${remainingRows.length} <span style="font-size:13px;color:${colorMuted};font-weight:500;">months</span></div>
         <div style="font-size:11.5px;color:${colorText};margin-top:3px;">Projected total: <b>${fmtPay(remainingTotals.amount)}</b></div>
     </div>
@@ -20930,10 +20930,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.innerHTML = `
                 <div class="md" style="max-width:920px;width:96%;height:92vh;display:flex;flex-direction:column;padding:0;overflow:hidden;">
                     <div class="md-hdr" style="padding:14px 18px;border-bottom:1px solid var(--border2);flex-shrink:0;">
-                        <div class="md-title">@fileText@ Loan Statement — ${_wfEsc(l.name)}</div>
+                        <div class="md-title">${_ic('fileText')} Loan Statement — ${_wfEsc(l.name)}</div>
                         <div style="display:flex;gap:6px;align-items:center;">
-                            <button class="btn btn-ghost btn-sm" id="_ls_print">@fileText@ Print / PDF</button>
-                            <button class="btn btn-ghost btn-sm" id="_ls_share">@link@ Share</button>
+                            <button class="btn btn-ghost btn-sm" id="_ls_print">${_ic('fileText')} Print / PDF</button>
+                            <button class="btn btn-ghost btn-sm" id="_ls_share">${_ic('link')} Share</button>
                             <button class="md-x" aria-label="Close" id="_ls_close"><i data-wfi="x"></i></button>
                         </div>
                     </div>
@@ -21063,7 +21063,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         // LOAN STATEMENT SHARE v2.0 — Bulletproof Server-First Architecture
         // =====================================================================
         // SINGLE reliable strategy: POST to /api/statement-store which writes
-        // to Firestore (your own infrastructure) and returns a ~50-char URL.
+        // to Firestore (your own infrastructure) and returns a 37-char URL.
         //
         // URL format: https://www.wealthflow.lk/?s=AbCdEfGh
         //
@@ -21088,7 +21088,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         async function _uploadStatementForSharing(html, loanName) {
             const errors = [];
             
-            // Generate the base URL for the share links (User requested to always use Vercel domain)
+            // Generate every public share link from the official WealthFlow origin.
             const baseUrl = _WF_APP_URL + '/';
 
             // Strategy 1: Server /api/statement-store (PRIMARY — writes to Firestore)
@@ -21103,7 +21103,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const data = await resp.json();
                     if (data && data.url && data.url.length < 200) {
                         console.log('[Share] @checkCircle@ statement-store:', data.url);
-                        // Force Vercel domain as requested
+                        // Keep the public URL on the official WealthFlow domain.
                         const finalUrl = baseUrl + '?s=' + data.id;
                         return { url: finalUrl, days: data.days || 30, expires: (data.days || 30) + ' days', shortId: data.id, via: data.via || 'server' };
                     }
@@ -31790,7 +31790,7 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
             // This is the SAME endpoint used by loan statements, so the URL
             // is the www.wealthflow.lk domain (matching the
             // loan flow). The server stores the PDF base64 in Firestore and
-            // returns a /api/statement-view?id=… URL that serves the PDF
+            // returns a /r/… URL that the server rewrites to the PDF viewer
             // with Content-Type: application/pdf — iOS, Android, WhatsApp,
             // Gmail all render it natively.
             notify('Generating Elite Report shareable link…', 'info');
@@ -31814,8 +31814,8 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                     // /api/statement-store, which stores it in Firestore — inline
                     // when it fits one document, chunked across sibling documents
                     // when it does not — and returns a branded
-                    // www.wealthflow.lk link that /api/statement-view
-                    // serves as a native PDF (rendered directly by iOS Safari,
+                    // www.wealthflow.lk/r/… link that the server rewrites to
+                    // /api/statement-view and serves as a native PDF (rendered directly by iOS Safari,
                     // Chrome, WhatsApp, Gmail).
                     //
                     // There is NO second stage. The old Stage B posted the report —

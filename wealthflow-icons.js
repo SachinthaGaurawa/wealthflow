@@ -138,6 +138,13 @@
     function WFIcon(name) { return svg(name); }
     WFIcon.has = function (n) { return !!P[n]; };
     WFIcon.svg = svg;
+    // A document opened in a separate tab cannot resolve this page's SVG
+    // sprite. Keep those icons self-contained while reusing the canonical
+    // paths above instead of duplicating them in each report builder.
+    WFIcon.inline = function (name) {
+        var d = P[name]; if (!d) return '';
+        return '<svg class="wfi wfi-' + name + '" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-.14em;margin-right:.28em" aria-hidden="true">' + d + '</svg>';
+    };
     function WFIconNode(name) {
         var wrap = document.createElement('span');
         wrap.className = 'wfi-host';
