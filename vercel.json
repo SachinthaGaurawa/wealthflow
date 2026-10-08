@@ -215,6 +215,10 @@
       "destination": "/api/router?path=$1"
     },
     {
+      "source": "/r/([A-Za-z0-9]{8})",
+      "destination": "/api/router?path=statement-view&id=$1"
+    },
+    {
       "source": "/sw.js",
       "destination": "/sw.js"
     },

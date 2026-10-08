@@ -9,7 +9,7 @@
 //
 // PDF mode (Elite Reports):
 //   POST { pdfBase64, name }
-//   → { url: "https://www.wealthflow.lk/api/statement-view?id=ABC123",
+//   → { url: "https://www.wealthflow.lk/r/AbCdEfGh",
 //       id, days, via, kind: 'pdf' }
 //   The /api/statement-view endpoint serves the PDF directly with
 //   Content-Type: application/pdf so iOS Safari / Chrome / WhatsApp etc.
@@ -332,10 +332,10 @@ export default async function handler(req, res) {
                 }
                 // URL format:
                 //   - HTML  → ?s=ID (rendered by the SPA reader)
-                //   - PDF   → /api/statement-view?id=ID (direct PDF response,
-                //             native rendering on iOS / Android / WhatsApp)
+                //   - PDF   → /r/ID (branded public route, internally rewritten
+                //             to statement-view for native PDF rendering)
                 return isPdf
-                    ? publicUrl(`/api/statement-view?id=${id}`)
+                    ? publicUrl(`/r/${id}`)
                     : publicUrl(`/?s=${id}`);
             }, 22000);
             return res.status(200).json({
@@ -355,7 +355,7 @@ export default async function handler(req, res) {
                 else { fields.html = wrapHtml(html, cleanName); }
                 await fsCreateDoc('shared_statements', id, fields);
                 return isPdf
-                    ? publicUrl(`/api/statement-view?id=${id}`)
+                    ? publicUrl(`/r/${id}`)
                     : publicUrl(`/?s=${id}`);
             }, 12000);
             return res.status(200).json({

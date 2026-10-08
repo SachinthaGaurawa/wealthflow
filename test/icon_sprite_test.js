@@ -133,6 +133,14 @@ describe('icons reference one shared sprite instead of re-inlining their shapes'
         expect(out).toMatch(/aria-hidden="true"/);
     });
 
+    it('can emit a self-contained icon for a standalone statement document', () => {
+        const { api } = load();
+        const out = api.inline('fileText');
+        expect(out).toContain('<svg');
+        expect(out).toContain('<path');
+        expect(out).not.toContain('<use');
+    });
+
     it('falls back to inline shapes when the sprite cannot be built', () => {
         // A missing icon is a worse outcome than a few extra nodes, so if there
         // is no host element to attach the sprite to, the old behaviour stands.
