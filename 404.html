@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>WealthFlow moved</title>
+</head>
+<body>
+    <p>WealthFlow is now available at <a href="https://www.wealthflow.lk">www.wealthflow.lk</a>.</p>
+    <script>
+        (function () {
+            var location = window.location;
+            var path = location.pathname || '/';
+            var prefix = '/wealthflow';
+            if (location.hostname !== 'sachinthagaurawa.github.io'
+                || (path !== prefix && path.indexOf(prefix + '/') !== 0)) return;
+            path = path.slice(prefix.length) || '/';
+            window.location.replace('https://www.wealthflow.lk' + path
+                + (location.search || '') + (location.hash || ''));
+        })();
+    </script>
+</body>
+</html>
