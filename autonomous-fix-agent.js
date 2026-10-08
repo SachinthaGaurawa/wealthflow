@@ -60,8 +60,8 @@ const OUTPUT = path.join(REPO_DIR, 'ai-fix-pr.json');
 
 function log(...m) { console.log('[agent]', ...m); }
 function fail(msg) {
-    console.error('[agent] ✗ MISCONFIGURED: ' + msg);
-    summary(`### ❌ Autonomous agent could not run\n\n${msg}\n`);
+    console.error('[agent] [INFO] MISCONFIGURED: ' + msg);
+    summary(`### [ERROR] Autonomous agent could not run\n\n${msg}\n`);
     process.exit(1);
 }
 function summary(md) {
@@ -175,7 +175,7 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null } =
         testWritten && result.verified
             ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — executed and verified: it FAILS against the original file and PASSES against this one.`
             : testWritten
-                ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — ⚠️ NOT verified red→green. Do not treat it as evidence.`
+                ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — [WARNING] NOT verified red→green. Do not treat it as evidence.`
                 : '**Proving test:** none — this PR needs human review before merge.',
         '',
         '### Issue',
@@ -187,7 +187,7 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null } =
         '- Independent security review on a different model provider than the author',
         result.verified
             ? '- **The proving test was executed twice** — red against the original file, green against this one'
-            : '- ⚠️ The proving test was NOT executed red→green',
+            : '- [WARNING] The proving test was NOT executed red→green',
         '- Sensitive-path gate: this change touches no auth, crypto, money, rules, service-worker, dependency, or CI file',
         '',
         '### Still to pass in CI',
@@ -240,7 +240,7 @@ async function main() {
             if (claimed.has(pinned)) {
                 log(`#${pinned} already has an open fix PR — not opening a duplicate.`);
                 summary(
-                    `### ✅ Issue #${pinned} is already being handled\n\n` +
+                    `### [OK] Issue #${pinned} is already being handled\n\n` +
                     'An autonomous fix PR for this issue is already open. This run stopped ' +
                     'rather than open a second PR for the same issue (the duplicate that the ' +
                     'first live run produced). This is a no-op, not a failure.\n'
@@ -255,7 +255,7 @@ async function main() {
     if (!candidates.length) {
         log('queue is empty — nothing to fix right now.');
         summary(
-            '### ✅ Autonomous agent ran — queue empty\n\n' +
+            '### [OK] Autonomous agent ran — queue empty\n\n' +
             `${llm.count} LLM provider(s) ready. No open, workable issues.\n\n` +
             'This is a genuine no-op, not a crash: the agent reached the queue and found it clear. ' +
             'Send feedback in the app, or open an issue, and the next run will pick it up.\n'
@@ -284,7 +284,7 @@ async function main() {
         log(`${candidates.length} workable issue(s). NOTE: ${queue.proposals.length} Firestore proposal(s) were read but NOT worked — `
             + 'a proposal has no issue number, so it cannot carry attempt state, comments or a Closes link. '
             + 'File it as a GitHub issue to have it actioned.');
-        summary(`### ⚠️ ${queue.proposals.length} Firestore proposal(s) ignored\n\n`
+        summary(`### [WARNING] ${queue.proposals.length} Firestore proposal(s) ignored\n\n`
             + 'They were read from `system/pendingRelease` but the agent only works GitHub Issues. '
             + 'A proposal has no issue number, so it cannot carry attempt state, comments or a `Closes` link.\n');
     } else {
@@ -303,7 +303,7 @@ async function main() {
             if (!DRY) {
                 await Q.addLabels(number, [Q.LABELS.stuck]).catch(() => {});
                 await Q.comment(number,
-                    `### 🛑 Autonomous agent is standing down\n\n` +
+                    `### [ERROR] Autonomous agent is standing down\n\n` +
                     `**Reason:** ${stuck.reason}\n\n` +
                     `I have tried ${state.attempts} time(s) and am not converging on a safe fix. ` +
                     `Rather than keep churning and opening near-identical pull requests, I am labelling this ` +
@@ -338,7 +338,7 @@ async function main() {
             if (!DRY) {
                 await Q.comment(number,
                     `<!-- wf-agent-attempt -->\n` +
-                    `### 🤖 Autonomous attempt ${state.attempts}/${MAX_ATTEMPTS} — no change made\n\n` +
+                    `### [AI] Autonomous attempt ${state.attempts}/${MAX_ATTEMPTS} — no change made\n\n` +
                     `**Stopped at:** \`${result.stage}\`\n` +
                     `**Why:** ${result.reason}\n` +
                     (result.file ? `**File considered:** \`${result.file}\`\n` : '') +
@@ -389,7 +389,7 @@ async function main() {
         fs.writeFileSync(OUTPUT, JSON.stringify(pr, null, 2) + '\n');
 
         summary(
-            `### 🤖 Autonomous fix drafted for #${number}\n\n` +
+            `### [AI] Autonomous fix drafted for #${number}\n\n` +
             `| | |\n|---|---|\n` +
             `| Issue | #${number} — ${String(issue.title).slice(0, 70)} |\n` +
             `| Role | ${result.role} |\n` +
@@ -405,7 +405,7 @@ async function main() {
             await Q.addLabels(number, [Q.LABELS.inProgress]).catch(() => {});
             await Q.comment(number,
                 `<!-- wf-agent-attempt -->\n` +
-                `### 🤖 Fix drafted (attempt ${state.attempts}/${MAX_ATTEMPTS})\n\n` +
+                `### [AI] Fix drafted (attempt ${state.attempts}/${MAX_ATTEMPTS})\n\n` +
                 `I changed \`${result.file}\`${testWritten ? ` and added \`${testWritten}\`` : ''}.\n\n` +
                 `- **Author:** ${result.role} agent via \`${provs.author}\`\n` +
                 `- **Security review:** ${result.review?.verdict} via \`${provs.security || 'unavailable'}\`\n` +
@@ -423,7 +423,7 @@ async function main() {
     // ── nothing was actionable ──────────────────────────────────────────────
     log('no issue could be safely progressed this run');
     summary(
-        '### ⚠️ Autonomous agent ran but produced no change\n\n' +
+        '### [WARNING] Autonomous agent ran but produced no change\n\n' +
         `Examined ${candidates.length} issue(s):\n\n` +
         skipped.map((s) => `- ${s}`).join('\n') +
         '\n\nThis is reported honestly rather than as a success. If the same reason repeats, ' +
@@ -444,8 +444,8 @@ const invokedDirectly = (() => {
 
 if (invokedDirectly) {
     main().catch((e) => {
-        console.error('[agent] ✗ unhandled failure:', e && e.stack || e);
-        summary(`### ❌ Autonomous agent crashed\n\n\`\`\`\n${String(e && e.message || e).slice(0, 1500)}\n\`\`\`\n`);
+        console.error('[agent] [INFO] unhandled failure:', e && e.stack || e);
+        summary(`### [ERROR] Autonomous agent crashed\n\n\`\`\`\n${String(e && e.message || e).slice(0, 1500)}\n\`\`\`\n`);
         process.exit(1);        // NOT 78 — a crash must never look like success
     });
 }

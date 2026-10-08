@@ -65,8 +65,8 @@ describe('the plan actually reaches the owner', () => {
          * be recovered from anything the app knows tomorrow. Idle cash can wait
          * a day. Ordering is the only thing that decides which is sacrificed if
          * the new code ever throws. */
-        const incomeAt = html.indexOf("title: '💰 Income Day — '");
-        const loanAt = html.indexOf("title: '🏦 Loan Installment — '");
+        const incomeAt = html.indexOf("title: '@wallet@ Income Day — '");
+        const loanAt = html.indexOf("title: '@bank@ Loan Installment — '");
         const nudgeAt = html.indexOf('checkSweepNudge();');
         expect(incomeAt).toBeGreaterThan(0);
         expect(loanAt).toBeGreaterThan(0);

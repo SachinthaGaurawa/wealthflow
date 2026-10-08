@@ -126,5 +126,5 @@
         applyToArrays: applyToArrays,
         apply: apply
     };
-    try { console.log('[WFSubs] ✓ subscription auto-routing engine ready'); } catch (_) {}
+    try { console.log('[WFSubs] @info@ subscription auto-routing engine ready'); } catch (_) {}
 })();

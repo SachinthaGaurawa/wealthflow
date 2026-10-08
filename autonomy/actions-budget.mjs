@@ -167,7 +167,7 @@ export function projectSchedule(dir = '.github/workflows') {
 // ── CLI ──────────────────────────────────────────────────────────────────────
 if ((process.argv[1] || '').endsWith('actions-budget.mjs')) {
     const p = projectSchedule();
-    console.log(`\n⏱  GitHub Actions monthly projection (private-repo free tier)\n`);
+    console.log(`\n[WAIT]  GitHub Actions monthly projection (private-repo free tier)\n`);
     console.log(`${'workflow'.padEnd(28)}${'cron'.padEnd(16)}${'runs'.padStart(7)}${'jobs'.padStart(6)}${'min/job'.padStart(9)}${'minutes'.padStart(9)}`);
     for (const r of p.rows) {
         console.log(r.file.padEnd(28) + r.crons.join(',').padEnd(16)
@@ -178,7 +178,7 @@ if ((process.argv[1] || '').endsWith('actions-budget.mjs')) {
     console.log(`  reserved for CI    ${String(p.ciReserve).padStart(6)} min`);
     console.log(`  ─────────────────────────────`);
     console.log(`  total              ${String(p.totalMinutes).padStart(6)} min  of ${p.budget}`);
-    console.log(`\n${p.withinBudget ? '✅' : '❌'} ${p.withinBudget
+    console.log(`\n${p.withinBudget ? '[OK]' : '[ERROR]'} ${p.withinBudget
         ? `within budget — ${p.headroom} min headroom`
         : `OVER BUDGET by ${-p.headroom} min (${(p.totalMinutes / p.budget).toFixed(1)}x)`}\n`);
     process.exit(p.withinBudget ? 0 : 1);

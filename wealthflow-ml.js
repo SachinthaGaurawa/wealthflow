@@ -8,10 +8,10 @@
  *   1. ONLINE INTENT LEARNING — a lightweight Naive-Bayes text classifier that
  *      learns from corrections + feedback so intent detection keeps improving.
  *   2. PREFERENCE MODEL — learns tone, length, language, topics the user likes
- *      (reinforced by 👍 / 👎 feedback) and feeds it back into the prompt.
+ *      (reinforced by @thumbsUp@ / @thumbsDown@ feedback) and feeds it back into the prompt.
  *   3. KNOWLEDGE MEMORY — extracts durable facts the user states about
  *      themselves and recalls them in future answers.
- *   4. FEEDBACK LOOP — 👍/👎 on any reply updates all three models.
+ *   4. FEEDBACK LOOP — @thumbsUp@/@thumbsDown@ on any reply updates all three models.
  *
  * Persistence: localStorage (per device) + mirrored into appData so it syncs
  * across the user's devices through the existing Firestore sync.
@@ -204,7 +204,7 @@
             '\nUse this to make the answer feel personal and relevant. Never say you were "told" this in a list.';
     }
 
-    // ---- 4. Public feedback hook (👍 / 👎 buttons call this) ----
+    // ---- 4. Public feedback hook (@thumbsUp@ / @thumbsDown@ buttons call this) ----
     function recordFeedback(userMsg, aiReply, liked) {
         if (liked) model.feedback.up++; else model.feedback.down++;
         learnPreference(userMsg, aiReply, liked ? 1 : -1);
@@ -215,7 +215,7 @@
             if (intent && liked) trainIntent(userMsg, intent);
         } catch (_) {}
         save();
-        log('feedback recorded:', liked ? '👍' : '👎', '(up=' + model.feedback.up + ' down=' + model.feedback.down + ')');
+        log('feedback recorded:', liked ? '@thumbsUp@' : '@thumbsDown@', '(up=' + model.feedback.up + ' down=' + model.feedback.down + ')');
     }
 
     // ---- Observe every exchange (called by the host) ----

@@ -341,7 +341,7 @@ export function verifyTestProves({
                 reason: 'the test passes against the UNFIXED file, so it does not exercise the fix',
             };
         }
-        log('[swarm] Agent 4 test fails before the fix ✓');
+        log('[swarm] Agent 4 test fails before the fix [INFO]');
 
         // 2. Against the FIXED file it must PASS. Failing both ways means the
         //    test is broken, the fix is wrong, or — the actual history here —
@@ -354,7 +354,7 @@ export function verifyTestProves({
                 reason: 'the test still fails against the FIXED file, so it is broken or the fix is wrong',
             };
         }
-        log('[swarm] Agent 4 test passes after the fix ✓');
+        log('[swarm] Agent 4 test passes after the fix [INFO]');
 
         return { ok: true, beforeFailed: true, afterPassed: true };
     } catch (e) {

@@ -48,9 +48,9 @@ const RENDER = fn('appendAIMessage');
 /* Named by code point so this file carries no emoji of its own, and so the
  * names say which is which. */
 const MARKERS = {
-    warning: '⚠️',
-    success: '✅',
-    info: '\u{1F4A1}',
+    warning: '@alert@',
+    success: '@checkCircle@',
+    info: '@sparkles@',
 };
 
 describe('the AI answer format is a contract between two functions', () => {
@@ -68,9 +68,9 @@ describe('the AI answer format is a contract between two functions', () => {
      * What the model actually acts on is the instruction that names the marker
      * and says what it is for. So each is pinned to its own instruction line. */
     const INSTRUCTIONS = {
-        warning: ['⚠️ (warnings)', "⚠️ **What's wrong**"],
-        success: ['✅ (good news)'],
-        info: ['\u{1F4A1} (insights)', '\u{1F4A1} **Bottom line:**'],
+        warning: ['@alert@ (warnings)', "@alert@ **What's wrong**"],
+        success: ['@checkCircle@ (good news)'],
+        info: ['@sparkles@ (insights)', '@sparkles@ **Bottom line:**'],
     };
 
     it.each(Object.entries(INSTRUCTIONS))(
@@ -108,15 +108,12 @@ describe('the AI answer format is a contract between two functions', () => {
          * fourth marker nothing renders, or if the renderer matched one the
          * prompt never requests. Neither is a crash; both are dead code that
          * looks alive. */
-        const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu;
         const rendererMarkers = new Set(
             RENDER.split('\n')
                 .filter((l) => l.includes('ai-callout '))
-                .flatMap((l) => (l.slice(0, l.indexOf('/g,')).match(EMOJI) || [])),
+                .flatMap((l) => (l.slice(0, l.indexOf('/g,')).match(/@[A-Za-z][A-Za-z0-9]*@/g) || [])),
         );
-        // the variation selector rides along with the warning sign
-        rendererMarkers.delete('️');
-        const expected = new Set(Object.values(MARKERS).map((g) => g.replace('️', '')));
+        const expected = new Set(Object.values(MARKERS));
         expect([...rendererMarkers].sort(),
             'the renderer matches a marker set this test does not know about')
             .toEqual([...expected].sort());

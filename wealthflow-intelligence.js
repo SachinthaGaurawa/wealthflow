@@ -43,12 +43,12 @@
      * A. SECURITY VAULT  (AES-256-GCM, encrypted at rest, synced per account)
      * =========================================================================
      * Threat model (honest):
-     *   ✔ Protects against the vault contents being readable in plaintext by
+     *   @info@ Protects against the vault contents being readable in plaintext by
      *     casual inspection, in cloud backups, or by other scripts that don't
      *     hold the device key.
-     *   ✔ Keeps NIC / DOB OUT of the cloud document IN PLAINTEXT — only the
+     *   @info@ Keeps NIC / DOB OUT of the cloud document IN PLAINTEXT — only the
      *     ciphertext, and the key needed to open it, ever leave the device.
-     *   ✘ Does NOT defend against an attacker with full read access to the
+     *   @info@ Does NOT defend against an attacker with full read access to the
      *     owner's Firestore document (they'd have both key + ciphertext, same
      *     as anyone with full localStorage access always could) — but at that
      *     point the account itself is the real perimeter. This is the correct,

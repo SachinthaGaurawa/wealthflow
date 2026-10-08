@@ -68,12 +68,13 @@ describe('the lock-screen buttons are built by the module that owns them', () =>
         /* A caller with nothing to offer must not grow a fake amount. The old
          * shape survives as the else-branch, guarded on `built` being null. */
         expect(html).toContain("actions: built ? built.actions : [");
-        expect(html).toContain("{ action: 'yes_' + id, title: '✅ ' + primary },");
+        expect(html).toContain("{ action: 'yes_' + id, title: primary },");
+        expect(html).toContain("{ action: 'no_' + id, title: secondary }");
     });
 
     it('takes the title and body from the built notification too', () => {
         // Otherwise the question could quote one figure and the button another.
-        expect(html).toContain('built ? built.title : title');
+        expect(html).toContain('built ? built.title : plainTitle');
         /* The fallback is `plainBody`, not `message`, since the sweep nudge —
          * the first caller with no figures to offer — actually took this branch
          * and put a literal "<b>" on the lock screen. A notification body is
@@ -86,8 +87,8 @@ describe('the lock-screen buttons are built by the module that owns them', () =>
 
 describe('the figure on the button has the same origin as the figure in the question', () => {
     it.each([
-        ['income', '💰', 'src.monthly', "kind: 'income'"],
-        ['a loan', '🏦', 'l.monthly', "kind: 'loan'"],
+        ['income', '@wallet@', 'src.monthly', "kind: 'income'"],
+        ['a loan', '@bank@', 'l.monthly', "kind: 'loan'"],
     ])('for %s', (_why, icon, amountExpr, kind) => {
         /* THE TEST THIS FILE EXISTS FOR. Both readings must come from the same
          * expression — not merely be equal today. */
@@ -100,8 +101,8 @@ describe('the figure on the button has the same origin as the figure in the ques
     });
 
     it.each([
-        ['income', '💰', 'src.id', 'curMonthStr'],
-        ['a loan', '🏦', 'l.id', 'curMonthStr'],
+        ['income', '@wallet@', 'src.id', 'curMonthStr'],
+        ['a loan', '@bank@', 'l.id', 'curMonthStr'],
     ])('identifies which item and which month, for %s', (_why, icon, idExpr, monthExpr) => {
         const site = callSite(icon);
         expect(site).toContain(`id: ${idExpr}`);

@@ -113,8 +113,8 @@ function _attachConfidenceBadge(elementId, confidence, label) {
     var badge = document.createElement('span');
     badge.id = elementId + '_conf';
     badge.style.cssText = 'display:inline-block;margin-left:6px;font-size:10px;padding:2px 6px;border-radius:8px;cursor:help;vertical-align:middle;';
-    var colour = '#22c55e', emoji = '✓';
-    if (confidence < 0.55) { colour = '#ef4444'; emoji = '⚠'; }
+    var colour = '#22c55e', emoji = '@info@';
+    if (confidence < 0.55) { colour = '#ef4444'; emoji = '@alert@'; }
     else if (confidence < 0.78) { colour = '#f59e0b'; emoji = '~'; }
     badge.style.background = colour + '22';
     badge.style.color = colour;
@@ -142,7 +142,7 @@ function _applyScanResultToForm(result, confidence, type) {
             (typeof result.amount === 'number' ? result.amount.toLocaleString() : '?') +
             ' on ' + (result.date || 'unknown date');
         if (result.items && result.items.length)
-            msg += '\n📦 ' + result.items.slice(0, 5).join(', ');
+            msg += '\n@receipt@ ' + result.items.slice(0, 5).join(', ');
         if (typeof appendAIMessage === 'function') appendAIMessage('bot', msg);
         return msg;
     }
@@ -162,12 +162,12 @@ function _applyScanResultToForm(result, confidence, type) {
     }
 
     // Construct a useful summary string
-    var summary = '✅ ' + (result.vendor || 'Vendor');
+    var summary = '@checkCircle@ ' + (result.vendor || 'Vendor');
     if (typeof result.amount === 'number')
         summary += ' — ' + (result.currency || 'LKR') + ' ' +
             ((typeof fmtN === 'function') ? fmtN(result.amount) : result.amount.toFixed(2));
     if (result.items && result.items.length)
-        summary += '\n📦 ' + result.items.slice(0, 4).join(', ');
+        summary += '\n@receipt@ ' + result.items.slice(0, 4).join(', ');
     return summary;
 }
 
@@ -182,7 +182,7 @@ async function handleAIScan(e, type) {
 
     // Sanity check: scanner module loaded?
     if (typeof window.WealthFlowScanner === 'undefined') {
-        if (typeof notify === 'function') notify('⚠️ Scanner module not loaded. Add <script src="/wealthflow-scanner.js"></script> to your HTML.', 'error');
+        if (typeof notify === 'function') notify('@alert@ Scanner module not loaded. Add <script src="/wealthflow-scanner.js"></script> to your HTML.', 'error');
         else alert('Scanner module not loaded.');
         inputEl.value = '';
         return;
@@ -192,7 +192,7 @@ async function handleAIScan(e, type) {
     var sizeMB = (file.size / 1024 / 1024).toFixed(2);
 
     if (typeof triggerHaptic === 'function') triggerHaptic('medium');
-    if (typeof notify === 'function') notify('📸 Scanning receipt (' + sizeMB + 'MB)…', 'info');
+    if (typeof notify === 'function') notify('@scan@ Scanning receipt (' + sizeMB + 'MB)…', 'info');
 
     var scanStarted = Date.now();
     try {
@@ -207,7 +207,7 @@ async function handleAIScan(e, type) {
             onProgress: function (stage, pct, msg) {
                 // Live progress: only spam-notify for big transitions
                 if (stage === 'scanning' || stage === 'escalating' || stage === 'fallback') {
-                    if (typeof notify === 'function') notify('🔍 ' + msg, 'info');
+                    if (typeof notify === 'function') notify('@search@ ' + msg, 'info');
                 }
                 console.log('[Scanner] ' + stage + ' (' + pct + '%) — ' + msg);
             }
@@ -231,7 +231,7 @@ async function handleAIScan(e, type) {
         var conf = Math.round((data.confidence.overall || 0) * 100);
         var engineCount = (data.engines || []).filter(function (en) { return en.success; }).length;
         var modeLabel = data.mode.charAt(0).toUpperCase() + data.mode.slice(1);
-        var toastMsg = summary + '\n⚙️ ' + modeLabel + ' · ' + engineCount + ' engines · ' +
+        var toastMsg = summary + '\n@settings@ ' + modeLabel + ' · ' + engineCount + ' engines · ' +
                        conf + '% confidence · ' + elapsed + 's';
 
         if (typeof notify === 'function') {
@@ -242,14 +242,14 @@ async function handleAIScan(e, type) {
         // If confidence is low, offer a one-tap retry with Ultra mode
         if (conf < 60 && data.mode !== 'ultra' && type !== 'ai_chat') {
             setTimeout(function () {
-                if (confirm('🤔 Scan confidence is only ' + conf + '%.\nRun a deeper "Ultra" scan now?')) {
+                if (confirm('@bot@ Scan confidence is only ' + conf + '%.\nRun a deeper "Ultra" scan now?')) {
                     _runManualScan(file, 'ultra', type);
                 }
             }, 600);
         }
     } catch (err) {
         console.error('[Scanner] failed:', err);
-        if (typeof notify === 'function') notify('⚠️ Scan failed: ' + (err.message || 'Try a clearer photo.'), 'error');
+        if (typeof notify === 'function') notify('@alert@ Scan failed: ' + (err.message || 'Try a clearer photo.'), 'error');
         if (typeof triggerHaptic === 'function') triggerHaptic('error');
 
         // Offer a manual retry
@@ -264,7 +264,7 @@ async function handleAIScan(e, type) {
 
 // Used by manual retry / "force ultra" buttons in the UI
 async function _runManualScan(file, mode, type) {
-    if (typeof notify === 'function') notify('🔄 Re-scanning in ' + mode + ' mode…', 'info');
+    if (typeof notify === 'function') notify('@refresh@ Re-scanning in ' + mode + ' mode…', 'info');
     try {
         var settings = window.WF_SCAN_SETTINGS || {};
         var data = await window.WealthFlowScanner.scan(file, {
@@ -275,9 +275,9 @@ async function _runManualScan(file, mode, type) {
         console.log('[Scanner Retry]', data);
         var summary = _applyScanResultToForm(data.result, data.confidence, type);
         var conf = Math.round((data.confidence.overall || 0) * 100);
-        if (typeof notify === 'function') notify(summary + '\n⚙️ ' + mode + ' · ' + conf + '% confidence', conf >= 60 ? 'success' : 'info');
+        if (typeof notify === 'function') notify(summary + '\n@settings@ ' + mode + ' · ' + conf + '% confidence', conf >= 60 ? 'success' : 'info');
     } catch (err) {
-        if (typeof notify === 'function') notify('⚠️ Retry failed: ' + err.message, 'error');
+        if (typeof notify === 'function') notify('@alert@ Retry failed: ' + err.message, 'error');
     }
 }
 
@@ -288,7 +288,7 @@ window._runManualScan = _runManualScan;
 // SCANNER SETTINGS PANEL
 // =============================================================================
 // Drop this open helper to wire up the Settings page button. Add a button or
-// link like:  <button onclick="openScannerSettings()">⚙️ Scanner Settings</button>
+// link like:  <button onclick="openScannerSettings()">@settings@ Scanner Settings</button>
 window.openScannerSettings = function () {
     var s = window.WF_SCAN_SETTINGS;
     var existing = document.getElementById('wf_scanner_settings_modal');
@@ -300,16 +300,16 @@ window.openScannerSettings = function () {
     ov.innerHTML = '' +
 '<div style="background:#0c1320;color:#e5e7eb;max-width:460px;width:100%;border:1px solid #d4af37;border-radius:14px;padding:24px;font-family:system-ui,sans-serif;">' +
 '  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">' +
-'    <h3 style="margin:0;color:#d4af37;font-size:18px;">🔍 AI Scanner Settings</h3>' +
+'    <h3 style="margin:0;color:#d4af37;font-size:18px;">@search@ AI Scanner Settings</h3>' +
 '    <button onclick="document.getElementById(\'wf_scanner_settings_modal\').remove()" style="background:none;border:0;color:#94a3b8;font-size:22px;cursor:pointer;">×</button>' +
 '  </div>' +
 '  <div style="margin-bottom:14px;">' +
 '    <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:6px;">Default Scan Mode</label>' +
 '    <select id="wf_set_mode" style="width:100%;padding:9px;background:#1e293b;border:1px solid #334155;border-radius:7px;color:#e5e7eb;font-size:14px;">' +
-'      <option value="auto">⚡ Auto (smart, recommended)</option>' +
-'      <option value="quick">🚀 Quick (single engine, ~2s)</option>' +
-'      <option value="deep">🔬 Deep (3 engines, ~4s)</option>' +
-'      <option value="ultra">💎 Ultra (5+ engines + OCR, ~8s)</option>' +
+'      <option value="auto">@sparkles@ Auto (smart, recommended)</option>' +
+'      <option value="quick">@trendUp@ Quick (single engine, ~2s)</option>' +
+'      <option value="deep">@search@ Deep (3 engines, ~4s)</option>' +
+'      <option value="ultra">@gem@ Ultra (5+ engines + OCR, ~8s)</option>' +
 '    </select>' +
 '    <div style="font-size:11px;color:#64748b;margin-top:4px;">Auto starts deep and escalates if confidence is low.</div>' +
 '  </div>' +
@@ -328,11 +328,11 @@ window.openScannerSettings = function () {
 '    <label for="wf_set_engines" style="font-size:13px;color:#e5e7eb;cursor:pointer;">Show engine debug info in the console</label>' +
 '  </div>' +
 '  <div style="background:#0a0f1c;border:1px solid #1e293b;border-radius:8px;padding:10px;font-size:11px;color:#64748b;margin-bottom:18px;line-height:1.5;">' +
-'    💡 The scanner uses Gemini 2.5 Flash + Gemini 2.0 Flash + Ollama llama3.2-vision + Groq Llava + OCR.space, all voting on the result. Higher modes = more engines, slower but more accurate.' +
+'    @sparkles@ The scanner uses Gemini 2.5 Flash + Gemini 2.0 Flash + Ollama llama3.2-vision + Groq Llava + OCR.space, all voting on the result. Higher modes = more engines, slower but more accurate.' +
 '  </div>' +
 '  <div style="display:flex;gap:10px;">' +
 '    <button onclick="document.getElementById(\'wf_scanner_settings_modal\').remove()" style="flex:1;padding:11px;background:#1e293b;border:1px solid #334155;border-radius:8px;color:#e5e7eb;cursor:pointer;font-size:14px;">Cancel</button>' +
-'    <button id="wf_set_save" style="flex:2;padding:11px;background:#d4af37;border:0;border-radius:8px;color:#0c1320;cursor:pointer;font-weight:600;font-size:14px;">💾 Save Settings</button>' +
+'    <button id="wf_set_save" style="flex:2;padding:11px;background:#d4af37;border:0;border-radius:8px;color:#0c1320;cursor:pointer;font-weight:600;font-size:14px;">@download@ Save Settings</button>' +
 '  </div>' +
 '</div>';
     document.body.appendChild(ov);
@@ -349,6 +349,6 @@ window.openScannerSettings = function () {
         };
         saveScanSettings();
         document.getElementById('wf_scanner_settings_modal').remove();
-        if (typeof notify === 'function') notify('✅ Scanner settings saved', 'success');
+        if (typeof notify === 'function') notify('@checkCircle@ Scanner settings saved', 'success');
     };
 };

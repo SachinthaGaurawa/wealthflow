@@ -1,4 +1,4 @@
-# 🧠 WealthFlow v7.11.0 — Intelligence Layer + Screenshot Reading
+# AI WealthFlow v7.11.0 — Intelligence Layer + Screenshot Reading
 
 This release makes WealthFlow work like a robot: paste text **or attach
 screenshots**, walk away, and the AI files everything on its own — learning as
@@ -12,22 +12,22 @@ until you answer them, even across sessions).
 
 |Capability                 |Module                                          |What it does                                                                                   |
 |---------------------------|------------------------------------------------|-----------------------------------------------------------------------------------------------|
-|🖼️ **Read screenshots**     |`wealthflow-vision-sms.js` + `api/vision-sms.js`|Attach 1 or many bank-SMS screenshots; on-device OCR reads them, the same brain classifies them|
-|🧠 **Learns merchants**     |`wealthflow-ai-memory.js`                       |Confirm a shop once → remembered forever; branch suffixes collapse                             |
-|🔒 **Encrypts data**        |`wealthflow-crypto.js`                          |AES-256-GCM at rest + in cloud sync for all new stores                                         |
-|🛡 **Removes duplicates**   |`wealthflow-dedup.js`                           |Multi-signal (amount+day+merchant+card); never deletes on a weak match                         |
-|🛟 **Asks later, remembers**|`wealthflow-review.js`                          |Unsure items persist across sessions; prompts on return; teaches memory on resolve             |
-|⚡ **Works in background**  |`wealthflow-queue.js`                           |Hand it work, close the app; live progress bar; resumes after reload                           |
+|Image **Read screenshots**     |`wealthflow-vision-sms.js` + `api/vision-sms.js`|Attach 1 or many bank-SMS screenshots; on-device OCR reads them, the same brain classifies them|
+|AI **Learns merchants**     |`wealthflow-ai-memory.js`                       |Confirm a shop once → remembered forever; branch suffixes collapse                             |
+|Security **Encrypts data**        |`wealthflow-crypto.js`                          |AES-256-GCM at rest + in cloud sync for all new stores                                         |
+|Security **Removes duplicates**   |`wealthflow-dedup.js`                           |Multi-signal (amount+day+merchant+card); never deletes on a weak match                         |
+|Review **Asks later, remembers**|`wealthflow-review.js`                          |Unsure items persist across sessions; prompts on return; teaches memory on resolve             |
+|Background **Works in background**  |`wealthflow-queue.js`                           |Hand it work, close the app; live progress bar; resumes after reload                           |
 
 -----
 
-## 🖼️ Reading screenshots (the new headline feature)
+## Image Reading screenshots (the new headline feature)
 
-1. Open **Settings → 📲 Paste Bank SMS → Open**
-1. Tap **🖼️ Attach screenshots** (or drag-drop, or paste an image)
+1. Open **Settings → Mobile Paste Bank SMS → Open**
+1. Tap **Image Attach screenshots** (or drag-drop, or paste an image)
 1. Pick **one or many** screenshots of your bank-SMS thread
 1. The AI reads them on-device and fills the box with the extracted SMS text
-1. Tap **⚡ Auto-file** — done. Close the app; the AI keeps working.
+1. Tap **Background Auto-file** — done. Close the app; the AI keeps working.
 
 **How the OCR works (two tiers):**
 
@@ -47,7 +47,7 @@ to review.
 
 -----
 
-## 🧠 How the “robot” decides
+## AI How the “robot” decides
 
 For every transaction (typed, pasted, or read from a screenshot):
 
@@ -69,7 +69,7 @@ close the app and come back the next day.
 
 -----
 
-## 🔒 A note on encryption (honest scope)
+## Security A note on encryption (honest scope)
 
 The new intelligence stores (learned memory, review queue, job queue) are
 encrypted with **AES-256-GCM**; the key is derived on-device (PBKDF2, 210k
@@ -102,4 +102,4 @@ No new required environment variables. `/api/vision-sms` reuses the existing
 
 -----
 
-© 2026 WealthFlow Elite. UNLICENSED.
+ 2026 WealthFlow Elite. UNLICENSED.

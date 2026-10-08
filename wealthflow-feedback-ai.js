@@ -486,5 +486,5 @@
         _dedupe: _dedupe, _fresh: _fresh, _ts: _ts, _isConsidering: _isConsidering, _sim: _sim,
         _consideringStatus: _consideringStatus, _fingerprint: _fingerprint
     };
-    console.log('[wfFeedbackAI] ✓ Feedback prioritisation engine v2.1 loaded (real counts · 2-week window · live server-truth badge · instant re-rank)');
+    console.log('[wfFeedbackAI] @info@ Feedback prioritisation engine v2.1 loaded (real counts · 2-week window · live server-truth badge · instant re-rank)');
 })();

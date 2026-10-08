@@ -6,7 +6,7 @@
  *   read via:
  *       JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
  *   FIREBASE_SERVICE_ACCOUNT was never set, so every scheduled run died in ~40ms
- *   with `Unexpected end of JSON input`, exited 78, and the workflow reported ✅.
+ *   with `Unexpected end of JSON input`, exited 78, and the workflow reported [OK].
  *   Verified in the Actions log for run 30200095048: the "Run the fix agent" step
  *   starts and completes on the same second, every two hours, forever.
  *

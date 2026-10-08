@@ -201,5 +201,5 @@
         if (e && e.detail) setUserSecret(e.detail);
     });
 
-    console.log('[wfCrypto] ✓ End-to-end encryption layer ready (AES-256-GCM, PBKDF2 ' + PBKDF2_ITERS + ')');
+    console.log('[wfCrypto] @info@ End-to-end encryption layer ready (AES-256-GCM, PBKDF2 ' + PBKDF2_ITERS + ')');
 })();

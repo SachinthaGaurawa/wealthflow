@@ -615,7 +615,7 @@
     root.WFRoute = API;
     root.WFLoanMatch = matchLoan;
     if (typeof module !== 'undefined' && module.exports) module.exports = API;
-    try { if (root.console) root.console.log('[WFRoute] ✓ transaction router ready'); } catch (_) {}
+    try { if (root.console) root.console.log('[WFRoute] @info@ transaction router ready'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);
 
 
@@ -632,7 +632,7 @@
  *      flow into the UI naturally. A charge is reopened ONLY when it is `paid`
  *      yet has no real settlement trail (no paidAt, no autoPaid) — the unique
  *      fingerprint of the bug; manual settles (paidAt) and FIFO matches (autoPaid)
- *      are never touched. reconcileCC() then re-✅s the ones a recorded payment
+ *      are never touched. reconcileCC() then re-@checkCircle@s the ones a recorded payment
  *      truly covers (oldest-first). Safe to run anytime; runs once via a gate.
  *
  *   2) Version labels — keep the footer/sidebar/pill in sync with the live VERSION even
@@ -846,7 +846,7 @@
                 } catch (_) { return null; }
             };
             root._wfLoanWired = true;
-            try { root.console && root.console.log('[WFRoute] ✓ multi-loan matcher wired (ref# · name · type · amount · bank, ambiguity-guarded)'); } catch (_) {}
+            try { root.console && root.console.log('[WFRoute] @info@ multi-loan matcher wired (ref# · name · type · amount · bank, ambiguity-guarded)'); } catch (_) {}
         } catch (_) {}
     }
 
@@ -866,5 +866,5 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 300); });
     else setTimeout(boot, 300);
 
-    try { root.console && root.console.log('[WFRoute] ✓ v' + VERSION + ' self-wiring armed (CC paid-fix · WFChargeIntel · version sync)'); } catch (_) {}
+    try { root.console && root.console.log('[WFRoute] @info@ v' + VERSION + ' self-wiring armed (CC paid-fix · WFChargeIntel · version sync)'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);

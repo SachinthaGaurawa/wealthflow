@@ -3,7 +3,7 @@
  * autonomy/self-check.mjs — does the autonomous system actually work?
  * ---------------------------------------------------------------------------
  * WHY THIS IS THE MOST IMPORTANT FILE HERE
- *   Every workflow in this repo reported ✅ success while the autonomous update
+ *   Every workflow in this repo reported [OK] success while the autonomous update
  *   system did nothing at all, for months. The agent crashed in 40ms and the run
  *   was green. The test suite ran zero assertions and the check was green. The
  *   consensus reviewer pointed at a filename that did not exist. The version
@@ -315,7 +315,7 @@ export function runChecks() {
     };
 }
 
-const ICON = { ok: '✅', warn: '⚠️ ', broken: '❌' };
+const ICON = { ok: '[OK]', warn: '[WARNING] ', broken: '[ERROR]' };
 
 function human(r) {
     const lines = [

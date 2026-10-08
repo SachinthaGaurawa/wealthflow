@@ -305,7 +305,7 @@
         if (_cmp(CURRENT_VERSION, c.target) >= 0) {
             _markInstalled(CURRENT_VERSION);
             try { localStorage.removeItem(LS_FAILED_TARGET); } catch (_) {}
-            try { console.log('[WFUpdate] ✓ update to ' + c.target + ' landed — running ' + CURRENT_VERSION); } catch (_) {}
+            try { console.log('[WFUpdate] @info@ update to ' + c.target + ' landed — running ' + CURRENT_VERSION); } catch (_) {}
             return { ok: true, target: c.target, running: CURRENT_VERSION };
         }
 
@@ -314,7 +314,7 @@
         // Record which target failed, so it is not auto-retried next boot.
         try { localStorage.setItem(LS_FAILED_TARGET, JSON.stringify({ target: c.target, at: Date.now() })); } catch (_) {}
         try {
-            console.error('[WFUpdate] ✗ update to ' + c.target + ' did NOT land — still running '
+            console.error('[WFUpdate] @info@ update to ' + c.target + ' did NOT land — still running '
                 + CURRENT_VERSION + ' (' + c.fetched + '/' + c.total + ' files fetched)');
         } catch (_) {}
         return { ok: false, target: c.target, running: CURRENT_VERSION, fetched: c.fetched, total: c.total };
@@ -1006,7 +1006,7 @@
             const allGood = passed === total;
             const rows = checks.map(c =>
                 '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border,#1f2638);">' +
-                    '<span style="font-size:15px;">' + (c.pass ? '✅' : '⚠️') + '</span>' +
+                    '<span style="font-size:15px;">' + (c.pass ? '@checkCircle@' : '@alert@') + '</span>' +
                     '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--text,#e6e7eb);">' + _esc(c.name) + '</div>' +
                     (c.detail ? '<div style="font-size:11px;color:var(--text3,#8b95a8);">' + _esc(c.detail) + '</div>' : '') + '</div>' +
                     '<span style="font-size:11px;font-weight:700;color:' + (c.pass ? '#10b981' : '#f59e0b') + ';">' + (c.pass ? 'OK' : 'CHECK') + '</span>' +
@@ -1038,12 +1038,12 @@
             'Report a bug or suggest an idea',
             '<div style="display:flex;flex-direction:column;gap:10px;">' +
                 '<select id="wfFbType" style="padding:11px;background:var(--bg,#060a14);border:1px solid var(--border2,#1f2638);border-radius:9px;color:var(--text,#e6e7eb);font-size:14px;">' +
-                    '<option value="bug">🐞 Bug report</option><option value="idea">💡 Feature idea</option><option value="other">💬 Other</option>' +
+                    '<option value="bug">@alert@ Bug report</option><option value="idea">@sparkles@ Feature idea</option><option value="other">@message@ Other</option>' +
                 '</select>' +
                 '<textarea id="wfFbText" rows="5" placeholder="Tell us what happened or what you\'d like…" style="padding:12px;background:var(--bg,#060a14);border:1px solid var(--border2,#1f2638);border-radius:9px;color:var(--text,#e6e7eb);font-size:14px;resize:vertical;"></textarea>' +
                 '<div>' +
                     '<input type="file" id="wfFbImg" accept="image/*" style="display:none;" />' +
-                    '<button type="button" id="wfFbImgBtn" style="width:100%;padding:11px;background:var(--bg,#060a14);border:1px dashed var(--border2,#1f2638);border-radius:9px;color:var(--text3,#8b95a8);font-size:13px;cursor:pointer;">📎 Attach a screenshot (optional)</button>' +
+                    '<button type="button" id="wfFbImgBtn" style="width:100%;padding:11px;background:var(--bg,#060a14);border:1px dashed var(--border2,#1f2638);border-radius:9px;color:var(--text3,#8b95a8);font-size:13px;cursor:pointer;">@link@ Attach a screenshot (optional)</button>' +
                     '<div id="wfFbImgPreview" style="display:none;margin-top:8px;position:relative;"></div>' +
                 '</div>' +
                 '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text3,#8b95a8);line-height:1.5;"><input type="checkbox" id="wfFbDiag" checked style="margin-top:2px;flex-shrink:0;"> <span>Send system diagnosis \u2014 attaches the recorded errors, stack traces, health snapshot and device details so the cause can be found automatically. <strong style="color:var(--text2,#a8b2c4);">Never includes any financial data.</strong></span></label>' +
@@ -1075,7 +1075,7 @@
                         _fbImageData = cv.toDataURL('image/jpeg', 0.7);
                         cv.width = cv.height = 0;
                         if (prev) { prev.style.display = 'block'; prev.innerHTML = '<img src="' + _fbImageData + '" style="max-width:100%;border-radius:8px;border:1px solid var(--border,#1f2638);"/><button type="button" onclick="this.parentNode.style.display=\'none\';this.parentNode.innerHTML=\'\';window.wfUpdate&&(window.wfUpdate._clearFbImg&&window.wfUpdate._clearFbImg());" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;">×</button>'; }
-                        if (imgBtn) imgBtn.textContent = '📎 Screenshot attached — tap to change';
+                        if (imgBtn) imgBtn.textContent = '@link@ Screenshot attached — tap to change';
                     };
                     img.src = reader.result;
                 };
@@ -1537,7 +1537,7 @@
             const rows = finished.map(f =>
                 '<div style="padding:12px 14px;border:1px solid var(--border2,#1f2638);border-radius:12px;margin-bottom:10px;background:rgba(16,185,129,0.06);">' +
                     '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
-                        '<span style="font-size:16px;">✅</span>' +
+                        '<span style="font-size:16px;">@checkCircle@</span>' +
                         '<span style="font-weight:800;font-size:13px;color:var(--green,#10b981);">Done' +
                         (f.version ? ' — shipped in v' + _esc(f.version) : '') + '</span>' +
                     '</div>' +
@@ -1550,7 +1550,7 @@
             ov.id = 'wfFbDone';
             ov.style.cssText = _overlayCss();
             ov.innerHTML = _sheet(
-                finished.length === 1 ? '✅ Your feedback is done' : '✅ ' + finished.length + ' of your reports are done',
+                finished.length === 1 ? '@checkCircle@ Your feedback is done' : '@checkCircle@ ' + finished.length + ' of your reports are done',
                 'You asked for this — here\'s what changed.',
                 '<div style="max-height:52vh;overflow-y:auto;">' + rows + '</div>',
                 '<button class="btn btn-primary" style="width:100%;" onclick="wfUpdate._close(\'wfFbDone\')">Close</button>'
@@ -1911,5 +1911,5 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(init, 1500));
     else setTimeout(init, 1500);
 
-    console.log('[wfUpdate] ✓ Update system loaded (build ' + CURRENT_VERSION + ')');
+    console.log('[wfUpdate] @info@ Update system loaded (build ' + CURRENT_VERSION + ')');
 })();

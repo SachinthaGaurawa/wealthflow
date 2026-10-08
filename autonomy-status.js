@@ -3,7 +3,7 @@
  *  Lets the APP tell the user the truth about its own update system.
  *
  *  Until now the only signal the user had was a version pill that read
- *  "v7.69.12 ✓ — All systems operational". It said that while the autonomous
+ *  "v7.69.12 [INFO] — All systems operational". It said that while the autonomous
  *  agent had been crashing on startup every two hours for months, and while ten
  *  of the version bumps behind that number contained no functional change at
  *  all. The pill was not lying on purpose; it simply had nothing real to read.

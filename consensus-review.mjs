@@ -173,7 +173,7 @@ function getDiff() {
 
     if (!mergeBase) {
         console.error(
-            `✗ No merge base between origin/${base} and HEAD, so the true PR diff cannot be determined.\n` +
+            `[INFO] No merge base between origin/${base} and HEAD, so the true PR diff cannot be determined.\n` +
             '  Refusing to review a partial diff — a board that approves a diff it never saw is worse than one that errors.'
         );
         return { text: '', mergeBase: '', headSha };   // main() treats an empty diff as a block
@@ -184,7 +184,7 @@ function getDiff() {
         // failure mode.
         return { text: run(`git diff ${mergeBase} HEAD`), mergeBase, headSha };
     } catch (e) {
-        console.error('✗ git diff failed:', e.message);
+        console.error('[INFO] git diff failed:', e.message);
         return { text: '', mergeBase, headSha };
     }
 }
@@ -610,7 +610,7 @@ export const NON_EXECUTABLE_WHY = {
  * The evidence was a real added executable line, so citesNonExecutableEvidence
  * had nothing to say. But the hunk was:
  *
- *   -  <div class="md-title">📸 AI Scanner Settings</div>
+ *   -  <div class="md-title">[INFO] AI Scanner Settings</div>
  *   +  <div class="md-title">${WFIcon('scan')} AI Scanner Settings</div>
  *
  * Nothing new appears. A camera EMOJI stood in that exact position and a
@@ -880,7 +880,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                 if (why) {
                     rejectedFinding = { reason: redact(String(parsed.reason || '')).slice(0, 300), evidence: redact(evidence), why };
                     finalVote = 'pass';
-                    console.log(`      ⚠ FINDING REJECTED — ${why}.`);
+                    console.log(`      [WARNING] FINDING REJECTED — ${why}.`);
                     console.log('        See the rejection block above runReviewer for why this is');
                     console.log('        enforced here rather than asked for in the prompt.');
                 }
@@ -893,7 +893,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                 // needs to see that instantly to decide on an override.
                 console.log(evidence
                     ? `      evidence: ${redact(evidence)}`
-                    : '      ⚠ NO EXECUTABLE EVIDENCE CITED — likely a reaction to comments/prose, not behaviour.');
+                    : '      [WARNING] NO EXECUTABLE EVIDENCE CITED — likely a reaction to comments/prose, not behaviour.');
             }
 
             /* A PASS whose reason denies the change is visible, on a diff that
@@ -906,7 +906,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
             if (finalVote === 'pass' && deniesVisibleChange(parsed.reason, diff)) {
                 correctedReason = redact(String(parsed.reason || '')).slice(0, 300);
                 correctionWhy = DENIAL_REPLACEMENT;
-                console.log('      ⚠ REASON CORRECTED — reviewer denied a user-facing change that the diff makes.');
+                console.log('      [WARNING] REASON CORRECTED — reviewer denied a user-facing change that the diff makes.');
             } else if (finalVote === 'pass' && r.name === 'user-impact'
                        /* Only when there IS something to name. A backend-only
                         * change genuinely has no user-facing part, and "no
@@ -916,7 +916,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                        && reasonIsGeneric(parsed.reason, diff)) {
                 correctedReason = redact(String(parsed.reason || '')).slice(0, 300);
                 correctionWhy = GENERIC_REPLACEMENT;
-                console.log('      ⚠ REASON CORRECTED — reviewer named nothing in this diff.');
+                console.log('      [WARNING] REASON CORRECTED — reviewer named nothing in this diff.');
             }
             return {
                 name: r.name,
@@ -1072,9 +1072,9 @@ async function postToPr(body) {
 async function main() {
     const llm = describeAvailability();
     if (!llm.healthy) {
-        console.error('✗ No model provider is configured, so no review can happen.');
+        console.error('[INFO] No model provider is configured, so no review can happen.');
         summary(
-            '### ⛔ Consensus review could not run\n\n' +
+            '### [ERROR] Consensus review could not run\n\n' +
             'No model provider is configured. Set at least one of `WealthFlow_API_Key`, ' +
             '`DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, ' +
             '`MISTRAL_API_KEY`, or `OPENROUTER_API_KEY` as a repository secret.\n\n' +
@@ -1093,12 +1093,12 @@ async function main() {
         const msg = `Already reviewed and passed for head ${String(headSha).slice(0, 7)} `
             + `on base ${String(mergeBase).slice(0, 7)} — reusing that verdict instead of re-asking.`;
         console.log(msg);
-        summary(`### ✅ Consensus review board — PASS (reused)\n\n${msg}\n`);
+        summary(`### [OK] Consensus review board — PASS (reused)\n\n${msg}\n`);
         process.exit(0);
     }
     if (!raw.trim()) {
         console.log('Empty diff — nothing to review. Blocking by default.');
-        summary('### ⛔ Consensus review: empty diff\n\nNothing to review, so nothing is approved.\n');
+        summary('### [ERROR] Consensus review: empty diff\n\nNothing to review, so nothing is approved.\n');
         process.exit(1);
     }
     const { text: diff, truncated } = prioritiseDiff(raw);
@@ -1142,7 +1142,7 @@ async function main() {
 
     const result = tally(votes);
     const rows = votes.map((v) => {
-        const icon = v.rejectedFinding ? '🚫' : v.vote === 'pass' ? '✅' : v.vote === 'unavailable' ? '⚪' : '❌';
+        const icon = v.rejectedFinding ? '[ERROR]' : v.vote === 'pass' ? '[OK]' : v.vote === 'unavailable' ? '[INFO]' : '[ERROR]';
         const ev = v.vote === 'fail' ? (v.evidence || '_no executable line cited_') : '';
         return `| ${icon} ${v.name} | \`${v.provider}\` | ${v.vote} | ${v.reason || '—'} | ${ev} |`;
     }).join('\n');
@@ -1153,9 +1153,9 @@ async function main() {
     // A board missing a reviewer is not the same as a board that objected, and
     // labelling both "BLOCKED" would train the reader to treat a real FAIL as
     // routine provider flakiness.
-    const headline = result.merge ? '✅ Consensus review board — PASS'
-        : result.degraded ? '⚠️ Consensus review board — INCOMPLETE'
-            : '⛔ Consensus review board — BLOCKED';
+    const headline = result.merge ? '[OK] Consensus review board — PASS'
+        : result.degraded ? '[WARNING] Consensus review board — INCOMPLETE'
+            : '[ERROR] Consensus review board — BLOCKED';
 
     const report =
         `### ${headline}\n\n` +
@@ -1181,7 +1181,7 @@ async function main() {
              * The heading and closing are kind-neutral now. What differed
              * between rejections was always in `why`, and that is where it
              * stays. */
-            ? '\n> 🚫 **Objection(s) rejected — not a finding about this diff.**\n'
+            ? '\n> [ERROR] **Objection(s) rejected — not a finding about this diff.**\n'
               + rejected.map((v) =>
                   `> \`${v.name}\` objected: _"${String(v.rejectedFinding.reason).replace(/\n/g, ' ')}"_\n`
                   + `> rejected because ${v.rejectedFinding.why || 'it restated the diff'}.\n`
@@ -1195,18 +1195,18 @@ async function main() {
               + '> rejection if you think the reviewer was onto something.\n'
             : '') +
         (result.outages
-            ? `\n> ⚠️ **${result.outages} reviewer(s) unreachable — this board is INCOMPLETE.**\n`
+            ? `\n> [WARNING] **${result.outages} reviewer(s) unreachable — this board is INCOMPLETE.**\n`
               + `> A provider outage is not an objection, so nothing here disagreed with the change.\n`
               + '> But nothing reviewed it from that angle either, and a gate that did not run must not\n'
               + '> report a pass. Re-run once the provider recovers, or apply `human-approved` to accept\n'
               + `> the change on a ${result.cast}-reviewer board.\n`
             : '') +
         (result.shared && result.shared.length
-            ? `\n> ℹ️ ${result.shared.join(', ')} ran on a provider another reviewer also used — its verdict\n`
+            ? `\n> [INFO] ${result.shared.join(', ')} ran on a provider another reviewer also used — its verdict\n`
               + '> counts, but it is not fully independent of the others.\n'
             : '') +
         (unsubstantiated.length
-            ? `\n> ⚠️ **${unsubstantiated.length} FAIL vote(s) cited no executable line.** That is the signature of a reviewer\n` +
+            ? `\n> [WARNING] **${unsubstantiated.length} FAIL vote(s) cited no executable line.** That is the signature of a reviewer\n` +
               '> reacting to comments or documentation rather than to behaviour. Check the reason above before\n' +
               '> assuming a real defect — if it is describing a bug the PR *fixes*, apply `human-approved`.\n'
             : '') +
@@ -1244,10 +1244,10 @@ async function main() {
         : report + (result.degraded
             // No objection was raised here — the board simply was not whole. Calling
             // that "overriding an objection" would misdescribe what the human signed.
-            ? '\n> ✅ **Accepted by `human-approved`.** A human accepted the change on an incomplete\n'
+            ? '\n> [OK] **Accepted by `human-approved`.** A human accepted the change on an incomplete\n'
               + `> board. ${result.missing.join(', ')} never voted; that is recorded here rather than\n`
               + '> smoothed over, so the gap is visible if this change is ever questioned.\n'
-            : '\n> ✅ **Overridden by `human-approved`.** A human reviewed the objection above and accepted the\n'
+            : '\n> [OK] **Overridden by `human-approved`.** A human reviewed the objection above and accepted the\n'
               + '> change. The board\'s verdict is preserved on the record rather than erased — an override is a\n'
               + '> documented decision, not a deleted one.\n');
 
@@ -1272,7 +1272,7 @@ const invokedDirectly = (() => {
 if (invokedDirectly) {
     main().catch((e) => {
         console.error('consensus error:', e && e.stack || e);
-        summary(`### ⛔ Consensus review crashed\n\n\`\`\`\n${String(e && e.message || e).slice(0, 1000)}\n\`\`\`\n`);
+        summary(`### [ERROR] Consensus review crashed\n\n\`\`\`\n${String(e && e.message || e).slice(0, 1000)}\n\`\`\`\n`);
         process.exit(1);
     });
 }

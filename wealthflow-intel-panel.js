@@ -5,12 +5,12 @@
    card (matching the other settings-sections), so the user can SEE and CONTROL
    what the AI is doing:
 
-     • 🧠 Learned merchants  — how many shop→category mappings the AI remembers
+     • @bot@ Learned merchants  — how many shop→category mappings the AI remembers
                                (+ a "Forget all" reset)
-     • 🛟 Needs-review queue  — count + one-tap "Review now"
-     • 🛡 Duplicate scanner   — "Scan now" → shows clusters → one-tap clean
-     • 🔒 Encryption status   — confirms AES-256-GCM is active for AI data
-     • ⚡ Background engine    — live status; "Process pending now"
+     • @shield@ Needs-review queue  — count + one-tap "Review now"
+     • @shield@ Duplicate scanner   — "Scan now" → shows clusters → one-tap clean
+     • @lock@ Encryption status   — confirms AES-256-GCM is active for AI data
+     • @sparkles@ Background engine    — live status; "Process pending now"
 
    This module is self-contained: it injects its card into the Settings page
    right after the existing AI-Intelligence mount and keeps the numbers live.
@@ -87,7 +87,7 @@
             };
             // Prefer the app's styled confirm box; fall back to native confirm.
             if (typeof window.showConfirm === 'function') {
-                window.showConfirm('🧠', 'Reset learned merchants?',
+                window.showConfirm('@bot@', 'Reset learned merchants?',
                     'Your transactions stay — only the categories the AI has learned are cleared.',
                     'btn-danger', 'Reset', doReset);
             } else {
@@ -107,7 +107,7 @@
             if (!out) return;
             out.style.display = '';
             if (!clusters.length) {
-                out.innerHTML = '<span style="color:#10b981;font-weight:700;">✓ No duplicates found.</span> Your records are clean.';
+                out.innerHTML = '<span style="color:#10b981;font-weight:700;">@info@ No duplicates found.</span> Your records are clean.';
                 return;
             }
             const totalDupes = clusters.reduce((n, c) => n + (c.items.length - 1), 0);
@@ -130,7 +130,7 @@
             if (cbtn) cbtn.onclick = () => {
                 let removed = 0;
                 try { removed = window.wfDedup.autoCleanExact(); } catch (_) {}
-                _notify(removed ? '✓ Removed ' + removed + ' duplicate' + (removed === 1 ? '' : 's') + '.' : 'Nothing certain enough to remove.', removed ? 'success' : 'info');
+                _notify(removed ? '@info@ Removed ' + removed + ' duplicate' + (removed === 1 ? '' : 's') + '.' : 'Nothing certain enough to remove.', removed ? 'success' : 'info');
                 ['renderDash', 'renderExpenses', 'renderIncome', 'renderSubscriptions', 'renderCCOneTime', 'renderCCInstall'].forEach(fn => { try { if (typeof window[fn] === 'function') window[fn](); } catch (_) {} });
                 document.getElementById('wfIntelDedup').click();
             };
@@ -142,7 +142,7 @@
                 const el = document.getElementById('wfIntelQueueState');
                 if (!el) return;
                 if (s.active || s.pending || s.processing) el.textContent = (s.done) + '/' + s.total + ' • working';
-                else if (s.total) el.textContent = '✓ done';
+                else if (s.total) el.textContent = '@info@ done';
                 else el.textContent = 'Idle';
             });
         }
@@ -187,5 +187,5 @@
     }
 
     window.wfIntelPanel = { refresh: _refresh, inject: _inject };
-    console.log('[wfIntelPanel] ✓ Intelligence settings panel loaded');
+    console.log('[wfIntelPanel] @info@ Intelligence settings panel loaded');
 })();

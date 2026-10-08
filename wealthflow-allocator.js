@@ -254,5 +254,5 @@
         });
     }
 
-    console.log('[Allocator] ✓ WealthFlow Allocator v1.0 loaded');
+    console.log('[Allocator] @info@ WealthFlow Allocator v1.0 loaded');
 })();

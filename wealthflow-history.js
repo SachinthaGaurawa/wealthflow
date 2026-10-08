@@ -192,7 +192,7 @@
                     )).join('');
                     return (
                         '<details class="wfh-month">' +
-                        '<summary><span class="wfh-caret">▶</span>' +
+                        '<summary><span class="wfh-caret">@play@</span>' +
                         '<span class="wfh-nm"><div class="t">' + esc(monthLabel(m.month)) + '</div><div class="s">' + m.txns.length + ' transaction' + (m.txns.length > 1 ? 's' : '') + '</div></span>' +
                         '<span class="wfh-histbtn">History</span>' +
                         '<span class="wfh-amt">' + esc(fmt(m.total)) + '</span></summary>' +
@@ -202,7 +202,7 @@
                 }).join('');
                 return (
                     '<details class="wfh-place">' +
-                    '<summary><span class="wfh-caret">▶</span>' +
+                    '<summary><span class="wfh-caret">@play@</span>' +
                     '<span class="wfh-nm"><div class="t">' + esc(p.place) + '</div><div class="s">' + p.txns + ' payment' + (p.txns > 1 ? 's' : '') + ' · ' + months.length + ' month' + (months.length > 1 ? 's' : '') + '</div></span>' +
                     '<span class="wfh-catbadge">' + esc(p.category) + '</span>' +
                     '<span class="wfh-amt">' + esc(fmt(p.total)) + '</span></summary>' +
@@ -246,7 +246,7 @@
         const ov = document.createElement('div'); ov.className = 'wfh-ov'; ov.id = 'wfh-ov';
         ov.innerHTML =
             '<div class="wfh-sheet" role="dialog" aria-label="Spending and payment history">' +
-            '<div class="wfh-hd"><h3>' + (opts.tab ? esc(opts.tab) + ' — History' : 'Spending & Payment History') + '</h3><button class="wfh-x" id="wfh-x" aria-label="Close">✕</button></div>' +
+            '<div class="wfh-hd"><h3>' + (opts.tab ? esc(opts.tab) + ' — History' : 'Spending & Payment History') + '</h3><button class="wfh-x" id="wfh-x" aria-label="Close">@x@</button></div>' +
             '<div id="wfh-content"></div>' +
             '</div>';
         document.body.appendChild(ov);

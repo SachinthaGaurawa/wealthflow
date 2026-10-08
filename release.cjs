@@ -53,7 +53,7 @@ const R = p => path.join(REPO, p);
 const read = p => fs.readFileSync(R(p), 'utf8');
 const exists = p => { try { fs.accessSync(R(p)); return true; } catch (_) { return false; } };
 function log(...m) { console.log('[release]', ...m); }
-function die(m) { console.error('[release] ✗ ' + m); process.exit(1); }
+function die(m) { console.error('[release] [INFO] ' + m); process.exit(1); }
 
 // ── semver ──────────────────────────────────────────────────────────────────
 function parse(v) { const p = String(v || '').trim().split('.').map(n => parseInt(n, 10)); return [p[0] || 0, p[1] || 0, p[2] || 0]; }
@@ -100,7 +100,7 @@ function applyVersion(next) {
         const out = s.replace(re, rep);
         if (out === s) die(`[${label}] replacement made no change in ${file}`);
         if (!DRY) fs.writeFileSync(R(file), out);
-        changed.push(file); log('  ✓', label, '→', next);
+        changed.push(file); log('  [INFO]', label, '→', next);
     };
     // 1) version.json — latest + notes + (mandatory if urgent)
     vj.latest = next;
@@ -112,12 +112,12 @@ function applyVersion(next) {
     vj.notes[next] = (RELEASE_NOTES && RELEASE_NOTES.structured) ? RELEASE_NOTES.structured : NOTE;
     if (URGENT) { vj.mandatory = Array.from(new Set([...(vj.mandatory || []), next])); }
     if (!DRY) fs.writeFileSync(R('version.json'), JSON.stringify(vj, null, 2) + '\n');
-    changed.push('version.json'); log('  ✓ version.json latest + notes' + (URGENT ? ' + mandatory' : ''), '→', next);
+    changed.push('version.json'); log('  [INFO] version.json latest + notes' + (URGENT ? ' + mandatory' : ''), '→', next);
     // 2) package.json
     if (exists('package.json')) {
         const pj = JSON.parse(read('package.json')); pj.version = next;
         if (!DRY) fs.writeFileSync(R('package.json'), JSON.stringify(pj, null, 2) + '\n');
-        changed.push('package.json'); log('  ✓ package.json version →', next);
+        changed.push('package.json'); log('  [INFO] package.json version →', next);
     }
     // 3) sw.js CACHE_NAME
     if (exists('sw.js')) rx('sw.js CACHE_NAME', 'sw.js', /(CACHE_NAME\s*=\s*'wealthflow-v)\d+\.\d+\.\d+(')/, `$1${next}$2`);
@@ -140,7 +140,7 @@ function writeChangelog(next, reason) {
     let prev = ''; try { prev = read('CHANGELOG.md'); } catch (_) {}
     const body = prev.startsWith('# WealthFlow') ? prev.replace(/^# WealthFlow[^\n]*\n/, '') : ('\n' + prev);
     if (!DRY) fs.writeFileSync(R('CHANGELOG.md'), '# WealthFlow — CHANGELOG\n\n' + head + body.replace(/^\n+/, ''));
-    log('  ✓ CHANGELOG.md prepended');
+    log('  [INFO] CHANGELOG.md prepended');
 }
 
 function gitPush(next, reason) {
@@ -195,7 +195,7 @@ function gitPush(next, reason) {
     if (!NOTE && AUTO_NOTES) {
         RELEASE_NOTES = AUTO_NOTES;
         NOTE = AUTO_NOTES.summary;
-        log('  ✓ notes derived from ' + AUTO_NOTES.base + '..HEAD — ' + AUTO_NOTES.summary);
+        log('  [INFO] notes derived from ' + AUTO_NOTES.base + '..HEAD — ' + AUTO_NOTES.summary);
     }
     // Only reached when the range is undescribable or git is unavailable. Kept
     // deliberately vague-but-honest rather than dressed up: a release that
@@ -216,12 +216,12 @@ function gitPush(next, reason) {
             man.latest = next; man.notes = man.notes || {}; man.notes[next] = NOTE;
             if (URGENT) man.mandatory = Array.from(new Set([...(man.mandatory || []), next]));
             await manRef.set(man, { merge: true });
-            log('  ✓ Firestore manifest updated + proposal consumed');
+            log('  [INFO] Firestore manifest updated + proposal consumed');
         } catch (e) { log('  (Firestore mirror skipped: ' + e.message + ')'); }
     }
 
     if (PUSH) gitPush(next, reason); else log('  (no --push: files updated locally only)');
-    log((DRY ? '[DRY] ' : '') + '✅ release complete: v' + next);
+    log((DRY ? '[DRY] ' : '') + '[OK] release complete: v' + next);
     log('   changed files: ' + changed.join(', '));
     process.exit(0);
 })().catch(e => die(e && e.stack || String(e)));

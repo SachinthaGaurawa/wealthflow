@@ -211,7 +211,7 @@
         for (var i = 0; i < kinds.length; i++) {
             var k = kinds[i], s = d.byKind[k];
             var meta = KINDS[k] || { label: k };
-            lines.push((s.counts ? '✓ ' : '✕ ') + (meta.label || k) + ': ' + s.n + ' · ' + Math.round(s.total)
+            lines.push((s.counts ? '@info@ ' : '@x@ ') + (meta.label || k) + ': ' + s.n + ' · ' + Math.round(s.total)
                 + (s.counts ? '' : (meta.why ? ' — ' + meta.why : '')));
         }
         if (d.needsReview) {

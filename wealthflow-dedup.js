@@ -226,5 +226,5 @@
         _norm, _merchantMatch
     };
 
-    console.log('[wfDedup] ✓ Multi-signal duplicate defence loaded');
+    console.log('[wfDedup] @info@ Multi-signal duplicate defence loaded');
 })();

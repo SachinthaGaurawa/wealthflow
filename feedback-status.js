@@ -12,7 +12,7 @@
  *  This endpoint is the return path. The client remembers the issue number that
  *  its feedback became, then asks here whether that issue has been closed and in
  *  which release the fix shipped. When the answer is yes, the app shows
- *  "✅ Completed" against that piece of feedback.
+ *  "[OK] Completed" against that piece of feedback.
  *
  *  Reads GitHub with the server-side token, so it works on a private repo
  *  without exposing any credential to the browser.

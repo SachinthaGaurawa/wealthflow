@@ -43,6 +43,8 @@
         x:'<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
         upload:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
         scan:'<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/>',
+        search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>',
+        play:'<polygon points="5 3 19 12 5 21 5 3"/>',
         /* Added for the share-dialog migration. Feather geometry, same as the
          * rest, so they inherit currentColor and 1em sizing. */
         link:'<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
@@ -179,40 +181,42 @@
     } catch (_) {}
 })();
 
-/*  Auto-replace known emoji glyphs in rendered UI text with inline SVG icons.
- *  Pure typography (→ ✓ ↑ ↓ • …) is intentionally kept. Runs after renders via
- *  the same MutationObserver. Skips inputs, textareas, [contenteditable], <script>,
- *  <style>, and any element marked data-noicon. */
+/*  Hydrate source-level icon tokens into inline SVG icons.
+ *
+ *  Application copy uses @name@ instead of emoji characters. This keeps
+ *  the source, the first paint and assistive text professional while retaining
+ *  semantic visual cues. Text-only controls have tokens removed because native
+ *  input attributes and <option> elements cannot contain SVG. */
 (function () {
     'use strict';
     if (!window.WFIcon) return;
-    var MAP = {
-        '📊':'chartLine','📈':'trendUp','📉':'chartLine','🧾':'receipt','📋':'receipt','🗑️':'trash','🗑':'trash',
-        '✅':'checkCircle','☑️':'checkCircle','❌':'x','✖️':'x','✕':'x','⚠️':'alert','⚠':'alert','ℹ️':'info',
-        '🎯':'target','💡':'sparkles','🧠':'bot','🤖':'bot','💰':'wallet','🏦':'bank','🔄':'refresh','📅':'calendar',
-        '🎉':'sparkles','✨':'sparkles','⏰':'clock','⏳':'clock','☁️':'globe','☁':'globe','⚡':'sparkles','🌐':'globe',
-        '📄':'cheque','🛡️':'lock','🛡':'lock','💳':'card','🔐':'lock','🔒':'lock','🔓':'lock','🔔':'bell','📱':'devices',
-        '💾':'download','💬':'info','📁':'receipt','👤':'bot','📸':'scan','📥':'download','📤':'upload','🔊':'bell',
-        '🔗':'globe','📐':'ruler','🏆':'trophy','💣':'bomb','🔮':'crystal','⚙️':'settings','⛽':'coins','💸':'coins',
-        '👍':'thumbsUp','👎':'thumbsDown','👁️':'eye','👁':'eye','💎':'gem','🎁':'gift','⬇️':'download','⬆️':'upload',
-        '📦':'receipt','💵':'wallet','💴':'wallet','💶':'wallet','💷':'wallet','🟢':'checkCircle','🔴':'alert','🟡':'alert',
-        '↩️':'undo','↩':'undo','🏛️':'bank','🏛':'bank','📜':'fileText','📷':'scan',
-        /* Runtime-swept UI glyphs; persona faces stay distinct emoji choices. */
-        '🚪':'lock','📡':'globe','📭':'mail','📲':'devices','🖥️':'devices','🖥':'devices',
-        '💻':'devices','🐧':'devices','🌍':'globe','🌏':'globe','🌎':'globe',
-        '💚':'wallet','💧':'coins','🎭':'user','⚖️':'ruler','⚖':'ruler',
-        '🖼️':'camera','🖼':'camera','🏷️':'folder','🏷':'folder','🧹':'trash',
-        '🏗️':'bank','🏗':'bank','🖱️':'pointer','🖱':'pointer','🚫':'x',
-        '🌅':'sun','🌄':'sun','📎':'link','⏱️':'clock','⏱':'clock','⌛':'clock'
-    };
-    // Build one regex of all emoji keys (longest first to match VS16 variants)
-    var keys = Object.keys(MAP).sort(function (a, b) { return b.length - a.length; });
-    var rx = new RegExp('(' + keys.map(function (k) { return k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|') + ')', 'g');
-    var SKIP = { SCRIPT:1, STYLE:1, TEXTAREA:1, INPUT:1, SVG:1, NOSCRIPT:1, OPTION:1, SELECT:1 };
+    var rx = /@([A-Za-z][A-Za-z0-9]*)@/g;
+    var SKIP = { SCRIPT:1, STYLE:1, SVG:1, NOSCRIPT:1 };
+
+    function cleanTextOnly(value) {
+        return String(value || '').replace(rx, function (all, name) {
+            return window.WFIcon.has(name) ? '' : all;
+        }).replace(/[ \t]{2,}/g, ' ').trim();
+    }
+
+    function cleanAttributes(root) {
+        if (!root || root.nodeType !== 1) return;
+        var nodes = [root];
+        if (root.querySelectorAll) nodes = nodes.concat(Array.prototype.slice.call(root.querySelectorAll('*')));
+        nodes.forEach(function (el) {
+            ['placeholder', 'title', 'aria-label', 'value'].forEach(function (name) {
+                if (!el.hasAttribute || !el.hasAttribute(name)) return;
+                var value = el.getAttribute(name);
+                rx.lastIndex = 0;
+                if (rx.test(value)) el.setAttribute(name, cleanTextOnly(value));
+            });
+        });
+    }
 
     function replaceIn(root) {
         try {
             root = root || document.body; if (!root) return;
+            cleanAttributes(root);
             var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
                 acceptNode: function (n) {
                     var p = n.parentNode;
@@ -233,15 +237,20 @@
             hits.forEach(function (textNode) {
                 var val = textNode.nodeValue; rx.lastIndex = 0;
                 if (!rx.test(val)) return;
+                var parentTag = textNode.parentNode && textNode.parentNode.tagName;
+                if (parentTag === 'OPTION' || parentTag === 'TEXTAREA') {
+                    textNode.nodeValue = cleanTextOnly(val);
+                    return;
+                }
                 var frag = document.createDocumentFragment();
                 var last = 0, m; rx.lastIndex = 0;
                 while ((m = rx.exec(val))) {
                     if (m.index > last) frag.appendChild(document.createTextNode(val.slice(last, m.index)));
-                    var key = MAP[m[1]];
+                    var key = m[1];
                     var node2 = key && window.WFIconNode ? window.WFIconNode(key) : null;
                     if (node2) { node2.style.verticalAlign = '-0.14em'; frag.appendChild(node2); }
-                    else frag.appendChild(document.createTextNode(m[1]));
-                    last = m.index + m[1].length;
+                    else frag.appendChild(document.createTextNode(m[0]));
+                    last = m.index + m[0].length;
                 }
                 if (last < val.length) frag.appendChild(document.createTextNode(val.slice(last)));
                 if (textNode.parentNode) textNode.parentNode.replaceChild(frag, textNode);
@@ -249,17 +258,13 @@
         } catch (_) {}
     }
     window.WFIconStripEmoji = replaceIn;
-    var _t=null,_roots=[];
+    var _roots=[];
     function schedule(root) {
         root = root || document.body;
         if (root && root.nodeType === 3) root = root.parentNode;
         if (root && root.nodeType === 1 && _roots.indexOf(root) < 0) _roots.push(root);
-        if (_t) return;
-        _t = setTimeout(function () {
-            _t = null;
-            var work=_roots.splice(0,_roots.length);
-            for(var i=0;i<work.length;i++) replaceIn(work[i]);
-        }, 120);
+        var work=_roots.splice(0,_roots.length);
+        for(var i=0;i<work.length;i++) replaceIn(work[i]);
     }
     if (document.readyState !== 'loading') schedule(document.body);
     else document.addEventListener('DOMContentLoaded', function () { schedule(document.body); });

@@ -13,9 +13,9 @@
      3. Show a 1000%-accurate "Preview Before Filing" grid:
             ┌──────────────────────────────────────────────────────────────┐
             │ 29 May 2026  •  CARGILLS FOOD CITY                           │
-            │              💸 LKR 2,498.74  → Food & Groceries  (98% sure) │
-            │              📁 Monthly Expenses → May 2026                  │
-            │  [✓ File]  [📂 Change tab]  [✏ Edit]  [✕ Skip]               │
+            │              @coins@ LKR 2,498.74  → Food & Groceries  (98% sure) │
+            │              @folder@ Monthly Expenses → May 2026                  │
+            │  [@info@ File]  [@folder@ Change tab]  [@edit@ Edit]  [@x@ Skip]               │
             └──────────────────────────────────────────────────────────────┘
      4. User taps "File All" (one tap to commit all) OR reviews + tweaks each
         row first. Each transaction is then routed via wfAllocate() which
@@ -54,16 +54,16 @@
     }
     function _moduleLabel(mod) {
         return ({
-            expenses: '💸 Monthly Expenses',
-            income: '💰 Income & Investments',
-            subscriptions: '🔁 Subscriptions',
-            cconetime: '💳 CC One-Time Payments',
-            ccinstall: '🗓 CC Installments',
-            loan: '🏦 Loan Payment',
-            loans: '🏦 Loan Payment',
-            goal: '🎯 Savings Goal',
-            cc_payment: '🔄 CC Bill Payment (FIFO reconcile)'
-        })[mod] || ('📁 ' + mod);
+            expenses: '@coins@ Monthly Expenses',
+            income: '@wallet@ Income & Investments',
+            subscriptions: '@refresh@ Subscriptions',
+            cconetime: '@card@ CC One-Time Payments',
+            ccinstall: '@calendar@ CC Installments',
+            loan: '@bank@ Loan Payment',
+            loans: '@bank@ Loan Payment',
+            goal: '@target@ Savings Goal',
+            cc_payment: '@refresh@ CC Bill Payment (FIFO reconcile)'
+        })[mod] || ('@folder@ ' + mod);
     }
     function _confColor(c) {
         if (c == null) return '#94a3b8';
@@ -327,7 +327,7 @@
         const list = document.getElementById('wfsmsList');
         if (!list) return;
         if (!_state.rows.length) {
-            list.innerHTML = '<div class="wfsms-empty"><div class="ico">📋</div><div style="font-weight:700;color:var(--text2,#94a3b8);">Paste your bank SMSes above and tap <b style="color:#10b981;">Analyse</b>.</div><div style="font-size:12px;margin-top:8px;">Works with one SMS at a time or 50 pasted together.</div></div>';
+            list.innerHTML = '<div class="wfsms-empty"><div class="ico">@receipt@</div><div style="font-weight:700;color:var(--text2,#94a3b8);">Paste your bank SMSes above and tap <b style="color:#10b981;">Analyse</b>.</div><div style="font-size:12px;margin-top:8px;">Works with one SMS at a time or 50 pasted together.</div></div>';
             _renderFooter();
             return;
         }
@@ -359,14 +359,14 @@
 
         if (r.status === 'err' || !b.ok) {
             return '<div class="' + klass + '">' +
-                '<div class="wfsms-r1"><div class="wfsms-r1l"><div class="wfsms-merchant">⚠ Could not parse</div>' +
+                '<div class="wfsms-r1"><div class="wfsms-r1l"><div class="wfsms-merchant">@alert@ Could not parse</div>' +
                 '<div class="wfsms-meta">' + _esc(b.error || b.reason || 'Brain returned no classification.') + '</div></div></div>' +
                 '<div class="wfsms-raw">' + _esc(r.raw.slice(0, 220)) + (r.raw.length > 220 ? '…' : '') + '</div>' +
-                '<div class="wfsms-actions"><button class="wfsms-act danger" data-act="remove" data-rid="' + r.id + '">✕ Discard</button></div>' +
+                '<div class="wfsms-actions"><button class="wfsms-act danger" data-act="remove" data-rid="' + r.id + '">@x@ Discard</button></div>' +
                 '</div>';
         }
 
-        const dupBadge = r.status === 'dup' ? '<div style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);color:#f59e0b;font-size:11.5px;padding:7px 10px;border-radius:8px;margin-bottom:10px;font-weight:700;">⚠ Duplicate detected — already in your records on ' + _dateLabel(r.dupOf && (r.dupOf.date_ms || r.dupOf.date)) + '</div>' : '';
+        const dupBadge = r.status === 'dup' ? '<div style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);color:#f59e0b;font-size:11.5px;padding:7px 10px;border-radius:8px;margin-bottom:10px;font-weight:700;">@alert@ Duplicate detected — already in your records on ' + _dateLabel(r.dupOf && (r.dupOf.date_ms || r.dupOf.date)) + '</div>' : '';
 
         const editForm = '<div class="wfsms-edit">' +
             '<label>Merchant</label><input type="text" data-edit="merchant" data-rid="' + r.id + '" value="' + _esc(merchantName) + '">' +
@@ -381,7 +381,7 @@
                         '<option value="' + k + '"' + (k === mod ? ' selected' : '') + '>' + _moduleLabel(k) + '</option>'
                     ).join('') + '</select></div>' +
             '</div>' +
-            '<button class="wfsms-act" data-act="endedit" data-rid="' + r.id + '" style="margin-top:10px;">✓ Done editing</button>' +
+            '<button class="wfsms-act" data-act="endedit" data-rid="' + r.id + '" style="margin-top:10px;">@info@ Done editing</button>' +
             '</div>';
 
         return '<div class="' + klass + '">' +
@@ -394,7 +394,7 @@
                 '<div class="wfsms-amt">' + _money(amt, cur) + '</div>' +
             '</div>' +
             '<div style="margin-top:7px;">' +
-                '<span class="wfsms-cat">📂 ' + _esc(cat) + '</span>' +
+                '<span class="wfsms-cat">@folder@ ' + _esc(cat) + '</span>' +
                 '<span class="wfsms-mod">' + _esc(_moduleLabel(mod)) + '</span>' +
                 '<span class="wfsms-conf" style="background:' + _confColor(conf) + '22;color:' + _confColor(conf) + ';">' + _confLabel(conf) + '</span>' +
             '</div>' +
@@ -402,9 +402,9 @@
             '<div class="wfsms-actions">' +
                 (r.status === 'skip' ?
                     '<button class="wfsms-act" data-act="include" data-rid="' + r.id + '">↻ Include</button>' :
-                    '<button class="wfsms-act" data-act="skip" data-rid="' + r.id + '">✕ Skip</button>') +
-                '<button class="wfsms-act" data-act="edit" data-rid="' + r.id + '">✏ Edit</button>' +
-                '<button class="wfsms-act danger" data-act="remove" data-rid="' + r.id + '">🗑 Remove</button>' +
+                    '<button class="wfsms-act" data-act="skip" data-rid="' + r.id + '">@x@ Skip</button>') +
+                '<button class="wfsms-act" data-act="edit" data-rid="' + r.id + '">@edit@ Edit</button>' +
+                '<button class="wfsms-act danger" data-act="remove" data-rid="' + r.id + '">@trash@ Remove</button>' +
             '</div>' +
             editForm +
             '</div>';
@@ -427,7 +427,7 @@
             (skip ? '<b>' + skip + '</b> skipped' : '') +
             '</div>' +
             '<button class="wfsms-btn wfsms-btn-ghost" data-act="clearAll">Clear all</button>' +
-            '<button class="wfsms-btn wfsms-btn-primary" data-act="fileAll"' + (staged === 0 ? ' disabled' : '') + '>✓ File ' + staged + ' transaction' + (staged === 1 ? '' : 's') + '</button>';
+            '<button class="wfsms-btn wfsms-btn-primary" data-act="fileAll"' + (staged === 0 ? ' disabled' : '') + '>@info@ File ' + staged + ' transaction' + (staged === 1 ? '' : 's') + '</button>';
     }
 
     // Duplicate check (uses the allocator's fuzzy matcher when available)
@@ -447,7 +447,7 @@
         }
     }
 
-    // ⚡ Fire-and-forget: hand the whole paste to the background queue engine
+    // @sparkles@ Fire-and-forget: hand the whole paste to the background queue engine
     // and close the modal immediately. The AI files everything it's sure about
     // and parks anything ambiguous in the review queue for later.
     // Returns true (and warns) if the textarea still holds the untouched demo
@@ -475,7 +475,7 @@
         }
         const n = await window.wfQueue.enqueueSms(text, 'paste');
         _notify(n > 0
-            ? '⚡ Handed ' + n + ' transaction' + (n === 1 ? '' : 's') + ' to the AI — you can close this or keep working.'
+            ? '@sparkles@ Handed ' + n + ' transaction' + (n === 1 ? '' : 's') + ' to the AI — you can close this or keep working.'
             : 'Nothing to process — check your paste.', n > 0 ? 'success' : 'warn');
         if (n > 0) closeModal();
     }
@@ -533,7 +533,7 @@
         } catch (e) {
             _notify('Analysis failed: ' + (e && e.message), 'error');
         } finally {
-            if (analyseBtn) { analyseBtn.disabled = false; analyseBtn.textContent = '🧠 Analyse'; }
+            if (analyseBtn) { analyseBtn.disabled = false; analyseBtn.textContent = '@bot@ Analyse'; }
             if (prog) prog.style.display = 'none';
         }
     }
@@ -608,7 +608,7 @@
             try { if (typeof window[fn] === 'function') window[fn](); } catch (_) {}
         });
 
-        const msg = '✓ Filed ' + ok + (quarantined ? ' · ' + quarantined + ' to review' : '') + (fail ? ' · ' + fail + ' failed' : '');
+        const msg = '@info@ Filed ' + ok + (quarantined ? ' · ' + quarantined + ' to review' : '') + (fail ? ' · ' + fail + ' failed' : '');
         _notify(msg, ok > 0 ? 'success' : 'warn');
 
         if (ok > 0 && fail === 0 && _state.rows.length === 0) {
@@ -710,28 +710,28 @@
                 '<div id="wfsmsPaneInput">' +
                     '<textarea id="wfsmsInput" class="wfsms-ta" placeholder="Copy your bank SMS from your phone and paste here — OR tap &#39;Attach screenshots&#39; below to let the AI read them.&#10;&#10;Examples that work:&#10;&#10;• One SMS at a time&#10;• Multiple SMSes pasted together&#10;• Screenshots of your bank-SMS thread (one or many)&#10;• Any bank: Commercial, HNB, Sampath, NTB, Seylan, DFCC, AMEX, HSBC + 25 international banks"></textarea>' +
                     '<div id="wfsmsDrop" style="margin-top:10px;border:1.5px dashed var(--border2,#1f2638);border-radius:12px;padding:14px;text-align:center;cursor:pointer;transition:all .15s;">' +
-                        '<div style="font-size:22px;margin-bottom:4px;">🖼️</div>' +
+                        '<div style="font-size:22px;margin-bottom:4px;">@camera@</div>' +
                         '<div style="font-weight:700;font-size:13px;color:var(--text,#e6e7eb);">Attach screenshots</div>' +
                         '<div style="font-size:11.5px;color:var(--text3,#8b95a8);margin-top:3px;">Tap to pick one or many images — the AI reads the SMS text for you. You can also drag &amp; drop, or paste an image.</div>' +
                         '<input id="wfsmsFileInput" type="file" accept="image/*" multiple style="display:none;">' +
                     '</div>' +
                     '<div id="wfsmsThumbs" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;"></div>' +
                     '<div class="wfsms-hint">' +
-                        '🎯 The AI knows 250+ merchants (Cargills, Keells, KOKO, Dialog, Netflix, Apple, AWS, etc.) and routes each transaction to the right tab + month + year.<br>' +
-                        '🧠 It learns: confirm a shop once and it remembers the category forever.<br>' +
-                        '🔁 Many SMSes (pasted or in a screenshot)? They\'re auto-split and processed in parallel.<br>' +
-                        '🛡 Duplicates are detected automatically — even across screenshots & re-pastes.' +
+                        '@target@ The AI knows 250+ merchants (Cargills, Keells, KOKO, Dialog, Netflix, Apple, AWS, etc.) and routes each transaction to the right tab + month + year.<br>' +
+                        '@bot@ It learns: confirm a shop once and it remembers the category forever.<br>' +
+                        '@refresh@ Many SMSes (pasted or in a screenshot)? They\'re auto-split and processed in parallel.<br>' +
+                        '@shield@ Duplicates are detected automatically — even across screenshots & re-pastes.' +
                     '</div>' +
                     '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">' +
-                        '<button id="wfsmsAutoBtn" class="wfsms-btn wfsms-btn-primary" data-act="autoFile" style="background:linear-gradient(135deg,#10b981,#0ea371);">⚡ Auto-file (walk away)</button>' +
-                        '<button id="wfsmsAnalyseBtn" class="wfsms-btn wfsms-btn-ghost" data-act="analyse">🧠 Review first</button>' +
+                        '<button id="wfsmsAutoBtn" class="wfsms-btn wfsms-btn-primary" data-act="autoFile" style="background:linear-gradient(135deg,#10b981,#0ea371);">@sparkles@ Auto-file (walk away)</button>' +
+                        '<button id="wfsmsAnalyseBtn" class="wfsms-btn wfsms-btn-ghost" data-act="analyse">@bot@ Review first</button>' +
                     '</div>' +
                     '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">' +
                         '<button class="wfsms-btn wfsms-btn-ghost" data-act="clearInput">Clear</button>' +
-                        '<button class="wfsms-btn wfsms-btn-ghost" data-act="pasteSample">📋 Try a sample</button>' +
+                        '<button class="wfsms-btn wfsms-btn-ghost" data-act="pasteSample">@receipt@ Try a sample</button>' +
                     '</div>' +
                     '<div class="wfsms-hint" style="margin-top:10px;">' +
-                        '⚡ <b>Auto-file</b> hands everything to the background AI and closes this window instantly — keep using the app or close it, the AI keeps working and only asks you about anything it\'s unsure of (later is fine).' +
+                        '@sparkles@ <b>Auto-file</b> hands everything to the background AI and closes this window instantly — keep using the app or close it, the AI keeps working and only asks you about anything it\'s unsure of (later is fine).' +
                     '</div>' +
                     '<div id="wfsmsProg" class="wfsms-progress" style="display:none;"><span id="wfsmsProgBar" style="width:0%;"></span></div>' +
                 '</div>' +
@@ -838,20 +838,20 @@
                 });
                 const clean = (text || '').trim();
                 // mark this tile done
-                if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '✓'; sp.style.background = 'rgba(16,185,129,0.5)'; } }
+                if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '@info@'; sp.style.background = 'rgba(16,185,129,0.5)'; } }
 
                 if (!clean || clean.replace(/\s/g, '').length < 8) {
-                    if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '⚠'; sp.style.background = 'rgba(239,68,68,0.5)'; } }
+                    if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '@alert@'; sp.style.background = 'rgba(239,68,68,0.5)'; } }
                     _notify('Couldn\'t read text from one screenshot. Try a clearer image.', 'warn');
                 } else {
                     // record the block + append a tagged segment to the textarea
                     _imgBlocks[blockId] = clean;
                     _appendImageBlock(blockId, clean);
                     const n = (typeof window.wfSplitSmsBatch === 'function') ? window.wfSplitSmsBatch(clean).length : 1;
-                    _notify('📖 Read screenshot → found ' + n + ' transaction' + (n === 1 ? '' : 's') + '.', 'success');
+                    _notify('@fileText@ Read screenshot → found ' + n + ' transaction' + (n === 1 ? '' : 's') + '.', 'success');
                 }
             } catch (e) {
-                if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '⚠'; sp.style.background = 'rgba(239,68,68,0.5)'; } }
+                if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '@alert@'; sp.style.background = 'rgba(239,68,68,0.5)'; } }
                 _notify('Image reading failed: ' + (e && e.message), 'error');
             }
         }
@@ -946,7 +946,7 @@
             wrap.style.cssText = 'margin:14px 0;';
             wrap.innerHTML =
                 '<div style="display:flex;align-items:center;gap:10px;padding:14px;background:linear-gradient(135deg,rgba(16,185,129,0.08),rgba(212,175,55,0.04),var(--card,#1a1f2e));border:1px solid rgba(16,185,129,0.45);border-radius:14px;">' +
-                  '<div style="font-size:24px;">📲</div>' +
+                  '<div style="font-size:24px;">@devices@</div>' +
                   '<div style="flex:1;min-width:0;">' +
                     '<div style="font-weight:800;font-size:14px;">Paste Bank SMS</div>' +
                     '<div style="font-size:12px;color:var(--text2,#94a3b8);margin-top:2px;line-height:1.5;">Copy any bank SMS from your phone, paste here, AI files it to the right tab + month + year. Works for any bank.</div>' +
@@ -966,5 +966,5 @@
         });
     }
 
-    console.log('[SMS Paste] ✓ WealthFlow SMS Paste v1.0 loaded — call wfOpenSmsPaste() to open');
+    console.log('[SMS Paste] @info@ WealthFlow SMS Paste v1.0 loaded — call wfOpenSmsPaste() to open');
 })();

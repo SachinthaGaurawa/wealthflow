@@ -60,16 +60,17 @@ describe('the AI chat message', () => {
     });
 
     /* ── the patterns must survive ─────────────────────────────────────────*/
-    it('still RECOGNISES the glyphs the model writes', () => {
-        /* The load-bearing assertion of this file. These three characters are
-         * input, not output. A migration that "cleaned" them would delete the
-         * callout feature outright and look like progress on the count. */
-        for (const [glyph, kind] of [['⚠️', 'warning'], ['✅', 'success'], ['\u{1F4A1}', 'info']]) {
+    it('recognises professional icon tokens written by the model', () => {
+        for (const [token, kind] of [['alert', 'warning'], ['checkCircle', 'success'], ['sparkles', 'info']]) {
             const line = APPEND.split('\n').find((l) => l.includes(`ai-callout ${kind}`));
             expect(line, `the ${kind} callout is gone`).toBeTruthy();
-            expect(line, `the ${kind} callout stopped matching what the model writes`)
-                .toContain(glyph);
+            expect(line, `the ${kind} callout stopped matching the icon-token protocol`)
+                .toContain(`@${token}@`);
         }
+    });
+
+    it('removes raw emoji returned by a model before rendering', () => {
+        expect(APPEND).toContain('Extended_Pictographic');
     });
 
     it('every glyph left in the function is on a pattern, never on output', () => {

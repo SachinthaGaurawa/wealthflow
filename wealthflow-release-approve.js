@@ -107,9 +107,9 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         if (res.ok && action === 'approve') {
             var v = _esc(res.body.version || '');
             var deployed = res.body.deployTriggered ? 'A new build was triggered.' : 'Announced to clients. (No deploy hook set, so the code build was not auto-triggered.)';
-            _msg('✓ Release ' + v + ' approved. ' + _esc(deployed), '#34d399');
+            _msg('@info@ Release ' + v + ' approved. ' + _esc(deployed), '#34d399');
         } else if (res.ok && action === 'reject') {
-            _msg('✓ Proposal rejected. The live version is unchanged.', '#34d399');
+            _msg('@info@ Proposal rejected. The live version is unchanged.', '#34d399');
         } else if (res.status === 403) {
             _msg('You are not authorised to approve releases on this account.', '#ef4444');
             if (btnA) btnA.disabled = false; if (btnR) btnR.disabled = false;
@@ -277,5 +277,5 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         showPanel: showPanel, _close: _close, _act: _act, _getPending: _getPending,
         _getDeployStatus: _getDeployStatus, _render: _render, _inject: _inject,
     };
-    console.log('[wfReleaseApprove] ✓ Release approval panel loaded — autonomous proposal, one-tap owner approval');
+    console.log('[wfReleaseApprove] @info@ Release approval panel loaded — autonomous proposal, one-tap owner approval');
 })();

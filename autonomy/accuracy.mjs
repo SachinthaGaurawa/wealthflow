@@ -129,7 +129,7 @@ export function formatLedger(ledger) {
     if (!ledger.length) return 'No graded findings yet — every detector is on probation by default.';
     const rows = ledger.map((r) => {
         const pct = r.judged ? `${Math.round(r.rejectionRate * 100)}%` : '—';
-        const flag = r.quarantined ? '  ⛔ QUARANTINED'
+        const flag = r.quarantined ? '  [ERROR] QUARANTINED'
             : NEVER_QUARANTINE.has(r.kind) ? '  (never quarantined)'
                 : r.judged < MIN_SAMPLE ? `  (only ${r.judged} judged; need ${MIN_SAMPLE})` : '';
         return `  ${r.kind.padEnd(26)} filed ${String(r.filed).padStart(3)}  fixed ${String(r.fixed).padStart(3)}  rejected ${String(r.rejected).padStart(3)}  reject-rate ${pct.padStart(4)}${flag}`;

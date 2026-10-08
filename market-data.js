@@ -2,7 +2,7 @@
 //
 // Endpoints (GET): /api/market-data?type=...&...
 //   type=quote      params: symbol         → real-time stock quote
-//   type=fx         params: from, to       → currency exchange rate (LKR↔USD etc.)
+//   type=fx         params: from, to       → currency exchange rate (LKR@info@USD etc.)
 //   type=crypto     params: symbol         → crypto to USD (BTC, ETH, etc.)
 //   type=daily      params: symbol         → 100 days OHLC
 //   type=intraday   params: symbol, interval=5min|15min|60min

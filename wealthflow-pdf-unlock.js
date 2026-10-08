@@ -303,7 +303,7 @@
             ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);';
             ov.innerHTML =
                 '<div style="background:var(--card,#11182a);border:1px solid var(--border2,#243049);border-radius:16px;padding:22px;max-width:340px;width:88%;box-shadow:0 20px 60px rgba(0,0,0,0.5);">' +
-                    '<div style="font-size:16px;font-weight:800;color:var(--text,#e2e8f0);display:flex;align-items:center;gap:8px;">🔒 Protected PDF</div>' +
+                    '<div style="font-size:16px;font-weight:800;color:var(--text,#e2e8f0);display:flex;align-items:center;gap:8px;">@lock@ Protected PDF</div>' +
                     '<div style="font-size:13px;color:var(--text2,#94a3b8);margin:8px 0 14px;">This statement is password-protected. Enter its password to unlock and read it.</div>' +
                     (isRetry ? '<div id="wfPwErr" style="font-size:12px;color:#ef4444;margin-bottom:8px;">Incorrect password — please try again.</div>' : '') +
                     '<input id="wfPwInput" type="password" autocomplete="off" placeholder="PDF password" style="width:100%;box-sizing:border-box;padding:11px 12px;border-radius:10px;border:1px solid var(--border2,#243049);background:var(--bg,#0b0f1a);color:var(--text,#e2e8f0);font-size:14px;outline:none;" />' +
@@ -323,5 +323,5 @@
     }
 
     window.WFPdfUnlock = { getStatementText: getStatementText, openPdf: openPdf, openPdfOnce: openPdfOnce, extractText: extractText, promptPassword: promptPassword, _itemsToLines: _itemsToLines, tryCandidates: tryCandidates, _isPasswordError: _isPasswordError };
-    try { console.log('[WFPdfUnlock] ✓ encrypted-PDF unlock ready'); } catch (_) {}
+    try { console.log('[WFPdfUnlock] @info@ encrypted-PDF unlock ready'); } catch (_) {}
 })();

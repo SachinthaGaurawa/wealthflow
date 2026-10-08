@@ -63,7 +63,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
             last4, updated_at: Date.now()
         });
         setCardRegistry(reg);
-        if (typeof window.notify === 'function') notify(`✓ Card •••${last4} saved`, 'success');
+        if (typeof window.notify === 'function') notify(`@info@ Card •••${last4} saved`, 'success');
         return reg[last4];
     }
     function deleteCard(last4) {
@@ -239,7 +239,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
                 if (parked) {
                     await markProcessed(brain.hash); // the review entry owns it now
                     if (typeof window.notify === 'function') {
-                        notify('🛟 1 transaction needs your review (low confidence)', 'info');
+                        notify('@shield@ 1 transaction needs your review (low confidence)', 'info');
                     }
                     return { ok: true, module: 'review' };
                 }
@@ -357,7 +357,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
                 try { syncToCloud(); } catch (_) {}
             }
             if (typeof window.notify === 'function') {
-                notify(`🤖 Auto-logged: ${brain.resolved_merchant && brain.resolved_merchant.name} • LKR ${(fields.amount||0).toLocaleString()}`, 'success');
+                notify(`@bot@ Auto-logged: ${brain.resolved_merchant && brain.resolved_merchant.name} • LKR ${(fields.amount||0).toLocaleString()}`, 'success');
             }
             return { ok: true, module };
         } catch (e) {
@@ -389,7 +389,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         const debits = ccot.concat(cci);
 
         if (!debits.length) {
-            if (typeof window.notify === 'function') notify(`💳 CC payment received (•••${card_last4}) — no outstanding charges to clear.`, 'info');
+            if (typeof window.notify === 'function') notify(`@card@ CC payment received (•••${card_last4}) — no outstanding charges to clear.`, 'info');
             return { ok: true, settled: 0 };
         }
 
@@ -430,7 +430,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
             }
             if (typeof window.notify === 'function') {
                 const n = plan.settled.length;
-                notify(`💳 FIFO reconciled: ${n} CC charge${n!==1?'s':''} cleared by your payment.`, 'success');
+                notify(`@card@ FIFO reconciled: ${n} CC charge${n!==1?'s':''} cleared by your payment.`, 'success');
             }
             return { ok: true, settled: plan.settled.length, partial: plan.partial };
         } catch (e) {
@@ -565,7 +565,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
                     if (typeof renderDash === 'function') renderDash();
                 } catch (_) {}
                 if (typeof window.notify === 'function') {
-                    notify(`📤 Applied ${drained} transaction${drained > 1 ? 's' : ''} from Share Sheet`, 'success');
+                    notify(`@upload@ Applied ${drained} transaction${drained > 1 ? 's' : ''} from Share Sheet`, 'success');
                 }
             }
             return { drained };
@@ -633,7 +633,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
                     if (typeof renderAutoPilotTile === 'function') renderAutoPilotTile();
                 } catch (_) {}
                 if (typeof window.notify === 'function') {
-                    notify(`🤖 Auto-logged ${drained} transaction${drained > 1 ? 's' : ''} from your phone`, 'success');
+                    notify(`@bot@ Auto-logged ${drained} transaction${drained > 1 ? 's' : ''} from your phone`, 'success');
                 }
             }
             return { drained };
@@ -671,5 +671,5 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         });
     }
 
-    console.log('[Autonomous] ✅ WealthFlow Autonomous Module v1.1 (v7.9.0 time-bucket stamping) loaded');
+    console.log('[Autonomous] @checkCircle@ WealthFlow Autonomous Module v1.1 (v7.9.0 time-bucket stamping) loaded');
 })();
