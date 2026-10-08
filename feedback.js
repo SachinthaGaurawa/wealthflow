@@ -12,8 +12,13 @@
    (version, device) — never financial data.
    ============================================================================ */
 import { fetchWithTimeout } from './fetch-timeout.mjs';
+import { OFFICIAL_EMAIL } from './wealthflow-public-identity.mjs';
 
 export const config = { runtime: 'edge' };
+
+export function feedbackSender() {
+    return `WealthFlow <${OFFICIAL_EMAIL}>`;
+}
 
 function json(body, status) {
     return new Response(JSON.stringify(body), {
@@ -59,7 +64,8 @@ export default async function handler(req) {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                from: env.FEEDBACK_EMAIL_FROM || 'WealthFlow <onboarding@resend.dev>',
+                from: feedbackSender(),
+                reply_to: OFFICIAL_EMAIL,
                 to: [to],
                 subject,
                 text: body
