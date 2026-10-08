@@ -10475,7 +10475,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
 
             // 1. Try Vercel Backend First (Handles multi-engine securely)
             try {
-                const vercelUrl = window._wfApiUrl('/api/ai');
+                const vercelUrl = (typeof window._wfApiUrl === 'function')
+                    ? window._wfApiUrl('/api/ai')
+                    : ((window.location && window.location.hostname === 'sachinthagaurawa.github.io')
+                        ? 'https://www.wealthflow.lk/api/ai' : '/api/ai');
 
                 const body = { prompt };
                 if (image) body.image = image;
@@ -10571,7 +10574,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (opts.temperature != null) body.temperature = opts.temperature;
             if (opts.maxTokens != null) body.maxTokens = opts.maxTokens;
             if (opts.itemwise && typeof opts.itemwise === 'object') body.itemwise = opts.itemwise;
-            var base = window._wfApiUrl('/api/ai');
+            var base = (typeof window._wfApiUrl === 'function')
+                ? window._wfApiUrl('/api/ai')
+                : ((location && location.hostname === 'sachinthagaurawa.github.io')
+                    ? 'https://www.wealthflow.lk/api/ai' : '/api/ai');
             try {
                 var r = await fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 if (r.ok) {

@@ -637,7 +637,14 @@ export const BUDGETS = {
     // (copied numbers arrive with tel: prefixes, direction marks and non-Latin digits). About a third is comments.
     // 2026-10-05 (a second number, and Settle & close): 2,445,000 -> 2_456_000 (measured 2,453,842 + ~0.1% headroom). The contact fields carry the optional second number with its own live line and Contacts button, the book shares it
     // with every record of the person, and wealthflow-sms.js closes and re-opens an investment.
-    totalJsBytes: 2_456_000,
+    // 2026-10-08: 2,456,000 -> 2,460,000 (measured 2,457,309 before the
+    // browser fallback below). wealthflow-public-identity.mjs is the one shared
+    // authority for official public URLs and customer email across server link
+    // producers. Keeping that security boundary importable and independently
+    // tested costs 1,309 bytes; duplicating these rules would avoid the counter
+    // while making legacy-link migration inconsistent. The ceiling moves once
+    // with less than 0.2% headroom.
+    totalJsBytes: 2_460_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     largestModuleBytes: 233_000, // measured 232,325
@@ -727,7 +734,10 @@ export const BUDGETS = {
     // 2026-10-04: 79 -> 80 for wealthflow-own-money.js (whose money a bank row is; see totalJsBytes).
     // 2026-10-05: 80 -> 83 for wealthflow-sms.js, wealthflow-phone.js and wealthflow-nic.js. The last two are imported by the first and by the server, not loaded by a tag of their own.
     // 2026-10-05: 83 -> 86 for wealthflow-people.js, wealthflow-people-ui.js and wealthflow-payaccounts.js. The first and the last are imported by the second (and by the server for the last), not loaded by a tag of their own.
-    moduleCount: 86,   // measured 86
+    // 2026-10-08: 86 -> 87 for wealthflow-public-identity.mjs. It is server
+    // shared rather than a new browser request, but this budget deliberately
+    // counts every deployable module, so the identity authority stays visible.
+    moduleCount: 87,   // measured 87
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
