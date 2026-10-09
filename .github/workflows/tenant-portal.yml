@@ -10,6 +10,9 @@ on:
       - tenant-statement.mjs
       - tenant-pdf.mjs
       - tenant-lang.js
+      - tenant-tools.js
+      - tenant-logo.png
+      - tenant-inter.woff2
       - tenant-links.mjs
       - wealthflow-nic.js
       - wealthflow-phone.js

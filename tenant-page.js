@@ -7,6 +7,7 @@
  * recorded phone have been checked by /api/tenant-portal, and then only for 20 minutes.
  *
  * WHAT THE PERSON CAN DO ONCE IN
+ *   see their balance first, on a dark card with whose statement it is, and blur every amount with one tap when someone is looking,
  *   read their statement (every investment and loan their lender records for them, in English or Sinhala),
  *   see what is coming up (a loan's due date, the next interest) with the days left, and add it to a phone
  *   calendar; see how much of a loan is paid back; see where to pay and copy the account number or the
@@ -132,13 +133,65 @@ function h(doc, tag, props, ...kids) {
 function fact(doc, label, value, cls) { return h(doc, 'div', {}, h(doc, 'dt', { text: label }), h(doc, 'dd', { class: cls || null, text: value })); }
 
 /**
+ * The page's icons: small line drawings made with createElementNS (never markup), in the colour of the text around them.
+ * Each is a list of path strings on a 24 x 24 grid. A document with no createElementNS (the tests' stand-in) gets an empty span.
+ */
+const ICONS = {
+    download: ['M12 3v12', 'm7 10 5 5 5-5', 'M5 21h14'],
+    share: ['M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7', 'm16 6-4-4-4 4', 'M12 2v13'],
+    table: ['M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z', 'M3 10h18', 'M9 10v9'],
+    print: ['M6 9V3h12v6', 'M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2', 'M6 14h12v7H6z'],
+    refresh: ['M21 12a9 9 0 1 1-3-6.7', 'M21 4v5h-5'],
+    eye: ['M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z', 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z'],
+    eyeOff: ['M3 3l18 18', 'M10.6 5.1A10.5 10.5 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.2', 'M6.6 6.6A16.6 16.6 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 4-.9', 'M9.9 9.9a3 3 0 0 0 4.2 4.2'],
+    logout: ['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4', 'm16 17 5-5-5-5', 'M21 12H9'],
+    lock: ['M5 11h14v10H5z', 'M8 11V7a4 4 0 0 1 8 0v4'],
+    shield: ['M12 3l8 3v6c0 5-3.4 8.4-8 9-4.6-.6-8-4-8-9V6z', 'm9 12 2 2 4-4'],
+    calendar: ['M4 6h16v14H4z', 'M4 10h16', 'M8 3v4', 'M16 3v4'],
+    home: ['M3 11l9-8 9 8', 'M5 10v10h14V10'],
+    bank: ['M3 10l9-6 9 6', 'M5 10v8', 'M9 10v8', 'M15 10v8', 'M19 10v8', 'M3 21h18'],
+    list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
+    message: ['M4 5h16v11H9l-5 4z'],
+    clock: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M12 7v5l3 2'],
+    chevron: ['m6 9 6 6 6-6'],
+};
+// the SVG namespace is a name that tells the browser what kind of element to make, not an address anything is fetched from
+const SVG_NS = ['http:', '', 'www.w3.org', '2000', 'svg'].join('/');
+function icon(doc, name) {
+    if (typeof doc.createElementNS !== 'function') return h(doc, 'span', { class: 'tp-ico', 'aria-hidden': 'true' });
+    const svg = doc.createElementNS(SVG_NS, 'svg');
+    for (const [k, v] of Object.entries({ class: 'tp-ico', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', focusable: 'false' })) svg.setAttribute(k, v);
+    for (const d of ICONS[name] || []) { const p = doc.createElementNS(SVG_NS, 'path'); p.setAttribute('d', d); svg.append(p); }
+    return svg;
+}
+
+/** An amount with its currency and cents set smaller, the way a banking app draws a balance. The characters are the same as fmtMoney's. */
+function money(doc, amount, currency, cls) {
+    const s = fmtMoney(amount, currency);
+    const num = s.slice(4);
+    const dot = num.lastIndexOf('.');
+    return h(doc, 'span', { class: `tp-money tp-amt${cls ? ` ${cls}` : ''}` },
+        h(doc, 'span', { class: 'tp-ccy', text: s.slice(0, 4) }),
+        h(doc, 'span', { class: 'tp-int', text: dot < 0 ? num : num.slice(0, dot) }),
+        dot < 0 ? null : h(doc, 'span', { class: 'tp-dec', text: num.slice(dot) }));
+}
+
+/** Up to two capital letters for the round badge by the name. */
+export function initials(name) {
+    const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return '';
+    const first = (w) => Array.from(w)[0] || '';
+    return (first(words[0]) + (words.length > 1 ? first(words[words.length - 1]) : '')).toUpperCase();
+}
+
+/**
  * Cells are [text, alignRight, secondLine]: a second line under the first keeps a table of four things to three columns on a phone.
  * A table of more than TABLE_LIMIT rows shows the latest ones and puts the earlier ones behind "Show all"; the rows are
  * only hidden, never left out, so print and copy still get them all.
  */
 function table(doc, caption, heads, rows, t = english) {
     const hide = rows.length > TABLE_LIMIT ? rows.length - TABLE_LIMIT : 0;
-    const body = h(doc, 'tbody', {}, rows.map((r, i) => h(doc, 'tr', { hidden: i < hide, class: i < hide ? 'tp-early' : null }, r.map(([text, num, sub]) => h(doc, 'td', { class: num ? 'tp-num' : null }, text, sub ? h(doc, 'span', { class: 'tp-sub', text: sub }) : null)))));
+    const body = h(doc, 'tbody', {}, rows.map((r, i) => h(doc, 'tr', { hidden: i < hide, class: i < hide ? 'tp-early' : null }, r.map(([text, num, sub]) => h(doc, 'td', { class: num ? 'tp-num tp-amt' : null }, text, sub ? h(doc, 'span', { class: 'tp-sub', text: sub }) : null)))));
     const scroll = h(doc, 'div', { class: 'tp-scroll' }, h(doc, 'table', {},
         h(doc, 'caption', { text: caption }),
         h(doc, 'thead', {}, h(doc, 'tr', {}, heads.map(([label, num]) => h(doc, 'th', { scope: 'col', class: num ? 'tp-num' : null, text: label })))),
@@ -175,14 +228,14 @@ function investmentCard(doc, g, st, t, actions) {
     return h(doc, 'section', { class: 'tp-card', 'aria-label': `${t('Investment')} ${g.ref}` },
         h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Investment') }), refChip(doc, g.ref, t, actions), lenderChip(doc, g, st, t)),
         h(doc, 'dl', { class: 'tp-facts' },
-            fact(doc, t('Capital'), fmtMoney(g.capital, cur)),
+            fact(doc, t('Capital'), fmtMoney(g.capital, cur), 'tp-amt'),
             fact(doc, t('Rate'), t('{n}% a year', { n: g.ratePct })),
             fact(doc, t('Interest paid'), t(FREQ[g.frequency] || FREQ.monthly)),
-            fact(doc, t('Interest each time'), fmtMoney(g.interestPerPeriod, cur)),
+            fact(doc, t('Interest each time'), fmtMoney(g.interestPerPeriod, cur), 'tp-amt'),
             fact(doc, t('Started'), fmtDay(g.start)),
             g.end ? fact(doc, t('Ends'), fmtDay(g.end)) : null,
             next ? fact(doc, t('Next interest due'), `${fmtDay(next.date)} (${fmtMoney(next.amount, cur)})`) : null,
-            fact(doc, t('Interest received'), fmtMoney(g.totalReceived, cur))),
+            fact(doc, t('Interest received'), fmtMoney(g.totalReceived, cur), 'tp-amt')),
         (() => { const pct = termProgress(g, st.asOf); return pct === null ? null : bar(doc, t('Term: {n}% complete', { n: pct }), pct); })(),
         Array.isArray(g.payments) && g.payments.length
             ? table(doc, t('Payments received, in {cur}', { cur }), [[t('For')], [t('Received on')], [t('Amount'), true]], g.payments.map((p) => [[fmtMonth(p.month)], [fmtDay(p.date)], [fmtNum(p.amount), true]]), t)
@@ -197,9 +250,9 @@ function loanCard(doc, g, st, t, actions) {
     return h(doc, 'section', { class: 'tp-card', 'aria-label': `${t('Loan')} ${g.ref}` },
         h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Loan') }), refChip(doc, g.ref, t, actions), lenderChip(doc, g, st, t), h(doc, 'span', { class: status[1], text: status[0] })),
         h(doc, 'dl', { class: 'tp-facts' },
-            fact(doc, t('Paid out'), fmtMoney(g.lent, cur)),
-            fact(doc, t('Repaid'), fmtMoney(g.repaid, cur)),
-            fact(doc, t('Outstanding'), fmtMoney(g.outstanding, cur)),
+            fact(doc, t('Paid out'), fmtMoney(g.lent, cur), 'tp-amt'),
+            fact(doc, t('Repaid'), fmtMoney(g.repaid, cur), 'tp-amt'),
+            fact(doc, t('Outstanding'), fmtMoney(g.outstanding, cur), 'tp-amt'),
             due ? fact(doc, t('Expected back by'), due, late ? 'tp-late' : null) : null),
         (() => { const pct = loanProgress(g); return pct === null ? null : bar(doc, t('{n}% repaid', { n: pct }), pct); })(),
         Array.isArray(g.events) && g.events.length
@@ -207,15 +260,44 @@ function loanCard(doc, g, st, t, actions) {
             : h(doc, 'p', { class: 'tp-note', text: t('Nothing recorded yet.') }));
 }
 
-/** Whose statement it is: the person's own full name and NIC, as their lender recorded them. Nothing is drawn for a field that is empty. */
-function holderCard(doc, holder, t) {
+/**
+ * The top of the statement, drawn the way a banking app draws its balance: a dark card with whose statement it is (the person's own
+ * full name and NIC as their lender recorded them; nothing is drawn for a field that is empty), the main figure of each currency large,
+ * and the other figures as small tiles under it. `actions.hide`, when the page can, adds a button that blurs every amount.
+ */
+function heroCard(doc, holder, groups, totals, t, actions) {
     const x = holder && typeof holder === 'object' ? holder : {};
     const name = typeof x.name === 'string' ? x.name.trim() : '';
     const nic = typeof x.nic === 'string' ? x.nic.trim() : '';
-    if (!name && !nic) return null;
-    return h(doc, 'section', { class: 'tp-card tp-holder', 'aria-label': t('Account holder') },
+    if (!name && !nic && !totals.length) return null;
+    let eye = null;
+    if (actions && typeof actions.hide === 'function') {
+        const paint = (hidden) => { eye.replaceChildren(icon(doc, hidden ? 'eyeOff' : 'eye')); eye.setAttribute('aria-pressed', hidden ? 'true' : 'false'); eye.setAttribute('aria-label', hidden ? t('Show amounts') : t('Hide amounts')); };
+        eye = h(doc, 'button', { type: 'button', class: 'tp-eye', id: 'tp-eye' });
+        paint(!!actions.hidden);
+        eye.addEventListener('click', () => paint(actions.hide()));
+    }
+    const who = name || nic ? h(doc, 'div', { class: 'tp-holder' },
         name ? h(doc, 'div', { class: 'tp-holder-item' }, h(doc, 'span', { class: 'tp-label', text: t('Account holder') }), h(doc, 'strong', { class: 'tp-holder-name', text: name })) : null,
-        nic ? h(doc, 'div', { class: 'tp-holder-item' }, h(doc, 'span', { class: 'tp-label', text: t('NIC / ID') }), h(doc, 'strong', { class: 'tp-holder-nic', text: nic })) : null);
+        nic ? h(doc, 'div', { class: 'tp-holder-item' }, h(doc, 'span', { class: 'tp-label', text: t('NIC / ID') }), h(doc, 'strong', { class: 'tp-holder-nic', text: nic })) : null) : null;
+    const blocks = totals.map((tot) => {
+        const mine = groups.filter((g) => g.currency === tot.currency);
+        const hasInv = mine.some((g) => g.kind === 'investment');
+        const hasLoan = mine.some((g) => g.kind === 'loan');
+        const rows = [];
+        if (hasInv) rows.push([t('Invested'), tot.invested], [t('Interest received'), tot.interestReceived]);
+        if (hasLoan) rows.push([t('Loan outstanding'), tot.loanOutstanding]);
+        const [main, ...rest] = rows;
+        return h(doc, 'div', { class: 'tp-hero-cur' },
+            h(doc, 'div', { class: 'tp-cur', text: tot.currency }),
+            main ? h(doc, 'div', { class: 'tp-hero-main' }, h(doc, 'span', { class: 'tp-label', text: main[0] }), money(doc, main[1], tot.currency, 'tp-figure')) : null,
+            rest.length ? h(doc, 'div', { class: 'tp-stats' }, rest.map(([label, v]) => h(doc, 'div', { class: 'tp-stat' }, h(doc, 'span', { class: 'tp-label', text: label }), money(doc, v, tot.currency, 'tp-figure')))) : null);
+    });
+    return h(doc, 'section', { class: 'tp-card tp-hero', id: 'tp-hero', tabindex: '-1', 'aria-label': t('Account holder') },
+        h(doc, 'div', { class: 'tp-hero-top' },
+            name ? h(doc, 'span', { class: 'tp-avatar', 'aria-hidden': 'true', text: initials(name) }) : null,
+            who, eye),
+        blocks);
 }
 
 /** The WealthFlow mark and name: the picture is a real image (not a background), so it also prints. */
@@ -273,49 +355,55 @@ function upcomingCard(doc, st, t, actions) {
     const items = upcoming(st);
     if (!items.length) return null;
     const hasPay = Array.isArray(st.lenders) && st.lenders.some((l) => l && Array.isArray(l.accounts) && l.accounts.length);
-    return h(doc, 'section', { class: 'tp-card tp-next', 'aria-label': t('Coming up') },
+    const tile = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return h(doc, 'span', { class: 'tp-tile', 'aria-hidden': 'true' }, h(doc, 'span', { class: 'tp-tile-mon', text: m && MONTHS[Number(m[2]) - 1] ? MONTHS[Number(m[2]) - 1] : '' }), h(doc, 'span', { class: 'tp-tile-day', text: m ? String(Number(m[3])) : '' })); };
+    return h(doc, 'section', { class: 'tp-card tp-next', id: 'tp-next', tabindex: '-1', 'aria-label': t('Coming up') },
         h(doc, 'h3', { text: t('Coming up') }),
         h(doc, 'ul', { class: 'tp-list' }, items.map((it) => h(doc, 'li', { class: `tp-item tp-${it.tone}` },
+            tile(it.date),
             h(doc, 'div', { class: 'tp-item-main' },
                 h(doc, 'span', { class: 'tp-item-title', text: it.kind === 'loan' ? t('Pay your loan') : t('Interest expected') }),
                 h(doc, 'span', { class: 'tp-item-sub', text: `${fmtDay(it.date)} · ${it.ref}` })),
             h(doc, 'div', { class: 'tp-item-side' },
-                h(doc, 'span', { class: 'tp-item-amount', text: fmtMoney(it.amount, it.currency) }),
+                h(doc, 'span', { class: 'tp-item-amount tp-amt', text: fmtMoney(it.amount, it.currency) }),
                 h(doc, 'span', { class: `tp-when tp-when-${it.tone}`, text: dayLabel(it.days, t) })),
-            actions && typeof actions.calendar === 'function' ? h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-small-btn', 'aria-label': `${t('Add to calendar')}: ${it.ref}`, text: t('Add to calendar'), onclick: () => actions.calendar(it) }) : null))),
-        hasPay && actions && typeof actions.jump === 'function' ? h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-jump', text: t('How to pay'), onclick: () => actions.jump('tp-pay') }) : null);
+            actions && typeof actions.calendar === 'function' ? h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-small-btn', 'aria-label': `${t('Add to calendar')}: ${it.ref}`, onclick: () => actions.calendar(it) }, icon(doc, 'calendar'), h(doc, 'span', { text: t('Add to calendar') })) : null))),
+        hasPay && actions && typeof actions.jump === 'function' ? h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-jump', onclick: () => actions.jump('tp-pay') }, icon(doc, 'bank'), h(doc, 'span', { text: t('How to pay') })) : null);
 }
 
 /**
- * The statement as DOM. `statement` is the server's answer; every string in it is shown as text.
- * `t` translates; `actions.copy(text, button)` is what the copy buttons call (without it there are none).
+ * The statement as DOM, in two columns (a phone shows them one after the other): `left` is the glance (who, the figures, what is coming
+ * up), `right` is the detail (where to pay, then every record). `sections` names what is on the page, for the section bar.
+ * `statement` is the server's answer; every string in it is shown as text. `t` translates; `actions.copy(text, button)` is what the
+ * copy buttons call (without it there are none).
  */
-export function statementView(doc, statement, t = english, actions = null) {
+export function statementColumns(doc, statement, t = english, actions = null) {
     const st = statement && typeof statement === 'object' ? statement : {};
     const groups = Array.isArray(st.groups) ? st.groups : [];
     const totals = Array.isArray(st.totals) ? st.totals : [];
-    const out = [];
-    const who = holderCard(doc, st.holder, t);
-    if (who) out.push(who);
-    if (!groups.length) out.push(h(doc, 'section', { class: 'tp-card' }, h(doc, 'p', { text: t('There is nothing to show yet. When your lender records something for you, it will appear here.') })));
-    for (const tot of totals) {
-        const mine = groups.filter((g) => g.currency === tot.currency);
-        const hasInv = mine.some((g) => g.kind === 'investment');
-        const hasLoan = mine.some((g) => g.kind === 'loan');
-        out.push(h(doc, 'div', { class: 'tp-cur', text: tot.currency }));
-        out.push(h(doc, 'div', { class: 'tp-totals' },
-            hasInv ? h(doc, 'div', { class: 'tp-total' }, h(doc, 'span', { class: 'tp-label', text: t('Invested') }), h(doc, 'span', { class: 'tp-figure', text: fmtMoney(tot.invested, tot.currency) })) : null,
-            hasInv ? h(doc, 'div', { class: 'tp-total' }, h(doc, 'span', { class: 'tp-label', text: t('Interest received') }), h(doc, 'span', { class: 'tp-figure', text: fmtMoney(tot.interestReceived, tot.currency) })) : null,
-            hasLoan ? h(doc, 'div', { class: 'tp-total' }, h(doc, 'span', { class: 'tp-label', text: t('Loan outstanding') }), h(doc, 'span', { class: 'tp-figure', text: fmtMoney(tot.loanOutstanding, tot.currency) })) : null));
-    }
+    const left = [];
+    const right = [];
+    const sections = [];
+    const hero = heroCard(doc, st.holder, groups, totals, t, actions);
+    if (hero) { left.push(hero); sections.push(['tp-hero', t('Overview'), 'home']); }
+    if (!groups.length) left.push(h(doc, 'section', { class: 'tp-card' }, h(doc, 'p', { text: t('There is nothing to show yet. When your lender records something for you, it will appear here.') })));
     // what is coming up, then where to pay, then the records: the order a person who has just seen their balance wants them in
     const next = upcomingCard(doc, st, t, actions);
-    if (next) out.push(next);
+    if (next) { left.push(next); sections.push(['tp-next', t('Coming up'), 'calendar']); }
     const pay = paymentCard(doc, st, t, actions);
-    if (pay) out.push(pay);
-    for (const g of groups) out.push(g.kind === 'loan' ? loanCard(doc, g, st, t, actions) : investmentCard(doc, g, st, t, actions));
-    if (st.truncated) out.push(h(doc, 'p', { class: 'tp-note', text: t('This statement is long, so only the first part is shown.') }));
-    return out;
+    if (pay) { right.push(pay); sections.push(['tp-pay', t('How to pay'), 'bank']); }
+    groups.forEach((g, i) => {
+        const card = g.kind === 'loan' ? loanCard(doc, g, st, t, actions) : investmentCard(doc, g, st, t, actions);
+        if (i === 0) { card.setAttribute('id', 'tp-records'); card.setAttribute('tabindex', '-1'); sections.push(['tp-records', t('Records'), 'list']); }
+        right.push(card);
+    });
+    if (st.truncated) right.push(h(doc, 'p', { class: 'tp-note', text: t('This statement is long, so only the first part is shown.') }));
+    return { left, right, sections };
+}
+
+/** The same cards in one list, in reading order (what the tests and a print see). */
+export function statementView(doc, statement, t = english, actions = null) {
+    const { left, right } = statementColumns(doc, statement, t, actions);
+    return [...left, ...right];
 }
 
 /* ── the page ─────────────────────────────────────────────────────────────── */
@@ -334,8 +422,10 @@ export function createPage(env) {
     const saveFile = env.saveFile || (() => {});
     const printPage = env.print || (() => {});
     const shareFile = typeof env.shareFile === 'function' ? env.shareFile : null;       // 'shared' | 'cancelled' | 'unsupported'
-    const jumpTo = env.jumpTo || ((id) => { const el = doc.getElementById ? doc.getElementById(id) : null; if (el) { if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' }); if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } });
-    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', codeMessage: '', tick: null, els: {} };
+    const calm = () => { const w = doc.defaultView; return !!(w && typeof w.matchMedia === 'function' && w.matchMedia('(prefers-reduced-motion: reduce)').matches); };
+    const jumpTo = env.jumpTo || ((id) => { const el = doc.getElementById ? doc.getElementById(id) : null; if (el) { if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: calm() ? 'auto' : 'smooth', block: 'start' }); if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } });
+    const watchSections = typeof env.watchSections === 'function' ? env.watchSections : null;       // (ids, onActive) => stop: which section is on screen, for the section bar
+    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', codeMessage: '', tick: null, hide: false, unwatch: null, els: {} };
     let t = makeT(st.lang);
 
     /** One door to the server. With `file`, a PDF answer comes back as a blob (never parsed as JSON); everything else is JSON. */
@@ -368,7 +458,15 @@ export function createPage(env) {
     const stopTick = () => { if (st.tick !== null) { clearTick(st.tick); st.tick = null; } };
     const setText = (el, text) => { if (el) el.textContent = text; };
     const showError = (text) => setText(st.els.err, text || '');
-    const showInfo = (text) => { if (st.els.info) { st.els.info.textContent = text || ''; st.els.info.hidden = !text; } };
+    let infoSeq = 0;
+    const showInfo = (text) => {
+        if (!st.els.info) return;
+        const mine = ++infoSeq;
+        st.els.info.textContent = text || '';
+        st.els.info.hidden = !text;
+        // on the statement the message floats over the page, so it goes away by itself once it has been read
+        if (text && st.screen === 'statement') later(() => { if (mine === infoSeq && st.screen === 'statement' && st.els.info) { st.els.info.textContent = ''; st.els.info.hidden = true; } }, 6000);
+    };
     const applyLang = () => { if (doc.documentElement && typeof doc.documentElement.setAttribute === 'function') doc.documentElement.setAttribute('lang', st.lang); };
 
     function toggleLang() {
@@ -384,12 +482,19 @@ export function createPage(env) {
         else if (st.screen === 'loading') screenLoading();
     }
 
-    function mount(title, nodes, focus) {
+    /** Puts a label on a button that also holds a drawing: the label is its own element, so changing the words never removes the picture. */
+    const labelled = (btn, name, label) => { const span = h(doc, 'span', { class: 'tp-lbl', text: label }); btn.append(icon(doc, name), span); btn.__lbl = span; return btn; };
+    const relabel = (btn, text) => { if (btn) (btn.__lbl || btn).textContent = text; };
+
+    function mount(title, nodes, focus, { bar = [], wide = false } = {}) {
         stopTick();
         st.busy = false;
+        if (st.unwatch) { st.unwatch(); st.unwatch = null; }
         const brand = brandEl(doc);
         const lang = h(doc, 'button', { class: 'tp-lang', type: 'button', id: 'tp-lang', lang: st.lang === 'si' ? 'en' : 'si', text: LANG_BUTTON[st.lang], onclick: toggleLang });
-        root.replaceChildren(h(doc, 'div', { class: 'tp-top' }, brand, lang), ...nodes);
+        root.replaceChildren(
+            h(doc, 'header', { class: 'tp-top' }, h(doc, 'div', { class: 'tp-top-in' }, brand, h(doc, 'div', { class: 'tp-top-actions' }, lang, ...bar))),
+            h(doc, 'div', { class: wide ? 'tp-wrap tp-wide' : 'tp-wrap' }, ...nodes));
         const target = focus ? root.querySelector(focus) : root.querySelector('h2');
         if (target && typeof target.focus === 'function') target.focus();
         if (typeof doc.title === 'string') doc.title = t(title);
@@ -398,12 +503,15 @@ export function createPage(env) {
     /** Two small bars: where in the sign-in the person is. Drawn, never read aloud (the screen's own heading says where they are). */
     const steps = (n) => h(doc, 'div', { class: 'tp-steps', 'aria-hidden': 'true' }, h(doc, 'span', { class: 'tp-on' }), h(doc, 'span', { class: n > 1 ? 'tp-on' : null }));
 
+    /** Three short promises under the sign-in form, each true of this page: a text-message code, a closing session, nothing kept. */
+    const trust = () => h(doc, 'ul', { class: 'tp-trust' }, [['message', t('Code sent by text message')], ['clock', t('Closes by itself after 20 minutes')], ['shield', t('Nothing is saved on your device')]].map(([ico, words]) => h(doc, 'li', {}, icon(doc, ico), h(doc, 'span', { text: words }))));
+
     function errorBox() { st.els.err = h(doc, 'p', { class: 'tp-error', role: 'alert', id: 'tp-err' }); return st.els.err; }
 
     function screenInvalid() {
         st.screen = 'invalid';
         st.els = {};
-        mount('Link not valid', [h(doc, 'section', { class: 'tp-card' }, h(doc, 'h2', { tabindex: '-1', text: t('This link is not valid') }), h(doc, 'p', { text: t(COPY.INVALID_LINK) }))]);
+        mount('Link not valid', [h(doc, 'section', { class: 'tp-card tp-auth' }, h(doc, 'span', { class: 'tp-badge tp-badge-warn', 'aria-hidden': 'true' }, icon(doc, 'lock')), h(doc, 'h2', { tabindex: '-1', text: t('This link is not valid') }), h(doc, 'p', { text: t(COPY.INVALID_LINK) }))]);
     }
 
     function screenNic({ info = '', error = '', value = '' } = {}) {
@@ -417,11 +525,12 @@ export function createPage(env) {
             h(doc, 'label', { for: 'tp-nic', text: t('Your NIC or passport / ID number') }), input, errorBox(), button);
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
         st.els.info = infoBox;
-        mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card' },
+        mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card tp-auth' },
+            h(doc, 'span', { class: 'tp-badge', 'aria-hidden': 'true' }, icon(doc, 'shield')),
             steps(1),
             h(doc, 'h2', { tabindex: '-1', text: t('View your statement') }),
             h(doc, 'p', { text: t('Enter your NIC, or your passport / ID number if you have no Sri Lankan NIC. We will text a 6-digit code to the mobile number your lender has on file for you.') }),
-            infoBox, form,
+            infoBox, form, trust(),
             h(doc, 'p', { class: 'tp-small', text: t('Your statement is shown only after you enter the code. Nobody else can see it from this link.') }))], '#tp-nic');
         showInfo(info ? t(info) : '');
         showError(error ? t(error) : '');
@@ -441,7 +550,8 @@ export function createPage(env) {
         st.els.input = input; st.els.button = verify; st.els.resend = resend; st.els.expiry = expiry;
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
         st.els.info = infoBox;
-        mount('Enter your code', [h(doc, 'section', { class: 'tp-card' },
+        mount('Enter your code', [h(doc, 'section', { class: 'tp-card tp-auth' },
+            h(doc, 'span', { class: 'tp-badge', 'aria-hidden': 'true' }, icon(doc, 'message')),
             steps(2),
             h(doc, 'h2', { tabindex: '-1', text: t('Enter your code') }),
             infoBox,
@@ -491,13 +601,13 @@ export function createPage(env) {
     async function pdfJob(button, label, use) {
         if (st.pdfBusy) return;
         st.pdfBusy = true;
-        if (button) { button.disabled = true; button.textContent = t('Preparing...'); }
+        if (button) { button.disabled = true; relabel(button, t('Preparing...')); }
         showError('');
         showInfo('');
         const res = await getPdf();
         st.pdfBusy = false;
         if (st.screen !== 'statement') return;                         // signed out or timed out while it was being made
-        if (button) { button.disabled = false; button.textContent = label; }
+        if (button) { button.disabled = false; relabel(button, label); }
         if (res.blob) { showInfo(await use(res.blob, res.name)); return; }
         if (res.status === 401) { wipe(); screenNic({ error: COPY.SESSION_ENDED }); return; }
         showError(res.status === 0 ? t(COPY.OFFLINE) : res.status === 200 ? t(COPY.PDF_FAILED) : describeFailure(res.status, res.body, t));
@@ -534,14 +644,21 @@ export function createPage(env) {
         if (st.busy) return;
         const btn = st.els.refresh;
         st.busy = true;
-        if (btn) { btn.disabled = true; btn.textContent = t('Preparing...'); }
+        if (btn) { btn.disabled = true; relabel(btn, t('Preparing...')); }
         const got = await api('statement', { token });
         st.busy = false;
         if (st.screen !== 'statement') return;
         if (got.status === 200 && got.body && got.body.ok) { st.pdfBlob = null; screenStatement(got.body.statement, got.body.expiresAt); showInfo(t(COPY.UPDATED)); return; }
-        if (btn) { btn.disabled = false; btn.textContent = t('Refresh'); }
+        if (btn) { btn.disabled = false; relabel(btn, t('Refresh')); }
         if (got.status === 401) { wipe(); screenNic({ error: COPY.SESSION_ENDED }); return; }
         showError(got.status === 0 ? t(COPY.OFFLINE) : describeFailure(got.status, got.body, t));
+    }
+
+    /** Blurs every amount on the page (or shows them again): for reading it with someone looking over a shoulder. Kept only while the page is open. */
+    function onHide() {
+        st.hide = !st.hide;
+        if (root.classList) root.classList.toggle('tp-hide', st.hide);
+        return st.hide;
     }
 
     function screenStatement(statement, expiresAt) {
@@ -550,26 +667,40 @@ export function createPage(env) {
         st.nic = '';
         st.statement = statement && typeof statement === 'object' ? statement : null;
         st.sessionEndsAt = Number(expiresAt) || now() + 20 * 60000;
-        const clock = h(doc, 'span', { class: 'tp-note', id: 'tp-session' });
-        const out = h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-out', text: t('Sign out'), onclick: onSignOut });
-        const pdf = h(doc, 'button', { class: 'tp-btn', type: 'button', id: 'tp-pdf', text: t('Download PDF'), onclick: onDownload });
-        const print = h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-print', text: t('Print'), onclick: () => printPage() });
-        const share = shareFile ? h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-share', text: t('Share PDF'), onclick: onShare }) : null;
-        const csv = h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-csv', text: t('Download CSV'), onclick: onCsv });
-        const refresh = h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-refresh', text: t('Refresh'), onclick: onRefresh });
+        const clock = h(doc, 'p', { class: 'tp-session', id: 'tp-session' });
+        const out = labelled(h(doc, 'button', { class: 'tp-out', type: 'button', id: 'tp-out', 'aria-label': t('Sign out'), onclick: onSignOut }), 'logout', t('Sign out'));
+        const pdf = labelled(h(doc, 'button', { class: 'tp-act tp-act-main', type: 'button', id: 'tp-pdf', onclick: onDownload }), 'download', t('Download PDF'));
+        const print = labelled(h(doc, 'button', { class: 'tp-act', type: 'button', id: 'tp-print', onclick: () => printPage() }), 'print', t('Print'));
+        const share = shareFile ? labelled(h(doc, 'button', { class: 'tp-act', type: 'button', id: 'tp-share', onclick: onShare }), 'share', t('Share PDF')) : null;
+        const csv = labelled(h(doc, 'button', { class: 'tp-act', type: 'button', id: 'tp-csv', onclick: onCsv }), 'table', t('Download CSV'));
+        const refresh = labelled(h(doc, 'button', { class: 'tp-act', type: 'button', id: 'tp-refresh', onclick: onRefresh }), 'refresh', t('Refresh'));
         st.els.pdf = pdf; st.els.share = share; st.els.refresh = refresh;
         st.els.err = h(doc, 'p', { class: 'tp-error', role: 'alert' });
         st.els.info = h(doc, 'p', { class: 'tp-info', role: 'status', id: 'tp-info', hidden: true });
+        const { left, right, sections } = statementColumns(doc, statement, t, { copy: onCopy, calendar: onCalendar, jump: jumpTo, hide: onHide, hidden: st.hide });
+        const actionRow = h(doc, 'div', { class: 'tp-actions', role: 'group', 'aria-label': t('Quick actions') }, pdf, share, csv, print, refresh);
+        left.splice(sections.length && sections[0][0] === 'tp-hero' ? 1 : 0, 0, actionRow);
+        const tabs = sections.length > 1 ? h(doc, 'nav', { class: 'tp-tabs', 'aria-label': t('Sections') }, sections.map(([id, label, ico]) => {
+            const b = h(doc, 'button', { type: 'button', class: 'tp-tab', 'data-to': id, onclick: () => jumpTo(id) });
+            return labelled(b, ico, label);
+        })) : null;
         mount('Your WealthFlow statement', [
-            h(doc, 'div', { class: 'tp-head' }, h(doc, 'h2', { tabindex: '-1', text: t('Your statement') }), out),
-            h(doc, 'p', { class: 'tp-note', text: t('As at {when}', { when: fmtAsOf(statement && statement.asOf, t) }) }),
-            clock,
-            h(doc, 'div', { class: 'tp-actions' }, pdf, share, csv, print, refresh),
-            st.els.err,
-            st.els.info,
-            ...statementView(doc, statement, t, { copy: onCopy, calendar: onCalendar, jump: jumpTo }),
+            h(doc, 'div', { class: 'tp-head' },
+                h(doc, 'h2', { tabindex: '-1', text: t('Your statement') }),
+                h(doc, 'p', { class: 'tp-note', text: t('As at {when}', { when: fmtAsOf(statement && statement.asOf, t) }) }),
+                clock),
+            h(doc, 'div', { class: 'tp-dash' }, h(doc, 'div', { class: 'tp-col tp-col-a' }, left), h(doc, 'div', { class: 'tp-col tp-col-b' }, right)),
             h(doc, 'p', { class: 'tp-foot', text: t('Figures are as recorded by your lender. If something looks wrong, please contact your lender.') }),
-        ]);
+            h(doc, 'div', { class: 'tp-toasts' }, st.els.err, st.els.info),
+            tabs,
+        ], null, { bar: [out], wide: true });
+        if (root.classList) root.classList.toggle('tp-hide', st.hide);
+        if (tabs && watchSections) {
+            const buttons = tabs.querySelectorAll ? [...tabs.querySelectorAll('button')] : [];
+            const on = (id) => { for (const b of buttons) { if (b.getAttribute('data-to') === id) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current'); } };
+            on(sections[0][0]);
+            st.unwatch = watchSections(sections.map((x) => x[0]), on);
+        }
         const paint = () => {
             const left = Math.ceil((st.sessionEndsAt - now()) / 1000);
             if (left <= 0) { wipe(); screenNic({ error: COPY.SESSION_ENDED }); return; }
@@ -656,14 +787,17 @@ export function createPage(env) {
         st.pdfBlob = null;
         st.pdfName = '';
         st.codeMessage = '';
-        root.replaceChildren(brandEl(doc));
+        st.hide = false;
+        if (st.unwatch) { st.unwatch(); st.unwatch = null; }
+        if (root.classList) root.classList.remove('tp-hide');
+        root.replaceChildren(h(doc, 'div', { class: 'tp-wrap' }, brandEl(doc)));
         st.els = {};
     }
 
     function screenLoading() {
         st.screen = 'loading';
         st.els = {};
-        mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card' }, h(doc, 'h2', { tabindex: '-1', text: t('One moment') }), h(doc, 'p', { class: 'tp-note', role: 'status', text: t('Checking for a session on this device...') }))]);
+        mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card tp-auth' }, h(doc, 'h2', { tabindex: '-1', text: t('One moment') }), h(doc, 'p', { class: 'tp-note', role: 'status', text: t('Checking for a session on this device...') }), h(doc, 'div', { class: 'tp-skel', 'aria-hidden': 'true' }, h(doc, 'span'), h(doc, 'span'), h(doc, 'span')))]);
     }
 
     /** Opens on the NIC form, unless this device already has a live session for this link (a reload within 20 minutes costs no new text). */
@@ -720,6 +854,22 @@ function browserEnv(win) {
             win.setTimeout(() => win.URL.revokeObjectURL(url), 60000);
         },
         print() { if (typeof win.print === 'function') win.print(); },
+        // which section the person is looking at, for the section bar: recomputed whenever any of them moves across the screen
+        watchSections(ids, onActive) {
+            if (typeof win.IntersectionObserver !== 'function') return () => {};
+            const els = ids.map((id) => doc.getElementById(id)).filter(Boolean);
+            const pick = () => {
+                const line = (win.innerHeight || 600) * 0.4;
+                const atEnd = (win.innerHeight || 0) + (win.scrollY || 0) >= doc.documentElement.scrollHeight - 4;
+                let active = els.length ? els[0].id : '';
+                for (const el of els) if (el.getBoundingClientRect().top <= line) active = el.id;
+                onActive(atEnd && els.length ? els[els.length - 1].id : active);
+            };
+            const io = new win.IntersectionObserver(pick, { threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] });
+            els.forEach((el) => io.observe(el));
+            win.addEventListener('scroll', pick, { passive: true });
+            return () => { io.disconnect(); win.removeEventListener('scroll', pick); };
+        },
         // the share sheet, offered only where the browser can share a file (most phones); the person cancelling it is not an error
         shareFile: win.navigator && typeof win.navigator.share === 'function' && typeof win.navigator.canShare === 'function' && typeof win.File === 'function'
             ? async (blob, name) => {

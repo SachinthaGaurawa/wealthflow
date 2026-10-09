@@ -8,13 +8,14 @@
 
 import { describe, it, expect } from 'vitest';
 globalThis.__WF_TENANT_NO_BOOT = true;
-const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, describeFailure, statementView, tokenFromPath, accountText, COPY } = await import('../tenant-page.js');
+const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY } = await import('../tenant-page.js');
 const { makeT } = await import('../tenant-lang.js');
 
 class El {
     constructor(tag) { this.tag = tag; this.attrs = {}; this.kids = []; this._text = ''; this.listeners = {}; }
     setAttribute(k, v) { this.attrs[k] = String(v); }
     append(...k) { this.kids.push(...k); }
+    replaceChildren(...k) { this._text = ''; this.kids = k; }
     addEventListener(t, f) { this.listeners[t] = f; }
     set textContent(v) { this._text = String(v); this.kids = []; }
     get textContent() { return this._text + this.kids.map((k) => k.textContent).join(''); }
@@ -80,8 +81,9 @@ describe('the statement view', () => {
         const nodes = statementView(doc, statement);
         const text = textOf(nodes);
         for (const want of ['LKR 500,000.00', 'LKR 10,000.00', 'INV-9990B2', 'DEB-96E5C2', '24% a year', 'Monthly', '5 Jan 2026', 'Aug 2026', '4 Oct 2026', 'LKR 30,000.00', 'Loan paid out', 'Repayment', '20 Sep 2026', 'Open']) expect(text, want).toContain(want);
-        expect(nodes[3].textContent).toContain('DEB-96E5C2');
-        expect(nodes[3].textContent).not.toMatch(/interest|rate/i);                  // the loan card has no interest on it
+        const loan = nodes.find((n) => n.attrs['aria-label'] === 'Loan DEB-96E5C2');
+        expect(loan.textContent).toContain('DEB-96E5C2');
+        expect(loan.textContent).not.toMatch(/interest|rate/i);                      // the loan card has no interest on it
     });
 
     it('shows every string it is given as text, never as markup', () => {
@@ -285,13 +287,16 @@ describe('the logo, the holder and the note', () => {
         expect(card.textContent).toContain('Nimal Kumara Perera');
         expect(card.textContent).toContain('NIC / ID');
         expect(card.textContent).toContain('853400937V');
-        expect(view[0]).toBe(card);
+        expect(view[0].attrs.class).toContain('tp-hero');                             // the dark balance card is first, and the holder is its heading
+        expect(walk([view[0]])).toContain(card);
+        expect(classes(view, 'tp-avatar')[0].textContent).toBe('NP');
     });
 
     it('draws nothing for a holder that is empty or missing, and never parses a name as markup', () => {
         expect(classes(statementView(doc, base(), makeT('en')), 'tp-holder')).toHaveLength(0);
         expect(classes(statementView(doc, base({ holder: { name: '', nic: '' } }), makeT('en')), 'tp-holder')).toHaveLength(0);
         expect(classes(statementView(doc, base({ holder: 'x' }), makeT('en')), 'tp-holder')).toHaveLength(0);
+        expect(classes(statementView(doc, base({ holder: 'x' }), makeT('en')), 'tp-hero')).toHaveLength(0);
         const [card] = classes(statementView(doc, base({ holder: { name: BAD, nic: '' } }), makeT('en')), 'tp-holder');
         expect(card.textContent).toContain(BAD);
         expect(walk([card]).some((e) => e.tag === 'img')).toBe(false);
@@ -305,5 +310,58 @@ describe('the logo, the holder and the note', () => {
             expect(panel.textContent).toContain('USE THE REFERENCE');
             expect(panel.textContent).toContain(lang === 'en' ? 'Note' : 'සටහන');
         }
+    });
+});
+
+describe('the balance card and the section bar', () => {
+    const walk = (nodes) => { const out = []; for (const n of nodes) n && n.walk && n.walk((e) => out.push(e)); return out; };
+    const classes = (nodes, cls) => walk(nodes).filter((e) => e.attrs && (e.attrs.class || '').split(' ').includes(cls));
+    const st = { asOf: '2026-10-05T05:00:00.000Z', holder: { name: 'Nimal Kumara Perera', nic: '853400937V' }, groups: [
+        { kind: 'investment', ref: 'INV-1', currency: 'LKR', capital: 500000, ratePct: 24, frequency: 'monthly', interestPerPeriod: 10000, start: '2026-01-05', nextInterest: { date: '2026-11-05', amount: 10000 }, totalReceived: 10000, payments: [] },
+        { kind: 'loan', ref: 'DEB-1', currency: 'LKR', lent: 50000, repaid: 20000, outstanding: 30000, status: 'open', events: [] }],
+        totals: [{ currency: 'LKR', invested: 500000, interestReceived: 10000, loanOutstanding: 30000 }], lenders: [{ n: 1, accounts: [{ bank: 'B', holder: 'H', number: '1' }] }], lenderCount: 1 };
+
+    it('makes the round badge from the first and last words of the name', () => {
+        expect(initials('Nimal Kumara Perera')).toBe('NP');
+        expect(initials('  kamal ')).toBe('K');
+        expect(initials('')).toBe('');
+        expect(initials(null)).toBe('');
+        expect(initials('නිමල් පෙරේරා')).toBe('නප');
+    });
+
+    it('splits the page into a glance and a detail column, and names the sections the bar can jump to', () => {
+        const { left, right, sections } = statementColumns(doc, st, makeT('en'), { jump: () => {} });
+        expect(sections.map((s) => s[0])).toEqual(['tp-hero', 'tp-next', 'tp-pay', 'tp-records']);
+        expect(left[0].attrs.id).toBe('tp-hero');
+        expect(left.at(-1).attrs.id).toBe('tp-next');
+        expect(right[0].attrs.id).toBe('tp-pay');
+        expect(right[1].attrs.id).toBe('tp-records');
+        expect(statementColumns(doc, { groups: [], totals: [] }, makeT('en')).sections).toEqual([]);
+    });
+
+    it('shows the main figure large, the others as tiles, with the cents set apart but the characters unchanged', () => {
+        const [hero] = statementView(doc, st, makeT('en'));
+        expect(classes([hero], 'tp-hero-main')[0].textContent).toContain('LKR 500,000.00');
+        expect(classes([hero], 'tp-stat').map((e) => e.textContent)).toEqual(['Interest receivedLKR 10,000.00', 'Loan outstandingLKR 30,000.00']);
+        expect(classes([hero], 'tp-dec')[0].textContent).toBe('.00');
+    });
+
+    it('has the hide-amounts button only when the page can hide them, and tells the page what it did', () => {
+        expect(classes(statementView(doc, st, makeT('en')), 'tp-eye')).toHaveLength(0);
+        let hidden = false;
+        const view = statementView(doc, st, makeT('en'), { hide: () => (hidden = !hidden), hidden: false });
+        const [eye] = classes(view, 'tp-eye');
+        expect(eye.attrs['aria-pressed']).toBe('false');
+        expect(eye.attrs['aria-label']).toBe('Hide amounts');
+        expect(classes([eye], 'tp-eye')).toHaveLength(1);
+        const si = classes(statementView(doc, st, makeT('si'), { hide: () => true, hidden: true }), 'tp-eye')[0];
+        expect(si.attrs['aria-pressed']).toBe('true');
+        expect(si.attrs['aria-label']).toBe('මුදල් පෙන්වන්න');
+    });
+
+    it('marks every amount so that hiding reaches all of them', () => {
+        const amounts = classes(statementView(doc, st, makeT('en')), 'tp-amt');
+        expect(amounts.length).toBeGreaterThan(8);
+        expect(classes(statementView(doc, st, makeT('en')), 'tp-item-amount')[0].attrs.class).toContain('tp-amt');
     });
 });
