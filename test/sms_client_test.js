@@ -445,7 +445,7 @@ describe('the log panel', () => {
         expect(html).toContain('&lt;img');
         expect(html).toMatch(/TEXTLK_API_TOKEN/);
         expect(html).toMatch(/3 units left/);
-        expect(html.indexOf('not connected')).toBeLessThan(html.indexOf('Delivered'));
+        expect(html.indexOf('not connected')).toBeLessThan(html.indexOf('Sent'));
         expect(panelHtml({ rows: [] })).toMatch(/No text messages yet/);
         expect(panelHtml({ disabled: true })).toMatch(/not enabled for this account/);
     });
@@ -632,7 +632,7 @@ describe('"Send balance": the owner asks for the balance to be texted', () => {
             { id: 'z', status: 'queued', kind: 'A.capital', nextAttemptAt: T0 + 3600e3, occurredAt: T0, to: '+94*****4567', ref: 'INV-1', body: 'Capital' },
         ], T0);
         expect(rows.find((r) => r.id === 'w').note).toMatch(/morning where the recipient is/);
-        expect(rows.find((r) => r.id === 'x').note).toMatch(/dropped rather than sent late/);
+        expect(rows.find((r) => r.id === 'x').note).toMatch(/dropped and the next one takes over/);
         expect(rows.find((r) => r.id === 'y').note).toMatch(/Held too long/);
         expect(rows.find((r) => r.id === 'z').note).toBe('Scheduled for a later time.');
     });
@@ -842,5 +842,20 @@ describe('closing an investment as fully settled', () => {
     it('CLOSED_END_WAS is the only extra field, and the server does not read it', () => {
         expect(CLOSED_END_WAS).toBe('closedEndWas');
         expect(Object.values(FIELDS)).not.toContain(CLOSED_END_WAS);
+    });
+});
+
+describe('"Sent" is not "Delivered" until the gateway says so', () => {
+    const row = (extra) => rowsOf([{ id: 'a', status: 'sent', sentAt: 5, to: '+94*****4567', ref: 'DEB-1', body: 'x', ...extra }], 10)[0];
+    it('says Sent for a text only the gateway has taken, Delivered once it confirms, and Not delivered (as a failure) when it reports that', () => {
+        expect(row({}).label).toBe('Sent');
+        expect(row({ delivery: { state: 'pending' } }).label).toBe('Sent');
+        expect(row({ delivery: { state: 'delivered' } }).label).toBe('Delivered');
+        const bad = row({ delivery: { state: 'undelivered' } });
+        expect(bad).toMatchObject({ label: 'Not delivered', status: 'failed' });
+        expect(bad.note).toMatch(/not delivered/);
+    });
+    it('a waiting text paused by the reserve says so', () => {
+        expect(rowsOf([{ id: 'w', status: 'queued', kind: 'B.late', error: { kind: 'reserve' }, nextAttemptAt: 1, occurredAt: 1, body: 'r' }], 10)[0].note).toMatch(/under the reserve you set/);
     });
 });

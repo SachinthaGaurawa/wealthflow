@@ -262,6 +262,24 @@ export class TextLkClient {
         return this._fail(KIND.UNKNOWN, `unreadable answer (HTTP ${httpStatus}): ${gatewayMessage}`, { httpStatus, possiblySent: true });
     }
 
+    /**
+     * What became of a text the gateway took: GET sms/{uid} (the "view sms" call). The answer's `data.status` is read loosely, by word, because
+     * the wording is the gateway's: anything with "undeliver", "fail", "reject" or "expire" in it is a no, "deliver" a yes, the rest is still pending.
+     * Free; never sends. @returns {{ok:true, state:'delivered'|'undelivered'|'pending', raw:string} | {ok:false, kind:string}}
+     */
+    async lookup(uid) {
+        const id = s(uid).trim();
+        if (!/^[A-Za-z0-9._-]{4,80}$/.test(id)) return this._fail(KIND.INVALID_MESSAGE, 'not a message id');
+        const out = await this._call('GET', `sms/${encodeURIComponent(id)}`);
+        if (out.problem) return out.problem;
+        const { response, json, text } = out;
+        if (s(json && json.status).trim().toLowerCase() !== 'success' || !json.data) return this._fail(classifyFailure(response.status, s(json && json.message) || text), s(json && json.message) || `HTTP ${response.status}`, { httpStatus: response.status });
+        const raw = s(json.data.status).trim();
+        const w = raw.toLowerCase();
+        const state = /undeliver|fail|reject|expire|error|block/.test(w) ? 'undelivered' : /deliver/.test(w) ? 'delivered' : 'pending';
+        return { ok: true, state, raw: raw.slice(0, 40) };
+    }
+
     /** Units left on the account. Free to call; never sends. */
     async balance() {
         const out = await this._call('GET', 'balance');

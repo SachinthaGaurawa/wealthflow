@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { createFirestore } from './helpers/fake-firestore.js';
 import {
+    checkDelivery,
     sweepUser, enqueue, claim, docIdFor, nextAttemptDelay, STATUS, LEASE_MS, MAX_ATTEMPTS, HOLD_MS, LIMITS, ADMIN_ALERT, CONCURRENCY,
 } from '../sms-engine.mjs';
 import { deriveEvents, FIELDS } from '../sms-events.mjs';
@@ -752,15 +753,48 @@ describe('late-payment reminders through the queue', () => {
         expect(gw.sent.some((m) => m.message.startsWith('Reminder'))).toBe(false);
     });
 
-    it('held for credit for more than a day, it is dropped, not sent with a balance that may have moved', async () => {
+    it('held for credit it is still owed for a week: the top-up three days later sends it, with the words as they were', async () => {
         const { fs, db } = makeDb();
         const broke = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: false, message: 'out of units' }));
         await run(db, due(), broke, { now: T('2026-10-05T03:00:00Z') });
         expect(lateDocs(fs)[0]).toMatchObject({ status: STATUS.QUEUED, lastError: { kind: KIND.CREDIT } });
         const gw = gateway();
-        await run(db, due(), gw, { now: T('2026-10-07T03:00:00Z') });
-        expect(gw.sent.some((m) => m.message.startsWith('Reminder'))).toBe(false);
-        expect(['cancelled', 'expired']).toContain(lateDocs(fs)[0].status);
+        await run(db, due(), gw, { now: T('2026-10-08T03:00:00Z') });
+        expect(gw.sent.filter((m) => m.message.startsWith('Reminder'))).toHaveLength(1);
+        expect(lateDocs(fs)[0].status).toBe(STATUS.SENT);
+    });
+
+    it('held for more than a week the first reminder is dropped, and the next one (its own day) takes over', async () => {
+        const { fs, db } = makeDb();
+        const broke = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: false, message: 'out of units' }));
+        await run(db, due(), broke, { now: T('2026-10-05T03:00:00Z') });
+        const gw = gateway();
+        await run(db, due(), gw, { now: T('2026-10-13T03:00:00Z') });
+        const docs = lateDocs(fs);
+        expect(['cancelled', 'expired']).toContain(docs.find((d) => /:1$/.test(d.key)).status);      // its week is over: no longer owed
+        expect(docs.find((d) => /:2$/.test(d.key)).status).toBe(STATUS.SENT);
+        expect(gw.sent.filter((m) => m.message.startsWith('Reminder'))).toHaveLength(1);
+    });
+
+    it('a reminder that waited while the debtor paid part of it is worded with what is owed now, and one that expired under the old one-day shelf is owed again', async () => {
+        const { fs, db } = makeDb();
+        const gw0 = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: false, message: 'out of units' }));
+        await run(db, due(), gw0, { now: T('2026-10-05T03:00:00Z') });
+        const first = lateDocs(fs)[0];
+        expect(first.body).toMatch(/50,000\.00/);
+        const u = due();
+        u.debtors[0].events.push({ id: 'e9', kind: 'repayment', amount: 15000, date: '2026-10-06', confirmed: true, at: T('2026-10-06T05:00:00Z') });
+        // attempts is 0 after a hold (a hold does not use up an attempt), so the words are rewritten for the new figure
+        const r = await sweepUser({ db, uid: UID, user: u, client: gw0, now: T('2026-10-06T05:30:00Z'), env, deps: { random: () => 0.5 } });
+        expect(r.enqueued.refreshed).toBe(1);
+        expect(lateDocs(fs)[0].amount).toBe(35000);
+        expect(lateDocs(fs)[0].body).toMatch(/35,000\.00/);
+        // an entry the old rule expired is revived while the books still say it is in force
+        const k = fs.data.get(lateDocs(fs)[0].path);
+        fs.data.set(lateDocs(fs)[0].path, { ...k, status: STATUS.EXPIRED, maxAgeMs: 32 * 3600e3 });
+        const gw = gateway();
+        await sweepUser({ db, uid: UID, user: u, client: gw, now: T('2026-10-07T03:00:00Z'), env, deps: { random: () => 0.5 } });
+        expect(lateDocs(fs)[0].status).toBe(STATUS.SENT);
     });
 
     it('the owner\'s message log is told the text is a scheduled one, so it can say why it is waiting', async () => {
@@ -891,5 +925,66 @@ describe('a second number: every text goes to both, each tracked on its own', ()
         const closing = gw.sent.filter((m) => /settled and closed/.test(m.message));
         expect(closing.map((m) => m.to).sort()).toEqual(['+447911123456', '+94771234567']);
         expect(ledger(fs).filter((d) => d.kind === 'B.closed')).toHaveLength(2);
+    });
+});
+
+describe('what became of a text the gateway took', () => {
+    const sentOnce = async (lookup) => {
+        const { fs, db } = makeDb();
+        const gw = gateway(() => ({ ok: true, gatewayId: 'uid-12345', cost: 1, segments: 1 }));
+        await run(db, books(), gw);                                   // this client has no lookup yet, so the sweep itself asks nothing
+        gw.lookup = lookup;
+        return { fs, db, gw };
+    };
+    it('"sent" is remembered as waiting for the gateway\'s word, and a yes closes it', async () => {
+        const { fs, db, gw } = await sentOnce(async () => ({ ok: true, state: 'delivered', raw: 'Delivered' }));
+        const doc = ledger(fs).find((d) => d.status === STATUS.SENT);
+        expect(doc.dlrPending).toBe(true);
+        const r = await checkDelivery({ db, uid: UID, client: gw, now: NOW + 60e3 });
+        expect(r).toMatchObject({ checked: 2, delivered: 2 });
+        expect(ledger(fs).find((d) => d.key === doc.key)).toMatchObject({ dlrPending: false, delivery: { state: 'delivered' } });
+        expect(mirrorDocs(fs).find((m) => m.key === doc.key).delivery.state).toBe('delivered');
+    });
+    it('a no is shown to the owner as not delivered, and logged without the number', async () => {
+        const { fs, db, gw } = await sentOnce(async () => ({ ok: true, state: 'undelivered', raw: 'Failed' }));
+        const r = await checkDelivery({ db, uid: UID, client: gw, now: NOW + 60e3 });
+        expect(r.undelivered).toBe(2);
+        expect(mirrorDocs(fs).find((m) => m.delivery && m.delivery.state === 'undelivered')).toBeTruthy();
+    });
+    it('"not yet" is asked again later, not every sweep; an unreachable gateway changes nothing', async () => {
+        let calls = 0;
+        const { fs, db, gw } = await sentOnce(async () => { calls += 1; return { ok: true, state: 'pending', raw: 'Sent' }; });
+        await checkDelivery({ db, uid: UID, client: gw, now: NOW + 60e3 });
+        await checkDelivery({ db, uid: UID, client: gw, now: NOW + 120e3 });
+        expect(calls).toBe(2);                                         // two texts went, each asked about once
+        await checkDelivery({ db, uid: UID, client: gw, now: NOW + 4 * 3600e3 });
+        expect(calls).toBe(4);
+        const down = await sentOnce(async () => ({ ok: false, kind: 'network' }));
+        await checkDelivery({ db: down.db, uid: UID, client: down.gw, now: NOW + 60e3 });
+        expect(ledger(down.fs).filter((d) => d.status === STATUS.SENT).every((d) => d.dlrPending === true)).toBe(true);
+        expect(fs).toBeTruthy();
+    });
+    it('stops asking after three days, and a client with no lookup is left alone', async () => {
+        const { fs, db, gw } = await sentOnce(async () => ({ ok: true, state: 'pending', raw: 'Sent' }));
+        await checkDelivery({ db, uid: UID, client: gw, now: NOW + 4 * 86400e3 });
+        expect(ledger(fs).filter((d) => d.status === STATUS.SENT).every((d) => d.dlrPending === false)).toBe(true);
+        const none = await checkDelivery({ db, uid: UID, client: gateway(), now: NOW });
+        expect(none.checked).toBe(0);
+    });
+});
+
+describe('a reminder that waits for the reserve says so', () => {
+    it('writes the reason on the waiting text, and clears it when it is no longer the reason', async () => {
+        const { fs, db } = makeDb(); const gw = gateway();
+        const u = books();
+        Object.assign(u.debtors[0], { dueISO: '2026-10-04', [FIELDS.REMIND]: true, [FIELDS.REMIND_AT]: NOW - 86400e3 * 3, [FIELDS.ENABLED_AT]: NOW - 86400e3 * 3 });
+        u.debtors[0].events = [{ id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-01', confirmed: true, at: NOW - 3 * 86400e3 }];
+        await run(db, u, gw, { now: T('2026-10-04T20:00:00Z'), env: { ...env, SMS_CREDIT_RESERVE: '20' }, deps: { units: 60, random: () => 0.5 } });
+        await run(db, u, gw, { now: T('2026-10-05T03:00:00Z'), env: { ...env, SMS_CREDIT_RESERVE: '20' }, deps: { units: 4, random: () => 0.5 } });
+        const row = mirrorDocs(fs).find((m) => m.kind === 'B.late');
+        expect(row).toMatchObject({ status: STATUS.QUEUED, error: { kind: 'reserve' } });
+        expect(row.error.message).toMatch(/4 units, under the reserve of 20/);
+        await run(db, u, gw, { now: T('2026-10-05T04:00:00Z'), env: { ...env, SMS_CREDIT_RESERVE: '20' }, deps: { units: 80, random: () => 0.5 } });
+        expect(mirrorDocs(fs).find((m) => m.kind === 'B.late')).toMatchObject({ status: STATUS.SENT, error: null });
     });
 });

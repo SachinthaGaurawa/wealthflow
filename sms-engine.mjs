@@ -45,7 +45,7 @@
 
 import crypto from 'node:crypto';
 import { KIND, maskPhone, analyzeSms } from './textlk.mjs';
-import { buildMessage } from './sms-templates.mjs';
+import { buildMessage, KINDS } from './sms-templates.mjs';
 import { deriveEvents, nextSendWindow, MAX_AGE_MS, LOCAL_OFFSET_MIN } from './sms-events.mjs';
 import { linksEnabled, linkFor, ensureTenantToken, portalSecret } from './tenant-links.mjs';
 import { creditReserve, creditPaused, isPausedKind } from './sms-guard.mjs';
@@ -105,7 +105,7 @@ const mirrorOf = (d, extra = {}) => ({
     status: d.status, to: d.toMasked, body: d.body, segments: d.segments, attempts: d.attempts,
     amount: d.amount, currency: d.currency, occurredAt: d.occurredAt, nextAttemptAt: d.nextAttemptAt || null,
     error: d.lastError ? { kind: d.lastError.kind, message: d.lastError.message } : null,
-    sentAt: d.sentAt || null, possiblyDuplicated: !!d.possiblyDuplicated, scheduled: !!d.scheduled,
+    sentAt: d.sentAt || null, possiblyDuplicated: !!d.possiblyDuplicated, scheduled: !!d.scheduled, delivery: d.delivery || null,
     ...extra,
 });
 
@@ -114,7 +114,7 @@ const mirrorOf = (d, extra = {}) => ({
  * @returns {{created:number, existing:number, rephoned:number, reopened:number, linked:number, noLink:number}}
  */
 export async function enqueue({ db, uid, events, now, env = process.env, deps = {}, pause = false }) {
-    const out = { created: 0, existing: 0, rephoned: 0, reopened: 0, linked: 0, noLink: 0 };
+    const out = { created: 0, existing: 0, rephoned: 0, reopened: 0, refreshed: 0, linked: 0, noLink: 0 };
     if (pause) out.paused = 0;
     const col = eventsCol(db, uid);
     let secret = null;
@@ -167,6 +167,24 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
             }
             const d = snap.data() || {};
             const phoneChanged = d.toHash !== toHash;
+            // A late reminder that has not been tried yet says what is owed NOW (a part payment confirmed while it waited changes the figure) and keeps
+            // the shelf life the books give it today. Anything already tried keeps its words: the gateway may have taken the first attempt.
+            const reminder = ev.kind === KINDS.B_LATE;
+            const untried = d.status === STATUS.QUEUED && num(d.attempts) === 0 && !d.possiblyDuplicated;
+            if (reminder && untried && !phoneChanged && (num(d.amount) !== num(ev.amount) || num(d.maxAgeMs) !== num(ev.maxAgeMs)) && s(d.body).includes(link || '')) {
+                const doc = { ...d, body, segments: a.segments, encoding: a.encoding, amount: ev.amount, currency: ev.currency, ...(ev.maxAgeMs > 0 ? { maxAgeMs: ev.maxAgeMs } : {}) };
+                tx.set(ref, doc);
+                return { what: 'refreshed', doc };
+            }
+            // A reminder that expired under an older, shorter shelf life is owed again while the books still say it is in force.
+            if (reminder && d.status === STATUS.EXPIRED && ev.maxAgeMs > 0 && now - ev.occurredAt <= ev.maxAgeMs) {
+                const doc = {
+                    ...d, status: STATUS.QUEUED, attempts: 0, nextAttemptAt: nextSendWindow(Math.max(now, ev.notBefore || 0), tzMin), leaseUntil: 0, to: ev.phone, toHash, toMasked: maskPhone(ev.phone), tzMin,
+                    body, segments: a.segments, encoding: a.encoding, amount: ev.amount, currency: ev.currency, linked: !!link, lastError: null, maxAgeMs: ev.maxAgeMs, revivedAt: now,
+                };
+                tx.set(ref, doc);
+                return { what: 'reopened', doc };
+            }
             // The words carry a link to a statement that is keyed by NIC. A held text whose NIC was corrected still holds the OLD person's link,
             // and the corrected number would be sent somebody else's statement: so when the link the books call for is not the one in the
             // words, the words are written again (only a link that can be minted counts: no link now is not a reason to drop the old one).
@@ -254,7 +272,7 @@ export async function claim({ db, uid, id, now }) {
         if (d.status === STATUS.QUEUED && d.scheduled === true) {
             const tz = Number.isFinite(d.tzMin) ? d.tzMin : LOCAL_OFFSET_MIN;
             const open = nextSendWindow(now, tz);
-            if (open > now) { tx.set(ref, { ...d, nextAttemptAt: open }); return null; }
+            if (open > now) { tx.set(ref, { ...d, nextAttemptAt: open, ...(d.lastError && d.lastError.kind === 'reserve' ? { lastError: null } : {}) }); return null; }
         }
         const doc = { ...d, status: STATUS.SENDING, leaseUntil: now + LEASE_MS, attempts: num(d.attempts) + 1, possiblyDuplicated: !!d.possiblyDuplicated || crashed };
         tx.set(ref, doc);
@@ -313,7 +331,7 @@ export async function deliver({ db, uid, id, doc, client, now, limits = LIMITS, 
     let res;
     try { res = await client.send({ to: doc.to, message: doc.body }); } catch (e) { res = { ok: false, kind: KIND.UNKNOWN, retryable: true, message: s(e && e.message) || 'the gateway call threw', possiblySent: true }; }
     if (res.ok) {
-        const next = { ...doc, status: STATUS.SENT, leaseUntil: 0, sentAt: now, gatewayId: res.gatewayId, cost: res.cost, segments: res.segments || doc.segments, nextAttemptAt: 0, lastError: null };
+        const next = { ...doc, status: STATUS.SENT, leaseUntil: 0, sentAt: now, gatewayId: res.gatewayId, cost: res.cost, segments: res.segments || doc.segments, nextAttemptAt: 0, lastError: null, ...(res.gatewayId ? { dlrPending: true } : {}) };
         // The text is on its way. Losing the record of that is the one way a message can be sent twice, so the write is tried again before giving up.
         let recorded = false;
         for (let i = 0; i < 3 && !recorded; i += 1) {
@@ -366,7 +384,7 @@ async function dueIds({ db, uid, now }) {
         for (const doc of snap.docs) {
             const d = doc.data() || {};
             const due = status === STATUS.QUEUED ? num(d.nextAttemptAt) <= now : num(d.leaseUntil) <= now;
-            if (due) out.push({ id: doc.id, at: num(d.occurredAt), to: s(d.toHash), kind: s(d.kind) });
+            if (due) out.push({ id: doc.id, at: num(d.occurredAt), to: s(d.toHash), kind: s(d.kind), held: s(d.lastError && d.lastError.kind), status });
         }
     }
     return out.sort((a, b) => a.at - b.at);
@@ -381,6 +399,61 @@ function dueGroups(due) {
     const groups = new Map();
     for (const x of due) { if (!groups.has(x.to)) groups.set(x.to, []); groups.get(x.to).push(x.id); }
     return [...groups.values()];
+}
+
+/** A text that is waiting because credit is under the reserve says so in the owner's log, instead of just "Waiting to be sent". */
+async function noteReserve({ db, uid, ids, units, reserve, now }) {
+    for (const id of ids.slice(0, 100)) {
+        try {
+            const ref = eventsCol(db, uid).doc(id);
+            let next = null;
+            await db.runTransaction(async (tx) => {
+                const snap = await tx.get(ref);
+                const d = snap.exists ? (snap.data() || {}) : null;
+                if (!d || d.status !== STATUS.QUEUED) return;
+                next = { ...d, lastError: { kind: 'reserve', message: `credit is ${num(units)} units, under the reserve of ${num(reserve)}`, at: now } };
+                tx.set(ref, next);
+            });
+            if (next) await mirror(db, uid, id, mirrorOf(next), now);
+        } catch (e) { console.warn('[WF-SMS] reserve note failed:', s(e && e.message).slice(0, 120)); }
+    }
+}
+
+export const DELIVERY_CHECKS_PER_RUN = 25;
+export const DELIVERY_WATCH_MS = 3 * 86400000;
+export const DELIVERY_RECHECK_MS = 3 * 3600e3;
+
+/**
+ * "Sent" only means the gateway took the text. Ask it, a few at a time, what became of the recent ones, so a text the carrier did not deliver is
+ * shown as that and not as "Delivered" for ever. An answer that is neither a clear yes nor a clear no is asked again later; one that cannot be
+ * asked (no lookup on the client, the gateway down) changes nothing.
+ */
+export async function checkDelivery({ db, uid, client, now }) {
+    const out = { checked: 0, delivered: 0, undelivered: 0 };
+    if (!client || !client.configured || typeof client.lookup !== 'function') return out;
+    const snap = await eventsCol(db, uid).where('dlrPending', '==', true).limit(100).get();
+    let asked = 0;
+    for (const doc of snap.docs) {
+        const d = doc.data() || {};
+        const age = now - num(d.sentAt);
+        const finish = async (patch) => {
+            const next = { ...d, ...patch };
+            await db.runTransaction(async (tx) => { const cur = await tx.get(doc.ref); if (cur.exists && (cur.data() || {}).status === STATUS.SENT) tx.set(doc.ref, next); });
+            await mirror(db, uid, doc.id, mirrorOf(next), now);
+        };
+        if (d.status !== STATUS.SENT || !d.gatewayId || age > DELIVERY_WATCH_MS) { await finish({ dlrPending: false }); continue; }
+        if (d.delivery && now - num(d.delivery.checkedAt) < DELIVERY_RECHECK_MS) continue;
+        if (asked >= DELIVERY_CHECKS_PER_RUN) break;
+        asked += 1;
+        let r;
+        try { r = await client.lookup(d.gatewayId); } catch (_) { r = { ok: false }; }
+        out.checked += 1;
+        if (!r || !r.ok) continue;
+        if (r.state === 'delivered') { out.delivered += 1; await finish({ dlrPending: false, delivery: { state: 'delivered', checkedAt: now } }); }
+        else if (r.state === 'undelivered') { out.undelivered += 1; await finish({ dlrPending: false, delivery: { state: 'undelivered', checkedAt: now, note: s(r.raw).slice(0, 40) } }); console.warn(`[WF-SMS] gateway reports not delivered ref=${d.ref} status="${s(r.raw).slice(0, 40)}"`); }
+        else await finish({ delivery: { state: 'pending', checkedAt: now } });
+    }
+    return out;
 }
 
 /** Write the owner's status card: what is switched on but cannot work, whether the gateway is configured, whether credit is low. */
@@ -426,8 +499,10 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
         let due = await dueIds({ db, uid, now });
         const holdDue = hold || await paused(due.some((x) => isPausedKind(x.kind)));
         if (holdDue) {
-            summary.paused = due.filter((x) => isPausedKind(x.kind)).length;
+            const stopped = due.filter((x) => isPausedKind(x.kind));
+            summary.paused = stopped.length;
             due = due.filter((x) => !isPausedKind(x.kind));
+            await noteReserve({ db, uid, ids: stopped.filter((x) => x.status === STATUS.QUEUED && x.held !== 'reserve').map((x) => x.id), units, reserve, now });
         }
         const groups = dueGroups(due);
         await pool(groups, CONCURRENCY, async (ids) => {
@@ -441,8 +516,9 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
             }
         });
     }
+    try { summary.delivery = await checkDelivery({ db, uid, client, now }); } catch (e) { console.warn('[WF-SMS] delivery check failed:', s(e && e.message).slice(0, 120)); }
     await writeStatus({ db, uid, issues, configured: client.configured, units, now, reserve });
     return summary;
 }
 
-export default { ROOT, MIRROR, STATUS, LIMITS, ADMIN_ALERT, docIdFor, toHashOf, nextAttemptDelay, enqueue, cancelUnowed, claim, deliver, sweepUser, writeStatus };
+export default { ROOT, MIRROR, STATUS, LIMITS, ADMIN_ALERT, checkDelivery, docIdFor, toHashOf, nextAttemptDelay, enqueue, cancelUnowed, claim, deliver, sweepUser, writeStatus };

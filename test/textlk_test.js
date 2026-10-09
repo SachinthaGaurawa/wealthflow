@@ -314,6 +314,27 @@ describe('balance', () => {
     });
 });
 
+describe('lookup: what became of a text the gateway took', () => {
+    const ask = (status) => clientWith(() => reply(200, { status: 'success', data: { uid: 'abc12345', status } }));
+    it('reads the answer by word: a yes, a no, and "not yet"', async () => {
+        expect(await ask('Delivered').c.lookup('abc12345')).toEqual({ ok: true, state: 'delivered', raw: 'Delivered' });
+        for (const w of ['Undelivered', 'Failed', 'Rejected', 'Expired']) expect(await ask(w).c.lookup('abc12345')).toMatchObject({ ok: true, state: 'undelivered' });
+        for (const w of ['Sent', 'Queued', '', 'Accepted']) expect(await ask(w).c.lookup('abc12345')).toMatchObject({ ok: true, state: 'pending' });
+    });
+    it('asks GET sms/{uid}, never sends, and refuses an id that is not one', async () => {
+        const { c, calls } = ask('Delivered');
+        await c.lookup('abc12345');
+        expect(calls[0].url).toBe(DEFAULT_BASE + 'sms/abc12345');
+        expect(calls[0].init.method).toBe('GET');
+        expect(await c.lookup('../balance')).toMatchObject({ ok: false });
+        expect(calls).toHaveLength(1);
+    });
+    it('a failed lookup is a failure, not a verdict', async () => {
+        const { c } = clientWith(() => reply(404, { status: 'error', message: 'Message not found' }));
+        expect(await c.lookup('abc12345')).toMatchObject({ ok: false });
+    });
+});
+
 describe('classifyFailure on its own', () => {
     it('does not mistake an auth message that mentions a balance for a credit problem', () => {
         expect(classifyFailure(401, 'Unauthorized: invalid token, cannot read balance')).toBe(KIND.AUTH);

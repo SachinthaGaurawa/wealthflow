@@ -23,18 +23,18 @@ const UID = 'owner1';
 const NOW = T('2026-10-05T05:00:00Z');                          // 10:30 in Colombo: inside the sending window
 
 describe('the reserve and what it pauses', () => {
-    it('is 20 units unless set, 0 switches it off, and nonsense falls back to the default', () => {
-        expect(CREDIT_RESERVE_DEFAULT).toBe(20);
-        expect(creditReserve({})).toBe(20);
-        expect(creditReserve({ SMS_CREDIT_RESERVE: '' })).toBe(20);
-        expect(creditReserve({ SMS_CREDIT_RESERVE: '  ' })).toBe(20);
+    it('is OFF unless set (a default of 20 held every reminder on an account that only has ten units), 0 switches it off, and nonsense falls back to the default', () => {
+        expect(CREDIT_RESERVE_DEFAULT).toBe(0);
+        expect(creditReserve({})).toBe(0);
+        expect(creditReserve({ SMS_CREDIT_RESERVE: '' })).toBe(0);
+        expect(creditReserve({ SMS_CREDIT_RESERVE: '  ' })).toBe(0);
         expect(creditReserve({ SMS_CREDIT_RESERVE: '35' })).toBe(35);
         expect(creditReserve({ SMS_CREDIT_RESERVE: '0' })).toBe(0);
         expect(creditReserve({ SMS_CREDIT_RESERVE: '12.9' })).toBe(12);
-        expect(creditReserve({ SMS_CREDIT_RESERVE: '-4' })).toBe(20);
-        expect(creditReserve({ SMS_CREDIT_RESERVE: 'lots' })).toBe(20);
+        expect(creditReserve({ SMS_CREDIT_RESERVE: '-4' })).toBe(0);
+        expect(creditReserve({ SMS_CREDIT_RESERVE: 'lots' })).toBe(0);
         expect(creditReserve({ SMS_CREDIT_RESERVE: '1e99' })).toBe(100000);
-        expect(creditReserve(undefined)).toBe(20);
+        expect(creditReserve(undefined)).toBe(0);
     });
 
     it('is under the reserve only for a known balance strictly below it', () => {
@@ -65,7 +65,7 @@ function makeDb() {
 }
 const ledger = (fs) => [...fs.data.entries()].filter(([p]) => p.startsWith(`wf-sms/${UID}/events/`)).map(([p, v]) => ({ path: p, ...v }));
 const status = (fs) => fs.data.get(`users/${UID}/smsLog/_status`) || {};
-const env = { TENANT_PORTAL_LINKS: 'on', WEALTHFLOW_PUBLIC_ORIGIN: 'https://wealthflow-personal.vercel.app', FIREBASE_SERVICE_ACCOUNT: JSON.stringify({ private_key: 'k'.repeat(64) }) };
+const env = { SMS_CREDIT_RESERVE: '20', TENANT_PORTAL_LINKS: 'on', WEALTHFLOW_PUBLIC_ORIGIN: 'https://wealthflow-personal.vercel.app', FIREBASE_SERVICE_ACCOUNT: JSON.stringify({ private_key: 'k'.repeat(64) }) };
 
 function gateway({ units = 50, balanceKind = null, hasBalance = true } = {}) {
     const sent = []; const calls = { balance: 0 };

@@ -65,8 +65,12 @@ the tick without one). While it is ticked and money is still confirmed as owed:
   after: at most four. Each is sent between 08:00 and 20:00 where the debtor is, never overnight.
   `Reminder: LKR 50,000.00 is still outstanding, due 02 Oct 2026, ref DEB-7E1E60. Statement: <link>`
 * No interest, no penalty and no demand: the figure is the confirmed balance and the date is the one the owner set.
-* Nothing is sent for a day that was over before the box was ticked, and an edit keeps the moment it was ticked (`sms_remind_at`).
-* A reminder whose day has gone by more than 24 hours ago is dropped, not sent late; a payment confirmed before it goes out cancels it.
+* **A reminder is owed from its day until the next one's (a week).** One that could not go out on its day (no credit, a sender not yet
+  approved, the debtor's night) goes on a later sweep inside those seven days, worded with what is owed at that moment (a part payment
+  confirmed while it waited changes the figure). After the week it is dropped and the next one takes over; a payment confirmed before it
+  goes out cancels it.
+* **Ticking the box on a debtor who is already late** sends the reminder that is in force now, once. If all four have gone by (weeks late),
+  one reminder is still sent for the day you ticked it. An edit keeps the moment it was ticked (`sms_remind_at`).
 * **Held back while a repayment is waiting for your confirmation.** A repayment you have logged but not yet checked against the bank means
   the debtor says they have paid; "still outstanding" would be wrong exactly then. Once you confirm it, a reminder (if one is still due)
   carries what is really left; if you delete it, they are reminded as before. A balance you ask for with **Send balance** is not held back:
@@ -108,7 +112,7 @@ read six fields (bank, name, number, branch, SWIFT / IBAN, note) and nothing els
 | `TEXTLK_API_TOKEN` | to send | the Text.lk API token (Bearer). Never logged, never sent to the page |
 | `SMS_ALLOWED_EMAILS` | to send | comma-separated verified emails allowed to use it (or a Firebase `admin` claim). Unset means nobody |
 | `TEXTLK_SENDER_ID` | no | defaults to `WealthFlow`; any capitalisation of it (`WEALTHFLOW`) is sent as `WealthFlow` |
-| `SMS_CREDIT_RESERVE` | no | units kept for the texts people are waiting for; defaults to `20`, `0` switches the rule off. Under it, late-payment reminders wait (see *Credit reserve* below) |
+| `SMS_CREDIT_RESERVE` | no | units kept for the texts people are waiting for; **off unless set** (a default of 20 paused every reminder on an account that held ten units); `0` also means off. Under it, late-payment reminders wait (see *Credit reserve* below) |
 | `SMS_ALERT_WEBHOOK_URL` | no | an `https` endpoint (a Slack or Discord incoming webhook, or anything that takes JSON) told when credit falls under the reserve and when Firebase sign-in has not answered on two runs in a row; at most once a day each. Addresses that only mean something inside a network (`localhost`, IPs, `*.internal`, a port) are refused |
 | `CRON_SECRET` | for the daily sweep | already used by the other crons |
 | `WEALTHFLOW_PUBLIC_ORIGIN` | no | origin for links in the text, defaults to the production alias |
@@ -135,12 +139,12 @@ eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends 
   skipped for that run and left as it is. A registration whose data document no longer exists is switched off too, so it cannot hold one of
   the 40 places in a run. The registered accounts are read in pages of 500 (up to 2,000) and ordered by when each was last swept, so a long
   list is covered across runs.
-* **Credit reserve.** The sweep reads the gateway balance once per run (free). Under `SMS_CREDIT_RESERVE` units (20 unless set) the
+* **Credit reserve.** The sweep reads the gateway balance once per run (free). When `SMS_CREDIT_RESERVE` is set (off otherwise), under that many units the
   late-payment reminders, and only those, are not queued or sent: they stay owed by the books, and the first sweep that sees the
   balance back at the reserve queues and sends them, once. Receipts, closing notices, disbursements and a balance you asked for
   still go, because someone is waiting for them. A reminder that waited past its own shelf life expires, as it always did, instead of
   going out late. A run that did not read the balance itself (the page's nudge after a save) reads it only if a reminder is in play.
-  An unreadable balance never stops a text. The panel says "Late-payment reminders are paused" and the sweep logs
+  An unreadable balance never stops a text. A reminder that is waiting for this says so in the log ("Paused: SMS credit is under the reserve you set"). The panel says "Late-payment reminders are paused" and the sweep logs
   `[WF-SMS] credit is under the reserve`. With `SMS_ALERT_WEBHOOK_URL` set the owner is also told, once a day at most, and told again
   at once if credit recovers and falls again. Reminders are not bundled into a digest: one text per reminder keeps each one worded from
   the books as they are when it is sent.
@@ -157,6 +161,10 @@ eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends 
   `Retry-After` if longer.
 * **Exactly once, honestly.** The ledger makes a second queueing impossible. The gateway has no idempotency key, so a
   worker that dies mid-send can cause a second attempt; that message is flagged `possiblyDuplicated`.
+* **"Sent" and "Delivered" are different.** The gateway answering success means it took the text, not that the phone received it. The log
+  says **Sent** until the gateway's own record (`GET sms/{uid}`, asked a few at a time for three days) says delivered; if it reports the
+  text as failed or undelivered the row turns to **Not delivered** and the sweep logs `gateway reports not delivered`. The wording of that
+  status comes from the gateway and is read loosely by word; a status that cannot be read leaves the row at **Sent**.
 * **Limits.** 300 texts per account per day, 12 per number per day, reserved before sending so concurrent sends cannot
   overshoot. **Scheduled** texts (monthly interest, late-payment reminders) go out only between 08:00 and 20:00 where the
   *recipient* is (the country of the number), and the engine checks that when it claims a text, not only when it queues one:
