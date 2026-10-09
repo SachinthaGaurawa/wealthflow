@@ -3,8 +3,8 @@
  * -----------------------------------------------------------------------------
  * Three small, separate jobs, all pure or fully injected so they are tested without a network:
  *
- *  1. THE CREDIT RESERVE. The gateway's balance is read once per sweep. Below the reserve (SMS_CREDIT_RESERVE, 20 units unless set; 0 switches
- *     the rule off) the one kind of text nobody is waiting for, the late-payment reminder, is not put in the ledger and not sent, so what is
+ *  1. THE CREDIT RESERVE. The gateway's balance is read once per sweep. Below the reserve (SMS_CREDIT_RESERVE; OFF unless the owner sets it: a default of 20 units paused every
+ *     reminder on an account that only ever held ten, so the owner who ticked "remind late" never got one) the one kind of text nobody is waiting for, the late-payment reminder, is not put in the ledger and not sent, so what is
  *     left pays for the texts people ARE waiting for: a receipt, a closing notice, a balance somebody asked for. Nothing is dropped or
  *     rewritten: the reminders stay owed by the books and go out on the first sweep that sees the balance back at the reserve (a reminder
  *     that waited past its own shelf life expires, as it always did, rather than going out late).
@@ -22,7 +22,7 @@
  *     the next occurrence is reported at once. The alert says units and counts only: no token, no number, no name.
  * ===========================================================================*/
 
-export const CREDIT_RESERVE_DEFAULT = 20;
+export const CREDIT_RESERVE_DEFAULT = 0;
 export const CREDIT_RESERVE_MAX = 100000;
 /** A balance reading older than this is not used by a run that did not read the balance itself (the page's nudge). */
 export const CREDIT_READING_TTL_MS = 30 * 3600e3;

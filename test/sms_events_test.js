@@ -387,18 +387,18 @@ describe('late-payment reminders (opt-in, a debtor only)', () => {
     it('then one a week later each time, at most four, and never more than one a day', () => {
         expect(REMINDER_OFFSETS_DAYS).toEqual([1, 8, 15, 22]);
         const keys = (now) => rem(deriveEvents(late({ [FIELDS.ENABLED_AT]: T('2026-10-01T00:00:00Z') }), now)).map((e) => e.key.split(':').pop());
-        expect(keys(T('2026-10-18T05:00:00Z'))).toEqual(['2']);                                       // the first one's day is more than three days gone: not sent late
+        expect(keys(T('2026-10-18T05:00:00Z'))).toEqual(['2']);                                       // the first one's week is over: the second is the one in force
         expect(keys(T('2026-10-25T05:00:00Z'))).toEqual(['3']);
         expect(keys(T('2026-11-01T05:00:00Z'))).toEqual(['4']);
         expect(keys(T('2026-11-20T05:00:00Z'))).toEqual([]);                                          // four is the end
     });
 
-    it('a reminder whose day was a few days ago is still owed (the sweep was down), but not one from last week', () => {
+    it('a reminder is owed from its day until the next one is due (a week), so one that could not go out on its day (no credit, a sender not yet approved) still goes', () => {
         expect(rem(deriveEvents(late(), T('2026-10-11T05:00:00Z')))).toHaveLength(1);
-        expect(rem(deriveEvents(late(), T('2026-10-13T18:00:00Z')))).toHaveLength(1);                 // two days and 23 hours after its day began
-        expect(rem(deriveEvents(late(), T('2026-10-13T19:00:00Z')))).toHaveLength(0);                 // three days and a half: too late to be useful
-        expect(rem(deriveEvents(late(), T('2026-10-17T05:00:00Z')))).toHaveLength(0);
-        expect(REMINDER_WINDOW_MS).toBe(3 * 86400000);
+        expect(rem(deriveEvents(late(), T('2026-10-13T19:00:00Z')))).toHaveLength(1);                 // three and a half days on: still the one in force
+        expect(rem(deriveEvents(late(), T('2026-10-17T18:29:00Z')))).toHaveLength(1);                 // a minute before the week is up
+        expect(rem(deriveEvents(late(), T('2026-10-17T18:30:00Z'))).map((e) => e.key.split(':').pop())).toEqual(['2']);   // the week is up: the second takes over, never both
+        expect(REMINDER_WINDOW_MS).toBe(7 * 86400000);
     });
 
     it('says the balance that is still owed after a part payment, never the original loan, and no interest', () => {
@@ -424,9 +424,17 @@ describe('late-payment reminders (opt-in, a debtor only)', () => {
         expect(rem(deriveEvents(late({ phone: '' }), now))).toHaveLength(0);
     });
 
-    it('a day that was over before the box was ticked is not brought back (ticked on the 12th: nothing for the 11th)', () => {
-        expect(rem(deriveEvents(late({ [FIELDS.REMIND_AT]: T('2026-10-12T09:00:00Z') }), T('2026-10-13T05:00:00Z')))).toHaveLength(0);
-        expect(rem(deriveEvents(late({ [FIELDS.REMIND_AT]: T('2026-10-12T09:00:00Z') }), T('2026-10-18T05:00:00Z')))).toHaveLength(1);   // the next one, a week on
+    it('ticking the box on a debtor who is already late sends the reminder in force now, once, not nothing until next week', () => {
+        const ticked = late({ [FIELDS.REMIND_AT]: T('2026-10-12T09:00:00Z') });
+        expect(rem(deriveEvents(ticked, T('2026-10-13T05:00:00Z'))).map((e) => e.key.split(':').pop())).toEqual(['1']);
+    });
+
+    it('ticking it on a debtor who has been late for weeks (all four have gone by) still sends the one reminder asked for, once, under the day it was asked', () => {
+        const ticked = late({ [FIELDS.REMIND_AT]: T('2026-12-01T09:00:00Z'), [FIELDS.ENABLED_AT]: T('2026-12-01T09:00:00Z') });
+        const r = rem(deriveEvents(ticked, T('2026-12-02T05:00:00Z')));
+        expect(r.map((e) => e.key)).toEqual(['B:d1:late:2026-10-10:asked-2026-12-01']);
+        expect(rem(deriveEvents(ticked, T('2026-12-02T05:00:00Z')))[0].key).toBe(r[0].key);          // the same key on every sweep: sent once
+        expect(rem(deriveEvents(ticked, T('2026-12-12T05:00:00Z')))).toHaveLength(0);                  // and not for ever
     });
 
     it('a new date is a new set of reminders, under new keys, so the old ones are no longer owed', () => {

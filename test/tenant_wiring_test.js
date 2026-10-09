@@ -135,7 +135,7 @@ describe('the owner\'s log understands the portal\'s texts', () => {
         }
         expect(docs).toHaveLength(2);
         const rows = rowsOf(docs, T0);
-        expect(rows.map((r) => r.label).sort()).toEqual(['Delivered', 'Failed']);
+        expect(rows.map((r) => r.label).sort()).toEqual(['Failed', 'Sent']);
         expect(rows.find((r) => r.status === 'failed').note).toBe('insufficient credit');
         const html = panelHtml({ rows });
         expect(html).toContain('Statement portal');

@@ -538,6 +538,7 @@ const HOLD_TEXT = {
     'sender': 'Waiting for the sender ID to be approved.',
     'config': 'The SMS gateway is not set up yet.',
     'cap': 'Daily sending limit reached. It will go out tomorrow.',
+    'reserve': 'Paused: SMS credit is under the reserve you set. It goes out after the top-up.',
     'rate-limit': 'The gateway asked us to slow down. Trying again.',
     'network': 'Could not reach the gateway. Trying again.',
     'timeout': 'The gateway was slow to answer. Trying again.',
@@ -578,7 +579,7 @@ const FAIL_TEXT = {
     'invalid-recipient': 'This is not a number the gateway can reach. Correct it on the record and save.',
 };
 
-const STATUS_WORDS = { sent: 'Delivered', queued: 'Waiting', sending: 'Sending', failed: 'Failed', expired: 'Expired', cancelled: 'Cancelled' };
+const STATUS_WORDS = { sent: 'Sent', queued: 'Waiting', sending: 'Sending', failed: 'Failed', expired: 'Expired', cancelled: 'Cancelled' };
 
 /** The rows of the log, newest first, as plain objects the page can draw. */
 export function rowsOf(docs, nowMs = Date.now()) {
@@ -589,11 +590,14 @@ export function rowsOf(docs, nowMs = Date.now()) {
             let note = '';
             if (d.status === 'queued') note = HOLD_TEXT[d.error && d.error.kind] || (num(d.nextAttemptAt) > nowMs ? (d.scheduled ? 'Scheduled for the morning where the recipient is (08:00-20:00).' : 'Scheduled for a later time.') : 'Waiting to be sent.');
             else if (d.status === 'failed') note = FAIL_TEXT[d.error && d.error.kind] || s(d.error && d.error.message) || 'The gateway refused this message.';
-            else if (d.status === 'expired' || (d.status === 'cancelled' && d.kind === 'B.balance')) note = d.kind === 'B.balance' ? 'The balance could not be sent within half an hour, so it was dropped rather than sent with a figure that may have moved. Press Send balance again.' : d.kind === 'B.late' ? 'The reminder\'s day passed before it could go out (no credit, or outside the debtor\'s sending hours), so it was dropped rather than sent late.' : 'Held too long to still be news, so it was not sent.';
+            else if (d.status === 'expired' || (d.status === 'cancelled' && d.kind === 'B.balance')) note = d.kind === 'B.balance' ? 'The balance could not be sent within half an hour, so it was dropped rather than sent with a figure that may have moved. Press Send balance again.' : d.kind === 'B.late' ? 'The reminder could not go out for a week (no credit, an unapproved sender, or the debtor\'s sending hours), so it was dropped and the next one takes over.' : 'Held too long to still be news, so it was not sent.';
             else if (d.status === 'cancelled') note = 'Switched off or changed before it was sent.';
+            else if (d.status === 'sent' && d.delivery && d.delivery.state === 'undelivered') note = 'The gateway took this text but reports it was not delivered (the number may be off, switched off or blocked by the network).' + (d.possiblyDuplicated ? ' It may also have been sent twice.' : '');
             else if (d.status === 'sent' && d.possiblyDuplicated) note = 'May have been delivered twice after a gateway timeout.';
+            const delivered = d.status === 'sent' && d.delivery && d.delivery.state === 'delivered';
+            const undelivered = d.status === 'sent' && d.delivery && d.delivery.state === 'undelivered';
             return {
-                id: d.id, status: d.status, label: STATUS_WORDS[d.status] || s(d.status), to: s(d.to), ref: s(d.ref), body: s(d.body),
+                id: d.id, status: undelivered ? 'failed' : d.status, label: delivered ? 'Delivered' : undelivered ? 'Not delivered' : STATUS_WORDS[d.status] || s(d.status), to: s(d.to), ref: s(d.ref), body: s(d.body),
                 at: num(d.sentAt) || num(d.occurredAt), note, layer: s(d.layer), second: /:2$/.test(s(d.key)),
             };
         });

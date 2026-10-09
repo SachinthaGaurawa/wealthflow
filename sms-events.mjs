@@ -82,8 +82,8 @@ export const FIELDS = Object.freeze({
  * balance as it was when it was queued, and is good for a day only, so a reminder that could not go out is dropped rather than sent stale.
  */
 export const REMINDER_OFFSETS_DAYS = Object.freeze([1, 8, 15, 22]);
-export const REMINDER_WINDOW_MS = 3 * 86400000;      // a reminder whose day was more than this long ago is not sent late
-export const REMINDER_SHELF_MS = 24 * 3600000;
+export const REMINDER_WINDOW_MS = 7 * 86400000;      // a reminder is owed from its day until the next one's (a week), so one that could not go out on its day (credit, an unapproved sender) still goes on a later sweep
+export const REMINDER_SHELF_MS = 7 * 86400000;
 
 /**
  * A "send the balance now" request is good for this long. The figure is written into the text when it is queued, so a request
@@ -346,16 +346,24 @@ function debtorEvents(user, now, currency, out, issues) {
             if (due && outstanding > 0 && !awaiting && remindAt <= now + CLOCK_SKEW_MS) {
                 const tz = Number.isFinite(base.tzMin) ? base.tzMin : LOCAL_OFFSET_MIN;
                 const dueStartUtc = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
-                const floor = Math.floor(Math.max(enabledAt, remindAt) / 86400000) * 86400000;
+                const push = (key, dayStart) => sink.push({
+                    ...base, key, kind: KINDS.B_LATE, occurredAt: dayStart, amount: outstanding, balance: outstanding,
+                    dateISO: str(d.dueISO), scheduled: true, notBefore: nextSendWindow(dayStart, tz), maxAgeMs: REMINDER_SHELF_MS + (nextSendWindow(dayStart, tz) - dayStart),
+                });
+                let inForce = 0;
                 REMINDER_OFFSETS_DAYS.forEach((days, i) => {
                     const dayStart = dueStartUtc + days * 86400000 - tz * 60000;      // that day begins, where the debtor is
-                    if (dayStart > now || now - dayStart > REMINDER_WINDOW_MS) return;
-                    if (dayStart + 86400000 < floor) return;                            // a day that was over before the reminders were switched on
-                    sink.push({
-                        ...base, key: `B:${d.id}:late:${str(d.dueISO)}:${i + 1}`, kind: KINDS.B_LATE, occurredAt: dayStart, amount: outstanding, balance: outstanding,
-                        dateISO: str(d.dueISO), scheduled: true, notBefore: nextSendWindow(dayStart, tz), maxAgeMs: REMINDER_SHELF_MS + (nextSendWindow(dayStart, tz) - dayStart),
-                    });
+                    if (dayStart > now || now - dayStart >= REMINDER_WINDOW_MS) return;
+                    inForce += 1;
+                    push(`B:${d.id}:late:${str(d.dueISO)}:${i + 1}`, dayStart);
                 });
+                // All four have gone by (the owner ticked the box on a debtor who has been late for weeks): the reminder asked for is still owed, once, for the day it was asked.
+                const lastDay = dueStartUtc + REMINDER_OFFSETS_DAYS[REMINDER_OFFSETS_DAYS.length - 1] * 86400000 - tz * 60000;
+                if (!inForce && now >= lastDay) {
+                    const asked = Math.max(enabledAt, remindAt);
+                    const askedDay = Math.floor((asked + tz * 60000) / 86400000) * 86400000 - tz * 60000;
+                    if (now - askedDay <= REMINDER_WINDOW_MS) push(`B:${d.id}:late:${str(d.dueISO)}:asked-${new Date(askedDay + tz * 60000).toISOString().slice(0, 10)}`, askedDay);
+                }
             }
         }
         // LAYER B COMPUTES NO INTEREST. Not "skips if zero": the accrual is never reached, so a stray `rate` on a record cannot produce a notice.
