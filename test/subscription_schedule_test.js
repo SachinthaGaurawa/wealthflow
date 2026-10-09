@@ -50,4 +50,19 @@ describe('subscription payment schedule', () => {
             history: [{ month: '2026-10', amount: 3000, date: '2026-10-05', source: 'statement' }] };
         expect(S.occurrence(sub, new Date('2026-10-07T12:00:00Z'))).toMatchObject({ active: false, paid: true, date: '2026-10-05' });
     });
+
+    it('closes a one-time payment when a statement records it early or late', () => {
+        const S = api();
+        const sub = { id: 'o2', cycle: 'once', amount: 1000, dueDay: 20,
+            dueDate: '2026-12-20', createdAt: '2026-10-01T00:00:00Z', history: [], monthOverrides: {} };
+        S.recordPayment(sub, { date: '2026-11-30', amount: 1000 });
+        expect(sub).toMatchObject({ paid: true, completed: true, paidAt: '2026-11-30' });
+        expect(S.occurrence(sub, new Date('2026-12-21T12:00:00Z'))).toMatchObject({ active: false, paid: true });
+    });
+
+    it('clamps a legacy day 31 to the real last day of a short month', () => {
+        const S = api();
+        expect(S.legacyDueDate({ cycle: 'once', dueDay: 31, createdAt: '2026-02-02T00:00:00Z' })).toBe('2026-02-28');
+        expect(S.legacyDueDate({ cycle: 'once', dueDay: 31, createdAt: '2024-02-02T00:00:00Z' })).toBe('2024-02-29');
+    });
 });

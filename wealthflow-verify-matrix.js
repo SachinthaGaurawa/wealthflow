@@ -263,13 +263,27 @@ export function pendingOutflows(appData, asOf, opts = {}) {
     const rows = [];
     for (const sub of arr(A.subscriptions)) {
         if (!sub || !sub.id) continue;
+        const cycle = s(sub.cycle || 'monthly').toLowerCase();
+        const oneTime = ['once', 'one-time', 'onetime'].includes(cycle);
+        if (oneTime && (sub.paid === true || sub.completed === true)) continue;
         const day = Math.floor(num(sub.dueDay));
         if (!(day >= 1)) continue;
         const created = parseDay(sub.createdAt);
+        const exactDue = oneTime ? parseDay(sub.dueDate) : null;
+        if (oneTime && !exactDue) continue;
+        const step = cycle === 'quarterly' ? 3 : (cycle === 'yearly' || cycle === 'annual' ? 12 : 1);
 
         for (let back = lookback; back >= 0; back -= 1) {
             const monthIdx = now.getUTCMonth() - back;
-            const due = dueDateFor(day, now.getUTCFullYear(), monthIdx);
+            const candidate = dueDateFor(day, now.getUTCFullYear(), monthIdx);
+            let due = candidate;
+            if (oneTime) {
+                if (monthKeyOf(candidate) !== monthKeyOf(exactDue)) continue;
+                due = exactDue;
+            } else if (created) {
+                const elapsed = (candidate.getUTCFullYear() - created.getUTCFullYear()) * 12 + candidate.getUTCMonth() - created.getUTCMonth();
+                if (elapsed < 0 || elapsed % step !== 0) continue;
+            }
             if (due > today) continue;
             /* Never ask about a month before the bill was recorded. The record
              * is not evidence that the bill existed then. */

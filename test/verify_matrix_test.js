@@ -348,6 +348,28 @@ describe('the bills side — insurance premiums and the rest', () => {
         );
         expect(rows.map((r) => r.monthKey)).toEqual(['2026-09']);
     });
+
+    it('asks for a one-time payment only on its exact due date month', () => {
+        const rows = pendingOutflows({ subscriptions: [sub({ cycle: 'once', dueDate: '2026-07-31' })] },
+            AT('2026-09-10'), { lookbackMonths: 6 });
+        expect(rows.map((r) => r.dueISO)).toEqual(['2026-07-31']);
+    });
+
+    it('never asks again for a completed one-time payment', () => {
+        const rows = pendingOutflows({ subscriptions: [sub({ cycle: 'once', dueDate: '2026-07-31', paid: true, completed: true })] },
+            AT('2026-09-10'), { lookbackMonths: 6 });
+        expect(rows).toEqual([]);
+    });
+
+    it('asks quarterly and yearly bills only in their actual cycle months', () => {
+        const quarterly = pendingOutflows({ subscriptions: [sub({ cycle: 'quarterly' })] },
+            AT('2026-09-10'), { lookbackMonths: 3 });
+        expect(quarterly.map((r) => r.monthKey)).toEqual(['2026-07']);
+
+        const yearly = pendingOutflows({ subscriptions: [sub({ cycle: 'yearly' })] },
+            AT('2026-09-10'), { lookbackMonths: 11 });
+        expect(yearly.map((r) => r.monthKey)).toEqual(['2026-01']);
+    });
 });
 
 describe('the total the card shows', () => {

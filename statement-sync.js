@@ -1461,7 +1461,18 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
         const touched = (before, after) => JSON.stringify(before) !== JSON.stringify(after);
         const plans = stripped(user.ccinstall, 'payments', row => row && row.statementKey === path);
         if (!changes.ccinstall && touched(user.ccinstall, plans)) changes.ccinstall = plans; else if (changes.ccinstall) changes.ccinstall = stripped(changes.ccinstall, 'payments', row => row && row.statementKey === path);
-        const subs = stripped(user.subscriptions, 'history', row => row && row.statementKey === path);
+        const subs = stripped(user.subscriptions, 'history', row => row && row.statementKey === path).map(sub => {
+            if (!sub || sub.paidSource !== 'statement' || sub.paidStatementKey !== path) return sub;
+            const remaining = Array.isArray(sub.history) ? sub.history.filter(row => row && row.source === 'statement') : [];
+            if (remaining.length) {
+                const latest = remaining[remaining.length - 1];
+                return { ...sub, paid: true, completed: true, paidAt: latest.date || sub.paidAt,
+                    paidStatementKey: latest.statementKey || '' };
+            }
+            const clean = { ...sub };
+            delete clean.paid; delete clean.completed; delete clean.paidAt; delete clean.paidSource; delete clean.paidStatementKey;
+            return clean;
+        });
         if (touched(user.subscriptions, subs)) changes.subscriptions = subs;
         const loans = stripped(user.loans, 'payments', row => row && row.source === 'statement' && gone.has(String(row.expenseId)));
         if (touched(user.loans, loans)) changes.loans = loans;

@@ -32396,7 +32396,7 @@ Be direct and use real numbers. Avoid generic advice.`;
             if ($('sub_day'))     $('sub_day').value     = s.dueDay || 1;
             if ($('sub_cycle'))   $('sub_cycle').value   = s.cycle || 'monthly';
             if ($('sub_due_date')) {
-                const legacy = s.createdAt ? String(s.createdAt).slice(0, 7) + '-' + p2(s.dueDay || 1) : '';
+                const legacy = window.WFSubs && window.WFSubs.legacyDueDate ? window.WFSubs.legacyDueDate(s) : '';
                 $('sub_due_date').value = s.dueDate || legacy;
             }
             if ($('sub_anomaly')) $('sub_anomaly').value = s.anomalyDetect ? '1' : '0';
@@ -36327,7 +36327,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             try {
                                 const res = window.WFSubs.apply({ description: desc, amount, direction: 'debit', date }, routeInfo);
                                 sub++; if (res && res.created) subCreated++;
-                                if (_batch && res && res.paymentAdded) WFBatch.recordSub(_batch, { subId: res.subId, paymentDate: res.paymentDate || date, amount: res.amount != null ? res.amount : amount, prevAmount: res.prevAmount, createdSub: !!res.created });
+                                if (_batch && res && res.paymentAdded) WFBatch.recordSub(_batch, { subId: res.subId, paymentDate: res.paymentDate || date, amount: res.amount != null ? res.amount : amount, prevAmount: res.prevAmount, previousLifecycle: res.previousLifecycle, createdSub: !!res.created });
                             }
                             catch (e) { console.warn('[WFSubs] apply failed:', e); skipped++; }
                         } else { skipped++; }

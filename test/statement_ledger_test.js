@@ -177,10 +177,14 @@ describe('statement ledger', () => {
         expect(args.db.docs.get('sources/s').filed).toBe(false);
     });
     it('updates an explicitly allocated subscription history and quarantines missing allocation', async () => {
-        const args = fixture({ subscriptions: [{ id: 'sub', name: 'Plan', history: [], amount: 10 }] });
+        const args = fixture({ subscriptions: [{ id: 'sub', name: 'Plan', history: [], amount: 10,
+            cycle: 'once', dueDate: '2026-10-10' }] });
         args.decisions = [{ module: 'subscriptions', category: 'Streaming', allocationId: 'sub', verified: true }];
         expect((await settleStatement(args)).filed).toBe(1);
         expect(args.db.docs.get('users/u').subscriptions[0].history).toHaveLength(1);
+        expect(args.db.docs.get('users/u').subscriptions[0]).toMatchObject({
+            paid: true, completed: true, paidAt: row.date, paidSource: 'statement', paidStatementKey: 'sources/s',
+        });
         const missing = fixture(); missing.decisions = args.decisions;
         expect((await settleStatement(missing)).review).toBe(1);
     });
