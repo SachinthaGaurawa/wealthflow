@@ -133,6 +133,7 @@ input[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 4px rgb
 .tp-head .tp-btn { width: auto; min-width: 112px; min-height: 44px; margin-top: 0; padding: 8px 16px; }
 #tp-session { display: block; margin: 0 0 14px; font-size: 13px; }
 .tp-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0 18px; }
+.tp-actions > :nth-child(even):last-child { grid-column: 1 / -1; }   /* an odd button out takes the whole row, never half of one */
 .tp-actions .tp-btn, .tp-actions .tp-btn.tp-ghost { margin-top: 0; }
 
 /* ── the summary: one figure first, the rest under it ─────────────────────── */
@@ -150,7 +151,7 @@ input[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 4px rgb
 .tp-acct { margin-top: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
 .tp-acct-note { margin: 12px 0 0; padding: 10px 12px 10px 14px; background: #fff7e6; border: 1px solid #f59e0b; border-left-width: 4px; border-radius: 8px; color: #1f2937; }
 .tp-acct-note p { margin: 2px 0 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
-.tp-acct-note-label { display: block; font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #b45309; }
+.tp-acct-note-label { display: block; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #b45309; }
 .tp-holder { display: flex; flex-wrap: wrap; gap: 8px 32px; align-items: flex-start; }
 .tp-holder-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .tp-holder-name, .tp-holder-nic { font-size: 17px; font-weight: 700; overflow-wrap: anywhere; }
@@ -190,6 +191,7 @@ td.tp-num, th.tp-num { text-align: right; }
 .tp-foot { color: var(--mute); font-size: 13px; text-align: center; margin-top: 28px; }
 
 @media (max-width: 360px) {
+    .tp-actions { grid-template-columns: 1fr; }
     .tp-wrap { padding-left: 12px; padding-right: 12px; }
     .tp-card { padding: 18px 16px; }
     dl.tp-facts { grid-template-columns: 1fr; }
@@ -246,4 +248,89 @@ button.tp-chip.tp-refcopy:hover, button.tp-chip.tp-refcopy:focus-visible { borde
     .tp-early[hidden] { display: table-row; }
     .tp-more, .tp-jump, .tp-item .tp-small-btn { display: none; }
     .tp-progress progress { height: 8px; }
+}
+
+/* ── every screen: from a 240 px feature phone to an ultrawide monitor ─────────
+ * The base rules are the phone. Below, the page gives way at the small end (a folded foldable, a feature
+ * phone, a browser zoomed to 400 %) and opens out at the big end (a tablet, a laptop, a monitor) while
+ * staying one readable column. Breakpoints are by width and height, never by device name. */
+.tp-top, .tp-head { min-width: 0; }
+.tp-brand { min-width: 0; }
+.tp-brand span { overflow-wrap: anywhere; }
+
+@media (max-width: 300px) {
+    .tp-wrap { padding-left: 8px; padding-right: 8px; }
+    .tp-brand { font-size: 16px; gap: 8px; }
+    .tp-logo { width: 28px; height: 28px; border-radius: 7px; }
+    .tp-lang { min-width: 56px; padding: 8px 10px; }
+    .tp-top { gap: 8px; }
+    h2 { font-size: 20px; }
+    .tp-card { padding: 14px 10px; }
+    .tp-total, .tp-total:first-child { padding: 12px; }
+    .tp-total .tp-figure { font-size: 16px; }
+    .tp-total:first-child .tp-figure { font-size: 22px; }
+    .tp-copyrow { flex-wrap: wrap; }
+    .tp-copyrow .tp-value { font-size: 15px; flex: 1 1 100%; }
+    .tp-copy { flex: 1 1 100%; }
+    .tp-item { grid-template-columns: 1fr; }
+    .tp-item-side { align-items: flex-start; text-align: left; }
+    .tp-code { letter-spacing: 0.25em; font-size: 20px; }
+}
+
+/* a phone held sideways is wide but very short: spend less height on spacing, keep the controls */
+@media (max-height: 480px) and (orientation: landscape) {
+    .tp-top, .tp-wrap > .tp-brand { padding: 8px 0; margin-bottom: 12px; }
+    .tp-card { padding: 16px; margin-bottom: 12px; }
+    h2 { font-size: 21px; }
+    .tp-wrap { padding-bottom: 28px; }
+}
+
+/* a notch or rounded corner on the side of a phone held sideways: the body already pads by env(); the cards
+ * keep a hand's width of space from the edge so nothing is touched by accident */
+@media (min-width: 520px) {
+    .tp-actions { grid-template-columns: repeat(3, 1fr); }
+    .tp-actions > :nth-child(even):last-child { grid-column: auto; }
+    .tp-actions:has(> :nth-child(5)) { grid-template-columns: repeat(4, 1fr); }
+    .tp-actions #tp-pdf { grid-column: 1 / -1; }
+}
+
+@media (min-width: 560px) {
+    .tp-wrap { padding-left: 24px; padding-right: 24px; }
+    .tp-card { padding: 26px 26px; }
+}
+
+/* a tablet or a laptop: a wider column, three figures across, facts four across */
+@media (min-width: 900px) {
+    .tp-wrap { max-width: 880px; padding-bottom: 80px; }
+    .tp-totals { grid-template-columns: repeat(3, 1fr); }
+    .tp-total:first-child { grid-column: auto; }
+    .tp-total:only-child { grid-column: 1 / -1; }
+    .tp-total:first-child .tp-figure { font-size: 24px; }
+    dl.tp-facts { grid-template-columns: repeat(4, 1fr); }
+    dl.tp-facts.tp-acct-facts { grid-template-columns: 1fr 1fr; }
+    table { font-size: 15px; }
+    th, td { padding: 12px 12px; }
+}
+
+/* a large monitor: the same column, a little larger, never a line of text across the whole screen */
+@media (min-width: 1500px) {
+    body { font-size: 18px; }
+    .tp-wrap { max-width: 980px; }
+    h2 { font-size: 28px; }
+    .tp-total .tp-figure { font-size: 22px; }
+    .tp-total:first-child .tp-figure { font-size: 30px; }
+    .tp-note, .tp-small, .tp-foot { font-size: 15px; }
+    table { font-size: 16px; }
+}
+
+/* the least a mouse-less device needs: a finger-sized target wherever one can be pressed */
+@media (pointer: coarse) {
+    .tp-btn, .tp-lang, .tp-copy, .tp-small-btn, button.tp-chip.tp-refcopy { min-height: 48px; }
+}
+
+/* high-contrast and forced-colour modes: keep every edge the colours were drawing */
+@media (forced-colors: active) {
+    .tp-card, .tp-total, .tp-acct, .tp-acct-note, .tp-scroll, .tp-chip, .tp-when { border: 1px solid CanvasText; }
+    .tp-btn { border: 1px solid ButtonText; }
+    .tp-steps span.tp-on { background: Highlight; }
 }
