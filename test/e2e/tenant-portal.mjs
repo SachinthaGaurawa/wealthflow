@@ -169,7 +169,7 @@ const body = await text();
 console.log('5. right code         -> statement', JSON.stringify(body.slice(0, 160)) + '...');
 for (const want of ['Your statement', 'Investment', 'Loan', 'LKR 500,000.00', 'LKR 10,000.00', 'LKR 30,000.00', 'LKR 50,000.00', 'LKR 20,000.00', '24% a year', 'Monthly', 'Loan paid out', 'Repayment', '1 Sep 2026', '20 Sep 2026']) assert.ok(body.includes(want), `statement shows ${want}`);
 assert.ok(body.includes('853400937V') && body.includes('NIC / ID'), 'the holder card shows the person\'s own NIC');
-assert.ok(await page.locator('img.tp-logo').first().evaluate((i) => i.complete && i.naturalWidth === 86), 'the WealthFlow mark loads');
+assert.ok(await page.locator('img.tp-logo').first().evaluate((i) => i.complete && i.naturalWidth === 144), 'the WealthFlow mark loads');
 for (const leak of ['PRIVATE', '198534000937', '0771234567', '077 123', 'inv1', 'deb1', '777']) assert.ok(!body.includes(leak), `statement must not show ${leak}`);
 assert.match(body, /INV-[0-9A-F]{6}/);
 assert.match(body, /DEB-[0-9A-F]{6}/);
@@ -216,7 +216,7 @@ const pdfText = [...pdf.toString('latin1').matchAll(/stream\n([\s\S]*?)\nendstre
 for (const want of ['(8001234567)', '(Commercial Bank)', '(500,000.00)', '(30,000.00)', 'Page 1 of']) assert.ok(pdfText.includes(want) || pdfText.includes(want.replace(/[()]/g, '')), `the PDF carries ${want}`);
 assert.match(pdfText, /INV-[0-9A-F]{6}/);
 assert.ok(pdfText.includes('(853400937V)'), 'the PDF names the person\'s own NIC in the holder block');
-assert.ok(/\/Subtype \/Image \/Width 86/.test(pdf.toString('latin1')), 'the PDF carries the WealthFlow mark');
+assert.ok(/\/Subtype \/Image \/Width 144/.test(pdf.toString('latin1')), 'the PDF carries the WealthFlow mark');
 for (const leak of ['PRIVATE', '198534000937', '0771234567', 'Closed Bank', '1111222233']) assert.ok(!pdf.toString('latin1').includes(leak) && !pdfText.includes(leak), `the PDF must not carry ${leak}`);
 await page.waitForFunction(() => /PDF is ready/.test(document.getElementById('tp-info').textContent));
 assert.equal(await page.textContent('#tp-pdf'), 'Download PDF');
