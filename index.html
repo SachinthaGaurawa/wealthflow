@@ -238,12 +238,9 @@
     <link rel="manifest" href="/manifest.json">
     <meta name="apple-mobile-web-app-title" content="WealthFlow">
     <meta name="format-detection" content="telephone=no">
-    <link rel="icon" type="image/x-icon"
-        href="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660550/WealthFlow_Logo_r3zccz.ico">
-    <link rel="icon" type="image/png"
-        href="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
-    <link rel="apple-touch-icon"
-        href="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=7.69.34">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=7.69.34">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=7.69.34">
     <link rel="apple-touch-startup-image"
         href="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
     <!-- ── CONNECTION HINTS ────────────────────────────────────────────────
@@ -7569,6 +7566,7 @@
                         <option value="monthly">Monthly</option>
                         <option value="quarterly">Quarterly</option>
                         <option value="yearly">Yearly</option>
+                        <option value="once">One-Time</option>
                     </select></div>
                 <div class="fg"><label class="fl">Auto-Detect Anomaly</label><select class="fs" id="sub_anomaly">
                         <option value="1">Yes - Alert if unusual</option>
@@ -8946,7 +8944,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.33';
+        var WF_APP_VERSION = '7.69.34';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -11805,7 +11803,10 @@ Be conversational and precise.`;
             try {
                 const subs = DB.get('subscriptions') || [];
                 subsCount = subs.length;
-                subsMonthly = subs.reduce((s, x) => s + (x.amount || x.monthly || 0), 0);
+                // Use the Monthly Plan's cycle-aware authority. A quarterly,
+                // yearly or one-time bill is not a monthly commitment merely
+                // because it lives in the subscriptions store.
+                subsMonthly = getMonthlyData(now.getFullYear(), now.getMonth()).subTotal;
             } catch (_) {}
             try { ccPending = pos.cardOwed; } catch (_) {}
 
@@ -28196,9 +28197,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const overrideAmt = s.monthOverrides && s.monthOverrides[ym];
                 let amt = (typeof overrideAmt === 'number') ? overrideAmt : (s.amount || 0);
                 const cycle = (s.cycle || 'monthly').toLowerCase();
-                if (cycle === 'yearly' || cycle === 'annual') {
+                if (cycle === 'once' || cycle === 'one-time' || cycle === 'onetime') {
+                    // A one-time bill belongs only to the month in which it was
+                    // recorded. With no anchor date we refuse to invent a month.
+                    if (!created || created.getFullYear() !== year || created.getMonth() !== month) amt = 0;
+                } else if (cycle === 'yearly' || cycle === 'annual') {
                     // Yearly billing — only the anniversary month counts.
                     if (created && created.getMonth() !== month) amt = 0;
+                } else if (cycle === 'quarterly' && created) {
+                    const elapsed = (year - created.getFullYear()) * 12 + month - created.getMonth();
+                    if (elapsed < 0 || elapsed % 3 !== 0) amt = 0;
                 } else if (cycle === 'weekly') {
                     amt = amt * 4.33;
                 }
@@ -29875,8 +29883,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.33</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.33</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.34</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.34</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes, misbehaves, or a statement is stuck in "Needs review", tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory), plus why statements are stuck (reason counts, bank names, and why "Map statement layout" couldn't read one), with no date, amount, or transaction detail ever included, so the exact cause can be fixed fast.</div></div>
@@ -32299,7 +32307,13 @@ Be direct and use real numbers. Avoid generic advice.`;
             notify(editMode ? 'Subscription updated!' : 'Subscription saved!');
             playUISound('success');
         }
-        function clearSubForm() { editMode = null;['sub_name', 'sub_amount', 'sub_day', 'sub_notes'].forEach(id => { if ($(id)) $(id).value = ''; }); if ($('mdSubscriptionTitle')) $('mdSubscriptionTitle').textContent = 'Add Subscription / Bill'; }
+        function clearSubForm() {
+            editMode = null;
+            ['sub_name', 'sub_amount', 'sub_day', 'sub_notes'].forEach(id => { if ($(id)) $(id).value = ''; });
+            if ($('sub_cycle')) $('sub_cycle').value = 'monthly';
+            if ($('sub_anomaly')) $('sub_anomaly').value = '1';
+            if ($('mdSubscriptionTitle')) $('mdSubscriptionTitle').textContent = 'Add Subscription / Bill';
+        }
         function editSubscription(id) {
             const s = (DB.get('subscriptions') || []).find(x => x.id === id);
             if (!s) return;
@@ -32485,7 +32499,20 @@ Be direct and use real numbers. Avoid generic advice.`;
             const ym = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
             let totalMonthly = 0, dueSoon = 0, overdue = 0;
 
+            const occursThisMonth = (s) => {
+                const cycle = String(s.cycle || 'monthly').toLowerCase();
+                const created = s.createdAt ? new Date(s.createdAt) : null;
+                if (!created || isNaN(created.getTime())) return !['once', 'one-time', 'onetime'].includes(cycle);
+                const elapsed = (now.getFullYear() - created.getFullYear()) * 12 + now.getMonth() - created.getMonth();
+                if (elapsed < 0) return false;
+                if (['once', 'one-time', 'onetime'].includes(cycle)) return elapsed === 0;
+                if (cycle === 'quarterly') return elapsed % 3 === 0;
+                if (cycle === 'yearly' || cycle === 'annual') return elapsed % 12 === 0;
+                return true;
+            };
+
             subs.forEach(s => {
+                if (!occursThisMonth(s)) return;
                 const override = s.monthOverrides && s.monthOverrides[ym];
                 totalMonthly += (typeof override === 'number') ? override : s.amount;
                 const daysUntil = s.dueDay - day;
@@ -32494,7 +32521,7 @@ Be direct and use real numbers. Avoid generic advice.`;
             });
 
             $('subStats').innerHTML = `
-                <div class="stat-card sc-red"><div class="stat-label">Monthly Bills</div><div class="stat-val">${fmtS(totalMonthly)}</div></div>
+                <div class="stat-card sc-red"><div class="stat-label">This Month</div><div class="stat-val">${fmtS(totalMonthly)}</div></div>
                 <div class="stat-card sc-gold"><div class="stat-label">Tracked</div><div class="stat-val">${subs.length}</div></div>
                 <div class="stat-card sc-blue"><div class="stat-label">Due Soon</div><div class="stat-val">${dueSoon}</div></div>
                 <div class="stat-card sc-green"><div class="stat-label">On Track</div><div class="stat-val">${subs.length - overdue - dueSoon}</div></div>
@@ -32511,9 +32538,12 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             const _cap = _wfCap('subscriptions', sorted);
             $('subscriptionList').innerHTML = _cap.rows.map(s => {
+                const oneTime = ['once', 'one-time', 'onetime'].includes(String(s.cycle || '').toLowerCase());
+                const activeThisMonth = occursThisMonth(s);
                 const daysUntil = s.dueDay - day;
                 let badgeClass = 'sub-due-ok', badgeText = `Due in ${daysUntil} days`;
-                if (daysUntil < 0) { badgeClass = 'sub-due-urgent'; badgeText = `Overdue ${Math.abs(daysUntil)}d`; }
+                if (oneTime && !activeThisMonth) { badgeClass = 'sub-due-ok'; badgeText = 'One-Time · recorded'; }
+                else if (daysUntil < 0) { badgeClass = 'sub-due-urgent'; badgeText = `Overdue ${Math.abs(daysUntil)}d`; }
                 else if (daysUntil === 0) { badgeClass = 'sub-due-urgent'; badgeText = 'Due TODAY'; }
                 else if (daysUntil <= 3) { badgeClass = 'sub-due-urgent'; badgeText = `Due in ${daysUntil}d`; }
                 else if (daysUntil <= 7) { badgeClass = 'sub-due-soon'; badgeText = `Due in ${daysUntil}d`; }
@@ -32542,7 +32572,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 // The "@chartLine@ Set May" pill uses .sub-act.cta-gold for the
                 // accent variant so it visually pops without overriding
                 // the chip geometry (no more inline-style specificity wars).
-                const thisMonthCta = needsThisMonth
+                const thisMonthCta = oneTime ? '' : needsThisMonth
                     ? `<button type="button" class="sub-act cta-gold" onclick="setSubscriptionMonthAmount('${_wfJsAttr(s.id)}')"
                                 title="Set this month's actual amount (great for telecom, water, electricity)">
                                 @chartLine@ Set ${MONTHS[now.getMonth()].slice(0,3)}
@@ -32561,7 +32591,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     <div class="sub-icon">${catIcons[s.category] || '@receipt@'}</div>
                     <div style="flex:1 1 0;min-width:0;">
                         <div style="font-size:14px;font-weight:700;word-wrap:break-word;overflow-wrap:break-word;">${_wfEsc(s.name)}</div>
-                        <div style="font-size:11px;color:var(--text3);word-wrap:break-word;">${_wfEsc(s.category)} · Day ${s.dueDay} · ${s.cycle}</div>
+                        <div style="font-size:11px;color:var(--text3);word-wrap:break-word;">${_wfEsc(s.category)} · Day ${s.dueDay} · ${oneTime ? 'One-Time' : _wfEsc(s.cycle)}</div>
                         ${notesHtml}
                         ${variableBadge}
                     </div>

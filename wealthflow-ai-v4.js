@@ -1100,7 +1100,8 @@
         // Billing cycle inference from text
         if ($('sub_cycle') && result.raw_text) {
             var rt = result.raw_text.toLowerCase();
-            if (/\b(annual|yearly|per year|12 month)\b/.test(rt)) $('sub_cycle').value = 'yearly';
+            if (/\b(one[ -]?time|single payment|pay once|once only)\b/.test(rt)) $('sub_cycle').value = 'once';
+            else if (/\b(annual|yearly|per year|12 month)\b/.test(rt)) $('sub_cycle').value = 'yearly';
             else if (/\b(quarter|3 month|every 3 months)\b/.test(rt)) $('sub_cycle').value = 'quarterly';
             else $('sub_cycle').value = 'monthly';
         }

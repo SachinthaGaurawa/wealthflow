@@ -141,7 +141,7 @@
     }
 
     /* ── SUBSCRIPTIONS ─────────────────────────────────────────────────────── */
-    var CYCLE_PER_YEAR = { monthly: 12, quarterly: 4, yearly: 1, annual: 1, weekly: 52 };
+    var CYCLE_PER_YEAR = { once: 1, 'one-time': 1, onetime: 1, monthly: 12, quarterly: 4, yearly: 1, annual: 1, weekly: 52 };
     function perYear(s) { return CYCLE_PER_YEAR[String(s.cycle || 'monthly').toLowerCase()] || 12; }
 
     /* monthOverrides is a { "YYYY-MM": amount } map the app has always written and never read. */
@@ -168,6 +168,7 @@
         }
 
         list.forEach(function (s) {
+            var oneTime = /^(once|one-time|onetime)$/.test(String(s.cycle || '').toLowerCase());
             var ser = priceSeries(s);
 
             // 1) PRICE RISE — the data was always there
@@ -197,7 +198,7 @@
             }
 
             // 3) RENEWAL — due within a week
-            if (s.dueDay) {
+            if (s.dueDay && !oneTime) {
                 var due = nextOn(s.dueDay), d = daysBetween(today, due);
                 if (d <= 3) {
                     out.push({ sev: d <= 1 ? 'high' : 'low', kind: 'sub_renew', sub: s.id,
