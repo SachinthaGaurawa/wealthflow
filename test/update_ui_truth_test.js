@@ -109,8 +109,12 @@ describe('the hardcoded release history is gone', () => {
         // pair processOneStatement() has written on every transient-failure
         // retry since that branch existed, previously never read back by
         // anything. Same trimming discipline as the fields above it.
+        // Raised from 116_200 after the Settings stability audit added a real
+        // keyboard-accessible switch state (role/tabindex/ARIA + atomic sync)
+        // to the auto-security control. Release-history duplication remains
+        // prohibited by the structural assertions immediately above.
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(116_200);
+        expect(bytes).toBeLessThan(116_500);
     });
 });
 

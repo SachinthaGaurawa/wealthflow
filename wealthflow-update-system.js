@@ -524,7 +524,7 @@
             '</div>' +
             '<div class="setting-row" style="border-top:1px solid var(--border);margin-top:8px;padding-top:12px;">' +
                 '<div class="setting-info"><div class="setting-label">Auto-install security updates</div><div class="setting-desc">Like Android: when ON, urgent security updates install automatically (still backup-first + rollback). Other updates always ask first.</div></div>' +
-                '<div class="toggle' + (_autoSecurityOn() ? ' on' : '') + '" id="wfAutoSec" onclick="wfUpdate.setAutoSecurity(!this.classList.contains(\'on\'))"></div>' +
+                '<div class="toggle' + (_autoSecurityOn() ? ' on' : '') + '" id="wfAutoSec" role="switch" tabindex="0" aria-label="Auto-install security updates" aria-checked="' + (_autoSecurityOn() ? 'true' : 'false') + '" onclick="wfUpdate.setAutoSecurity(!this.classList.contains(\'on\'))"></div>' +
             '</div>' +
             '<div class="setting-row">' +
                 '<div class="setting-info"><div class="setting-label">Prioritised feedback</div><div class="setting-desc">See all user feedback scored and ranked by urgency (security & crashes first).</div></div>' +
@@ -569,7 +569,11 @@
     function _autoSecurityOn() { try { return localStorage.getItem(LS_AUTOSEC) === '1'; } catch (_) { return false; } }
     function setAutoSecurity(on) {
         try { localStorage.setItem(LS_AUTOSEC, on ? '1' : '0'); } catch (_) {}
-        const tg = document.getElementById('wfAutoSec'); if (tg) tg.classList.toggle('on', !!on);
+        const tg = document.getElementById('wfAutoSec');
+        if (tg) {
+            tg.classList.toggle('on', !!on);
+            tg.setAttribute('aria-checked', on ? 'true' : 'false');
+        }
         _notify(on ? 'Auto-install for urgent security updates is ON.' : 'Auto-install for security updates is OFF.', on ? 'success' : 'info');
         if (on && _updateAvailable() && _isMandatory(_latestVersion())) {
             setTimeout(() => _autoApplyIfSecurity(), 600);

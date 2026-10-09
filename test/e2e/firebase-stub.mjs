@@ -63,21 +63,22 @@ export function firebaseStubSource(user = TEST_USER) {
   function emptyQuery() {
     return { empty: true, size: 0, docs: [], forEach: function () {} };
   }
-  function docRef() {
+  function docRef(owner) {
     var d = {
+      firestore: owner,
       get: function () { return Promise.resolve(emptySnap()); },
       set: function () { return Promise.resolve(); },
       update: function () { return Promise.resolve(); },
       delete: function () { return Promise.resolve(); },
       onSnapshot: function (cb) { try { typeof cb === 'function' && cb(emptySnap()); } catch (e) {} return function () {}; },
     };
-    d.collection = function () { return collRef(); };
+    d.collection = function () { return collRef(owner); };
     return d;
   }
-  function collRef() {
+  function collRef(owner) {
     var c = {
-      doc: function () { return docRef(); },
-      add: function () { return Promise.resolve(docRef()); },
+      doc: function () { return docRef(owner); },
+      add: function () { return Promise.resolve(docRef(owner)); },
       get: function () { return Promise.resolve(emptyQuery()); },
       onSnapshot: function (cb) { try { typeof cb === 'function' && cb(emptyQuery()); } catch (e) {} return function () {}; },
     };
@@ -89,9 +90,9 @@ export function firebaseStubSource(user = TEST_USER) {
   }
 
   var firestore = function () {
-    return {
-      collection: function () { return collRef(); },
-      doc: function () { return docRef(); },
+    var db = {
+      collection: function () { return collRef(db); },
+      doc: function () { return docRef(db); },
       batch: function () {
         return { set: function () {}, update: function () {}, delete: function () {}, commit: function () { return Promise.resolve(); } };
       },
@@ -99,6 +100,7 @@ export function firebaseStubSource(user = TEST_USER) {
       enablePersistence: function () { return Promise.resolve(); },
       settings: function () {},
     };
+    return db;
   };
   firestore.FieldValue = {
     serverTimestamp: function () { return new Date(); },
