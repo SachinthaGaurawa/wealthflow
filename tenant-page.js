@@ -300,7 +300,7 @@ export function createPage(env) {
     function mount(title, nodes, focus) {
         stopTick();
         st.busy = false;
-        const brand = h(doc, 'h1', { class: 'tp-brand', text: 'WealthFlow' });
+        const brand = h(doc, 'h1', { class: 'tp-brand' }, h(doc, 'img', { src: '/assets/brand/wealthflow-wordmark.svg', alt: 'WealthFlow' }));
         const lang = h(doc, 'button', { class: 'tp-lang', type: 'button', id: 'tp-lang', lang: st.lang === 'si' ? 'en' : 'si', text: LANG_BUTTON[st.lang], onclick: toggleLang });
         root.replaceChildren(h(doc, 'div', { class: 'tp-top' }, brand, lang), ...nodes);
         const target = focus ? root.querySelector(focus) : root.querySelector('h2');
@@ -509,7 +509,7 @@ export function createPage(env) {
         st.verified = false;
         st.statement = null;
         st.codeMessage = '';
-        root.replaceChildren(h(doc, 'h1', { class: 'tp-brand', text: 'WealthFlow' }));
+        root.replaceChildren(h(doc, 'h1', { class: 'tp-brand' }, h(doc, 'img', { src: '/assets/brand/wealthflow-wordmark.svg', alt: 'WealthFlow' })));
         st.els = {};
     }
 

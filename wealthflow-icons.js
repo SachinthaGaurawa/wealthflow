@@ -68,6 +68,7 @@
         sparkles:'<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
         send:'<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9"/>',
         menu:'<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>',
+        moreHorizontal:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
         thumbsUp:'<path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/>',
         thumbsDown:'<path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/>',
         eye:'<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
@@ -186,6 +187,18 @@
         if (document.body) mo.observe(document.body, { childList: true, subtree: true });
         else document.addEventListener('DOMContentLoaded', function () { mo.observe(document.body, { childList: true, subtree: true }); });
     } catch (_) {}
+})();
+
+/* The secure shell shares this first-party bootstrap to avoid another startup request. */
+(function(){
+    var page='dashboard',ready=0,$=function(s){return Array.from(document.querySelectorAll(s));};
+    function announce(s){var n=document.getElementById('wfShellAnnouncer');if(n)n.textContent=s||'';}
+    function setRouteState(p){page=p||'dashboard';document.documentElement.dataset.wfRoute=page;$('[data-wf-page]').forEach(function(n){var on=n.dataset.wfPage===page;n.classList.toggle('active',on);n.setAttribute('aria-current',on?'page':'false');});}
+    function setSyncState(s){var n=document.getElementById('syncIndicator'),labels={syncing:'Syncing',synced:'Synced',offline:'Offline',error:'Sync issue'};if(!n)return;s=labels[s]?s:'synced';n.dataset.state=s;n.textContent=labels[s];announce(labels[s]);}
+    function activate(p){typeof showPage==='function'?showPage(p):setRouteState(p);}
+    function init(){var n=document.getElementById('wfMobileNav');if(ready||!n)return;ready=1;$('.sidebar .nav-item').forEach(function(x){var m=/showPage\('([^']+)'/.exec(x.getAttribute('onclick')||'');if(!m)return;x.dataset.wfPage=m[1];x.setAttribute('role','button');x.tabIndex=0;x.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();activate(m[1]);}});});n.innerHTML=[['dashboard','dashboard','Home'],['incRecv','wallet','Income'],['expenses','receipt','Spend'],['ai','bot','Advisor']].map(function(x){return '<button data-wf-page="'+x[0]+'" aria-label="'+x[2]+'"><i data-wfi="'+x[1]+'"></i><span>'+x[2]+'</span></button>';}).join('')+'<button aria-label="More tools" onclick="openSb()"><i data-wfi="moreHorizontal"></i><span>More</span></button>';n.addEventListener('click',function(e){var b=e.target.closest('[data-wf-page]');if(b)activate(b.dataset.wfPage);});setRouteState(page);}
+    window.WealthFlowShell={init:init,setRouteState:setRouteState,setSyncState:setSyncState,announce:announce};
+    document.readyState==='loading'?document.addEventListener('DOMContentLoaded',init,{once:true}):init();
 })();
 
 /*  Hydrate source-level icon tokens into inline SVG icons.
