@@ -313,7 +313,12 @@ export const BUDGETS = {
     // toasts say a text is queued. About a third is comments.
     // 2026-10-05 (a second number, and Settle & close on an investment): 2,216,000 -> 2_219_000 (measured 2,217,148 + ~0.1% headroom). saveIncome and the debtor form carry and check the second number; the investment card gets a
     // Settle & close / Re-open button and a Settled badge, and the Ended list counts a closed investment. About a third is comments.
-    htmlBytes: 2_219_000,
+    // 2026-10-09: 2,219,000 -> 2,223,000 (measured 2,220,464). The secure
+    // application now exposes a semantic mobile navigation landmark and a
+    // read-only reconciled dashboard mount. The visual rules live in separate
+    // cacheable stylesheets; this HTML increase is only their links, the mount,
+    // and the adapter that passes existing computed figures into the view.
+    htmlBytes: 2_223_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -644,7 +649,12 @@ export const BUDGETS = {
     // tested costs 1,309 bytes; duplicating these rules would avoid the counter
     // while making legacy-link migration inconsistent. The ceiling moves once
     // with less than 0.2% headroom.
-    totalJsBytes: 2_460_000,
+    // 2026-10-09: 2,460,000 -> 2,472,000 (measured 2,467,713). The new
+    // wealthflow-dashboard-ui.js owns presentation only: it receives already
+    // reconciled figures, writes no storage, and renders accessible SVG data,
+    // empty, loading and recovery states. Keeping it isolated avoids adding more
+    // untestable code to the 2.2 MB HTML monolith.
+    totalJsBytes: 2_472_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     largestModuleBytes: 233_000, // measured 232,325
@@ -737,7 +747,9 @@ export const BUDGETS = {
     // 2026-10-08: 86 -> 87 for wealthflow-public-identity.mjs. It is server
     // shared rather than a new browser request, but this budget deliberately
     // counts every deployable module, so the identity authority stays visible.
-    moduleCount: 87,   // measured 87
+    // 2026-10-09: 87 -> 88 for the read-only dashboard presentation module.
+    // It is type="module", deferred by the browser, and covered by DOM tests.
+    moduleCount: 88,
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -806,7 +818,9 @@ export const BUDGETS = {
     // 2026-10-04: 77 -> 78 for wealthflow-own-money.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-05: 78 -> 79 for wealthflow-sms.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-05: 79 -> 80 for wealthflow-people-ui.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
-    scriptTags: 80,              // measured 80; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
+    // 2026-10-09: 80 -> 81 for wealthflow-dashboard-ui.js. It is deferred and
+    // renderBlockingScripts below remains fixed at two.
+    scriptTags: 81,
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

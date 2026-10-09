@@ -25,3 +25,4 @@ ai-fix-pr.json
 pr-body.txt
 .vercel
 .DS_Store
+.impeccable/review/

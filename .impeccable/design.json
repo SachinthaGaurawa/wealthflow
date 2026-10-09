@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-09T12:55:00+05:30",
+  "title": "Design System: WealthFlow Premium FinTech",
+  "extensions": {
+    "colorMeta": {
+      "midnight-canvas": { "role": "neutral", "displayName": "Midnight Canvas", "canonical": "#050911", "tonalRamp": ["#020409", "#050911", "#0b1422", "#18273a", "#33445a", "#65758a", "#aab5c3", "#edf1f6"] },
+      "wealth-gold": { "role": "primary", "displayName": "Wealth Gold", "canonical": "#e7bd55", "tonalRamp": ["#241b06", "#45350b", "#705716", "#9e7d26", "#c9a43e", "#e7bd55", "#f2d784", "#fff5d8"] },
+      "verified-emerald": { "role": "secondary", "displayName": "Verified Emerald", "canonical": "#3dd3a4", "tonalRamp": ["#041d16", "#07382a", "#0d5a43", "#188062", "#27aa82", "#3dd3a4", "#87e8ca", "#dcfaf0"] },
+      "risk-crimson": { "role": "tertiary", "displayName": "Risk Crimson", "canonical": "#fb7185", "tonalRamp": ["#2b0710", "#530e1d", "#84192f", "#b52c46", "#df4962", "#fb7185", "#fda4af", "#ffe4e8"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Editorial Promise", "purpose": "Marketing hero promise only." },
+      "headline": { "displayName": "Financial Headline", "purpose": "Page, statement, and record titles." },
+      "body": { "displayName": "Operational Body", "purpose": "Instructions and financial context." },
+      "label": { "displayName": "Ledger Label", "purpose": "Metadata, chips, and table labels." }
+    },
+    "shadows": [
+      { "name": "panel-ambient", "value": "0 14px 38px rgba(0,0,0,.2)", "purpose": "Low separation for dashboard panels." },
+      { "name": "tenant-card", "value": "0 18px 42px rgba(0,0,0,.22)", "purpose": "Separation for secure statement records." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(.2,.75,.2,1)", "purpose": "Short state transitions and controlled entrances." },
+      { "name": "duration-fast", "value": "140ms", "purpose": "Hover, focus, and press feedback." }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "560px" },
+      { "name": "shell-collapse", "value": "768px" },
+      { "name": "tenant-wide", "value": "860px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The decisive action on a financial surface.",
+      "html": "<button class=\"ds-btn-primary\">Continue securely</button>",
+      "css": ".ds-btn-primary{min-height:52px;padding:12px 18px;border:0;border-radius:var(--wf-radius-lg,12px);color:#08110f;background:var(--wf-gold,#e7bd55);font:800 15px/1.2 var(--wf-font,sans-serif);cursor:pointer;transition:filter 140ms var(--wf-ease),transform 140ms var(--wf-ease)}.ds-btn-primary:hover{filter:brightness(1.06)}.ds-btn-primary:active{transform:translateY(1px)}.ds-btn-primary:focus-visible{outline:3px solid var(--wf-focus,#ffd66b);outline-offset:3px}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary action with clear structure and restrained weight.",
+      "html": "<button class=\"ds-btn-ghost\">View details</button>",
+      "css": ".ds-btn-ghost{min-height:48px;padding:12px 16px;border:1px solid var(--wf-line-strong,rgba(188,202,222,.22));border-radius:12px;color:var(--wf-text-soft,#c9d2df);background:rgba(255,255,255,.025);font:700 14px/1.2 var(--wf-font,sans-serif);cursor:pointer;transition:background 140ms,color 140ms}.ds-btn-ghost:hover{color:var(--wf-text,#f4f7fb);background:rgba(255,255,255,.06)}.ds-btn-ghost:focus-visible{outline:3px solid var(--wf-focus,#ffd66b);outline-offset:3px}"
+    },
+    {
+      "name": "Financial Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A quiet, high-contrast container for one financial concern.",
+      "html": "<section class=\"ds-card\"><h3>Available balance</h3><strong>LKR 245,000.00</strong><p>Verified moments ago</p></section>",
+      "css": ".ds-card{padding:28px;border:1px solid var(--wf-line,rgba(158,174,197,.13));border-radius:16px;color:var(--wf-text,#f4f7fb);background:var(--wf-ink-2,#0d1726);box-shadow:0 14px 38px rgba(0,0,0,.2);font-family:var(--wf-font,sans-serif)}.ds-card h3{margin:0 0 16px;font-size:18px}.ds-card strong{font-size:28px;font-variant-numeric:tabular-nums}.ds-card p{margin:10px 0 0;color:var(--wf-text-muted,#8491a5)}"
+    },
+    {
+      "name": "Verified Chip",
+      "kind": "chip",
+      "description": "Text-and-color status for a verified financial state.",
+      "html": "<span class=\"ds-chip-verified\">Verified</span>",
+      "css": ".ds-chip-verified{display:inline-flex;align-items:center;min-height:26px;padding:3px 9px;border:1px solid rgba(61,211,164,.36);border-radius:999px;color:var(--wf-emerald,#3dd3a4);background:rgba(61,211,164,.06);font:750 12px/1.2 var(--wf-font,sans-serif)}"
+    },
+    {
+      "name": "Secure Input",
+      "kind": "input",
+      "description": "Touch-safe credential and identifier field.",
+      "html": "<input class=\"ds-input\" aria-label=\"NIC or passport number\" placeholder=\"NIC or passport number\">",
+      "css": ".ds-input{width:100%;min-height:54px;padding:12px 14px;border:1px solid var(--wf-line-strong,rgba(188,202,222,.22));border-radius:12px;color:var(--wf-text,#f4f7fb);background:rgba(255,255,255,.035);font:18px/1.3 var(--wf-font,sans-serif);transition:border-color 140ms,background 140ms}.ds-input:hover{background:rgba(255,255,255,.05)}.ds-input:focus-visible{outline:3px solid var(--wf-focus,#ffd66b);outline-offset:3px;border-color:var(--wf-focus,#ffd66b)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Trusted Financial Instrument",
+    "overview": "WealthFlow should feel like a precise financial instrument rather than a decorative dashboard. It uses a deep midnight field, high-contrast information, quiet glass layers, and rare gold or emerald signals to communicate trust, control, and verified progress.",
+    "keyCharacteristics": ["Evidence-led hierarchy", "Dark tonal layering", "Restrained semantic accents", "Touch-safe responsive flows"],
+    "rules": [
+      { "name": "The One Decisive Accent Rule", "body": "Gold identifies the primary action or active destination; it must not become background decoration across the screen.", "section": "colors" },
+      { "name": "The Semantic Signal Rule", "body": "Emerald and crimson communicate real system or financial state, never mood.", "section": "colors" },
+      { "name": "The Figure First Rule", "body": "Financial values use tabular numerals, strong weight, and direct labels; decorative text effects are not part of the system.", "section": "typography" },
+      { "name": "The Tonal Before Shadow Rule", "body": "Use background tone and a single hairline before adding elevation; colored glow is not a general surface treatment.", "section": "elevation" }
+    ],
+    "dos": ["Do keep gold rare and attached to the primary action or active destination.", "Do provide reduced-motion, reduced-transparency, forced-color, keyboard-focus, and narrow-screen behavior.", "Do keep financial figures tabular, explicit, and traceable to a labeled record.", "Do use SVG brand assets and semantic icons instead of emoji or placeholder glyphs."],
+    "donts": ["Don't use gradient text, decorative pulse indicators, or colored glow as proof of activity.", "Don't create cards inside cards when spacing or a divider can express hierarchy.", "Don't place body copy below 14px; 12px is reserved for labels and metadata.", "Don't let glass effects reduce contrast or become required for comprehension."]
+  }
+}

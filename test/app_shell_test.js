@@ -10,9 +10,9 @@ describe('secure application shell', () => {
     it('supports compact navigation, visible focus and user motion preferences', () => {
         expect(css).toMatch(/\.wf-mobile-nav\s*\{/);
         expect(css).toMatch(/:focus-visible/);
-        expect(css).toContain('@media(prefers-reduced-motion:reduce)');
-        expect(css).toContain('@media(prefers-reduced-transparency:reduce)');
-        expect(css).toContain('@media(forced-colors:active)');
+        expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+        expect(css).toMatch(/@media\s*\(prefers-reduced-transparency:\s*reduce\)/);
+        expect(css).toMatch(/@media\s*\(forced-colors:\s*active\)/);
     });
 
     it('contains complete dashboard states instead of an unstyled injected island', () => {
