@@ -214,8 +214,6 @@
     <meta name="viewport"
         content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>WealthFlow | Elite Financial System</title>
-    <link rel="canonical" href="https://www.wealthflow.lk/app">
-    <meta property="og:url" content="https://www.wealthflow.lk/app">
     <meta name="application-name" content="WealthFlow">
     <meta name="description" content="WealthFlow Elite Financial System - Manage your wealth with precision">
     <meta name="theme-color" content="#060a14">
@@ -458,7 +456,6 @@
          are harmless. READ-ONLY: it prunes nothing. The compaction engine was
          deliberately not built until the numbers justify it. window.WFDataHealth -->
     <script src="wealthflow-data-health.js" defer></script>
-    <script type="module" src="wealthflow-dashboard-ui.js"></script>
     <!-- Committed Cash Flow Engine — walks the loan EMIs, card instalments,
          subscription renewals and post-dated cheques already in the ledger day
          by day, and names the date the balance goes under along with the
@@ -5574,9 +5571,6 @@
             .content { max-width: 2400px; width: 100%; margin-inline: auto; padding-inline: clamp(24px, 2vw, 64px); }
         }
     </style>
-    <link rel="stylesheet" href="/styles/wf-tokens.css">
-<link rel="stylesheet" href="/wealthflow-shell.css">
-<link rel="stylesheet" href="/wealthflow-dashboard.css">
 </head>
 
 <body>
@@ -5587,7 +5581,7 @@
             <div class="sp-orb sp-orb2"></div>
         </div>
         <div class="sp-logo"><img
-                src="/assets/brand/wealthflow-mark.svg"
+                src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png"
                 alt="WealthFlow"></div>
         <div class="sp-title-wrap">
             <div class="sp-title">WealthFlow</div>
@@ -5700,7 +5694,7 @@
 
         <div class="auth-box" id="authGoogle" style="display:none;">
             <div class="auth-logo"><img
-                    src="/assets/brand/wealthflow-mark.svg"
+                    src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png"
                     alt="WealthFlow"></div>
             <div class="auth-title">WealthFlow Cloud</div>
             <div class="auth-sub">Take control of your money — track, plan and grow with confidence</div>
@@ -5752,7 +5746,7 @@
 
         <div class="auth-box" id="authLogin" style="display:none;">
             <div class="auth-logo"><img
-                    src="/assets/brand/wealthflow-mark.svg"
+                    src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png"
                     alt="WealthFlow"></div>
             <div class="auth-title">Welcome Back</div>
             <div class="auth-sub" id="authLoginSub">Enter your 6-digit PIN to unlock</div>
@@ -5923,7 +5917,7 @@
             <div class="sb-logo">
                 <div class="sb-logomark">
                     <div class="sb-icon">
-                        <img src="/assets/brand/wealthflow-mark.svg"
+                        <img src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png"
                             alt="WealthFlow Logo" style="max-width: 100%; height: auto;">
                     </div>
                     <div>
@@ -5989,8 +5983,6 @@
                 <div class="sb-ver" id="wfSbVer">WealthFlow · Infinity Engine</div>
             </div>
         </aside>
-        <nav class="wf-mobile-nav" id="wfMobileNav" aria-label="Primary"></nav>
-        <div class="wf-shell-announcer" id="wfShellAnnouncer" role="status" aria-live="polite" aria-atomic="true"></div>
 
         <div class="main">
             <header class="topbar">
@@ -6033,7 +6025,6 @@
                     connection recovers.</div>
 
                 <div class="page active" id="page-dashboard">
-                    <div id="wfDashboardExperience" aria-live="polite"></div>
                     <div id="wfBrief" style="margin-bottom:16px;"></div>
                     <!-- The Pending Inflow Queue. A date arriving is not evidence
                          that money arrived, so a due payout produces a QUESTION
@@ -13093,8 +13084,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 if (!('Notification' in window) || Notification.permission !== 'granted') return;
                 const opts = {
                     body,
-                    icon: icon || '/assets/brand/wealthflow-mark.svg',
-                    badge: '/assets/brand/wealthflow-mark.svg',
+                    icon: icon || 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
+                    badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
                     vibrate: [100, 50, 100],
                     tag: 'wealthflow-ai-' + Date.now(),
                     renotify: true,
@@ -18222,7 +18213,6 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const pageEl = $('page-' + name);
             if (pageEl) pageEl.classList.add('active');
             if (navEl) navEl.classList.add('active');
-            try { if (window.WealthFlowShell) window.WealthFlowShell.setRouteState(name); } catch (_) {}
             $('pgTitle').innerHTML = pgTitles[name] || name;
             closeSb();
 
@@ -28836,14 +28826,6 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="stat-card sc-blue"><div class="stat-label">${periodCardTitle}</div><div class="stat-val">${fmtS(periodExp)}</div><div class="stat-meta">${periodLabel}</div></div>
         ${DB.getObj('settings', {}).showSavingsRate === false ? '' : `<div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>`}
     `;
-            try {
-                if (window.WealthFlowDashboardUI) {
-                    const attention = [];
-                    if (yrPending > 0) attention.push({ title: 'Confirm received income', detail: `${fmtS(yrPending)} is imported but not confirmed`, severity: 'warning' });
-                    if (yrLoanUnpaid > 0) attention.push({ title: 'Review due loan payments', detail: `${fmtS(yrLoanUnpaid)} is due and not marked paid`, severity: 'critical' });
-                    window.WealthFlowDashboardUI.render({ year, currency: _getCurrency(), overview: [{ label: 'Income received', value: yrInc, tone: 'positive' }, { label: 'Expenses paid', value: yrExp, tone: 'negative' }, { label: 'Net savings', value: yrInc - yrExp, tone: 'accent' }], attention, freshness: { label: 'Updated just now', state: navigator.onLine === false ? 'offline' : 'fresh' }, source: { from: 'Verified statements', through: 'Reconciled books', to: 'Financial plan' }, series: months.map((label, index) => ({ label, income: incData[index], expense: expData[index] })), categories: Object.entries(catMap).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value) });
-                }
-            } catch (error) { try { if (window.WealthFlowDashboardUI) window.WealthFlowDashboardUI.renderError(error); } catch (_) {} }
 
 
             const ctxC = $('dashChart');
@@ -30482,8 +30464,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             try {
                 const options = {
                     body,
-                    icon: '/assets/brand/wealthflow-mark.svg',
-                    badge: '/assets/brand/wealthflow-mark.svg',
+                    icon: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
+                    badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
                     tag,
                     vibrate: [5, 40, 5, 40, 12, 60, 20],
                     requireInteraction: false,
@@ -30805,8 +30787,8 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                 await reg.showNotification(built ? built.title : plainTitle, {
                     body: built ? built.body : plainBody,
-                    icon: '/assets/brand/wealthflow-mark.svg',
-                    badge: '/assets/brand/wealthflow-mark.svg',
+                    icon: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
+                    badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
                     tag: 'wf-actionable-' + id,
                     requireInteraction: true,
                     actions: built ? built.actions : [

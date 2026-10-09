@@ -28,7 +28,7 @@ import { normalizeNic } from '../../wealthflow-nic.js';
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 const PAGE_HEADERS = Object.fromEntries(VERCEL.headers.find((h) => h.source === '/t/(.*)').headers.map((h) => [h.key, h.value]));
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 
 const ENV = { TENANT_PORTAL_SECRET: 'e2e-secret-'.repeat(4) };
 const NIC = '853400937V';
@@ -75,8 +75,8 @@ const server = http.createServer((req, res) => {
     if (/^\/t\/[A-Za-z0-9_-]{16}$/.test(file)) { file = '/tenant.html'; Object.assign(headers, PAGE_HEADERS); }
     const f = path.resolve(ROOT, '.' + file);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end('not found'); }
-    // the page's own files, brand assets, shared tokens and NIC module only
-    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-lang\.js|wealthflow-nic\.js|styles\/wf-tokens\.css|assets\/brand\/wealthflow-wordmark\.svg)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
+    // the page's own files, its words, the shared NIC module and nothing else
+    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-lang\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', ...headers });
     res.end(fs.readFileSync(f));
 });

@@ -105,8 +105,8 @@ describe('the page', () => {
 
     it('loads nothing from anywhere else, and sets no inline style', () => {
         expect(CSS).not.toMatch(/@import|url\(\s*['"]?(https?:|\/\/)|expression\(/i);
-        expect(CSS).toMatch(/min-height:\s*(?:5[2-9]|[6-9]\d)px/);                    // touch targets
-        expect(CSS).toMatch(/font(?:-size|):[^;}]*18px/);                              // a phone does not zoom into the field
+        expect(CSS).toMatch(/min-height: 52px/);                                      // touch targets
+        expect(CSS).toMatch(/font-size: 18px/);                                       // a phone does not zoom into the field
     });
 
     it('does not appear in the sitemap of anything the app precaches', () => {
