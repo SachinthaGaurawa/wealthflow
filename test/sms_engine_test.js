@@ -35,7 +35,7 @@ const mirrorDocs = (fs) => [...fs.data.entries()].filter(([p]) => p.startsWith(`
 function gateway(behaviour = () => ({ ok: true, gatewayId: 'g', cost: 1, segments: 1 }), { configured = true } = {}) {
     const sent = []; let inFlight = 0; let peak = 0; let n = 0;
     return {
-        configured, senderId: 'WEALTHFLOW', sent,
+        configured, senderId: 'WealthFlow', sent,
         get peak() { return peak; },
         async send({ to, message }) {
             inFlight += 1; peak = Math.max(peak, inFlight);
@@ -870,7 +870,7 @@ describe('a second number: every text goes to both, each tracked on its own', ()
         const { db } = makeDb();
         const arrived = [];
         const gw = {
-            configured: true, senderId: 'WEALTHFLOW',
+            configured: true, senderId: 'WealthFlow',
             async send({ to, message }) {
                 await new Promise((r) => setTimeout(r, /^Repayment/.test(message) ? 25 : 1));        // the receipt is the slow one
                 arrived.push({ to, kind: /^Repayment/.test(message) ? 'receipt' : /settled and closed/.test(message) ? 'closed' : 'other' });

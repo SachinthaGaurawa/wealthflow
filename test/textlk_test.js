@@ -118,10 +118,12 @@ describe('phone numbers: any way a person types them, one way on the wire', () =
 
 describe('sender id', () => {
     it('is matched without regard to case, and the approved spelling is kept', () => {
-        expect(normalizeSenderId('wealthflow')).toBe('WEALTHFLOW');
-        expect(normalizeSenderId(' WealthFlow ')).toBe('WEALTHFLOW');
-        expect(sameSender('WEALTHFLOW', 'wealthflow')).toBe(true);
-        expect(sameSender('WEALTHFLOW', 'OTHER')).toBe(false);
+        expect(normalizeSenderId('wealthflow')).toBe('WealthFlow');
+        expect(normalizeSenderId('WEALTHFLOW')).toBe('WealthFlow');
+        expect(normalizeSenderId(' WealthFlow ')).toBe('WealthFlow');
+        expect(DEFAULT_SENDER).toBe('WealthFlow');
+        expect(sameSender('WEALTHFLOW', 'WealthFlow')).toBe(true);
+        expect(sameSender('WealthFlow', 'OTHER')).toBe(false);
     });
     it('refuses what a sender id cannot be', () => {
         for (const bad of ['', 'ab', 'WEALTH FLOW', 'WEALTHFLOW-APP', 'TWELVECHARSXX', 'WéALTH']) expect(normalizeSenderId(bad), bad).toBeNull();
@@ -164,7 +166,7 @@ describe('what goes on the wire', () => {
         expect(calls[0].init.headers.Authorization).toBe(`Bearer ${TOKEN}`);
         expect(calls[0].init.headers['Content-Type']).toBe('application/json');
         expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
-        expect(JSON.parse(calls[0].init.body)).toEqual({ recipient: '94771234567', sender_id: 'WEALTHFLOW', type: 'plain', message: 'Hello there' });
+        expect(JSON.parse(calls[0].init.body)).toEqual({ recipient: '94771234567', sender_id: 'WealthFlow', type: 'plain', message: 'Hello there' });
     });
 
     it('treats the gateway status as case-insensitive', async () => {
@@ -194,9 +196,9 @@ describe('what goes on the wire', () => {
     });
 
     it('reads the token from TEXTLK_API_TOKEN and the sender from TEXTLK_SENDER_ID', () => {
-        const c = TextLkClient.fromEnv({ TEXTLK_API_TOKEN: TOKEN, TEXTLK_SENDER_ID: 'wealthflow' });
+        const c = TextLkClient.fromEnv({ TEXTLK_API_TOKEN: TOKEN, TEXTLK_SENDER_ID: 'WEALTHFLOW' });
         expect(c.configured).toBe(true);
-        expect(c.senderId).toBe('WEALTHFLOW');
+        expect(c.senderId).toBe('WealthFlow');
         expect(TextLkClient.fromEnv({}).configured).toBe(false);
     });
 

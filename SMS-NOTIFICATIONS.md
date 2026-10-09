@@ -1,6 +1,6 @@
 # Text-message notices (Text.lk)
 
-WealthFlow texts the people the owner has invested for or lent to, from the approved sender ID `WEALTHFLOW`, through the
+WealthFlow texts the people the owner has invested for or lent to, from the approved sender ID `WealthFlow`, through the
 Text.lk HTTP API v3 (`https://app.text.lk/api/v3/`).
 
 ## What is sent
@@ -107,7 +107,7 @@ read six fields (bank, name, number, branch, SWIFT / IBAN, note) and nothing els
 | --- | --- | --- |
 | `TEXTLK_API_TOKEN` | to send | the Text.lk API token (Bearer). Never logged, never sent to the page |
 | `SMS_ALLOWED_EMAILS` | to send | comma-separated verified emails allowed to use it (or a Firebase `admin` claim). Unset means nobody |
-| `TEXTLK_SENDER_ID` | no | defaults to `WEALTHFLOW` |
+| `TEXTLK_SENDER_ID` | no | defaults to `WealthFlow`; any capitalisation of it (`WEALTHFLOW`) is sent as `WealthFlow` |
 | `SMS_CREDIT_RESERVE` | no | units kept for the texts people are waiting for; defaults to `20`, `0` switches the rule off. Under it, late-payment reminders wait (see *Credit reserve* below) |
 | `SMS_ALERT_WEBHOOK_URL` | no | an `https` endpoint (a Slack or Discord incoming webhook, or anything that takes JSON) told when credit falls under the reserve and when Firebase sign-in has not answered on two runs in a row; at most once a day each. Addresses that only mean something inside a network (`localhost`, IPs, `*.internal`, a port) are refused |
 | `CRON_SECRET` | for the daily sweep | already used by the other crons |

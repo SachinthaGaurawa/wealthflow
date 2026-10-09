@@ -479,7 +479,7 @@ export function announce(rows, memory = {}) {
 export const HELD_NOTICE = Object.freeze({
     credit: ['Texts are waiting for SMS credit', 'Top up your Text.lk account and they go out by themselves.'],
     auth: ['Texts are waiting: Text.lk rejected the API token', 'Check TEXTLK_API_TOKEN in the Vercel settings.'],
-    sender: ['Texts are waiting for the sender ID', 'Text.lk has to approve the WEALTHFLOW sender ID first.'],
+    sender: ['Texts are waiting for the sender ID', 'Text.lk has to approve the WealthFlow sender ID first.'],
     config: ['Texts are waiting: Text.lk is not connected', 'Add TEXTLK_API_TOKEN in the Vercel settings.'],
     unconfigured: ['Texts are waiting: Text.lk is not connected', 'Add TEXTLK_API_TOKEN in the Vercel settings and they go out by themselves.'],
     low: ['SMS credit is running low', 'When it runs out, texts are held, not lost, until you top up.'],
