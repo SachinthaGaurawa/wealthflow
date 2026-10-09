@@ -10,10 +10,12 @@ Text.lk HTTP API v3 (`https://app.text.lk/api/v3/`).
 | A | Investments tab, investment form | capital recorded, monthly interest applied, a payment received, the investment settled and closed |
 | B | Liquidity & Credit Hub, debtor form | loan paid out (first advance and further advances), repayment confirmed (with the balance that is left), balance on request, the loan settled and closed |
 
-Any country, any person: the number is stored as an international (E.164) number, with a country picked from a list of 240+
-countries (default Sri Lanka, changed once under **Saved people**), and a person with no Sri Lankan NIC is identified by a passport or
+Sri Lanka only: the gateway (Text.lk) delivers inside Sri Lanka and nowhere else, so there is no country to choose. A number is a Sri Lankan
+mobile number (`07X XXX XXXX`, any usual way of typing it) and is stored as `+94...`; a number of another country is refused on the form with
+the reason. An older record that already holds a foreign number keeps it as typed, is flagged `phone-not-sri-lanka`, and is never texted (texts
+already queued to it are cancelled). A person with no Sri Lankan NIC (a foreign national with a Sri Lankan mobile) is identified by a passport or
 ID number (stored as `ID:XXXX`, so the two can never be mistaken for each other). A recipient's quiet hours (08:00 to 20:00) are
-kept in *their* time zone, and a number the gateway cannot route is reported as a destination problem, not as an outage.
+kept in Sri Lanka time, and a number the gateway cannot route is reported as a destination problem, not as an outage.
 
 Layer B never calculates or sends interest. The switch is a boolean on the record, `sms_notifications_enabled`; the
 form also stores `phone`, `nic` (optional) and `sms_enabled_at`, the moment the switch went on. Anything that happened
@@ -52,7 +54,7 @@ On the debtor's card:
 
 Every person, loan and investment can carry a second mobile number (`phone2`). Every text then goes to **both** numbers: the ledger holds one entry per
 number (the second keyed `<key>:2`), so a failure on one never blocks or repeats the other, and the receipt always leaves before the closing text. The second
-number has to be a real mobile number and not the first one again (the form says so). It is saved in E.164 like the first, shared with the saved person
+number has to be a real mobile number and not the first one again (the form says so). It is saved as +94... like the first, shared with the saved person
 like the first, and shown in the message log as "(second number)". The tenant statement's one-time code goes to the **first** number only. Because each text
 is sent per number, a second number doubles the units a record uses.
 
@@ -61,7 +63,7 @@ is sent per number, a second number doubles the units a record uses.
 Off unless the owner ticks **Also remind when a payment is late** on that debtor's form (it needs an *Expected back by* date; the form refuses
 the tick without one). While it is ticked and money is still confirmed as owed:
 
-* One text the day after the date (the debtor's own calendar day, from their number's country), then one a week later, then 15 and 22 days
+* One text the day after the date (the debtor's own calendar day, Sri Lanka time), then one a week later, then 15 and 22 days
   after: at most four. Each is sent between 08:00 and 20:00 where the debtor is, never overnight.
   `Reminder: LKR 50,000.00 is still outstanding, due 02 Oct 2026, ref DEB-7E1E60. Statement: <link>`
 * No interest, no penalty and no demand: the figure is the confirmed balance and the date is the one the owner set.
@@ -81,7 +83,7 @@ the tick without one). While it is ticked and money is still confirmed as owed:
 
 **Saved people** (button on the Investments tab and on the Debtors card) is one address book for both tabs.
 
-* Add a person once (name, phone with country, NIC or passport / ID, email, notes). On the next loan or investment pick them from the list
+* Add a person once (name, mobile number, NIC or passport / ID, email, notes). On the next loan or investment pick them from the list
   at the top of the form and everything fills in. **Everybody named on a loan or an investment is saved to the book automatically**, an
   investor typed by name alone included (untick *Save to my people list* on a form to skip it). People already named on existing loans and
   investments are filed the same way as soon as the app is open, with no button to press; the same name is the same person (two
@@ -167,7 +169,7 @@ eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends 
   status comes from the gateway and is read loosely by word; a status that cannot be read leaves the row at **Sent**.
 * **Limits.** 300 texts per account per day, 12 per number per day, reserved before sending so concurrent sends cannot
   overshoot. **Scheduled** texts (monthly interest, late-payment reminders) go out only between 08:00 and 20:00 where the
-  *recipient* is (the country of the number), and the engine checks that when it claims a text, not only when it queues one:
+  recipient is (Sri Lanka), and the engine checks that when it claims a text, not only when it queues one:
   a text queued for the morning is never sent at 03:00 because that is when a sweep got to it. It waits for the next window
   (reminders are dropped after a day, interest notices after a month). A text that is news the moment it happens (a receipt,
   a disbursement, a balance you asked for, a one-time code) is sent at once, at any hour.

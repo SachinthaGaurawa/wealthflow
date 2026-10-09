@@ -34,14 +34,16 @@ describe('a phone number as the form shows it', () => {
         expect(r).toMatchObject({ ok: true, e164: '+94771234567', pretty: '+94 77 123 4567', iso: 'LK' });
         expect(r.text).toContain('Sri Lanka');
     });
-    it('reads a number with its own country code whatever the box is set to', () => {
-        expect(resolvePhone('+44 7911 123456', 'LK')).toMatchObject({ ok: true, e164: '+447911123456', iso: 'GB' });
-        expect(resolvePhone('0044 7911 123456', 'LK').e164).toBe('+447911123456');
-        expect(resolvePhone('+1 (415) 555-2671', 'LK')).toMatchObject({ ok: true, e164: '+14155552671' });
+    it('refuses a number of another country, whatever the box was set to, and says the gateway reaches Sri Lanka only', () => {
+        for (const raw of ['+44 7911 123456', '0044 7911 123456', '+1 (415) 555-2671', '+971 50 123 4567']) {
+            const r = resolvePhone(raw, 'LK');
+            expect(r, raw).toMatchObject({ ok: false, reason: 'not-sri-lanka' });
+            expect(r.text).toMatch(/Sri Lankan mobile numbers/);
+        }
     });
-    it('reads a bare number in the country the owner chose', () => {
-        expect(resolvePhone('0501234567', 'AE')).toMatchObject({ ok: true, e164: '+971501234567', iso: 'AE' });
-        expect(resolvePhone('07911 123456', 'GB')).toMatchObject({ ok: true, e164: '+447911123456' });
+    it('reads a bare number as a Sri Lankan one, and ignores any other country it is told', () => {
+        expect(resolvePhone('0771234567', 'AE')).toMatchObject({ ok: true, e164: '+94771234567', iso: 'LK' });
+        expect(resolvePhone('0501234567', 'AE')).toMatchObject({ ok: false, reason: 'not-a-mobile-number' });
     });
     it('says nothing for an empty box, and a sentence for a wrong one', () => {
         expect(resolvePhone('', 'LK')).toMatchObject({ ok: false, empty: true, text: '' });
@@ -51,16 +53,15 @@ describe('a phone number as the form shows it', () => {
         expect(resolvePhone('call me', 'LK').reason).toBe('not-a-number');
     });
     it('every reason the normaliser can give has words', () => {
-        for (const reason of ['empty', 'not-a-number', 'misplaced-plus', 'needs-country-code', 'unknown-country-code', 'bad-length', 'not-a-mobile-number']) {
+        for (const reason of ['empty', 'not-a-number', 'misplaced-plus', 'not-sri-lanka', 'bad-length', 'not-a-mobile-number']) {
             expect(phoneProblem(reason), reason).not.toBe('That does not look like a phone number.');
         }
         expect(phoneProblem('something-new')).toBe('That does not look like a phone number.');
     });
-    it('finds the region of a stored international number', () => {
-        expect(isoOfPhone('+447911123456')).toBe('GB');
+    it('finds the region of a stored number: Sri Lanka, for every number there is', () => {
+        expect(isoOfPhone('+447911123456')).toBe('LK');                    // an old foreign number is not a region the system serves
         expect(isoOfPhone('+94771234567')).toBe('LK');
         expect(isoOfPhone('077 123 4567')).toBe('LK');
-        expect(isoOfPhone('0501234567', 'AE')).toBe('AE');
     });
 });
 
@@ -102,10 +103,13 @@ describe('cleanPerson', () => {
         expect(r.errors.phone).toBeTruthy();
         expect(cleanPerson({ name: 'A' }).ok).toBe(true);                    // a number is optional
     });
-    it('accepts a person from another country with their own passport', () => {
-        const r = cleanPerson({ name: 'Ahmed', phone: '050 123 4567', country: 'AE', nic: 'x1234567', idKind: 'other' });
+    it('accepts a foreign national with a Sri Lankan mobile and their own passport, and refuses a number abroad', () => {
+        const r = cleanPerson({ name: 'Ahmed', phone: '077 123 4567', country: 'AE', nic: 'x1234567', idKind: 'other' });
         expect(r.ok).toBe(true);
-        expect(r.fields).toMatchObject({ phone: '+971501234567', country: 'AE', nic: 'ID:X1234567' });
+        expect(r.fields).toMatchObject({ phone: '+94771234567', country: 'LK', nic: 'ID:X1234567' });
+        const abroad = cleanPerson({ name: 'Ahmed', phone: '+971 50 123 4567', nic: 'x1234567', idKind: 'other' });
+        expect(abroad.ok).toBe(false);
+        expect(abroad.errors.phone).toMatch(/Sri Lankan mobile numbers/);
     });
     it('a second number only has to look like a number', () => {
         expect(cleanPerson({ name: 'A', phone2: 'abc' }).errors.phone2).toBeTruthy();
@@ -401,8 +405,8 @@ describe('contacts from the phone', () => {
     it('turns a contact into a name and numbers a form can use, keeping what it cannot', () => {
         const d = draftFromContact({ name: 'Nimal Perera', tels: ['077 123 4567', '+44 7911 123456', '0112345678', '077 123 4567'] }, 'LK');
         expect(d.name).toBe('Nimal Perera');
-        expect(d.numbers.map((n) => n.e164)).toEqual(['+94771234567', '+447911123456']);
-        expect(d.others).toEqual([{ raw: '0112345678', reason: 'not-a-mobile-number' }]);
+        expect(d.numbers.map((n) => n.e164)).toEqual(['+94771234567']);
+        expect(d.others).toEqual([{ raw: '+44 7911 123456', reason: 'not-sri-lanka' }, { raw: '0112345678', reason: 'not-a-mobile-number' }]);
         expect(draftFromContact(null)).toEqual({ name: '', numbers: [], others: [] });
     });
 });
@@ -519,7 +523,7 @@ describe('filing the people the ledgers already name', () => {
         // a record keeps every other field exactly
         expect(s.data.debtors.find((d) => d.id === 'd1')).toMatchObject({ name: 'Nimal Perera', phone: '077 123 4567', nic: '853400937V' });
         // the person is made from the first record that names them, with a country read from the number
-        expect(s.data.people.find((p) => p.name === 'Ahmed Khan')).toMatchObject({ country: 'AE', nic: 'ID:X1234567', phone: '+971501234567' });
+        expect(s.data.people.find((p) => p.name === 'Ahmed Khan')).toMatchObject({ country: 'LK', nic: 'ID:X1234567', phone: '+971501234567' });          // an old number abroad is kept as it was, not rewritten
     });
     it('a second run finds nobody and writes nothing', () => {
         const s = books();
@@ -809,10 +813,11 @@ describe('a second number for one person (optional, texted as well as the first)
     const LOAN = (over = {}) => ({ id: 'd1', name: 'Nimal Perera', phone: '+94771234567', nic: '', ...over });
     const person = (over = {}) => ({ id: 'p1', name: 'Nimal Perera', phone: '+94771234567', phone2: '', country: 'LK', nic: '', email: '', address: '', note: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...over });
 
-    it('is read the way the first one is: any real mobile number, saved in E.164 in the region of the person', () => {
+    it('is read the way the first one is: a Sri Lankan mobile number, saved in E.164', () => {
         expect(P.secondNumberOf('0712345678', 'LK')).toBe('+94712345678');
-        expect(P.secondNumberOf('+44 7911 123456', 'LK')).toBe('+447911123456');
-        expect(P.secondNumberOf('tel:+971 50 123 4567', 'LK')).toBe('+971501234567');
+        expect(P.secondNumberOf('tel:+94 71 234 5678', 'LK')).toBe('+94712345678');
+        expect(P.secondNumberOf('+44 7911 123456', 'LK')).toBe('');            // no text can reach another country
+        expect(P.secondNumberOf('tel:+971 50 123 4567', 'LK')).toBe('');
         expect(P.secondNumberOf('', 'LK')).toBe('');
         expect(P.secondNumberOf(undefined, 'LK')).toBe('');
         expect(P.secondNumberOf('011 234 5678', 'LK')).toBe('');            // a landline cannot be texted

@@ -139,16 +139,15 @@ assert.match(await page.textContent('#_db_pv'), /\+94 77 555 1212 \(Sri Lanka\)/
 console.log('3a. contact picker     -> one number fills the form');
 
 await page.fill('#_db_name', 'Typed Name');
-await page.evaluate(() => { window.__contacts = [{ name: ['Ahmed Khan'], tel: ['+971 50 123 4567', '+44 7911 123456', '0112345678'] }]; });
+await page.evaluate(() => { window.__contacts = [{ name: ['Ahmed Khan'], tel: ['0771112222', '+44 7911 123456', '0112345678', '+94 71 234 5678'] }]; });
 await page.click('button[data-wfp="contacts"][data-p="_db"]');
 await page.waitForSelector('.wfp-chooser [data-c="num"]');
 const numbers = await page.$$eval('.wfp-chooser [data-c="num"]', (b) => b.map((x) => x.textContent));
-assert.deepEqual(numbers, ['+971 501 234 567', '+44 791 112 3456'], 'a contact with several numbers asks which; a number that cannot be texted is not offered');
+assert.deepEqual(numbers, ['+94 77 111 2222', '+94 71 234 5678'], 'a contact with several numbers asks which; a number that cannot be texted (abroad, a landline) is not offered');
 await page.click('.wfp-chooser [data-c="num"][data-i="1"]');
-await page.waitForFunction(() => document.getElementById('_db_cc').value === 'GB');
-assert.equal(await page.inputValue('#_db_phone'), '+44 791 112 3456');
+await page.waitForFunction(() => document.getElementById('_db_phone').value === '+94 71 234 5678');
 assert.equal(await page.inputValue('#_db_name'), 'Typed Name', 'a name the owner typed is not overwritten');
-console.log('3b. several numbers    -> chooser, country follows the number');
+console.log('3b. several numbers    -> chooser, only Sri Lankan mobiles offered');
 
 /* ── 4. no contact picker (iPhone, desktop): a contacts file ───────────────── */
 await page.evaluate(() => { Object.defineProperty(navigator, 'contacts', { configurable: true, value: undefined }); document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()); });
@@ -156,7 +155,7 @@ await openDebtor(null);
 await page.waitForSelector('#_db_phone');
 const vcf = [
     'BEGIN:VCARD', 'VERSION:3.0', 'FN:Dilan Fernando', 'TEL;TYPE=CELL:0712345678', 'END:VCARD',
-    'BEGIN:VCARD', 'VERSION:3.0', 'FN:Sara Smith', 'TEL;TYPE=CELL:+1 (415) 555-2671', 'END:VCARD',
+    'BEGIN:VCARD', 'VERSION:3.0', 'FN:Sara Smith', 'TEL;TYPE=CELL:0722223333', 'END:VCARD',
 ].join('\r\n');
 await page.click('button[data-wfp="contacts"][data-p="_db"]');
 await page.waitForSelector('.wfp-src [data-c="file"]');
@@ -168,8 +167,7 @@ await chooser.setFiles({ name: 'contacts.vcf', mimeType: 'text/vcard', buffer: B
 await page.waitForSelector('.wfp-chooser [data-c="q"]');
 await page.fill('.wfp-chooser [data-c="q"]', 'sara');
 await page.click('.wfp-chooser [data-c="num"]');
-await page.waitForFunction(() => document.getElementById('_db_cc').value === 'US');
-assert.equal(await page.inputValue('#_db_phone'), '+1 415 555 2671');
+await page.waitForFunction(() => document.getElementById('_db_phone').value === '+94 72 222 3333');
 assert.equal(await page.inputValue('#_db_name'), 'Sara Smith');
 console.log('4.  contacts file      -> parsed, searched, applied');
 await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
@@ -243,7 +241,7 @@ await page.fill('#_pp_phone', '12');
 await page.fill('#_pp_name', 'Kamal Silva');
 await page.click('.wfp-hub [data-h="save"]');
 await page.waitForSelector('#_pp_pv.bad');
-assert.match(await page.textContent('#_pp_pv'), /wrong number of digits/);
+assert.match(await page.textContent('#_pp_pv'), /Sri Lankan mobile number has 10 digits/);
 assert.equal(await page.inputValue('#_pp_name'), 'Kamal Silva', 'what was typed is kept');
 await page.fill('#_pp_phone', '');
 await page.click('.wfp-hub [data-h="save"]');
@@ -253,26 +251,29 @@ await page.click('.wfp-hub [data-h="savego"]');
 await page.waitForFunction(() => DB.get('people').some((p) => p.name === 'Kamal Silva'));
 assert.equal(await page.evaluate(() => DB.get('debtors').find((d) => d.id === 'd3').name), 'Kamal Silva');
 
-// add a person from another country, with a passport
+// add a foreign national with a Sri Lankan mobile and a passport; a number abroad is refused, because the gateway reaches Sri Lanka only
 await page.click('.wfp-hub [data-h="add"]');
 await page.waitForSelector('#_pp_name');
+assert.equal(await page.locator('#_pp_cc').getAttribute('type'), 'hidden', 'there is no country to choose');
 await page.fill('#_pp_name', 'Maria Garcia');
-await page.selectOption('#_pp_cc', 'ES');
-await page.fill('#_pp_phone', '612 345 678');
-assert.match(await page.textContent('#_pp_pv'), /\+34 612 345 678 \(Spain\)/);
+await page.fill('#_pp_phone', '+34 612 345 678');
+await page.press('#_pp_phone', 'Tab');
+assert.match(await page.textContent('#_pp_pv'), /Sri Lankan mobile numbers/);
+await page.fill('#_pp_phone', '0712223344');
+assert.match(await page.textContent('#_pp_pv'), /\+94 71 222 3344 \(Sri Lanka\)/);
+await page.selectOption('#_pp_idk', 'other');
 await page.fill('#_pp_nic', 'ab123456');
 await page.click('.wfp-hub [data-h="save"]');
 await page.waitForFunction(() => DB.get('people').some((p) => p.name === 'Maria Garcia'));
 const maria = await page.evaluate(() => DB.get('people').find((p) => p.name === 'Maria Garcia'));
-assert.deepEqual({ phone: maria.phone, country: maria.country, nic: maria.nic }, { phone: '+34612345678', country: 'ES', nic: 'ID:AB123456' });
-console.log('5c. add from abroad    -> +34 number and passport kept');
+assert.deepEqual({ phone: maria.phone, country: maria.country, nic: maria.nic }, { phone: '+94712223344', country: 'LK', nic: 'ID:AB123456' });
+console.log('5c. foreign national   -> Sri Lankan mobile and passport kept; a number abroad refused');
 
 // the same person again is refused, and says who
 await page.click('.wfp-hub [data-h="add"]');
 await page.waitForSelector('#_pp_name');
 await page.fill('#_pp_name', 'maria  garcia');
-await page.selectOption('#_pp_cc', 'ES');
-await page.fill('#_pp_phone', '612345678');
+await page.fill('#_pp_phone', '0712223344');
 await page.click('.wfp-hub [data-h="save"]');
 await page.waitForSelector('.wfp-hub .wfp-pv.bad');
 assert.match(await page.textContent('.wfp-hub .wfp-pv.bad'), /Maria Garcia is already in the list/);
@@ -292,7 +293,7 @@ console.log('5d. delete a person    -> loans unchanged');
 // import from a contacts file (no contact picker in this browser)
 const vcf2 = ['A:1'].join('');
 const bulk = [
-    ['Dilan Fernando', '0712345678'], ['Sara Smith', '+1 (415) 555-2671'], ['Landline Only', '011 234 5678'], ['Maria Garcia', '+34 612 345 678'],
+    ['Dilan Fernando', '0712345678'], ['Sara Smith', '0722223333'], ['Landline Only', '011 234 5678'], ['Maria Garcia', '0712223344'], ['Tom Abroad', '+44 7911 123456'],
 ].map(([n, t]) => `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${n}\r\nTEL:${t}\r\nEND:VCARD`).join('\r\n');
 await page.click('.wfp-hub [data-h="import"]');
 await page.waitForSelector('.wfp-src [data-c="file"]');
@@ -301,6 +302,7 @@ await fc.setFiles({ name: 'all.vcf', mimeType: 'text/vcard', buffer: Buffer.from
 await page.waitForSelector('.wfp-hub [data-h="impgo"]');
 assert.equal(await page.isDisabled('.wfp-hub [data-h="impgo"]'), true, 'nothing is added until the owner ticks it');
 assert.equal(await page.isDisabled('.wfp-hub .wfp-imp:has-text("Landline Only") input'), true, 'a number that cannot be texted cannot be ticked');
+assert.equal(await page.isDisabled('.wfp-hub .wfp-imp:has-text("Tom Abroad") input'), true, 'a number abroad cannot be ticked either: the gateway reaches Sri Lanka only');
 await page.click('.wfp-hub [data-h="impall"]');
 assert.match(await page.textContent('.wfp-hub [data-h="impgo"]'), /Add 3 people/);
 await page.click('.wfp-hub [data-h="impgo"]');
@@ -355,32 +357,25 @@ await page.waitForFunction(() => DB.get('payAccounts').length === 0);
 console.log('6.  payment details    -> add, validate, switch off, edit, delete');
 await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
 
-/* ── 7. a number typed without a country code is read in the owner's own country ── */
+/* ── 7. there is no country to choose: every number is a Sri Lankan mobile number ── */
 await reset();
 await page.evaluate(() => WFPeople.openHub('people'));
-await page.waitForSelector('#wfp_home');
-assert.equal(await page.inputValue('#wfp_home'), 'LK');
-await page.selectOption('#wfp_home', 'AE');
-await page.waitForFunction(() => DB.getObj('settings', {}).homeCountry === 'AE');
+await page.waitForSelector('#wfp_q');
+assert.equal(await page.locator('#wfp_home').count(), 0, 'the "home country" setting is gone');
 await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
 await openDebtor(null);
-await page.waitForSelector('#_db_cc');
-assert.equal(await page.inputValue('#_db_cc'), 'AE', 'new forms open on the owner\'s country');
-await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
-await page.evaluate(() => DB.set('settings', { ...DB.getObj('settings', {}), homeCountry: 'LK' }));
-// one number for somebody abroad never turns later local numbers into foreign ones
-await openDebtor(null);
-await page.waitForSelector('#_db_cc');
-await page.selectOption('#_db_cc', 'GB');
+await page.waitForSelector('#_db_phone');
+assert.equal(await page.locator('select#_db_cc').count(), 0, 'no country list on the form');
+assert.equal(await page.getAttribute('#_db_phone', 'placeholder'), '077 123 4567');
 await page.fill('#_db_name', 'Abroad');
 await page.fill('#_db_amount', '10');
 await page.fill('#_db_phone', '07911 123456');
-await page.click('#_db_save');
-await page.waitForFunction(() => DB.get('debtors').length === 1);
-await openDebtor(null);
-await page.waitForSelector('#_db_cc');
-assert.equal(await page.inputValue('#_db_cc'), 'LK', 'the last form\'s country is not remembered');
-console.log('7.  home country       -> explicit, never "the last one used"');
+await page.press('#_db_phone', 'Tab');
+assert.match(await page.textContent('#_db_pv'), /Sri Lankan mobile numbers|10 digits|07X/);
+await page.fill('#_db_phone', '+44 7911 123456');
+await page.press('#_db_phone', 'Tab');
+assert.match(await page.textContent('#_db_pv'), /does not deliver to other countries/);
+console.log('7.  no country list    -> numbers are Sri Lankan mobiles; another country is refused with the reason');
 await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
 
 /* ── 8. nothing overflows a 320 px phone ──────────────────────────────────── */
@@ -502,11 +497,11 @@ console.log('10b. pasted number     -> fills at once, even with the hidden marks
 
 await page.fill('#_db_phone', '');
 await openSheet();
-const card = 'Kamal Silva\nmobile\n+94 71 111 1111\nhome\n+44 7911 123456\nkamal@example.com';
+const card = 'Kamal Silva\nmobile\n+94 71 111 1111\nhome\n+94 77 222 3333\nkamal@example.com';
 await page.fill('.wfp-src [data-c="paste"]', card);
 await page.click('.wfp-src [data-c="use"]');
 await page.waitForSelector('.wfp-chooser [data-c="num"]');
-assert.deepEqual(await page.$$eval('.wfp-chooser [data-c="num"]', (b) => b.map((x) => x.textContent)), ['+94 71 111 1111', '+44 791 112 3456'], 'a pasted contact card with two numbers asks which');
+assert.deepEqual(await page.$$eval('.wfp-chooser [data-c="num"]', (b) => b.map((x) => x.textContent)), ['+94 71 111 1111', '+94 77 222 3333'], 'a pasted contact card with two numbers asks which');
 await page.click('.wfp-chooser [data-c="num"][data-i="0"]');
 await page.waitForFunction(() => document.getElementById('_db_phone').value === '+94 71 111 1111');
 console.log('10c. pasted card       -> number chooser');
@@ -528,12 +523,11 @@ await openSheet();
 await page.evaluate(() => {
     const sheet = document.querySelector('.wfp-src');
     const dt = new DataTransfer();
-    dt.items.add(new File(['BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ahmed Khan\r\nTEL;TYPE=CELL:+971 50 123 4567\r\nEND:VCARD'], 'ahmed.vcf', { type: 'text/vcard' }));
+    dt.items.add(new File(['BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ahmed Khan\r\nTEL;TYPE=CELL:+94 75 123 4567\r\nEND:VCARD'], 'ahmed.vcf', { type: 'text/vcard' }));
     sheet.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
 });
-await page.waitForFunction(() => document.getElementById('_db_phone').value === '+971 501 234 567');
-assert.equal(await page.inputValue('#_db_cc'), 'AE', 'the country follows the dropped number');
-console.log('10e. dropped vCard     -> applied, country follows');
+await page.waitForFunction(() => document.getElementById('_db_phone').value === '+94 75 123 4567');
+console.log('10e. dropped vCard     -> applied');
 
 await page.fill('#_db_phone', ''); await page.fill('#_db_name', '');
 await openSheet();
@@ -590,11 +584,11 @@ await page.waitForSelector('.wfp-hub .wfp-card:has-text("Kamal")');
 await page.click('.wfp-hub .wfp-card:has-text("Kamal")');
 await page.waitForSelector('#_pp_phone2');
 assert.equal(await page.inputValue('#_pp_phone2'), '+94 71 234 5678');
-await page.fill('#_pp_phone2', '+44 7911 123456');
+await page.fill('#_pp_phone2', '+94 72 888 9999');
 await page.click('.wfp-hub [data-h="save"]');
 await page.waitForSelector('.wfp-hub [data-h="savego"]');
 await page.click('.wfp-hub [data-h="savego"]');
-await page.waitForFunction(() => DB.get('debtors')[0].phone2 === '+447911123456' && DB.get('income')[0].phone2 === '+447911123456');
+await page.waitForFunction(() => DB.get('debtors')[0].phone2 === '+94728889999' && DB.get('income')[0].phone2 === '+94728889999');
 console.log('11b. edit in the book  -> the loan and the investment have the new second number');
 await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
 

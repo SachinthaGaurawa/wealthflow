@@ -29,8 +29,8 @@ if (await welcome.isVisible()) {
 /* ── the debtor form ──────────────────────────────────────────────────────── */
 await page.evaluate(() => { DB.set('debtors', []); DB.set('people', []); window.openDebtorModal(null); });
 await page.waitForSelector('#_db_sms_on');
-assert.equal(await page.isVisible('#_db_phone'), true, 'the number, the country and the NIC / passport are on the form (the contact fields), not folded behind the switch');
-assert.equal(await page.isVisible('#_db_cc'), true);
+assert.equal(await page.isVisible('#_db_phone'), true, 'the number and the NIC / passport are on the form (the contact fields), not folded behind the switch');
+assert.equal(await page.locator('select#_db_cc').count(), 0, 'no country list: the gateway only reaches Sri Lanka');
 assert.equal(await page.isVisible('#_db_nic'), true);
 assert.match(await page.textContent('[data-wf-sms="_db_sms"]'), /never carry interest/, 'a loan promises no interest');
 
@@ -88,22 +88,25 @@ console.log('3. switched off       ->', off.sms_notifications_enabled, off.phone
 assert.equal(off.sms_notifications_enabled, false);
 assert.equal(off.phone, '+94771234567', 'the number is kept for when it is switched on again');
 
-/* a person in another country: an international number and a passport, no Sri Lankan NIC anywhere */
+/* a foreign national with a Sri Lankan mobile: a passport, no Sri Lankan NIC anywhere (a number abroad is refused: the gateway reaches Sri Lanka only) */
 await page.evaluate(() => window.openDebtorModal(null));
 await page.waitForSelector('#_db_sms_on');
 await page.fill('#_db_name', 'Ahmed Khan');
 await page.fill('#_db_amount', '1000');
-await page.selectOption('#_db_cc', 'AE');
-await page.fill('#_db_phone', '050 123 4567');
-assert.match(await page.textContent('#_db_pv'), /\+971 501 234 567 \(United Arab Emirates\)/, 'the line under the number says exactly which number the texts will go to, and where');
-assert.equal(await page.inputValue('#_db_idk'), 'other', 'outside Sri Lanka the ID box starts as passport / ID');
+assert.equal(await page.locator('select#_db_cc').count(), 0, 'there is no country list');
+await page.fill('#_db_phone', '+971 50 123 4567');
+await page.press('#_db_phone', 'Tab');
+assert.match(await page.textContent('#_db_pv'), /Sri Lankan mobile numbers/, 'a number abroad is refused with the reason');
+await page.fill('#_db_phone', '071 999 8888');
+assert.match(await page.textContent('#_db_pv'), /\+94 71 999 8888 \(Sri Lanka\)/, 'the line under the number says exactly which number the texts will go to, and where');
+await page.selectOption('#_db_idk', 'other');
 await page.fill('#_db_nic', 'x1234567');
 await page.check('#_db_sms_on');
 await page.click('#_db_save');
 await page.waitForFunction(() => (DB.get('debtors') || []).length === 2);
 const abroad = await page.evaluate(() => (DB.get('debtors') || []).find((d) => d.name === 'Ahmed Khan'));
-console.log('3b. another country   ->', JSON.stringify({ phone: abroad.phone, nic: abroad.nic, on: abroad.sms_notifications_enabled }));
-assert.equal(abroad.phone, '+971501234567');
+console.log('3b. passport holder    ->', JSON.stringify({ phone: abroad.phone, nic: abroad.nic, on: abroad.sms_notifications_enabled }));
+assert.equal(abroad.phone, '+94719998888');
 assert.equal(abroad.nic, 'ID:X1234567');
 assert.equal(abroad.sms_notifications_enabled, true);
 

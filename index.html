@@ -17940,7 +17940,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (host) {
                         const open = !!(rec && (rec.phone || rec.nic || rec.personId || rec.sms_notifications_enabled === true));
                         host.innerHTML = '<details class="wfp-det"' + (open ? ' open' : '') + '><summary>Investor contact &amp; text messages <span>(optional)</span></summary>'
-                            + (WP ? WP.contactHtml('i', { kind: 'investment', record: rec, nameId: 'i_company', phoneHelp: 'Needed for text messages. Works for a mobile number in any country.' }) : '')
+                            + (WP ? WP.contactHtml('i', { kind: 'investment', record: rec, nameId: 'i_company', phoneHelp: 'Needed for text messages. Sri Lankan mobile numbers only.' }) : '')
                             + (window.WFSms ? WFSms.blockHtml('i_sms', { layer: 'A', record: rec }) : '') + '</details>';
                     }
                 } catch (_) { }
@@ -24356,7 +24356,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     + '<input class="fi money-input" id="_db_amount" inputmode="decimal" placeholder="200000"></div>'
                     + '<div class="fg"><label class="fl" for="_db_date">Date lent</label>'
                     + '<input class="fi" id="_db_date" type="date" value="' + _liqToday() + '"></div>'))
-                + (WP ? WP.contactHtml('_db', { kind: 'debtor', record: d, nameId: '_db_name', phoneHelp: 'Optional. Shown on the row as a number you can tap to call, which is what you actually do when a repayment is late. Needed for text messages, which work for any country.' })
+                + (WP ? WP.contactHtml('_db', { kind: 'debtor', record: d, nameId: '_db_name', phoneHelp: 'Optional. Shown on the row as a number you can tap to call, which is what you actually do when a repayment is late. Needed for text messages, which go to Sri Lankan mobile numbers.' })
                     : '<div class="fg"><label class="fl" for="_db_phone">Phone</label>'
                     + '<input class="fi" id="_db_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + _wfEsc(d.phone || '') + '">'
                     + '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Optional. Shown on the row as a number you can tap to call, which is what you actually do when a repayment is late.</div></div>')

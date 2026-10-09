@@ -11,7 +11,6 @@
 import { describe, it, expect } from 'vitest';
 import { deriveEvents, nextSendWindow, periodInterest, interestApplies, hasSmsRecords, GRACE_MS, MAX_AGE_MS, REQUEST_WINDOW_MS, REQUESTS_READ, REMINDER_OFFSETS_DAYS, REMINDER_WINDOW_MS, REMINDER_SHELF_MS, FIELDS, LAYER } from '../sms-events.mjs';
 import { KINDS } from '../sms-templates.mjs';
-import { utcOffsetOf } from '../wealthflow-phone.js';
 
 const T = (iso) => Date.parse(iso);
 const DAY = 86400000;
@@ -229,7 +228,11 @@ describe('phones and subjects', () => {
     it('any shape of number is normalised to E.164 on the derived event', () => {
         const mk = (phone) => deriveEvents({ debtors: [debtor({ phone, events: [{ id: 'e1', kind: 'lent', amount: 5, date: '2026-10-05', confirmed: true, at: T('2026-10-05T09:00:00Z') }] })] }, T('2026-10-05T10:00:00Z'));
         expect(mk('077-123 4567').events[0].phone).toBe('+94771234567');
-        expect(mk('+1 415 555 2671').events[0].phone).toBe('+14155552671');
+        expect(mk('+94 77 123 4567').events[0].phone).toBe('+94771234567');
+        // the gateway delivers inside Sri Lanka only: a number of any other country is reported and never texted
+        const abroad = mk('+1 415 555 2671');
+        expect(abroad.events).toEqual([]);
+        expect(abroad.issues).toEqual([{ recordKind: 'debtor', recordId: 'd1', reason: 'phone-not-sri-lanka' }]);
     });
 
     it('a number that cannot receive is reported, not silently skipped', () => {
@@ -377,11 +380,14 @@ describe('late-payment reminders (opt-in, a debtor only)', () => {
         expect(r[0].maxAgeMs).toBe(REMINDER_SHELF_MS + (T('2026-10-11T02:30:00Z') - T('2026-10-10T18:30:00Z')));
     });
 
-    it('the day is the recipient\'s: a number in Dubai (UTC+04:00) is reminded on its own morning', () => {
-        const r = rem(deriveEvents(late({ phone: '+971501234567' }), T('2026-10-10T21:00:00Z')));     // 01:00 on the 11th in Dubai
+    it('the day is Sri Lanka\'s: a reminder is due on the Colombo morning, and a number in another country gets none', () => {
+        const r = rem(deriveEvents(late({ phone: '+94771234567' }), T('2026-10-10T21:00:00Z')));     // 02:30 on the 11th in Colombo
         expect(r).toHaveLength(1);
-        expect(r[0].occurredAt).toBe(T('2026-10-10T20:00:00Z'));
-        expect(r[0].notBefore).toBe(T('2026-10-11T04:00:00Z'));                                       // 08:00 Dubai
+        expect(r[0].tzMin).toBe(330);
+        expect(r[0].notBefore).toBe(T('2026-10-11T02:30:00Z'));                                       // 08:00 Colombo
+        const dubai = deriveEvents(late({ phone: '+971501234567' }), T('2026-10-10T21:00:00Z'));
+        expect(rem(dubai)).toHaveLength(0);
+        expect(dubai.issues.map((i) => i.reason)).toContain('phone-not-sri-lanka');
     });
 
     it('then one a week later each time, at most four, and never more than one a day', () => {
@@ -595,16 +601,19 @@ describe('a second number (optional): every text goes to both', () => {
         expect(to(r)).toEqual(['A:inv1:created>+94771234567', 'A:inv1:created:2>+94712345678']);
     });
 
-    it('the second number may be in another country, and a scheduled text waits for ITS morning', () => {
+    it('a second number outside Sri Lanka is reported and never texted, while the first number still is; a Sri Lankan one waits for the same morning', () => {
         const user = { income: [investment({ phone2: '+14155552671', [FIELDS.ENABLED_AT]: T('2026-10-01T00:00:00Z') })] };
         const r = deriveEvents(user, T('2026-10-16T10:00:00Z'));
-        const a = r.events.find((e) => e.kind === KINDS.A_INTEREST && e.key.endsWith(':2'));
-        const p = r.events.find((e) => e.kind === KINDS.A_INTEREST && !e.key.endsWith(':2'));
-        expect(a.phone).toBe('+14155552671');
-        expect(a.tzMin).toBe(utcOffsetOf('+14155552671'));
-        expect(a.tzMin).not.toBe(330);
-        expect(a.notBefore).toBe(nextSendWindow(a.occurredAt, a.tzMin));
-        expect(p.notBefore).toBe(nextSendWindow(p.occurredAt, 330));
+        expect(r.events.some((e) => e.key.endsWith(':2'))).toBe(false);
+        expect(r.events.some((e) => e.kind === KINDS.A_INTEREST)).toBe(true);
+        expect(r.issues.map((i) => i.reason)).toContain('phone2-not-sri-lanka');
+        const ok = deriveEvents({ income: [investment({ phone2: '+94712345678', [FIELDS.ENABLED_AT]: T('2026-10-01T00:00:00Z') })] }, T('2026-10-16T10:00:00Z'));
+        const a = ok.events.find((e) => e.kind === KINDS.A_INTEREST && e.key.endsWith(':2'));
+        const p = ok.events.find((e) => e.kind === KINDS.A_INTEREST && !e.key.endsWith(':2'));
+        expect(a.phone).toBe('+94712345678');
+        expect(a.tzMin).toBe(330);
+        expect(a.notBefore).toBe(nextSendWindow(a.occurredAt, 330));
+        expect(a.notBefore).toBe(p.notBefore);
         expect(a.scheduled).toBe(true);
     });
 
@@ -674,7 +683,7 @@ describe('a second number (optional): every text goes to both', () => {
     });
 
     it('a reminder\'s shelf life follows the second number\'s own window', () => {
-        const d = debtor({ phone2: '+14155552671', dueISO: '2026-10-02', [FIELDS.REMIND]: true, [FIELDS.REMIND_AT]: T('2026-10-01T00:00:00Z'), events: [{ ...lent, date: '2026-10-01', at: T('2026-10-01T09:00:00Z') }] });
+        const d = debtor({ phone2: '+94712345678', dueISO: '2026-10-02', [FIELDS.REMIND]: true, [FIELDS.REMIND_AT]: T('2026-10-01T00:00:00Z'), events: [{ ...lent, date: '2026-10-01', at: T('2026-10-01T09:00:00Z') }] });
         const r = deriveEvents({ debtors: [d] }, T('2026-10-03T10:00:00Z'));
         const p = r.events.find((e) => e.kind === KINDS.B_LATE && !e.key.endsWith(':2'));
         const t = r.events.find((e) => e.kind === KINDS.B_LATE && e.key.endsWith(':2'));
