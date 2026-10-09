@@ -11,7 +11,7 @@
  * Nothing is stored: the language is chosen from the browser's own list the first time and changed with one
  * button; it is not kept anywhere, because this page keeps nothing. Dates and month names stay as they are
  * on the statement (English month abbreviations and Western digits), the form a Sri Lankan statement uses.
- * The PDF is English only: the standard PDF fonts have no Sinhala letters.
+ * The PDF and the spreadsheet are English only (the standard PDF fonts have no Sinhala letters); the calendar reminder is in the page's language.
  *
  * Plain ES module, no DOM.
  * ===========================================================================*/
@@ -119,6 +119,32 @@ export const SI = Object.freeze({
     'Copy all details': 'සියලු විස්තර පිටපත් කරන්න',
     'Copied to the clipboard.': 'පිටපත් කරන ලදි.',
     'Could not copy. Please select the text and copy it yourself.': 'පිටපත් කළ නොහැකි විය. කරුණාකර පෙළ තෝරා ඔබම පිටපත් කරන්න.',
+
+    /* what the person can do with the statement */
+    'Coming up': 'ඉදිරියේදී',
+    'Pay your loan': 'ඔබේ ණය ගෙවන්න',
+    'Interest expected': 'බලාපොරොත්තු වන පොලිය',
+    'Due today': 'අද නියමිතයි',
+    'Due tomorrow': 'හෙට නියමිතයි',
+    'In {n} days': 'දින {n}කින්',
+    '1 day overdue': 'දවසක් ප්‍රමාදයි',
+    '{n} days overdue': 'දින {n}ක් ප්‍රමාදයි',
+    'Add to calendar': 'දින දර්ශනයට එක් කරන්න',
+    '{n}% repaid': '{n}%ක් ආපසු ගෙවා ඇත',
+    'Term: {n}% complete': 'කාලසීමාවෙන් {n}%ක් ගත වී ඇත',
+    'Copy reference': 'යොමු අංකය පිටපත් කරන්න',
+    'Show all {n}': 'සියල්ල පෙන්වන්න ({n})',
+    'Show fewer': 'අඩුවෙන් පෙන්වන්න',
+    'Share PDF': 'PDF බෙදාගන්න',
+    'Download CSV': 'CSV බාගන්න',
+    'Refresh': 'යාවත්කාලීන කරන්න',
+    'Shared.': 'බෙදාගන්නා ලදි.',
+    'Your file is ready. Check your downloads.': 'ඔබේ ගොනුව සූදානම්. බාගැනීම් බලන්න.',
+    'Updated just now.': 'දැන් යාවත්කාලීන කළා.',
+    'Sharing is not available here, so the file was saved instead.': 'මෙහි බෙදාගැනීම නොමැති නිසා ගොනුව සුරැකිණි.',
+    'Pay {amount} to your lender ({ref})': 'ඔබේ ණයදෙන්නාට {amount} ගෙවන්න ({ref})',
+    'Interest of {amount} expected ({ref})': '{amount} ක පොලියක් බලාපොරොත්තු වේ ({ref})',
+    'Reminder from your WealthFlow statement. Quote the reference {ref} when you pay.': 'ඔබේ WealthFlow ප්‍රකාශයෙන් සිහිකැඳවීමකි. ගෙවන විට යොමු අංකය {ref} සඳහන් කරන්න.',
 
     /* titles and the small screens */
     'Your WealthFlow statement': 'ඔබේ WealthFlow ප්‍රකාශය',

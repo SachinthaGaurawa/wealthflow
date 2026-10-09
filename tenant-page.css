@@ -216,3 +216,34 @@ td.tp-num, th.tp-num { text-align: right; }
     .tp-chip { color: #000; border-color: #666; background: #fff; }
     .tp-info:empty, .tp-error:empty { display: none; }
 }
+
+/* ── what is coming up, progress, and the extra buttons ── */
+.tp-actions #tp-pdf { grid-column: 1 / -1; }
+.tp-next h3 { margin: 0 0 10px; }
+.tp-list { list-style: none; margin: 0; padding: 0; }
+.tp-item { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
+.tp-item:first-child { border-top: 0; padding-top: 0; }
+.tp-item-main, .tp-item-side { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tp-item-side { align-items: flex-end; text-align: right; }
+.tp-item-title { font-weight: 650; }
+.tp-item-sub { color: var(--mute); font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tp-item-amount { font-weight: 750; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tp-when { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 650; background: var(--surface-2); color: var(--mute); border: 1px solid var(--line); }
+.tp-when-soon { color: var(--primary); background: var(--primary-weak); border-color: #c6dafa; }
+.tp-when-late { color: var(--amber); background: #fff7e6; border-color: #f2d9a6; }
+.tp-item .tp-small-btn { grid-column: 1 / -1; justify-self: start; min-height: 44px; font-size: 15px; padding: 8px 14px; }
+.tp-jump { margin-top: 4px; }
+.tp-progress { display: flex; flex-direction: column; gap: 6px; margin: 0 0 14px; }
+.tp-progress-label { color: var(--mute); font-size: 13px; font-weight: 600; }
+.tp-progress progress { width: 100%; height: 10px; border: 0; border-radius: 999px; overflow: hidden; background: var(--surface-2); accent-color: var(--primary); }
+.tp-progress progress::-webkit-progress-bar { background: var(--surface-2); border-radius: 999px; }
+.tp-progress progress::-webkit-progress-value { background: var(--primary); border-radius: 999px; }
+.tp-progress progress::-moz-progress-bar { background: var(--primary); border-radius: 999px; }
+button.tp-chip.tp-refcopy { cursor: pointer; font-family: inherit; min-height: 32px; }
+button.tp-chip.tp-refcopy:hover, button.tp-chip.tp-refcopy:focus-visible { border-color: var(--primary); color: var(--primary); }
+.tp-more { margin-top: 10px; }
+@media print {
+    .tp-early[hidden] { display: table-row; }
+    .tp-more, .tp-jump, .tp-item .tp-small-btn { display: none; }
+    .tp-progress progress { height: 8px; }
+}
