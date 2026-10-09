@@ -118,6 +118,21 @@ describe('the hardcoded release history is gone', () => {
     });
 });
 
+describe('the update progress indicator stays on the compositor', () => {
+    it('animates a transform instead of repeatedly changing layout width', () => {
+        const barMarkup = SRC.match(/<div id="wfPgBar"[^>]+>/)?.[0] || '';
+        expect(barMarkup).toContain('width:100%');
+        expect(barMarkup).toContain('transform:scaleX(0)');
+        expect(barMarkup).toContain('transform-origin:0');
+        expect(barMarkup).toContain('transition:transform');
+        expect(barMarkup).not.toMatch(/transition:width/);
+
+        const setBar = SRC.match(/const setBar = \(p\) => \{[^\n]+/)?.[0] || '';
+        expect(setBar).toContain("b.style.transform = 'scaleX('");
+        expect(setBar).not.toMatch(/b\.style\.width/);
+    });
+});
+
 describe('the notes fallback that fabricated history is gone', () => {
     it('no longer reaches for "the newest notes we have"', () => {
         const code = SRC.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
