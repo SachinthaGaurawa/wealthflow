@@ -133,7 +133,7 @@ const lenderChip = (doc, g, st, t) => (Number(st.lenderCount) > 1 && Number(g.le
 function investmentCard(doc, g, st, t) {
     const cur = g.currency;
     const next = g.nextInterest && typeof g.nextInterest === 'object' ? g.nextInterest : null;
-    return h(doc, 'section', { class: 'tp-card tp-record is-investment', 'aria-label': `${t('Investment')} ${g.ref}` },
+    return h(doc, 'section', { class: 'tp-card', 'aria-label': `${t('Investment')} ${g.ref}` },
         h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Investment') }), h(doc, 'span', { class: 'tp-chip', text: g.ref }), lenderChip(doc, g, st, t)),
         h(doc, 'dl', { class: 'tp-facts' },
             fact(doc, t('Capital'), fmtMoney(g.capital, cur)),
@@ -151,14 +151,10 @@ function investmentCard(doc, g, st, t) {
 
 function loanCard(doc, g, st, t) {
     const cur = g.currency;
+    const status = g.status === 'settled' ? [t('Settled'), 'tp-chip tp-ok'] : g.status === 'closed' ? [t('Closed'), 'tp-chip'] : [t('Open'), 'tp-chip'];
     const late = Number(g.overdueDays) > 0 ? Math.floor(Number(g.overdueDays)) : 0;
-    const status = g.status === 'settled'
-        ? [t('Settled'), 'tp-chip tp-ok']
-        : g.status === 'closed'
-            ? [t('Closed'), 'tp-chip']
-            : [t('Open'), `tp-chip${late ? ' tp-overdue' : ''}`];
     const due = g.due ? `${fmtDay(g.due)}${late ? ` (${late === 1 ? t('1 day ago') : t('{n} days ago', { n: late })})` : ''}` : '';
-    return h(doc, 'section', { class: `tp-card tp-record is-loan${late ? ' is-overdue' : ''}`, 'aria-label': `${t('Loan')} ${g.ref}` },
+    return h(doc, 'section', { class: 'tp-card', 'aria-label': `${t('Loan')} ${g.ref}` },
         h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Loan') }), h(doc, 'span', { class: 'tp-chip', text: g.ref }), lenderChip(doc, g, st, t), h(doc, 'span', { class: status[1], text: status[0] })),
         h(doc, 'dl', { class: 'tp-facts' },
             fact(doc, t('Paid out'), fmtMoney(g.lent, cur)),
@@ -304,7 +300,7 @@ export function createPage(env) {
     function mount(title, nodes, focus) {
         stopTick();
         st.busy = false;
-        const brand = h(doc, 'h1', { class: 'tp-brand' }, h(doc, 'img', { src: '/assets/brand/wealthflow-wordmark.svg', alt: 'WealthFlow' }));
+        const brand = h(doc, 'h1', { class: 'tp-brand', text: 'WealthFlow' });
         const lang = h(doc, 'button', { class: 'tp-lang', type: 'button', id: 'tp-lang', lang: st.lang === 'si' ? 'en' : 'si', text: LANG_BUTTON[st.lang], onclick: toggleLang });
         root.replaceChildren(h(doc, 'div', { class: 'tp-top' }, brand, lang), ...nodes);
         const target = focus ? root.querySelector(focus) : root.querySelector('h2');
@@ -513,18 +509,14 @@ export function createPage(env) {
         st.verified = false;
         st.statement = null;
         st.codeMessage = '';
-        root.replaceChildren(h(doc, 'h1', { class: 'tp-brand' }, h(doc, 'img', { src: '/assets/brand/wealthflow-wordmark.svg', alt: 'WealthFlow' })));
+        root.replaceChildren(h(doc, 'h1', { class: 'tp-brand', text: 'WealthFlow' }));
         st.els = {};
     }
 
     function screenLoading() {
         st.screen = 'loading';
         st.els = {};
-        mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card tp-loading' },
-            h(doc, 'h2', { tabindex: '-1', text: t('One moment') }),
-            h(doc, 'p', { class: 'tp-note', role: 'status', text: t('Checking for a session on this device...') }),
-            h(doc, 'div', { class: 'tp-skeleton', 'aria-hidden': 'true' }),
-            h(doc, 'div', { class: 'tp-skeleton is-short', 'aria-hidden': 'true' }))]);
+        mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card' }, h(doc, 'h2', { tabindex: '-1', text: t('One moment') }), h(doc, 'p', { class: 'tp-note', role: 'status', text: t('Checking for a session on this device...') }))]);
     }
 
     /** Opens on the NIC form, unless this device already has a live session for this link (a reload within 20 minutes costs no new text). */

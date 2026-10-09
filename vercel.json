@@ -239,14 +239,6 @@
       "destination": "/tenant.html"
     },
     {
-      "source": "/app",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/",
-      "destination": "/marketing.html"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
