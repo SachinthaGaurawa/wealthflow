@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * The owner's ask: add a person the first time, with every detail, and when they borrow again pick
  * them from the list instead of typing it all again; edit or delete them there; take a number from
- * the phone's own contacts; and let texts go to anyone in any country.
+ * the phone's own contacts; and let texts go to any Sri Lankan mobile number (the text gateway reaches no other country).
  *
  * THE MODEL IS SMALL ON PURPOSE.
  *   - `people[]`: one record per person (name, mobile, another number, country, NIC or passport/ID,
@@ -40,9 +40,8 @@ const PHONE_TEXT = {
     'empty': 'Enter the mobile number the texts should go to.',
     'not-a-number': 'A phone number can only contain digits, spaces and a leading +.',
     'misplaced-plus': 'A + can only come first, as in +94 77 123 4567.',
-    'needs-country-code': 'Add the country code, for example +94 77 123 4567, or choose the country.',
-    'unknown-country-code': 'That country code is not one I know. Check the digits after the +.',
-    'bad-length': 'That number has the wrong number of digits for the country.',
+    'not-sri-lanka': 'Texts can only be sent to Sri Lankan mobile numbers (07X XXX XXXX). The text service does not deliver to other countries.',
+    'bad-length': 'A Sri Lankan mobile number has 10 digits and starts 07, like 077 123 4567.',
     'not-a-mobile-number': 'Sri Lankan texts go to mobile numbers (07X XXX XXXX).',
 };
 const ID_TEXT = {

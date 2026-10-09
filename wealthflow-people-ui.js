@@ -4,7 +4,7 @@
  * What the owner sees (the rules live in wealthflow-people.js and wealthflow-payaccounts.js; this file is
  * the glue that draws them, and holds no authority of its own):
  *
- *   CONTACT FIELDS   on a loan and on an investment: country, mobile number (typed, or taken from the phone's own
+ *   CONTACT FIELDS   on a loan and on an investment: mobile number (Sri Lankan only) (typed, or taken from the phone's own
  *                    contacts), NIC or passport/ID, a live line saying exactly which number the texts will go to,
  *                    and "Save to my people list".
  *   SAVED PEOPLE     a picker at the top of those forms ("Nimal Perera · +94 77 123 4567") that fills everything in.
@@ -25,7 +25,7 @@
  * Nothing here throws into the app: if this file fails to load, the forms keep working without it. ESM; window.WFPeople.
  * ===========================================================================*/
 
-import { COUNTRIES, regionByIso, DEFAULT_REGION, formatPhone } from './wealthflow-phone.js';
+import { regionByIso, DEFAULT_REGION, formatPhone } from './wealthflow-phone.js';
 import { displayIdentity } from './wealthflow-nic.js';
 import * as People from './wealthflow-people.js';
 import * as Pay from './wealthflow-payaccounts.js';
@@ -36,21 +36,12 @@ const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
 
 /* ── 1. the pieces every form shares ─────────────────────────────────────── */
 
-let COUNTRY_ROWS = null;
-const countryRows = () => {
-    if (!COUNTRY_ROWS) {
-        COUNTRY_ROWS = COUNTRIES.map((c) => ({ iso: c.iso, label: c.name + ' (+' + c.dial + ')' }))
-            .sort((a, b) => (a.iso === DEFAULT_REGION ? -1 : b.iso === DEFAULT_REGION ? 1 : a.label.localeCompare(b.label)));
-    }
-    return COUNTRY_ROWS;
-};
-
-/** The country list as a <select>: Sri Lanka first (the owner's own country), then A to Z. Typing a name jumps to it. */
-export function countrySelectHtml(id, selected, attrs = '') {
-    const sel = regionByIso(selected) ? s(selected).toUpperCase() : DEFAULT_REGION;
-    return '<select class="fs" id="' + esc(id) + '" ' + attrs + '>'
-        + countryRows().map((o) => '<option value="' + o.iso + '"' + (o.iso === sel ? ' selected' : '') + '>' + esc(o.label) + '</option>').join('')
-        + '</select>';
+/**
+ * There is no country to choose: the gateway delivers inside Sri Lanka only, so every number is a Sri Lankan mobile number (wealthflow-phone.js).
+ * The forms still carry the region as one hidden field, which is always Sri Lanka, so the code that reads a form keeps one shape.
+ */
+export function countrySelectHtml(id, _selected, attrs = '') {
+    return '<input type="hidden" id="' + esc(id) + '" value="' + DEFAULT_REGION + '" ' + attrs + '>';
 }
 
 /** How a stored number is shown: "+94 77 123 4567" when it is one, what was typed when it is not. */
@@ -119,10 +110,10 @@ export function contactHtml(prefix, { kind = 'debtor', record = null, people = [
     const common = ' data-p="' + p + '" data-name="' + esc(nameId) + '"';
     return '<div class="wfp-contact" data-p="' + p + '" data-kind="' + esc(kind) + '">'
         + '<input type="hidden" id="' + p + '_pid" value="' + esc(person ? person.id : '') + '">'
-        + '<div class="fg"><label class="fl" for="' + p + '_cc">Country</label>' + countrySelectHtml(prefix + '_cc', iso, 'data-wfp="cc"' + common) + '</div>'
+        + countrySelectHtml(prefix + '_cc', iso, 'data-wfp="cc"' + common)
         + '<div class="fg"><label class="fl" for="' + p + '_phone">Mobile number</label>'
         + '<div class="wfp-row"><input class="fi" id="' + p + '_phone" type="tel" inputmode="tel" autocomplete="off" maxlength="40" data-wfp="phone"' + common
-        + ' placeholder="077 123 4567 or +44 7911 123456" value="' + esc(info && info.ok ? info.pretty : phoneRaw) + '">'
+        + ' placeholder="077 123 4567" value="' + esc(info && info.ok ? info.pretty : phoneRaw) + '">'
         + '<button type="button" class="btn btn-secondary btn-sm wfp-btn" data-wfp="contacts"' + common + ' title="Take the number from your contacts, a contacts file, or text you copied">Contacts</button></div>'
         + '<div class="wfp-pv ' + pv.cls + '" id="' + p + '_pv" role="status" aria-live="polite">' + esc(pv.text) + '</div>'
         + (phoneHelp ? '<div class="wfp-help">' + esc(phoneHelp) + '</div>' : '') + '</div>'
@@ -131,7 +122,7 @@ export function contactHtml(prefix, { kind = 'debtor', record = null, people = [
         + ' placeholder="Optional. Every text goes to this number too" value="' + esc(info2 && info2.ok ? info2.pretty : phone2Raw) + '">'
         + '<button type="button" class="btn btn-secondary btn-sm wfp-btn" data-wfp="contacts2"' + common + ' title="Take the second number from your contacts, a contacts file, or text you copied">Contacts</button></div>'
         + '<div class="wfp-pv ' + pv2.cls + '" id="' + p + '_pv2" role="status" aria-live="polite">' + esc(pv2.text) + '</div>'
-        + '<div class="wfp-help">Another country? Start it with + and the country code.</div></div>'
+        + '<div class="wfp-help">Sri Lankan mobile numbers only (07X XXX XXXX): the text service delivers inside Sri Lanka.</div></div>'
         + '<div class="fg"><label class="fl" for="' + p + '_nic" id="' + p + '_nic_l">' + ID_LABEL[idKind] + '</label>'
         + '<div class="wfp-row"><select class="fs wfp-idk" id="' + p + '_idk" data-wfp="idk"' + common + ' aria-label="Kind of ID">'
         + '<option value="nic"' + (idKind === 'nic' ? ' selected' : '') + '>NIC</option><option value="other"' + (idKind === 'other' ? ' selected' : '') + '>Passport / ID</option></select>'
@@ -286,7 +277,7 @@ export function peopleListHtml({ people = [], books = {}, q = '' } = {}) {
         + (list.length > 200 ? '<div class="wfp-empty">Showing 200 of ' + list.length + '. Type to narrow the list.</div>' : '');
 }
 
-export function peopleTabHtml({ people = [], books = {}, q = '', unfiled = 0, picker = false, home = DEFAULT_REGION } = {}) {
+export function peopleTabHtml({ people = [], books = {}, q = '', unfiled = 0, picker = false } = {}) {
     return '<div class="wfp-bar"><input class="fi" type="search" id="wfp_q" data-h="search" placeholder="Search name, number, NIC" autocomplete="off" value="' + esc(q) + '" aria-label="Search saved people">'
         + '<button type="button" class="btn btn-primary btn-sm wfp-btn" data-h="add">Add person</button></div>'
         + '<div class="wfp-tools"><button type="button" class="btn btn-secondary btn-sm" data-h="import">' + (picker ? 'Import from contacts' : 'Import contacts file') + '</button></div>'
@@ -294,8 +285,7 @@ export function peopleTabHtml({ people = [], books = {}, q = '', unfiled = 0, pi
             ? '<div class="wfp-note"><div><b>' + plural(unfiled, 'loan or investment names', 'loans and investments name') + ' somebody who is not in this list yet.</b> Add them in one tap; nothing else on those records changes.</div>'
               + '<button type="button" class="btn btn-secondary btn-sm" data-h="harvest">Add them to the list</button></div>'
             : '')
-        + '<div id="wfp_list">' + peopleListHtml({ people, books, q }) + '</div>'
-        + '<div class="wfp-home"><label class="fl" for="wfp_home">A number typed without a country code is read as a number in</label>' + countrySelectHtml('wfp_home', home, 'data-h="home"') + '</div>';
+        + '<div id="wfp_list">' + peopleListHtml({ people, books, q }) + '</div>';
 }
 
 const fieldError = (errors, key) => (errors && errors[key] ? '<div class="wfp-pv bad" role="alert">' + esc(errors[key]) + '</div>' : '');
@@ -430,10 +420,8 @@ export function boot(win) {
     const doc = win.document;
     const store = () => storeOf(win);
     const toast = (text, tone = 'success') => { try { if (typeof win.notify === 'function') win.notify(text, tone); } catch (_) { /* a toast is a courtesy */ } };
-    /* The country a number typed WITHOUT a country code belongs to. Sri Lanka unless the owner says otherwise (Saved people, People tab): never
-     * "whatever the last form used", because one number for somebody abroad must not turn every later local number into a foreign one. */
-    const homeCountry = () => { try { const v = s(win.DB.getObj('settings', {}).homeCountry).toUpperCase(); return regionByIso(v) ? v : DEFAULT_REGION; } catch (_) { return DEFAULT_REGION; } };
-    const setHomeCountry = (iso) => { try { if (!regionByIso(iso)) return false; win.DB.set('settings', { ...win.DB.getObj('settings', {}), homeCountry: s(iso).toUpperCase() }); return true; } catch (_) { return false; } };
+    /* The country a number belongs to: Sri Lanka, the only one the gateway reaches. */
+    const homeCountry = () => DEFAULT_REGION;
     const smsPanel = () => (win.WFSms && typeof win.WFSms.panelInto === 'function' ? win.WFSms : null);
 
     /* ── everybody the ledgers already name goes into the saved list by itself ──
@@ -770,7 +758,7 @@ export function boot(win) {
                 } else if (st.view === 'import') {
                     body.innerHTML = importHtml(importModel());
                 } else {
-                    body.innerHTML = peopleTabHtml({ people, books, q: st.q, unfiled: People.unfiledRecords(data().sx).length, picker: People.contactPickerSupported(win), home: homeCountry() });
+                    body.innerHTML = peopleTabHtml({ people, books, q: st.q, unfiled: People.unfiledRecords(data().sx).length, picker: People.contactPickerSupported(win) });
                 }
             } else if (st.tab === 'pay') {
                 if (st.view === 'account') {
@@ -893,9 +881,7 @@ export function boot(win) {
         });
         o.el.addEventListener('change', (e) => {
             const t = e.target; const a = t.getAttribute && t.getAttribute('data-h');
-            if (a === 'home') {
-                if (setHomeCountry(t.value)) toast('Numbers typed without a country code are now read as ' + (regionByIso(t.value) ? regionByIso(t.value).name : t.value) + ' numbers', 'success');
-            } else if (a === 'acc-toggle') {
+            if (a === 'acc-toggle') {
                 const sx = store();
                 sx.set(Pay.PAY_KEY, Pay.listAccounts(sx.get(Pay.PAY_KEY)).map((x) => (x.id === t.getAttribute('data-id') ? { ...x, active: !!t.checked, updatedAt: new Date().toISOString() } : x)));
                 render();

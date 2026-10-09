@@ -68,10 +68,10 @@ describe('the line under the second number', () => {
         expect(n.text).toMatch(/same as the first/);
         expect(phone2Note('+94 77 123 4567', '077 123 4567', 'LK', false)).toEqual({ cls: '', text: '' });
     });
-    it('accepts a number from another country when it carries its own code', () => {
+    it('warns about a number of another country: the text service reaches Sri Lanka only', () => {
         const n = phone2Note('+44 7911 123456', '077 123 4567', 'LK');
-        expect(n.cls).toBe('ok');
-        expect(n.text).toContain('United Kingdom');
+        expect(n.cls).toBe('warn');
+        expect(n.text).toMatch(/Sri Lankan mobile numbers/);
     });
 });
 
@@ -93,10 +93,10 @@ describe('reading and checking the form', () => {
         expect(c.phone2).toBe('');
     });
 
-    it('a real mobile number is stored in E.164, in the region of the form or its own', () => {
+    it('a real Sri Lankan mobile number is stored in E.164; a number abroad is not stored as one', () => {
         expect(collectContact(form({ phone2: '071 234 5678' }), { smsOn: true }).phone2).toBe('+94712345678');
-        expect(collectContact(form({ phone2: '+44 7911 123456' }), { smsOn: true }).phone2).toBe('+447911123456');
-        expect(collectContact(form({ phone2: 'tel:+971501234567' }), { smsOn: true }).phone2).toBe('+971501234567');
+        expect(collectContact(form({ phone2: 'tel:+94712345678' }), { smsOn: true }).phone2).toBe('+94712345678');
+        expect(collectContact(form({ phone2: '+44 7911 123456' }), { smsOn: true })).toMatchObject({ ok: false });
     });
 
     it('the first number again is refused, with texts on or off', () => {

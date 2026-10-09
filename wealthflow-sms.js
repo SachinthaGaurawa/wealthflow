@@ -73,14 +73,14 @@ export function carry(prev) {
 /**
  * Validate what the owner entered and return the fields to merge into the record.
  *
- *   input: { enabled:boolean, phone:string, country?:string, phone2?:string, country2?:string, nic:string, idKind?:'nic'|'other' }
+ *   input: { enabled:boolean, phone:string, phone2?:string, nic:string, idKind?:'nic'|'other' }
  *   -> { ok:true, fields }  or  { ok:false, errors:{ phone?, phone2?, nic? } }
  *
  * `phone2` is an optional second mobile number: every text goes to it as well. Left out, the record keeps the one it has; blank, it is removed.
- * It must be a real mobile number and not the first number again. `country2` is its region when it is typed without a country code (default: `country`).
+ * It must be a real Sri Lankan mobile number and not the first number again.
  *
- * `country` is the region a number typed without a country code belongs to (default Sri Lanka). The number is stored as E.164, so it means
- * the same thing on every device, and to the server, in whatever country it is. `idKind` 'other' is a passport or national ID for somebody
+ * Only Sri Lankan mobile numbers are accepted (the gateway delivers nowhere else), so there is no country to choose. The number is stored as
+ * E.164, so it means the same thing on every device and to the server. `idKind` 'other' is a passport or national ID for somebody
  * with no Sri Lankan NIC; it is stored as "ID:AB123456".
  *
  * The switch-on stamp is set when the toggle goes from off to on and is KEPT while it stays on, so editing a record never
@@ -91,15 +91,14 @@ export function applyToggle(prev, input, now = Date.now()) {
     if (!input || input.enabled !== true) return { ok: true, fields: { [SMS_FIELDS.ENABLED]: false }, errors: {} };
     const errors = {};
     const phoneRaw = s(input.phone).trim();
-    const phone = normalizePhone(phoneRaw, input.country ? { defaultCountry: input.country } : undefined);
+    const phone = normalizePhone(phoneRaw);
     if (!phone.ok) errors.phone = phoneProblem(phone.reason);
     let phone2 = null;                                          // undefined in the input: leave what the record has
     if (input.phone2 !== undefined) {
         const raw2 = s(input.phone2).trim();
         if (!raw2) phone2 = '';
         else {
-            const c2 = input.country2 || input.country;
-            const n2 = normalizePhone(raw2, c2 ? { defaultCountry: c2 } : undefined);
+            const n2 = normalizePhone(raw2);
             if (!n2.ok) errors.phone2 = 'Second number: ' + phoneProblem(n2.reason);
             else if (phone.ok && n2.e164 === phone.e164) errors.phone2 = 'The second number is the same as the first. Leave it empty or enter a different number.';
             else phone2 = n2.e164;
@@ -205,7 +204,7 @@ const COPY = {
     A: 'Texts the investor when capital is recorded, when interest is applied, when a payment is received and, separately, when you close the investment as fully settled.',
     B: 'Texts the debtor when a loan is paid out and when a repayment is confirmed (with the balance that is left), and sends one more, separate text when the loan is fully settled and closed. Loans never carry interest, so no interest is ever calculated or sent.',
     SECOND: ' An optional second mobile number gets every one of these texts too (each text costs a unit per number).',
-    PORTAL: ' Works for a mobile number in any country. With an NIC or a passport / ID number, each text carries a private link to a statement page; the person sees it only after entering that number and a one-time code sent to the mobile number above.',
+    PORTAL: ' Works for a Sri Lankan mobile number. With an NIC or a passport / ID number, each text carries a private link to a statement page; the person sees it only after entering that number and a one-time code sent to the mobile number above.',
 };
 
 /**
@@ -549,6 +548,7 @@ const ISSUE_TEXT = {
     'no-phone': 'has no phone number, so nothing is sent',
     'phone-bad-length': 'has a phone number with the wrong number of digits',
     'phone-not-a-mobile-number': 'has a phone number that is not a mobile number',
+    'phone-not-sri-lanka': 'has a phone number outside Sri Lanka, which the text service cannot reach (use a Sri Lankan mobile number)',
     'phone-needs-country-code': 'has a phone number with no country code',
     'phone-not-a-number': 'has a phone number with characters that are not allowed',
     'phone-misplaced-plus': 'has a phone number with a misplaced +',

@@ -45,10 +45,6 @@ describe('phone numbers: any way a person types them, one way on the wire', () =
         ['+94 77 123 4567', '+94771234567'],
         ['0094 77 123 4567', '+94771234567'],
         ['(077) 123-4567', '+94771234567'],
-        ['+1 (415) 555-2671', '+14155552671'],
-        ['001 415 555 2671', '+14155552671'],
-        ['+44 7911 123456', '+447911123456'],
-        ['+971 50 123 4567', '+971501234567'],
     ];
     for (const [input, e164] of good) {
         it(`${input} -> ${e164}`, () => {
@@ -65,11 +61,16 @@ describe('phone numbers: any way a person types them, one way on the wire', () =
         ['077-12', 'bad-length'],
         ['0112 345 678', 'not-a-mobile-number'],           // a Colombo landline cannot receive an SMS
         ['+94 11 234 5678', 'not-a-mobile-number'],
-        ['+1 (015) 555-2671', 'bad-length'],                // NANP area codes never start with 0
-        ['4155552671', 'needs-country-code'],               // a bare foreign number is ambiguous: refused, not guessed
+        ['+1 (415) 555-2671', 'not-sri-lanka'],             // the gateway delivers inside Sri Lanka only: any other country is refused, with that reason
+        ['001 415 555 2671', 'not-sri-lanka'],
+        ['+44 7911 123456', 'not-sri-lanka'],
+        ['+971 50 123 4567', 'not-sri-lanka'],
+        ['+1 (015) 555-2671', 'not-sri-lanka'],
+        ['4155552671', 'bad-length'],                       // a bare number that is not a Sri Lankan shape is refused, not guessed
+        ['077123456', 'bad-length'],                        // a digit missing
         ['+9477+1234567', 'misplaced-plus'],
         ['+0123456789', 'bad-length'],
-        ['+1234567890123456', 'bad-length'],                // more than 15 digits is not E.164
+        ['+1234567890123456', 'not-sri-lanka'],
     ];
     for (const [input, reason] of bad) {
         it(`refuses "${input}" (${reason})`, () => {
@@ -105,8 +106,11 @@ describe('phone numbers: any way a person types them, one way on the wire', () =
         for (const input of ['077 123 4567 ext 12', '+94771234567;ext=12', '077 123 4567 / 071 111 1111', '077 123 4567 mobile']) expect(normalizePhone(input).ok, input).toBe(false);
     });
 
-    it('accepts a different default country for bare local numbers', () => {
-        expect(normalizePhone('0501234567', { defaultCountry: '971' }).e164).toBe('+971501234567');
+    it('has no country to choose: a default country is ignored, and a bare number is always read as a Sri Lankan one', () => {
+        expect(normalizePhone('0501234567', { defaultCountry: '971' })).toMatchObject({ ok: false, reason: 'not-a-mobile-number' });
+        expect(normalizePhone('0771234567', { defaultCountry: 'GB' }).e164).toBe('+94771234567');
+        expect(normalizePhone('+94 (0) 77 123 4567').e164).toBe('+94771234567');
+        expect(normalizePhone('0771234567')).toMatchObject({ country: '94', iso: 'LK', gateway: '94771234567' });
     });
 
     it('masks a number to something recognisable and not usable', () => {

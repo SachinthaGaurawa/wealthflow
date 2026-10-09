@@ -34,24 +34,26 @@ describe('the switch', () => {
         expect(r).toMatchObject({ ok: true, fields: { sms_notifications_enabled: true, sms_enabled_at: T0, phone: '+94771234567', nic: '' } });
     });
 
-    it('works for a person in any country: an international number, or a local one in the chosen country', () => {
-        expect(applyToggle({}, { enabled: true, phone: '+44 7911 123456' }, T0).fields.phone).toBe('+447911123456');
-        expect(applyToggle({}, { enabled: true, phone: '050 123 4567', country: 'AE' }, T0).fields.phone).toBe('+971501234567');
-        expect(applyToggle({}, { enabled: true, phone: '07911 123456', country: 'GB' }, T0).fields.phone).toBe('+447911123456');
-        expect(applyToggle({}, { enabled: true, phone: '(415) 555-2671', country: 'US' }, T0).fields.phone).toBe('+14155552671');
+    it('works for Sri Lankan mobile numbers only, in whatever way they are typed; a country, if a caller still sends one, is ignored', () => {
+        expect(applyToggle({}, { enabled: true, phone: '+94 77 123 4567' }, T0).fields.phone).toBe('+94771234567');
+        expect(applyToggle({}, { enabled: true, phone: '0771234567', country: 'AE' }, T0).fields.phone).toBe('+94771234567');
+        expect(applyToggle({}, { enabled: true, phone: '(077) 123-4567' }, T0).fields.phone).toBe('+94771234567');
     });
 
-    it('a number with no country to read it in is refused with the sentence that tells the owner to add one', () => {
-        const r = applyToggle({}, { enabled: true, phone: '4155552671' }, T0);
-        expect(r.ok).toBe(false);
-        expect(r.errors.phone).toMatch(/country/i);
+    it('a number of another country is refused with the sentence that says the text service reaches Sri Lanka only', () => {
+        for (const [phone, country] of [['+44 7911 123456'], ['050 123 4567', 'AE'], ['07911 123456', 'GB'], ['(415) 555-2671', 'US'], ['+1 415 555 2671']]) {
+            const r = applyToggle({}, { enabled: true, phone, country }, T0);
+            expect(r.ok, phone).toBe(false);
+            expect(r.errors.phone, phone).toMatch(/Sri Lankan mobile|10 digits|07X/);
+        }
+        expect(applyToggle({}, { enabled: true, phone: '+44 7911 123456' }, T0).errors.phone).toMatch(/does not deliver to other countries/);
     });
 
     it('a passport or national ID stands in for an NIC, stored with a prefix so the two can never be confused', () => {
-        const r = applyToggle({}, { enabled: true, phone: '+971501234567', nic: ' x-1234 567 ', idKind: 'other' }, T0);
+        const r = applyToggle({}, { enabled: true, phone: '0771234567', nic: ' x-1234 567 ', idKind: 'other' }, T0);
         expect(r).toMatchObject({ ok: true, fields: { nic: 'ID:X1234567' } });
-        expect(applyToggle({}, { enabled: true, phone: '+971501234567', nic: 'ID:X1234567' }, T0).fields.nic).toBe('ID:X1234567');   // already in its stored form
-        const bad = applyToggle({}, { enabled: true, phone: '+971501234567', nic: 'a', idKind: 'other' }, T0);
+        expect(applyToggle({}, { enabled: true, phone: '0771234567', nic: 'ID:X1234567' }, T0).fields.nic).toBe('ID:X1234567');   // already in its stored form
+        const bad = applyToggle({}, { enabled: true, phone: '0771234567', nic: 'a', idKind: 'other' }, T0);
         expect(bad.ok).toBe(false);
         expect(bad.errors.nic).toMatch(/passport/i);
     });
@@ -114,13 +116,13 @@ describe('the markup', () => {
         expect(b).toContain('never carry interest');
         expect(b).not.toContain('b_phone');
     });
-    it('has no emoji, and tells the owner it works in any country and about the statement link', () => {
+    it('has no emoji, and tells the owner it works for Sri Lankan mobile numbers and about the statement link', () => {
         for (const layer of ['A', 'B']) {
             const html = blockHtml('x', { layer });
             expect(/[\u{1F300}-\u{1FAFF}☀-➿]/u.test(html)).toBe(false);
             expect(html).toMatch(/private link to a statement page/);
             expect(html).toMatch(/one-time code/);
-            expect(html).toMatch(/any country/);
+            expect(html).toMatch(/Sri Lankan mobile number/);
             expect(html).toMatch(/passport/);
         }
     });
@@ -762,10 +764,11 @@ describe('the second number', () => {
         expect(on({ phone2: '   ' }).fields.phone2).toBe('');
     });
 
-    it('is stored the way the first one is, in any country', () => {
+    it('is stored the way the first one is, as a Sri Lankan mobile number in E.164, and a number abroad is refused', () => {
         expect(on({ phone2: '071 234 5678' }).fields).toMatchObject({ phone: '+94771234567', phone2: '+94712345678' });
-        expect(on({ phone2: '+44 7911 123456' }).fields.phone2).toBe('+447911123456');
-        expect(on({ phone2: '050 123 4567', country2: 'AE' }).fields.phone2).toBe('+971501234567');
+        expect(on({ phone2: '+94 71 234 5678' }).fields.phone2).toBe('+94712345678');
+        expect(on({ phone2: '+44 7911 123456' }).ok).toBe(false);
+        expect(on({ phone2: '050 123 4567', country2: 'AE' }).ok).toBe(false);
     });
 
     it('must be a real mobile number, and not the first number again', () => {
@@ -783,7 +786,7 @@ describe('the second number', () => {
         expect(first.fields.phone2_at).toBe(T0);
         const later = applyToggle({ ...first.fields }, { enabled: true, phone: '077 123 4567', phone2: '071 234 5678' }, T0 + 5e6);
         expect(later.fields.phone2_at).toBe(T0);                                                    // an edit that leaves it alone does not make it new
-        const changed = applyToggle({ ...first.fields }, { enabled: true, phone: '077 123 4567', phone2: '+44 7911 123456' }, T0 + 5e6);
+        const changed = applyToggle({ ...first.fields }, { enabled: true, phone: '077 123 4567', phone2: '+94 71 999 8888' }, T0 + 5e6);
         expect(changed.fields.phone2_at).toBe(T0 + 5e6);
         expect(applyToggle({ ...first.fields }, { enabled: true, phone: '077 123 4567', phone2: '' }, T0 + 5e6).fields).toMatchObject({ phone2: '', phone2_at: 0 });
         expect(on({}).fields).not.toHaveProperty('phone2_at');                                      // not mentioned: not touched

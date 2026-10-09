@@ -672,10 +672,10 @@ describe('the balance the owner asked for', () => {
 });
 
 describe('a scheduled text never goes out outside the recipient\'s 08:00-20:00, whenever the sweep happens to run', () => {
-    // A debtor in the United Kingdom (UTC+0 here): the daily 04:00 UTC sweep is 04:00 their time, the owner's page nudges at any hour.
+    // A debtor in Sri Lanka (UTC+5:30): the daily 04:00 UTC sweep is 09:30 their time, the owner's page nudges at any hour.
     const uk = () => {
         const u = books();
-        Object.assign(u.debtors[0], { phone: '+447911123456', dueISO: '2026-10-04', [FIELDS.REMIND]: true, [FIELDS.REMIND_AT]: NOW - 86400e3 * 3, [FIELDS.ENABLED_AT]: NOW - 86400e3 * 3 });
+        Object.assign(u.debtors[0], { phone: '+94771234567', dueISO: '2026-10-04', [FIELDS.REMIND]: true, [FIELDS.REMIND_AT]: NOW - 86400e3 * 3, [FIELDS.ENABLED_AT]: NOW - 86400e3 * 3 });
         u.debtors[0].events = [{ id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-01', confirmed: true, at: NOW - 3 * 86400e3 }];
         return u;
     };
@@ -684,22 +684,22 @@ describe('a scheduled text never goes out outside the recipient\'s 08:00-20:00, 
 
     it('a sweep that runs late at night leaves it queued for the next morning instead of sending it then', async () => {
         const { fs, db } = makeDb(); const gw = gateway();
-        await run(db, uk(), gw, { now: T('2026-10-05T03:00:00Z') });                 // 03:00 UK: queued for 08:00
-        expect(docs(fs)[0].nextAttemptAt).toBe(T('2026-10-05T08:00:00Z'));
-        await run(db, uk(), gw, { now: T('2026-10-05T21:30:00Z') });                 // 21:30 UK: the due time has passed, the window has closed
+        await run(db, uk(), gw, { now: T('2026-10-04T19:30:00Z') });                 // 01:00 in Colombo on the 5th: queued for 08:00
+        expect(docs(fs)[0].nextAttemptAt).toBe(T('2026-10-05T02:30:00Z'));
+        await run(db, uk(), gw, { now: T('2026-10-05T16:00:00Z') });                 // 21:30 in Colombo: the due time has passed, the window has closed
         expect(reminders(gw)).toHaveLength(0);
-        expect(docs(fs)[0]).toMatchObject({ status: STATUS.QUEUED, nextAttemptAt: T('2026-10-06T08:00:00Z') });
+        expect(docs(fs)[0]).toMatchObject({ status: STATUS.QUEUED, nextAttemptAt: T('2026-10-06T02:30:00Z') });
     });
 
     it('goes out when a sweep next runs inside the window, once', async () => {
         const { fs, db } = makeDb(); const gw = gateway();
-        await run(db, uk(), gw, { now: T('2026-10-05T03:00:00Z') });
-        await run(db, uk(), gw, { now: T('2026-10-05T21:30:00Z') });
-        await run(db, uk(), gw, { now: T('2026-10-06T07:30:00Z') });                 // still before 08:00
+        await run(db, uk(), gw, { now: T('2026-10-04T19:30:00Z') });
+        await run(db, uk(), gw, { now: T('2026-10-05T16:00:00Z') });
+        await run(db, uk(), gw, { now: T('2026-10-06T02:00:00Z') });                 // 07:30 in Colombo: still before 08:00
         expect(reminders(gw)).toHaveLength(0);
-        await run(db, uk(), gw, { now: T('2026-10-06T08:00:00Z') });                 // the window opens: 32 h after the day began, still inside its shelf life
+        await run(db, uk(), gw, { now: T('2026-10-06T02:30:00Z') });                 // the window opens: 32 h after the day began, still inside its shelf life
         expect(reminders(gw)).toHaveLength(1);
-        await run(db, uk(), gw, { now: T('2026-10-06T09:00:00Z') });
+        await run(db, uk(), gw, { now: T('2026-10-06T03:30:00Z') });
         expect(reminders(gw)).toHaveLength(1);
         expect(docs(fs)[0].status).toBe(STATUS.SENT);
     });
@@ -820,7 +820,7 @@ describe('late-payment reminders through the queue', () => {
 });
 
 describe('a second number: every text goes to both, each tracked on its own', () => {
-    const with2 = (phone2 = '+44 7911 123456') => { const u = books(); u.debtors[0][FIELDS.PHONE2] = phone2; return u; };
+    const with2 = (phone2 = '+94 71 234 5678') => { const u = books(); u.debtors[0][FIELDS.PHONE2] = phone2; return u; };
     const settled = (phone2) => {
         const u = with2(phone2);
         u.debtors[0].events[1] = { id: 'e2', kind: 'repayment', amount: 50000, date: '2026-10-05', confirmed: true, at: NOW - 600e3 };
@@ -832,7 +832,7 @@ describe('a second number: every text goes to both, each tracked on its own', ()
         const a = await run(db, with2(), gw);
         expect(a).toMatchObject({ derived: 4, sent: 4 });
         expect(gw.sent.filter((m) => m.to === '+94771234567')).toHaveLength(2);
-        expect(gw.sent.filter((m) => m.to === '+447911123456')).toHaveLength(2);
+        expect(gw.sent.filter((m) => m.to === '+94712345678')).toHaveLength(2);
         expect(ledger(fs).filter((d) => d.key.endsWith(':2'))).toHaveLength(2);
         const b = await run(db, with2(), gw);
         expect(b.sent).toBe(0);
@@ -858,25 +858,36 @@ describe('a second number: every text goes to both, each tracked on its own', ()
         expect(gw2.sent.map((m) => m.to)).toEqual(['+94771234567', '+94771234567']);
     });
 
+    it('a second number that is changed to one outside Sri Lanka is cancelled before it goes, and the first number is untouched', async () => {
+        const { fs, db } = makeDb();
+        const held = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: true, message: 'Insufficient balance' }));
+        await run(db, with2('+94 71 234 5678'), held);
+        const gw2 = gateway();
+        const r = await run(db, with2('+44 7911 123456'), gw2, { now: NOW + 60e3 });
+        expect(r.cancelled).toBe(2);
+        expect(ledger(fs).filter((d) => d.key.endsWith(':2')).every((d) => d.status === STATUS.CANCELLED)).toBe(true);
+        expect(gw2.sent.every((m) => m.to === '+94771234567')).toBe(true);
+    });
+
     it('a corrected second number reaches only the second number\'s held texts', async () => {
         const { fs, db } = makeDb();
         const gw = gateway(() => ({ ok: false, kind: KIND.CREDIT, retryable: true, message: 'Insufficient balance' }));
-        await run(db, with2('+44 7911 123456'), gw);
+        await run(db, with2('+94 71 234 5678'), gw);
         const before = ledger(fs).find((d) => d.key === 'B:d1:e1:out');
-        const r = await enqueue({ db, uid: UID, events: deriveEvents(with2('+971 50 123 4567'), NOW).events, now: NOW + 60e3, env, deps: {} });
+        const r = await enqueue({ db, uid: UID, events: deriveEvents(with2('+94 72 999 8888'), NOW).events, now: NOW + 60e3, env, deps: {} });
         expect(r.rephoned).toBe(2);
         const after = ledger(fs);
-        expect(after.filter((d) => d.key.endsWith(':2')).every((d) => d.to === '+971501234567')).toBe(true);
+        expect(after.filter((d) => d.key.endsWith(':2')).every((d) => d.to === '+94729998888')).toBe(true);
         expect(after.find((d) => d.key === 'B:d1:e1:out')).toEqual(before);
     });
 
     it('a number that can never receive fails on its own: the other number still gets its text and nothing is retried', async () => {
         const { fs, db } = makeDb();
-        const gw = gateway(({ to }) => (to === '+447911123456' ? { ok: false, kind: KIND.DESTINATION, retryable: false, message: 'no route to this country' } : { ok: true, gatewayId: 'g', cost: 1, segments: 1 }));
+        const gw = gateway(({ to }) => (to === '+94712345678' ? { ok: false, kind: KIND.DESTINATION, retryable: false, message: 'no route to this country' } : { ok: true, gatewayId: 'g', cost: 1, segments: 1 }));
         const a = await run(db, with2(), gw);
         expect(a).toMatchObject({ sent: 2, failed: 2, retry: 0 });
         expect(ledger(fs).filter((d) => d.to === '+94771234567').every((d) => d.status === STATUS.SENT)).toBe(true);
-        expect(ledger(fs).filter((d) => d.to === '+447911123456').every((d) => d.status === STATUS.FAILED && d.lastError.kind === KIND.DESTINATION)).toBe(true);
+        expect(ledger(fs).filter((d) => d.to === '+94712345678').every((d) => d.status === STATUS.FAILED && d.lastError.kind === KIND.DESTINATION)).toBe(true);
         const calls = gw.sent.length;
         await run(db, with2(), gw, { now: NOW + 3 * 3600e3 });
         expect(gw.sent.length).toBe(calls);
@@ -888,7 +899,7 @@ describe('a second number: every text goes to both, each tracked on its own', ()
         u.debtors[0].events = [{ id: 'e1', kind: 'lent', amount: 50000, date: '2026-10-05', confirmed: true, at: NOW - 1800e3 }];
         const a = await run(db, u, gw, { limits: { ...LIMITS, perRecipientPerDay: 1 } });
         expect(a.sent).toBe(2);
-        expect(gw.sent.map((m) => m.to).sort()).toEqual(['+447911123456', '+94771234567']);
+        expect(gw.sent.map((m) => m.to).sort()).toEqual(['+94712345678', '+94771234567']);
     });
 
     it('the second number is never given a text the first number was not owed (an unconfirmed repayment is neither)', async () => {
@@ -896,7 +907,7 @@ describe('a second number: every text goes to both, each tracked on its own', ()
         const u = with2();
         u.debtors[0].events[1].confirmed = false;
         await run(db, u, gw);
-        expect(gw.sent.filter((m) => m.to === '+447911123456').map((m) => m.message)).toEqual(gw.sent.filter((m) => m.to === '+94771234567').map((m) => m.message));
+        expect(gw.sent.filter((m) => m.to === '+94712345678').map((m) => m.message)).toEqual(gw.sent.filter((m) => m.to === '+94771234567').map((m) => m.message));
         expect(gw.sent.every((m) => !/^Repayment/.test(m.message))).toBe(true);
     });
 
@@ -912,7 +923,7 @@ describe('a second number: every text goes to both, each tracked on its own', ()
             },
         };
         await run(db, settled(), gw);
-        for (const to of ['+94771234567', '+447911123456']) {
+        for (const to of ['+94771234567', '+94712345678']) {
             const mine = arrived.filter((a) => a.to === to && a.kind !== 'other').map((a) => a.kind);
             expect(mine).toEqual(['receipt', 'closed']);
         }
@@ -923,7 +934,7 @@ describe('a second number: every text goes to both, each tracked on its own', ()
         await run(db, settled(), gw);
         await run(db, settled(), gw, { now: NOW + 3600e3 });
         const closing = gw.sent.filter((m) => /settled and closed/.test(m.message));
-        expect(closing.map((m) => m.to).sort()).toEqual(['+447911123456', '+94771234567']);
+        expect(closing.map((m) => m.to).sort()).toEqual(['+94712345678', '+94771234567']);
         expect(ledger(fs).filter((d) => d.kind === 'B.closed')).toHaveLength(2);
     });
 });
