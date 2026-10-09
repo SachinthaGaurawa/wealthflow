@@ -5,16 +5,17 @@
  * loan, private notes. The tenant's statement is built from it by a function that
  * can only PICK, never pass through:
  *
- *   WHICH RECORDS. Those the owner switched text messages on for AND whose NIC is the
- *   tenant's. Across ONE lender (the lender whose text carried the link) that is the
+ *   WHICH RECORDS. Those whose NIC is the tenant's, once the owner has switched text messages on for at least one of
+ *   them (the person has the page; a second loan whose box was never ticked is still theirs and is on it). Across ONE lender (the lender whose text carried the link) that is the
  *   whole of "all ledgers under one NIC": the investments and the loans, together. Across
  *   OTHER lenders it is only the records whose phone number is the very number the
  *   one-time code just went to — an NIC is an identifier, not a secret, so it is never
  *   enough on its own to read another lender's books.
- *   WHAT OF EACH. Figures and dates, under a reference code. Never a name, a note, a phone
- *   number, an NIC, a record id, or a payment nobody confirmed. The owner's free text is
- *   the one place a private opinion of a person could be sitting, so none of it is ever
- *   read here. Titles are generic ("Investment", "Loan"); the reference identifies it.
+ *   WHAT OF EACH. Figures and dates, under a reference code. Never a note, a phone number, a record id, or a
+ *   payment nobody confirmed. The owner's free text is the one place a private opinion of a person could be
+ *   sitting, so none of it is ever read here. Titles are generic ("Investment", "Loan"); the reference identifies it.
+ *   WHO. One `holder`: the person's own FULL NAME (the separate `fullName` field, never the owner's nickname in
+ *   `name` / `company`) and their own NIC, which they typed in to get here. No full name saved means no name shown.
  *   LOANS CARRY NO INTEREST. There is no interest field on a loan row, by construction.
  *   WHERE TO PAY. The lender's bank accounts (wealthflow-payaccounts.js) go out as a WHITELIST of six fields, only
  *   those the lender marked for this kind of record (an investor's account is not shown to a debtor unless it is
@@ -26,7 +27,7 @@
  * their HMACs, so this module never needs either in the clear.
  * ===========================================================================*/
 
-import { normalizeIdentity } from './wealthflow-nic.js';
+import { normalizeIdentity, displayIdentity } from './wealthflow-nic.js';
 import { normalizePhone } from './wealthflow-phone.js';
 import { debtorSummary, EVENT } from './wealthflow-liquidity.js';
 import { FIELDS, periodInterest, LOCAL_OFFSET_MIN } from './sms-events.mjs';
@@ -43,6 +44,13 @@ const str = (v) => String(v == null ? '' : v).trim();
 const money = (v) => Math.round(num(v) * 100) / 100;
 const day = (v) => { const m = /^(\d{4}-\d{2}-\d{2})/.exec(str(v)); return m ? m[1] : ''; };
 
+const HOLDER_NAME_MAX = 80;
+/** The name and NIC to print at the head of the statement, from the first record that carries a full name (the owner's own books first). */
+function holderOf(candidates) {
+    const pick = candidates.find((c) => c.name) || candidates[0];
+    return pick ? { name: pick.name, nic: pick.nic } : { name: '', nic: '' };
+}
+
 const isOn = (rec) => !!rec && rec[FIELDS.ENABLED] === true;
 const nicMatches = (rec, nicHash, secret) => { const n = normalizeIdentity(rec && rec[FIELDS.NIC]); return n.ok && nicHashOf(n.canonical, secret) === nicHash; };
 const phoneMatches = (rec, phoneHash, secret) => { const p = normalizePhone(rec && rec[FIELDS.PHONE]); return p.ok && !!phoneHash && phoneHashOf(p.e164, secret) === phoneHash; };
@@ -50,7 +58,11 @@ const phoneMatches = (rec, phoneHash, secret) => { const p = normalizePhone(rec 
 /** The records of one lender's document this tenant may see. */
 export function recordsFor(user, { nicHash, phoneHash, secret, own }) {
     const u = user && typeof user === 'object' ? user : {};
-    const keep = (rec) => isOn(rec) && rec.id && nicMatches(rec, nicHash, secret) && (own || phoneMatches(rec, phoneHash, secret));
+    const theirs = (rec) => rec && rec.id && nicMatches(rec, nicHash, secret) && (own || phoneMatches(rec, phoneHash, secret));
+    // texts are switched on per record, but the PERSON has the page: once any one of their records has the texts on, every other record of
+    // theirs (a second loan whose box was never ticked) is on their page too, so the statement is whole and no payment is left out
+    const hasPage = [...arr(u.income), ...arr(u.debtors)].some((rec) => isOn(rec) && theirs(rec));
+    const keep = (rec) => theirs(rec) && (isOn(rec) || hasPage);
     return { investments: arr(u.income).filter(keep), debtors: arr(u.debtors).filter(keep) };
 }
 
@@ -139,19 +151,23 @@ function loanRow(d, now) {
 
 /**
  * @param {{ledgers:{uid:string,user:object,own:boolean,currency?:string}[], nicHash:string, phoneHash:string, secret:Buffer|string, now:number}} p
- * @returns {{asOf:string, groups:object[], totals:object[], lenders:{n:number, accounts:object[]}[], lenderCount:number, truncated:boolean}}
+ * @returns {{asOf:string, holder:{name:string,nic:string}, groups:object[], totals:object[], lenders:{n:number, accounts:object[]}[], lenderCount:number, truncated:boolean}}
  */
 export function buildStatement({ ledgers, nicHash, phoneHash, secret, now }) {
     const groups = [];
     const lenders = [];
     let truncated = false;
     let n = 0;
+    const holders = [];
     for (const ledger of arr(ledgers)) {
         const user = ledger && ledger.user && typeof ledger.user === 'object' ? ledger.user : {};
         const currency = currencyOf(user.settings && user.settings.currency);
         const { investments, debtors } = recordsFor(user, { nicHash, phoneHash, secret, own: !!ledger.own });
         if (!investments.length && !debtors.length) continue;
         n += 1;
+        const named = [...investments, ...debtors].find((r) => str(r.fullName)) || investments[0] || debtors[0];
+        const holder = { name: str(named && named.fullName).replace(/\s+/g, ' ').slice(0, HOLDER_NAME_MAX), nic: displayIdentity(named && named[FIELDS.NIC]) };
+        if (ledger.own) holders.unshift(holder); else holders.push(holder);
         for (const inv of investments) groups.push({ ...investmentRow(inv, user, now), currency, lender: n });
         for (const d of debtors) groups.push({ ...loanRow(d, now), currency, lender: n });
         // where this lender wants to be paid: only the accounts meant for the kinds of record this person has with them
@@ -170,7 +186,7 @@ export function buildStatement({ ledgers, nicHash, phoneHash, secret, now }) {
         else t(g.currency).loanOutstanding += g.outstanding;
     }
     const totals = [...byCurrency.values()].map((x) => ({ currency: x.currency, invested: money(x.invested), interestReceived: money(x.interestReceived), loanOutstanding: money(x.loanOutstanding) }));
-    return { asOf: new Date(now).toISOString(), groups, totals, lenders, lenderCount: n, truncated };
+    return { asOf: new Date(now).toISOString(), holder: holderOf(holders), groups, totals, lenders, lenderCount: n, truncated };
 }
 
 export default { MAX_RECORDS, recordsFor, buildStatement, nextInterest };

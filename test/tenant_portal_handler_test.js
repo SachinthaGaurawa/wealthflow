@@ -84,7 +84,8 @@ describe('the whole journey', () => {
         expect(st.json.ok).toBe(true);
         expect(st.json.statement.groups.map((g) => g.kind)).toEqual(['investment', 'loan']);
         expect(st.json.expiresAt).toBeGreaterThan(T0);
-        expect(st.raw).not.toMatch(/PRIVATE|853400937|198534000937|771234567/);
+        expect(st.json.statement.holder).toEqual({ name: '', nic: '853400937V' });          // the person's own NIC, and only there
+        expect(JSON.stringify({ ...st.json.statement, holder: null })).not.toMatch(/PRIVATE|853400937|198534000937|771234567/);
 
         // the session ends by the clock
         advance(21 * 60e3);
@@ -268,11 +269,12 @@ describe('the PDF', () => {
         expect(seen).toEqual(['si', 'en', 'en', 'en', 'en', 'en', 'en', 'en', 'en', 'en']);
     });
 
-    it('is a file with no name, note, phone, NIC or record id in it, whatever way the bytes are read', async () => {
+    it('is a file with no nickname, note, phone or record id in it, and their own NIC only in the holder block, whatever way the bytes are read', async () => {
         const { d, token, cookie } = await signedIn();
         const out = await call(d, { body: { action: 'pdf', token }, cookie });
         const everything = out.file.toString('latin1') + pageTexts(out.file).join('\n');
-        for (const leak of ['PRIVATE', 'Fixed deposit', '853400937', '198534000937', '0771234567', '771234567', 'inv1', 'deb1']) expect(everything, leak).not.toContain(leak);
+        expect(pageTexts(out.file).join('\n')).toContain('853400937V');                                // the holder block: their own NIC, shown back to them
+        for (const leak of ['PRIVATE', 'Fixed deposit', '198534000937', '0771234567', '771234567', 'inv1', 'deb1']) expect(everything, leak).not.toContain(leak);
     });
 
     it('is refused without a live session, for another link\'s session, and after sign-out', async () => {

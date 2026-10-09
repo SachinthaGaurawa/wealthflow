@@ -207,6 +207,25 @@ function loanCard(doc, g, st, t, actions) {
             : h(doc, 'p', { class: 'tp-note', text: t('Nothing recorded yet.') }));
 }
 
+/** Whose statement it is: the person's own full name and NIC, as their lender recorded them. Nothing is drawn for a field that is empty. */
+function holderCard(doc, holder, t) {
+    const x = holder && typeof holder === 'object' ? holder : {};
+    const name = typeof x.name === 'string' ? x.name.trim() : '';
+    const nic = typeof x.nic === 'string' ? x.nic.trim() : '';
+    if (!name && !nic) return null;
+    return h(doc, 'section', { class: 'tp-card tp-holder', 'aria-label': t('Account holder') },
+        name ? h(doc, 'div', { class: 'tp-holder-item' }, h(doc, 'span', { class: 'tp-label', text: t('Account holder') }), h(doc, 'strong', { class: 'tp-holder-name', text: name })) : null,
+        nic ? h(doc, 'div', { class: 'tp-holder-item' }, h(doc, 'span', { class: 'tp-label', text: t('NIC / ID') }), h(doc, 'strong', { class: 'tp-holder-nic', text: nic })) : null);
+}
+
+/** The WealthFlow mark and name: the picture is a real image (not a background), so it also prints. */
+const logos = new WeakMap();
+export function brandEl(doc) {
+    // ONE picture element for the life of the page, moved into each new header: a new element every time the page rebuilds would cancel and restart the download
+    if (!logos.has(doc)) logos.set(doc, h(doc, 'img', { class: 'tp-logo', src: '/tenant-logo.png', alt: '', width: '34', height: '34' }));
+    return h(doc, 'h1', { class: 'tp-brand' }, logos.get(doc), h(doc, 'span', { text: 'WealthFlow' }));
+}
+
 /** One bank account, with a copy button on the number (the thing that gets typed wrongly) and one for the lot. */
 function accountCard(doc, a, t, actions) {
     const x = a && typeof a === 'object' ? a : {};
@@ -225,7 +244,7 @@ function accountCard(doc, a, t, actions) {
             row(t('Account number'), x.number, true),
             row(t('Branch'), x.branch),
             row('SWIFT / IBAN', x.swift, true)),
-        x.note ? h(doc, 'p', { class: 'tp-note', text: x.note }) : null,
+        x.note ? h(doc, 'div', { class: 'tp-acct-note', role: 'note' }, h(doc, 'strong', { class: 'tp-acct-note-label', text: t('Note') }), h(doc, 'p', { text: x.note })) : null,
         all);
 }
 
@@ -276,6 +295,8 @@ export function statementView(doc, statement, t = english, actions = null) {
     const groups = Array.isArray(st.groups) ? st.groups : [];
     const totals = Array.isArray(st.totals) ? st.totals : [];
     const out = [];
+    const who = holderCard(doc, st.holder, t);
+    if (who) out.push(who);
     if (!groups.length) out.push(h(doc, 'section', { class: 'tp-card' }, h(doc, 'p', { text: t('There is nothing to show yet. When your lender records something for you, it will appear here.') })));
     for (const tot of totals) {
         const mine = groups.filter((g) => g.currency === tot.currency);
@@ -366,7 +387,7 @@ export function createPage(env) {
     function mount(title, nodes, focus) {
         stopTick();
         st.busy = false;
-        const brand = h(doc, 'h1', { class: 'tp-brand', text: 'WealthFlow' });
+        const brand = brandEl(doc);
         const lang = h(doc, 'button', { class: 'tp-lang', type: 'button', id: 'tp-lang', lang: st.lang === 'si' ? 'en' : 'si', text: LANG_BUTTON[st.lang], onclick: toggleLang });
         root.replaceChildren(h(doc, 'div', { class: 'tp-top' }, brand, lang), ...nodes);
         const target = focus ? root.querySelector(focus) : root.querySelector('h2');
@@ -635,7 +656,7 @@ export function createPage(env) {
         st.pdfBlob = null;
         st.pdfName = '';
         st.codeMessage = '';
-        root.replaceChildren(h(doc, 'h1', { class: 'tp-brand', text: 'WealthFlow' }));
+        root.replaceChildren(brandEl(doc));
         st.els = {};
     }
 

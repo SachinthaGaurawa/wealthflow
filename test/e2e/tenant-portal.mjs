@@ -28,7 +28,7 @@ import { normalizeNic } from '../../wealthflow-nic.js';
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 const PAGE_HEADERS = Object.fromEntries(VERCEL.headers.find((h) => h.source === '/t/(.*)').headers.map((h) => [h.key, h.value]));
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png' };
 
 const ENV = { TENANT_PORTAL_SECRET: 'e2e-secret-'.repeat(4) };
 const NIC = '853400937V';
@@ -76,7 +76,7 @@ const server = http.createServer((req, res) => {
     const f = path.resolve(ROOT, '.' + file);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end('not found'); }
     // the page's own files, its words, the shared NIC module and nothing else
-    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
+    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', ...headers });
     res.end(fs.readFileSync(f));
 });
@@ -168,7 +168,9 @@ await page.waitForSelector('#tp-out');
 const body = await text();
 console.log('5. right code         -> statement', JSON.stringify(body.slice(0, 160)) + '...');
 for (const want of ['Your statement', 'Investment', 'Loan', 'LKR 500,000.00', 'LKR 10,000.00', 'LKR 30,000.00', 'LKR 50,000.00', 'LKR 20,000.00', '24% a year', 'Monthly', 'Loan paid out', 'Repayment', '1 Sep 2026', '20 Sep 2026']) assert.ok(body.includes(want), `statement shows ${want}`);
-for (const leak of ['PRIVATE', '853400937', '198534000937', '0771234567', '077 123', 'inv1', 'deb1', '777']) assert.ok(!body.includes(leak), `statement must not show ${leak}`);
+assert.ok(body.includes('853400937V') && body.includes('NIC / ID'), 'the holder card shows the person\'s own NIC');
+assert.ok(await page.locator('img.tp-logo').first().evaluate((i) => i.complete && i.naturalWidth === 86), 'the WealthFlow mark loads');
+for (const leak of ['PRIVATE', '198534000937', '0771234567', '077 123', 'inv1', 'deb1', '777']) assert.ok(!body.includes(leak), `statement must not show ${leak}`);
 assert.match(body, /INV-[0-9A-F]{6}/);
 assert.match(body, /DEB-[0-9A-F]{6}/);
 assert.match(body, /closes in \d+:\d\d/);
@@ -213,7 +215,9 @@ assert.ok(pdf.subarray(-6).toString('latin1') === '%%EOF\n');
 const pdfText = [...pdf.toString('latin1').matchAll(/stream\n([\s\S]*?)\nendstream/g)].map((m) => zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1')).join('\n');
 for (const want of ['(8001234567)', '(Commercial Bank)', '(500,000.00)', '(30,000.00)', 'Page 1 of']) assert.ok(pdfText.includes(want) || pdfText.includes(want.replace(/[()]/g, '')), `the PDF carries ${want}`);
 assert.match(pdfText, /INV-[0-9A-F]{6}/);
-for (const leak of ['PRIVATE', '853400937', '198534000937', '0771234567', 'Closed Bank', '1111222233']) assert.ok(!pdf.toString('latin1').includes(leak) && !pdfText.includes(leak), `the PDF must not carry ${leak}`);
+assert.ok(pdfText.includes('(853400937V)'), 'the PDF names the person\'s own NIC in the holder block');
+assert.ok(/\/Subtype \/Image \/Width 86/.test(pdf.toString('latin1')), 'the PDF carries the WealthFlow mark');
+for (const leak of ['PRIVATE', '198534000937', '0771234567', 'Closed Bank', '1111222233']) assert.ok(!pdf.toString('latin1').includes(leak) && !pdfText.includes(leak), `the PDF must not carry ${leak}`);
 await page.waitForFunction(() => /PDF is ready/.test(document.getElementById('tp-info').textContent));
 assert.equal(await page.textContent('#tp-pdf'), 'Download PDF');
 assert.equal(await page.isDisabled('#tp-pdf'), false, 'the button is ready for another download');

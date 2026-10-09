@@ -272,3 +272,38 @@ describe('what a person can do with the statement', () => {
         expect(find(statementView(doc, short), (e) => e.tag === 'button')).toHaveLength(0);
     });
 });
+
+describe('the logo, the holder and the note', () => {
+    const walk = (nodes) => { const out = []; for (const n of nodes) n && n.walk && n.walk((e) => out.push(e)); return out; };
+    const classes = (nodes, cls) => walk(nodes).filter((e) => e.attrs && (e.attrs.class || '').split(' ').includes(cls));
+    const base = (over = {}) => ({ asOf: '2026-10-05T05:00:00.000Z', groups: [], totals: [], lenders: [], lenderCount: 1, ...over });
+
+    it('shows the person\'s full name and NIC as text, at the head of the statement', () => {
+        const view = statementView(doc, base({ holder: { name: 'Nimal Kumara Perera', nic: '853400937V' } }), makeT('en'));
+        const [card] = classes(view, 'tp-holder');
+        expect(card.textContent).toContain('Account holder');
+        expect(card.textContent).toContain('Nimal Kumara Perera');
+        expect(card.textContent).toContain('NIC / ID');
+        expect(card.textContent).toContain('853400937V');
+        expect(view[0]).toBe(card);
+    });
+
+    it('draws nothing for a holder that is empty or missing, and never parses a name as markup', () => {
+        expect(classes(statementView(doc, base(), makeT('en')), 'tp-holder')).toHaveLength(0);
+        expect(classes(statementView(doc, base({ holder: { name: '', nic: '' } }), makeT('en')), 'tp-holder')).toHaveLength(0);
+        expect(classes(statementView(doc, base({ holder: 'x' }), makeT('en')), 'tp-holder')).toHaveLength(0);
+        const [card] = classes(statementView(doc, base({ holder: { name: BAD, nic: '' } }), makeT('en')), 'tp-holder');
+        expect(card.textContent).toContain(BAD);
+        expect(walk([card]).some((e) => e.tag === 'img')).toBe(false);
+    });
+
+    it('puts the lender\'s note in a highlighted panel labelled Note, in either language', () => {
+        const st = base({ groups: [{ kind: 'investment', ref: 'INV-1', currency: 'LKR', lender: 1, capital: 1, payments: [] }], totals: [{ currency: 'LKR', invested: 1, interestReceived: 0, loanOutstanding: 0 }], lenders: [{ n: 1, accounts: [{ bank: 'DFCC Bank', holder: 'A', number: '1', note: 'USE THE REFERENCE' }] }] });
+        for (const lang of ['en', 'si']) {
+            const [panel] = classes(statementView(doc, st, makeT(lang)), 'tp-acct-note');
+            expect(panel.attrs.role).toBe('note');
+            expect(panel.textContent).toContain('USE THE REFERENCE');
+            expect(panel.textContent).toContain(lang === 'en' ? 'Note' : 'සටහන');
+        }
+    });
+});

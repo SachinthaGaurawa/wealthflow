@@ -611,3 +611,39 @@ describe('what the dashboard does when one of these is confirmed', () => {
         expect(HTML).toContain("r.source === 'debtor-due' ? 'Log what came in'");
     });
 });
+
+describe('findOpenLoanFor: the loan a new loan could be added to', () => {
+    const NOW = new Date('2026-10-09T00:00:00Z');
+    const ev = (kind, amount, date, id) => ({ id, kind, amount, date, confirmed: true });
+    const loan = (over = {}) => ({ id: 'a', name: 'Nimal', nic: '853400937V', events: [ev('lent', 50000, '2026-09-01', 'e1')], ...over });
+
+    it('finds the same person by the saved-person link or by the NIC / ID, whichever way the NIC is written', () => {
+        expect(L.findOpenLoanFor([loan()], { id: 'n', nic: '853400937v' }, NOW).id).toBe('a');
+        expect(L.findOpenLoanFor([loan()], { id: 'n', nic: '198534000937' }, NOW).id).toBe('a');
+        expect(L.findOpenLoanFor([loan({ nic: '', personId: 'p1' })], { id: 'n', personId: 'p1' }, NOW).id).toBe('a');
+    });
+    it('never by a name or a phone alone, and never itself', () => {
+        expect(L.findOpenLoanFor([loan({ nic: '' })], { id: 'n', name: 'Nimal', phone: '+94771234567' }, NOW)).toBe(null);
+        expect(L.findOpenLoanFor([loan({ phone: '+94771234567' })], { id: 'n', name: 'Nimal', phone: '+94771234567' }, NOW)).toBe(null);
+        expect(L.findOpenLoanFor([loan()], { id: 'a', nic: '853400937V' }, NOW)).toBe(null);
+        expect(L.findOpenLoanFor([loan()], { id: 'n', nic: '853400938V' }, NOW)).toBe(null);
+    });
+    it('only a loan with money still outstanding: a settled one is not asked about', () => {
+        const paid = loan({ events: [ev('lent', 50000, '2026-09-01', 'e1'), ev('repayment', 50000, '2026-09-20', 'e2')] });
+        expect(L.findOpenLoanFor([paid], { id: 'n', nic: '853400937V' }, NOW)).toBe(null);
+        const unconfirmed = loan({ events: [{ ...ev('lent', 50000, '2026-09-01', 'e1'), confirmed: false }] });
+        expect(L.findOpenLoanFor([unconfirmed], { id: 'n', nic: '853400937V' }, NOW)).toBe(null);
+    });
+    it('with several open loans it offers the one lent most recently, and survives rubbish', () => {
+        const old = loan({ id: 'old' });
+        const newer = loan({ id: 'newer', events: [ev('lent', 1000, '2026-10-01', 'e9')] });
+        expect(L.findOpenLoanFor([old, newer], { id: 'n', nic: '853400937V' }, NOW).id).toBe('newer');
+        expect(L.findOpenLoanFor(null, null, NOW)).toBe(null);
+        expect(L.findOpenLoanFor([null, 5, {}], { nic: 'x' }, NOW)).toBe(null);
+    });
+    it('adding a topup to the found loan keeps one balance', () => {
+        const found = L.findOpenLoanFor([loan()], { id: 'n', nic: '853400937V' }, NOW);
+        const r = addEvent(found, { kind: 'topup', amount: 20000, date: '2026-10-09', id: 'e5', now: 1, confirmed: true });
+        expect(debtorSummary(r.debtor, NOW).outstanding).toBe(70000);
+    });
+});

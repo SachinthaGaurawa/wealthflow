@@ -463,7 +463,8 @@ describe('the session', () => {
         const live = await readSession({ db, cookieHeader: cookie, now: T0 + 5000 });
         const st = await loadStatement({ db, live, secret: SECRET, now: T0 + 5000 });
         expect(st.groups.map((g) => g.kind)).toEqual(['investment', 'loan']);
-        const text = JSON.stringify(st);
+        expect(st.holder).toEqual({ name: '', nic: NIC });                  // the person's own NIC, shown back to them: nowhere else
+        const text = JSON.stringify({ ...st, holder: null });
         for (const secret of ['PRIVATE COMPANY NAME', 'PRIVATE NOTE', 'PRIVATE DEBTOR NAME', 'PRIVATE DEBTOR NOTE', NIC, CANON, '0771234567', '077 123 4567', '+94771234567', 'inv1', 'deb1', '777']) {
             expect(text, secret).not.toContain(secret);
         }

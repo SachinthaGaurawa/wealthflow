@@ -45,6 +45,8 @@ import PAWN, {
     monthsElapsed, pawnStatus, pawnTotals, clearFirst, pendingPawn,
 } from './wealthflow-pawn.js';
 
+import { normalizeIdentity } from './wealthflow-nic.js';
+
 const DAY_MS = 86400000;
 /* The average calendar month. Used only where a fraction of a month is being
  * measured; whole-month counting below is done on the calendar, not on this. */
@@ -404,13 +406,34 @@ export function reopenDebtor(debtor) {
     return { ok: true, debtor: next };
 }
 
+/**
+ * Does this person already owe the owner something? The loan a NEW loan could be added to: another debtor record of the same person
+ * (the same saved-person link, or the same NIC / ID) that still has money outstanding. When there are several, the one lent most recently.
+ * Matching is by identity only: a name alone is never enough, and neither is a shared family phone.
+ * @returns {object|null} the existing debtor record
+ */
+export function findOpenLoanFor(debtors, rec, asOf) {
+    const r = rec && typeof rec === 'object' ? rec : {};
+    const pid = s(r.personId);
+    const mine = normalizeIdentity(r.nic);
+    const same = (d) => {
+        if (!d || d.id === r.id) return false;
+        if (pid && s(d.personId) === pid) return true;
+        const other = normalizeIdentity(d.nic);
+        return mine.ok && other.ok && mine.canonical === other.canonical;
+    };
+    const open = arr(debtors).filter((d) => same(d) && debtorSummary(d, asOf).outstanding > 0);
+    const last = (d) => { const e = debtorSummary(d, asOf).lastEvent; return e ? e.date : ''; };
+    return open.sort((a, b) => (last(b) < last(a) ? -1 : last(b) > last(a) ? 1 : 0))[0] || null;
+}
+
 const API = {
     PAWN_STATE, DEBT_STATE, EVENT, MATURITY_WARN_DAYS, LATE_AFTER_DAYS,
     parseDay, daysBetween, monthsElapsed, interestOn,
     pawnStatus, pawnTotals, clearFirst,
     debtorSummary, debtorTotals, pendingLiquidity,
     addEvent, confirmEvent, settleInFull,
-    updateDebtor, updateEvent, removeEvent, unconfirmEvent, reopenDebtor,
+    updateDebtor, updateEvent, removeEvent, unconfirmEvent, reopenDebtor, findOpenLoanFor,
     /* The pawn engine, reachable from the one global the page already has. */
     pawn: PAWN,
 };

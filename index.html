@@ -3592,6 +3592,9 @@
         }
 
         /* ================== SORT BAR ================== */
+        .wf-listsearch { margin: 0 0 12px; }
+        .wf-listsearch input { width: 100%; max-width: 420px; }
+        .wf-listsearch-none { padding: 18px 4px; font-size: 13px; color: var(--text3); }
         .sort-bar {
             display: flex;
             gap: 6px;
@@ -6160,6 +6163,7 @@
                                 Add Investment</button>
                         </div>
                     </div>
+                    <div class="wf-listsearch"><input type="search" id="incSearch" class="fi" placeholder="Search name, nickname, NIC or phone number" autocomplete="off" aria-label="Search investments" oninput="_wfListSearch('income', this.value)"></div>
                     <div id="incomeList"></div>
                 </div>
 
@@ -18359,6 +18363,36 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             if (btn) { const p = btn.closest('.sort-bar'); if (p) p.querySelectorAll('.sb-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
             try { renderCCOT(); } catch (_) {}
         }
+        /* Search box over the investments and the debtors: the cards stay as they are and are only hidden, so every button keeps
+         * the position it had and typing never rebuilds the list (and never loses the caret). */
+        const _wfListQuery = { income: '', debtor: '' };
+        function _wfApplyListSearch(key) {
+            const isDebt = key === 'debtor';
+            const root = $(isDebt ? 'liqBody' : 'incomeList');
+            if (!root) return;
+            const q = _wfListQuery[key] || '';
+            const recs = new Map((DB.get(isDebt ? 'debtors' : 'income') || []).filter(Boolean).map((r) => [String(r.id), r]));
+            const match = (window.WFPeople && WFPeople.recordMatches) || null;
+            let shown = 0, total = 0;
+            root.querySelectorAll(isDebt ? '.liq-row[data-wf-id]' : '.inc-card[data-wf-id]').forEach((card) => {
+                total += 1;
+                const rec = recs.get(card.getAttribute('data-wf-id'));
+                const ok = !q || !match || !rec || match(rec, q);
+                card.style.display = ok ? '' : 'none';
+                if (ok) shown += 1;
+            });
+            let note = root.querySelector('.wf-listsearch-none');
+            if (q && total && !shown) {
+                if (!note) { note = document.createElement('div'); note.className = 'wf-listsearch-none'; root.appendChild(note); }
+                note.textContent = 'Nothing matches "' + q + '". Try part of the name, the NIC or the phone number.';
+            } else if (note) note.remove();
+        }
+        function _wfListSearch(key, value) {
+            _wfListQuery[key] = String(value || '').slice(0, 80);
+            _wfApplyListSearch(key);
+        }
+        window._wfListSearch = _wfListSearch;
+
         function sortList(key, field, btn) {
             if (!sortState[key]) sortState[key] = { field: '', dir: -1 };
             if (sortState[key].field === field) sortState[key].dir *= -1;
@@ -18512,7 +18546,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const rec = { id: editMode || uid(), createdAt: prevRec.createdAt || new Date().toISOString(), name, company, amount, rate, start: $('i_start').value, end: $('i_end').value, freq, day: $('i_day').value, monthly: override || calc, notes: $('i_notes').value };
             /* The record is rebuilt from the form, so what the form does not show is carried over by hand — otherwise saving an edit would switch the
              * text messages off and forget who they go to. */
-            ['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'phone2', 'phone2_at', 'nic', 'personId', 'closedAt', 'closedEndWas'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });
+            ['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'phone2', 'phone2_at', 'nic', 'fullName', 'personId', 'closedAt', 'closedEndWas'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });
             /* The investor, when this is a person: country, number and NIC / passport are checked together and shown against the fields they belong to. */
             const WP = window.WFPeople;
             let contact = null;
@@ -18525,6 +18559,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (contact.phone) rec.phone = contact.phone; else delete rec.phone;
                     if (contact.phone2) rec.phone2 = contact.phone2; else { delete rec.phone2; delete rec.phone2_at; }
                     if (contact.nic) rec.nic = contact.nic; else delete rec.nic;
+                    if (contact.fullName) rec.fullName = contact.fullName; else delete rec.fullName;
                     if (contact.personId) rec.personId = contact.personId; else delete rec.personId;
                 }
                 if (form) {
@@ -18915,7 +18950,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const expectedTotal = source.monthly * totalMonths;
                 const receivedTotal = source.monthly * receivedMonths;
 
-                return `<div class="inc-card${isArchived ? ' income-archive-card' : ''}">
+                return `<div class="inc-card${isArchived ? ' income-archive-card' : ''}" data-wf-id="${_wfEsc(source.id)}">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;">
                 <div><div style="font-size:15px;font-weight:700;">${_wfEsc(source.name)}</div><div style="font-size:12px;color:var(--text3);margin-top:2px;">@bank@ ${_wfEsc(source.company)} · ${fmtDatePretty(source.start)}${source.end ? ' → ' + fmtDatePretty(source.end) : ''}</div></div>
                 <div style="display:flex;gap:10px;align-items:flex-start;">
@@ -18973,6 +19008,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const _capE = _wfCap('incomeEnded', endedArr);
                 el.innerHTML += `<div id="endedIncomeWrap">` + _capE.rows.map(src => renderCard(src, true)).join('') + _capE.bar + `</div>`;
             }
+            _wfApplyListSearch('income');
         }
 
         async function confirmIncomeReceived(id) {
@@ -23732,7 +23768,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             ${d.phone ? ' · <a href="tel:' + _wfEsc(String(d.phone).replace(/[^0-9+]/g, '')) + '" style="color:var(--accent);">' + _wfEsc(window.WFPeople ? WFPeople.showPhone(d.phone) : d.phone) + '</a>' : ''}
                         </div>` : (d.phone ? `<div class="liq-sub" style="margin-top:2px;"><a href="tel:${_wfEsc(String(d.phone).replace(/[^0-9+]/g, ''))}" style="color:var(--accent);">${_wfEsc(window.WFPeople ? WFPeople.showPhone(d.phone) : d.phone)}</a></div>` : '');
                     return `
-                    <div class="liq-row">
+                    <div class="liq-row" data-wf-id="${_wfEsc(d.id || '')}">
                         <div class="liq-head">
                             <div class="liq-name" style="flex:1;min-width:150px;">${_wfEsc(d.name || 'Debtor')}</div>
                             ${chip}
@@ -23771,9 +23807,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 <button class="btn btn-primary btn-sm" id="_liq_addd">${(window.WFIcon ? WFIcon('plus') : '')} Add debtor</button>
                             </div>
                         </div>
+                        ${debtors.length ? `<div class="wf-listsearch"><input type="search" id="debtSearch" class="fi" placeholder="Search name, nickname, NIC or phone number" autocomplete="off" aria-label="Search debtors" value="${_wfEsc(_wfListQuery.debtor)}" oninput="_wfListSearch('debtor', this.value)"></div>` : ''}
                         ${rows || '<div style="font-size:12.5px;color:var(--text3);padding:14px 0;">Nobody owes you anything here yet. Add a debtor to track partial repayments, further advances and what is still outstanding.</div>'}
                     </div>`;
 
+                _wfApplyListSearch('debtor');
                 const add = host.querySelector('#_liq_addd');
                 if (add) add.onclick = () => openDebtorModal(null);
                 const smsBtn = host.querySelector('#_liq_sms');
@@ -24401,6 +24439,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         if (contact) {
                             if (contact.phone2) rec.phone2 = contact.phone2; else { delete rec.phone2; delete rec.phone2_at; }
                             if (contact.nic) rec.nic = contact.nic; else delete rec.nic;
+                            if (contact.fullName) rec.fullName = contact.fullName; else delete rec.fullName;
                             if (contact.personId) rec.personId = contact.personId; else delete rec.personId;
                         }
                         /* The text-message switch. The number is the one above; the rest is validated and stamped here, before anything is saved. */
@@ -24431,17 +24470,55 @@ table.amort tbody tr { page-break-inside: avoid; }
                         }
                         /* The people step comes BEFORE the ledger is read for the write: a changed name, number or NIC is carried to this person's other
                          * loans and investments here, and it may ask the owner one question (update everywhere, or this loan only). */
+                        let outcome = { record: rec, message: existing ? 'Debtor updated' : 'Debtor added' };
                         const commit = () => {
+                            const record = outcome.record;
+                            const message = outcome.message;
                             const list = (DB.get('debtors') || []).slice();
-                            const at = list.findIndex((x) => x && x.id === rec.id);
-                            if (at > -1) list[at] = rec; else list.push(rec);
+                            const at = list.findIndex((x) => x && x.id === record.id);
+                            if (at > -1) list[at] = record; else list.push(record);
                             DB.set('debtors', list);
                             try { triggerHaptic('success'); } catch (_) {}
-                            notify(existing ? 'Debtor updated' : 'Debtor added', 'success');
+                            notify(message, 'success');
                             close();
                             renderLiquidity();
                         };
-                        if (WP) WP.saveLink({ kind: 'debtor', rec, remember: !!(contact && contact.remember), country: contact ? contact.country : '', onDone: commit }); else commit();
+                        /* A person who still owes money borrows again: ONE question, asked before anything is written. Adding it to the loan they
+                         * already have keeps one balance, one timeline and one line on their statement; a separate loan keeps the two apart. */
+                        const askThenCommit = () => {
+                            if (existing || !amount) return commit();
+                            const open = window.WFLiquidity.findOpenLoanFor(DB.get('debtors') || [], rec, new Date());
+                            if (!open) return commit();
+                            const owing = window.WFLiquidity.debtorSummary(open, new Date()).outstanding;
+                            const lentOn = (window.WFLiquidity.debtorSummary(open, new Date()).events[0] || {}).date || '';
+                            _liqOverlay((window.WFIcon ? WFIcon('user') : '') + ' Already owes you',
+                                '<div style="font-size:13px;line-height:1.6;margin-bottom:12px;"><b>' + _wfEsc(open.name || name) + '</b> still owes you <b>' + _wfEsc(fmt(owing)) + '</b>'
+                                + (lentOn ? ' on a loan from ' + _wfEsc(lentOn) : '') + '. This new <b>' + _wfEsc(fmt(amount)) + '</b> can be added to that loan as a further advance, '
+                                + 'so there is one balance, one timeline and one line on their statement page, or kept as a separate new loan.</div>'
+                                + '<div class="md-ftr" style="display:flex;flex-direction:column;gap:8px;">'
+                                + '<button class="btn btn-primary" id="_dm_join" style="width:100%;">Add to the existing loan (recommended)</button>'
+                                + '<button class="btn btn-secondary" id="_dm_new" style="width:100%;">Keep it as a separate new loan</button>'
+                                + '<button class="btn btn-ghost" id="_dm_cancel" style="width:100%;">Cancel, do not save</button></div>',
+                                (ov2, close2) => {
+                                    ov2.querySelector('#_dm_cancel').onclick = () => close2();
+                                    ov2.querySelector('#_dm_new').onclick = () => { close2(); { outcome = { record: rec, message: 'Debtor added as a separate loan' }; commit(); }; };
+                                    ov2.querySelector('#_dm_join').onclick = () => {
+                                        close2();
+                                        const lent = rec.events[rec.events.length - 1];
+                                        const r2 = window.WFLiquidity.addEvent(open, { kind: 'topup', amount: lent.amount, date: lent.date, id: uid(), now: Date.now(), confirmed: true });
+                                        if (!r2.ok) { { outcome = { record: rec, message: 'Debtor added as a separate loan' }; commit(); }; return; }
+                                        let merged = r2.debtor;
+                                        // what the new form says that the old record did not: a date promised, a note, the texts, the full name and the second number
+                                        if (rec.dueISO) merged.dueISO = rec.dueISO;
+                                        if (rec.note && !merged.note) merged.note = rec.note;
+                                        for (const k of ['fullName', 'phone', 'phone2', 'phone2_at', 'nic', 'personId']) if (rec[k] && !merged[k]) merged[k] = rec[k];
+                                        if (rec.sms_notifications_enabled === true && merged.sms_notifications_enabled !== true) merged = { ...merged, ...WFSms.carry(rec) };
+                                        else if (rec.sms_remind_late === true && merged.sms_remind_late !== true) { merged.sms_remind_late = true; merged.sms_remind_at = rec.sms_remind_at; }
+                                        outcome = { record: merged, message: 'Added to ' + (open.name || name) + '\u2019s existing loan' }; commit();
+                                    };
+                                });
+                        };
+                        if (WP) WP.saveLink({ kind: 'debtor', rec, remember: !!(contact && contact.remember), country: contact ? contact.country : '', onDone: askThenCommit }); else askThenCommit();
                     };
                 },
             );

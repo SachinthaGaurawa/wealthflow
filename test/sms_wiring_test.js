@@ -32,7 +32,7 @@ describe('the page', () => {
     it('the investment form carries its fields over by hand and validates BEFORE it saves anything', () => {
         const start = HTML.indexOf('function saveIncome()');
         const body = HTML.slice(start, HTML.indexOf('function clearIncomeForm()', start));
-        expect(body).toContain("['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'phone2', 'phone2_at', 'nic', 'personId', 'closedAt', 'closedEndWas'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });");
+        expect(body).toContain("['sms_notifications_enabled', 'sms_enabled_at', 'phone', 'phone2', 'phone2_at', 'nic', 'fullName', 'personId', 'closedAt', 'closedEndWas'].forEach(k => { if (prevRec[k] !== undefined) rec[k] = prevRec[k]; });");
         expect(body.indexOf('WFSms.applyToggle')).toBeGreaterThan(0);
         expect(body.indexOf('WFSms.applyToggle')).toBeLessThan(body.indexOf("DB.set('income', arr)"));
         expect(body).toMatch(/if \(!sms\.ok\) \{[^}]*\breturn; \}/);

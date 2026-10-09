@@ -29,8 +29,39 @@ describe('what is on it', () => {
         expect(inv.ref).toMatch(/^INV-[0-9A-F]{6}$/);
         expect(loan).toMatchObject({ kind: 'loan', title: 'Loan', lent: 50000, repaid: 20000, outstanding: 30000, status: 'open' });
         expect(loan.ref).toMatch(/^DEB-[0-9A-F]{6}$/);
-        expect(Object.keys(st).sort()).toEqual(['asOf', 'groups', 'lenderCount', 'lenders', 'totals', 'truncated']);
+        expect(Object.keys(st).sort()).toEqual(['asOf', 'groups', 'holder', 'lenderCount', 'lenders', 'totals', 'truncated']);
         expect(st.totals).toEqual([{ currency: 'LKR', invested: 500000, interestReceived: 10000, loanOutstanding: 30000 }]);
+    });
+
+    it('names the person by their FULL name, never by the nickname the owner keeps them under', () => {
+        const user = lenderDoc();
+        user.income[0].fullName = '  Nimal   Kumara Perera ';
+        user.debtors[0].fullName = 'Somebody Else';
+        const st = build(user);
+        expect(st.holder).toEqual({ name: 'Nimal Kumara Perera', nic: NIC });
+        expect(JSON.stringify(st)).not.toMatch(/PRIVATE/);
+        expect(Object.keys(st.holder).sort()).toEqual(['name', 'nic']);
+    });
+
+    it('no full name saved: no name is shown (the nickname is not a fallback), but the NIC still is', () => {
+        expect(build(lenderDoc()).holder).toEqual({ name: '', nic: NIC });
+    });
+
+    it('the lender whose text carried the link names the person first; another lender\'s record only when theirs has none', () => {
+        const mine = lenderDoc(); mine.debtors[0].fullName = 'Own Ledger Name';
+        const other = lenderDoc(); other.income[0].fullName = 'Other Lender Name'; other.debtors[0].fullName = 'Other Lender Name';
+        const st = buildStatement({ ledgers: [{ uid: 'a', user: other, own: false }, { uid: 'b', user: mine, own: true }], nicHash, phoneHash, secret: SECRET, now: T0 });
+        expect(st.holder.name).toBe('Own Ledger Name');
+        const bare = lenderDoc();
+        const st2 = buildStatement({ ledgers: [{ uid: 'b', user: bare, own: true }, { uid: 'a', user: other, own: false }], nicHash, phoneHash, secret: SECRET, now: T0 });
+        expect(st2.holder.name).toBe('Other Lender Name');
+    });
+
+    it('a name is squeezed and clipped', () => {
+        const user = lenderDoc(); user.income[0].fullName = `A${' '.repeat(5)}${'b'.repeat(200)}`;
+        const name = build(user).holder.name;
+        expect(name.startsWith('A b')).toBe(true);
+        expect(name.length).toBeLessThanOrEqual(80);
     });
 
     it('a loan has no interest on it: not zero, not hidden, not a field at all', () => {
@@ -41,8 +72,10 @@ describe('what is on it', () => {
         expect(loan.events.every((e) => Object.keys(e).sort().join() === 'amount,balance,date,kind')).toBe(true);
     });
 
-    it('carries no name, note, phone, NIC, company or record id from either kind of record', () => {
-        const text = JSON.stringify(build(lenderDoc()));
+    it('carries no name, note, phone, company or record id from either kind of record, and the person\'s own NIC only in `holder`', () => {
+        const { holder, ...rest } = build(lenderDoc());
+        expect(holder).toEqual({ name: '', nic: NIC });
+        const text = JSON.stringify(rest);
         for (const leak of ['PRIVATE', 'Fixed deposit', NIC, CANON, '0771234567', '077 123 4567', '94771234567', 'inv1', 'deb1', 'e1', 'e2']) expect(text, leak).not.toContain(leak);
     });
 
@@ -89,9 +122,32 @@ describe('what is on it', () => {
 describe('which records', () => {
     const rec = (over) => ({ id: 'r', nic: NIC, phone: PHONE, sms_notifications_enabled: true, ...over });
 
-    it('only those switched on, and only those under this NIC, in either shape', () => {
-        const user = { income: [rec({ id: 'on' }), rec({ id: 'off', sms_notifications_enabled: false }), rec({ id: 'str', sms_notifications_enabled: 'true' }), rec({ id: 'other', nic: '198534000999' }), rec({ id: 'none', nic: '' }), rec({ id: 'new', nic: '198534000937' }), { ...rec({}), id: '' }], debtors: [] };
+    it('only those under this NIC, in either shape, and only once the texts are on for at least one of them', () => {
+        const user = { income: [rec({ id: 'on' }), rec({ id: 'other', nic: '198534000999' }), rec({ id: 'none', nic: '' }), rec({ id: 'new', nic: '198534000937' }), { ...rec({}), id: '' }], debtors: [] };
         expect(recordsFor(user, { nicHash, phoneHash, secret: SECRET, own: true }).investments.map((r) => r.id)).toEqual(['on', 'new']);
+        const none = { income: [rec({ id: 'off', sms_notifications_enabled: false }), rec({ id: 'str', sms_notifications_enabled: 'true' })], debtors: [rec({ id: 'loan', sms_notifications_enabled: false })] };
+        const seen = recordsFor(none, { nicHash, phoneHash, secret: SECRET, own: true });
+        expect([seen.investments, seen.debtors]).toEqual([[], []]);              // nobody has the page until the owner switches the texts on for them
+    });
+
+    it('a second loan whose texts box was never ticked is on the page of a person who has the texts on for another record', () => {
+        const user = {
+            income: [rec({ id: 'inv', sms_notifications_enabled: false })],
+            debtors: [rec({ id: 'first' }), rec({ id: 'second', sms_notifications_enabled: false }), rec({ id: 'stranger', nic: '198534000999', sms_notifications_enabled: false })],
+        };
+        const seen = recordsFor(user, { nicHash, phoneHash, secret: SECRET, own: true });
+        expect(seen.debtors.map((r) => r.id)).toEqual(['first', 'second']);
+        expect(seen.investments.map((r) => r.id)).toEqual(['inv']);              // the investment is theirs too; the stranger's loan is not
+        // the statement counts the second loan's repayments like any other
+        const doc = lenderDoc();
+        doc.debtors.push({ ...doc.debtors[0], id: 'deb2', sms_notifications_enabled: false, events: [{ id: 'x1', kind: 'lent', amount: 10000, date: '2026-09-25', confirmed: true }, { id: 'x2', kind: 'repayment', amount: 4000, date: '2026-09-28', confirmed: true }] });
+        const st = build(doc);
+        expect(st.groups.filter((g) => g.kind === 'loan').map((g) => g.outstanding).sort((a, b) => a - b)).toEqual([6000, 30000]);
+    });
+
+    it('for another lender the phone must still match, whatever the texts box says', () => {
+        const user = { income: [], debtors: [rec({ id: 'same' }), rec({ id: 'sibling', phone: '0719999999', sms_notifications_enabled: false }), rec({ id: 'off', sms_notifications_enabled: false })] };
+        expect(recordsFor(user, { nicHash, phoneHash, secret: SECRET, own: false }).debtors.map((r) => r.id)).toEqual(['same', 'off']);
     });
 
     it('for another lender, also the phone the code went to', () => {

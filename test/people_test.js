@@ -89,10 +89,10 @@ describe('an identity as a record stores it', () => {
 
 describe('cleanPerson', () => {
     it('keeps everything a person has and tidies it', () => {
-        const r = cleanPerson({ name: '  Nimal   Perera ', phone: '077 123 4567', phone2: '011 234 5678', country: 'lk', nic: '853400937v', email: 'nimal@example.com', address: ' 12 Temple Rd ', note: 'brother of Kamal' });
+        const r = cleanPerson({ name: '  Nimal   Perera ', fullName: '  Nimal   Kumara  Perera ', phone: '077 123 4567', phone2: '011 234 5678', country: 'lk', nic: '853400937v', email: 'nimal@example.com', address: ' 12 Temple Rd ', note: 'brother of Kamal' });
         expect(r.ok).toBe(true);
         expect(r.fields).toEqual({
-            name: 'Nimal Perera', phone: '+94771234567', phone2: '011 234 5678', country: 'LK', nic: '853400937V',
+            name: 'Nimal Perera', fullName: 'Nimal Kumara Perera', phone: '+94771234567', phone2: '011 234 5678', country: 'LK', nic: '853400937V',
             email: 'nimal@example.com', address: '12 Temple Rd', note: 'brother of Kamal',
         });
     });
@@ -179,7 +179,7 @@ describe('searching the book', () => {
 
 describe('how a loan and an investment keep the person', () => {
     it('a loan keeps the name in `name`, an investment in `company`', () => {
-        expect(readShared('debtor', { name: ' Nimal ', phone: ' +94771234567', nic: '853400937V' })).toEqual({ name: 'Nimal', phone: '+94771234567', phone2: '', nic: '853400937V' });
+        expect(readShared('debtor', { name: ' Nimal ', phone: ' +94771234567', nic: '853400937V' })).toEqual({ name: 'Nimal', fullName: '', phone: '+94771234567', phone2: '', nic: '853400937V' });
         expect(readShared('investment', { company: 'Nimal', name: 'Fixed deposit' }).name).toBe('Nimal');
         const loan = { name: 'a', phone: 'x' };
         expect(writeShared('debtor', loan, { name: 'b', phone: 'x' })).toBe(true);
@@ -188,6 +188,15 @@ describe('how a loan and an investment keep the person', () => {
         expect(writeShared('investment', inv, { name: 'b', phone: '+94771234567', nic: '' })).toBe(true);
         expect(inv).toEqual({ name: 'FD', company: 'b', phone: '+94771234567' });                  // a blank NIC on a record that has none adds no field
         expect(writeShared('investment', inv, { name: 'b' })).toBe(false);
+    });
+    it('the full name is a field of its own: the nickname in `name` / `company` is never overwritten by it, and a blank one removes it', () => {
+        expect(readShared('investment', { company: 'Nimal', fullName: ' Nimal  Kumara Perera ' })).toMatchObject({ name: 'Nimal', fullName: 'Nimal Kumara Perera' });
+        const loan = { name: 'Nimal' };
+        expect(writeShared('debtor', loan, { name: 'Nimal', fullName: 'Nimal Kumara Perera' })).toBe(true);
+        expect(loan).toEqual({ name: 'Nimal', fullName: 'Nimal Kumara Perera' });
+        expect(writeShared('debtor', loan, { fullName: '' })).toBe(true);
+        expect(loan).toEqual({ name: 'Nimal' });
+        expect(writeShared('debtor', loan, { fullName: '' })).toBe(false);
     });
     it('a blank name never blanks a record', () => {
         const loan = { name: 'Nimal' };
@@ -457,7 +466,7 @@ describe('the default export carries the same names', () => {
     it('is the module', () => {
         expect(P.PEOPLE_KEY).toBe(PEOPLE_KEY);
         expect(P.SHARED).toEqual(SHARED);
-        expect(SHARED).toEqual(['name', 'phone', 'phone2', 'nic']);
+        expect(SHARED).toEqual(['name', 'fullName', 'phone', 'phone2', 'nic']);
         expect(typeof P.linkRecord).toBe('function');
     });
 });
@@ -924,5 +933,44 @@ describe('a second number for one person (optional, texted as well as the first)
         const s = store({ people: [], debtors: [LOAN({ phone2: '+94712345678' })], income: [] });
         harvestPeople(s, { now: NOW });
         expect(s.data.people[0].phone2).toBe('+94712345678');
+    });
+});
+
+describe('recordMatches (the search box over the investments and the debtors)', () => {
+    const loan = { id: 'd1', name: 'Nimal', fullName: 'Nimal Kumara Perera', phone: '+94771234567', phone2: '011 234 5678', nic: '853400937V' };
+    const inv = { id: 'i1', name: 'Fixed deposit', company: 'Kamal', fullName: 'Kamal Silva', phone: '0712223344', nic: 'ID:P1234567' };
+    it('an empty search matches everything', () => {
+        expect(P.recordMatches(loan, '')).toBe(true);
+        expect(P.recordMatches(loan, '   ')).toBe(true);
+        expect(P.recordMatches(null, '')).toBe(true);
+    });
+    it('finds by the nickname, the full name, a part of either, in any case', () => {
+        for (const q of ['nimal', 'NIM', 'kumara', 'perera nimal', 'Nimal Kumara']) expect(P.recordMatches(loan, q), q).toBe(true);
+        expect(P.recordMatches(loan, 'kamal')).toBe(false);
+    });
+    it('an investment is found by the person (company), its title and the full name', () => {
+        for (const q of ['kamal', 'fixed', 'silva', 'kamal silva']) expect(P.recordMatches(inv, q), q).toBe(true);
+    });
+    it('finds by the NIC, with or without the letter, and by a passport', () => {
+        expect(P.recordMatches(loan, '853400937')).toBe(true);
+        expect(P.recordMatches(loan, '853400937v')).toBe(true);
+        expect(P.recordMatches(inv, 'p1234567')).toBe(true);
+        expect(P.recordMatches(loan, '999999')).toBe(false);
+    });
+    it('finds by either number whichever way it is written, and never by one or two digits alone', () => {
+        for (const q of ['0771234567', '+94771234567', '77 123', '771234567', '234 5678', '011234']) expect(P.recordMatches(loan, q), q).toBe(true);
+        expect(P.recordMatches(inv, '071 222')).toBe(true);
+        expect(P.recordMatches({ ...loan, nic: '' }, '77')).toBe(false);           // two digits are not a number: they match names and NICs only
+        expect(P.recordMatches(loan, '5555555')).toBe(false);
+    });
+    it('every word has to be found, and a note or an amount is not searched', () => {
+        expect(P.recordMatches({ ...loan, note: 'secret', amount: 777 }, 'nimal 0771234567')).toBe(true);
+        expect(P.recordMatches(loan, 'nimal kamal')).toBe(false);
+        expect(P.recordMatches({ ...loan, note: 'secret', amount: 777 }, 'secret')).toBe(false);
+        expect(P.recordMatches({ ...loan, note: 'secret', amount: 777 }, '777')).toBe(false);
+    });
+    it('search also finds a saved person by their full name', () => {
+        const people = [{ id: 'p1', name: 'Nimal', fullName: 'Nimal Kumara Perera' }, { id: 'p2', name: 'Kamal' }];
+        expect(P.searchPeople(people, 'kumara').map((p) => p.id)).toEqual(['p1']);
     });
 });
