@@ -9,7 +9,7 @@
  *     { action: 'request',   token, nic }          -> the same answer for every input that is well formed
  *     { action: 'verify',    token, nic, code }    -> 200 + Set-Cookie on success, else one refusal
  *     { action: 'statement', token }               -> the statement, for the cookie's session (which must be this link's)
- *     { action: 'pdf', token }                     -> the same statement as a PDF file (application/pdf, an attachment), same session rule
+ *     { action: 'pdf', token, lang? }              -> the same statement as a PDF file (application/pdf, an attachment), same session rule; lang 'si' = Sinhala, anything else English
  *     { action: 'logout', token }                  -> ends the session
  *
  * WHAT IS CHECKED BEFORE ANYTHING ELSE
@@ -30,7 +30,7 @@ import crypto from 'node:crypto';
 import { getAdminDb } from './admin-db.mjs';
 import { TextLkClient } from './textlk.mjs';
 import { portalSecret } from './tenant-links.mjs';
-import { statementPdf, pdfFileName } from './tenant-pdf.mjs';
+import { renderStatementPdf, pdfFileName } from './tenant-pdf.mjs';
 import {
     MSG, LIMITS, requestCode, verifyCode, readSession, loadStatement, endSession, hit, ipKey, clearCookie,
 } from './tenant-portal.mjs';
@@ -135,7 +135,9 @@ export async function handlePortal(req, res, deps) {
             if (!live) return send(res, fail(401, MSG.NO_SESSION, { cookie: clearCookie() }));
             if (String(body.token || '') !== live.token) return send(res, fail(401, MSG.NO_SESSION));
             const statement = await loadStatement({ db, live, secret, now });
-            return sendPdf(res, statementPdf(statement, { generatedAt: now }), pdfFileName(statement.asOf));
+            // the language the person is reading the page in: anything but 'si' is English, so a request cannot choose what it should not
+            const lang = body.lang === 'si' ? 'si' : 'en';
+            return sendPdf(res, await (deps.renderPdf || renderStatementPdf)(statement, { generatedAt: now, lang }), pdfFileName(statement.asOf));
         }
         return send(res, fail(400, MSG.FAILED));
     } catch (e) {

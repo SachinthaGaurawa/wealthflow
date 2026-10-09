@@ -11,7 +11,8 @@
  * Nothing is stored: the language is chosen from the browser's own list the first time and changed with one
  * button; it is not kept anywhere, because this page keeps nothing. Dates and month names stay as they are
  * on the statement (English month abbreviations and Western digits), the form a Sri Lankan statement uses.
- * The PDF and the spreadsheet are English only (the standard PDF fonts have no Sinhala letters); the calendar reminder is in the page's language.
+ * The PDF is in the same two languages: the person's choice on the page is sent with the download, and the file is
+ * set in an embedded Sinhala font (tenant-pdf.mjs), using the words below. The spreadsheet is English only; the calendar reminder is in the page's language.
  *
  * Plain ES module, no DOM.
  * ===========================================================================*/
@@ -104,6 +105,47 @@ export const SI = Object.freeze({
     'This statement is long, so only the first part is shown.': 'මෙම ප්‍රකාශය දිගු බැවින් පළමු කොටස පමණක් පෙන්වයි.',
     'Figures are as recorded by your lender. If something looks wrong, please contact your lender.':
         'සංඛ්‍යා ඔබේ ණය දෙන්නා සටහන් කර ඇති ආකාරයටම ය. යමක් වැරදි බවක් පෙනේ නම් කරුණාකර ඔබේ ණය දෙන්නා අමතන්න.',
+
+    /* the PDF's own words (the page does not show these) */
+    'Every investment and loan your lender records for you is listed here under a reference code. Quote the code when you contact your lender or make a payment.':
+        'ඔබේ ණය දෙන්නා ඔබ වෙනුවෙන් සටහන් කරන සෑම ආයෝජනයක් සහ ණයක්ම යොමු කේතයක් යටතේ මෙහි ලැයිස්තුගත කර ඇත. ඔබේ ණය දෙන්නා අමතන විට හෝ ගෙවීමක් කරන විට එම කේතය සඳහන් කරන්න.',
+    'Summary': 'සාරාංශය',
+    'Figures are as recorded by your lender from the payments they have confirmed. This statement is for your own records and is not a substitute for your lender\'s own account. If something looks wrong, please contact your lender.':
+        'සංඛ්‍යා ඔබේ ණය දෙන්නා තහවුරු කළ ගෙවීම් අනුව සටහන් කර ඇති ආකාරයටම ය. මෙම ප්‍රකාශය ඔබේ පෞද්ගලික වාර්තා සඳහා පමණි; එය ඔබේ ණය දෙන්නාගේ ගිණුමට විකල්පයක් නොවේ. යමක් වැරදි බවක් පෙනේ නම් කරුණාකර ඔබේ ණය දෙන්නා අමතන්න.',
+    'Account Statement': 'ගිණුම් ප්‍රකාශය',
+    'Your investments and loans with your lender': 'ඔබේ ණය දෙන්නා සමඟ ඔබට ඇති ආයෝජන සහ ණය',
+    'Statement No': 'ප්‍රකාශ අංකය',
+    'As at': 'දිනය සහ වේලාව',
+    'Time zone': 'වේලා කලාපය',
+    '1 day': 'දින 1',
+    '{n} days': 'දින {n}',
+    'Investment details': 'ආයෝජන විස්තර',
+    'Reference': 'යොමු කේතය',
+    'Account status': 'ගිණුමේ තත්ත්වය',
+    'Payments received': 'ලැබුණු ගෙවීම්',
+    'Next interest amount': 'ඊළඟ පොලී මුදල',
+    'Interest received ({n})': 'ලැබුණු පොලිය ({n})',
+    'Amount ({cur})': 'මුදල ({cur})',
+    'Total received ({n})': 'මුළු ලැබීම ({n})',
+    'Loan details': 'ණය විස්තර',
+    'Repaid so far': 'මෙතෙක් ආපසු ගෙවූ මුදල',
+    'Status': 'තත්ත්වය',
+    'Overdue': 'ප්‍රමාද දින',
+    'Account movements ({n})': 'ගිණුම් ගනුදෙනු ({n})',
+    'Transaction': 'ගනුදෙනුව',
+    'Balance ({cur})': 'ශේෂය ({cur})',
+    'Type': 'වර්ගය',
+    'Total repaid ({n})': 'මුළු ආපසු ගෙවීම ({n})',
+    'money lent': 'ණයට දුන් මුදල',
+    'money paid back': 'ආපසු ලැබුණු මුදල',
+    'Legend': 'සටහන්',
+    'Advance': 'අතිරේක මුදල',
+    'Interest received so far': 'මෙතෙක් ලැබුණු පොලිය',
+    'SWIFT / IBAN': 'SWIFT / IBAN',
+    'and {n} more': 'සහ තවත් {n}ක්',
+    'WealthFlow statement': 'WealthFlow ප්‍රකාශය',
+    'Generated {when}': 'සකස් කළේ {when}',
+    'Page {i} of {total}': 'පිටුව {i} / {total}',
 
     /* where to pay */
     'How to pay': 'ගෙවන ආකාරය',

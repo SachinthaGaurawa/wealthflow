@@ -257,6 +257,17 @@ describe('the PDF', () => {
         expect(text).toContain('500,000.00');
     });
 
+    it('passes the language the page is read in to the PDF, and treats anything but "si" as English', async () => {
+        const { d, token, cookie } = await signedIn();
+        const seen = [];
+        d.renderPdf = async (statement, opts) => { seen.push(opts.lang); return Buffer.from('%PDF-1.4\n%%EOF\n', 'latin1'); };
+        for (const lang of ['si', 'en', 'ta', 'SI', '', undefined, null, 1, ['si'], { lang: 'si' }]) {
+            const out = await call(d, { body: { action: 'pdf', token, lang }, cookie });
+            expect(out.status).toBe(200);
+        }
+        expect(seen).toEqual(['si', 'en', 'en', 'en', 'en', 'en', 'en', 'en', 'en', 'en']);
+    });
+
     it('is a file with no name, note, phone, NIC or record id in it, whatever way the bytes are read', async () => {
         const { d, token, cookie } = await signedIn();
         const out = await call(d, { body: { action: 'pdf', token }, cookie });

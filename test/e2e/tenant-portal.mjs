@@ -268,8 +268,15 @@ await shot('3c-statement-si');
 await page.setViewportSize({ width: 320, height: 700 });
 await noOverflow('statement in Sinhala at 320');
 await page.setViewportSize({ width: 390, height: 800 });
+// the file follows the page's language: a Sinhala page gets the Sinhala file (the English one it already holds is not reused)
+const [siDownload] = await Promise.all([page.waitForEvent('download'), page.click('#tp-pdf')]);
+const siPdf = fs.readFileSync(await siDownload.path());
+assert.ok(siPdf.toString('latin1').includes('/Lang (si)') && siPdf.toString('latin1').includes('/Subtype /Type0'), 'the Sinhala page downloads the Sinhala PDF');
+assert.ok(siPdf.length > pdf.length && siPdf.length < 120 * 1024, `and it is a sensible size (${siPdf.length} bytes)`);
 await page.click('#tp-lang');
 await page.waitForFunction(() => document.getElementById('tp-lang').textContent === 'සිංහල');
+const [enDownload] = await Promise.all([page.waitForEvent('download'), page.click('#tp-pdf')]);
+assert.ok(!fs.readFileSync(await enDownload.path()).toString('latin1').includes('/Subtype /Type0'), 'and back in English the file is English again');
 assert.ok((await text()).includes('Your statement'));
 assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
 console.log('5d. print and Sinhala -> print layout is white with no buttons; the page reads in Sinhala and back, nothing stored');
