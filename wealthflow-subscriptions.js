@@ -61,6 +61,60 @@
 
     function _monthOf(date) { var m = String(date || '').match(/^(\d{4})-(\d{2})/); return m ? (m[1] + '-' + m[2]) : ''; }
     function _dayOf(date) { var m = String(date || '').match(/-(\d{2})$/); return m ? (parseInt(m[1], 10) || 1) : 1; }
+    function _p2(n) { return String(n).padStart(2, '0'); }
+    function _ymd(y, m, d) {
+        var last = new Date(y, m + 1, 0).getDate();
+        return y + '-' + _p2(m + 1) + '-' + _p2(Math.min(Math.max(1, Number(d) || 1), last));
+    }
+    function _date(v) {
+        if (!v) return null;
+        var d = new Date(String(v).match(/^\d{4}-\d{2}-\d{2}$/) ? String(v) + 'T00:00:00' : v);
+        return isNaN(d.getTime()) ? null : d;
+    }
+    function _oneTime(cycle) { return /^(once|one-time|onetime)$/.test(String(cycle || '').toLowerCase()); }
+    function _paidInMonth(sub, ym, oneTime) {
+        if (!sub) return false;
+        if (sub.completed === true || sub.paid === true) return true;
+        var history = Array.isArray(sub.history) ? sub.history : [];
+        if (history.some(function (h) { return h && (h.month === ym || _monthOf(h.date) === ym) && h.paid !== false; })) return true;
+        return !!(sub.monthOverrides && typeof sub.monthOverrides[ym] === 'number');
+    }
+
+    /**
+     * The one authoritative lifecycle for a bill occurrence.
+     *
+     * One-time payments keep their exact dueDate and remain actionable after
+     * that date until completed; they never roll into a new month. Recurring
+     * bills are active only in a real cycle month and stop reminding as soon as
+     * that cycle is recorded in history/monthOverrides.
+     */
+    function occurrence(sub, at) {
+        sub = sub || {};
+        var now = _date(at) || new Date();
+        var cycle = String(sub.cycle || 'monthly').toLowerCase();
+        var oneTime = _oneTime(cycle);
+        var anchor = _date(sub.createdAt);
+        var dueDate = oneTime ? _date(sub.dueDate) : null;
+        if (oneTime && !dueDate && anchor) dueDate = _date(_ymd(anchor.getFullYear(), anchor.getMonth(), sub.dueDay));
+        var ym;
+
+        if (oneTime) {
+            if (!dueDate) return { active: false, paid: false, oneTime: true, date: '', cycle: cycle, reason: 'missing-due-date' };
+            var fixed = _ymd(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+            ym = fixed.slice(0, 7);
+            var oncePaid = _paidInMonth(sub, ym, true);
+            return { active: !oncePaid, paid: oncePaid, oneTime: true, date: fixed, month: ym, cycle: cycle };
+        }
+
+        if (!anchor) return { active: false, paid: false, oneTime: false, date: '', cycle: cycle, reason: 'missing-anchor' };
+        var elapsed = (now.getFullYear() - anchor.getFullYear()) * 12 + now.getMonth() - anchor.getMonth();
+        var step = cycle === 'quarterly' ? 3 : (cycle === 'yearly' || cycle === 'annual' ? 12 : 1);
+        if (elapsed < 0 || elapsed % step !== 0) return { active: false, paid: false, oneTime: false, date: '', cycle: cycle, reason: 'off-cycle' };
+        var fixedDate = _ymd(now.getFullYear(), now.getMonth(), sub.dueDay);
+        ym = fixedDate.slice(0, 7);
+        var cyclePaid = _paidInMonth(sub, ym, false);
+        return { active: !cyclePaid, paid: cyclePaid, oneTime: false, date: fixedDate, month: ym, cycle: cycle };
+    }
 
     function buildSubscription(routeInfo, txn) {
         routeInfo = routeInfo || {}; txn = txn || {};
@@ -123,6 +177,7 @@
         findExisting: findExisting,
         buildSubscription: buildSubscription,
         recordPayment: recordPayment,
+        occurrence: occurrence,
         applyToArrays: applyToArrays,
         apply: apply
     };

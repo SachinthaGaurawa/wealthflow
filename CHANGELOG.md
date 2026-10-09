@@ -1,5 +1,9 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.35 — 2026-10-09
+
+One-time payments now use an exact due date, alert only once until paid, stop all future reminders after completion, respect recurring cycle months, and stay aligned across Monthly Plan, cash-flow forecasts, AI bill scanning, and subscription status cards.
+
 ## v7.69.34 — 2026-10-09
 
 Subscription Billing Cycle now supports One-Time payments end to end: saved entries appear once in their recorded month, project once in cash flow, and are not inflated into monthly or annual recurring totals. WealthFlow and the branded customer portal now use reliable same-origin favicon and touch-icon routes, including PWA icons, instead of a disabled portal icon or an HTML fallback.

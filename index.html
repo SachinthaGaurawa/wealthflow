@@ -7531,17 +7531,18 @@
             <div class="fr">
                 <div class="fg"><label class="fl">Amount (LKR) *</label><input class="fi money-input" id="sub_amount"
                         placeholder="1,500"></div>
-                <div class="fg"><label class="fl">Due Day of Month *</label><input class="fi" id="sub_day" type="number"
+                <div class="fg" id="sub_day_group"><label class="fl">Due Day of Month *</label><input class="fi" id="sub_day" type="number"
                         min="1" max="31" placeholder="15"></div>
+                <div class="fg" id="sub_due_date_group" style="display:none;"><label class="fl">Payment Due Date *</label><input class="fi" id="sub_due_date" type="date"></div>
             </div>
             <div class="fr">
-                <div class="fg"><label class="fl">Billing Cycle</label><select class="fs" id="sub_cycle">
+                <div class="fg"><label class="fl">Billing Cycle</label><select class="fs" id="sub_cycle" onchange="syncSubscriptionCycleFields()">
                         <option value="monthly">Monthly</option>
                         <option value="quarterly">Quarterly</option>
                         <option value="yearly">Yearly</option>
                         <option value="once">One-Time</option>
                     </select></div>
-                <div class="fg"><label class="fl">Auto-Detect Anomaly</label><select class="fs" id="sub_anomaly">
+                <div class="fg" id="sub_anomaly_group"><label class="fl">Auto-Detect Anomaly</label><select class="fs" id="sub_anomaly">
                         <option value="1">Yes - Alert if unusual</option>
                         <option value="0">No</option>
                     </select></div>
@@ -8917,7 +8918,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.34';
+        var WF_APP_VERSION = '7.69.35';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -28244,9 +28245,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                 let amt = (typeof overrideAmt === 'number') ? overrideAmt : (s.amount || 0);
                 const cycle = (s.cycle || 'monthly').toLowerCase();
                 if (cycle === 'once' || cycle === 'one-time' || cycle === 'onetime') {
-                    // A one-time bill belongs only to the month in which it was
-                    // recorded. With no anchor date we refuse to invent a month.
-                    if (!created || created.getFullYear() !== year || created.getMonth() !== month) amt = 0;
+                    // A one-time bill belongs to its exact due-date month. Old
+                    // records without dueDate keep their creation-month anchor.
+                    const due = s.dueDate ? new Date(s.dueDate + 'T00:00:00') : created;
+                    if (!due || due.getFullYear() !== year || due.getMonth() !== month) amt = 0;
                 } else if (cycle === 'yearly' || cycle === 'annual') {
                     // Yearly billing — only the anniversary month counts.
                     if (created && created.getMonth() !== month) amt = 0;
@@ -29929,8 +29931,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.34</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.34</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.35</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.35</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes, misbehaves, or a statement is stuck in "Needs review", tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory), plus why statements are stuck (reason counts, bank names, and why "Map statement layout" couldn't read one), with no date, amount, or transaction detail ever included, so the exact cause can be fixed fast.</div></div>
@@ -32324,9 +32326,28 @@ Be direct and use real numbers. Avoid generic advice.`;
         }
 
         // ==================== SUBSCRIPTION & BILL TRACKER ====================
+        function syncSubscriptionCycleFields() {
+            const cycle = $('sub_cycle') ? $('sub_cycle').value : 'monthly';
+            const oneTime = cycle === 'once';
+            const dayGroup = $('sub_day_group'), dateGroup = $('sub_due_date_group'), anomalyGroup = $('sub_anomaly_group');
+            if (dayGroup) dayGroup.style.display = oneTime ? 'none' : '';
+            if (dateGroup) dateGroup.style.display = oneTime ? '' : 'none';
+            if (anomalyGroup) anomalyGroup.style.display = oneTime ? 'none' : '';
+            if ($('sub_day')) $('sub_day').required = !oneTime;
+            if ($('sub_due_date')) {
+                $('sub_due_date').required = oneTime;
+                if (oneTime && !$('sub_due_date').value) $('sub_due_date').value = window.WFWhen.today();
+            }
+            if (oneTime && $('sub_anomaly')) $('sub_anomaly').value = '0';
+        }
+        window.syncSubscriptionCycleFields = syncSubscriptionCycleFields;
+
         function saveSubscription() {
-            const name = $('sub_name').value.trim(), cat = $('sub_cat').value, amount = parseMoney($('sub_amount').value), day = parseInt($('sub_day').value);
-            if (!name || !amount || !day) { notify('Fill required fields', 'error'); return; }
+            const name = $('sub_name').value.trim(), cat = $('sub_cat').value, amount = parseMoney($('sub_amount').value);
+            const cycle = $('sub_cycle').value, oneTime = cycle === 'once';
+            const dueDate = oneTime ? String($('sub_due_date').value || '') : '';
+            const day = oneTime ? parseInt(dueDate.slice(-2), 10) : parseInt($('sub_day').value, 10);
+            if (!name || !amount || !day || (oneTime && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) { notify('Fill required fields', 'error'); return; }
             const arr = DB.get('subscriptions') || [];
             // Preserve existing per-month overrides / history when editing,
             // and never destroy them by clearing the form.
@@ -32335,10 +32356,13 @@ Be direct and use real numbers. Avoid generic advice.`;
                 id: editMode || uid(),
                 // v7.66.0 — subscriptions never carried a createdAt, so _utOf() fell all
                 // the way through to 0 and every one was a permanent merge loser.
-                createdAt: (existing && existing.createdAt) || new Date().toISOString(),
                 name, category: cat, amount, dueDay: day,
-                cycle: $('sub_cycle').value,
-                anomalyDetect: $('sub_anomaly').value === '1',
+                dueDate,
+                cycle,
+                anomalyDetect: oneTime ? false : $('sub_anomaly').value === '1',
+                completed: oneTime ? !!(existing && existing.completed) : false,
+                paid: oneTime ? !!(existing && (existing.paid || existing.completed)) : false,
+                paidAt: oneTime && existing ? (existing.paidAt || null) : null,
                 notes: $('sub_notes').value,
                 history: existing ? (existing.history || []) : [],
                 monthOverrides: existing ? (existing.monthOverrides || {}) : {},
@@ -32355,10 +32379,11 @@ Be direct and use real numbers. Avoid generic advice.`;
         }
         function clearSubForm() {
             editMode = null;
-            ['sub_name', 'sub_amount', 'sub_day', 'sub_notes'].forEach(id => { if ($(id)) $(id).value = ''; });
+            ['sub_name', 'sub_amount', 'sub_day', 'sub_due_date', 'sub_notes'].forEach(id => { if ($(id)) $(id).value = ''; });
             if ($('sub_cycle')) $('sub_cycle').value = 'monthly';
             if ($('sub_anomaly')) $('sub_anomaly').value = '1';
             if ($('mdSubscriptionTitle')) $('mdSubscriptionTitle').textContent = 'Add Subscription / Bill';
+            syncSubscriptionCycleFields();
         }
         function editSubscription(id) {
             const s = (DB.get('subscriptions') || []).find(x => x.id === id);
@@ -32370,10 +32395,28 @@ Be direct and use real numbers. Avoid generic advice.`;
             if ($('sub_amount'))  $('sub_amount').value  = fmtN(s.amount || 0);
             if ($('sub_day'))     $('sub_day').value     = s.dueDay || 1;
             if ($('sub_cycle'))   $('sub_cycle').value   = s.cycle || 'monthly';
+            if ($('sub_due_date')) {
+                const legacy = s.createdAt ? String(s.createdAt).slice(0, 7) + '-' + p2(s.dueDay || 1) : '';
+                $('sub_due_date').value = s.dueDate || legacy;
+            }
             if ($('sub_anomaly')) $('sub_anomaly').value = s.anomalyDetect ? '1' : '0';
             if ($('sub_notes'))   $('sub_notes').value   = s.notes || '';
+            syncSubscriptionCycleFields();
             openModal('mdSubscription');
         }
+        function toggleOneTimePayment(id) {
+            const arr = DB.get('subscriptions') || [];
+            const s = arr.find(x => x.id === id);
+            if (!s || !['once', 'one-time', 'onetime'].includes(String(s.cycle || '').toLowerCase())) return;
+            const done = !(s.completed === true || s.paid === true);
+            s.completed = done;
+            s.paid = done;
+            s.paidAt = done ? Date.now() : null;
+            DB.set('subscriptions', arr);
+            renderSubscriptions();
+            notify(done ? 'One-time payment marked paid.' : 'One-time payment reopened.', done ? 'success' : 'info');
+        }
+        window.toggleOneTimePayment = toggleOneTimePayment;
         // Variable telecom/utility bills — set the actual amount paid for a
         // specific month. The dashboard uses this override when summing
         // monthly expenses, so totals stay accurate even when the bill
@@ -32543,41 +32586,49 @@ Be direct and use real numbers. Avoid generic advice.`;
             const now = new Date();
             const day = now.getDate();
             const ym = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
-            let totalMonthly = 0, dueSoon = 0, overdue = 0;
+            let totalMonthly = 0, dueSoon = 0, overdue = 0, onTrack = 0;
 
             const occursThisMonth = (s) => {
                 const cycle = String(s.cycle || 'monthly').toLowerCase();
                 const created = s.createdAt ? new Date(s.createdAt) : null;
-                if (!created || isNaN(created.getTime())) return !['once', 'one-time', 'onetime'].includes(cycle);
+                if (['once', 'one-time', 'onetime'].includes(cycle)) {
+                    const due = s.dueDate ? new Date(s.dueDate + 'T00:00:00') : created;
+                    return !!due && !isNaN(due.getTime()) && due.getFullYear() === now.getFullYear() && due.getMonth() === now.getMonth();
+                }
+                if (!created || isNaN(created.getTime())) return false;
                 const elapsed = (now.getFullYear() - created.getFullYear()) * 12 + now.getMonth() - created.getMonth();
                 if (elapsed < 0) return false;
-                if (['once', 'one-time', 'onetime'].includes(cycle)) return elapsed === 0;
                 if (cycle === 'quarterly') return elapsed % 3 === 0;
                 if (cycle === 'yearly' || cycle === 'annual') return elapsed % 12 === 0;
                 return true;
             };
 
             subs.forEach(s => {
-                if (!occursThisMonth(s)) return;
-                const override = s.monthOverrides && s.monthOverrides[ym];
-                totalMonthly += (typeof override === 'number') ? override : s.amount;
-                const daysUntil = s.dueDay - day;
+                if (occursThisMonth(s)) {
+                    const override = s.monthOverrides && s.monthOverrides[ym];
+                    totalMonthly += (typeof override === 'number') ? override : s.amount;
+                }
+                const occ = window.WFSubs && window.WFSubs.occurrence ? window.WFSubs.occurrence(s, now) : null;
+                if (!occ || !occ.active || !occ.date) { onTrack++; return; }
+                const daysUntil = Math.ceil((new Date(occ.date + 'T00:00:00') - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
                 if (daysUntil < 0) overdue++;
                 else if (daysUntil <= 7) dueSoon++;
+                else onTrack++;
             });
 
             $('subStats').innerHTML = `
                 <div class="stat-card sc-red"><div class="stat-label">This Month</div><div class="stat-val">${fmtS(totalMonthly)}</div></div>
                 <div class="stat-card sc-gold"><div class="stat-label">Tracked</div><div class="stat-val">${subs.length}</div></div>
                 <div class="stat-card sc-blue"><div class="stat-label">Due Soon</div><div class="stat-val">${dueSoon}</div></div>
-                <div class="stat-card sc-green"><div class="stat-label">On Track</div><div class="stat-val">${subs.length - overdue - dueSoon}</div></div>
+                <div class="stat-card sc-green"><div class="stat-label">On Track</div><div class="stat-val">${onTrack}</div></div>
             `;
 
             if (!subs.length) { $('subscriptionList').innerHTML = emptyState('@bell@', 'No subscriptions tracked', 'Add your recurring bills and subscriptions'); return; }
 
             const sorted = [...subs].sort((a, b) => {
-                const da = a.dueDay - day, db = b.dueDay - day;
-                return (da < 0 ? da + 31 : da) - (db < 0 ? db + 31 : db);
+                const oa = window.WFSubs && window.WFSubs.occurrence ? window.WFSubs.occurrence(a, now) : null;
+                const ob = window.WFSubs && window.WFSubs.occurrence ? window.WFSubs.occurrence(b, now) : null;
+                return String(oa && oa.date || '9999-12-31').localeCompare(String(ob && ob.date || '9999-12-31'));
             });
 
             const catIcons = { Streaming: '@info@', Telecom: '@devices@', Utilities: '@sparkles@', Insurance: '@shield@', Leasing: '@devices@', Software: '@devices@', 'Gym/Fitness': '@trendUp@', Other: '@receipt@' };
@@ -32585,14 +32636,15 @@ Be direct and use real numbers. Avoid generic advice.`;
             const _cap = _wfCap('subscriptions', sorted);
             $('subscriptionList').innerHTML = _cap.rows.map(s => {
                 const oneTime = ['once', 'one-time', 'onetime'].includes(String(s.cycle || '').toLowerCase());
-                const activeThisMonth = occursThisMonth(s);
-                const daysUntil = s.dueDay - day;
-                let badgeClass = 'sub-due-ok', badgeText = `Due in ${daysUntil} days`;
-                if (oneTime && !activeThisMonth) { badgeClass = 'sub-due-ok'; badgeText = 'One-Time · recorded'; }
-                else if (daysUntil < 0) { badgeClass = 'sub-due-urgent'; badgeText = `Overdue ${Math.abs(daysUntil)}d`; }
+                const occ = window.WFSubs && window.WFSubs.occurrence ? window.WFSubs.occurrence(s, now) : null;
+                const daysUntil = occ && occ.date ? Math.ceil((new Date(occ.date + 'T00:00:00') - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000) : NaN;
+                let badgeClass = 'sub-due-ok', badgeText = 'Not due this month';
+                if (occ && occ.paid) badgeText = oneTime ? 'Paid · completed' : 'Paid this cycle';
+                else if (occ && occ.active && daysUntil < 0) { badgeClass = 'sub-due-urgent'; badgeText = `Overdue ${Math.abs(daysUntil)}d`; }
                 else if (daysUntil === 0) { badgeClass = 'sub-due-urgent'; badgeText = 'Due TODAY'; }
                 else if (daysUntil <= 3) { badgeClass = 'sub-due-urgent'; badgeText = `Due in ${daysUntil}d`; }
                 else if (daysUntil <= 7) { badgeClass = 'sub-due-soon'; badgeText = `Due in ${daysUntil}d`; }
+                else if (occ && occ.active) badgeText = `Due in ${daysUntil} days`;
                 const override = s.monthOverrides && s.monthOverrides[ym];
                 const showAmt = (typeof override === 'number') ? override : s.amount;
                 const overrideBadge = (typeof override === 'number')
@@ -32601,7 +32653,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 // (so it's obvious which entries are variable / telecom-style).
                 const overrideCount = s.monthOverrides ? Object.keys(s.monthOverrides).length : 0;
                 const isVariable = overrideCount >= 2;
-                const variableBadge = isVariable
+                const variableBadge = oneTime ? '' : isVariable
                     ? `<div style="display:inline-flex;align-items:center;gap:4px;font-size:9px;color:var(--blue);font-weight:800;background:rgba(59,130,246,.14);padding:2px 7px;border-radius:8px;margin-top:3px;border:1px solid rgba(59,130,246,.35);">@chartLine@ VARIABLE · ${overrideCount} mo tracked</div>`
                     : overrideCount === 1
                         ? `<div style="font-size:9px;color:var(--blue);font-weight:700;margin-top:2px;">@chartLine@ 1 month tracked</div>`
@@ -32624,6 +32676,9 @@ Be direct and use real numbers. Avoid generic advice.`;
                                 @chartLine@ Set ${MONTHS[now.getMonth()].slice(0,3)}
                             </button>`
                     : `<button type="button" class="sub-act" onclick="setSubscriptionMonthAmount('${_wfJsAttr(s.id)}')" title="Edit monthly amounts"><i data-wfi="chartLine"></i></button>`;
+                const paidCta = oneTime
+                    ? `<button type="button" class="sub-act ${occ && occ.paid ? '' : 'cta-gold'}" onclick="toggleOneTimePayment('${_wfJsAttr(s.id)}')" title="${occ && occ.paid ? 'Reopen this payment' : 'Mark this one-time payment as paid'}">${occ && occ.paid ? 'Reopen' : 'Mark paid'}</button>`
+                    : '';
 
                 // v7.5.6 — show notes if present (was hidden entirely).
                 // Matches how expense rows and loan rows render notes:
@@ -32637,7 +32692,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     <div class="sub-icon">${catIcons[s.category] || '@receipt@'}</div>
                     <div style="flex:1 1 0;min-width:0;">
                         <div style="font-size:14px;font-weight:700;word-wrap:break-word;overflow-wrap:break-word;">${_wfEsc(s.name)}</div>
-                        <div style="font-size:11px;color:var(--text3);word-wrap:break-word;">${_wfEsc(s.category)} · Day ${s.dueDay} · ${oneTime ? 'One-Time' : _wfEsc(s.cycle)}</div>
+                        <div style="font-size:11px;color:var(--text3);word-wrap:break-word;">${_wfEsc(s.category)} · ${oneTime ? `Due ${_wfEsc((occ && occ.date) || s.dueDate || '')} · One-Time` : `Day ${s.dueDay} · ${_wfEsc(s.cycle)}`}</div>
                         ${notesHtml}
                         ${variableBadge}
                     </div>
@@ -32648,6 +32703,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     </div>
                     <div class="act-btns">
                         <button type="button" class="sub-act cta-edit" onclick="editSubscription('${_wfJsAttr(s.id)}')" title="Edit subscription"><i data-wfi="edit"></i></button>
+                        ${paidCta}
                         ${thisMonthCta}
                         <button type="button" class="sub-act cta-del" onclick="deleteSubscription('${_wfJsAttr(s.id)}')" title="Delete"><i data-wfi="trash"></i></button>
                     </div>

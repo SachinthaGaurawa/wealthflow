@@ -231,7 +231,9 @@ export function commitments(appData, from, to) {
         // renewal lands on ITS quarter, not on whichever month the window opens.
         const anchor = parseDay(s.createdAt) || from;
         if (oneTime) {
-            const d = dayInMonth(anchor.getUTCFullYear(), anchor.getUTCMonth(), dueDay);
+            if (s.completed === true || s.paid === true) continue;
+            const exact = parseDay(s.dueDate);
+            const d = exact || dayInMonth(anchor.getUTCFullYear(), anchor.getUTCMonth(), dueDay);
             if (d >= from && d <= to) push(d, 'out', amount, (s.name || 'Bill') + ' one-time payment',
                 'subscriptions', 'committed', s.id);
             continue;
