@@ -739,7 +739,7 @@
               '<div style="font-weight:800;font-size:17px;color:var(--text,#e6e7eb);margin-bottom:4px;">Updating to v' + _esc(version) + '</div>' +
               '<div id="wfPgStep" style="font-size:12.5px;color:var(--text3,#8b95a8);margin-bottom:16px;min-height:18px;">Preparing…</div>' +
               '<div style="height:12px;border-radius:999px;background:var(--bg2,#0a0e1a);overflow:hidden;border:1px solid var(--border,#1f2638);">' +
-                '<div id="wfPgBar" style="height:100%;width:0%;background:linear-gradient(90deg,#10b981,#34d399);transition:width .5s ease;"></div>' +
+                '<div id="wfPgBar" style="height:100%;width:100%;background:linear-gradient(90deg,#10b981,#34d399);transform:scaleX(0);transform-origin:0;transition:transform .5s ease;"></div>' +
               '</div>' +
               '<div style="display:flex;justify-content:space-between;margin-top:10px;font-size:12px;color:var(--text2,#c7cdd9);">' +
                 '<span id="wfPgPct" style="font-weight:800;color:#10b981;">0%</span>' +
@@ -749,7 +749,7 @@
         document.body.appendChild(ov);
         requestAnimationFrame(() => ov.style.opacity = '1');
 
-        const setBar = (p) => { const b = document.getElementById('wfPgBar'), t = document.getElementById('wfPgPct'); if (b) b.style.width = p + '%'; if (t) t.textContent = p + '%'; };
+        const setBar = (p) => { const b = document.getElementById('wfPgBar'), t = document.getElementById('wfPgPct'); if (b) b.style.transform = 'scaleX(' + (Math.min(100, Math.max(0, +p || 0)) / 100) + ')'; if (t) t.textContent = p + '%'; };
         const setStep = (s) => { const e = document.getElementById('wfPgStep'); if (e) e.textContent = s; };
         const setEta = (sec) => { const e = document.getElementById('wfPgEta'); if (e) e.textContent = sec > 0 ? ('about ' + sec + 's remaining') : 'finishing…'; };
 
