@@ -277,8 +277,8 @@ describe('the mark, the account holder and the bank details', () => {
 
     it('draws the WealthFlow mark as a real image with its own soft mask, not a drawn square', () => {
         const src = statementPdf(withHolder({ name: '', nic: '' }), { generatedAt: T0 }).toString('latin1');
-        expect(src).toMatch(/\/Subtype \/Image \/Width 86 \/Height 86 \/ColorSpace \/DeviceRGB \/BitsPerComponent 8 \/SMask \d+ 0 R/);
-        expect(src).toMatch(/\/Subtype \/Image \/Width 86 \/Height 86 \/ColorSpace \/DeviceGray/);
+        expect(src).toMatch(/\/Subtype \/Image \/Width 144 \/Height 144 \/ColorSpace \/DeviceRGB \/BitsPerComponent 8 \/SMask \d+ 0 R/);
+        expect(src).toMatch(/\/Subtype \/Image \/Width 144 \/Height 144 \/ColorSpace \/DeviceGray/);
         expect(src).toMatch(/\/XObject << \/Im1 \d+ 0 R >>/);
         const drawn = [...src.matchAll(/stream\n([\s\S]*?)\nendstream/g)].map((m) => { try { return zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'); } catch (_) { return ''; } }).join('\n');
         expect(drawn).toContain('/Im1 Do');
