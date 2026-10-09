@@ -128,13 +128,14 @@ describe('the file', () => {
         expect(numPages).toBe(pages.length);
         const all = pages.join(' ');
         expect(all).toContain('WEALTHFLOW');
-        expect(all).toContain('As at 05 Oct 2026');
-        expect(all).toContain('10:30, Sri Lanka time');
+        expect(all).toContain('As at: 05 Oct 2026, 10:30');
+        expect(all).toMatch(/Statement No: WF-[0-9A-Z]{6}/);
+        expect(all).toContain('Sri Lanka time');
         expect(all).toContain('LKR 500,000.00');
         expect(all).toMatch(/INV-[0-9A-F]{6}/);
         expect(all).toMatch(/DEB-[0-9A-F]{6}/);
-        expect(all).toContain('NEXT INTEREST DUE');
-        expect(all).toContain('How to pay');
+        expect(all).toContain('Next interest due');
+        expect(all).toContain('HOW TO PAY');
         expect(all).toContain('8001234567');
         expect(all).toContain('Commercial Bank');
         pages.forEach((p, i) => expect(p, `page ${i + 1}`).toContain(`Page ${i + 1} of ${numPages}`));
@@ -166,7 +167,7 @@ describe('the file', () => {
         // the loan table's header appears on every page the table is on
         const withRows = pages.filter((p) => p.includes('Repayment'));
         expect(withRows.length).toBeGreaterThanOrEqual(2);
-        for (const p of withRows) expect(p).toContain('DATE WHAT AMOUNT BALANCE');
+        for (const p of withRows) expect(p).toContain('DATE TRANSACTION AMOUNT (LKR) BALANCE (LKR)');
         // all 81 movements are in the file, none twice
         expect((pages.join(' ').match(/Repayment/g) || []).length).toBe(80);
         expect(pages.join(' ')).toContain('Loan paid out');
@@ -178,15 +179,15 @@ describe('the file', () => {
             user.debtors[0].events = [{ id: 'e0', kind: 'lent', amount: 500000, date: '2026-01-01', confirmed: true }];
             for (let i = 1; i <= rows; i += 1) user.debtors[0].events.push({ id: `r${i}`, kind: 'repayment', amount: 100, date: '2026-02-01', confirmed: true });
             const { pages } = await read(statementPdf(stFor(user), { generatedAt: T0 }));
-            const at = pages.findIndex((p) => p.includes('How to pay'));
+            const at = pages.findIndex((p) => p.includes('HOW TO PAY'));
             expect(at, `rows ${rows}`).toBeGreaterThanOrEqual(0);
-            expect(pages[at], `rows ${rows}`).toContain('ACCOUNT NUMBER');
+            expect(pages[at], `rows ${rows}`).toContain('Account number');
         }
     });
 
     it('has no payment section when the lender has put no account there, and no section for a kind the person has none of', async () => {
         const noPay = await read(statementPdf(stFor(lenderDoc()), { generatedAt: T0 }));
-        expect(noPay.pages.join(' ')).not.toContain('How to pay');
+        expect(noPay.pages.join(' ')).not.toContain('HOW TO PAY');
         const user = lenderDoc({ payAccounts: [acct()] }); user.debtors = [];
         const inv = await read(statementPdf(stFor(user), { generatedAt: T0 }));
         const all = inv.pages.join(' ');
@@ -249,5 +250,23 @@ describe('the file', () => {
             expect(/^[\x20-\x7E\n]*$/.test(text)).toBe(true);
         }
         expect(streams).toBeGreaterThan(0);
+    });
+});
+
+describe('the loan statement look', () => {
+    it('has the loan statement\'s parts (details beside status, navy-headed movements with a total, a legend and a notice) and no signature or date line', async () => {
+        const { pages } = await read(statementPdf(stFor(lenderDoc({ payAccounts: [acct()] })), { generatedAt: T0 }));
+        const all = pages.join(' ');
+        for (const want of ['Account Statement', 'LOAN DETAILS', 'ACCOUNT STATUS', 'ACCOUNT MOVEMENTS', 'TOTAL REPAID (1)', 'INTEREST RECEIVED (1)', 'TOTAL RECEIVED (1)', 'Legend:', 'not a substitute for your lender']) expect(all, want).toContain(want);
+        expect(all).not.toMatch(/signature/i);
+        expect(all).not.toMatch(/Account Holder/i);
+        expect(all).not.toMatch(/\bDate:?\s*$/m);
+    });
+
+    it('numbers a statement from its moment, so the same statement carries the same number', async () => {
+        const a = await read(statementPdf(stFor(lenderDoc({})), { generatedAt: T0 }));
+        const b = await read(statementPdf(stFor(lenderDoc({})), { generatedAt: T0 + 86400000 }));
+        const no = (r) => /Statement No: (WF-[0-9A-Z]{6})/.exec(r.pages[0])[1];
+        expect(no(a)).toBe(no(b));
     });
 });
