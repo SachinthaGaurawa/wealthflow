@@ -16,11 +16,19 @@ const { COPY } = await import('../tenant-page.js');
 
 // the page and the tools it calls (tenant-tools.js words the day counts and the calendar reminder)
 const PAGE = readFileSync(new URL('../tenant-page.js', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('../tenant-tools.js', import.meta.url), 'utf8');
+const PDF = readFileSync(new URL('../tenant-pdf.mjs', import.meta.url), 'utf8');
 const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
 const unescape = (s) => s.replace(/\\'/g, "'").replace(/\\\\/g, '\\');
 
 /** Every sentence the page passes to t('...') as a literal, and every screen title it passes to mount('...') (mount translates it for the tab). */
 const literals = () => [...strip(PAGE).matchAll(/\b(?:t|mount)\(\s*'((?:[^'\\]|\\.)*)'/g)].map((m) => unescape(m[1]));
+
+/** The same for the PDF writer: its sentences are looked up in the same table, plus the words it keeps in small tables (how often interest is paid, what a loan movement is, a loan's state). */
+const pdfLiterals = () => {
+    const out = [...strip(PDF).matchAll(/\bt\(\s*'((?:[^'\\]|\\.)*)'/g)].map((m) => unescape(m[1]));
+    for (const table of strip(PDF).matchAll(/\bconst (?:FREQ|LOAN_EVENT|STATUS|TAG) = \{([^}]*)\}/g)) for (const v of table[1].matchAll(/: '([^']*)'/g)) out.push(v[1]);
+    return out;
+};
 
 describe('choosing a language', () => {
     it('Sinhala only when the browser lists it, anywhere in its preferences', () => {
@@ -75,6 +83,12 @@ describe('nothing is left untranslated', () => {
         expect(missing).toEqual([]);
     });
 
+    it('every sentence the PDF translates has a Sinhala entry too, so a Sinhala file never has English in the middle of it', () => {
+        const wanted = [...new Set(pdfLiterals())];
+        expect(wanted.length).toBeGreaterThan(40);
+        expect(wanted.filter((w) => !Object.prototype.hasOwnProperty.call(SI, w))).toEqual([]);
+    });
+
     it('so do the page\'s own messages and the server\'s fixed sentences, word for word', () => {
         for (const [key, text] of Object.entries(COPY)) expect(SI[text], `COPY.${key}`).toBeTruthy();
         for (const [key, text] of Object.entries(MSG)) expect(SI[text], `MSG.${key}`).toBeTruthy();
@@ -90,7 +104,7 @@ describe('nothing is left untranslated', () => {
     });
 
     it('has no entry that nothing uses (a reworded sentence leaves its old translation behind, silently)', () => {
-        const used = new Set([...literals(), ...Object.values(COPY), ...Object.values(MSG), 'This service is temporarily unavailable. Please try again later.', 'Too many attempts. Please wait a while and try again.',
+        const used = new Set([...literals(), ...pdfLiterals(), ...Object.values(COPY), ...Object.values(MSG), 'This service is temporarily unavailable. Please try again later.', 'Too many attempts. Please wait a while and try again.',
             'Monthly', 'Every 3 months', 'Yearly', 'Loan paid out', 'Further advance', 'Repayment']);
         const stale = Object.keys(SI).filter((k) => !used.has(k));
         expect(stale).toEqual([]);

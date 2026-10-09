@@ -367,7 +367,7 @@ export function accountFormHtml({ account = null, draft = null, errors = {}, ask
         : '';
     return '<div class="wfp-formhead"><button type="button" class="btn btn-ghost btn-sm" data-h="acc-cancel">‹ Back</button><div class="wfp-title">' + (account ? 'Edit bank account' : 'Add a bank account') + '</div></div>'
         + del
-        + '<div class="wfp-help wfp-pdfhelp">Shown to your debtors and investors on their statement page and in the PDF they download. The PDF prints English letters and digits only, so write the details in English.</div>'
+        + '<div class="wfp-help wfp-pdfhelp">Shown to your debtors and investors on their statement page and in the PDF they download. The PDF shows English and Sinhala; any other script prints as ?, so write the details in English or Sinhala.</div>'
         + f('bank', 'Bank', d.bank, ' placeholder="Commercial Bank of Ceylon"', Pay.LIMITS.bank)
         + f('holder', 'Name on the account', d.holder, ' placeholder="Your name or your company’s"', Pay.LIMITS.holder)
         + f('number', 'Account number', d.number, ' inputmode="text" placeholder="8001234567"', Pay.LIMITS.number)

@@ -6,9 +6,8 @@
  * on. It carries figures, dates, reference codes and the lender's payment details, under the same rules.
  *
  * WHY A WRITER OF OUR OWN. The deployment has no PDF library and a function that renders a handful of tables
- * does not justify one: this file writes PDF 1.4 directly (Helvetica and Helvetica-Bold, two of the fourteen
- * fonts every reader has, so nothing is embedded and the file is a few kilobytes), Flate-compressed pages, a
- * correct cross-reference table, a document title and page numbers ("Page 2 of 3") on every page.
+ * does not justify one: this file writes PDF 1.4 directly, Flate-compressed pages, a correct cross-reference
+ * table, a document title and page numbers ("Page 2 of 3") on every page.
  *
  * THE LOOK is the one of the app's own loan statement (index.html, _buildLoanStatementHTML), so the document a
  * person holds from their lender and the one the owner prints from the app read as one family: the logo mark and
@@ -17,15 +16,29 @@
  * legend and a boxed notice, a footer on every page. Unlike the lender's own copy it has no signature or date
  * line: it is a statement the person receives, not a form they sign.
  *
- * WHAT IT CANNOT DO, and says so rather than guessing: the standard fonts have no Sinhala, Tamil, Arabic or
- * CJK glyphs. Text is reduced to the letters those fonts have (accents are dropped, é -> e), anything else
- * prints as "?", never as a broken file. Account details are best entered in English letters and digits.
+ * TWO WAYS TO DRAW TEXT.
+ *   English (the default): Helvetica and Helvetica-Bold, two of the fourteen fonts every reader has, so nothing is
+ *   embedded and the file is a few kilobytes. These fonts have no Sinhala, Tamil, Arabic or CJK letters: text is
+ *   reduced to what they have (accents are dropped, é -> e) and anything else prints as "?", never as a broken file.
+ *   Sinhala (`lang: 'si'`, or any Sinhala letters in the statement's own data, such as a bank's name or a note):
+ *   the whole document is set in Noto Sans Sinhala (SIL Open Font License, assets/fonts), which also carries the Latin
+ *   letters and digits, so a line mixing the two is one font. Sinhala is shaped by HarfBuzz (pdf-shape.mjs: vowel
+ *   signs that are drawn before their consonant, split vowels, joined clusters), and only the glyphs the document
+ *   uses are embedded (pdf-font.mjs), so the file stays small. The text carries its own meaning (ToUnicode and
+ *   ActualText), so it can be searched and copied. The words come from the same table as the page (tenant-lang.js).
+ *   If the shaping engine cannot be loaded the English file is returned instead: never a file with wrong letters.
+ *   Other scripts (Tamil, Arabic, CJK) are not covered: they would need their own font and word table.
  *
- * Pure: no clock (`generatedAt` is passed), no network, no files. Returns a Buffer.
+ * Pure: no clock (`generatedAt` is passed), no network. The shaper is passed in (or loaded by `renderStatementPdf`),
+ * which is the only part that reads files. Returns a Buffer.
  * ===========================================================================*/
 
 import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 import { fmtMoney, fmtDay } from './sms-templates.mjs';
+import { makeT } from './tenant-lang.js';
+import { subsetFont, glyphCodePoints } from './pdf-font.mjs';
+import { loadShaper, needsShaping } from './pdf-shape.mjs';
 
 /* ── metrics: the advance width of every printable ASCII character, in 1/1000 em (the fonts' own AFM files) ─── */
 
@@ -107,8 +120,56 @@ const COLOR = { accent: rgb('#0b3d91'), ink: rgb('#0f172a'), mute: rgb('#6b7280'
 const n2 = (v) => (Math.round(v * 100) / 100).toString();
 const esc = (t) => t.replace(/[\\()]/g, (c) => `\\${c}`);
 
+/** Greedy word wrap for shaped text: the same rules as `wrapText`, measured with the font that will draw it. */
+function wrapShaped(sh, text, bold, size, maxWidth) {
+    const words = sh.clean(text, bold).split(' ').filter(Boolean);
+    const lines = [];
+    let line = '';
+    const push = () => { if (line) lines.push(line); line = ''; };
+    const graphemes = (w) => (typeof Intl !== 'undefined' && Intl.Segmenter ? Array.from(new Intl.Segmenter('si', { granularity: 'grapheme' }).segment(w), (g) => g.segment) : Array.from(w));
+    for (let word of words) {
+        if (sh.width(word, bold, size) > maxWidth) {
+            // a word wider than the line is cut between letters (never inside one), at the longest piece that fits
+            const parts = graphemes(word);
+            while (parts.length) {
+                let n = parts.length;
+                while (n > 1 && sh.width(parts.slice(0, n).join(''), bold, size) > maxWidth) n -= 1;
+                push();
+                lines.push(parts.splice(0, n).join(''));
+            }
+            continue;
+        }
+        const next = line ? `${line} ${word}` : word;
+        if (line && sh.width(next, bold, size) > maxWidth) { push(); line = word; } else line = next;
+    }
+    push();
+    return lines.length ? lines : [''];
+}
+
+const utf16hex = (text) => Buffer.from(`﻿${text}`, 'utf16le').swap16().toString('hex').toUpperCase();
+
 class Canvas {
-    constructor() { this.pages = []; this.ops = null; this.y = 0; this.newPage(); }
+    /**
+     * @param {{shaper?:object, lang?:string}} opts `shaper` set means the whole document is drawn in the embedded font
+     */
+    constructor({ shaper = null, lang = 'en' } = {}) {
+        this.shaper = shaper;
+        this.lang = lang === 'si' ? 'si' : 'en';
+        this.t = makeT(this.lang);
+        // glyph number -> the text it stands for, per weight: what ToUnicode will say, and which glyphs the font subset must keep
+        this.used = { regular: new Map(), bold: new Map() };
+        this.cps = { regular: null, bold: null };
+        this.pages = []; this.ops = null; this.y = 0; this.newPage();
+    }
+    /** Sinhala letters are finer than Latin ones at the same size: the smallest labels are drawn a little larger, and wrapped paragraphs given more room between lines. */
+    sz(size) { return this.lang === 'si' && size <= 8.5 ? size * 1.12 : size; }
+    lh(pitch) { return this.lang === 'si' ? pitch * 1.18 : pitch; }
+    /** Width of a string in points, in whichever font will draw it. */
+    measure(str, bold, size) {
+        if (this.shaper) return this.shaper.width(this.shaper.clean(str, bold), bold, this.sz(size));
+        return textWidth(pdfText(str), bold, size);
+    }
+    wrap(text, bold, size, maxWidth) { return this.shaper ? wrapShaped(this.shaper, text, bold, this.sz(size), maxWidth) : wrapText(text, bold, size, maxWidth); }
     newPage() { this.ops = []; this.pages.push(this.ops); this.y = PAGE.margin; }
     get room() { return PAGE.h - PAGE.footerH - this.y; }
     /** Moves to a new page unless `h` more points fit. Returns true when it did. */
@@ -125,12 +186,73 @@ class Canvas {
     }
     /** One line of text whose baseline is `base` points from the top. align: 'l' | 'r' | 'c' about x. */
     text(x, base, str, { size = 10, bold = false, color = COLOR.ink, align = 'l' } = {}) {
+        if (this.shaper) return this.shapedText(x, base, str, { size, bold, color, align });
         const t = pdfText(str);
         if (!t) return;
         const w = textWidth(t, bold, size);
         const px = align === 'r' ? x - w : align === 'c' ? x - w / 2 : x;
         const [r, g, b] = color;
         this.ops.push(`BT /${bold ? 'F2' : 'F1'} ${n2(size)} Tf ${n2(r)} ${n2(g)} ${n2(b)} rg ${n2(px)} ${n2(PAGE.h - base)} Td (${esc(t)}) Tj ET`);
+    }
+    /** The same, set in the embedded font: the string is shaped, and every glyph is placed where the shaper said. */
+    shapedText(x, base, str, { size: asked, bold, color, align }) {
+        const sh = this.shaper;
+        const size = this.sz(asked);
+        const text = sh.clean(str, bold);
+        if (!text) return;
+        const shaped = sh.shape(text, bold);
+        const scale = 1000 / sh.upem;
+        const w = (shaped.width * size) / sh.upem;
+        const px = align === 'r' ? x - w : align === 'c' ? x - w / 2 : x;
+        const [r, g, b] = color;
+        // what each glyph stands for (the ToUnicode map is per glyph, not per use, so it must say what the glyph is wherever it appears):
+        // a glyph the font reaches from a character says that character; a glyph that exists only through shaping (a conjunct) says the
+        // letters of its cluster that no sibling glyph already says
+        const used = this.used[bold ? 'bold' : 'regular'];
+        const cps = (this.cps[bold ? 'bold' : 'regular'] ||= glyphCodePoints(sh.font(bold)));
+        for (let k = 0; k < shaped.glyphs.length;) {
+            let end = k;
+            while (end + 1 < shaped.glyphs.length && shaped.glyphs[end + 1].from === shaped.glyphs[k].from) end += 1;
+            const cluster = shaped.glyphs.slice(k, end + 1);
+            let rest = text.slice(cluster[0].from, cluster[0].to);
+            for (const g2 of cluster) {
+                if (!cps.has(g2.gid)) continue;
+                const ch = String.fromCodePoint(cps.get(g2.gid));
+                if (!used.has(g2.gid)) used.set(g2.gid, ch);
+                const at = rest.indexOf(ch);
+                if (at >= 0) rest = rest.slice(0, at) + rest.slice(at + ch.length);
+            }
+            let spoken = false;
+            for (const g2 of cluster) {
+                if (cps.has(g2.gid)) continue;
+                if (!used.has(g2.gid)) used.set(g2.gid, spoken ? '' : rest);
+                spoken = true;
+            }
+            k = end + 1;
+        }
+        // positions: TJ numbers are thousandths of the font size, positive moves LEFT
+        const items = [];
+        const move = (units) => { const n = -units * scale; if (Math.abs(n) < 0.005) return; if (typeof items[items.length - 1] === 'number') items[items.length - 1] += n; else items.push(n); };
+        let out = '';
+        let rise = 0;
+        const flush = () => {
+            if (!items.length) return;
+            out += `[${items.map((v) => (typeof v === 'number' ? n2(v) : v)).join(' ')}] TJ `;
+            items.length = 0;
+        };
+        for (const g2 of shaped.glyphs) {
+            if (g2.dy !== rise) { flush(); rise = g2.dy; out += `${n2((rise * size) / sh.upem)} Ts `; }
+            if (g2.dx) move(g2.dx);
+            const hex = g2.gid.toString(16).padStart(4, '0');
+            const last = items[items.length - 1];
+            if (typeof last === 'string') items[items.length - 1] = `${last.slice(0, -1)}${hex}>`; else items.push(`<${hex}>`);
+            move(g2.adv - g2.dx - sh.advanceOf(g2.gid, bold));
+        }
+        flush();
+        if (rise !== 0) out += '0 Ts ';
+        const draw = `BT /${bold ? 'F4' : 'F3'} ${n2(size)} Tf ${n2(r)} ${n2(g)} ${n2(b)} rg ${n2(px)} ${n2(PAGE.h - base)} Td ${out.trim()} ET`;
+        // Sinhala is stored as glyph numbers; ActualText says what those glyphs spell, so that search and copy get the letters
+        this.ops.push(needsShaping(text) ? `/Span << /ActualText <${utf16hex(text)}> >> BDC ${draw} EMC` : draw);
     }
 }
 
@@ -144,28 +266,30 @@ const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 /** The statement's own number: the same for the same moment, so two downloads of one statement agree. */
 const statementNo = (asOf) => `WF-${(Date.parse(asOf) || 0).toString(36).toUpperCase().slice(-6).padStart(6, '0')}`;
 
+
 /* ── drawing the parts ────────────────────────────────────────────────────── */
 
 function header(c, st) {
+    const t = c.t;
     const top = PAGE.margin;
     // the logo mark: a navy square with a white W, then the name
     c.rect(PAGE.margin, top, 30, 30, COLOR.accent);
     c.text(PAGE.margin + 15, top + 22, 'W', { size: 19, bold: true, color: COLOR.white, align: 'c' });
     c.text(PAGE.margin + 40, top + 22, 'WEALTHFLOW', { size: 21, bold: true, color: COLOR.accent });
-    c.text(PAGE.margin, top + 48, 'Account Statement', { size: 11, bold: true });
-    c.text(PAGE.margin, top + 61, 'Your investments and loans with your lender', { size: 9, color: COLOR.mute });
+    c.text(PAGE.margin, top + 48, t('Account Statement'), { size: 11, bold: true });
+    c.text(PAGE.margin, top + 61, t('Your investments and loans with your lender'), { size: 9, color: COLOR.mute });
     const right = PAGE.w - PAGE.margin;
-    const meta = [['Statement No', statementNo(st.asOf)], ['As at', `${dayOf(st.asOf)}, ${timeOf(st.asOf)}`], ['Time zone', 'Sri Lanka time']];
+    const meta = [[t('Statement No'), statementNo(st.asOf)], [t('As at'), `${dayOf(st.asOf)}, ${timeOf(st.asOf)}`], [t('Time zone'), t('Sri Lanka time')]];
     meta.forEach(([k, v], i) => {
         const base = top + 12 + i * 14;
-        c.text(right - textWidth(pdfText(v), true, 9) - 6, base, `${k}:`, { size: 9, color: COLOR.mute, align: 'r' });
+        c.text(right - c.measure(v, true, 9) - 6, base, `${k}:`, { size: 9, color: COLOR.mute, align: 'r' });
         c.text(right, base, v, { size: 9, bold: true, align: 'r' });
     });
     c.hline(PAGE.margin, right, top + 72, COLOR.accent, 2.4);
     c.hline(PAGE.margin, right, top + 76, COLOR.accent, 0.6);
     c.y = top + 76 + 18;
-    const intro = 'Every investment and loan your lender records for you is listed here under a reference code. Quote the code when you contact your lender or make a payment.';
-    for (const line of wrapText(intro, false, 9.5, CONTENT_W)) { c.text(PAGE.margin, c.y, line, { size: 9.5, color: COLOR.mute }); c.y += 13; }
+    const intro = t('Every investment and loan your lender records for you is listed here under a reference code. Quote the code when you contact your lender or make a payment.');
+    for (const line of c.wrap(intro, false, 9.5, CONTENT_W)) { c.text(PAGE.margin, c.y, line, { size: 9.5, color: COLOR.mute }); c.y += c.lh(13); }
     c.y += 6;
 }
 
@@ -182,15 +306,16 @@ function sectionTitle(c, text, sub, { x = PAGE.margin, w = CONTENT_W, square } =
 
 /** Summary cards with a coloured left edge, like the loan statement's "Paid installments" / "Remaining" pair. */
 function summary(c, st) {
+    const t = c.t;
     const totals = Array.isArray(st.totals) ? st.totals : [];
     const groups = Array.isArray(st.groups) ? st.groups : [];
     if (!totals.length) return;
-    sectionTitle(c, 'Summary');
-    for (const t of totals) {
-        const mine = groups.filter((g) => g.currency === t.currency);
+    sectionTitle(c, t('Summary'));
+    for (const tot of totals) {
+        const mine = groups.filter((g) => g.currency === tot.currency);
         const boxes = [];
-        if (mine.some((g) => g.kind === 'investment')) boxes.push(['Invested', fmtMoney(t.invested, t.currency), COLOR.accent, COLOR.alt], ['Interest received', fmtMoney(t.interestReceived, t.currency), COLOR.paid, COLOR.paidBg]);
-        if (mine.some((g) => g.kind === 'loan')) boxes.push(['Loan outstanding', fmtMoney(t.loanOutstanding, t.currency), t.loanOutstanding > 0 ? COLOR.owed : COLOR.paid, t.loanOutstanding > 0 ? COLOR.balance : COLOR.paidBg]);
+        if (mine.some((g) => g.kind === 'investment')) boxes.push([t('Invested'), fmtMoney(tot.invested, tot.currency), COLOR.accent, COLOR.alt], [t('Interest received'), fmtMoney(tot.interestReceived, tot.currency), COLOR.paid, COLOR.paidBg]);
+        if (mine.some((g) => g.kind === 'loan')) boxes.push([t('Loan outstanding'), fmtMoney(tot.loanOutstanding, tot.currency), tot.loanOutstanding > 0 ? COLOR.owed : COLOR.paid, tot.loanOutstanding > 0 ? COLOR.balance : COLOR.paidBg]);
         if (!boxes.length) continue;
         c.ensure(62);
         const gap = 10;
@@ -222,7 +347,7 @@ function detailsAndStatus(c, leftTitle, left, rightTitle, right) {
     const base = c.y;
     left.forEach(([k, v, color], i) => {
         c.text(PAGE.margin, base + i * 17 + 10, k, { size: 9, color: COLOR.mute });
-        c.text(PAGE.margin + 112, base + i * 17 + 10, v, { size: 9, bold: true, color: color || COLOR.ink });
+        c.text(PAGE.margin + (c.lang === 'si' ? 124 : 112), base + i * 17 + 10, v, { size: 9, bold: true, color: color || COLOR.ink });
     });
     right.forEach(([k, v, color], i) => {
         const x = PAGE.margin + colW + gap;
@@ -292,88 +417,93 @@ function note(c, text) {
 
 /** The heading of a record: what it is, its reference code and (for a loan) whether it is open. */
 function recordHead(c, g, many) {
+    const t = c.t;
     c.ensure(120);
     c.y += 4;
     const loan = g.kind === 'loan';
     c.rect(PAGE.margin, c.y, CONTENT_W, 26, COLOR.alt, COLOR.line);
     c.rect(PAGE.margin, c.y, 4, 26, COLOR.accent);
-    c.text(PAGE.margin + 16, c.y + 17, loan ? 'Loan' : 'Investment', { size: 12, bold: true, color: COLOR.accent });
-    const tag = [many && g.lender ? `Lender ${g.lender}` : '', loan && STATUS[g.status] ? STATUS[g.status] : '', g.ref].filter(Boolean).join('   |   ');
+    c.text(PAGE.margin + 16, c.y + 17, loan ? t('Loan') : t('Investment'), { size: 12, bold: true, color: COLOR.accent });
+    const tag = [many && g.lender ? t('Lender {n}', { n: g.lender }) : '', loan && STATUS[g.status] ? t(STATUS[g.status]) : '', g.ref].filter(Boolean).join('   |   ');
     c.text(PAGE.w - PAGE.margin - 12, c.y + 17, tag, { size: 9, bold: true, align: 'r' });
     c.y += 38;
 }
 
+/** "3 days" / "1 day" in the document's language. */
+const daysWord = (t, n) => (n === 1 ? t('1 day') : t('{n} days', { n }));
+
 function investment(c, g, many) {
+    const t = c.t;
     const cur = g.currency;
     recordHead(c, g, many);
     const pays = Array.isArray(g.payments) ? g.payments : [];
-    detailsAndStatus(c, 'Investment details', [
-        ['Reference', g.ref],
-        ['Capital', fmtMoney(g.capital, cur)],
-        ['Rate', `${num(g.ratePct)}% a year`],
-        ['Interest paid', FREQ[g.frequency] || FREQ.monthly],
-        ['Interest each time', fmtMoney(g.interestPerPeriod, cur)],
-        ['Started', day(g.start)],
-        g.end ? ['Ends', day(g.end)] : null,
-    ].filter(Boolean), 'Account status', [
-        ['Interest received so far', fmtMoney(g.totalReceived, cur), COLOR.paid],
-        ['Payments received', String(pays.length)],
-        g.nextInterest ? ['Next interest due', day(g.nextInterest.date)] : null,
-        g.nextInterest ? ['Next interest amount', fmtMoney(g.nextInterest.amount, cur)] : null,
+    detailsAndStatus(c, t('Investment details'), [
+        [t('Reference'), g.ref],
+        [t('Capital'), fmtMoney(g.capital, cur)],
+        [t('Rate'), t('{n}% a year', { n: num(g.ratePct) })],
+        [t('Interest paid'), t(FREQ[g.frequency] || FREQ.monthly)],
+        [t('Interest each time'), fmtMoney(g.interestPerPeriod, cur)],
+        [t('Started'), day(g.start)],
+        g.end ? [t('Ends'), day(g.end)] : null,
+    ].filter(Boolean), t('Account status'), [
+        [t('Interest received so far'), fmtMoney(g.totalReceived, cur), COLOR.paid],
+        [t('Payments received'), String(pays.length)],
+        g.nextInterest ? [t('Next interest due'), day(g.nextInterest.date)] : null,
+        g.nextInterest ? [t('Next interest amount'), fmtMoney(g.nextInterest.amount, cur)] : null,
     ].filter(Boolean));
     if (pays.length) {
-        table(c, `Interest received (${pays.length})`, COLOR.paid,
-            [{ label: '#', w: 1 }, { label: 'For', w: 3 }, { label: 'Received on', w: 3 }, { label: `Amount (${cur})`, w: 3, right: true }],
+        table(c, t('Interest received ({n})', { n: pays.length }), COLOR.paid,
+            [{ label: '#', w: 1 }, { label: t('For'), w: 3 }, { label: t('Received on'), w: 3 }, { label: t('Amount ({cur})', { cur }), w: 3, right: true }],
             pays.map((p, i) => [String(i + 1), month(p.month), day(p.date), { t: fmtMoney(p.amount, cur).slice(4), bold: true }]),
-            [`TOTAL RECEIVED (${pays.length})`, '', '', fmtMoney(g.totalReceived, cur).slice(4)].map((t, i) => (i === 0 ? { t, bold: true } : t)));
+            [t('Total received ({n})', { n: pays.length }).toUpperCase(), '', '', fmtMoney(g.totalReceived, cur).slice(4)].map((x, i) => (i === 0 ? { t: x, bold: true } : x)));
         // the label of the total spans the first columns: only the first cell carries text
-    } else note(c, 'No payments recorded yet.');
+    } else note(c, t('No payments recorded yet.'));
 }
 
-const MOVEMENT = {
-    lent: { word: 'Loan paid out', tag: 'PAID OUT', color: COLOR.accent },
-    further: { word: 'Further advance', tag: 'ADVANCE', color: COLOR.accent },
-    repayment: { word: 'Repayment', tag: 'REPAID', color: COLOR.paid },
-};
+const LOAN_EVENT = { lent: 'Loan paid out', further: 'Further advance', repayment: 'Repayment' };
+const TAG = { lent: 'Paid out', further: 'Advance', repayment: 'Repaid' };
+const TAG_COLOR = { lent: COLOR.accent, further: COLOR.accent, repayment: COLOR.paid };
 
 function loan(c, g, many) {
+    const t = c.t;
     const cur = g.currency;
     recordHead(c, g, many);
     const late = num(g.overdueDays);
     const open = g.outstanding > 0;
     const events = Array.isArray(g.events) ? g.events : [];
-    detailsAndStatus(c, 'Loan details', [
-        ['Reference', g.ref],
-        ['Paid out', fmtMoney(g.lent, cur)],
-        g.due ? ['Expected back by', day(g.due)] : null,
-    ].filter(Boolean), 'Account status', [
-        ['Repaid so far', fmtMoney(g.repaid, cur), COLOR.paid],
-        ['Outstanding', fmtMoney(g.outstanding, cur), open ? COLOR.owed : COLOR.paid],
-        ['Status', STATUS[g.status] || 'Open', open ? (late > 0 ? COLOR.owed : COLOR.accent) : COLOR.paid],
-        late > 0 ? ['Overdue', `${late} day${late === 1 ? '' : 's'}`, COLOR.owed] : null,
+    detailsAndStatus(c, t('Loan details'), [
+        [t('Reference'), g.ref],
+        [t('Paid out'), fmtMoney(g.lent, cur)],
+        g.due ? [t('Expected back by'), day(g.due)] : null,
+    ].filter(Boolean), t('Account status'), [
+        [t('Repaid so far'), fmtMoney(g.repaid, cur), COLOR.paid],
+        [t('Outstanding'), fmtMoney(g.outstanding, cur), open ? COLOR.owed : COLOR.paid],
+        [t('Status'), t(STATUS[g.status] || 'Open'), open ? (late > 0 ? COLOR.owed : COLOR.accent) : COLOR.paid],
+        late > 0 ? [t('Overdue'), daysWord(t, late), COLOR.owed] : null,
     ].filter(Boolean));
     if (events.length) {
         const repayments = events.filter((e) => e.kind === 'repayment');
         const repaidSum = repayments.reduce((a, e) => a + num(e.amount), 0);
-        table(c, `Account movements (${events.length})`, COLOR.accent,
-            [{ label: '#', w: 1 }, { label: 'Date', w: 3 }, { label: 'Transaction', w: 4 }, { label: `Amount (${cur})`, w: 3, right: true }, { label: `Balance (${cur})`, w: 3, right: true }, { label: 'Type', w: 3, center: true }],
+        table(c, t('Account movements ({n})', { n: events.length }), COLOR.accent,
+            [{ label: '#', w: 1 }, { label: t('Date'), w: 3 }, { label: t('Transaction'), w: 4 }, { label: t('Amount ({cur})', { cur }), w: 3, right: true }, { label: t('Balance ({cur})', { cur }), w: 3, right: true }, { label: t('Type'), w: 3, center: true }],
             events.map((e, i) => {
-                const m = MOVEMENT[e.kind] || { word: '-', tag: '-', color: COLOR.mute };
-                return [String(i + 1), day(e.date), m.word, { t: fmtMoney(e.amount, cur).slice(4), bold: true }, { t: fmtMoney(e.balance, cur).slice(4), bold: true, fill: num(e.balance) > 0 ? COLOR.balance : null }, { t: m.tag, color: m.color, bold: true }];
+                const tag = TAG[e.kind];
+                return [String(i + 1), day(e.date), LOAN_EVENT[e.kind] ? t(LOAN_EVENT[e.kind]) : '-', { t: fmtMoney(e.amount, cur).slice(4), bold: true }, { t: fmtMoney(e.balance, cur).slice(4), bold: true, fill: num(e.balance) > 0 ? COLOR.balance : null }, { t: tag ? t(tag).toUpperCase() : '-', color: TAG_COLOR[e.kind] || COLOR.mute, bold: true }];
             }),
-            [{ t: `TOTAL REPAID (${repayments.length})`, bold: true }, '', '', fmtMoney(repaidSum, cur).slice(4), fmtMoney(g.outstanding, cur).slice(4), '']);
-    } else note(c, 'Nothing recorded yet.');
+            [{ t: t('Total repaid ({n})', { n: repayments.length }).toUpperCase(), bold: true }, '', '', fmtMoney(repaidSum, cur).slice(4), fmtMoney(g.outstanding, cur).slice(4), '']);
+    } else note(c, t('Nothing recorded yet.'));
 }
 
 /** One account in a box; the account number is the largest thing in it, because it is the one that gets copied. */
-function accountLayout(a) {
-    const rows = [['Account name', a.holder], ['Account number', a.number, true], a.branch ? ['Branch', a.branch] : null, a.swift ? ['SWIFT / IBAN', a.swift] : null].filter(Boolean);
-    const noteLines = a.note ? wrapText(a.note, false, 9, CONTENT_W - 28) : [];
-    return { rows, noteLines, h: 32 + rows.length * 22 + (noteLines.length ? 8 + noteLines.length * 12 : 0) + 8 };
+function accountLayout(c, a) {
+    const t = c.t;
+    const rows = [[t('Account name'), a.holder], [t('Account number'), a.number, true], a.branch ? [t('Branch'), a.branch] : null, a.swift ? [t('SWIFT / IBAN'), a.swift] : null].filter(Boolean);
+    const noteLines = a.note ? c.wrap(a.note, false, 9, CONTENT_W - 28) : [];
+    return { rows, noteLines, h: 32 + rows.length * 22 + (noteLines.length ? 8 + noteLines.length * c.lh(12) : 0) + 8 };
 }
 
 function account(c, a) {
-    const { rows, noteLines, h } = accountLayout(a);
+    const { rows, noteLines, h } = accountLayout(c, a);
     c.ensure(h + 8);
     c.rect(PAGE.margin, c.y, CONTENT_W, h, COLOR.alt, COLOR.line);
     c.rect(PAGE.margin, c.y, 3.5, h, COLOR.accent);
@@ -384,60 +514,64 @@ function account(c, a) {
         c.text(PAGE.margin + 130, y + 11, value, { size: big ? 13 : 10, bold: true });
         y += 22;
     }
-    if (noteLines.length) { y += 4; for (const line of noteLines) { c.text(PAGE.margin + 16, y + 9, line, { size: 9, color: COLOR.mute }); y += 12; } }
+    if (noteLines.length) { y += 4; for (const line of noteLines) { c.text(PAGE.margin + 16, y + 9, line, { size: 9, color: COLOR.mute }); y += c.lh(12); } }
     c.y += h + 10;
 }
 
 function payment(c, st) {
+    const t = c.t;
     const lenders = Array.isArray(st.lenders) ? st.lenders : [];
     if (!lenders.length) return;
     const groups = Array.isArray(st.groups) ? st.groups : [];
     const many = num(st.lenderCount) > 1;
     // the heading never sits alone at the foot of a page: it travels with its first account
-    c.ensure(26 + 34 + 24 + accountLayout(lenders[0].accounts[0]).h + 8);
-    sectionTitle(c, 'How to pay');
-    const lead = 'Pay by bank transfer to the account below and put the reference of the record in the transfer. If the account details here look different from what your lender told you, check with your lender before sending money.';
-    for (const line of wrapText(lead, false, 9.5, CONTENT_W)) { c.ensure(14); c.text(PAGE.margin, c.y + 10, line, { size: 9.5, color: COLOR.mute }); c.y += 13; }
+    c.ensure(26 + 34 + 24 + accountLayout(c, lenders[0].accounts[0]).h + 8);
+    sectionTitle(c, t('How to pay'));
+    const lead = t('Pay by bank transfer to the account below and put the reference of the record in the transfer. If the account details here look different from what your lender told you, check with your lender before sending money.');
+    for (const line of c.wrap(lead, false, 9.5, CONTENT_W)) { c.ensure(14); c.text(PAGE.margin, c.y + 10, line, { size: 9.5, color: COLOR.mute }); c.y += c.lh(13); }
     c.y += 8;
     for (const l of lenders) {
         const refs = groups.filter((g) => g.lender === l.n).map((g) => g.ref);
-        if (many) { c.ensure(40); c.text(PAGE.margin, c.y + 10, `Lender ${l.n}`, { size: 11, bold: true }); c.y += 18; }
+        if (many) { c.ensure(40); c.text(PAGE.margin, c.y + 10, t('Lender {n}', { n: l.n }), { size: 11, bold: true }); c.y += 18; }
         if (refs.length) {
-            const shown = refs.slice(0, 6).join(', ') + (refs.length > 6 ? ` and ${refs.length - 6} more` : '');
-            for (const line of wrapText(`References: ${shown}`, true, 9, CONTENT_W)) { c.ensure(14); c.text(PAGE.margin, c.y + 10, line, { size: 9, bold: true, color: COLOR.ink }); c.y += 12; }
+            const shown = refs.slice(0, 6).join(', ') + (refs.length > 6 ? ` ${t('and {n} more', { n: refs.length - 6 })}` : '');
+            for (const line of c.wrap(t('References: {refs}', { refs: shown }), true, 9, CONTENT_W)) { c.ensure(14); c.text(PAGE.margin, c.y + 10, line, { size: 9, bold: true, color: COLOR.ink }); c.y += c.lh(12); }
             c.y += 6;
         }
         for (const a of l.accounts) account(c, a);
     }
 }
 
-/** The legend and the boxed notice that close the loan statement; only the words for what this statement has. */
+/** The legend that closes the loan statement; only the words for what this statement has. */
 function closing(c, st) {
+    const t = c.t;
     const kinds = new Set((st.groups || []).map((g) => g.kind));
     const parts = [];
-    if (kinds.has('loan')) parts.push(['PAID OUT', COLOR.accent, 'money lent'], ['REPAID', COLOR.paid, 'money paid back']);
+    if (kinds.has('loan')) parts.push([t('Paid out').toUpperCase(), COLOR.accent, t('money lent')], [t('Repaid').toUpperCase(), COLOR.paid, t('money paid back')]);
     if (!parts.length) return;
     c.ensure(70);
     c.y += 4;
     let x = PAGE.margin;
-    c.text(x, c.y + 9, 'Legend:', { size: 8.5, bold: true, color: COLOR.mute });
-    x += 44;
+    const lead = `${t('Legend')}:`;
+    c.text(x, c.y + 9, lead, { size: 8.5, bold: true, color: COLOR.mute });
+    x += c.measure(lead, true, 8.5) + 8;
     parts.forEach(([tag, color, what]) => {
         c.text(x, c.y + 9, tag, { size: 8.5, bold: true, color });
-        x += textWidth(tag, true, 8.5) + 4;
+        x += c.measure(tag, true, 8.5) + 4;
         c.text(x, c.y + 9, `- ${what}`, { size: 8.5, color: COLOR.mute });
-        x += textWidth(`- ${what}`, false, 8.5) + 16;
+        x += c.measure(`- ${what}`, false, 8.5) + 16;
     });
     c.y += 20;
 }
 
 function notice(c, text) {
-    const lines = wrapText(text, false, 9, CONTENT_W - 28);
-    const h = 16 + lines.length * 12.5 + 6;
+    const lines = c.wrap(text, false, 9, CONTENT_W - 28);
+    const pitch = c.lh(12.5);
+    const h = 16 + lines.length * pitch + 6;
     c.ensure(h + 8);
     c.rect(PAGE.margin, c.y, CONTENT_W, h, COLOR.alt);
     c.rect(PAGE.margin, c.y, 3, h, COLOR.accent);
-    lines.forEach((line, i) => c.text(PAGE.margin + 14, c.y + 17 + i * 12.5, line, { size: 9, color: COLOR.ink }));
+    lines.forEach((line, i) => c.text(PAGE.margin + 14, c.y + 17 + i * pitch, line, { size: 9, color: COLOR.ink }));
     c.y += h + 8;
 }
 
@@ -445,12 +579,18 @@ function notice(c, text) {
 
 const pdfDate = (ms) => { const d = new Date(ms); const p = (n, w = 2) => String(n).padStart(w, '0'); return `D:${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`; };
 
+/** Is there any Sinhala in this statement's own data (a bank's name, a holder, a note)? Those need the shaper whatever language was asked for. */
+export function hasSinhala(statement) {
+    try { return needsShaping(JSON.stringify(statement)); } catch (_) { return false; }
+}
+
 /**
  * @param {object} statement what buildStatement returned
- * @param {{generatedAt:number}} opts
+ * @param {{generatedAt:number, lang?:('en'|'si'), shaper?:object}} opts `shaper` (from pdf-shape.mjs) is what lets Sinhala be drawn; without it
+ *   the file is English and any Sinhala letters in the data print as "?"
  * @returns {Buffer} a complete PDF file
  */
-export function statementPdf(statement, { generatedAt } = {}) {
+export function statementPdf(statement, { generatedAt, lang = 'en', shaper = null } = {}) {
     const raw = statement && typeof statement === 'object' ? statement : {};
     // only ever draws what has the shape of a record: a damaged entry is skipped, never allowed to take the download down
     const objects = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') : []);
@@ -459,10 +599,13 @@ export function statementPdf(statement, { generatedAt } = {}) {
     const made = Number.isFinite(Number(generatedAt)) ? Number(generatedAt) : Date.parse(st.asOf) || 0;
     const many = num(st.lenderCount) > 1;
 
-    const c = new Canvas();
+    // one font for the whole document: the embedded one when Sinhala was asked for or is in the data, else Helvetica
+    const sinhala = !!shaper && (lang === 'si' || hasSinhala(raw));
+    const c = new Canvas({ shaper: sinhala ? shaper : null, lang: sinhala && lang === 'si' ? 'si' : 'en' });
+    const t = c.t;
     header(c, st);
     if (!groups.length) {
-        note(c, 'There is nothing to show yet. When your lender records something for you, it will appear here.');
+        note(c, t('There is nothing to show yet. When your lender records something for you, it will appear here.'));
     } else {
         summary(c, st);
         const inv = groups.filter((g) => g.kind === 'investment');
@@ -472,38 +615,105 @@ export function statementPdf(statement, { generatedAt } = {}) {
         payment(c, st);
         closing(c, st);
     }
-    if (st.truncated) note(c, 'This statement is long, so only the first part is shown.');
-    notice(c, 'Figures are as recorded by your lender from the payments they have confirmed. This statement is for your own records and is not a substitute for your lender\'s own account. If something looks wrong, please contact your lender.');
+    if (st.truncated) note(c, t('This statement is long, so only the first part is shown.'));
+    notice(c, t('Figures are as recorded by your lender from the payments they have confirmed. This statement is for your own records and is not a substitute for your lender\'s own account. If something looks wrong, please contact your lender.'));
 
     // footers, now that the page count is known
     const total = c.pages.length;
     const no = statementNo(st.asOf);
-    const stamp = `Generated ${dayOf(new Date(made).toISOString())} ${timeOf(new Date(made).toISOString())} (Sri Lanka time)`;
+    const stamp = `${t('Generated {when}', { when: `${dayOf(new Date(made).toISOString())} ${timeOf(new Date(made).toISOString())}` })} (${t('Sri Lanka time')})`;
     c.pages.forEach((ops, i) => {
         c.ops = ops;
         c.hline(PAGE.margin, PAGE.w - PAGE.margin, PAGE.h - 34, COLOR.line, 0.5);
-        c.text(PAGE.margin, PAGE.h - 22, `WealthFlow statement  |  ${no}  |  ${stamp}`, { size: 7.5, color: COLOR.mute });
-        c.text(PAGE.w - PAGE.margin, PAGE.h - 22, `Page ${i + 1} of ${total}`, { size: 7.5, bold: true, color: COLOR.mute, align: 'r' });
+        c.text(PAGE.margin, PAGE.h - 22, `${t('WealthFlow statement')}  |  ${no}  |  ${stamp}`, { size: 7.5, color: COLOR.mute });
+        c.text(PAGE.w - PAGE.margin, PAGE.h - 22, t('Page {i} of {total}', { i: i + 1, total }), { size: 7.5, bold: true, color: COLOR.mute, align: 'r' });
     });
 
-    return assemble(c.pages.map((ops) => ops.join('\n')), made);
+    return assemble(c.pages.map((ops) => ops.join('\n')), made, { canvas: c });
 }
 
-/** Objects: 1 catalog, 2 page tree, 3-4 fonts, 5 info, then a page and its content for each page. */
-function assemble(streams, made) {
+/**
+ * The file for a download: loads the shaping engine only when the document needs it, and returns the English file, never a broken one,
+ * if the engine cannot be loaded or fails on this document.
+ * @param {object} statement
+ * @param {{generatedAt:number, lang?:string, loader?:Function}} opts `loader` is for tests
+ */
+export async function renderStatementPdf(statement, { generatedAt, lang = 'en', loader = loadShaper } = {}) {
+    const want = lang === 'si' ? 'si' : 'en';
+    if (want === 'en' && !hasSinhala(statement)) return statementPdf(statement, { generatedAt });
+    let shaper = null;
+    try { shaper = await loader(); } catch (e) { console.warn('[WF-PORTAL] the Sinhala PDF engine could not be loaded:', String((e && e.message) || e).slice(0, 160)); }
+    if (shaper) {
+        try { return statementPdf(statement, { generatedAt, lang: want, shaper }); }
+        catch (e) { console.warn('[WF-PORTAL] the Sinhala PDF could not be built:', String((e && e.message) || e).slice(0, 160)); }
+    }
+    return statementPdf(statement, { generatedAt });
+}
+
+/** The PDF objects of one embedded font weight: Type0 -> CIDFontType2 -> descriptor -> font program, and the ToUnicode map. */
+function fontObjects(baseId, sh, bold, used) {
+    const gids = [...used.keys()].sort((x, y) => x - y);
+    const parsed = sh.font(bold);
+    const { file } = subsetFont(parsed, gids);
+    const tag = [...crypto.createHash('sha1').update(`${bold ? 'b' : 'r'}:${gids.join(',')}`).digest().subarray(0, 6)].map((b) => String.fromCharCode(65 + (b % 26))).join('');
+    const name = `${tag}+NotoSansSinhala-${bold ? 'Bold' : 'Regular'}`;
+    const k = 1000 / parsed.upem;
+    const wid = (g) => Math.round(parsed.advances[g] * k);
+
+    // widths: consecutive glyph numbers share one entry
+    const wParts = [];
+    for (let i = 0; i < gids.length;) {
+        let j = i;
+        while (j + 1 < gids.length && gids[j + 1] === gids[j] + 1) j += 1;
+        wParts.push(`${gids[i]} [${gids.slice(i, j + 1).map(wid).join(' ')}]`);
+        i = j + 1;
+    }
+    const bfchars = gids.filter((g) => used.get(g)).map((g) => `<${g.toString(16).padStart(4, '0').toUpperCase()}> <${utf16hex(used.get(g)).slice(4)}>`);
+    const blocks = [];
+    for (let i = 0; i < bfchars.length; i += 100) { const part = bfchars.slice(i, i + 100); blocks.push(`${part.length} beginbfchar\n${part.join('\n')}\nendbfchar`); }
+    const cmap = `/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n${blocks.join('\n')}\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend`;
+
+    const stream = (dict, data) => { const body = zlib.deflateSync(data, { level: 9 }); return Buffer.concat([Buffer.from(`<< ${dict} /Filter /FlateDecode /Length ${body.length} >>\nstream\n`, 'latin1'), body, Buffer.from('\nendstream', 'latin1')]); };
+    const [x0, y0, x1, y1] = parsed.bbox.map((v) => Math.round(v * k));
+    return [
+        Buffer.from(`<< /Type /Font /Subtype /Type0 /BaseFont /${name} /Encoding /Identity-H /DescendantFonts [${baseId + 1} 0 R] /ToUnicode ${baseId + 4} 0 R >>`, 'latin1'),
+        Buffer.from(`<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${name} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${baseId + 2} 0 R /DW 1000 /W [${wParts.join(' ')}] /CIDToGIDMap /Identity >>`, 'latin1'),
+        Buffer.from(`<< /Type /FontDescriptor /FontName /${name} /Flags 4 /FontBBox [${x0} ${y0} ${x1} ${y1}] /ItalicAngle 0 /Ascent ${Math.round(parsed.ascent * k)} /Descent ${Math.round(parsed.descent * k)} /CapHeight 714 /StemV ${bold ? 140 : 80} /FontFile2 ${baseId + 3} 0 R >>`, 'latin1'),
+        stream(`/Length1 ${file.length}`, file),
+        stream('', Buffer.from(cmap, 'latin1')),
+    ];
+}
+
+/** Objects: 1 catalog, 2 page tree, 3-4 fonts, 5 info, then a page and its content for each page, then the embedded fonts (five objects each). */
+function assemble(streams, made, { canvas = null } = {}) {
     const pageCount = streams.length;
     const kidRefs = streams.map((_, i) => `${6 + i * 2} 0 R`);
+    const sh = canvas && canvas.shaper;
+    const si = !!sh && canvas.lang === 'si';
+    // the embedded fonts that were used, each with the object number it will have
+    let next = 6 + pageCount * 2;
+    const embedded = [];
+    if (sh) for (const [bold, res] of [[false, 'F3'], [true, 'F4']]) {
+        const used = canvas.used[bold ? 'bold' : 'regular'];
+        if (!used.size) continue;
+        embedded.push({ res, id: next, objects: fontObjects(next, sh, bold, used) });
+        next += 5;
+    }
+    const fontRes = ['/F1 3 0 R', '/F2 4 0 R', ...embedded.map((f) => `/${f.res} ${f.id} 0 R`)].join(' ');
+    const title = si ? `<${utf16hex(canvas.t('Your WealthFlow statement'))}>` : '(WealthFlow statement)';
+
     const objects = [];
-    objects[1] = Buffer.from('<< /Type /Catalog /Pages 2 0 R /Lang (en) /ViewerPreferences << /DisplayDocTitle true >> >>', 'latin1');
+    objects[1] = Buffer.from(`<< /Type /Catalog /Pages 2 0 R /Lang (${si ? 'si' : 'en'}) /ViewerPreferences << /DisplayDocTitle true >> >>`, 'latin1');
     objects[2] = Buffer.from(`<< /Type /Pages /Count ${pageCount} /Kids [${kidRefs.join(' ')}] >>`, 'latin1');
     objects[3] = Buffer.from('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>', 'latin1');
     objects[4] = Buffer.from('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>', 'latin1');
-    objects[5] = Buffer.from(`<< /Title (WealthFlow statement) /Producer (WealthFlow) /CreationDate (${pdfDate(made)}) >>`, 'latin1');
+    objects[5] = Buffer.from(`<< /Title ${title} /Producer (WealthFlow) /CreationDate (${pdfDate(made)}) >>`, 'latin1');
     streams.forEach((content, i) => {
         const body = zlib.deflateSync(Buffer.from(content, 'latin1'), { level: 9 });
-        objects[6 + i * 2] = Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE.w} ${PAGE.h}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> /ProcSet [/PDF /Text] >> /Contents ${7 + i * 2} 0 R >>`, 'latin1');
+        objects[6 + i * 2] = Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE.w} ${PAGE.h}] /Resources << /Font << ${fontRes} >> /ProcSet [/PDF /Text] >> /Contents ${7 + i * 2} 0 R >>`, 'latin1');
         objects[7 + i * 2] = Buffer.concat([Buffer.from(`<< /Filter /FlateDecode /Length ${body.length} >>\nstream\n`, 'latin1'), body, Buffer.from('\nendstream', 'latin1')]);
     });
+    for (const f of embedded) f.objects.forEach((o, k) => { objects[f.id + k] = o; });
 
     const parts = [Buffer.from('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n', 'latin1')];
     const offsets = [];
@@ -525,4 +735,4 @@ function assemble(streams, made) {
 /** The file name a browser saves it under: no personal data in it, just the date. */
 export const pdfFileName = (asOf) => `WealthFlow-statement-${/^\d{4}-\d{2}-\d{2}/.test(String(asOf)) ? String(asOf).slice(0, 10) : 'latest'}.pdf`;
 
-export default { statementPdf, pdfText, textWidth, wrapText, pdfFileName, PAGE };
+export default { statementPdf, renderStatementPdf, hasSinhala, pdfText, textWidth, wrapText, pdfFileName, PAGE };

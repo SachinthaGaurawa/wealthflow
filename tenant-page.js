@@ -314,7 +314,7 @@ export function createPage(env) {
     const printPage = env.print || (() => {});
     const shareFile = typeof env.shareFile === 'function' ? env.shareFile : null;       // 'shared' | 'cancelled' | 'unsupported'
     const jumpTo = env.jumpTo || ((id) => { const el = doc.getElementById ? doc.getElementById(id) : null; if (el) { if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' }); if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } });
-    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', codeMessage: '', tick: null, els: {} };
+    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', codeMessage: '', tick: null, els: {} };
     let t = makeT(st.lang);
 
     /** One door to the server. With `file`, a PDF answer comes back as a blob (never parsed as JSON); everything else is JSON. */
@@ -459,9 +459,10 @@ export function createPage(env) {
 
     /** The PDF for this session: asked for once and kept in memory until the page is wiped or refreshed, so a second press (and a share, which needs a fresh tap) costs nothing. */
     async function getPdf() {
-        if (st.pdfBlob) return { blob: st.pdfBlob, name: st.pdfName };
-        const res = await api('pdf', { token }, { file: true });
-        if (res.blob) { st.pdfBlob = res.blob; st.pdfName = res.name; }
+        if (st.pdfBlob && st.pdfLang === st.lang) return { blob: st.pdfBlob, name: st.pdfName };      // the file is in the language it was asked for: changing the page's language asks again
+        const lang = st.lang;
+        const res = await api('pdf', { token, lang }, { file: true });
+        if (res.blob) { st.pdfBlob = res.blob; st.pdfName = res.name; st.pdfLang = lang; }
         return res;
     }
 
