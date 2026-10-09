@@ -118,7 +118,7 @@ function h(doc, tag, props, ...kids) {
     return e;
 }
 
-function fact(doc, label, value) { return h(doc, 'div', {}, h(doc, 'dt', { text: label }), h(doc, 'dd', { text: value })); }
+function fact(doc, label, value, cls) { return h(doc, 'div', {}, h(doc, 'dt', { text: label }), h(doc, 'dd', { class: cls || null, text: value })); }
 
 /** Cells are [text, alignRight, secondLine]: a second line under the first keeps a table of four things to three columns on a phone. */
 function table(doc, caption, heads, rows) {
@@ -151,7 +151,7 @@ function investmentCard(doc, g, st, t) {
 
 function loanCard(doc, g, st, t) {
     const cur = g.currency;
-    const status = g.status === 'settled' ? [t('Settled'), 'tp-chip tp-ok'] : g.status === 'closed' ? [t('Closed'), 'tp-chip'] : [t('Open'), 'tp-chip'];
+    const status = g.status === 'settled' ? [t('Settled'), 'tp-chip tp-ok'] : g.status === 'closed' ? [t('Closed'), 'tp-chip'] : [t('Open'), 'tp-chip tp-open'];
     const late = Number(g.overdueDays) > 0 ? Math.floor(Number(g.overdueDays)) : 0;
     const due = g.due ? `${fmtDay(g.due)}${late ? ` (${late === 1 ? t('1 day ago') : t('{n} days ago', { n: late })})` : ''}` : '';
     return h(doc, 'section', { class: 'tp-card', 'aria-label': `${t('Loan')} ${g.ref}` },
@@ -160,7 +160,7 @@ function loanCard(doc, g, st, t) {
             fact(doc, t('Paid out'), fmtMoney(g.lent, cur)),
             fact(doc, t('Repaid'), fmtMoney(g.repaid, cur)),
             fact(doc, t('Outstanding'), fmtMoney(g.outstanding, cur)),
-            due ? fact(doc, t('Expected back by'), due) : null),
+            due ? fact(doc, t('Expected back by'), due, late ? 'tp-late' : null) : null),
         Array.isArray(g.events) && g.events.length
             ? table(doc, t('Movements, in {cur}', { cur }), [[t('Date')], [t('Amount'), true], [t('Balance'), true]], g.events.map((e) => [[fmtDay(e.date), false, t(LOAN_EVENT[e.kind] || '-')], [fmtNum(e.amount), true], [fmtNum(e.balance), true]]))
             : h(doc, 'p', { class: 'tp-note', text: t('Nothing recorded yet.') }));
@@ -308,6 +308,9 @@ export function createPage(env) {
         if (typeof doc.title === 'string') doc.title = t(title);
     }
 
+    /** Two small bars: where in the sign-in the person is. Drawn, never read aloud (the screen's own heading says where they are). */
+    const steps = (n) => h(doc, 'div', { class: 'tp-steps', 'aria-hidden': 'true' }, h(doc, 'span', { class: 'tp-on' }), h(doc, 'span', { class: n > 1 ? 'tp-on' : null }));
+
     function errorBox() { st.els.err = h(doc, 'p', { class: 'tp-error', role: 'alert', id: 'tp-err' }); return st.els.err; }
 
     function screenInvalid() {
@@ -328,6 +331,7 @@ export function createPage(env) {
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
         st.els.info = infoBox;
         mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card' },
+            steps(1),
             h(doc, 'h2', { tabindex: '-1', text: t('View your statement') }),
             h(doc, 'p', { text: t('Enter your NIC, or your passport / ID number if you have no Sri Lankan NIC. We will text a 6-digit code to the mobile number your lender has on file for you.') }),
             infoBox, form,
@@ -351,6 +355,7 @@ export function createPage(env) {
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
         st.els.info = infoBox;
         mount('Enter your code', [h(doc, 'section', { class: 'tp-card' },
+            steps(2),
             h(doc, 'h2', { tabindex: '-1', text: t('Enter your code') }),
             infoBox,
             h(doc, 'form', { novalidate: true, onsubmit: onVerify }, h(doc, 'label', { for: 'tp-code', text: t('Code from the text message') }), input, errorBox(), verify),
