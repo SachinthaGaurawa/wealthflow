@@ -454,10 +454,22 @@ describe('the log panel', () => {
 
     it('says plainly that late-payment reminders are paused under the credit reserve, and only then', () => {
         const paused = panelHtml({ rows: [], status: { configured: true, units: 12, reserve: 20, creditPaused: true } });
-        expect(paused).toMatch(/Late-payment reminders are paused: only 12 units are left \(the reserve is 20\)/);
+        expect(paused).toMatch(/Late-payment reminders are paused: 12 units are left, under the reserve of 20/);
         expect(paused).toMatch(/Receipts and closing notices still go out/);
         expect(panelHtml({ rows: [], status: { configured: true, units: 90, reserve: 20, creditPaused: false } })).not.toMatch(/paused/);
         expect(panelHtml({ rows: [], status: { configured: true, units: 12 } })).not.toMatch(/paused/);
+    });
+
+    it('never claims a pause the reading does not show: no reserve, a figure over the reserve, or no figure at all', () => {
+        const say = (status) => panelHtml({ rows: [], status: { configured: true, ...status } });
+        expect(say({ units: 8, reserve: 0, creditPaused: true })).not.toMatch(/paused/);          // a stale flag from the time the reserve was on
+        expect(say({ units: 50, reserve: 20, creditPaused: true })).not.toMatch(/paused/);
+        expect(say({ units: null, lowCredit: true, creditPaused: true, reserve: 20 })).not.toMatch(/running low|paused/);
+    });
+
+    it('says the figure when the credit really is zero, and when it was read', () => {
+        const html = panelHtml({ rows: [], fmtWhen: () => '09 Oct, 12:00', status: { configured: true, units: 0, lowCredit: true, unitsAt: 1 } });
+        expect(html).toMatch(/SMS credit is running low: 0 units left \(read 09 Oct, 12:00\)/);
     });
 });
 
