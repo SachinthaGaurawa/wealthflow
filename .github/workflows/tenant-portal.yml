@@ -16,6 +16,7 @@ on:
       - wealthflow-payaccounts.js
       - vercel.json
       - test/e2e/tenant-portal.mjs
+      - test/e2e/tenant-responsive.mjs
       - test/e2e/harness.mjs
       - .github/workflows/tenant-portal.yml
   workflow_dispatch:
@@ -36,3 +37,6 @@ jobs:
       # The page, under the Content-Security-Policy vercel.json sends, against the real endpoint over an in-memory database:
       # NIC, code, statement, the PDF download, copy, print, Sinhala, sign-out, lock-out, and no overflow on a 320 px phone.
       - run: node test/e2e/tenant-portal.mjs
+      # Twenty-one screen sizes, from a 240 px feature phone to an ultrawide monitor: no sideways scroll, nothing cut off,
+      # touch-sized controls, readable type, a centred column, an A4 print layout; sign-in forms and the statement, English and Sinhala.
+      - run: node test/e2e/tenant-responsive.mjs
