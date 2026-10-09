@@ -17,10 +17,10 @@ function page({ auth = {}, local = {}, standalone = false } = {}) {
     const context = vm.createContext({
         appData, notify: vi.fn(), showConfirm: vi.fn((icon, msg, det, cls, label, cb) => cb()), launchApp: vi.fn(), resetAutoLockTimer: vi.fn(), showAuthView: vi.fn(), renderSettings: vi.fn(), pinMode: '',
         localStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } },
-        window: { navigator: { standalone }, matchMedia: () => ({ matches: standalone }) }, navigator: { standalone }, document: { referrer: '' },
+        window: { navigator: { standalone }, matchMedia: () => ({ matches: standalone }) }, navigator: { standalone }, document: { referrer: '', getElementById: () => null },
         DB: { getObj: key => appData[key] || {}, set: vi.fn((key, value) => { appData[key] = value; }) },
     });
-    for (const name of ['_isStandaloneApp', '_skipLockEnabled', '_canSkipEntryLock', '_bootEnterWithPin', 'toggleSkipLock', '_applySkipLock']) vm.runInContext(source(name), context);
+    for (const name of ['_isStandaloneApp', '_skipLockEnabled', '_canSkipEntryLock', '_bootEnterWithPin', 'toggleSkipLock', '_syncSkipLockUI', '_applySkipLock']) vm.runInContext(source(name), context);
     return { context, store, appData };
 }
 

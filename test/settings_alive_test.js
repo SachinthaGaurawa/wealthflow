@@ -57,7 +57,10 @@ function fn(name, src = HTML) {
 
 /* Every key the settings screen writes. Read from the source rather than
  * listed here, so a new switch is covered the day it is added. */
-const KEYS = [...new Set([...HTML.matchAll(/toggleSetting\('([A-Za-z0-9_]+)'/g)].map((m) => m[1]))];
+const KEYS = [...new Set([
+    ...[...HTML.matchAll(/toggleSetting\('([A-Za-z0-9_]+)'/g)].map((m) => m[1]),
+    ...[...HTML.matchAll(/settingSwitch\('([A-Za-z0-9_]+)'/g)].map((m) => m[1]),
+])];
 
 /* The haystack with the settings SCREEN removed: its own markup mentions every
  * key (to draw the switch in the right position), and counting that as a reader

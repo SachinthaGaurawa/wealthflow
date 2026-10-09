@@ -4339,7 +4339,8 @@
         }
 
         .toggle::after {
-            content: 'absolute';
+            content: '';
+            position: absolute;
             top: 2px;
             left: 2px;
             width: 20px;
@@ -4352,6 +4353,11 @@
 
         .toggle.on::after {
             transform: translateX(20px);
+        }
+
+        .setting-dependent-disabled {
+            opacity: .5;
+            pointer-events: none;
         }
 
         /* ================== OFFLINE BANNER ================== */
@@ -7660,22 +7666,22 @@
 
             <div class="setting-row" style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px;">
                 <div class="setting-info"><div class="setting-label">@camera@ TF.js Image Enhancement</div><div class="setting-desc">On-device AI sharpening + contrast boost before scanning. Improves accuracy on poor photos.</div></div>
-                <div class="toggle" id="scanTfToggle" onclick="setScanSetting('scanTfEnhance', !_scanSetting('scanTfEnhance', true))"></div>
+                <div class="toggle" id="scanTfToggle" role="switch" tabindex="0" aria-label="TF.js Image Enhancement" aria-checked="false" onclick="setScanSetting('scanTfEnhance', !_scanSetting('scanTfEnhance', true))"></div>
             </div>
 
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">@refresh@ Auto-Escalate</div><div class="setting-desc">If confidence is low, automatically retry with a higher mode.</div></div>
-                <div class="toggle" id="scanAutoEscToggle" onclick="setScanSetting('scanAutoEscalate', !_scanSetting('scanAutoEscalate', true))"></div>
+                <div class="toggle" id="scanAutoEscToggle" role="switch" tabindex="0" aria-label="Auto-Escalate" aria-checked="false" onclick="setScanSetting('scanAutoEscalate', !_scanSetting('scanAutoEscalate', true))"></div>
             </div>
 
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">@folder@ Auto-Categorize</div><div class="setting-desc">AI assigns the best expense category automatically.</div></div>
-                <div class="toggle" id="scanAutoCatToggle" onclick="setScanSetting('scanAutoCategory', !_scanSetting('scanAutoCategory', true))"></div>
+                <div class="toggle" id="scanAutoCatToggle" role="switch" tabindex="0" aria-label="Auto-Categorize" aria-checked="false" onclick="setScanSetting('scanAutoCategory', !_scanSetting('scanAutoCategory', true))"></div>
             </div>
 
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Clean Drive file browser</div><div class="setting-desc">A thumbnail-free list sorted by most-recently-modified, with folder navigation, instead of Google's picker. Turning this on asks for a one-time Google Drive read permission.</div></div>
-                <div class="toggle" id="driveBrowserToggle" onclick="_wfToggleDriveBrowser()"></div>
+                <div class="toggle" id="driveBrowserToggle" role="switch" tabindex="0" aria-label="Clean Drive file browser" aria-checked="false" onclick="_wfToggleDriveBrowser()"></div>
             </div>
 
             <div class="fg" style="margin-top:14px;">
@@ -10142,13 +10148,25 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             return false;
         }
         function toggleSkipLock(on) {
+            if (typeof on !== 'boolean') on = !_skipLockEnabled();
             if (!on) return _applySkipLock(false);
             showConfirm('', 'Turn on passcode-free entry?', 'Signed in with Google, WealthFlow will open without a passcode on every device. Anyone who can open it on a device signed in to your account will see your data. The passcode still protects the vault and Change PIN.', 'btn-primary', 'Turn ON', () => _applySkipLock(true));
         }
+        function _syncSkipLockUI() {
+            const button = document.getElementById('skipLockToggle');
+            if (!button) return;
+            const enabled = _skipLockEnabled();
+            button.classList.toggle('btn-success', enabled);
+            button.classList.toggle('btn-secondary', !enabled);
+            button.setAttribute('aria-pressed', enabled);
+            button.textContent = enabled ? 'ON' : 'OFF';
+        }
         function _applySkipLock(on) {
             try { if (on) localStorage.setItem('wf2_skip_lock', '1'); else localStorage.removeItem('wf2_skip_lock'); } catch (_) {}
+            window._wfSettingsAtomicWrite = true;
             try { const auth = DB.getObj('auth') || {}; auth.skipLock = !!on; DB.set('auth', auth); } catch (_) {}   // explicit false: a stale true on another device must lose
-            try { if (typeof renderSettings === 'function') renderSettings(); } catch (_) {}
+            finally { window._wfSettingsAtomicWrite = false; }
+            _syncSkipLockUI();
             notify(on ? 'Passcode-free entry ON — signed in with Google, WealthFlow opens straight to your dashboard on every device.'
                 : 'Passcode-free entry OFF — your passcode / biometric is required to enter again.', on ? 'success' : 'info');
         }
@@ -17527,6 +17545,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
              * unlocked, and boot draws everything once anyway. */
             const app = document.getElementById('app');
             if (!app || !app.classList.contains('show')) return false;
+            if (window._wfSettingsAtomicWrite === true) return false;
+            // Visible Settings controls sync themselves; do not rebuild the page.
+            if (key === 'settings') {
+                const active = document.querySelector('.page.active');
+                if (active && active.id === 'page-settings') return false;
+            }
             const sched = _wfRepaintScheduler();
             return sched ? sched.touch(key) : false;
         }
@@ -18303,10 +18327,15 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 try { localStorage.removeItem('wf_theme_pending'); } catch (_) {}
             }
         }
-        function toggleTheme() {
+        function toggleTheme(sourceEl) {
             var cur = document.documentElement.getAttribute('data-theme');
             var next = cur === 'dark' ? 'light' : 'dark';
             _applyThemeSafe(next, true);
+            try { document.querySelectorAll('[data-setting="theme"]').forEach(function (el) {
+                var on = next === 'dark'; el.classList.toggle('on', on); el.setAttribute('aria-checked', on);
+            }); } catch (_) {
+                if (sourceEl && sourceEl.classList) sourceEl.classList.toggle('on', next === 'dark');
+            }
         }
 
         function initTheme() {
@@ -29289,6 +29318,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const userPhoto = currentUser && currentUser.photoURL ? currentUser.photoURL : '';
             const bioData = getDeviceBiometric();
             const bioRegistered = !!(bioData && bioData.rawId);
+            const settingSwitch = (key, on, id, action) => `<div${id ? ` id="${id}"` : ''} class="toggle${on ? ' on' : ''}" data-setting="${key}" role="switch" tabindex="0" aria-checked="${on}" onclick="${action || `toggleSetting('${_wfJsAttr(key)}',${!on},this)`}"></div>`;
 
             // Calculate data stats
             const totalIncome = DB.get('income').length;
@@ -29332,13 +29362,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--accent);">Appearance & Experience</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Dark Theme</div><div class="setting-desc">Switch between Light and Dark aesthetic modes.</div></div>
-                <div class="toggle ${s.theme === 'dark' ? 'on' : ''}" onclick="toggleTheme(); renderSettings();"></div>
+                ${settingSwitch('theme', s.theme === 'dark', '', 'toggleTheme(this)')}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Haptic Feedback</div><div class="setting-desc">Enable luxury vibration patterns for physical interactions. No sound — pure vibration.</div></div>
-                <div class="toggle ${s.haptics ? 'on' : ''}" onclick="toggleSetting('haptics', ${!s.haptics}); triggerHaptic('light');"></div>
+                ${settingSwitch('haptics', !!s.haptics)}
             </div>
-            ${s.haptics ? `<div class="setting-row" style="padding-left:24px; border-left:3px solid var(--accent);">
+            <div class="setting-row" data-setting-dependent="haptics" ${s.haptics ? 'aria-hidden="false"' : 'hidden aria-hidden="true"'} style="padding-left:24px; border-left:3px solid var(--accent);">
                 <div class="setting-info"><div class="setting-label">Haptic Intensity</div><div class="setting-desc">How strong each vibration feels. The pattern stays the same at every level — only its strength changes.</div></div>
                 <div style="display:flex;gap:8px;align-items:center;">
                     <!-- The stored value may still be the older gentle/intense
@@ -29352,10 +29382,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     </select>
                     <button class="btn btn-ghost btn-sm" onclick="_testHaptic()" style="white-space:nowrap;">${(window.WFIcon ? WFIcon('bell') : '')} Test</button>
                 </div>
-            </div>` : ''}
+            </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Compact Mode</div><div class="setting-desc">Reduce spacing for smaller screens and faster scanning.</div></div>
-                <div class="toggle ${s.compactMode ? 'on' : ''}" onclick="toggleSetting('compactMode', ${!s.compactMode});"></div>
+                ${settingSwitch('compactMode', !!s.compactMode)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Currency Display</div><div class="setting-desc">Primary currency for all financial displays.</div></div>
@@ -29472,7 +29502,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div class="setting-label">Passcode-free entry</div>
                     <div class="setting-desc">Signed in with Google? Open straight to your dashboard on <b>any device</b> — the installed app or a browser — with no passcode or biometric. It follows your account, so it applies on every device you sign in on. Turn it OFF to ask for the passcode again. <span style="color:var(--accent);">Anyone who can open WealthFlow on a device that is signed in to your Google account will see your data.</span> The passcode still protects the vault and Change PIN.</div>
                 </div>
-                <button class="btn btn-sm ${_skipLockEnabled() ? 'btn-success' : 'btn-secondary'}" style="min-width:64px;" onclick="toggleSkipLock(${!_skipLockEnabled()})">${_skipLockEnabled() ? 'ON' : 'OFF'}</button>
+                <button id="skipLockToggle" class="btn btn-sm ${_skipLockEnabled() ? 'btn-success' : 'btn-secondary'}" style="min-width:64px;" aria-pressed="${String(_skipLockEnabled())}" onclick="toggleSkipLock()">${_skipLockEnabled() ? 'ON' : 'OFF'}</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info">
@@ -29499,7 +29529,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Notifications</div><div class="setting-desc">Enable proactive financial alerts and reminders.</div></div>
-                <div class="toggle ${s.notifications !== false ? 'on' : ''}" onclick="toggleSetting('notifications', ${s.notifications === false});"></div>
+                ${settingSwitch('notifications', s.notifications !== false)}
             </div>
         </div>
 
@@ -29539,11 +29569,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--purple);">AI Advisor Preferences</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Categorize Expenses</div><div class="setting-desc">AI automatically assigns categories to new expenses based on the title entered.</div></div>
-                <div class="toggle ${s.autoCategory !== false ? 'on' : ''}" onclick="toggleSetting('autoCategory', ${s.autoCategory === false})"></div>
+                ${settingSwitch('autoCategory', s.autoCategory !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">AI Auto-Notifications</div><div class="setting-desc">AI proactively sends smart financial reminders and insights.</div></div>
-                <div class="toggle ${s.aiNotifications !== false ? 'on' : ''}" onclick="toggleSetting('aiNotifications', ${s.aiNotifications === false})"></div>
+                ${settingSwitch('aiNotifications', s.aiNotifications !== false)}
             </div>
         </div>
 
@@ -29551,16 +29581,16 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--cyan);">Sound & Feedback</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Dynamic Soundscapes</div><div class="setting-desc">Subtle luxury UI sounds for interactions (soft chimes, ticks, satisfying sounds).</div></div>
-                <div class="toggle ${s.sounds ? 'on' : ''}" onclick="toggleSetting('sounds', ${!s.sounds})"></div>
+                ${settingSwitch('sounds', !!s.sounds)}
             </div>
-            ${s.sounds ? `<div class="setting-row" style="padding-left:24px;border-left:3px solid var(--cyan);">
+            <div class="setting-row" data-setting-dependent="sounds" ${s.sounds ? 'aria-hidden="false"' : 'hidden aria-hidden="true"'} style="padding-left:24px;border-left:3px solid var(--cyan);">
                 <div class="setting-info"><div class="setting-label">Sound Volume</div><div class="setting-desc">Adjust the volume of UI sounds.</div></div>
                 <select class="fi" style="width:120px;" onchange="toggleSetting('soundVolume', this.value)">
                     <option value="low" ${(s.soundVolume || 'low') === 'low' ? 'selected' : ''}>Low</option>
                     <option value="medium" ${(s.soundVolume || 'low') === 'medium' ? 'selected' : ''}>Medium</option>
                     <option value="high" ${(s.soundVolume || 'low') === 'high' ? 'selected' : ''}>High</option>
                 </select>
-            </div>` : ''}
+            </div>
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(239,68,68,0.03), var(--card)); border: 1px solid var(--border2);">
@@ -29712,11 +29742,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Show Savings Rate on Dashboard</div><div class="setting-desc">Display your monthly savings rate percentage prominently on the dashboard.</div></div>
-                <div class="toggle ${s.showSavingsRate !== false ? 'on' : ''}" onclick="toggleSetting('showSavingsRate', ${s.showSavingsRate === false}); renderDash();"></div>
+                ${settingSwitch('showSavingsRate', s.showSavingsRate !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Smart Expense Suggestions</div><div class="setting-desc">AI suggests expense categories as you type descriptions.</div></div>
-                <div class="toggle ${s.smartExpenseSuggest !== false ? 'on' : ''}" onclick="toggleSetting('smartExpenseSuggest', ${s.smartExpenseSuggest === false})"></div>
+                ${settingSwitch('smartExpenseSuggest', s.smartExpenseSuggest !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Loan Interest Alert Threshold</div><div class="setting-desc">Warn when a new loan rate exceeds this percentage.</div></div>
@@ -29732,11 +29762,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Round Display Amounts</div><div class="setting-desc">Hide trailing decimals in the dashboard for cleaner reading.</div></div>
-                <div id="setTgl_roundAmounts" class="toggle ${s.roundAmounts ? 'on' : ''}" onclick="toggleSetting('roundAmounts', ${!s.roundAmounts})"></div>
+                ${settingSwitch('roundAmounts', !!s.roundAmounts, 'setTgl_roundAmounts')}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Hide Sensitive Numbers</div><div class="setting-desc">Privacy mode — replaces amounts with • • • • until tapped.</div></div>
-                <div id="setTgl_privacyMode" class="toggle ${s.privacyMode ? 'on' : ''}" onclick="toggleSetting('privacyMode', ${!s.privacyMode}); renderDash();"></div>
+                ${settingSwitch('privacyMode', !!s.privacyMode, 'setTgl_privacyMode')}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Week Starts On</div><div class="setting-desc">Affects monthly plan and recurring schedules.</div></div>
@@ -29752,45 +29782,45 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--green);">Smart Notification Settings</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">All Notifications</div><div class="setting-desc">Master switch for all WealthFlow notifications and reminders.</div></div>
-                <div class="toggle ${s.notifications !== false ? 'on' : ''}" onclick="toggleSetting('notifications', ${s.notifications === false});"></div>
+                ${settingSwitch('notifications', s.notifications !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Loan Payment Reminders</div><div class="setting-desc">Notify 7, 3, and 1 day before each loan payment is due.</div></div>
-                <div class="toggle ${s.notifLoan !== false ? 'on' : ''}" onclick="toggleSetting('notifLoan', ${s.notifLoan === false})"></div>
+                ${settingSwitch('notifLoan', s.notifLoan !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">CC One-Time Deadline Alerts</div><div class="setting-desc">Last 10 days reminders for credit card one-time purchases (50-day rule).</div></div>
-                <div class="toggle ${s.notifCCOT !== false ? 'on' : ''}" onclick="toggleSetting('notifCCOT', ${s.notifCCOT === false})"></div>
+                ${settingSwitch('notifCCOT', s.notifCCOT !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Cheque Release Reminders</div><div class="setting-desc">Alert before each cheque release date so you can ensure funds.</div></div>
-                <div class="toggle ${s.notifCheque !== false ? 'on' : ''}" onclick="toggleSetting('notifCheque', ${s.notifCheque === false})"></div>
+                ${settingSwitch('notifCheque', s.notifCheque !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Salary / Payday Alerts</div><div class="setting-desc">Confirm receipt on each scheduled payday.</div></div>
-                <div class="toggle ${s.notifPayday !== false ? 'on' : ''}" onclick="toggleSetting('notifPayday', ${s.notifPayday === false})"></div>
+                ${settingSwitch('notifPayday', s.notifPayday !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Budget Alerts</div><div class="setting-desc">Alert when monthly spending exceeds 50% of income by mid-month.</div></div>
-                <div class="toggle ${s.notifBudget !== false ? 'on' : ''}" onclick="toggleSetting('notifBudget', ${s.notifBudget === false})"></div>
+                ${settingSwitch('notifBudget', s.notifBudget !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Subscription Anomaly Alerts</div><div class="setting-desc">Detect unusually high or duplicate subscription charges.</div></div>
-                <div class="toggle ${s.notifAnomaly !== false ? 'on' : ''}" onclick="toggleSetting('notifAnomaly', ${s.notifAnomaly === false})"></div>
+                ${settingSwitch('notifAnomaly', s.notifAnomaly !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Target Progress Updates</div><div class="setting-desc">Celebrate every 25%, 50%, 75%, and 100% target milestone.</div></div>
-                <div class="toggle ${s.notifTarget !== false ? 'on' : ''}" onclick="toggleSetting('notifTarget', ${s.notifTarget === false})"></div>
+                ${settingSwitch('notifTarget', s.notifTarget !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Weekly Financial Tips</div><div class="setting-desc">Get a personalized financial tip every Friday evening.</div></div>
-                <div class="toggle ${s.notifWeeklyTip !== false ? 'on' : ''}" onclick="toggleSetting('notifWeeklyTip', ${s.notifWeeklyTip === false})"></div>
+                ${settingSwitch('notifWeeklyTip', s.notifWeeklyTip !== false)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Quiet Hours</div><div class="setting-desc">Suppress all non-critical notifications during this window.</div></div>
-                <div class="toggle ${s.quietHoursEnabled !== false ? 'on' : ''}" onclick="toggleSetting('quietHoursEnabled', ${s.quietHoursEnabled === false}); renderSettings();"></div>
+                ${settingSwitch('quietHoursEnabled', s.quietHoursEnabled !== false)}
             </div>
-            <div class="setting-row" style="${s.quietHoursEnabled === false ? 'opacity:.5;pointer-events:none;' : ''}">
+            <div class="setting-row ${s.quietHoursEnabled === false ? 'setting-dependent-disabled' : ''}" data-setting-disabled="quietHoursEnabled" aria-disabled="${s.quietHoursEnabled === false ? 'true' : 'false'}">
                 <div class="setting-info"><div class="setting-label" style="font-size:12px;">↳ Quiet Window</div><div class="setting-desc">From → To (24-hour format)</div></div>
                 <div style="display:flex;gap:6px;align-items:center;">
                     <input type="time" class="fi" style="width:104px;" value="${s.quietStart || '22:00'}" onchange="toggleSetting('quietStart', this.value)">
@@ -30049,7 +30079,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window._applyDisplaySettings = _applyDisplaySettings;
 
-        function toggleSetting(key, val) {
+        function toggleSetting(key, val, sourceEl) {
             const s = DB.getObj('settings', {});
             // ── v7.39.0 — fix the "dancing"/scroll-jump bug ────────────────
             // The old code called renderSettings() on every toggle, which
@@ -30060,10 +30090,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             // toggle IN PLACE and never re-render the panel. The new value is
             // read from the toggle's LIVE on/off state, so repeated taps work
             // even though the inline onclick passes a value baked at render time.
-            let _el = null;
+            let _el = sourceEl || null;
             try {
                 const _ev = window.event;
-                if (_ev) {
+                if (!_el && _ev) {
                     const _t = _ev.currentTarget || _ev.target;
                     _el = (_t && _t.classList && _t.classList.contains('toggle')) ? _t : (_t && _t.closest ? _t.closest('.toggle') : null);
                 }
@@ -30084,42 +30114,44 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             }
             DB.set('settings', s);
-            // Flip the clicked toggle in place — NO settings re-render, so the
-            // page never scrolls/jumps. If we couldn't find the element (very
-            // old browser without window.event), fall back to a re-render that
-            // preserves the WINDOW scroll position so it still can't jump.
-            if (_el && _el.classList) {
-                _el.classList.toggle('on', val === true);
-                // Keep the mutually-exclusive display toggles visually in sync.
+            if (typeof val === 'boolean') {
                 try {
-                    const _sync = (k, on) => { const t = document.getElementById('setTgl_' + k); if (t) t.classList.toggle('on', !!on); };
-                    if (key === 'roundAmounts' && val === true) { _sync('privacyMode', false); }
-                    if ((key === 'privacyMode' || key === 'hideSensitive') && val === true) { _sync('roundAmounts', false); }
-                } catch (_) {}
-            } else if (typeof val === 'boolean') {
-                const _wy = window.scrollY || document.documentElement.scrollTop || 0;
-                const _m = document.querySelector('.main'); const _mt = _m ? _m.scrollTop : 0;
-                renderSettings();
-                if (_m) _m.scrollTop = _mt;
-                window.scrollTo(0, _wy);
+                    const _sync = (settingKey, on) => {
+                        document.querySelectorAll('[data-setting="' + settingKey + '"]').forEach((t) => {
+                            t.classList.toggle('on', !!on); t.setAttribute('aria-checked', on);
+                        });
+                        document.querySelectorAll('[data-setting-dependent="' + settingKey + '"]').forEach((row) => {
+                            row.hidden = !on; row.setAttribute('aria-hidden', !on);
+                        });
+                        document.querySelectorAll('[data-setting-disabled="' + settingKey + '"]').forEach((row) => {
+                            row.classList.toggle('setting-dependent-disabled', !on); row.setAttribute('aria-disabled', !on);
+                        });
+                    };
+                    _sync(key, val);
+                    if (key === 'roundAmounts' && val === true) _sync('privacyMode', false);
+                    if ((key === 'privacyMode' || key === 'hideSensitive') && val === true) _sync('roundAmounts', false);
+                } catch (_) {
+                    if (_el && _el.classList) {
+                        _el.classList.toggle('on', val === true);
+                        try { _el.setAttribute('aria-checked', val); } catch (_) {}
+                    }
+                }
             }
 
             triggerHaptic('toggle');
 
-            // Settings that change how numbers/dates are displayed everywhere →
-            // re-render the active page AND the dashboard so the change is visible immediately.
             const DISPLAY_KEYS = ['roundAmounts', 'privacyMode', 'hideSensitive', 'weekStart',
                                    'dashPeriod', 'showSavingsRate', 'currency', 'compactMode'];
             if (DISPLAY_KEYS.includes(key)) {
                 _applyDisplaySettings();
                 document.body.classList.toggle('privacy-mode-on',
                     !!(DB.getObj('settings', {}).privacyMode || DB.getObj('settings', {}).hideSensitive));
-                try { if (typeof renderDash === 'function') renderDash(); } catch (e) {}
                 const activePage = document.querySelector('.page.active');
                 if (activePage) {
                     const pageId = activePage.id.replace('page-', '');
                     if (pageId !== 'settings') {
-                        try { renderPage(pageId); } catch (e) {}
+                        try { if (typeof renderPage === 'function') renderPage(pageId);
+                            else if (pageId === 'dashboard' && typeof renderDash === 'function') renderDash(); } catch (e) {}
                     }
                 }
             }
@@ -30131,6 +30163,14 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (key === 'weekStart') notify(`Week now starts on ${String(val).charAt(0).toUpperCase()+String(val).slice(1)}`, 'success');
             if (key === 'dashPeriod') notify('Dashboard period updated', 'success');
         }
+
+        document.addEventListener('keydown', function (event) {
+            const target = event.target;
+            if (!target || !target.matches || !target.matches('.toggle[role="switch"]')) return;
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            target.click();
+        });
 
         // Intercept button clicks for luxury haptics
         document.addEventListener('click', (e) => {
@@ -34646,10 +34686,11 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             document.querySelectorAll('.scan-mode-card').forEach(c => {
                 c.classList.toggle('active', c.getAttribute('data-mode') === mode);
             });
-            const tf = $('scanTfToggle'); if (tf) tf.classList.toggle('on', _scanSetting('scanTfEnhance', true));
-            const ae = $('scanAutoEscToggle'); if (ae) ae.classList.toggle('on', _scanSetting('scanAutoEscalate', true));
-            const ac = $('scanAutoCatToggle'); if (ac) ac.classList.toggle('on', _scanSetting('scanAutoCategory', true));
-            const dbz = $('driveBrowserToggle'); if (dbz) dbz.classList.toggle('on', _scanSetting('driveCleanBrowser', false));
+            const syncSwitch = (id, on) => { const el = $(id); if (el) { el.classList.toggle('on', !!on); el.setAttribute('aria-checked', on); } };
+            syncSwitch('scanTfToggle', _scanSetting('scanTfEnhance', true));
+            syncSwitch('scanAutoEscToggle', _scanSetting('scanAutoEscalate', true));
+            syncSwitch('scanAutoCatToggle', _scanSetting('scanAutoCategory', true));
+            syncSwitch('driveBrowserToggle', _scanSetting('driveCleanBrowser', false));
             const cur = $('scanCurrencySel'); if (cur) cur.value = _scanSetting('scanCurrency', 'LKR');
             // Update the Configure button label in Settings
             document.querySelectorAll('button[onclick*="openScannerSettings"]').forEach(b => {
