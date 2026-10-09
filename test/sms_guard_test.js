@@ -70,7 +70,7 @@ const env = { TENANT_PORTAL_LINKS: 'on', WEALTHFLOW_PUBLIC_ORIGIN: 'https://weal
 function gateway({ units = 50, balanceKind = null, hasBalance = true } = {}) {
     const sent = []; const calls = { balance: 0 };
     const gw = {
-        configured: true, senderId: 'WEALTHFLOW', sent, calls, units,
+        configured: true, senderId: 'WealthFlow', sent, calls, units,
         async send({ to, message }) { sent.push({ to, message }); return { ok: true, gatewayId: 'g', cost: 1, segments: 1 }; },
         async balance() { calls.balance += 1; return balanceKind ? { ok: false, kind: balanceKind, retryable: false, message: 'x' } : { ok: true, units: gw.units }; },
     };

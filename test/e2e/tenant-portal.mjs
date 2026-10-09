@@ -55,7 +55,7 @@ fsx.data.set('users/owner1', {
 const TOKEN = await ensureTenantToken({ db, uid: 'owner1', canonicalNic: CANON, secret: portalSecret(ENV), now: NOW - 1000 });
 
 const sent = [];
-const gateway = { configured: true, senderId: 'WEALTHFLOW', async send({ to, message }) { sent.push({ to, message }); return { ok: true, gatewayId: 'g', cost: 1, segments: 1 }; } };
+const gateway = { configured: true, senderId: 'WealthFlow', async send({ to, message }) { sent.push({ to, message }); return { ok: true, gatewayId: 'g', cost: 1, segments: 1 }; } };
 const deps = { client: () => gateway, getAdminDb: async () => ({ db }), env: ENV, now: () => Date.now(), randomInt: crypto.randomInt, randomBytes: crypto.randomBytes, pad: null };
 
 /* ── the site: static files, the rewrite, the policy header, and the endpoint ─ */

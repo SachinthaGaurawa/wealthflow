@@ -29,7 +29,7 @@ const req = (over = {}) => ({ method: 'POST', url: '/api/sms-notify', headers: {
 function gateway({ units = 50, balanceKind = null, configured = true } = {}) {
     const sent = []; const calls = { balance: 0 };
     return {
-        configured, senderId: 'WEALTHFLOW', sent, calls,
+        configured, senderId: 'WealthFlow', sent, calls,
         async send({ to, message }) { sent.push({ to, message }); return { ok: true, gatewayId: 'g', cost: 1, segments: 1 }; },
         async balance() { calls.balance += 1; return balanceKind ? { ok: false, kind: balanceKind, retryable: false, message: 'x' } : { ok: true, units }; },
     };
@@ -230,7 +230,7 @@ describe('GET ?check=1, the owner\'s "is it wired up" probe', () => {
     it('an allowed signed-in account also sees whether the gateway is reachable, the credit warning and the sender id, never a balance', async () => {
         const w = world({ client: gateway({ units: 3 }) });
         const r = await probe(w, { authorization: 'Bearer good-token' });
-        expect(r.body).toMatchObject({ ok: true, configured: true, tokenAccepted: true, reachable: true, lowCredit: true, senderId: 'WEALTHFLOW' });
+        expect(r.body).toMatchObject({ ok: true, configured: true, tokenAccepted: true, reachable: true, lowCredit: true, senderId: 'WealthFlow' });
         expect(JSON.stringify(r.body)).not.toMatch(/"units"|\b3\b/);
         const stranger = world({ tokens: { 'good-token': { ...STRANGER, email_verified: true } }, client: gateway({ units: 3 }) });
         expect((await probe(stranger, { authorization: 'Bearer good-token' })).body).toEqual({ ok: true, configured: true, tokenAccepted: true });

@@ -5,7 +5,7 @@
  *
  *   OAuth 2.0 API endpoint   https://app.text.lk/api/v3/
  *   send                     POST sms/send   Authorization: Bearer <API token>
- *       { recipient: "94710000000", sender_id: "WEALTHFLOW", type: "plain", message: "..." }
+ *       { recipient: "94710000000", sender_id: "WealthFlow", type: "plain", message: "..." }
  *   answer                   { status: "success", message, data: { uid, to, from, status, cost, sms_count } }
  *                            { status: "error",   message: "<human readable>" }
  *
@@ -36,7 +36,7 @@
 import { readBody } from './fetch-timeout.mjs';
 
 export const DEFAULT_BASE = 'https://app.text.lk/api/v3/';
-export const DEFAULT_SENDER = 'WEALTHFLOW';
+export const DEFAULT_SENDER = 'WealthFlow';
 export const SEND_TIMEOUT_MS = 12000;
 export const TOKEN_ENV = 'TEXTLK_API_TOKEN';
 export const SENDER_ENV = 'TEXTLK_SENDER_ID';
@@ -76,7 +76,7 @@ export { DEFAULT_COUNTRY, normalizePhone, maskPhone };
 export function normalizeSenderId(raw) {
     const v = s(raw).trim();
     if (!/^[A-Za-z0-9]{3,11}$/.test(v)) return null;
-    // The approved id is written in capitals on the Text.lk dashboard; a lower-case spelling in an env var means the same id.
+    // The approved id is written "WealthFlow" on the Text.lk dashboard; any other capitalisation of it in an env var (WEALTHFLOW, wealthflow) means the same id and is sent as approved.
     return v.toLowerCase() === DEFAULT_SENDER.toLowerCase() ? DEFAULT_SENDER : v;
 }
 
@@ -159,7 +159,7 @@ export class TextLkClient {
     /**
      * @param {object} cfg
      * @param {string} cfg.token      the API token (TEXTLK_API_TOKEN). Never logged, never returned.
-     * @param {string} [cfg.senderId] default WEALTHFLOW
+     * @param {string} [cfg.senderId] default WealthFlow
      * @param {string} [cfg.baseUrl]  default https://app.text.lk/api/v3/ (https only)
      * @param {Function} [cfg.fetchImpl] injected for tests
      * @param {number} [cfg.timeoutMs]

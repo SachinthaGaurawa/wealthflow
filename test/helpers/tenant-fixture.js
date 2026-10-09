@@ -49,7 +49,7 @@ export async function seedTenant(fs, db, { uid = UID, user = lenderDoc(), nic = 
 export function gateway(behaviour = () => ({ ok: true, gatewayId: 'g1', cost: 1, segments: 1 })) {
     const sent = []; let calls = 0;
     return {
-        configured: true, senderId: 'WEALTHFLOW', sent,
+        configured: true, senderId: 'WealthFlow', sent,
         get calls() { return calls; },
         async send({ to, message }) {
             calls += 1;
