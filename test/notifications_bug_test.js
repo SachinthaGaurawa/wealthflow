@@ -32,6 +32,7 @@ import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC = fs.readFileSync(path.join(ROOT, 'wealthflow-notifications.js'), 'utf8');
+const SUBS_SRC = fs.readFileSync(path.join(ROOT, 'wealthflow-subscriptions.js'), 'utf8');
 
 const iso = (offsetDays) => {
     const d = new Date();
@@ -46,7 +47,7 @@ const iso = (offsetDays) => {
  * would run once and every later test would inherit the first test's
  * localStorage. Same reasoning as test/update_ui_truth_test.js.
  */
-function load({ cheques = [], storageThrows = false, pushGranted = false } = {}) {
+function load({ cheques = [], subscriptions = [], storageThrows = false, pushGranted = false } = {}) {
     const store = new Map();
     const warnings = [];
     const notifications = [];
@@ -102,7 +103,7 @@ function load({ cheques = [], storageThrows = false, pushGranted = false } = {})
         // always false and both push tests passed while firing nothing — the
         // exact vacuous pass this suite exists to prevent.
         DB: {
-            get: (k) => (k === 'cheques' ? cheques : []),
+            get: (k) => (k === 'cheques' ? cheques : (k === 'subscriptions' ? subscriptions : [])),
             getObj: (k, d) => (k === 'settings' ? { notif: { push: pushGranted } } : (d || {})),
         },
         Notification,
@@ -118,12 +119,57 @@ function load({ cheques = [], storageThrows = false, pushGranted = false } = {})
     };
     win.window = win;
 
+    new Function('window', SUBS_SRC)(win);
+
     new Function('window', 'document', 'localStorage', 'Notification', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'console', 'navigator', 'location', SRC)(
         win, document, localStorage, Notification, setTimeout, clearTimeout, setInterval, clearInterval, win.console, win.navigator, win.location,
     );
 
     return { api: win.WFNotif, win, store, warnings, notifications };
 }
+
+describe('one-time and cycle-aware bill reminders', () => {
+    it('reminds for an unpaid one-time payment once, using its exact due date', () => {
+        const dueDate = iso(3);
+        const { api } = load({ subscriptions: [{
+            id: 'ONCE1', name: 'Setup fee', amount: 12000, cycle: 'once',
+            dueDate, dueDay: Number(dueDate.slice(-2)), createdAt: iso(-10),
+        }] });
+        const list = api.compute();
+        expect(list).toHaveLength(1);
+        expect(list[0]).toMatchObject({ id: `sub:ONCE1:${dueDate}`, sev: 'warning', date: dueDate });
+    });
+
+    it('never reminds again after a one-time payment is completed', () => {
+        const dueDate = iso(-3);
+        const { api } = load({ subscriptions: [{
+            id: 'ONCE2', name: 'Registration fee', amount: 5000, cycle: 'once',
+            dueDate, dueDay: Number(dueDate.slice(-2)), completed: true, paidAt: Date.now(),
+        }] });
+        expect(api.compute()).toEqual([]);
+    });
+
+    it('does not invent a monthly reminder for a quarterly bill in an off-cycle month', () => {
+        const now = new Date();
+        const anchor = new Date(now.getFullYear(), now.getMonth() - 1, Math.max(1, now.getDate() - 1));
+        const { api } = load({ subscriptions: [{
+            id: 'Q1', name: 'Quarterly hosting', amount: 9000, cycle: 'quarterly',
+            dueDay: now.getDate(), createdAt: anchor.toISOString(),
+        }] });
+        expect(api.compute()).toEqual([]);
+    });
+
+    it('stops this cycle reminder after a statement records the payment', () => {
+        const dueDate = iso(-2);
+        const ym = dueDate.slice(0, 7);
+        const { api } = load({ subscriptions: [{
+            id: 'M1', name: 'Internet', amount: 6000, cycle: 'monthly',
+            dueDay: Number(dueDate.slice(-2)), createdAt: iso(-90),
+            history: [{ month: ym, amount: 6000, date: dueDate, source: 'statement' }],
+        }] });
+        expect(api.compute()).toEqual([]);
+    });
+});
 
 /** An overdue cheque — sev 'urgent'. */
 const overdue = [{ id: 'C1', status: 'pending', release: iso(-5), party: 'Acme', amount: 50000, type: 'issued' }];

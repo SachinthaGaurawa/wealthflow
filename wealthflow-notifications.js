@@ -197,16 +197,22 @@
             });
         }
 
-        // 4) SUBSCRIPTIONS — day-of-month precise (mirrors renderSubscriptions)
+        // 4) BILLS / SUBSCRIPTIONS — exact lifecycle from WFSubs. One-time
+        // payments keep one fixed due date until paid; recurring bills only
+        // alert in a real cycle month and stop after that cycle is recorded.
         if (st.subs) {
-            var d = new Date(), day = d.getDate(), ym = curYM();
+            var d = new Date(), ym = curYM();
             getArr('subscriptions').forEach(function (s) {
-                if (!s || !s.dueDay) return;
-                var until = s.dueDay - day;
-                var amt = money((s.monthOverrides && typeof s.monthOverrides[ym] === 'number') ? s.monthOverrides[ym] : s.amount);
-                var sortDate = ym + '-' + p2(Math.min(28, Math.max(1, s.dueDay)));
-                if (until < 0 && st.urgent) out.push({ id: 'sub:' + s.id + ':' + ym, sev: 'urgent', cat: 'Bill', icon: 'bill', title: 'Bill overdue \u2014 ' + esc(s.name || 'Subscription'), sub: 'Was due day ' + s.dueDay + ' \u00b7 ' + amt, when: Math.abs(until) + 'd over', date: sortDate, page: 'subscriptions' });
-                else if (until >= 0 && until <= 7 && st.dueSoon) out.push({ id: 'sub:' + s.id + ':' + ym, sev: 'warning', cat: 'Bill', icon: 'bill', title: 'Bill \u2014 ' + esc(s.name || 'Subscription'), sub: 'Day ' + s.dueDay + ' \u00b7 ' + amt, when: until === 0 ? 'Today' : 'in ' + until + 'd', date: sortDate, page: 'subscriptions' });
+                if (!s || !window.WFSubs || typeof window.WFSubs.occurrence !== 'function') return;
+                var occ = window.WFSubs.occurrence(s, d);
+                if (!occ.active || !occ.date) return;
+                var until = dLeft(occ.date); if (isNaN(until)) return;
+                var amountMonth = occ.month || ym;
+                var amt = money((s.monthOverrides && typeof s.monthOverrides[amountMonth] === 'number') ? s.monthOverrides[amountMonth] : s.amount);
+                var label = occ.oneTime ? 'One-time payment' : 'Bill';
+                var id = 'sub:' + s.id + ':' + (occ.oneTime ? occ.date : amountMonth);
+                if (until < 0 && st.urgent) out.push({ id: id, sev: 'urgent', cat: label, icon: 'bill', title: label + ' overdue \u2014 ' + esc(s.name || 'Payment'), sub: 'Due ' + esc(occ.date) + ' \u00b7 ' + amt, when: Math.abs(until) + 'd over', date: occ.date, page: 'subscriptions' });
+                else if (until >= 0 && until <= 7 && st.dueSoon) out.push({ id: id, sev: 'warning', cat: label, icon: 'bill', title: label + ' \u2014 ' + esc(s.name || 'Payment'), sub: 'Due ' + esc(occ.date) + ' \u00b7 ' + amt, when: until === 0 ? 'Today' : 'in ' + until + 'd', date: occ.date, page: 'subscriptions' });
             });
         }
 
@@ -644,7 +650,7 @@
             row('cheques', 'Cheques', 'Pending cheques nearing or past their release date.', true) +
             row('ccOneTime', 'Card payments', 'Unpaid one-time credit-card charges nearing or past their deadline.', true) +
             row('loans', 'Loan instalments', 'Loan EMIs due this month or overdue.', true) +
-            row('subs', 'Bills & subscriptions', 'Recurring bills due soon or overdue.', true) +
+            row('subs', 'Bills & subscriptions', 'Recurring bills and unpaid one-time payments due soon or overdue.', true) +
             row('ccInstall', 'Card instalments', 'Active credit-card instalment plans (informational).', true) +
             '</div>';
         card.setAttribute('data-built', '1');
