@@ -72,6 +72,12 @@
         return isNaN(d.getTime()) ? null : d;
     }
     function _oneTime(cycle) { return /^(once|one-time|onetime)$/.test(String(cycle || '').toLowerCase()); }
+    function legacyDueDate(sub) {
+        sub = sub || {};
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(sub.dueDate || ''))) return String(sub.dueDate);
+        var anchor = _date(sub.createdAt);
+        return anchor ? _ymd(anchor.getFullYear(), anchor.getMonth(), sub.dueDay) : '';
+    }
     function _paidInMonth(sub, ym, oneTime) {
         if (!sub) return false;
         if (sub.completed === true || sub.paid === true) return true;
@@ -94,8 +100,7 @@
         var cycle = String(sub.cycle || 'monthly').toLowerCase();
         var oneTime = _oneTime(cycle);
         var anchor = _date(sub.createdAt);
-        var dueDate = oneTime ? _date(sub.dueDate) : null;
-        if (oneTime && !dueDate && anchor) dueDate = _date(_ymd(anchor.getFullYear(), anchor.getMonth(), sub.dueDay));
+        var dueDate = oneTime ? _date(legacyDueDate(sub)) : null;
         var ym;
 
         if (oneTime) {
@@ -140,13 +145,20 @@
         sub.history = sub.history || []; sub.monthOverrides = sub.monthOverrides || {};
         var date = (txn && txn.date) || ''; var month = _monthOf(date); var amt = Math.abs(txn && txn.amount) || 0;
         var prevAmount = sub.amount;   // headline amount BEFORE this statement changed it (for exact undo)
+        var previousLifecycle = { paid: sub.paid, completed: sub.completed, paidAt: sub.paidAt,
+            paidSource: sub.paidSource, paidStatementKey: sub.paidStatementKey };
         var dup = sub.history.some(function (h) { return h.date === date && Math.abs((h.amount || 0) - amt) < 0.01; });
         if (!dup) {
             sub.history.push({ month: month, amount: amt, date: date, source: 'statement' });
             if (month) sub.monthOverrides[month] = amt; // variable-bill actual for that month
             if (amt) sub.amount = amt;                  // keep the headline amount current
         }
-        return { added: !dup, month: month, amount: amt, prevAmount: prevAmount };
+        if (_oneTime(sub.cycle)) {
+            var paidNow = new Date();
+            sub.paid = true; sub.completed = true; sub.paidAt = date || _ymd(paidNow.getFullYear(), paidNow.getMonth(), paidNow.getDate());
+            sub.paidSource = 'statement';
+        }
+        return { added: !dup, month: month, amount: amt, prevAmount: prevAmount, previousLifecycle: previousLifecycle };
     }
 
     // Pure core (testable): mutate/return the arrays without touching storage.
@@ -159,7 +171,8 @@
         if (sub.merchantKeys.indexOf(found.key) < 0) sub.merchantKeys.push(found.key);
         var pay = recordPayment(sub, txn);
         map[found.key] = sub.id; // remember for next time
-        return { subscriptions: subs, map: map, subId: sub.id, name: sub.name, created: created, paymentAdded: pay.added, prevAmount: pay.prevAmount, via: found.via };
+        return { subscriptions: subs, map: map, subId: sub.id, name: sub.name, created: created, paymentAdded: pay.added,
+            prevAmount: pay.prevAmount, previousLifecycle: pay.previousLifecycle, via: found.via };
     }
 
     // Live path: read from DB, apply, write back. Returns a small summary.
@@ -169,7 +182,8 @@
         var map = (DB && DB.get ? DB.get('subMerchantMap') : null) || {};
         var r = applyToArrays(txn, routeInfo, subs, map);
         if (DB && DB.set) { DB.set('subscriptions', r.subscriptions); DB.set('subMerchantMap', r.map); }
-        return { subId: r.subId, name: r.name, created: r.created, paymentAdded: r.paymentAdded, prevAmount: r.prevAmount, via: r.via, paymentDate: (txn && txn.date) || '', amount: Math.abs((txn && txn.amount) || 0) };
+        return { subId: r.subId, name: r.name, created: r.created, paymentAdded: r.paymentAdded, prevAmount: r.prevAmount,
+            previousLifecycle: r.previousLifecycle, via: r.via, paymentDate: (txn && txn.date) || '', amount: Math.abs((txn && txn.amount) || 0) };
     }
 
     window.WFSubs = {
@@ -177,6 +191,7 @@
         findExisting: findExisting,
         buildSubscription: buildSubscription,
         recordPayment: recordPayment,
+        legacyDueDate: legacyDueDate,
         occurrence: occurrence,
         applyToArrays: applyToArrays,
         apply: apply
