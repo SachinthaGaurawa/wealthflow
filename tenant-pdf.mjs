@@ -37,6 +37,7 @@ import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import { fmtMoney, fmtDay } from './sms-templates.mjs';
 import { makeT } from './tenant-lang.js';
+import { LOGO } from './tenant-logo.mjs';
 import { subsetFont, glyphCodePoints } from './pdf-font.mjs';
 import { loadShaper, needsShaping } from './pdf-shape.mjs';
 
@@ -115,7 +116,7 @@ const CONTENT_W = PAGE.w - 2 * PAGE.margin;
 
 const rgb = (hex) => [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255];
 /* the palette of the app's loan statement: navy for structure, green for money in, red for money owed, amber behind a balance */
-const COLOR = { accent: rgb('#0b3d91'), ink: rgb('#0f172a'), mute: rgb('#6b7280'), line: rgb('#cfd6e2'), alt: rgb('#f7f9fc'), paid: rgb('#0e7c4a'), owed: rgb('#b91c1c'), balance: rgb('#fff7e6'), paidBg: rgb('#f4faf6'), white: rgb('#ffffff') };
+const COLOR = { accent: rgb('#0b3d91'), ink: rgb('#0f172a'), mute: rgb('#6b7280'), line: rgb('#cfd6e2'), alt: rgb('#f7f9fc'), paid: rgb('#0e7c4a'), owed: rgb('#b91c1c'), balance: rgb('#fff7e6'), warn: rgb('#b45309'), warnEdge: rgb('#f59e0b'), paidBg: rgb('#f4faf6'), white: rgb('#ffffff') };
 
 const n2 = (v) => (Math.round(v * 100) / 100).toString();
 const esc = (t) => t.replace(/[\\()]/g, (c) => `\\${c}`);
@@ -179,6 +180,11 @@ class Canvas {
         const at = `${n2(x)} ${n2(PAGE.h - top - h)} ${n2(w)} ${n2(h)} re`;
         if (fill) { const [r, g, b] = fill; this.ops.push(`${n2(r)} ${n2(g)} ${n2(b)} rg ${at} f`); }
         if (border) { const [r, g, b] = border; this.ops.push(`${n2(r)} ${n2(g)} ${n2(b)} RG 0.6 w ${at} S`); }
+    }
+    /** The WealthFlow mark (image object /Im1, written by `assemble`), `size` points square with its top-left corner at (x, top). */
+    logo(x, top, size) {
+        this.usesLogo = true;
+        this.ops.push(`q ${n2(size)} 0 0 ${n2(size)} ${n2(x)} ${n2(PAGE.h - top - size)} cm /Im1 Do Q`);
     }
     hline(x1, x2, top, color, width = 0.5) {
         const [r, g, b] = color;
@@ -272,10 +278,9 @@ const statementNo = (asOf) => `WF-${(Date.parse(asOf) || 0).toString(36).toUpper
 function header(c, st) {
     const t = c.t;
     const top = PAGE.margin;
-    // the logo mark: a navy square with a white W, then the name
-    c.rect(PAGE.margin, top, 30, 30, COLOR.accent);
-    c.text(PAGE.margin + 15, top + 22, 'W', { size: 19, bold: true, color: COLOR.white, align: 'c' });
-    c.text(PAGE.margin + 40, top + 22, 'WEALTHFLOW', { size: 21, bold: true, color: COLOR.accent });
+    // the WealthFlow mark, then the name
+    c.logo(PAGE.margin, top - 2, 34);
+    c.text(PAGE.margin + 44, top + 22, 'WEALTHFLOW', { size: 21, bold: true, color: COLOR.accent });
     c.text(PAGE.margin, top + 48, t('Account Statement'), { size: 11, bold: true });
     c.text(PAGE.margin, top + 61, t('Your investments and loans with your lender'), { size: 9, color: COLOR.mute });
     const right = PAGE.w - PAGE.margin;
@@ -287,10 +292,35 @@ function header(c, st) {
     });
     c.hline(PAGE.margin, right, top + 72, COLOR.accent, 2.4);
     c.hline(PAGE.margin, right, top + 76, COLOR.accent, 0.6);
-    c.y = top + 76 + 18;
+    c.y = top + 76 + 14;
+    holder(c, st);
     const intro = t('Every investment and loan your lender records for you is listed here under a reference code. Quote the code when you contact your lender or make a payment.');
     for (const line of c.wrap(intro, false, 9.5, CONTENT_W)) { c.text(PAGE.margin, c.y, line, { size: 9.5, color: COLOR.mute }); c.y += c.lh(13); }
     c.y += 6;
+}
+
+/** Whose statement it is: the person's own full name and NIC. Nothing is drawn for a field the lender has not recorded. */
+function holder(c, st) {
+    const t = c.t;
+    const h = st.holder && typeof st.holder === 'object' ? st.holder : {};
+    const name = String(h.name || '').trim();
+    const nic = String(h.nic || '').trim();
+    if (!name && !nic) return;
+    const boxH = 40;
+    c.rect(PAGE.margin, c.y, CONTENT_W, boxH, COLOR.alt, COLOR.line);
+    c.rect(PAGE.margin, c.y, 3.5, boxH, COLOR.accent);
+    const nameW = name && nic ? CONTENT_W * 0.62 : CONTENT_W;
+    if (name) {
+        c.text(PAGE.margin + 16, c.y + 15, t('Account holder').toUpperCase(), { size: 7.5, bold: true, color: COLOR.mute });
+        const line = c.wrap(name, true, 11, nameW - 24)[0];
+        c.text(PAGE.margin + 16, c.y + 31, line, { size: 11, bold: true });
+    }
+    if (nic) {
+        const x = PAGE.margin + (name ? nameW : 0) + 16;
+        c.text(x, c.y + 15, t('NIC / ID').toUpperCase(), { size: 7.5, bold: true, color: COLOR.mute });
+        c.text(x, c.y + 31, nic, { size: 11, bold: true });
+    }
+    c.y += boxH + 16;
 }
 
 /** The small uppercase navy heading with a hairline under it, in the loan statement's "section-title" style. */
@@ -494,27 +524,45 @@ function loan(c, g, many) {
     } else note(c, t('Nothing recorded yet.'));
 }
 
-/** One account in a box; the account number is the largest thing in it, because it is the one that gets copied. */
+/**
+ * One account in a box. Every value is the same size and weight (the account number is the thing that gets copied, but a
+ * statement reads as an official document when its details line up): label in grey, value in bold ink, one row pitch.
+ * A note from the lender gets its own tinted panel so it is not missed.
+ */
+const ACCT = { pad: 16, title: 34, row: 19, valueX: 140 };
+
 function accountLayout(c, a) {
     const t = c.t;
-    const rows = [[t('Account name'), a.holder], [t('Account number'), a.number, true], a.branch ? [t('Branch'), a.branch] : null, a.swift ? [t('SWIFT / IBAN'), a.swift] : null].filter(Boolean);
-    const noteLines = a.note ? c.wrap(a.note, false, 9, CONTENT_W - 28) : [];
-    return { rows, noteLines, h: 32 + rows.length * 22 + (noteLines.length ? 8 + noteLines.length * c.lh(12) : 0) + 8 };
+    const rows = [[t('Account name'), a.holder], [t('Account number'), a.number], a.branch ? [t('Branch'), a.branch] : null, a.swift ? [t('SWIFT / IBAN'), a.swift] : null].filter(Boolean);
+    const noteLines = a.note ? c.wrap(a.note, false, 9, CONTENT_W - 2 * ACCT.pad - 26) : [];
+    const noteH = noteLines.length ? 24 + noteLines.length * c.lh(12) : 0;
+    return { rows, noteLines, noteH, h: ACCT.title + rows.length * ACCT.row + (noteH ? 10 + noteH : 0) + 12 };
 }
 
 function account(c, a) {
-    const { rows, noteLines, h } = accountLayout(c, a);
+    const t = c.t;
+    const { rows, noteLines, noteH, h } = accountLayout(c, a);
     c.ensure(h + 8);
+    const x = PAGE.margin + ACCT.pad;
     c.rect(PAGE.margin, c.y, CONTENT_W, h, COLOR.alt, COLOR.line);
     c.rect(PAGE.margin, c.y, 3.5, h, COLOR.accent);
-    c.text(PAGE.margin + 16, c.y + 21, a.bank, { size: 12, bold: true, color: COLOR.accent });
-    let y = c.y + 32;
-    for (const [label, value, big] of rows) {
-        c.text(PAGE.margin + 16, y + 10, label, { size: 8.5, color: COLOR.mute });
-        c.text(PAGE.margin + 130, y + 11, value, { size: big ? 13 : 10, bold: true });
-        y += 22;
+    c.text(x, c.y + 21, a.bank, { size: 11, bold: true, color: COLOR.accent });
+    c.hline(x, PAGE.w - PAGE.margin - ACCT.pad, c.y + 29, COLOR.line, 0.6);
+    let y = c.y + ACCT.title;
+    for (const [label, value] of rows) {
+        c.text(x, y + 12, label, { size: 8.5, color: COLOR.mute });
+        c.text(PAGE.margin + ACCT.valueX, y + 12, value, { size: 10, bold: true });
+        y += ACCT.row;
     }
-    if (noteLines.length) { y += 4; for (const line of noteLines) { c.text(PAGE.margin + 16, y + 9, line, { size: 9, color: COLOR.mute }); y += c.lh(12); } }
+    if (noteLines.length) {
+        y += 10;
+        const nx = PAGE.margin + ACCT.pad;
+        const nw = CONTENT_W - 2 * ACCT.pad;
+        c.rect(nx, y, nw, noteH, COLOR.balance, COLOR.warnEdge);
+        c.rect(nx, y, 3, noteH, COLOR.warnEdge);
+        c.text(nx + 13, y + 14, t('Note').toUpperCase(), { size: 7.5, bold: true, color: COLOR.warn });
+        noteLines.forEach((line, i) => c.text(nx + 13, y + 27 + i * c.lh(12), line, { size: 9, color: COLOR.ink }));
+    }
     c.y += h + 10;
 }
 
@@ -699,6 +747,10 @@ function assemble(streams, made, { canvas = null } = {}) {
         embedded.push({ res, id: next, objects: fontObjects(next, sh, bold, used) });
         next += 5;
     }
+    // the logo (an RGB image with its own alpha channel as a soft mask) goes after the fonts
+    let logoId = 0;
+    if (canvas && canvas.usesLogo) { logoId = next; next += 2; }
+    const xobj = logoId ? `/XObject << /Im1 ${logoId} 0 R >> ` : '';
     const fontRes = ['/F1 3 0 R', '/F2 4 0 R', ...embedded.map((f) => `/${f.res} ${f.id} 0 R`)].join(' ');
     const title = si ? `<${utf16hex(canvas.t('Your WealthFlow statement'))}>` : '(WealthFlow statement)';
 
@@ -710,9 +762,15 @@ function assemble(streams, made, { canvas = null } = {}) {
     objects[5] = Buffer.from(`<< /Title ${title} /Producer (WealthFlow) /CreationDate (${pdfDate(made)}) >>`, 'latin1');
     streams.forEach((content, i) => {
         const body = zlib.deflateSync(Buffer.from(content, 'latin1'), { level: 9 });
-        objects[6 + i * 2] = Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE.w} ${PAGE.h}] /Resources << /Font << ${fontRes} >> /ProcSet [/PDF /Text] >> /Contents ${7 + i * 2} 0 R >>`, 'latin1');
+        objects[6 + i * 2] = Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE.w} ${PAGE.h}] /Resources << /Font << ${fontRes} >> ${xobj}/ProcSet [/PDF /Text${logoId ? ' /ImageC' : ''}] >> /Contents ${7 + i * 2} 0 R >>`, 'latin1');
         objects[7 + i * 2] = Buffer.concat([Buffer.from(`<< /Filter /FlateDecode /Length ${body.length} >>\nstream\n`, 'latin1'), body, Buffer.from('\nendstream', 'latin1')]);
     });
+    if (logoId) {
+        const flate = (b64) => Buffer.from(b64, 'base64');
+        const img = (dict, data) => Buffer.concat([Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${LOGO.width} /Height ${LOGO.height} ${dict} /Filter /FlateDecode /Length ${data.length} >>\nstream\n`, 'latin1'), data, Buffer.from('\nendstream', 'latin1')]);
+        objects[logoId] = img(`/ColorSpace /DeviceRGB /BitsPerComponent 8 /SMask ${logoId + 1} 0 R`, flate(LOGO.rgb));
+        objects[logoId + 1] = img('/ColorSpace /DeviceGray /BitsPerComponent 8', flate(LOGO.alpha));
+    }
     for (const f of embedded) f.objects.forEach((o, k) => { objects[f.id + k] = o; });
 
     const parts = [Buffer.from('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n', 'latin1')];

@@ -314,7 +314,9 @@ export const BUDGETS = {
     // 2026-10-05 (a second number, and Settle & close on an investment): 2,216,000 -> 2_219_000 (measured 2,217,148 + ~0.1% headroom). saveIncome and the debtor form carry and check the second number; the investment card gets a
     // Settle & close / Re-open button and a Settled badge, and the Ended list counts a closed investment. About a third is comments.
     // 2026-10-09 (stable Settings controls): 2,219,000 -> 2,222,500 (measured 2,220,002 + ~0.1% headroom). The shared switch renderer, atomic dependent-row sync, keyboard semantics and passcode-free control sync replace whole-page rerenders.
-    htmlBytes: 2_222_500,
+    // 2026-10-09 (full name, search over the investments and debtors, and the "already owes you" question): 2,222,500 -> 2_229_500 (measured 2,227,210 + ~0.1% headroom). The full-name field carried by both forms, one
+    // search box for each list (the cards are only hidden, never rebuilt), and one question asked before a new loan for somebody who still owes money. About a third is comments.
+    htmlBytes: 2_229_500,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

@@ -26,9 +26,9 @@ import { normalizeNic, normalizeOtherId, normalizeIdentity, displayIdentity, OTH
 
 export const PEOPLE_KEY = 'people';
 export const LINK_FIELD = 'personId';
-export const LIMITS = Object.freeze({ name: 80, phone2: 24, email: 120, address: 200, note: 300, people: 2000, vcfBytes: 2 * 1024 * 1024, vcfCards: 2000 });
+export const LIMITS = Object.freeze({ name: 80, fullName: 80, phone2: 24, email: 120, address: 200, note: 300, people: 2000, vcfBytes: 2 * 1024 * 1024, vcfCards: 2000 });
 /** What a person shares with every record linked to them: the rest of a loan or an investment is that record's own. */
-export const SHARED = Object.freeze(['name', 'phone', 'phone2', 'nic']);
+export const SHARED = Object.freeze(['name', 'fullName', 'phone', 'phone2', 'nic']);
 
 const str = (v) => String(v == null ? '' : v);
 /** Collapses runs of whitespace and drops control characters: a name pasted from a chat or a contacts export is not trusted to be tidy. */
@@ -116,7 +116,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 /**
  * Validate what a form says about a person and produce the record's fields.
- *   input: { name, phone, phone2, country, nic, idKind, email, address, note }
+ *   input: { name, fullName, phone, phone2, country, nic, idKind, email, address, note }
+ * `name` is the owner's own name for the person (a nickname is fine: it is what the app shows); `fullName` is the person's real name, the only name the
+ * customer's statement page and PDF show.
  * @returns {{ok:boolean, fields:object, errors:object}}
  * The mobile number and the ID, when given, must be valid HERE: this is the book, and a saved number that cannot be texted is the
  * quiet failure it exists to prevent. (A landline or a second number goes in `phone2`, which only has to look like a number.)
@@ -160,7 +162,7 @@ export function cleanPerson(input) {
     if (email && !EMAIL_RE.test(email)) errors.email = 'That does not look like an email address.';
 
     const fields = {
-        name, phone, phone2, country, nic,
+        name, fullName: squash(i.fullName).slice(0, LIMITS.fullName), phone, phone2, country, nic,
         email: errors.email ? '' : email,
         address: squash(i.address).slice(0, LIMITS.address),
         note: squash(i.note).slice(0, LIMITS.note),
@@ -242,7 +244,7 @@ export function searchPeople(people, query) {
     if (!q) return list.slice().sort(byName);
     const scored = [];
     for (const p of list) {
-        const name = norm(p.name);
+        const name = norm(`${p.name} ${p.fullName || ''}`);
         let score = 0;
         if (name.startsWith(q)) score = 3;
         else if (name.split(' ').some((w) => w.startsWith(q))) score = 2;
@@ -254,12 +256,38 @@ export function searchPeople(people, query) {
     return scored.sort((a, b) => b.score - a.score || byName(a.p, b.p)).map((x) => x.p);
 }
 
+/* ── searching the investments and the loans ──────────────────────────────── */
+
+/** A phone number as the digits that identify it, whatever way it was written: +94 77 123 4567, 0771234567 and 771234567 are one. */
+const lineKey = (v) => { const d = str(v).replace(/\D/g, ''); return d.replace(/^(?:0094|94|0)/, ''); };
+
+/**
+ * Does this loan or investment match what was typed? Every word must be found: in the person's own name (the nickname the owner
+ * keeps them under, the full name, and an investment's title), or in the NIC / ID; a number of three digits or more is looked for in
+ * both phone numbers. An empty search matches everything.
+ */
+export function recordMatches(rec, query) {
+    const q = norm(query);
+    if (!q) return true;
+    const r = rec && typeof rec === 'object' ? rec : {};
+    const names = norm([r.name, r.company, r.fullName].map(str).join(' '));
+    const nic = norm(displayIdentity(r.nic)).replace(/\s+/g, '');
+    const lines = [r.phone, r.phone2].map(lineKey).filter(Boolean);
+    // a number typed with spaces ("77 123 45") is one thing, not three words
+    if (/^[+\d\s()-]+$/.test(q)) { const all = lineKey(q); if (all.length >= 3 && lines.some((l) => l.includes(all))) return true; }
+    return q.split(' ').every((w) => {
+        if (names.includes(w) || (nic && nic.includes(w.replace(/\s+/g, '')))) return true;
+        const digits = lineKey(w);
+        return digits.length >= 3 && /^[+\d()-]+$/.test(w) && lines.some((l) => l.includes(digits));
+    });
+}
+
 /* ── how a loan or an investment shows its person ─────────────────────────── */
 
 /** The shared fields as a record keeps them. An investment keeps the person's name in `company` ("Company / Person"), a loan in `name`. */
 export function readShared(kind, rec) {
     const r = rec || {};
-    return { name: squash(kind === 'debtor' ? r.name : r.company), phone: str(r.phone).trim(), phone2: str(r.phone2).trim(), nic: str(r.nic).trim() };
+    return { name: squash(kind === 'debtor' ? r.name : r.company), fullName: squash(r.fullName), phone: str(r.phone).trim(), phone2: str(r.phone2).trim(), nic: str(r.nic).trim() };
 }
 
 /** One shared field as a person holds it. The second number counts only when it can be texted (a landline in "other number" is the person's own business). */
@@ -270,6 +298,7 @@ export function writeShared(kind, rec, values, now = Date.now()) {
     let changed = false;
     const set = (field, value) => { if (str(rec[field]) !== str(value)) { rec[field] = value; changed = true; return true; } return false; };
     if (values.name !== undefined && values.name !== '') set(kind === 'debtor' ? 'name' : 'company', values.name);
+    if (values.fullName !== undefined) { if (values.fullName === '') { if (rec.fullName !== undefined) { delete rec.fullName; changed = true; } } else set('fullName', values.fullName); }
     if (values.phone !== undefined) set('phone', values.phone);
     // a second number written onto a record is new to that record: what happened before is history for it (see sms-events.mjs PHONE2_AT)
     if (values.phone2 !== undefined && set('phone2', values.phone2)) { if (values.phone2) rec.phone2_at = now; else delete rec.phone2_at; }
@@ -281,7 +310,7 @@ export function writeShared(kind, rec, values, now = Date.now()) {
 function fillBlanks(kind, rec, person, now = Date.now()) {
     const have = readShared(kind, rec);
     const gift = {};
-    for (const f of ['phone', 'phone2', 'nic']) {
+    for (const f of ['fullName', 'phone', 'phone2', 'nic']) {
         const v = personValue(person, f).trim();
         if (!have[f] && v) gift[f] = v;
     }
@@ -405,7 +434,7 @@ export function linkRecord({ store, kind, rec, remember = false, country = '', n
         // records follow; what this form left blank is filled in from the person.
         const next = { ...dup };
         let changed = false;
-        for (const f of ['phone', 'phone2', 'nic']) if (shared[f] && personValue(dup, f) !== shared[f]) { next[f] = shared[f]; changed = true; }
+        for (const f of ['fullName', 'phone', 'phone2', 'nic']) if (shared[f] && personValue(dup, f) !== shared[f]) { next[f] = shared[f]; changed = true; }
         if (iso && !dup.country) { next.country = iso; changed = true; }
         if (changed) {
             next.updatedAt = stamp;
@@ -422,6 +451,7 @@ export function linkRecord({ store, kind, rec, remember = false, country = '', n
     // place that insists on a clean one
     const fields = {
         name: shared.name.slice(0, LIMITS.name),
+        fullName: shared.fullName.slice(0, LIMITS.fullName),
         phone: shared.phone, phone2: shared.phone2,
         country: iso || isoOfPhone(shared.phone),
         nic: shared.nic,
@@ -544,7 +574,7 @@ export function harvestPeople(store, { now = Date.now(), newId = null, orphans =
             if (people.length >= LIMITS.people) continue;
             // a number that is a number is saved the way every device and the server read it (E.164); one that is not is kept as it was written
             const pn = u.phone ? resolvePhone(u.phone, iso) : null;
-            hit = newPerson({ name: u.name.slice(0, LIMITS.name), phone: pn && pn.ok ? pn.e164 : u.phone, phone2: secondNumberOf(u.phone2, iso), country: pn && pn.ok ? pn.iso : iso, nic: u.nic, email: '', address: '', note: '' }, { now, newId: newId || (() => harvestId(u)) });
+            hit = newPerson({ name: u.name.slice(0, LIMITS.name), fullName: u.fullName ? u.fullName.slice(0, LIMITS.fullName) : '', phone: pn && pn.ok ? pn.e164 : u.phone, phone2: secondNumberOf(u.phone2, iso), country: pn && pn.ok ? pn.iso : iso, nic: u.nic, email: '', address: '', note: '' }, { now, newId: newId || (() => harvestId(u)) });
             people.push(hit);
             added += 1;
         }
@@ -833,6 +863,6 @@ export function draftFromContact(contact, iso = DEFAULT_REGION) {
 
 export default {
     PEOPLE_KEY, LINK_FIELD, LIMITS, SHARED, phoneProblem, idProblem, resolvePhone, isoOfPhone, secondNumberOf, storedId, idKindOf, cleanPerson, newPerson, defaultId,
-    personById, listPeople, findDuplicate, sameNameOnly, searchPeople, readShared, writeShared, usageOf, booksOf, sharedDiff, propagate, linkRecord, updatePerson, previewUpdate, addPerson, addPeople, removePerson,
+    personById, listPeople, findDuplicate, sameNameOnly, searchPeople, recordMatches, readShared, writeShared, usageOf, booksOf, sharedDiff, propagate, linkRecord, updatePerson, previewUpdate, addPerson, addPeople, removePerson,
     unfiledRecords, harvestPeople, contactPickerSupported, pickContacts, parseVCards, parseContactsCsv, parseContactsText, parseContacts, platformOf, draftFromContact,
 };

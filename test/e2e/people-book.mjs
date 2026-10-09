@@ -65,12 +65,33 @@ assert.equal(await page.isVisible('#_db_remember_row'), false, 'a picked person 
 assert.match(await page.textContent('#_db_linked'), /Saved person: Nimal Perera/);
 await page.fill('#_db_amount', '25000');
 await page.click('#_db_save');
+// Nimal still owes 100,000, so the page asks once what to do with this one
+await page.waitForSelector('#_dm_new');
+assert.match(await page.locator('.mo:has(#_dm_new)').textContent(), /still owes you/);
+await page.click('#_dm_new');
 await page.waitForFunction(() => DB.get('debtors').length === 2);
 book = await page.evaluate(() => ({ people: DB.get('people'), debtors: DB.get('debtors') }));
 assert.equal(book.people.length, 1, 'picking does not create a second Nimal');
 assert.equal(book.debtors[1].personId, book.people[0].id);
 assert.equal(book.debtors[1].phone, '+94771234567');
 console.log('1b. second loan        -> picked, no duplicate, linked');
+
+// a third advance, this time joined to the loan Nimal already has: one balance, a further advance on that loan, nothing new in the list
+await openDebtor(null);
+await page.waitForSelector('#_db_pick');
+await page.selectOption('#_db_pick', { index: 1 });
+assert.equal(await page.isChecked('#_db_sms_on'), false, 'no record of this person has the texts on yet, so the box is not ticked for them');
+await page.fill('#_db_amount', '5000');
+await page.click('#_db_save');
+await page.waitForSelector('#_dm_join');
+await page.click('#_dm_join');
+await page.waitForFunction(() => DB.get('debtors').some((d) => (d.events || []).some((e) => e.kind === 'topup')));
+book = await page.evaluate(() => ({ debtors: DB.get('debtors') }));
+assert.equal(book.debtors.length, 2, 'joining adds no loan');
+const joined = book.debtors.find((d) => (d.events || []).some((e) => e.kind === 'topup'));
+assert.equal(joined.events.find((e) => e.kind === 'topup').amount, 5000);
+assert.equal(joined.events.find((e) => e.kind === 'topup').confirmed, true);
+console.log('1c. owes already       -> asked, joined as a further advance, no new loan');
 
 // choosing "New person" after a pick clears what the pick filled in
 await openDebtor(null);

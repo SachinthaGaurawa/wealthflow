@@ -102,6 +102,7 @@ export function contactHtml(prefix, { kind = 'debtor', record = null, people = [
     const iso = info && info.ok ? info.iso : fallback;
     const idStored = s(r.nic).trim() || (person ? s(person.nic).trim() : '');
     const idKind = idStored ? People.idKindOf(idStored) : (iso === DEFAULT_REGION ? 'nic' : 'other');
+    const fullRaw = s(r.fullName).trim() || (person ? s(person.fullName).trim() : '');
     const phone2Raw = s(r.phone2).trim() || (person ? s(person.phone2).trim() : '');
     const info2 = phone2Raw ? People.resolvePhone(phone2Raw, iso) : null;
     const pv = errors && errors.phone ? { cls: 'bad', text: errors.phone } : phoneNote(phoneRaw, iso, true);
@@ -110,6 +111,9 @@ export function contactHtml(prefix, { kind = 'debtor', record = null, people = [
     const common = ' data-p="' + p + '" data-name="' + esc(nameId) + '"';
     return '<div class="wfp-contact" data-p="' + p + '" data-kind="' + esc(kind) + '">'
         + '<input type="hidden" id="' + p + '_pid" value="' + esc(person ? person.id : '') + '">'
+        + '<div class="fg"><label class="fl" for="' + p + '_full">Full name <span class="wfp-opt">(shown to the customer)</span></label>'
+        + '<input class="fi" id="' + p + '_full" maxlength="' + People.LIMITS.fullName + '" autocomplete="off" data-wfp="full"' + common + ' placeholder="The customer\'s own name, as on their NIC" value="' + esc(fullRaw) + '">'
+        + '<div class="wfp-help">The name above is your own nickname for this person, the one you see in WealthFlow. The customer\'s statement page and PDF show this full name and their NIC instead.</div></div>'
         + countrySelectHtml(prefix + '_cc', iso, 'data-wfp="cc"' + common)
         + '<div class="fg"><label class="fl" for="' + p + '_phone">Mobile number</label>'
         + '<div class="wfp-row"><input class="fi" id="' + p + '_phone" type="tel" inputmode="tel" autocomplete="off" maxlength="40" data-wfp="phone"' + common
@@ -161,9 +165,11 @@ export function readContact(root, prefix) {
     const q = (suffix) => root.querySelector('#' + prefix + '_' + suffix);
     const phone = q('phone');
     if (!phone) return null;
-    const cc = q('cc'); const idk = q('idk'); const nic = q('nic'); const pid = q('pid'); const rem = q('remember'); const phone2 = q('phone2');
+    const cc = q('cc'); const idk = q('idk'); const nic = q('nic'); const pid = q('pid'); const rem = q('remember'); const phone2 = q('phone2'); const full = q('full');
     return {
         personId: pid ? s(pid.value) : '',
+        fullName: full ? s(full.value).replace(/\s+/g, ' ').trim() : '',
+        hasFullName: !!full,
         country: cc ? s(cc.value) : DEFAULT_REGION,
         phone: s(phone.value).trim(),
         phone2: phone2 ? s(phone2.value).trim() : '',
@@ -200,6 +206,7 @@ export function collectContact(c, { smsOn = false } = {}) {
         phone2: phone2.ok ? phone2.e164 : s(x.phone2).trim(),
         phone: phone.ok ? phone.e164 : s(x.phone).trim(),
         nic: id.ok ? id.stored : '',
+        fullName: s(x.fullName).replace(/\s+/g, ' ').trim().slice(0, People.LIMITS.fullName),
         country: phone.ok ? phone.iso : x.country,
         idKind: x.idKind, personId: x.personId, remember: !!x.remember,
     };
@@ -292,16 +299,16 @@ const fieldError = (errors, key) => (errors && errors[key] ? '<div class="wfp-pv
 
 /** The add / edit form for one person. `draft` is what the form held when it last failed, `confirm` is the "this also updates" step. */
 export function personFormHtml({ person = null, draft = null, errors = {}, people = [], use = null, confirm = null, askDelete = false } = {}) {
-    const d = draft || (person ? { name: person.name, phone: person.phone, nic: person.nic, country: person.country, phone2: person.phone2, email: person.email, address: person.address, note: person.note } : {});
+    const d = draft || (person ? { name: person.name, fullName: person.fullName, phone: person.phone, nic: person.nic, country: person.country, phone2: person.phone2, email: person.email, address: person.address, note: person.note } : {});
     const nameIn = '<div class="fg"><label class="fl" for="_pp_name">Name</label><input class="fi" id="_pp_name" maxlength="' + People.LIMITS.name + '" autocomplete="off" value="' + esc(d.name) + '">' + fieldError(errors, 'name') + '</div>';
-    const contact = contactHtml('_pp', { kind: 'person', record: { phone: d.phone, phone2: d.phone2, nic: d.nic }, people, nameId: '_pp_name', defaultCountry: d.country || DEFAULT_REGION, remember: false, errors });
+    const contact = contactHtml('_pp', { kind: 'person', record: { fullName: d.fullName, phone: d.phone, phone2: d.phone2, nic: d.nic }, people, nameId: '_pp_name', defaultCountry: d.country || DEFAULT_REGION, remember: false, errors });
     const more = '<div class="fg"><label class="fl" for="_pp_email">Email</label><input class="fi" id="_pp_email" type="email" maxlength="' + People.LIMITS.email + '" autocomplete="off" value="' + esc(d.email) + '">' + fieldError(errors, 'email') + '</div>'
         + '<div class="fg"><label class="fl" for="_pp_address">Address</label><input class="fi" id="_pp_address" maxlength="' + People.LIMITS.address + '" autocomplete="off" value="' + esc(d.address) + '"></div>'
         + '<div class="fg"><label class="fl" for="_pp_note">Note</label><input class="fi" id="_pp_note" maxlength="' + People.LIMITS.note + '" autocomplete="off" placeholder="Anything worth remembering" value="' + esc(d.note) + '"></div>';
     let banner = '';
     if (confirm) {
         banner = '<div class="wfp-note wfp-warn"><div><b>This also updates ' + esc([confirm.loans ? plural(confirm.loans, 'loan', 'loans') : '', confirm.investments ? plural(confirm.investments, 'investment', 'investments') : ''].filter(Boolean).join(' and ')) + '.</b> '
-            + 'They will use the new name, number or ID' + (confirm.smsOn ? ', and the texts on ' + plural(confirm.smsOn, 'of them', 'of them') + ' will go to the new number' : '') + '.</div>'
+            + 'They will use the new name, full name, number or ID' + (confirm.smsOn ? ', and the texts on ' + plural(confirm.smsOn, 'of them', 'of them') + ' will go to the new number' : '') + '.</div>'
             + '<div class="wfp-actions"><button type="button" class="btn btn-primary btn-sm" data-h="savego">Save and update them</button><button type="button" class="btn btn-ghost btn-sm" data-h="savenot">Back</button></div></div>';
     }
     if (askDelete && person) {
@@ -504,6 +511,7 @@ export function boot(win) {
         if (name) name.value = person ? person.name : '';
         const iso = regionByIso(person && person.country) ? person.country : homeCountry();
         set(p + '_cc', iso);
+        set(p + '_full', person ? s(person.fullName) : '');
         set(p + '_phone', person && person.phone ? showPhone(person.phone) : '');
         set(p + '_phone2', person && person.phone2 ? showPhone(person.phone2) : '');
         const kind = person && person.nic ? People.idKindOf(person.nic) : (iso === DEFAULT_REGION ? 'nic' : 'other');
@@ -511,6 +519,24 @@ export function boot(win) {
         set(p + '_nic', person ? displayIdentity(person.nic) : '');
         refreshPhone(root, p, true);
         refreshId(root, p, true, true);
+    }
+
+    /** A person who already gets texts on another loan or investment gets them on this one too: the box is ticked for the owner (it can be unticked). */
+    function tickTextsFor(root, person, before) {
+        if (!person || (before && before === person.id)) return;
+        let on = false;
+        try { on = People.usageOf(person, People.booksOf(store())).smsOn > 0; } catch (_) { on = false; }
+        const box = root && root.querySelector ? root.querySelector('[data-wf-sms] input[type="checkbox"][id$="_on"]') : null;
+        if (!on || !box || box.checked) return;
+        box.checked = true;
+        const wrap = box.closest ? box.closest('[data-wf-sms]') : null;
+        if (wrap && !wrap.querySelector('.wfp-texts-note')) {
+            const note = doc.createElement('div');
+            note.className = 'wfp-texts-note';
+            note.style.cssText = 'font-size:11.5px;color:var(--text3);margin-top:6px;';
+            note.textContent = person.name + ' already gets texts and has a statement page, so this one is switched on too. Untick it if you do not want that.';
+            wrap.appendChild(note);
+        }
     }
 
     function pickPerson(root, p, id, nameId) {
@@ -521,6 +547,7 @@ export function boot(win) {
         if (person) fillFromPerson(root, p, nameId, person);
         else if (before) fillFromPerson(root, p, nameId, null);                  // "New person" after a pick: the picked person's details do not stay behind
         toggleLink(root, p, person);
+        tickTextsFor(root, person, before);
         const section = person && hidden && hidden.closest ? hidden.closest('details') : null;
         if (section) section.open = true;                                        // the investment form folds the contact fields away; a pick shows what it filled
     }
@@ -705,7 +732,7 @@ export function boot(win) {
 
     /** "Update everywhere / this record only / cancel": asked when a form changes a saved person's name, number or ID. */
     function askUpdate({ person, diff, others, kind }, done) {
-        const what = diff.map((f) => ({ name: 'name', phone: 'number', phone2: 'second number', nic: 'NIC / ID' }[f])).join(', ');
+        const what = diff.map((f) => ({ name: 'name', fullName: 'full name', phone: 'number', phone2: 'second number', nic: 'NIC / ID' }[f])).join(', ');
         const more = others.loans + others.investments;
         const where = [others.loans ? plural(others.loans, 'other loan', 'other loans') : '', others.investments ? plural(others.investments, 'other investment', 'other investments') : ''].filter(Boolean).join(' and ');
         const o = overlay('<div class="md" style="max-width:440px;"><div class="md-hdr"><div class="md-title">Update ' + esc(person.name) + '’s saved details?</div>' + xButton + '</div>'
@@ -742,7 +769,7 @@ export function boot(win) {
         function read(id) { const el = body.querySelector('#' + id); return el ? s(el.value) : ''; }
         function readPerson() {
             const c = readContact(body, '_pp') || { phone: '', country: DEFAULT_REGION, nic: '', idKind: 'nic' };
-            return { name: read('_pp_name'), phone: c.phone, country: c.country, nic: c.nic, idKind: c.idKind, phone2: read('_pp_phone2'), email: read('_pp_email'), address: read('_pp_address'), note: read('_pp_note') };
+            return { name: read('_pp_name'), fullName: c.fullName, phone: c.phone, country: c.country, nic: c.nic, idKind: c.idKind, phone2: read('_pp_phone2'), email: read('_pp_email'), address: read('_pp_address'), note: read('_pp_note') };
         }
         /** A form's contents as the form builder wants them back: the kind of ID rides on the prefix the stored form uses. */
         const asDraft = (f) => ({ ...f, nic: f.nic && f.idKind === 'other' && !/^ID:/i.test(f.nic) ? 'ID:' + f.nic : f.nic });
@@ -919,6 +946,8 @@ export function boot(win) {
     const api = {
         ready: true,
         showPhone,
+        /** Does this loan or investment match what was typed in a list's search box (name, nickname, full name, NIC, either number)? */
+        recordMatches: People.recordMatches,
         /** The "Saved people" picker for the top of a form. `record` is the loan or investment being edited, or null. */
         pickerHtml(prefix, { record = null, nameId = '' } = {}) { ensureStyle(); autoFile(); return pickerHtml(prefix, { people: People.listPeople(store()), record: freshRecord(record), nameId }); },
         /** The country / number / ID fields. */

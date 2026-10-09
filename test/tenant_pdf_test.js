@@ -116,7 +116,7 @@ describe('the file', () => {
         const file = statementPdf(stFor(lenderDoc({ payAccounts: [acct()] })), { generatedAt: T0 });
         expect(Buffer.isBuffer(file)).toBe(true);
         const pagesInFile = Number(/\/Type \/Pages \/Count (\d+)/.exec(file.toString('latin1'))[1]);
-        expect(checkStructure(file)).toBe(6 + 2 * pagesInFile);                  // the free entry, 5 fixed objects, a page and its content for each page
+        expect(checkStructure(file)).toBe(6 + 2 * pagesInFile + 2);              // the free entry, 5 fixed objects, a page and its content for each page, the logo and its mask
         expect(file.length).toBeLessThan(20000);                                  // a few kilobytes: nothing is embedded
     });
 
@@ -245,6 +245,7 @@ describe('the file', () => {
         const src = file.toString('latin1');
         let streams = 0;
         for (const m of src.matchAll(/stream\n([\s\S]*?)\nendstream/g)) {
+            if (/\/Subtype \/Image[^>]*>>\n$/.test(src.slice(Math.max(0, m.index - 200), m.index))) continue;       // the logo's pixels are data, not operators
             streams += 1;
             const text = zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1');
             expect(/^[\x20-\x7E\n]*$/.test(text)).toBe(true);
@@ -268,5 +269,63 @@ describe('the loan statement look', () => {
         const b = await read(statementPdf(stFor(lenderDoc({})), { generatedAt: T0 + 86400000 }));
         const no = (r) => /Statement No: (WF-[0-9A-Z]{6})/.exec(r.pages[0])[1];
         expect(no(a)).toBe(no(b));
+    });
+});
+
+describe('the mark, the account holder and the bank details', () => {
+    const withHolder = (holder, over = {}) => ({ ...stFor(lenderDoc({ payAccounts: [acct()] }), over), holder });
+
+    it('draws the WealthFlow mark as a real image with its own soft mask, not a drawn square', () => {
+        const src = statementPdf(withHolder({ name: '', nic: '' }), { generatedAt: T0 }).toString('latin1');
+        expect(src).toMatch(/\/Subtype \/Image \/Width 86 \/Height 86 \/ColorSpace \/DeviceRGB \/BitsPerComponent 8 \/SMask \d+ 0 R/);
+        expect(src).toMatch(/\/Subtype \/Image \/Width 86 \/Height 86 \/ColorSpace \/DeviceGray/);
+        expect(src).toMatch(/\/XObject << \/Im1 \d+ 0 R >>/);
+        const drawn = [...src.matchAll(/stream\n([\s\S]*?)\nendstream/g)].map((m) => { try { return zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'); } catch (_) { return ''; } }).join('\n');
+        expect(drawn).toContain('/Im1 Do');
+    });
+
+    it('prints the holder\'s full name and NIC under the title, and says nothing for what is missing', async () => {
+        const both = (await read(statementPdf(withHolder({ name: 'Nimal Kumara Perera', nic: '853400937V' }), { generatedAt: T0 }))).pages[0];
+        expect(both).toContain('ACCOUNT HOLDER');
+        expect(both).toContain('Nimal Kumara Perera');
+        expect(both).toContain('NIC / ID');
+        expect(both).toContain('853400937V');
+        const nicOnly = (await read(statementPdf(withHolder({ name: '', nic: '853400937V' }), { generatedAt: T0 }))).pages[0];
+        expect(nicOnly).not.toContain('ACCOUNT HOLDER');
+        expect(nicOnly).toContain('853400937V');
+        const none = (await read(statementPdf(withHolder({ name: '', nic: '' }), { generatedAt: T0 }))).pages[0];
+        expect(none).not.toContain('NIC / ID');
+        const missing = (await read(statementPdf({ ...withHolder(undefined) }, { generatedAt: T0 }))).pages[0];
+        expect(missing).not.toContain('ACCOUNT HOLDER');
+    });
+
+    it('sets every bank detail value at one size and weight, the account number included', () => {
+        const file = statementPdf(withHolder({ name: '', nic: '' }), { generatedAt: T0 });
+        const ops = [];
+        for (const m of file.toString('latin1').matchAll(/stream\n([\s\S]*?)\nendstream/g)) {
+            try { ops.push(zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1')); } catch (_) { /* an image */ }
+        }
+        const text = ops.join('\n');
+        const sizeOf = (value) => { const m = new RegExp(`/(F\\d) ([\\d.]+) Tf [\\d. ]+ rg [\\d.]+ [\\d.]+ Td \\(${value}\\) Tj`).exec(text); return m && `${m[1]} ${m[2]}`; };
+        const holder = sizeOf('N\\. Perera');
+        expect(holder).toBe('F2 10');
+        expect(sizeOf('8001234567')).toBe(holder);
+        expect(sizeOf('Colombo 03')).toBe(holder);
+        expect(sizeOf('CCEYLKLX')).toBe(holder);
+    });
+
+    it('gives the lender\'s note its own tinted panel under a NOTE label', async () => {
+        const file = statementPdf(withHolder({ name: '', nic: '' }), { generatedAt: T0 });
+        const text = (await read(file)).pages.join(' ');
+        expect(text).toContain('NOTE');
+        expect(text).toContain('Quote your reference');
+        const ops = [...file.toString('latin1').matchAll(/stream\n([\s\S]*?)\nendstream/g)].map((m) => { try { return zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'); } catch (_) { return ''; } }).join('\n');
+        expect(ops).toContain('1 0.97 0.9 rg');                    // the amber tint (#fff7e6) behind it
+    });
+
+    it('a statement with no note draws no note panel', async () => {
+        const st = withHolder({ name: '', nic: '' });
+        st.lenders[0].accounts[0].note = '';
+        expect((await read(statementPdf(st, { generatedAt: T0 }))).pages.join(' ')).not.toContain('NOTE');
     });
 });

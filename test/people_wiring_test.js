@@ -63,6 +63,17 @@ describe('the page', () => {
         expect(deb).toContain("WP.saveLink({ kind: 'debtor', rec,");
     });
 
+    it('a new loan for somebody who still owes money asks once: add to the existing loan, keep it separate, or cancel', () => {
+        const deb = HTML.slice(HTML.indexOf('function openDebtorModal(existing)'), HTML.indexOf('window.openDebtorModal = openDebtorModal'));
+        expect(deb).toContain('window.WFLiquidity.findOpenLoanFor(');
+        expect(deb).toContain('_dm_join');
+        expect(deb).toContain('_dm_new');
+        expect(deb).toContain('_dm_cancel');
+        expect(deb).toContain("kind: 'topup'");                                      // the join is a further advance on the old loan, confirmed like any lending the owner just did
+        expect(deb).toContain('onDone: askThenCommit');
+        expect(deb.indexOf('findOpenLoanFor')).toBeGreaterThan(deb.indexOf('const askThenCommit'));
+    });
+
     it('the picker sits at the top of both forms, where the person is named, and fills the form\'s own name box', () => {
         expect(HTML).toContain('<div id="i_pick_host"></div>');
         expect(HTML).toContain("WP.pickerHtml('i', { record: rec, nameId: 'i_company' })");
