@@ -332,7 +332,7 @@ export function build(deps) {
     });
 
     /* ── 10. subscriptions and the Investments tab ── */
-    const CYCLE = { weekly: 52, monthly: 12, quarterly: 4, yearly: 1, annual: 1 };
+    const CYCLE = { once: 1, 'one-time': 1, onetime: 1, weekly: 52, monthly: 12, quarterly: 4, yearly: 1, annual: 1 };
     const subs = get('subscriptions').filter((s) => s && num(s.amount) > 0);
     const subscriptions = {
         count: subs.length,

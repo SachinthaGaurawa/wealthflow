@@ -251,6 +251,15 @@ describe('commitments', () => {
         expect(dates).toEqual(['2026-10-09']);
     });
 
+    it('projects a one-time bill exactly once and never turns it into a monthly renewal', () => {
+        const A = LEDGER();
+        A.subscriptions = [{ id: 'S10', name: 'Domain setup', amount: 12500, dueDay: 17,
+            cycle: 'once', createdAt: '2026-09-02T00:00:00Z' }];
+        const dates = of(commitments(A, D('2026-01-01'), D('2027-12-31')), 'subscriptions')
+            .map((s) => s.date);
+        expect(dates).toEqual(['2026-09-17']);
+    });
+
     it('projects a pending issued cheque out and a pending received cheque in', () => {
         const cq = of(res(), 'cheques');
         const issued = cq.find((c) => c.id === 'Q1');

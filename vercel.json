@@ -129,6 +129,32 @@
       ]
     },
     {
+      "source": "/favicon.ico",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "image/x-icon"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/(apple-touch-icon|icon-192|icon-512).png",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "image/png"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, must-revalidate"
+        }
+      ]
+    },
+    {
       "source": "/.well-known/assetlinks.json",
       "headers": [
         {
@@ -213,6 +239,22 @@
     {
       "source": "/api/(.*)",
       "destination": "/api/router?path=$1"
+    },
+    {
+      "source": "/favicon.ico",
+      "destination": "https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660550/WealthFlow_Logo_r3zccz.ico"
+    },
+    {
+      "source": "/apple-touch-icon.png",
+      "destination": "https://res.cloudinary.com/dzrfpc9be/image/upload/c_fill,w_180,h_180/v1778426077/WealthFlow_Logo_extc7w.png"
+    },
+    {
+      "source": "/icon-192.png",
+      "destination": "https://res.cloudinary.com/dzrfpc9be/image/upload/c_fill,w_192,h_192/v1778426077/WealthFlow_Logo_extc7w.png"
+    },
+    {
+      "source": "/icon-512.png",
+      "destination": "https://res.cloudinary.com/dzrfpc9be/image/upload/c_fill,w_512,h_512/v1778426077/WealthFlow_Logo_extc7w.png"
     },
     {
       "source": "/r/([A-Za-z0-9]{8})",

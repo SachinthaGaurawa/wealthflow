@@ -1,6 +1,6 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.69.33",
+  "latest": "7.69.34",
   "mandatory": [
     "7.16.0",
     "7.16.1"
@@ -600,13 +600,13 @@
         {
           "title": "What changed for you",
           "items": [
-        "Old waiting statements regain missing sender metadata on a safe rescan, small inline Gmail attachments are accepted, unencrypted statements no longer require a password vault, every fresh sign-in starts cloud processing, and a dedicated daily catch-up closes gaps left by delayed or dropped push notifications."
+            "Old waiting statements regain missing sender metadata on a safe rescan, small inline Gmail attachments are accepted, unencrypted statements no longer require a password vault, every fresh sign-in starts cloud processing, and a dedicated daily catch-up closes gaps left by delayed or dropped push notifications."
           ]
         },
         {
           "title": "Under the hood",
           "items": [
-        "Historical scan pages fail closed on transient Gmail errors, stored ciphertext is pinned to SHA-256, PDF columns are reconstructed in visual order, statement parsing uses isolated VM state, stale filed keys cannot create phantom records, and connected-mailbox status no longer asks for a replacement credential."
+            "Historical scan pages fail closed on transient Gmail errors, stored ciphertext is pinned to SHA-256, PDF columns are reconstructed in visual order, statement parsing uses isolated VM state, stale filed keys cannot create phantom records, and connected-mailbox status no longer asks for a replacement credential."
           ]
         }
       ]
@@ -694,7 +694,8 @@
           ]
         }
       ]
-    }
+    },
+    "7.69.34": "Subscription Billing Cycle now supports One-Time payments end to end: saved entries appear once in their recorded month, project once in cash flow, and are not inflated into monthly or annual recurring totals. WealthFlow and the branded customer portal now use reliable same-origin favicon and touch-icon routes, including PWA icons, instead of a disabled portal icon or an HTML fallback."
   },
   "version": "7.24.1"
 }

@@ -100,6 +100,27 @@ describe('buildFinancialContext (the real one) hands the Advisor the sheet and n
     });
 });
 
+describe('one-time bills remain one-time across the books and Advisor', () => {
+    const books = () => ({
+        ...EMPTY(),
+        subscriptions: [{ id: 'once-1', name: 'Setup fee', amount: 12000, dueDay: 15,
+            cycle: 'once', createdAt: '2026-08-02T00:00:00Z' }],
+    });
+
+    it('charges the creation month once and no later month', () => {
+        const { ctx } = page(books());
+        expect(ctx.getMonthlyData(2026, 7).subTotal).toBe(12000);
+        expect(ctx.getMonthlyData(2026, 8).subTotal).toBe(0);
+        expect(ctx.getMonthlyData(2026, 9).subTotal).toBe(0);
+    });
+
+    it('annualises a one-time bill as one payment, not twelve', () => {
+        const { ctx } = page(books());
+        expect(factsOf(ctx).subscriptions.annual).toBe(12000);
+        expect(ctx.buildFinancialContext().subscriptionsMonthly).toBe(0);
+    });
+});
+
 describe('the sheet is pure, bounded and honest about what is missing', () => {
     it('is the same twice, and reading it changes nothing in the books', () => {
         const { ctx, store } = page(household());

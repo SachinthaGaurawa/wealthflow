@@ -222,12 +222,20 @@ export function commitments(appData, from, to) {
     for (const s of arr(A.subscriptions)) {
         if (!s) continue;
         const amount = num(s.amount);
-        const step = CYCLE_MONTHS[String(s.cycle || 'monthly')] || 1;
+        const cycle = String(s.cycle || 'monthly').toLowerCase();
+        const oneTime = cycle === 'once' || cycle === 'one-time' || cycle === 'onetime';
+        const step = CYCLE_MONTHS[cycle] || 1;
         const dueDay = num(s.dueDay) || 1;
         if (!(amount > 0)) { skip('subscriptions', s.id, 'no amount'); continue; }
         // Anchor the cycle on the record's own creation month so a quarterly
         // renewal lands on ITS quarter, not on whichever month the window opens.
         const anchor = parseDay(s.createdAt) || from;
+        if (oneTime) {
+            const d = dayInMonth(anchor.getUTCFullYear(), anchor.getUTCMonth(), dueDay);
+            if (d >= from && d <= to) push(d, 'out', amount, (s.name || 'Bill') + ' one-time payment',
+                'subscriptions', 'committed', s.id);
+            continue;
+        }
         let m = monthsBetween(anchor, from);
         m -= ((m % step) + step) % step;           // step back to the cycle boundary
         for (let k = m; ; k += step) {

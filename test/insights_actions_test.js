@@ -221,3 +221,15 @@ describe('insights: the invariant, stated at the source', () => {
         expect(offenders, `these CTAs render as dead divs: ${offenders.join(', ')}`).toEqual([]);
     });
 });
+
+describe('insights: one-time bills are not multiplied into recurring spend', () => {
+    it('counts a one-time payment once in the annual total', () => {
+        const { I } = loadInsights({ db: { subscriptions: [
+            { id: 'once-1', name: 'Activation fee', amount: 2500, cycle: 'once', dueDay: 25 },
+        ] } });
+        const total = I.subs().find((x) => x.kind === 'sub_total');
+        expect(total.amount).toBe(2500);
+        expect(total.title).toContain('2,500');
+        expect(total.title).not.toContain('30,000');
+    });
+});

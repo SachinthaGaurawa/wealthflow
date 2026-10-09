@@ -1,5 +1,9 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.34 — 2026-10-09
+
+Subscription Billing Cycle now supports One-Time payments end to end: saved entries appear once in their recorded month, project once in cash flow, and are not inflated into monthly or annual recurring totals. WealthFlow and the branded customer portal now use reliable same-origin favicon and touch-icon routes, including PWA icons, instead of a disabled portal icon or an HTML fallback.
+
 ## v7.69.33 — 2026-09-20
 
 - Statement backlog processing is split into short, durable interactive requests instead of one request that can exceed the client timeout.
