@@ -76,7 +76,7 @@ const server = http.createServer((req, res) => {
     const f = path.resolve(ROOT, '.' + file);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end('not found'); }
     // the page's own files, its words, the shared NIC module and nothing else
-    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-lang\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
+    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', ...headers });
     res.end(fs.readFileSync(f));
 });
@@ -228,6 +228,31 @@ await page.emulateMedia({ media: 'print' });
 assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('tp-pdf')).display), 'none', 'the print layout has no buttons');
 assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(255, 255, 255)', 'and prints on white');
 await page.emulateMedia({ media: 'screen' });
+
+// what is coming up, a reminder for the phone's calendar, a spreadsheet, a refresh inside the same session, and a jump to where to pay
+const next = await page.locator('.tp-next').innerText();
+assert.match(next, /Coming up/i);
+assert.match(next, /Pay your loan/);
+assert.match(next, /days? overdue/, 'the late loan says how late it is');
+assert.match(next, /Interest expected/);
+const [ics] = await Promise.all([page.waitForEvent('download'), page.locator('.tp-next .tp-small-btn').first().click()]);
+assert.match(ics.suggestedFilename(), /^WealthFlow-DEB-[0-9A-F]{6}-\d{4}-\d{2}-\d{2}\.ics$/);
+const icsText = fs.readFileSync(await ics.path(), 'utf8');
+assert.ok(icsText.startsWith('BEGIN:VCALENDAR\r\n') && icsText.includes('TRIGGER:-P1D') && icsText.replace(/\r\n /g, '').includes('SUMMARY:Pay LKR 30\\,000.00 to your lender'), 'a calendar file with the amount and an alert');
+assert.ok(!/PRIVATE|853400937|0771234567/.test(icsText), 'the calendar file carries nothing private');
+const [csv] = await Promise.all([page.waitForEvent('download'), page.click('#tp-csv')]);
+assert.match(csv.suggestedFilename(), /^WealthFlow-statement-\d{4}-\d{2}-\d{2}\.csv$/);
+const csvText = fs.readFileSync(await csv.path(), 'utf8');
+assert.ok(csvText.includes('"Reference","Type","Date","Description","Amount","Balance","Currency"') && csvText.includes('"Repayment"') && csvText.includes('"Loan paid out"'));
+assert.ok(!/PRIVATE|853400937|0771234567/.test(csvText), 'the spreadsheet carries nothing private');
+await page.click('.tp-jump');
+assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'tp-pay', 'the jump lands on where to pay');
+await page.click('#tp-refresh');
+await page.waitForFunction(() => /Updated just now/.test((document.getElementById('tp-info') || {}).textContent || ''));
+assert.ok((await text()).includes('LKR 30,000.00'), 'the same statement is back after a refresh, with no new code');
+assert.ok(await page.locator('.tp-progress progress').count() >= 1, 'the loan shows its progress');
+console.log('5e. extras            -> coming up, calendar file, spreadsheet, jump to pay, refresh without a new code');
+await shot('3d-statement-extras');
 
 // their own language, one tap, nothing remembered
 assert.equal(await page.textContent('#tp-lang'), 'සිංහල');

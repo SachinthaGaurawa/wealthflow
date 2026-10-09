@@ -8,8 +8,12 @@
  *
  * WHAT THE PERSON CAN DO ONCE IN
  *   read their statement (every investment and loan their lender records for them, in English or Sinhala),
- *   see when the next payment is due, see where to pay and copy the account number in one tap,
- *   download the statement as a PDF, print it, and sign out.
+ *   see what is coming up (a loan's due date, the next interest) with the days left, and add it to a phone
+ *   calendar; see how much of a loan is paid back; see where to pay and copy the account number or the
+ *   reference in one tap; download the statement as a PDF, share it, save every movement as a spreadsheet,
+ *   print it, refresh it without a new code, and sign out.
+ *   The extras are worked out on the device from the statement already on the page (tenant-tools.js): they ask
+ *   the server for nothing it has not already sent, and write nothing anywhere.
  *
  * WHAT THIS FILE PROMISES
  *   - It builds the page with createElement and textContent only. There is no innerHTML, no
@@ -28,6 +32,7 @@
 
 import { identityCandidates } from './wealthflow-nic.js';
 import { makeT, detectLang, LANG_BUTTON } from './tenant-lang.js';
+import { upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvFile } from './tenant-tools.js';
 
 export const ENDPOINT = '/api/tenant-portal';
 export const FETCH_TIMEOUT_MS = 20000;
@@ -45,7 +50,13 @@ export const COPY = Object.freeze({
     EXPIRED: 'That code has expired. Request a new one.',
     COPIED: 'Copied to the clipboard.',
     COPY_FAILED: 'Could not copy. Please select the text and copy it yourself.',
+    FILE_READY: 'Your file is ready. Check your downloads.',
+    UPDATED: 'Updated just now.',
+    SHARE_SAVED: 'Sharing is not available here, so the file was saved instead.',
 });
+
+/** A table longer than this shows its latest rows first and the rest behind one button (all of it prints). */
+export const TABLE_LIMIT = 8;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const FREQ = { monthly: 'Monthly', quarterly: 'Every 3 months', annual: 'Yearly' };
@@ -118,23 +129,51 @@ function h(doc, tag, props, ...kids) {
     return e;
 }
 
-function fact(doc, label, value) { return h(doc, 'div', {}, h(doc, 'dt', { text: label }), h(doc, 'dd', { text: value })); }
+function fact(doc, label, value, cls) { return h(doc, 'div', {}, h(doc, 'dt', { text: label }), h(doc, 'dd', { class: cls || null, text: value })); }
 
-/** Cells are [text, alignRight, secondLine]: a second line under the first keeps a table of four things to three columns on a phone. */
-function table(doc, caption, heads, rows) {
-    return h(doc, 'div', { class: 'tp-scroll' }, h(doc, 'table', {},
+/**
+ * Cells are [text, alignRight, secondLine]: a second line under the first keeps a table of four things to three columns on a phone.
+ * A table of more than TABLE_LIMIT rows shows the latest ones and puts the earlier ones behind "Show all"; the rows are
+ * only hidden, never left out, so print and copy still get them all.
+ */
+function table(doc, caption, heads, rows, t = english) {
+    const hide = rows.length > TABLE_LIMIT ? rows.length - TABLE_LIMIT : 0;
+    const body = h(doc, 'tbody', {}, rows.map((r, i) => h(doc, 'tr', { hidden: i < hide, class: i < hide ? 'tp-early' : null }, r.map(([text, num, sub]) => h(doc, 'td', { class: num ? 'tp-num' : null }, text, sub ? h(doc, 'span', { class: 'tp-sub', text: sub }) : null)))));
+    const scroll = h(doc, 'div', { class: 'tp-scroll' }, h(doc, 'table', {},
         h(doc, 'caption', { text: caption }),
         h(doc, 'thead', {}, h(doc, 'tr', {}, heads.map(([label, num]) => h(doc, 'th', { scope: 'col', class: num ? 'tp-num' : null, text: label })))),
-        h(doc, 'tbody', {}, rows.map((r) => h(doc, 'tr', {}, r.map(([text, num, sub]) => h(doc, 'td', { class: num ? 'tp-num' : null }, text, sub ? h(doc, 'span', { class: 'tp-sub', text: sub }) : null)))))));
+        body));
+    if (!hide) return scroll;
+    const more = h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-more', 'aria-expanded': 'false', text: t('Show all {n}', { n: rows.length }) });
+    more.addEventListener('click', () => {
+        const open = more.getAttribute('aria-expanded') !== 'true';
+        more.setAttribute('aria-expanded', open ? 'true' : 'false');
+        more.textContent = open ? t('Show fewer') : t('Show all {n}', { n: rows.length });
+        for (const tr of body.querySelectorAll ? body.querySelectorAll('tr.tp-early') : []) { if (open) tr.removeAttribute('hidden'); else tr.setAttribute('hidden', ''); }
+    });
+    return h(doc, 'div', { class: 'tp-tablewrap' }, scroll, more);
+}
+
+/** The reference code: a button that copies it when the page can copy (it is what goes in the bank transfer), else a plain label. */
+function refChip(doc, ref, t, actions) {
+    if (!actions || typeof actions.copy !== 'function') return h(doc, 'span', { class: 'tp-chip', text: ref });
+    const b = h(doc, 'button', { type: 'button', class: 'tp-chip tp-refcopy', 'aria-label': `${t('Copy reference')}: ${ref}`, text: ref });
+    b.addEventListener('click', () => actions.copy(ref, b));
+    return b;
+}
+
+/** A native progress bar (no inline style needed, and read out by screen readers). */
+function bar(doc, label, pct) {
+    return h(doc, 'div', { class: 'tp-progress' }, h(doc, 'span', { class: 'tp-progress-label', text: label }), h(doc, 'progress', { max: '100', value: String(pct), 'aria-label': label }));
 }
 
 const lenderChip = (doc, g, st, t) => (Number(st.lenderCount) > 1 && Number(g.lender) > 0 ? h(doc, 'span', { class: 'tp-chip', text: t('Lender {n}', { n: Number(g.lender) }) }) : null);
 
-function investmentCard(doc, g, st, t) {
+function investmentCard(doc, g, st, t, actions) {
     const cur = g.currency;
     const next = g.nextInterest && typeof g.nextInterest === 'object' ? g.nextInterest : null;
     return h(doc, 'section', { class: 'tp-card', 'aria-label': `${t('Investment')} ${g.ref}` },
-        h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Investment') }), h(doc, 'span', { class: 'tp-chip', text: g.ref }), lenderChip(doc, g, st, t)),
+        h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Investment') }), refChip(doc, g.ref, t, actions), lenderChip(doc, g, st, t)),
         h(doc, 'dl', { class: 'tp-facts' },
             fact(doc, t('Capital'), fmtMoney(g.capital, cur)),
             fact(doc, t('Rate'), t('{n}% a year', { n: g.ratePct })),
@@ -144,25 +183,27 @@ function investmentCard(doc, g, st, t) {
             g.end ? fact(doc, t('Ends'), fmtDay(g.end)) : null,
             next ? fact(doc, t('Next interest due'), `${fmtDay(next.date)} (${fmtMoney(next.amount, cur)})`) : null,
             fact(doc, t('Interest received'), fmtMoney(g.totalReceived, cur))),
+        (() => { const pct = termProgress(g, st.asOf); return pct === null ? null : bar(doc, t('Term: {n}% complete', { n: pct }), pct); })(),
         Array.isArray(g.payments) && g.payments.length
-            ? table(doc, t('Payments received, in {cur}', { cur }), [[t('For')], [t('Received on')], [t('Amount'), true]], g.payments.map((p) => [[fmtMonth(p.month)], [fmtDay(p.date)], [fmtNum(p.amount), true]]))
+            ? table(doc, t('Payments received, in {cur}', { cur }), [[t('For')], [t('Received on')], [t('Amount'), true]], g.payments.map((p) => [[fmtMonth(p.month)], [fmtDay(p.date)], [fmtNum(p.amount), true]]), t)
             : h(doc, 'p', { class: 'tp-note', text: t('No payments recorded yet.') }));
 }
 
-function loanCard(doc, g, st, t) {
+function loanCard(doc, g, st, t, actions) {
     const cur = g.currency;
-    const status = g.status === 'settled' ? [t('Settled'), 'tp-chip tp-ok'] : g.status === 'closed' ? [t('Closed'), 'tp-chip'] : [t('Open'), 'tp-chip'];
+    const status = g.status === 'settled' ? [t('Settled'), 'tp-chip tp-ok'] : g.status === 'closed' ? [t('Closed'), 'tp-chip'] : [t('Open'), 'tp-chip tp-open'];
     const late = Number(g.overdueDays) > 0 ? Math.floor(Number(g.overdueDays)) : 0;
     const due = g.due ? `${fmtDay(g.due)}${late ? ` (${late === 1 ? t('1 day ago') : t('{n} days ago', { n: late })})` : ''}` : '';
     return h(doc, 'section', { class: 'tp-card', 'aria-label': `${t('Loan')} ${g.ref}` },
-        h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Loan') }), h(doc, 'span', { class: 'tp-chip', text: g.ref }), lenderChip(doc, g, st, t), h(doc, 'span', { class: status[1], text: status[0] })),
+        h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Loan') }), refChip(doc, g.ref, t, actions), lenderChip(doc, g, st, t), h(doc, 'span', { class: status[1], text: status[0] })),
         h(doc, 'dl', { class: 'tp-facts' },
             fact(doc, t('Paid out'), fmtMoney(g.lent, cur)),
             fact(doc, t('Repaid'), fmtMoney(g.repaid, cur)),
             fact(doc, t('Outstanding'), fmtMoney(g.outstanding, cur)),
-            due ? fact(doc, t('Expected back by'), due) : null),
+            due ? fact(doc, t('Expected back by'), due, late ? 'tp-late' : null) : null),
+        (() => { const pct = loanProgress(g); return pct === null ? null : bar(doc, t('{n}% repaid', { n: pct }), pct); })(),
         Array.isArray(g.events) && g.events.length
-            ? table(doc, t('Movements, in {cur}', { cur }), [[t('Date')], [t('Amount'), true], [t('Balance'), true]], g.events.map((e) => [[fmtDay(e.date), false, t(LOAN_EVENT[e.kind] || '-')], [fmtNum(e.amount), true], [fmtNum(e.balance), true]]))
+            ? table(doc, t('Movements, in {cur}', { cur }), [[t('Date')], [t('Amount'), true], [t('Balance'), true]], g.events.map((e) => [[fmtDay(e.date), false, t(LOAN_EVENT[e.kind] || '-')], [fmtNum(e.amount), true], [fmtNum(e.balance), true]]), t)
             : h(doc, 'p', { class: 'tp-note', text: t('Nothing recorded yet.') }));
 }
 
@@ -193,7 +234,7 @@ function paymentCard(doc, st, t, actions) {
     if (!lenders.length) return null;
     const groups = Array.isArray(st.groups) ? st.groups : [];
     const many = Number(st.lenderCount) > 1;
-    return h(doc, 'section', { class: 'tp-card tp-pay', 'aria-label': t('How to pay') },
+    return h(doc, 'section', { class: 'tp-card tp-pay', id: 'tp-pay', tabindex: '-1', 'aria-label': t('How to pay') },
         h(doc, 'h3', { text: t('How to pay') }),
         h(doc, 'p', { class: 'tp-note', text: t('Pay by bank transfer to the account below and put the reference of the record in the transfer. If the account details here look different from what your lender told you, check with your lender before sending money.') }),
         lenders.map((l) => {
@@ -203,6 +244,27 @@ function paymentCard(doc, st, t, actions) {
                 refs.length ? h(doc, 'p', { class: 'tp-refs', text: t('References: {refs}', { refs: refs.slice(0, 6).join(', ') }) }) : null,
                 l.accounts.map((a) => accountCard(doc, a, t, actions)));
         }));
+}
+
+/**
+ * "Coming up": the next dates, soonest first, each with the days left and (when the page can) an "Add to calendar" button.
+ * A jump to "How to pay" sits under it when the lender has given an account.
+ */
+function upcomingCard(doc, st, t, actions) {
+    const items = upcoming(st);
+    if (!items.length) return null;
+    const hasPay = Array.isArray(st.lenders) && st.lenders.some((l) => l && Array.isArray(l.accounts) && l.accounts.length);
+    return h(doc, 'section', { class: 'tp-card tp-next', 'aria-label': t('Coming up') },
+        h(doc, 'h3', { text: t('Coming up') }),
+        h(doc, 'ul', { class: 'tp-list' }, items.map((it) => h(doc, 'li', { class: `tp-item tp-${it.tone}` },
+            h(doc, 'div', { class: 'tp-item-main' },
+                h(doc, 'span', { class: 'tp-item-title', text: it.kind === 'loan' ? t('Pay your loan') : t('Interest expected') }),
+                h(doc, 'span', { class: 'tp-item-sub', text: `${fmtDay(it.date)} · ${it.ref}` })),
+            h(doc, 'div', { class: 'tp-item-side' },
+                h(doc, 'span', { class: 'tp-item-amount', text: fmtMoney(it.amount, it.currency) }),
+                h(doc, 'span', { class: `tp-when tp-when-${it.tone}`, text: dayLabel(it.days, t) })),
+            actions && typeof actions.calendar === 'function' ? h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-small-btn', 'aria-label': `${t('Add to calendar')}: ${it.ref}`, text: t('Add to calendar'), onclick: () => actions.calendar(it) }) : null))),
+        hasPay && actions && typeof actions.jump === 'function' ? h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-jump', text: t('How to pay'), onclick: () => actions.jump('tp-pay') }) : null);
 }
 
 /**
@@ -225,10 +287,12 @@ export function statementView(doc, statement, t = english, actions = null) {
             hasInv ? h(doc, 'div', { class: 'tp-total' }, h(doc, 'span', { class: 'tp-label', text: t('Interest received') }), h(doc, 'span', { class: 'tp-figure', text: fmtMoney(tot.interestReceived, tot.currency) })) : null,
             hasLoan ? h(doc, 'div', { class: 'tp-total' }, h(doc, 'span', { class: 'tp-label', text: t('Loan outstanding') }), h(doc, 'span', { class: 'tp-figure', text: fmtMoney(tot.loanOutstanding, tot.currency) })) : null));
     }
-    // where to pay comes before the records: it is what a person who has just seen their balance wants next
+    // what is coming up, then where to pay, then the records: the order a person who has just seen their balance wants them in
+    const next = upcomingCard(doc, st, t, actions);
+    if (next) out.push(next);
     const pay = paymentCard(doc, st, t, actions);
     if (pay) out.push(pay);
-    for (const g of groups) out.push(g.kind === 'loan' ? loanCard(doc, g, st, t) : investmentCard(doc, g, st, t));
+    for (const g of groups) out.push(g.kind === 'loan' ? loanCard(doc, g, st, t, actions) : investmentCard(doc, g, st, t, actions));
     if (st.truncated) out.push(h(doc, 'p', { class: 'tp-note', text: t('This statement is long, so only the first part is shown.') }));
     return out;
 }
@@ -248,7 +312,9 @@ export function createPage(env) {
     const copyText = env.copyText || (async () => false);
     const saveFile = env.saveFile || (() => {});
     const printPage = env.print || (() => {});
-    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, codeMessage: '', tick: null, els: {} };
+    const shareFile = typeof env.shareFile === 'function' ? env.shareFile : null;       // 'shared' | 'cancelled' | 'unsupported'
+    const jumpTo = env.jumpTo || ((id) => { const el = doc.getElementById ? doc.getElementById(id) : null; if (el) { if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' }); if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } });
+    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', codeMessage: '', tick: null, els: {} };
     let t = makeT(st.lang);
 
     /** One door to the server. With `file`, a PDF answer comes back as a blob (never parsed as JSON); everything else is JSON. */
@@ -308,6 +374,9 @@ export function createPage(env) {
         if (typeof doc.title === 'string') doc.title = t(title);
     }
 
+    /** Two small bars: where in the sign-in the person is. Drawn, never read aloud (the screen's own heading says where they are). */
+    const steps = (n) => h(doc, 'div', { class: 'tp-steps', 'aria-hidden': 'true' }, h(doc, 'span', { class: 'tp-on' }), h(doc, 'span', { class: n > 1 ? 'tp-on' : null }));
+
     function errorBox() { st.els.err = h(doc, 'p', { class: 'tp-error', role: 'alert', id: 'tp-err' }); return st.els.err; }
 
     function screenInvalid() {
@@ -328,6 +397,7 @@ export function createPage(env) {
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
         st.els.info = infoBox;
         mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card' },
+            steps(1),
             h(doc, 'h2', { tabindex: '-1', text: t('View your statement') }),
             h(doc, 'p', { text: t('Enter your NIC, or your passport / ID number if you have no Sri Lankan NIC. We will text a 6-digit code to the mobile number your lender has on file for you.') }),
             infoBox, form,
@@ -351,6 +421,7 @@ export function createPage(env) {
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
         st.els.info = infoBox;
         mount('Enter your code', [h(doc, 'section', { class: 'tp-card' },
+            steps(2),
             h(doc, 'h2', { tabindex: '-1', text: t('Enter your code') }),
             infoBox,
             h(doc, 'form', { novalidate: true, onsubmit: onVerify }, h(doc, 'label', { for: 'tp-code', text: t('Code from the text message') }), input, errorBox(), verify),
@@ -386,20 +457,69 @@ export function createPage(env) {
         }
     }
 
-    async function onDownload() {
+    /** The PDF for this session: asked for once and kept in memory until the page is wiped or refreshed, so a second press (and a share, which needs a fresh tap) costs nothing. */
+    async function getPdf() {
+        if (st.pdfBlob) return { blob: st.pdfBlob, name: st.pdfName };
+        const res = await api('pdf', { token }, { file: true });
+        if (res.blob) { st.pdfBlob = res.blob; st.pdfName = res.name; }
+        return res;
+    }
+
+    /** Runs a PDF job with its button disabled, and handles the answers every PDF button shares. `use(blob, name)` does the job and returns a message to show. */
+    async function pdfJob(button, label, use) {
         if (st.pdfBusy) return;
         st.pdfBusy = true;
-        const btn = st.els.pdf;
-        if (btn) { btn.disabled = true; btn.textContent = t('Preparing...'); }
+        if (button) { button.disabled = true; button.textContent = t('Preparing...'); }
         showError('');
         showInfo('');
-        const res = await api('pdf', { token }, { file: true });
+        const res = await getPdf();
         st.pdfBusy = false;
         if (st.screen !== 'statement') return;                         // signed out or timed out while it was being made
-        if (btn) { btn.disabled = false; btn.textContent = t('Download PDF'); }
-        if (res.blob) { saveFile(res.blob, res.name); showInfo(t('Your PDF is ready. Check your downloads.')); return; }
+        if (button) { button.disabled = false; button.textContent = label; }
+        if (res.blob) { showInfo(await use(res.blob, res.name)); return; }
         if (res.status === 401) { wipe(); screenNic({ error: COPY.SESSION_ENDED }); return; }
         showError(res.status === 0 ? t(COPY.OFFLINE) : res.status === 200 ? t(COPY.PDF_FAILED) : describeFailure(res.status, res.body, t));
+    }
+
+    const onDownload = () => pdfJob(st.els.pdf, t('Download PDF'), async (blob, name) => { saveFile(blob, name); return t('Your PDF is ready. Check your downloads.'); });
+
+    /** The phone's own share sheet (WhatsApp, e-mail, Drive...) with the PDF attached; where there is none, the file is saved instead. */
+    const onShare = () => pdfJob(st.els.share, t('Share PDF'), async (blob, name) => {
+        const how = shareFile ? await shareFile(blob, name) : 'unsupported';
+        if (how === 'unsupported') { saveFile(blob, name); return t(COPY.SHARE_SAVED); }
+        return how === 'shared' ? t('Shared.') : '';
+    });
+
+    /** Every movement and payment as a spreadsheet file, made here from the statement on the page. */
+    function onCsv() {
+        if (!st.statement) return;
+        showError('');
+        saveFile(new Blob([csvFile(st.statement)], { type: 'text/csv;charset=utf-8' }), `WealthFlow-statement-${String((st.statement && st.statement.asOf) || '').slice(0, 10) || 'latest'}.csv`);
+        showInfo(t(COPY.FILE_READY));
+    }
+
+    /** A reminder for one date, as a calendar file the phone offers to add. */
+    function onCalendar(item) {
+        const text = calendarFile(item, { t, fmtMoney, asOf: st.statement && st.statement.asOf });
+        if (!text) return;
+        showError('');
+        saveFile(new Blob([text], { type: 'text/calendar;charset=utf-8' }), `WealthFlow-${String(item.ref || 'reminder').replace(/[^A-Za-z0-9-]/g, '')}-${item.date}.ics`);
+        showInfo(t(COPY.FILE_READY));
+    }
+
+    /** Asks for the statement again inside the same session (no new text message), for after a payment has been recorded. */
+    async function onRefresh() {
+        if (st.busy) return;
+        const btn = st.els.refresh;
+        st.busy = true;
+        if (btn) { btn.disabled = true; btn.textContent = t('Preparing...'); }
+        const got = await api('statement', { token });
+        st.busy = false;
+        if (st.screen !== 'statement') return;
+        if (got.status === 200 && got.body && got.body.ok) { st.pdfBlob = null; screenStatement(got.body.statement, got.body.expiresAt); showInfo(t(COPY.UPDATED)); return; }
+        if (btn) { btn.disabled = false; btn.textContent = t('Refresh'); }
+        if (got.status === 401) { wipe(); screenNic({ error: COPY.SESSION_ENDED }); return; }
+        showError(got.status === 0 ? t(COPY.OFFLINE) : describeFailure(got.status, got.body, t));
     }
 
     function screenStatement(statement, expiresAt) {
@@ -412,17 +532,20 @@ export function createPage(env) {
         const out = h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-out', text: t('Sign out'), onclick: onSignOut });
         const pdf = h(doc, 'button', { class: 'tp-btn', type: 'button', id: 'tp-pdf', text: t('Download PDF'), onclick: onDownload });
         const print = h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-print', text: t('Print'), onclick: () => printPage() });
-        st.els.pdf = pdf;
+        const share = shareFile ? h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-share', text: t('Share PDF'), onclick: onShare }) : null;
+        const csv = h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-csv', text: t('Download CSV'), onclick: onCsv });
+        const refresh = h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-refresh', text: t('Refresh'), onclick: onRefresh });
+        st.els.pdf = pdf; st.els.share = share; st.els.refresh = refresh;
         st.els.err = h(doc, 'p', { class: 'tp-error', role: 'alert' });
         st.els.info = h(doc, 'p', { class: 'tp-info', role: 'status', id: 'tp-info', hidden: true });
         mount('Your WealthFlow statement', [
             h(doc, 'div', { class: 'tp-head' }, h(doc, 'h2', { tabindex: '-1', text: t('Your statement') }), out),
             h(doc, 'p', { class: 'tp-note', text: t('As at {when}', { when: fmtAsOf(statement && statement.asOf, t) }) }),
             clock,
-            h(doc, 'div', { class: 'tp-actions' }, pdf, print),
+            h(doc, 'div', { class: 'tp-actions' }, pdf, share, csv, print, refresh),
             st.els.err,
             st.els.info,
-            ...statementView(doc, statement, t, { copy: onCopy }),
+            ...statementView(doc, statement, t, { copy: onCopy, calendar: onCalendar, jump: jumpTo }),
             h(doc, 'p', { class: 'tp-foot', text: t('Figures are as recorded by your lender. If something looks wrong, please contact your lender.') }),
         ]);
         const paint = () => {
@@ -508,6 +631,8 @@ export function createPage(env) {
         st.nic = '';
         st.verified = false;
         st.statement = null;
+        st.pdfBlob = null;
+        st.pdfName = '';
         st.codeMessage = '';
         root.replaceChildren(h(doc, 'h1', { class: 'tp-brand', text: 'WealthFlow' }));
         st.els = {};
@@ -573,6 +698,17 @@ function browserEnv(win) {
             win.setTimeout(() => win.URL.revokeObjectURL(url), 60000);
         },
         print() { if (typeof win.print === 'function') win.print(); },
+        // the share sheet, offered only where the browser can share a file (most phones); the person cancelling it is not an error
+        shareFile: win.navigator && typeof win.navigator.share === 'function' && typeof win.navigator.canShare === 'function' && typeof win.File === 'function'
+            ? async (blob, name) => {
+                try {
+                    const file = new win.File([blob], name, { type: 'application/pdf' });
+                    if (!win.navigator.canShare({ files: [file] })) return 'unsupported';
+                    await win.navigator.share({ files: [file], title: 'WealthFlow' });
+                    return 'shared';
+                } catch (e) { return e && e.name === 'AbortError' ? 'cancelled' : 'unsupported'; }
+            }
+            : null,
     };
 }
 

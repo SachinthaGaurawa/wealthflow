@@ -94,12 +94,13 @@ describe('the page', () => {
         }
     });
 
-    it('talks to one endpoint on its own origin and imports only its two own modules', () => {
+    it('talks to one endpoint on its own origin and imports only its own modules', () => {
         const src = code(PAGE);
         expect(src).not.toMatch(/https?:\/\//);
         expect([...src.matchAll(/\bfetchImpl\(\s*([A-Z_]+)/g)].map((m) => m[1])).toEqual(['ENDPOINT']);
         expect(PAGE).toContain("export const ENDPOINT = '/api/tenant-portal';");
-        expect([...PAGE.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])).toEqual(['./wealthflow-nic.js', './tenant-lang.js']);
+        expect([...PAGE.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])).toEqual(['./wealthflow-nic.js', './tenant-lang.js', './tenant-tools.js']);
+        expect([...read('tenant-tools.js').matchAll(/^import /gm)]).toHaveLength(0);         // the tools are pure: they import nothing
         expect([...read('tenant-lang.js').matchAll(/^import /gm)]).toHaveLength(0);          // the words are data: they import nothing
     });
 

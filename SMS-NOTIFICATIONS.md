@@ -197,6 +197,12 @@ same for one lender and one NIC in every message; it only lets the page *ask* fo
    What a person can do on it: see when the next interest is due or when a loan is expected back, see where to pay (the lender's bank
    accounts, with a **Copy** button on the account number), **Download PDF**, **Print**, read it in English or Sinhala (one button; nothing
    is stored), and **Sign out**.
+   Also on the page, all worked out on the person's device from the statement already there (`tenant-tools.js`; nothing new is asked of the
+   server, nothing is written): **Coming up** (a late loan first with "N days overdue", then the next interest, with the days left),
+   **Add to calendar** (an .ics file with an alert the day before), a progress bar on each loan (share repaid) and on each investment with an
+   end date (share of the term gone), **Copy** on every reference code, **Download CSV** (every movement and payment, safe to open in a
+   spreadsheet), **Share PDF** where the phone can share a file (else it saves it), **Refresh** (the same session, no new text) and
+   "Show all N" on a table of more than eight rows (print always has every row).
 4. If the same NIC is also a tenant of another WealthFlow lender who texts with links, that lender's records appear too, but only
    those whose recorded phone is the number this code went to (an NIC is not a secret; the phone is the second proof).
 
@@ -205,7 +211,7 @@ same for one lender and one NIC in every message; it only lets the page *ask* fo
 `POST /api/tenant-portal { action: 'pdf', token }` with the session cookie returns the same statement as an `application/pdf` attachment
 (`WealthFlow-statement-<date>.pdf`: no name in the file name). It is built from the object the page shows, so it holds the same figures
 and nothing more, plus the lender's payment details. It has its own address limit (30 an hour). The writer (`tenant-pdf.mjs`) is
-dependency-free PDF 1.4 with Helvetica, a few kilobytes. **It prints English letters and digits only**: Sinhala, Tamil and other scripts in
+dependency-free PDF 1.4 with Helvetica, a few kilobytes. Its look is the app's own loan statement (logo mark, double navy rule, statement number, details beside status, summary cards, navy-headed banded tables with a total line, legend, boxed notice); it has no signature or date line. **It prints English letters and digits only**: Sinhala, Tamil and other scripts in
 an account name come out as `?`, so enter the payment details in English.
 
 What a stranger can do: nothing they can see. A request for a code gets the same answer whether the link is real, the NIC is

@@ -93,7 +93,7 @@ describe('the statement view', () => {
         const tags = new Set();
         const attrs = [];
         nodes.forEach((n) => n.walk((e) => { tags.add(e.tag); attrs.push(...Object.values(e.attrs)); }));
-        expect([...tags].every((t) => ['div', 'section', 'h3', 'span', 'dl', 'dt', 'dd', 'p', 'table', 'caption', 'thead', 'tbody', 'tr', 'th', 'td'].includes(t))).toBe(true);
+        expect([...tags].every((t) => ['div', 'section', 'h3', 'span', 'dl', 'dt', 'dd', 'p', 'table', 'caption', 'thead', 'tbody', 'tr', 'th', 'td', 'ul', 'li', 'progress'].includes(t))).toBe(true);
         expect(tags.has('img')).toBe(false);
         expect(textOf(nodes)).toContain(BAD);                                         // it is on the page, as characters
     });
@@ -154,15 +154,15 @@ describe('what a person needs next: when, and where to pay', () => {
         expect(text.indexOf('How to pay')).toBeLessThan(text.indexOf('Capital'));
     });
 
-    it('has copy buttons only when the page can copy, one on the number, one on the SWIFT code and one for the lot', () => {
+    it('has copy buttons only when the page can copy: the number, the SWIFT code, the lot, and each reference code', () => {
         expect(buttonsOf(statementView(doc, base))).toHaveLength(0);
         const copied = [];
         const nodes = statementView(doc, base, makeT('en'), { copy: (text, b) => copied.push([text, b.tag]) });
         const buttons = buttonsOf(nodes);
-        expect(buttons).toHaveLength(3);
-        expect(buttons.map((b) => b.attrs['aria-label'])).toEqual(['Copy: Account number', 'Copy: SWIFT / IBAN', 'Copy all details']);
+        expect(buttons).toHaveLength(5);
+        expect(buttons.map((b) => b.attrs['aria-label'])).toEqual(['Copy: Account number', 'Copy: SWIFT / IBAN', 'Copy all details', 'Copy reference: INV-9990B2', 'Copy reference: DEB-96E5C2']);
         buttons.forEach((b) => b.listeners.click());
-        expect(copied.map((c) => c[0])).toEqual(['8001234567', 'CCEYLKLX', 'Bank: Commercial Bank\nAccount name: N. Perera\nAccount number: 8001234567\nBranch: Colombo 03\nSWIFT / IBAN: CCEYLKLX']);
+        expect(copied.map((c) => c[0])).toEqual(['8001234567', 'CCEYLKLX', 'Bank: Commercial Bank\nAccount name: N. Perera\nAccount number: 8001234567\nBranch: Colombo 03\nSWIFT / IBAN: CCEYLKLX', 'INV-9990B2', 'DEB-96E5C2']);
     });
 
     it('has no payment section when the lender gave no account, and names each lender when there are several', () => {
@@ -211,5 +211,64 @@ describe('what a person needs next: when, and where to pay', () => {
         expect(accountText({ bank: 'B', holder: 'H', number: '12345' })).toBe('Bank: B\nAccount name: H\nAccount number: 12345');
         expect(accountText(null)).toBe('Bank: \nAccount name: \nAccount number: ');
         expect(accountText(acct, makeT('si'))).toContain('ගිණුම් අංකය: 8001234567');
+    });
+});
+
+describe('what a person can do with the statement', () => {
+    const acct = { bank: 'Commercial Bank', holder: 'N. Perera', number: '8001234567' };
+    const base = {
+        asOf: '2026-10-05T05:00:00.000Z',
+        groups: [
+            { kind: 'investment', ref: 'INV-9990B2', currency: 'LKR', capital: 500000, ratePct: 24, frequency: 'monthly', interestPerPeriod: 10000, start: '2026-01-05', end: '2027-01-05', nextInterest: { date: '2026-10-12', amount: 10000 }, totalReceived: 10000, payments: [] },
+            { kind: 'loan', ref: 'DEB-96E5C2', currency: 'LKR', lent: 50000, repaid: 20000, outstanding: 30000, status: 'open', due: '2026-10-01', overdueDays: 4, events: [] },
+        ],
+        totals: [{ currency: 'LKR', invested: 500000, interestReceived: 10000, loanOutstanding: 30000 }],
+        lenders: [{ n: 1, accounts: [acct] }], lenderCount: 1, truncated: false,
+    };
+    const textOf = (nodes) => nodes.map((n) => n.textContent).join(' | ');
+    const find = (nodes, pick) => { const out = []; nodes.forEach((n) => n.walk((e) => { if (pick(e)) out.push(e); })); return out; };
+
+    it('lists what is coming up, soonest first, with the days left and how late', () => {
+        const text = textOf(statementView(doc, base));
+        expect(text).toContain('Coming up');
+        expect(text).toContain('Pay your loan1 Oct 2026 · DEB-96E5C2LKR 30,000.004 days overdue');
+        expect(text).toContain('Interest expected12 Oct 2026 · INV-9990B2LKR 10,000.00In 7 days');
+        expect(text.indexOf('4 days overdue')).toBeLessThan(text.indexOf('In 7 days'));
+        const none = structuredClone(base); none.groups[0].nextInterest = null; none.groups[1].due = '';
+        expect(textOf(statementView(doc, none))).not.toContain('Coming up');
+    });
+
+    it('has an add-to-calendar button for each date and a jump to where to pay only when the page can do them', () => {
+        expect(find(statementView(doc, base), (e) => e.tag === 'button')).toHaveLength(0);
+        const added = []; const jumped = [];
+        const nodes = statementView(doc, base, makeT('en'), { calendar: (it) => added.push(it.ref), jump: (id) => jumped.push(id) });
+        const buttons = find(nodes, (e) => e.tag === 'button');
+        expect(buttons.map((b) => b.textContent)).toEqual(['Add to calendar', 'Add to calendar', 'How to pay']);
+        buttons.forEach((b) => b.listeners.click());
+        expect(added).toEqual(['DEB-96E5C2', 'INV-9990B2']);
+        expect(jumped).toEqual(['tp-pay']);
+        expect(find(nodes, (e) => e.attrs.id === 'tp-pay')).toHaveLength(1);
+    });
+
+    it('shows how much of a loan is repaid and how far an investment is through its term, as native progress bars', () => {
+        const bars = find(statementView(doc, base), (e) => e.tag === 'progress');
+        expect(bars.map((b) => [b.attrs.value, b.attrs['aria-label']])).toEqual([['75', 'Term: 75% complete'], ['40', '40% repaid']]);
+        const open = structuredClone(base); open.groups[0].end = ''; open.groups[1].lent = 0;
+        expect(find(statementView(doc, open), (e) => e.tag === 'progress')).toHaveLength(0);
+    });
+
+    it('puts the earlier rows of a long table behind one button, keeping every row in the page', () => {
+        const long = structuredClone(base);
+        long.groups[1].events = Array.from({ length: 12 }, (_, i) => ({ date: `2026-09-${String(i + 1).padStart(2, '0')}`, kind: 'repayment', amount: 100, balance: 30000 - i * 100 }));
+        const nodes = statementView(doc, long);
+        const rows = find(nodes, (e) => e.tag === 'tr' && e.attrs.class === 'tp-early');
+        expect(rows).toHaveLength(4);
+        expect(rows.every((r) => 'hidden' in r.attrs)).toBe(true);
+        expect(find(nodes, (e) => e.tag === 'tr' && !('hidden' in e.attrs)).length).toBe(1 + 8);   // the loan table's header and its 8 latest rows
+        const more = find(nodes, (e) => e.tag === 'button' && /Show all/.test(e.textContent));
+        expect(more.map((b) => b.textContent)).toEqual(['Show all 12']);
+        const short = structuredClone(base);
+        short.groups[1].events = long.groups[1].events.slice(0, 8);
+        expect(find(statementView(doc, short), (e) => e.tag === 'button')).toHaveLength(0);
     });
 });

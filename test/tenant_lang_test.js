@@ -14,7 +14,8 @@ import { MSG } from '../tenant-portal.mjs';
 globalThis.__WF_TENANT_NO_BOOT = true;
 const { COPY } = await import('../tenant-page.js');
 
-const PAGE = readFileSync(new URL('../tenant-page.js', import.meta.url), 'utf8');
+// the page and the tools it calls (tenant-tools.js words the day counts and the calendar reminder)
+const PAGE = readFileSync(new URL('../tenant-page.js', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('../tenant-tools.js', import.meta.url), 'utf8');
 const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
 const unescape = (s) => s.replace(/\\'/g, "'").replace(/\\\\/g, '\\');
 
