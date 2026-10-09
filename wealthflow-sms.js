@@ -494,13 +494,13 @@ export function heldAlerts(rows, status, told = new Set()) {
         if (!key) continue;
         now.add(key); counts[key] = (counts[key] || 0) + 1;
     }
-    if (status && status.lowCredit === true) now.add('low');
+    if (status && status.lowCredit === true && status.units !== null && status.units !== undefined && Number.isFinite(Number(status.units))) now.add('low');
     const toasts = [];
     for (const key of ['credit', 'auth', 'sender', 'config', 'unconfigured', 'low']) {
         if (!now.has(key) || (told instanceof Set && told.has(key))) continue;
         const [text, detail] = HELD_NOTICE[key];
         const n = counts[key];
-        toasts.push({ tone: key === 'low' ? 'info' : 'error', text, detail: (n ? n + (n === 1 ? ' text is' : ' texts are') + ' waiting. ' : '') + detail + (key === 'low' && num(status && status.units) ? ' (' + num(status.units) + ' units left)' : '') });
+        toasts.push({ tone: key === 'low' ? 'info' : 'error', text, detail: (n ? n + (n === 1 ? ' text is' : ' texts are') + ' waiting. ' : '') + detail + (key === 'low' ? ' (' + num(status && status.units) + ' units left)' : '') });
     }
     return { toasts, told: now };
 }
@@ -610,8 +610,12 @@ export function panelHtml({ rows = [], status = null, disabled = false, lastErro
     const lines = [];
     if (disabled) lines.push('SMS notifications are not enabled for this account. Ask the administrator to add your email to SMS_ALLOWED_EMAILS.');
     if (status && status.configured === false) lines.push('The SMS gateway is not connected yet: texts are queued and nothing is lost. Add TEXTLK_API_TOKEN to the deployment settings.');
-    if (status && status.lowCredit) lines.push('SMS credit is running low' + (num(status.units) ? ' (' + num(status.units) + ' units left)' : '') + '. Messages are held, not dropped, when it runs out.');
-    if (status && status.creditPaused === true) lines.push('Late-payment reminders are paused' + (num(status.units) ? ': only ' + num(status.units) + ' units are left' : '') + (num(status.reserve) ? ' (the reserve is ' + num(status.reserve) + ')' : '') + '. Receipts and closing notices still go out, and the reminders follow once credit is topped up.');
+    // The card states only what the last balance reading says, with the figure (0 included) and when it was read. A reminder pause is claimed only
+    // when the reading really is under a reserve that is switched on, never from a flag alone.
+    const known = status && status.units !== null && status.units !== undefined && Number.isFinite(Number(status.units));
+    const asOf = known && num(status.unitsAt) ? ' (read ' + when(num(status.unitsAt)) + ')' : '';
+    if (status && status.lowCredit === true && known) lines.push('SMS credit is running low: ' + num(status.units) + (num(status.units) === 1 ? ' unit' : ' units') + ' left' + asOf + '. Messages are held, not dropped, when it runs out.');
+    if (status && status.creditPaused === true && known && num(status.reserve) > 0 && num(status.units) < num(status.reserve)) lines.push('Late-payment reminders are paused: ' + num(status.units) + ' units are left, under the reserve of ' + num(status.reserve) + '. Receipts and closing notices still go out, and the reminders follow once credit is topped up.');
     for (const i of (status && Array.isArray(status.issues) ? status.issues : []).slice(0, 8)) lines.push(describeIssue(i, nameOf));
     if (lastError) lines.push(lastError);
     const notes = lines.length

@@ -29,7 +29,7 @@
  * left for the next run instead of each waiting out its own deadline, and the response says `authDegraded`. Nothing is sent on a remembered "it was
  * allowed last time", because that would let an account whose access has just been taken away keep spending the balance. Queued texts stay queued.
  *
- * WHEN CREDIT IS SHORT. Under SMS_CREDIT_RESERVE units (20 unless set) the late-payment reminders wait (sms-engine.mjs / sms-guard.mjs); receipts,
+ * WHEN CREDIT IS SHORT. Under SMS_CREDIT_RESERVE units (off unless set) the late-payment reminders wait (sms-engine.mjs / sms-guard.mjs); receipts,
  * closing notices and requested balances still go. With SMS_ALERT_WEBHOOK_URL set the owner is also told, once a day at most, for this and for a
  * sign-in service that has not answered several runs in a row.
  *
@@ -147,7 +147,7 @@ export async function handleSweep(req, res, deps) {
     let units = null; let balanceKind = null;
     if (client.configured) {
         const b = await client.balance();
-        if (b.ok) units = b.units; else balanceKind = b.kind;
+        if (b.ok) { units = b.units; console.info(`[WF-SMS] gateway balance read: units=${units === null ? 'unknown' : units} fields=${JSON.stringify(b.fields || {})}`); } else balanceKind = b.kind;
     }
 
     const allowed = deps.accountAllowed || ((uid) => accountStillAllowed({ admin, uid, env: deps.env, sleep: deps.sleep }));

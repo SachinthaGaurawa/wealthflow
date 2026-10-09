@@ -14,7 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     TextLkClient, KIND, normalizePhone, maskPhone, normalizeSenderId, sameSender, analyzeSms, classifyFailure,
-    redact, retryAfterMs, DEFAULT_BASE, DEFAULT_SENDER, MAX_SEGMENTS,
+    redact, retryAfterMs, DEFAULT_BASE, DEFAULT_SENDER, MAX_SEGMENTS, figureOf, readUnits,
 } from '../textlk.mjs';
 
 const TOKEN = '1234|SuperSecretTokenValue0123456789abcdef';
@@ -308,13 +308,32 @@ describe('balance', () => {
     it('reads the remaining units', async () => {
         const { c, calls } = clientWith(() => reply(200, { status: 'success', data: { remaining_unit: '10', expired_on: '2031-10-03' } }));
         const b = await c.balance();
-        expect(b).toEqual({ ok: true, units: 10, expiresOn: '2031-10-03' });
+        expect(b).toEqual({ ok: true, units: 10, fields: { remaining_unit: 10 }, expiresOn: '2031-10-03' });
         expect(calls[0].url).toBe(DEFAULT_BASE + 'balance');
         expect(calls[0].init.method).toBe('GET');
     });
     it('classifies a refused token', async () => {
         const { c } = clientWith(() => reply(401, { status: 'error', message: 'Unauthenticated.' }));
         expect(await c.balance()).toMatchObject({ ok: false, kind: KIND.AUTH });
+    });
+    it('reads a figure written as text, with a currency or thousands separators', () => {
+        expect(figureOf('1,250.50')).toBe(1250.5);
+        expect(figureOf('LKR 1,250.50')).toBe(1250.5);
+        expect(figureOf(' 7 ')).toBe(7);
+        expect(figureOf(42)).toBe(42);
+    });
+    it('does not turn "nothing" into 0 units: an empty, missing or wordy field is unknown, never "out of credit"', async () => {
+        for (const v of ['', ' ', null, undefined, 'n/a', {}, [], true]) expect(figureOf(v)).toBeNull();
+        const { c } = clientWith(() => reply(200, { status: 'success', data: { remaining_unit: '', balance: null } }));
+        expect(await c.balance()).toMatchObject({ ok: true, units: null });
+    });
+    it('a real zero is a zero', async () => {
+        const { c } = clientWith(() => reply(200, { status: 'success', data: { remaining_unit: 0 } }));
+        expect(await c.balance()).toMatchObject({ ok: true, units: 0 });
+    });
+    it('fields that disagree make the balance unknown (never "credit has run out" on a guess), and the field names are reported', () => {
+        expect(readUnits({ remaining_unit: 0, balance: '250.00' })).toEqual({ units: null, fields: { remaining_unit: 0, balance: 250 }, conflict: true });
+        expect(readUnits({ remaining_unit: '10', sms_unit: 10 })).toMatchObject({ units: 10 });
     });
 });
 

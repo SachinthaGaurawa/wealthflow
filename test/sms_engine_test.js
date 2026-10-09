@@ -593,6 +593,19 @@ describe('the owner sees it', () => {
         expect(mirrorDocs(fs).find((m) => m.id === '_status')).toMatchObject({ units: 120, lowCredit: false });
     });
 
+    it('every run leaves a current balance on the card: a stale "paused under reserve 20" is replaced, and an unreadable answer clears it instead of keeping a claim nothing confirms', async () => {
+        const { fs, db } = makeDb();
+        const withBalance = (answer) => ({ ...gateway(), async balance() { return answer; } });
+        await run(db, books(), gateway(), { deps: { random: () => 0.5, units: 3 } });                                   // an older sweep: 3 units, paused under a reserve of 20
+        expect(mirrorDocs(fs).find((m) => m.id === '_status')).toMatchObject({ units: 3, lowCredit: true });
+        await run(db, books(), withBalance({ ok: true, units: 140 }), { now: NOW + 60e3 });                              // the owner's next save reads the gateway itself
+        expect(mirrorDocs(fs).find((m) => m.id === '_status')).toMatchObject({ units: 140, lowCredit: false, creditPaused: false });
+        await run(db, books(), withBalance({ ok: true, units: null }), { now: NOW + 120e3 });                            // read, but could not be made sense of
+        expect(mirrorDocs(fs).find((m) => m.id === '_status')).toMatchObject({ units: null, lowCredit: false, creditPaused: false });
+        await run(db, books(), withBalance({ ok: false, kind: 'network' }), { now: NOW + 180e3 });                       // never reached the gateway: the last finding stays
+        expect(mirrorDocs(fs).find((m) => m.id === '_status')).toMatchObject({ units: null, lowCredit: false });
+    });
+
     it('a failure to mirror never fails the delivery', async () => {
         const { fs, db } = makeDb(); const gw = gateway();
         const realCollection = db.collection;

@@ -288,12 +288,43 @@ export class TextLkClient {
         const status = s(json && json.status).trim().toLowerCase();
         if (status === 'success' && json && json.data) {
             const d = json.data;
-            const units = Number(d.remaining_unit ?? d.remaining ?? d.balance ?? d.sms_balance);
-            return { ok: true, units: Number.isFinite(units) ? units : null, expiresOn: s(d.expired_on || d.expires_on || '') || null };
+            const { units, fields } = readUnits(d);
+            return { ok: true, units, fields, expiresOn: s(d.expired_on || d.expires_on || '') || null };
         }
         const kind = classifyFailure(response.status, s(json && json.message) || text);
         return this._fail(kind === KIND.REJECTED && response.status === 404 ? KIND.UNKNOWN : kind, s(json && json.message) || `HTTP ${response.status}`, { httpStatus: response.status });
     }
+}
+
+/** The fields the gateway has used for "what is left on the account". The shape of its answer was never verified against a live account, so every one is read. */
+const BALANCE_FIELDS = ['remaining_unit', 'remaining_units', 'remaining', 'sms_unit', 'sms_units', 'sms_balance', 'balance', 'credit', 'units'];
+
+/**
+ * A figure out of what the gateway wrote: 10, "10", "1,250.50", "LKR 1,250.50". Nothing, "" or text without a number is NOT a figure
+ * (Number("") is 0, and a balance of "0" read from an empty field told the owner their credit had run out).
+ */
+export function figureOf(v) {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    if (typeof v !== 'string') return null;
+    const m = v.replace(/ /g, ' ').match(/-?\d[\d,]*(?:\.\d+)?|-?\.\d+/);
+    if (!m) return null;
+    const n = Number(m[0].replace(/,/g, ''));
+    return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Units left from the balance answer's `data`. Every known field that holds a figure is read; when they disagree (one says 0, another 120) the
+ * answer is "unknown" (null), because the system must never tell an owner who has credit that it has run out, and unknown never stops a text.
+ * `fields` names what was found, for the logs and the owner's health check.
+ */
+export function readUnits(data) {
+    const d = data && typeof data === 'object' ? data : {};
+    const fields = {};
+    for (const k of BALANCE_FIELDS) { const n = figureOf(d[k]); if (n !== null) fields[k] = n; }
+    const values = [...new Set(Object.values(fields))];
+    if (values.length === 1) return { units: values[0], fields };
+    if (values.length > 1) return { units: null, fields, conflict: true };
+    return { units: null, fields };
 }
 
 export default { TextLkClient, KIND, RETRYABLE, normalizePhone, maskPhone, normalizeSenderId, sameSender, analyzeSms, classifyFailure, redact, retryAfterMs, DEFAULT_BASE, DEFAULT_SENDER, MAX_SEGMENTS };

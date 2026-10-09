@@ -164,7 +164,7 @@ describe('under the reserve, through the engine', () => {
         const plain = makeDb(); const gw2 = gateway({ units: 3 });
         const u = books(); u.debtors[0][FIELDS.REMIND] = false;           // nothing the reserve could hold back
         await sweepUser({ db: plain.db, uid: UID, user: u, client: gw2, now: NOW, env, deps: { random: () => 0.5 } });
-        expect(gw2.calls.balance).toBe(0);
+        expect(gw2.calls.balance).toBe(1);                               // no reminder in play, so nothing was held back; the one free call at the end only keeps the owner's status card current
     });
 
     it('a balance the sweep already read is not read again', async () => {

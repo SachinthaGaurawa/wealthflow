@@ -457,10 +457,14 @@ export async function checkDelivery({ db, uid, client, now }) {
 }
 
 /** Write the owner's status card: what is switched on but cannot work, whether the gateway is configured, whether credit is low. */
-export async function writeStatus({ db, uid, issues, configured, units = null, now, reserve = 0 }) {
+export async function writeStatus({ db, uid, issues, configured, units = null, now, reserve = 0, balanceRead = false }) {
     // A sweep that did not ask the gateway for the balance (the page's nudge after a save) knows nothing about it, and must not erase what the
     // last one that did (the daily sweep) found: writing `units: null` here made the low-credit warning vanish at the owner's next save.
-    const credit = units === null || units === undefined ? {} : { units, lowCredit: units <= LOW_CREDIT_UNITS, unitsAt: now, reserve, creditPaused: creditPaused(units, reserve) };
+    // A balance that WAS read but could not be made sense of (units null) clears the old warning: a card saying "credit is low, reminders paused"
+    // that nothing can confirm is worse than none. Only a run that never reached the gateway leaves the last finding as it was.
+    const known = units !== null && units !== undefined;
+    const credit = known ? { units, lowCredit: units <= LOW_CREDIT_UNITS, unitsAt: now, reserve, creditPaused: creditPaused(units, reserve) }
+        : balanceRead ? { units: null, lowCredit: false, unitsAt: now, reserve, creditPaused: false } : {};
     await mirror(db, uid, '_status', { kind: 'status', configured: !!configured, issues: issues.slice(0, 50), ...credit }, now);
 }
 
@@ -517,7 +521,13 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
         });
     }
     try { summary.delivery = await checkDelivery({ db, uid, client, now }); } catch (e) { console.warn('[WF-SMS] delivery check failed:', s(e && e.message).slice(0, 120)); }
-    await writeStatus({ db, uid, issues, configured: client.configured, units, now, reserve });
+    // Every run leaves a balance that is current, not the one the last daily sweep saw (a card still saying "reserve 20" after the reserve was
+    // switched off was the owner's "this is false"). Free call, only when this run did not already have one.
+    let balanceRead = creditAsked;
+    if (units === null && client.configured && typeof client.balance === 'function') {
+        try { const b = await client.balance(); if (b && b.ok) { balanceRead = true; units = Number.isFinite(Number(b.units)) && b.units !== null ? Number(b.units) : null; } } catch (_) { /* unknown: the last finding stays */ }
+    }
+    await writeStatus({ db, uid, issues, configured: client.configured, units, now, reserve, balanceRead });
     return summary;
 }
 
