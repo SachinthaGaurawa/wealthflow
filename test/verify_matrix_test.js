@@ -375,6 +375,14 @@ describe('the bills side — insurance premiums and the rest', () => {
         expect(rows[0].oneTime).toBe(true);
     });
 
+    it('asks again about a reopened one-time payment that was earlier answered Paid in the queue', () => {
+        const base = { id: 'sub1', cycle: 'once', dueDate: '2026-07-31' };
+        const billPaid = { [billKey('sub1', '2026-07')]: { at: 1 } };
+        expect(pendingOutflows({ billPaid, subscriptions: [sub({ ...base, reopened: false })] }, AT('2026-09-10'), { lookbackMonths: 6 })).toEqual([]);
+        const rows = pendingOutflows({ billPaid, subscriptions: [sub({ ...base, reopened: true })] }, AT('2026-09-10'), { lookbackMonths: 6 });
+        expect(rows.map((r) => r.dueISO)).toEqual(['2026-07-31']);
+    });
+
     it('anchors a quarterly bill to the month it was created on the owner\'s own clock (Sri Lanka is UTC+5:30)', () => {
         const was = process.env.TZ;
         process.env.TZ = 'Asia/Colombo';

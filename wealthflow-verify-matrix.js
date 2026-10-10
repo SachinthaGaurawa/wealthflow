@@ -304,7 +304,7 @@ export function pendingOutflows(appData, asOf, opts = {}) {
             if (!oneTime && created && due < created) continue;
             const mk = monthKeyOf(due);
             const key = billKey(sub.id, mk);
-            if (paid[key]) continue;
+            if (paid[key] && !(oneTime && sub.reopened === true)) continue;   // reopening a one-time bill outranks an earlier queue answer
             /* An amount recorded for that month IS the answer. The per-month
              * override editor already writes one, and asking again about a
              * month the owner has typed a figure into would be the app failing
