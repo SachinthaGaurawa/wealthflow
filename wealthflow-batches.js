@@ -17,7 +17,12 @@
  *  so they are recorded as explicit ops { loanId, month, prev } and undo either
  *  removes the added entry or restores the exact one it replaced.
  *
- *  window.WFBatch = { begin, tag, record, recordSub, recordLoan, commit, list, undo, _key }
+ *  A statement row that SETTLES a cheque the owner already tracks (cleared it, or
+ *  marked it bounced) changes an existing record rather than creating one. That is
+ *  an op too — { id, prev, status } — and undo puts the cheque back exactly as it
+ *  was, unless the owner has changed it since (then it is left alone).
+ *
+ *  window.WFBatch = { begin, tag, record, recordSub, recordLoan, recordCheque, commit, list, undo, _key }
  */
 (function () {
     'use strict';
@@ -45,6 +50,7 @@
             counts: counts,
             ids: ids,
             loans: [],   // [{ loanId, month, prev }]  — loan instalments this batch wrote
+            cheques: [], // [{ id, prev, status }]    — tracked cheques this batch cleared / bounced (prev = the record as it was)
             subs: []     // [{ subId, paymentDate, amount, createdSub: bool }]
         };
     }
@@ -66,6 +72,12 @@
         if (!batch.loans) batch.loans = [];
         batch.loans.push({ loanId: info.loanId, month: info.month, prev: info.prev || null });
     }
+    // Note a tracked cheque this batch settled (cleared / bounced) so undo can put it back as it was.
+    function recordCheque(batch, info) {
+        if (!batch || !info || !info.id || !info.prev) return;
+        if (!batch.cheques) batch.cheques = [];
+        batch.cheques.push({ id: info.id, prev: info.prev, status: info.status || '' });
+    }
     // Note a subscription payment this batch made (for precise undo).
     function recordSub(batch, info) {
         if (!batch || !info) return;
@@ -77,6 +89,7 @@
         var t = (batch.counts && batch.counts.subscription) || 0;
         TABS.forEach(function (tab) { t += (batch.counts && batch.counts[tab]) || 0; });
         t += (batch.loans || []).length;
+        t += (batch.cheques || []).length;
         return t;
     }
     // Persist the batch (only if it actually did something).
@@ -107,6 +120,25 @@
             changed = true;
         });
         if (changed) db.set('loans', loans);
+    }
+
+    function _undoCheques(batch, removed) {
+        var db = _db(); if (!db) return;
+        var ops = batch.cheques || [];
+        if (!ops.length) return;
+        var rows = db.get('cheques') || [];
+        var changed = false;
+        // newest op first: a cheque cleared and then bounced by the same import returns to its first state
+        ops.slice().reverse().forEach(function (op) {
+            var i = rows.findIndex(function (c) { return c && c.id === op.id; });
+            if (i < 0) return;
+            // only a cheque still in the state THIS batch left it in — one the owner has edited or settled since is not touched
+            if (op.status && rows[i].status !== op.status) return;
+            rows[i] = op.prev;
+            removed.chequesRestored = (removed.chequesRestored || 0) + 1;
+            changed = true;
+        });
+        if (changed) db.set('cheques', rows);
     }
 
     function _undoSubs(batch) {
@@ -199,6 +231,7 @@
         });
 
         _undoLoans(batch, removed);
+        _undoCheques(batch, removed);
         _undoSubs(batch);
         removed.subscription = (batch.subs || []).length;
 
@@ -210,6 +243,6 @@
         return { label: batch.label, removed: removed };
     }
 
-    window.WFBatch = { begin: begin, tag: tag, record: record, recordSub: recordSub, recordLoan: recordLoan, commit: commit, list: list, undo: undo, _key: KEY, MAX: MAX };
+    window.WFBatch = { begin: begin, tag: tag, record: record, recordSub: recordSub, recordLoan: recordLoan, recordCheque: recordCheque, commit: commit, list: list, undo: undo, _key: KEY, MAX: MAX };
     try { console.log('[WFBatch] @info@ statement import-batch + full undo ready (v7.49.0 — subscription headline restore on undo)'); } catch (_) {}
 })();

@@ -7,7 +7,10 @@ import { createFirestore } from './helpers/fake-firestore.js';
 import { runStatementSync } from '../statement-sync.js';
 import { settleStatement } from '../statement-ledger.mjs';
 import { incomeIn } from '../wealthflow-reactive.js';
-import { manualTwin, matchSubscriptionForDebit, subscriptionCountedIn, matchChequeForDebit, cardSettlementDebit } from '../statement-links.mjs';
+import { manualTwin, matchSubscriptionForDebit, subscriptionCountedIn, cardSettlementDebit } from '../statement-links.mjs';
+import { readCheque, matchTracked } from '../wealthflow-cheques.js';
+// the cheque matcher moved to wealthflow-cheques.js (by number first, then amount and days); this asks it what the old matchChequeForDebit was asked
+const matchChequeForDebit = (r, cheques) => { const read = readCheque({ description: r.description, direction: 'debit', amount: r.amount }); const hit = read.isCheque ? matchTracked(read, { date: r.date, amount: r.amount }, cheques) : null; return hit && hit.status === 'matched' && !hit.already ? hit.cheque : null; };
 
 // One payment, one count. A statement row is the money that really moved; the books may already hold it under another name. These tests run
 // the real worker over a real statement and read the monthly total back through the dashboard's own getMonthlyData, against ground truth.
@@ -45,7 +48,7 @@ describe('the matchers', () => {
         expect(matchSubscriptionForDebit(row('AMAZON PRIME', 12000, '2026-03-09'), [yearly])).toBeNull();               // the totals would not count it in March, so it is not hidden there
         expect(subscriptionCountedIn(netflix, '2025-12')).toBe(false);
     });
-    it('a cheque: the number in the narration, or the same amount near its date; never a received or bounced one', () => {
+    it('a cheque: the number in the narration, or the same amount near its date; never a received one', () => {
         const cheque = { id: 'C1', no: '000123', type: 'issued', amount: 25000, issue: '2026-03-10', release: '2026-03-10', status: 'pending' };
         expect(matchChequeForDebit(row('CHEQUE 000123', 25000, '2026-03-14'), [cheque]).id).toBe('C1');
         expect(matchChequeForDebit(row('CHQ NO 123 PAID', 25000, '2026-03-14'), [cheque]).id).toBe('C1');
@@ -53,7 +56,8 @@ describe('the matchers', () => {
         expect(matchChequeForDebit(row('CHEQUE CLEARING', 25000, '2026-04-30'), [cheque])).toBeNull();
         expect(matchChequeForDebit(row('KEELLS', 25000, '2026-03-14'), [cheque])).toBeNull();
         expect(matchChequeForDebit(row('CHEQUE 000123', 25000), [{ ...cheque, type: 'received' }])).toBeNull();
-        expect(matchChequeForDebit(row('CHEQUE 000123', 25000), [{ ...cheque, status: 'bounced' }])).toBeNull();
+        // a cheque marked bounced that the bank then paid IS paid: matched (the tracker marks it cleared again), not skipped
+        expect(matchChequeForDebit(row('CHEQUE 000123', 25000, '2026-03-14'), [{ ...cheque, status: 'bounced' }]).id).toBe('C1');
     });
     it('the bank paying a card: settlement wording AND a card the owner tracks (its last four digits, or its bank\'s name) in the narration', () => {
         const tracked = { cardRegistry: { 4512: { bank: 'HNB', type: 'credit_card' } }, cards: [{ card_last4: '0276', bank: 'American Express (AMEX)' }] };

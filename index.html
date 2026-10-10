@@ -529,6 +529,9 @@
     <!-- WHOSE MONEY A BANK ROW IS. "Cash advance cr 376657******0276" is money drawn on the owner's own AMEX, not income; the email worker and this page ask the same rule (the Cards & Accounts registry decides which numbers are the
          owner's cards). Pure; ESM; window.WFOwnMoney. -->
     <script type="module" src="wealthflow-own-money.js"></script>
+    <!-- WHAT A CHEQUE ROW ON A STATEMENT IS, AND WHICH TRACKED CHEQUE IT SETTLES. "CHEQUE DEPOSIT 285943" is a cheque, money in, number 285943; "CHQ RTN 285943" is that cheque coming back. The upload page and the
+         email worker read cheque rows with this one rule, so a row is not one thing here and another by email. Pure; ESM; window.WFCheques. -->
+    <script type="module" src="wealthflow-cheques.js"></script>
     <!-- WHICH BANK ISSUED A STATEMENT, READ FROM THE STATEMENT. The manual upload used to stop and ask for the bank (fifteen buttons).
          It is weighed from the statement's own words, the PDF's properties, the file name, an AI reading of a scanned page, the owner's cards and the
          mail the email sync already filed — and left unlabelled, not guessed, when none of them settles it. Pure; ESM; window.WFBankDetect. -->
@@ -22701,7 +22704,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (!no || !party || !bank || !amount || !issue || !release) { notify('Please fill required fields', 'error'); return; }
             const rec = { id: editMode || uid(), no, party, bank, type: $('chq_type').value, amount, issue, release, notes: $('chq_notes').value, status: 'pending' };
             const arr = DB.get('cheques');
-            if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) arr[i] = rec; } else arr.push(rec);
+            /* Editing a cheque used to start it again as "pending" and drop everything else the record held — a cheque the bank statement had cleared went back to pending, and the statement it came from was
+             * forgotten. An edit changes what the form shows; the state, the clearing date and where it came from stay. */
+            if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) { const old = arr[i] || {}; arr[i] = { ...old, ...rec, status: old.status || 'pending' }; } } else arr.push(rec);
             DB.set('cheques', arr);
             closeModal('mdCheque'); clearChequeForm(); renderCheques(); updateChequeBadge();
             notify('Cheque added!');
@@ -22729,13 +22734,13 @@ table.amort tbody tr { page-break-inside: avoid; }
         function markChequeCleared(id) {
             showConfirm('@checkCircle@', 'Mark Cheque Cleared?', 'Confirm this cheque has been cleared/honoured.', 'btn-success', '@checkCircle@ Mark Cleared', () => {
                 const arr = DB.get('cheques'); const i = arr.findIndex(x => x.id === id);
-                if (i > -1) { arr[i].status = 'cleared'; DB.set('cheques', arr); renderCheques(); updateChequeBadge(); notify('Cheque marked cleared!'); }
+                if (i > -1) { arr[i].status = 'cleared'; arr[i].clearedDate = today(); DB.set('cheques', arr); renderCheques(); updateChequeBadge(); notify('Cheque marked cleared!'); }
             });
         }
         function markChequeBounced(id) {
             showConfirm('@alert@', 'Mark as Bounced?', 'Mark this cheque as returned/bounced?', 'btn-danger', '@alert@ Mark Bounced', () => {
                 const arr = DB.get('cheques'); const i = arr.findIndex(x => x.id === id);
-                if (i > -1) { arr[i].status = 'bounced'; DB.set('cheques', arr); renderCheques(); updateChequeBadge(); notify('Cheque marked as bounced', 'warn'); }
+                if (i > -1) { arr[i].status = 'bounced'; arr[i].bouncedDate = today(); DB.set('cheques', arr); renderCheques(); updateChequeBadge(); notify('Cheque marked as bounced', 'warn'); }
             });
         }
         function updateChequeBadge() {
@@ -22774,9 +22779,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 else if (daysToRelease <= 3) { cdCls = 'cd-warn'; cdTxt = daysToRelease + ' days'; }
                 const statusMap = { pending: '<span class="badge bg-a">Pending</span>', cleared: '<span class="badge bg-g">Cleared</span>', bounced: '<span class="badge bg-r">Bounced</span>' };
                 return (item === _cap.firstDone ? _cap.a.row + _wfDoneRow(_cap.doneCount, 'cheques', 10) : '') + `<tr class="${item.status !== 'pending' ? 'done-row' : ''}">
-            <td class="td-mono">${_wfEsc(item.no)}</td>
+            <td class="td-mono">${_wfEsc(item.no || '—')}</td>
             <td style="font-weight:600;">${_wfEsc(item.party)}</td>
-            <td><span class="badge bg-b">${_wfEsc(item.bank)}</span></td>
+            <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
             <td class="td-a">${fmt(item.amount)}</td>
             <td class="td-m">${item.issue}</td>
             <td class="td-m">${item.release}</td>
@@ -28396,14 +28401,19 @@ table.amort tbody tr { page-break-inside: avoid; }
             // marked cleared/bounced. Outgoing cheques (party paid) only —
             // received cheques are income, not expenses.
             let cheTotal = 0, cheItems = [];
+            /* a cleared cheque whose payment the owner's own expense entry already counts (`countedBy`, set when the statement shows both) tracks the payment and does not add it a second time —
+             * unless that entry has since been deleted, when the cheque carries the money again */
+            const _chqCounted = new Set((DB.get('expenses') || []).map(e => e && e.id).filter(Boolean));
             DB.get('cheques').forEach(c => {
                 if (!c || !c.issue) return;
                 if (c.type === 'received') return;       // incoming → not an expense
+                if (c.countedBy && _chqCounted.has(c.countedBy)) return;
                 if (c.status === 'cleared' || c.status === 'bounced') {
                     // Only count cleared cheques in their cleared month.
                     if (c.status !== 'cleared') return;
                 } else return;     // a cheque that has not cleared has not been paid
-                const releaseDate = new Date((c.release || c.issue) + 'T00:00:00');
+                // the month the money left: the day the bank cleared it when that is known (a statement row), else the release date
+                const releaseDate = new Date((c.clearedDate || c.release || c.issue) + 'T00:00:00');
                 if (releaseDate.getFullYear() === year && releaseDate.getMonth() === month) {
                     cheTotal += c.amount || 0;
                     cheItems.push({ name: c.party + ' · ' + (c.no || ''), amount: c.amount, cat: 'Cheques' });
@@ -30124,7 +30134,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         function undoBatch(batchId) {
             const b = (window.WFBatch ? WFBatch.list() : []).find(x => x.id === batchId);
             if (!b) { notify('That import is no longer available', 'warn'); return; }
-            const c = b.counts || {}; const total = (c.cconetime || 0) + (c.expenses || 0) + (c.incomeRecv || 0) + (c.ccPayments || 0) + (c.cheques || 0) + (c.subscription || 0) + ((b.loans || []).length);
+            const c = b.counts || {}; const total = (c.cconetime || 0) + (c.expenses || 0) + (c.incomeRecv || 0) + (c.ccPayments || 0) + (c.cheques || 0) + (c.subscription || 0) + ((b.loans || []).length) + ((b.cheques || []).length);
             showConfirm('@trash@', 'Undo this statement import?', 'This removes all ' + total + ' entr' + (total === 1 ? 'y' : 'ies') + ' this import added — across Expenses, Income, CC One-Time, Card Payments, Cheques, Loans and Subscriptions — and recalculates your dashboard. This cannot be redone.', 'btn-danger', 'Undo import', () => {
                 // Undoing an import legitimately removes every row it added, which on a
                 // year's statement is hundreds. Say so, or _wfStampAndTomb's bulk guard
@@ -31554,14 +31564,14 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             // 3. Cheque release reminders
             if (s.notifCheque !== false) {
-                DB.get('cheques').filter(c => c.status !== 'cleared').forEach(c => {
+                DB.get('cheques').filter(c => c.status === 'pending').forEach(c => {
                     const dl = dLeft(c.release);
                     if ([3, 1].includes(dl)) {
                         const k = 'chq:' + c.id + ':' + dl;
                         if (!seen.ids.includes(k)) {
                             sendOSNotification(
                                 '@fileText@ Cheque Release Reminder',
-                                `${userName}, cheque #${c.number} for ${fmt(c.amount)} clears in ${dl} day${dl === 1 ? '' : 's'}. Ensure funds are available.`,
+                                `${userName}, cheque #${String(c.no || '').trim()} for ${fmt(c.amount)} clears in ${dl} day${dl === 1 ? '' : 's'}. Ensure funds are available.`,
                                 'wf-chq-' + c.id
                             );
                             seen.ids.push(k);
@@ -35840,6 +35850,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     }
                     t._chequeType = routed.chequeType || '';
                     t._chequeNo = routed.chequeNo || '';
+                    t._chequeEvent = routed.chequeEvent || '';
                     // ── v7.59.0 — Sri Lanka Merchant Intelligence (window.WFMerchants):
                     //    authoritative merchant->category->tab refinement — a mobile bill ->
                     //    Telecom (Subscriptions), an insurer -> Insurance (Subscriptions), a
@@ -36365,7 +36376,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const incRecvArr = DB.get('incomeRecv');
                 const loanArr = DB.get('loans') || [];
                 const chequeArr = DB.get('cheques') || [];
-                let cc = 0, ccPay = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0, dup = 0, loanCnt = 0, loanRepl = 0, chq = 0;
+                let cc = 0, ccPay = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0, dup = 0, loanCnt = 0, loanRepl = 0, chq = 0, chqNew = 0, chqCleared = 0, chqBounced = 0;
+                const chqReview = [];     // cheque rows that were settled but deserve a second look (a statement amount that differs, a wording that disagrees, two cheques that fit)
                 let _loansDirty = false;
                 let _chequesDirty = false;
                 // A statement row dated in the past is already settled → auto-tick it.
@@ -36519,18 +36531,63 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             loanCnt++; _loansDirty = true;
                         } else { skipped++; }
                     } else if (dest === 'cheque') {
-                        // v7.30.0 — file a statement cheque into the Cheque tab. received = money IN
-                        // (deposit/inward/credit), issued = money OUT (payment/outward/debit). It is
-                        // already on the statement, so it has CLEARED. De-dupe by cheque number.
+                        /* The Cheque Tracker is SETTLED by the statement, not just added to (wealthflow-cheques.js — the rule the email worker shares):
+                         *   a cheque you issued, paid out      → the tracked cheque is marked CLEARED (or a cleared one is added); the cheque is what counts the money, so no expense row is added
+                         *   a cheque you deposited, credited   → the tracked cheque is marked CLEARED (or one is added) and the credit is INCOME, unless the same deposit is already in Income
+                         *   a deposited cheque RETURNED        → the tracked cheque is marked BOUNCED and the debit is an expense (the cash left again)
+                         *   an issued cheque RETURNED          → the tracked cheque is marked BOUNCED (a bounced cheque is not counted as paid)
+                         * Every statement money row is therefore counted exactly once, and a cheque already in the tracker is matched by its NUMBER (leading zeros ignored) — it used to be skipped as
+                         * a duplicate, so it stayed "pending" for ever, and the deposit never reached Income at all. */
                         const _t = t || {};
-                        const _no = String(_t._chequeNo || '').trim();
-                        const _seen = chequeArr.some(c => (_no && String(c.no || '').trim() === _no) || (c.issue === date && Math.abs((c.amount || 0) - amount) < 0.01 && _nz(c.party) === _nz(desc)));
-                        if (_seen) { dup++; return; }
-                        const _ctype = (_t._chequeType === 'issued' || _t._chequeType === 'received') ? _t._chequeType : (String(_t.direction || '').toLowerCase() === 'debit' ? 'issued' : 'received');
-                        const _crec = { id: uid(), no: _no || ('IMP-' + String(Date.now()).slice(-6)), party: desc.slice(0, 60) || 'Statement import', bank: bank || '', type: _ctype, amount, issue: date, release: date, notes: _noteFor(date, desc, amount) || ('Auto-imported from ' + (bank || 'bank') + ' statement'), status: 'cleared', source: 'statement', createdAt: new Date().toISOString() };
-                        if (_batch) { try { WFBatch.tag(_batch, _crec); WFBatch.record(_batch, 'cheques', _crec.id); } catch (_) {} }
-                        chequeArr.push(_crec);
-                        chq++; _chequesDirty = true;
+                        const _W = window.WFCheques;
+                        const _bk = _bankShown(_source.bank || bank || '') || '';
+                        const _res = _W ? _W.settleCheque({ description: desc, direction: _t.direction, amount, date, bank: _bk, key: _source.statementKey, rowNo: _source.statementRow, nth: _t._nth, claim: _source.uploadClaim || '', batch: _batch ? _batch.id : '' },
+                            chequeArr, { id: uid(), now: new Date().toISOString(), source: _source, note: _noteFor(date, desc, amount), force: true }) : null;
+                        let _moneyFiled = false;
+                        if (!_res || _res.action === 'none') {
+                            // the module did not load, or the row has no money direction: never lose it — file a cleared cheque by the row's own flag, as before
+                            const _no = String(_t._chequeNo || '').replace(/\D+/g, '');
+                            const _sameNo = (a, b) => a && b && a.replace(/^0+/, '') === b.replace(/^0+/, '');
+                            if (_no && chequeArr.some(c => _sameNo(String(c.no || '').replace(/\D+/g, ''), _no))) { dup++; return; }
+                            const _ctype = (_t._chequeType === 'issued' || _t._chequeType === 'received') ? _t._chequeType : (String(_t.direction || '').toLowerCase() === 'debit' ? 'issued' : 'received');
+                            const _crec = { id: uid(), no: _no, party: desc.slice(0, 60) || 'Statement import', bank: _bk, type: _ctype, amount, issue: date, release: date, notes: _noteFor(date, desc, amount) || ('Auto-imported from ' + (_bk || 'bank') + ' statement'), status: 'cleared', clearedDate: date, source: 'statement', ..._source, createdAt: new Date().toISOString() };
+                            if (_batch) { try { WFBatch.tag(_batch, _crec); WFBatch.record(_batch, 'cheques', _crec.id); } catch (_) {} }
+                            chequeArr.push(_crec);
+                            chq++; chqNew++; _chequesDirty = true;
+                            return;
+                        }
+                        if (_res.action === 'clear' || _res.action === 'bounce') {
+                            const _c = _res.cheque, _prev = JSON.parse(JSON.stringify(_c));
+                            Object.assign(_c, _res.patch);
+                            if (_batch && WFBatch.recordCheque) { try { WFBatch.recordCheque(_batch, { id: _c.id, prev: _prev, status: _c.status }); } catch (_) {} }
+                            if (_res.action === 'bounce') chqBounced++; else chqCleared++;
+                            chq++; _chequesDirty = true; _moneyFiled = true;
+                        } else if (_res.action === 'create') {
+                            const _crec = _res.record;
+                            if (_batch) { try { WFBatch.tag(_batch, _crec); WFBatch.record(_batch, 'cheques', _crec.id); } catch (_) {} }
+                            chequeArr.push(_crec);
+                            if (_crec.status === 'bounced') chqBounced++; else chqNew++;
+                            chq++; _chequesDirty = true; _moneyFiled = true;
+                        }
+                        if (_res.review && _res.review.length) chqReview.push(desc.slice(0, 40) + ' — ' + _res.review.join('; '));
+                        if (_res.filesIncome) {
+                            // the deposit is income — unless an earlier upload already filed it, or it was typed into Income by hand (same amount, within a week, naming the cheque or its payer)
+                            const _mine = _W.incomeCounted({ description: desc, amount, date }, _res.cheque || _res.record, incRecvArr);
+                            if (!_dupIn(incRecvArr, date, amount, desc, 'amount', _source) && !_mine) {
+                                const _irec = { id: uid(), name: desc, type: 'Other', ..._source, amount, month, date, received: past, source: 'statement', notes: _noteFor(date, desc, amount), createdAt: new Date().toISOString() };
+                                if (_batch) { WFBatch.tag(_batch, _irec); WFBatch.record(_batch, 'incomeRecv', _irec.id); }
+                                incRecvArr.push(_irec);
+                                inc++; _moneyFiled = true;
+                            } else if (_mine) { chqReview.push(desc.slice(0, 40) + ' — already in Income as "' + String(_mine.name || '').slice(0, 30) + '" — not added twice'); }
+                        } else if (_res.filesExpense) {
+                            if (!_dupIn(expArr, date, amount, desc, 'amount', _source)) {
+                                const _erec = { id: uid(), desc, cat: 'Banking', ..._source, amount, month, date, recurring: false, recurringType: '0', notes: _noteFor(date, desc, amount) || 'Returned cheque: the bank took the money back', completed: past, source: 'statement', createdAt: new Date().toISOString() };
+                                if (_batch) { WFBatch.tag(_batch, _erec); WFBatch.record(_batch, 'expenses', _erec.id); }
+                                expArr.push(_erec);
+                                exp++; _moneyFiled = true;
+                            }
+                        }
+                        if (!_moneyFiled) dup++;      // the tracker (and the books) already hold this row
                     } else {
                         skipped++; // skip — not saved as a ledger entry
                     }
@@ -36560,11 +36617,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (exp) parts.push(exp + ' Expense' + (exp > 1 ? 's' : ''));
                 if (inc) parts.push(inc + ' Income');
                 if (loanCnt) parts.push(loanCnt + ' Loan Payment' + (loanCnt > 1 ? 's' : '') + (loanRepl ? (' · ' + loanRepl + ' updated') : ''));
-                if (chq) parts.push(chq + ' Cheque' + (chq > 1 ? 's' : ''));
+                if (chqNew) parts.push(chqNew + ' Cheque' + (chqNew > 1 ? 's' : '') + ' added');
+                if (chqCleared) parts.push(chqCleared + ' tracked cheque' + (chqCleared > 1 ? 's' : '') + ' marked cleared');
+                if (chqBounced) parts.push(chqBounced + ' cheque' + (chqBounced > 1 ? 's' : '') + ' marked bounced');
                 if (sub) parts.push(sub + ' Subscription' + (sub > 1 ? 's' : '') + (subCreated ? (' · ' + subCreated + ' new') : ''));
                 const tail = (skipped ? (' · skipped ' + skipped) : '') + (dup ? (' · ' + dup + ' duplicate' + (dup > 1 ? 's' : '') + ' ignored') : '');
                 if (parts.length) { notify('@checkCircle@ Filed ' + parts.join(' · ') + tail, 'success'); triggerHaptic('success'); }
                 else { notify('Nothing added' + (dup ? (' · ' + dup + ' duplicate(s) ignored') : '') + (skipped ? (' · ' + skipped + ' skipped') : ''), 'warn'); }
+                if (chqReview.length) { try { notify('Cheque check: ' + chqReview.slice(0, 3).map(x => String(x).replace(/[<>&]/g, '')).join(' · ') + (chqReview.length > 3 ? ' · +' + (chqReview.length - 3) + ' more' : ''), 'warn'); } catch (_) {} }
                 /* A bank the owner set by hand is remembered for this card / account number, so its next statement is named without anyone being asked. */
                 if (parts.length && parsed._wfBank && parsed._wfBank.manual && parsed._wfBank.ok && window.WFBankMemory && typeof window.WFBankMemory.teach === 'function') { try { window.WFBankMemory.teach(parsed._wfBank); } catch (_) {} }
 

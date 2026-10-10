@@ -326,7 +326,9 @@ export const BUDGETS = {
     // phone, 1 while a dialog is open; errors are never queued) and _wfStrip asks for a one-card insight strip on a phone. Most of it is the comments recording why. No new script or request.
     // 2026-10-10 (One-Time bills: paid-status field, past-dated bills filed as paid; measured 2,246,313 + ~0.1% headroom): 2,245,000 -> 2_248_500.
     // (both of the above merged: measured at the merge)
-    htmlBytes: 2_251_000,
+    // 2026-10-10 (Cheque Tracker settled by the statement): 2,251,000 -> 2_259_000 (measured 2,254,911 + ~0.2% headroom, before the final comments). The upload page now clears / bounces the cheque it already tracks instead of skipping
+    // it (and files the deposit as income and a returned deposit as an expense), undoes that import exactly, and the Cheques table shows a bank by its proper name. About half of it is the comment recording why.
+    htmlBytes: 2_259_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -664,12 +666,16 @@ export const BUDGETS = {
     // show-more fold with theme-token tones (wealthflow-insights.js). About a third is comments. No new module or request.
     // 2026-10-10 (one-time lifecycle + verification/statement rollback, merged with the dashboard; measured 2,499,397 + ~0.1% headroom): the schedule, verification queue and statement undo paths now share the same paid/cadence rules.
     // 2026-10-10 (SMS panel: the "automatic daily check has not run" line, wealthflow-sms.js; measured 2,502,266 + ~0.1% headroom): 2_502_000 -> 2_505_000.
-    totalJsBytes: 2_505_000,
+    // 2026-10-10 (Cheque Tracker settled by the statement; measured 2,536,075 + ~0.1% headroom): 2_505_000 -> 2_539_000. wealthflow-cheques.js (about 26 KB, a third of it comments) is the ONE reading of a cheque row that
+    // the upload page and the email worker share (cheque number, the way the money went, returned or paid, the tracked cheque it settles); wealthflow-statement-parser.js now keeps a cheque number instead of stripping it
+    // as a reference; wealthflow-batches.js can undo a cheque it cleared. No new request: the module loads deferred beside wealthflow-own-money.js.
+    totalJsBytes: 2_539_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
     // 2026-10-10: 234,000 -> 234_300 (wealthflow-ai-v4.js, measured 234,092): a scanned bill is filed as still to be paid, not as already paid.
-    largestModuleBytes: 234_300,
+    // 2026-10-10: 234,300 -> 234_500 (wealthflow-ai-v4.js, measured 234,407): the statement-reading prompt keeps a cheque's number (and a Cheque No column's) in the description.
+    largestModuleBytes: 234_500,
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely
@@ -760,7 +766,8 @@ export const BUDGETS = {
     // shared rather than a new browser request, but this budget deliberately
     // counts every deployable module, so the identity authority stays visible.
     // 2026-10-10: 87 -> 88 for wealthflow-shell.js (tab bar, More sheet, command palette; see totalJsBytes).
-    moduleCount: 88,   // measured 88
+    // 2026-10-10: 88 -> 89 for wealthflow-cheques.js (what a cheque row on a statement is and which tracked cheque it settles; see totalJsBytes).
+    moduleCount: 89,   // measured 89
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -830,7 +837,8 @@ export const BUDGETS = {
     // 2026-10-05: 78 -> 79 for wealthflow-sms.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-05: 79 -> 80 for wealthflow-people-ui.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-10: 80 -> 81 for wealthflow-shell.js — a plain deferred script, so renderBlockingScripts below is unchanged at 2.
-    scriptTags: 81,              // measured 81; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
+    // 2026-10-10: 81 -> 82 for wealthflow-cheques.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
+    scriptTags: 82,              // measured 82; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

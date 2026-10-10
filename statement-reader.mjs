@@ -311,6 +311,8 @@ async function htmlText(html) {
                 columns = { date, description, amount, debit, credit,
                     marker: index(/^(?:drcr|crdr|direction|type)$/) >= 0 ? index(/^(?:drcr|crdr|direction|type)$/) : inferMarker(rowIndex + 1),
                     reference: index(/^(?:reference|referenceno|ref|refno|transactionreference)$/),
+                    /* a column of its own for the cheque number (HNB, Sampath, DFCC print one): it is the cheque's number, kept in the narration where the Cheque Tracker reads it */
+                    cheque: index(/^(?:cheque|chq|chk|check|cheq)s?(?:no|number|num|nr|ref|refno)?(?:ref|refno)?$/),
                     balance: index(/^(?:balance|runningbalance)$/) };
                 continue;
             }
@@ -379,7 +381,11 @@ async function htmlText(html) {
                 }
             }
             if (direction === 'DR') sumDebit += value; else sumCredit += value;
-            const narration = cells[c.description].replace(/\b(?:DR|CR)\b/gi, '').trim();
+            let narration = cells[c.description].replace(/\b(?:DR|CR)\b/gi, '').trim();
+            /* the cheque number printed in its own column joins the narration unless the narration already says it ("0" and "-" in an empty cell are not numbers) */
+            const chequeCell = c.cheque >= 0 ? String(cells[c.cheque] || '').trim() : '';
+            const chequeDigits = (/^[\s#:.\-]*(\d{3,12})[\s]*$/.exec(chequeCell) || [])[1];
+            if (chequeDigits && !narration.replace(/\D+/g, ' ').split(' ').includes(chequeDigits)) narration = `${narration} Cheque No ${chequeDigits}`.trim();
             const ref = c.reference >= 0 && cells[c.reference] ? ` REF:${cells[c.reference]}` : '';
             lines.push(`${withYear(dateCell, periodEnd)} ${narration}${ref} ${value.toFixed(2)} ${direction}`);
         }

@@ -40,6 +40,7 @@ import { repairByArithmetic } from './statement-repair.mjs';
 import { buildHistory } from './statement-history.mjs';
 import { ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins, tailsIn } from './statement-transfers.mjs';
 import { ownMoney } from './wealthflow-own-money.js';
+import { readCheque } from './wealthflow-cheques.js';
 import { isolateMerchant } from './statement-merchant-name.mjs';
 import { totalsAgree } from './statement-totals.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
@@ -216,6 +217,7 @@ function subscriptionWords(allocations) {
 }
 function needsBoard(row, rule, words) {
     if (rule.ownMoney) return false;      // the owner's own card, named in the row: nothing for a board to name
+    if (rule.cheque) return false;        // a cheque is read from the row's own words and the bank's own debit/credit flag (wealthflow-cheques.js)
     if (rule.verified && (rule.autoDecided === 'transfer-to-others' || rule.autoDecided === 'transfer-from-others')) return false;      // what the rules know of a transfer is all there is to know: there is no merchant for the board to name
     if (!rule.verified || rule.category === 'Other' || rule.category === 'Income') return true;
     if (!words.length) return false;
@@ -315,6 +317,16 @@ export function deterministicDecision(row, allocations = {}) {
      * the account, not income; the card statement carries the advance. It is decided from the Cards & Accounts registry and the owner's own statements before any wording of a transfer is asked for. */
     const own = ownMoney({ description, direction: row?.direction, isCard: isCreditCardRow(row || {}, allocations), registry: allocations.cardRegistry, tails: allocations.own });
     if (own) return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true, ownTransfer: own.kind, ownMoney: own };
+    /* A CHEQUE ON A BANK STATEMENT IS READ, NOT GUESSED (wealthflow-cheques.js — the rule the manual upload applies): "CHEQUE DEPOSIT 285943" is a cheque, money in, number 285943; "CHQ PAID 000123" a cheque the owner
+     * issued; "CHQ RTN 285943" one the bank sent back. The statement's own debit/credit flag decides the way the money went, so there is nothing for an AI board to name and nothing to ask the owner: the row is
+     * decided by that flag and settled against the Cheque Tracker when it is filed (statement-ledger.mjs). A cheque-book / return / stop-payment FEE is not a cheque movement and is read as the bank charge it is.
+     * This comes before the wording of a transfer ("Transfer Cheque Deposit Cheque No: 070283" is a cheque), and never on a card statement. */
+    if ((row?.direction === 'debit' || row?.direction === 'credit') && !isCreditCardRow(row || {}, allocations)) {
+        const cheque = readCheque({ description, direction: row.direction, amount: row.amount });
+        if (cheque.isCheque && cheque.type) return row.direction === 'debit'
+            ? { module: 'expenses', category: 'Bank Charges', allocationId: '', verified: true, deterministic: true, cheque: true }
+            : { module: 'incomeRecv', category: 'Other', allocationId: '', verified: true, deterministic: true, cheque: true };
+    }
     if (transferEvidence({ description })) {
         /* A TRANSFER IS LEFT OUT OF THE BOOKS ONLY WHEN IT IS THE OWNER'S OWN MONEY MOVING BETWEEN THE OWNER'S OWN ACCOUNTS (statement-transfers.mjs): the account number of one of their own cards, their own words
          * ("my DFCC"), or the other leg on the same statement. "Outward Ceft Transfer Car", "Inward Ceft Transfer Dip Refund" are money paid to and received from other people — spending and income. They were all
@@ -826,6 +838,43 @@ export async function healHandMadeTwins({ db, uid, now = Date.now(), log = conso
         return { merged: chosen.length, more: pairs.length > chosen.length && chosen.length >= limit };
     });
     if (result.merged) log(JSON.stringify({ evt: 'hand-twin-heal', merged: result.merged, ...(result.more ? { more: true } : {}) }));
+    return result;
+}
+
+/* A CHEQUE THE BANK PAID AND AN EXPENSE THE OWNER TYPED FOR THE SAME PAYMENT ARE ONE PAYMENT. The Cheque Tracker counts a cleared issued cheque in the month the bank cleared it; an expense typed in (or pasted from an
+ * SMS) for that very payment counts it too. When the statement came first and the entry was typed after — or the upload was the owner's own, which does not look at what was typed — both were in the month.
+ * The cheque is then marked `countedBy` that entry (the month's total skips it while the entry exists) and the entry is marked as the row's twin; nothing is deleted, the cheque stays in the tracker
+ * with its number and status, and the owner's entry keeps its category and notes. Only a cheque a statement cleared (it carries the statement's key); same cents, the same day or a named match
+ * within three days; two that fit equally are never guessed between. Counts only are logged. */
+export async function healChequeTwins({ db, uid, now = Date.now(), log = console.info, limit = 60 }) {
+    const userRef = db.collection('users').doc(uid);
+    const peek = (await userRef.get()).data() || {};
+    const isTyped = record => !!record && record.source !== 'statement' && !record.statementKey;
+    const isOpen = cheque => !!cheque && cheque.type === 'issued' && cheque.status === 'cleared' && !!cheque.statementKey && !cheque.countedBy;
+    if (!(Array.isArray(peek.cheques) ? peek.cheques : []).some(isOpen) || !(Array.isArray(peek.expenses) ? peek.expenses : []).some(isTyped)) return { merged: 0, more: false };
+    const result = await db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), user = structuredClone(snap.data() || {});
+        if (!Array.isArray(user.cheques) || !Array.isArray(user.expenses)) return { merged: 0, more: false };
+        const typed = user.expenses.filter(isTyped), pairs = [], claims = new Map();
+        for (const cheque of user.cheques.filter(isOpen)) {
+            const date = String(cheque.clearedDate || cheque.release || cheque.issue || '').slice(0, 10);
+            const row = { amount: cheque.amount, date, description: `${cheque.party || ''} cheque ${cheque.no || ''}`, direction: 'debit' };
+            const twin = manualTwin(typed, row, { strict: true });
+            if (!twin) continue;
+            pairs.push({ cheque, twin, row });
+            claims.set(String(twin.r.id), (claims.get(String(twin.r.id)) || 0) + 1);
+        }
+        const chosen = pairs.filter(pair => claims.get(String(pair.twin.r.id)) === 1).slice(0, limit);
+        if (!chosen.length) return { merged: 0, more: false };
+        for (const { cheque, twin, row } of chosen) {
+            markTwin(twin, row.date.slice(0, 7), cheque.statementKey, cheque.statementRow == null ? 0 : cheque.statementRow, now, row);
+            cheque.countedBy = String(twin.r.id); cheque._ut = now;
+            cheque.notes = (cheque.notes ? cheque.notes + ' · ' : '') + 'Counted once — your expense "' + String(twin.r.desc || twin.r.name || '').slice(0, 40) + '" already holds this payment';
+        }
+        tx.set(userRef, { cheques: user.cheques, expenses: user.expenses, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        return { merged: chosen.length, more: pairs.length > chosen.length && chosen.length >= limit };
+    });
+    if (result.merged) log(JSON.stringify({ evt: 'cheque-twin-heal', merged: result.merged, ...(result.more ? { more: true } : {}) }));
     return result;
 }
 
@@ -1485,11 +1534,15 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
         if (touched(user.subscriptions, subs)) changes.subscriptions = subs;
         const loans = stripped(user.loans, 'payments', row => row && row.source === 'statement' && gone.has(String(row.expenseId)));
         if (touched(user.loans, loans)) changes.loans = loans;
-        const cheques = (Array.isArray(user.cheques) ? user.cheques : []).map(cheque => {
-            if (!cheque || cheque.statementKey !== path) return cheque;
-            const { clearedDate, statementKey, statementRow, ...rest } = cheque;
-            return { ...rest, status: rest.status === 'cleared' ? 'pending' : rest.status, _ut: now };
-        });
+        /* A cheque this statement ADDED (it was never tracked) leaves with it, tombstoned; one the owner already tracked and the statement cleared / bounced goes back to the state it was in (wealthflow-cheques.js
+         * keeps it in prevStatus) and to the amount the owner typed. A cheque record never changes the owner's own entries beyond that. */
+        const cheques = [];
+        for (const cheque of Array.isArray(user.cheques) ? user.cheques : []) {
+            if (!cheque || cheque.statementKey !== path) { cheques.push(cheque); continue; }
+            if (cheque.source === 'statement') { gone.add(String(cheque.id)); tomb.cheques = { ...(tomb.cheques && typeof tomb.cheques === 'object' ? tomb.cheques : {}), [cheque.id]: now }; continue; }
+            const { clearedDate, bouncedDate, statementKey, statementRow, uploadClaim, prevStatus, prevAmount, direction, countedBy, ...rest } = cheque;
+            cheques.push({ ...rest, status: prevStatus || (rest.status === 'cleared' ? 'pending' : rest.status), ...(prevAmount != null ? { amount: prevAmount } : {}), _ut: now });
+        }
         if (touched(user.cheques, cheques)) changes.cheques = cheques;
         const more = ledger.docs.length >= CAP;
         for (const doc of ledger.docs) tx.set(doc.ref, { status: 'superseded_by_layout', supersededBy: 'exact-sender-rule', settledAt: now }, { merge: true });
@@ -2527,7 +2580,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     }
     if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
         // each on its own: one that fails (a document in a shape it did not expect) must not stop the others from ever running
-        for (const heal of [() => healLoanInstallments({ db, uid }), () => healHandMadeTwins({ db, uid }), () => healStatementCopies({ db, mailRef, uid }), () => healOwnTransfers({ db, uid }), () => healCardSettlement({ db, uid }), () => repairCardInstallments({ db, uid })]) { try { await heal(); } catch (_) { /* the next run tries again */ } }
+        for (const heal of [() => healLoanInstallments({ db, uid }), () => healHandMadeTwins({ db, uid }), () => healChequeTwins({ db, uid }), () => healStatementCopies({ db, mailRef, uid }), () => healOwnTransfers({ db, uid }), () => healCardSettlement({ db, uid }), () => repairCardInstallments({ db, uid })]) { try { await heal(); } catch (_) { /* the next run tries again */ } }
         try { await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     const [pending, processing] = await Promise.all([

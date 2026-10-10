@@ -180,10 +180,20 @@
     // Bank reference tokens are stripped conservatively (>=5 digits) so real
     // words like "KULIYAPITIYA" survive. Trailing brackets and currency codes are
     // removed because the money token they belonged to has already been taken out.
+    //
+    // A CHEQUE NUMBER IS NOT A BANK REFERENCE. "CHEQUE DEPOSIT 285943", "CHQ PAID 000123",
+    // "Transfer Cheque Deposit Cheque No: 070283" and "CHQ285943 DEPOSIT" all end or begin with a
+    // six-digit token, which the two rules below used to delete as a reference: the Cheque Tracker
+    // then had a cheque with no number to match against the owner's own record of it. When the
+    // narration names a cheque, the token that IS the cheque's number (digits only, or glued to the
+    // word: CHQ285943) is kept; any other reference token is still taken out.
+    var CHEQUE_WORD_RE = /\b(?:cheques?|chq|chque|cheq|chk|check|cq|pdc)\b|\b(?:cheque|chq|chk|cq|pdc)\d/i;
+    var CHEQUE_TOKEN_RE = /^(?:\d+|(?:cheques?|chq|chque|cheq|chk|check|cq|pdc)\d+)$/i;
     function cleanNarration(n) {
         n = String(n || '').trim();
-        n = n.replace(/^[A-Za-z]{1,4}\d{5,}[A-Za-z]?\s+/, '');
-        n = n.replace(/\s+[A-Za-z]{0,4}\d{5,}[A-Za-z]?\s*$/, '');
+        var cheque = CHEQUE_WORD_RE.test(n);
+        n = n.replace(/^([A-Za-z]{1,4}\d{5,}[A-Za-z]?)\s+/, function (all, tok) { return cheque && CHEQUE_TOKEN_RE.test(tok) ? all : ''; });
+        n = n.replace(/\s+([A-Za-z]{0,4}\d{5,}[A-Za-z]?)\s*$/, function (all, tok) { return cheque && CHEQUE_TOKEN_RE.test(tok) ? all : ''; });
         n = n.replace(/\b(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)\s*$/i, '');
         n = n.replace(/[\s|,;:.\-(]+$/, '');
         n = n.replace(/^[\s|,;:.\-)]+/, '');

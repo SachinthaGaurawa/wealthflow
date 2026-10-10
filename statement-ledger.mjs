@@ -8,7 +8,8 @@ import { canonicalBank } from './wealthflow-institutions.js';
 import { ownMoney } from './wealthflow-own-money.js';
 import { bankKeyOf } from './statement-coverage.mjs';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
-import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment } from './statement-links.mjs';
+import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment } from './statement-links.mjs';
+import { settleCheque } from './wealthflow-cheques.js';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -91,6 +92,28 @@ function linkInstallment(loans, expenses, record, now) {
     return true;
 }
 
+/* One statement row against the owner's Cheque Tracker (wealthflow-cheques.js). Writes to the working copy of `user.cheques` and says what it did:
+ *   consumed  the row's money is carried by the cheque record itself (an issued cheque paid, or an issued cheque the bank gave back as a credit) — the caller files no expense / income for it
+ *   twin      the owner had ALSO typed that payment into Expenses (or pasted its SMS): that entry already counts the money, so the cheque is marked `countedBy` it and the month counts the payment once
+ * A deposited cheque (a credit) and the debit that takes one back are NOT consumed: the tracker is updated and the row is then filed as income / expense like any other. null: not a cheque movement. */
+function settleChequeRow({ row, user, index, id, sourcePath, bank, now }) {
+    const plan = settleCheque({ description: row.description || row.narration, direction: row.direction, amount: row.amount, date: row.date, bank, key: sourcePath, rowNo: index },
+        Array.isArray(user.cheques) ? user.cheques : [], { id, now: new Date(now).toISOString(), source: { statementKey: sourcePath, statementRow: index, bank } });
+    if (!plan.isCheque || plan.action === 'none') return null;
+    const type = plan.read.type, event = plan.read.event;
+    const out = { action: plan.action, cheque: plan.cheque || plan.record || null, changed: false, consumed: type === 'issued', twin: null };
+    out.reason = plan.action === 'already' ? 'cheque-already-tracked' : event === 'return' ? 'cheque-returned' : plan.action === 'create' ? 'cheque-added-from-statement' : 'clears-a-tracked-cheque';
+    // an issued cheque the bank paid IS the payment — unless the owner typed the same payment in as an expense (the entry counts it; the cheque only tracks it)
+    const counts = type === 'issued' && event === 'clear' && (plan.action === 'clear' || plan.action === 'create');
+    const twin = counts && !(out.cheque && out.cheque.countedBy) ? manualTwin(Array.isArray(user.expenses) ? user.expenses : [], { ...row, description: row.description || row.narration }) : null;
+    if (twin) { markTwin(twin, String(row.date || '').slice(0, 7), sourcePath, index, now, row); out.twin = twin; out.reason = 'cheque-counted-by-your-expense'; }
+    const stamp = { direction: row.direction, _ut: now, ...(twin ? { countedBy: String(twin.r.id || '') } : {}) };
+    const counted = (notes) => twin ? { notes: (notes ? notes + ' · ' : '') + 'Counted once — your expense "' + String(twin.r.desc || twin.r.name || '').slice(0, 40) + '" already holds this payment' } : {};
+    if (plan.action === 'clear' || plan.action === 'bounce') { Object.assign(plan.cheque, plan.patch, stamp, counted(plan.patch.notes)); out.changed = true; }
+    else if (plan.action === 'create') { user.cheques = Array.isArray(user.cheques) ? user.cheques : []; user.cheques.push({ ...plan.record, ...stamp, ...counted(plan.record.notes) }); out.changed = true; }
+    return out;
+}
+
 /* THE PAYMENT IS ALREADY IN THE BOOKS UNDER ANOTHER NAME (statement-links.mjs). A row that the owner typed in by hand, tracks as a subscription, wrote as
  * an issued cheque, or that is the bank settling a card whose purchases are already counted, is not filed as a second expense or income. Evidence only;
  * no counterpart found means the row is filed exactly as before. */
@@ -105,8 +128,6 @@ function findCounterpart({ row, module, user, cards, cardRegistry }) {
         if (!(found.length > 1 && found[0].twin.gap === found[1].twin.gap)) return found[0];
     }
     if (module === 'expenses' && row.direction === 'debit') {
-        const cheque = matchChequeForDebit(row, user.cheques);
-        if (cheque) return { kind: 'cheque', cheque };
         if (cardSettlementDebit(row, { cardRegistry, cards })) return { kind: 'card-settlement' };
     }
     // a card charge for a plan the owner already has is that plan's month, whether or not the narration says installment
@@ -191,6 +212,9 @@ function filedRecord(user, sourcePath, index, id, matchedId) {
         const hit = (Array.isArray(sub?.history) ? sub.history : []).find(entry => entry && entry.statementKey === sourcePath && entry.statementRow === index);
         if (hit) return { ...hit, direction: 'debit' };
     }
+    /* …or a cheque the row cleared / bounced / added (wealthflow-cheques.js): the cheque record carries the row's day and money */
+    const cheque = (Array.isArray(user.cheques) ? user.cheques : []).find(entry => entry && entry.statementKey === sourcePath && entry.statementRow === index);
+    if (cheque) return { date: cheque.clearedDate || cheque.bouncedDate || cheque.release, amount: cheque.amount, direction: cheque.direction || '' };
     return null;
 }
 async function settledRowVerdict({ entry, row, user, sourcePath, index, id, readReview, at = Date.now() }) {
@@ -294,18 +318,31 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', module: modules[decision.module] || '', reason: `copy-of-a-row-counted-by-a-${held}`, fingerprint, settledAt: now }]);
                 outcome.duplicates++; continue;
             }
+            /* A CHEQUE ROW SETTLES THE CHEQUE TRACKER (wealthflow-cheques.js — the rule the manual upload applies, so a row is not one thing by email and another on the page). A cheque the owner issued and the bank paid is
+             * marked cleared (or added, cleared, when it was never tracked) and IS the payment: no expense row is added, so the money is counted once. A cheque the owner deposited is marked cleared (or added) and its
+             * credit is income as any credit is; one the bank sent back is marked bounced, and the debit that takes the money back is an expense. A cheque the bank returns to the owner as a credit is bounced, and
+             * the credit is not income. Evidence only: a row that does not read as a cheque (a cheque-book fee, a person called Cheque) is filed exactly as before. */
+            if (!reason && (module === 'expenses' || module === 'incomeRecv') && !isCreditCardRow(row, context)) {
+                if (user.cheques != null && !Array.isArray(user.cheques)) reason = 'invalid-ledger-schema';
+                else {
+                    const plan = settleChequeRow({ row, user, index, id, sourcePath: sourceRef.path, bank: canonicalBank(bank || ''), now });
+                    if (plan) {
+                        if (plan.changed) changes.cheques = user.cheques;
+                        if (plan.twin) changes.expenses = user.expenses;
+                        if (plan.consumed) {
+                            writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: plan.action === 'already' ? 'duplicate' : 'filed', module: 'cheque', reason: plan.reason, fingerprint, ...(plan.cheque ? { matchedId: String(plan.cheque.id || '') } : {}), settledAt: now }]);
+                            if (plan.action === 'already') outcome.duplicates++; else outcome.filed++;
+                            continue;
+                        }
+                    }
+                }
+            }
             const counterpart = reason ? null : findCounterpart({ row, module, user, cards, cardRegistry });
             let subscriptionOfCard = null;
             if (counterpart && counterpart.kind === 'twin') {
                 markTwin(counterpart.twin, row.date.slice(0, 7), sourceRef.path, index, now, row); changes[counterpart.store || module] = user[counterpart.store || module];
                 writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', module, reason: 'entered-by-hand', fingerprint, matchedId: String(counterpart.twin.r.id || ''), settledAt: now }]);
                 outcome.duplicates++; continue;
-            }
-            if (counterpart && counterpart.kind === 'cheque') {
-                counterpart.cheque.status = 'cleared'; counterpart.cheque.clearedDate = row.date; counterpart.cheque.statementKey = sourceRef.path; counterpart.cheque.statementRow = index; counterpart.cheque._ut = now;
-                changes.cheques = user.cheques;
-                writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'filed', module: 'cheque', reason: 'clears-an-issued-cheque', fingerprint, settledAt: now }]);
-                outcome.filed++; continue;
             }
             if (counterpart && counterpart.kind === 'plan') {
                 applyPlanPayment(counterpart.plan, row, sourceRef.path, index, now); changes.ccinstall = user.ccinstall;
