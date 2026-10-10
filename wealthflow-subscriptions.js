@@ -167,7 +167,8 @@
             if (month) sub.monthOverrides[month] = amt; // variable-bill actual for that month
             if (amt) sub.amount = amt;                  // keep the headline amount current
         }
-        if (_oneTime(sub.cycle)) {
+        // an exact re-import of a payment already on the bill is not a new payment: it must not close a bill the owner has since reopened
+        if (_oneTime(sub.cycle) && (!dup || !sub.reopened)) {
             var paidNow = new Date();
             sub.paid = true; sub.completed = true; sub.paidAt = date || _ymd(paidNow.getFullYear(), paidNow.getMonth(), paidNow.getDate());
             sub.paidSource = 'statement';

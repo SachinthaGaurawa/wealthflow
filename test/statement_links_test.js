@@ -27,6 +27,13 @@ describe('the matchers', () => {
         expect(manualTwin([{ ...rent, statementTwins: { '2026-03': {} } }], row('RENT PAYMENT LANDLORD', 50000, '2026-03-03'))).toBeNull();
         expect(manualTwin([rent], row('SOMETHING ELSE', 50000, '2026-03-03'))).toBeNull();
     });
+    it('a one-time bill that is already paid is finished: a later charge from the same merchant is not that bill', () => {
+        const once = { id: 'O1', name: 'Dialog Router', amount: 8000, cycle: 'once', dueDate: '2026-09-20', createdAt: '2026-09-01T00:00:00Z' };
+        expect(matchSubscriptionForDebit(row('DIALOG ROUTER', 8000, '2026-10-05'), [once]).id).toBe('O1');                   // still open: it is this bill
+        expect(matchSubscriptionForDebit(row('DIALOG ROUTER', 8000, '2026-10-05'), [{ ...once, paid: true }])).toBeNull();
+        expect(matchSubscriptionForDebit(row('DIALOG ROUTER', 8000, '2026-10-05'), [{ ...once, completed: true }])).toBeNull();
+        expect(matchSubscriptionForDebit(row('DIALOG ROUTER', 8000, '2026-10-05'), [{ ...once, paid: false, completed: false, reopened: true }]).id).toBe('O1');
+    });
     it('a subscription: its name in the narration, an amount about right, counted that month — a yearly one only in its own month', () => {
         const netflix = { id: 'S1', name: 'Netflix', amount: 1500, cycle: 'monthly', createdAt: '2026-01-10T00:00:00Z' };
         expect(matchSubscriptionForDebit(row('NETFLIX.COM 866', 1500), [netflix]).id).toBe('S1');
