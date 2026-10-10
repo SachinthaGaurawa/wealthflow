@@ -86,10 +86,42 @@
         Object.keys(DEFAULTS).forEach(function (k) { out[k] = (typeof n[k] === 'boolean') ? n[k] : DEFAULTS[k]; });
         return out;
     }
-    function saveSettings(n) {
+    /* Persist ONE switch, not the whole resolved object.
+     *
+     * settings() fills every switch the person never touched with its default, and
+     * this used to write that whole filled-in object back. Settings sync decides
+     * which device wins PER SWITCH by when each was last written, so writing nine
+     * values for one tap told the cloud "on this device, at this moment, I chose all
+     * nine" — and a phone that had never opened this card then overruled the
+     * laptop's earlier choices on the other eight. Only the switch the person
+     * actually changed goes in now (even when its new value equals the default,
+     * because that IS a choice and must beat an older opposite choice elsewhere). */
+    /* The OLDER switches in Settings -> Smart Notifications ("All Notifications",
+     * "Loan Payment Reminders", "CC One-Time Deadline Alerts", "Cheque Release
+     * Reminders") live under settings.notifications / notifLoan / notifCCOT /
+     * notifCheque, not under settings.notif. Only the toasts and device alerts read
+     * them, so turning "All Notifications" off still left this bell lit and its red
+     * badge counting — a switch that visibly did nothing. The bell now answers to
+     * both sets: a kind of reminder is shown only when neither switch for it is off. */
+    function legacySwitches() {
+        var s = {};
+        try { s = (window.DB && window.DB.getObj) ? (window.DB.getObj('settings', {}) || {}) : {}; } catch (_) { s = {}; }
+        return {
+            all: s.notifications !== false,
+            loans: s.notifLoan !== false,
+            cheques: s.notifCheque !== false,
+            ccOneTime: s.notifCCOT !== false
+        };
+    }
+
+    function saveSettings(n, key) {
         try {
             var s = (window.DB && window.DB.getObj) ? (window.DB.getObj('settings', {}) || {}) : {};
-            s.notif = n;
+            var cur = (s.notif && typeof s.notif === 'object') ? s.notif : {};
+            var next = Object.assign({}, cur);
+            if (key) next[key] = n[key];
+            else Object.keys(n).forEach(function (k) { next[k] = n[k]; });
+            s.notif = next;
             if (window.DB && window.DB.set) window.DB.set('settings', s);
         } catch (_) { }
     }
@@ -143,10 +175,11 @@
     function compute() {
         var st = settings();
         var out = [];
-        if (!st.enabled) return out;
+        var lg = legacySwitches();
+        if (!st.enabled || !lg.all) return out;
 
         // 1) CHEQUES — pending, release date precise
-        if (st.cheques) {
+        if (st.cheques && lg.cheques) {
             getArr('cheques').forEach(function (c) {
                 if (!c || c.status !== 'pending' || !c.release) return;
                 var dl = dLeft(c.release); if (isNaN(dl)) return;
@@ -160,7 +193,7 @@
         }
 
         // 2) CC ONE-TIME — unpaid, deadline precise
-        if (st.ccOneTime) {
+        if (st.ccOneTime && lg.ccOneTime) {
             getArr('cconetime').forEach(function (x) {
                 if (!x || x.paid || !x.deadline) return;
                 var dl = dLeft(x.deadline); if (isNaN(dl)) return;
@@ -174,7 +207,7 @@
         }
 
         // 3) LOANS — per-month paid flags (month precise)
-        if (st.loans) {
+        if (st.loans && lg.loans) {
             var ck = curYM();
             getArr('loans').forEach(function (l) {
                 if (!l) return;
@@ -317,7 +350,7 @@
     /* ----------------------------------------------------------- device push */
     function canPush() {
         var st = settings();
-        return !!st.enabled && !!st.push && ('Notification' in window) && (window.Notification.permission === 'granted');
+        return !!st.enabled && legacySwitches().all && !!st.push && ('Notification' in window) && (window.Notification.permission === 'granted');
     }
     function showDeviceNotification(title, body, page, count, tag) {
         try {
@@ -372,7 +405,7 @@
     function _afterPerm(perm) {
         var st = settings();
         st.push = (perm === 'granted');
-        saveSettings(st);
+        saveSettings(st, 'push');
         syncSettingsUI();
         if (perm === 'granted') {
             var pm = pushedMap();
@@ -411,7 +444,7 @@
             (_list.length ? '<button type="button" class="wfntf-readall" onclick="WFNotif.markAllRead()">Mark all read</button>' : '') +
             '</div>';
 
-        if (!st.enabled) {
+        if (!st.enabled || !legacySwitches().all) {
             p.innerHTML = head + '<div class="wfntf-empty"><div class="wfntf-empty-ic">' + SVG.bellsm + '</div><div class="wfntf-empty-t">Notifications are off</div><div class="wfntf-empty-sub">Turn them on in Settings \u2192 Notifications.</div></div>' + footHtml();
             return;
         }
@@ -500,11 +533,11 @@
         if (!(key in st)) return;
         if (key === 'push') {
             if (!st.push) { requestPush(); }            // turning on → ask OS permission
-            else { st.push = false; saveSettings(st); syncSettingsUI(); }
+            else { st.push = false; saveSettings(st, 'push'); syncSettingsUI(); }
             return;
         }
         st[key] = !st[key];
-        saveSettings(st);
+        saveSettings(st, key);
         syncSettingsUI();
         refresh();
     }

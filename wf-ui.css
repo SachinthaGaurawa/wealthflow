@@ -982,6 +982,15 @@ html.wf-sheet-open, html.wf-sheet-open body { overscroll-behavior: contain; }
     .tbl-wrap table .act-btns { gap: 2px; }
 }
 
+/* ═════════════════ 20b. COMPACT MODE ════════════════════════════════════
+   Settings → Compact Mode adds body.wf-compact. The base rules for it live in index.html and lose to the
+   rules above (the summary bar's id selector, the card family's own padding), so the switch moved the page
+   gutter and little else. These are the same intent, written where they win. */
+body.wf-compact .card, body.wf-compact .loan-card, body.wf-compact .inc-card,
+body.wf-compact .chq-card, body.wf-compact .tgt-card, body.wf-compact .sub-card { padding: 14px; }
+body.wf-compact .card-header { margin-bottom: 12px; }
+body.wf-compact #dashStats .stat-card { padding: 12px 14px 10px; }
+
 /* ═════════════════ 21. MOTION PREFERENCES ═══════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
