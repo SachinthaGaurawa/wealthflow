@@ -158,4 +158,18 @@ describe('as text', () => {
         expect(accountText({ bank: 'B', holder: 'H', number: '12345' })).toBe('Bank: B\nAccount name: H\nAccount number: 12345');
         expect(accountText(null)).toBe('Bank: \nAccount name: \nAccount number: ');
     });
+
+    it('keeps an optional Sinhala note, trimmed and limited, and leaves the field out when it is empty', () => {
+        const withSi = cleanAccount(good({ noteSi: '  කරුණාකර NIC අංකය ලියන්න  ' }));
+        expect(withSi.fields.noteSi).toBe('කරුණාකර NIC අංකය ලියන්න');
+        expect(cleanAccount(good({ noteSi: 'x'.repeat(900) })).fields.noteSi).toHaveLength(LIMITS.noteSi);
+        expect('noteSi' in cleanAccount(good({ noteSi: '   ' })).fields).toBe(false);
+        expect('noteSi' in cleanAccount(good()).fields).toBe(false);
+    });
+    it('sends the Sinhala note out with the account, and only when there is one', () => {
+        const raw = [{ ...good({ noteSi: 'සටහන' }), id: 'a1', createdAt: '1' }, { ...good(), id: 'a2', createdAt: '2' }];
+        const out = publicAccounts(raw, ['B']);
+        expect(out[0].noteSi).toBe('සටහන');
+        expect('noteSi' in out[1]).toBe(false);
+    });
 });

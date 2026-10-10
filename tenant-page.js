@@ -32,7 +32,7 @@
  * ===========================================================================*/
 
 import { identityCandidates } from './wealthflow-nic.js';
-import { makeT, detectLang, LANG_BUTTON } from './tenant-lang.js';
+import { makeT, detectLang, LANG_BUTTON, noteText } from './tenant-lang.js';
 import { upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvFile, payoffPlan, planFile, balanceTrail } from './tenant-tools.js';
 
 export const ENDPOINT = '/api/tenant-portal';
@@ -60,19 +60,24 @@ export const COPY = Object.freeze({
 export const TABLE_LIMIT = 8;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS_SI = ['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'];
+const MONTHS_SI_SHORT = ['ජන', 'පෙබ', 'මාර්', 'අප්‍රේ', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝ', 'සැප්', 'ඔක්', 'නොවැ', 'දෙසැ'];
 const FREQ = { monthly: 'Monthly', quarterly: 'Every 3 months', annual: 'Yearly' };
 const LOAN_EVENT = { lent: 'Loan paid out', further: 'Further advance', repayment: 'Repayment' };
 const english = makeT('en');
 
 export const tokenFromPath = (pathname) => { const m = TOKEN_PATH_RE.exec(String(pathname || '')); return m ? m[1] : ''; };
 
-export function fmtDay(iso) {
+/* Dates read in the page's language: "5 Oct 2026" in English, "2026 ඔක්තෝබර් 5" in Sinhala (year, month, day, the way Sinhala is written). */
+export function fmtDay(iso, lang) {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
-    return m && MONTHS[Number(m[2]) - 1] ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : '-';
+    if (!m || !MONTHS[Number(m[2]) - 1]) return '-';
+    return lang === 'si' ? `${m[1]} ${MONTHS_SI[Number(m[2]) - 1]} ${Number(m[3])}` : `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
 }
-export function fmtMonth(ym) {
+export function fmtMonth(ym, lang) {
     const m = /^(\d{4})-(\d{2})$/.exec(String(ym || ''));
-    return m && MONTHS[Number(m[2]) - 1] ? `${MONTHS[Number(m[2]) - 1]} ${m[1]}` : '-';
+    if (!m || !MONTHS[Number(m[2]) - 1]) return '-';
+    return lang === 'si' ? `${m[1]} ${MONTHS_SI[Number(m[2]) - 1]}` : `${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
 }
 export function fmtMoney(amount, currency) {
     const v = Number(amount);
@@ -87,7 +92,8 @@ export function fmtAsOf(iso, t = english) {
     if (!Number.isFinite(ms)) return '';
     const d = new Date(ms + 330 * 60000);
     const pad = (n) => String(n).padStart(2, '0');
-    return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} (${t('Sri Lanka time')})`;
+    const day = t.lang === 'si' ? `${d.getUTCFullYear()} ${MONTHS_SI[d.getUTCMonth()]} ${d.getUTCDate()}` : `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+    return `${day}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} (${t('Sri Lanka time')})`;
 }
 export const fmtClock = (sec) => { const s = Math.max(0, Math.floor(Number(sec) || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
@@ -232,13 +238,13 @@ function investmentCard(doc, g, st, t, actions) {
             fact(doc, t('Rate'), t('{n}% a year', { n: g.ratePct })),
             fact(doc, t('Interest paid'), t(FREQ[g.frequency] || FREQ.monthly)),
             fact(doc, t('Interest each time'), fmtMoney(g.interestPerPeriod, cur), 'tp-amt'),
-            fact(doc, t('Started'), fmtDay(g.start)),
-            g.end ? fact(doc, t('Ends'), fmtDay(g.end)) : null,
-            next ? h(doc, 'div', {}, h(doc, 'dt', { text: t('Next interest due') }), h(doc, 'dd', {}, `${fmtDay(next.date)} (`, h(doc, 'span', { class: 'tp-amt', text: fmtMoney(next.amount, cur) }), ')')) : null,
+            fact(doc, t('Started'), fmtDay(g.start, t.lang)),
+            g.end ? fact(doc, t('Ends'), fmtDay(g.end, t.lang)) : null,
+            next ? h(doc, 'div', {}, h(doc, 'dt', { text: t('Next interest due') }), h(doc, 'dd', {}, `${fmtDay(next.date, t.lang)} (`, h(doc, 'span', { class: 'tp-amt', text: fmtMoney(next.amount, cur) }), ')')) : null,
             fact(doc, t('Interest received'), fmtMoney(g.totalReceived, cur), 'tp-amt')),
         (() => { const pct = termProgress(g, st.asOf); return pct === null ? null : bar(doc, t('Term: {n}% complete', { n: pct }), pct); })(),
         Array.isArray(g.payments) && g.payments.length
-            ? table(doc, t('Payments received, in {cur}', { cur }), [[t('For')], [t('Received on')], [t('Amount'), true]], g.payments.map((p) => [[fmtMonth(p.month)], [fmtDay(p.date)], [fmtNum(p.amount), true]]), t)
+            ? table(doc, t('Payments received, in {cur}', { cur }), [[t('For')], [t('Received on')], [t('Amount'), true]], g.payments.map((p) => [[fmtMonth(p.month, t.lang)], [fmtDay(p.date, t.lang)], [fmtNum(p.amount), true]]), t)
             : h(doc, 'p', { class: 'tp-note', text: t('No payments recorded yet.') }));
 }
 
@@ -294,8 +300,8 @@ function planWidget(doc, g, st, t, actions) {
         out.replaceChildren(
             h(doc, 'dl', { class: 'tp-facts' },
                 fact(doc, t('Payments'), String(plan.count)),
-                fact(doc, t('First payment'), fmtDay(plan.first)),
-                fact(doc, t('Finished by'), fmtDay(plan.finish)),
+                fact(doc, t('First payment'), fmtDay(plan.first, t.lang)),
+                fact(doc, t('Finished by'), fmtDay(plan.finish, t.lang)),
                 plan.count > 1 && plan.last !== plan.amount ? fact(doc, t('Last payment'), fmtMoney(plan.last, plan.currency), 'tp-amt') : null),
             plan.onTime === null ? null : h(doc, 'p', { class: plan.onTime ? 'tp-plan-ok' : 'tp-plan-late', text: plan.onTime ? t('This finishes by the due date.') : t('This finishes after the due date. Pay a little more each time to be on time.') }),
             actions && typeof actions.planCalendar === 'function' ? h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-small-btn', onclick: () => actions.planCalendar(plan) }, icon(doc, 'calendar'), h(doc, 'span', { text: t('Add this plan to my calendar') })) : null);
@@ -314,7 +320,7 @@ function loanCard(doc, g, st, t, actions) {
     const cur = g.currency;
     const status = g.status === 'settled' ? [t('Settled'), 'tp-chip tp-ok'] : g.status === 'closed' ? [t('Closed'), 'tp-chip'] : [t('Open'), 'tp-chip tp-open'];
     const late = Number(g.overdueDays) > 0 ? Math.floor(Number(g.overdueDays)) : 0;
-    const due = g.due ? `${fmtDay(g.due)}${late ? ` (${late === 1 ? t('1 day ago') : t('{n} days ago', { n: late })})` : ''}` : '';
+    const due = g.due ? `${fmtDay(g.due, t.lang)}${late ? ` (${late === 1 ? t('1 day ago') : t('{n} days ago', { n: late })})` : ''}` : '';
     return h(doc, 'section', { class: 'tp-card', 'aria-label': `${t('Loan')} ${g.ref}` },
         h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Loan') }), refChip(doc, g.ref, t, actions), lenderChip(doc, g, st, t), h(doc, 'span', { class: status[1], text: status[0] })),
         h(doc, 'dl', { class: 'tp-facts' },
@@ -326,7 +332,7 @@ function loanCard(doc, g, st, t, actions) {
         trailChart(doc, g, t),
         planWidget(doc, g, st, t, actions),
         Array.isArray(g.events) && g.events.length
-            ? table(doc, t('Movements, in {cur}', { cur }), [[t('Date')], [t('Amount'), true], [t('Balance'), true]], g.events.map((e) => [[fmtDay(e.date), false, t(LOAN_EVENT[e.kind] || '-')], [fmtNum(e.amount), true], [fmtNum(e.balance), true]]), t)
+            ? table(doc, t('Movements, in {cur}', { cur }), [[t('Date')], [t('Amount'), true], [t('Balance'), true]], g.events.map((e) => [[fmtDay(e.date, t.lang), false, t(LOAN_EVENT[e.kind] || '-')], [fmtNum(e.amount), true], [fmtNum(e.balance), true]]), t)
             : h(doc, 'p', { class: 'tp-note', text: t('Nothing recorded yet.') }));
 }
 
@@ -396,7 +402,7 @@ function accountCard(doc, a, t, actions) {
             row(t('Account number'), x.number, true),
             row(t('Branch'), x.branch),
             row('SWIFT / IBAN', x.swift, true)),
-        x.note ? h(doc, 'div', { class: 'tp-acct-note', role: 'note' }, h(doc, 'strong', { class: 'tp-acct-note-label', text: t('Note') }), h(doc, 'p', { text: x.note })) : null,
+        x.note ? h(doc, 'div', { class: 'tp-acct-note', role: 'note' }, h(doc, 'strong', { class: 'tp-acct-note-label', text: t('Note') }), h(doc, 'p', { text: noteText(x, t.lang) })) : null,
         all);
 }
 
@@ -425,14 +431,14 @@ function upcomingCard(doc, st, t, actions) {
     const items = upcoming(st);
     if (!items.length) return null;
     const hasPay = Array.isArray(st.lenders) && st.lenders.some((l) => l && Array.isArray(l.accounts) && l.accounts.length);
-    const tile = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return h(doc, 'span', { class: 'tp-tile', 'aria-hidden': 'true' }, h(doc, 'span', { class: 'tp-tile-mon', text: m && MONTHS[Number(m[2]) - 1] ? MONTHS[Number(m[2]) - 1] : '' }), h(doc, 'span', { class: 'tp-tile-day', text: m ? String(Number(m[3])) : '' })); };
+    const tile = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return h(doc, 'span', { class: 'tp-tile', 'aria-hidden': 'true' }, h(doc, 'span', { class: 'tp-tile-mon', text: m && MONTHS[Number(m[2]) - 1] ? (t.lang === 'si' ? MONTHS_SI_SHORT[Number(m[2]) - 1] : MONTHS[Number(m[2]) - 1]) : '' }), h(doc, 'span', { class: 'tp-tile-day', text: m ? String(Number(m[3])) : '' })); };
     return h(doc, 'section', { class: 'tp-card tp-next', id: 'tp-next', tabindex: '-1', 'aria-label': t('Coming up') },
         h(doc, 'h3', { text: t('Coming up') }),
         h(doc, 'ul', { class: 'tp-list' }, items.map((it) => h(doc, 'li', { class: `tp-item tp-${it.tone}` },
             tile(it.date),
             h(doc, 'div', { class: 'tp-item-main' },
                 h(doc, 'span', { class: 'tp-item-title', text: it.kind === 'loan' ? t('Pay your loan') : t('Interest expected') }),
-                h(doc, 'span', { class: 'tp-item-sub', text: `${fmtDay(it.date)} · ${it.ref}` })),
+                h(doc, 'span', { class: 'tp-item-sub', text: `${fmtDay(it.date, t.lang)} · ${it.ref}` })),
             h(doc, 'div', { class: 'tp-item-side' },
                 h(doc, 'span', { class: 'tp-item-amount tp-amt', text: fmtMoney(it.amount, it.currency) }),
                 h(doc, 'span', { class: `tp-when tp-when-${it.tone}`, text: dayLabel(it.days, t) })),
