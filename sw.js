@@ -65,6 +65,11 @@ function _isAppShell(url) {
         || p === '/index.html'
         || p === '/manifest.json'
         || /^\/wealthflow-[a-zA-Z0-9-]+\.js$/.test(p)
+        // The design system. Without these an offline cold start would render the
+        // app with its own inline defaults: working, but not the interface that was
+        // last seen. Same network-first policy as the scripts they style.
+        || /^\/wf-(tokens|ui)\.css$/.test(p)
+        || /^\/assets\/fonts\/geist-[a-z-]+\.woff2$/.test(p)
         || /^\/version\.js$/.test(p);
 }
 
