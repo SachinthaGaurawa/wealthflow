@@ -355,6 +355,18 @@ describe('the bills side — insurance premiums and the rest', () => {
         expect(rows.map((r) => r.dueISO)).toEqual(['2026-07-31']);
     });
 
+    it('keeps an explicitly past-due one-time payment even when it predates record creation', () => {
+        const rows = pendingOutflows({ subscriptions: [sub({ cycle: 'once', dueDate: '2026-07-31',
+            createdAt: '2026-08-15T00:00:00Z' })] }, AT('2026-09-10'), { lookbackMonths: 6 });
+        expect(rows.map((r) => r.dueISO)).toEqual(['2026-07-31']);
+    });
+
+    it('derives the same clamped date for a legacy one-time payment with no dueDate', () => {
+        const rows = pendingOutflows({ subscriptions: [sub({ cycle: 'once', dueDay: 31,
+            createdAt: '2026-02-02T00:00:00Z' })] }, AT('2026-03-10'), { lookbackMonths: 2 });
+        expect(rows.map((r) => r.dueISO)).toEqual(['2026-02-28']);
+    });
+
     it('never asks again for a completed one-time payment', () => {
         const rows = pendingOutflows({ subscriptions: [sub({ cycle: 'once', dueDate: '2026-07-31', paid: true, completed: true })] },
             AT('2026-09-10'), { lookbackMonths: 6 });

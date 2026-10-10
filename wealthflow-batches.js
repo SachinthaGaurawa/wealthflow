@@ -159,7 +159,7 @@
                 var first = (batch.subs || []).find(function (s) { return s.subId === subId && s.previousLifecycle; });
                 var prev = first && first.previousLifecycle;
                 if (prev) {
-                    ['paid', 'completed', 'paidAt', 'paidSource', 'paidStatementKey'].forEach(function (key) {
+                    ['paid', 'completed', 'paidAt', 'paidSource', 'paidStatementKey', 'reopened'].forEach(function (key) {
                         if (prev[key] === undefined) delete sub[key]; else sub[key] = prev[key];
                     });
                 }

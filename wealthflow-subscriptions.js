@@ -80,6 +80,10 @@
     }
     function _paidInMonth(sub, ym, oneTime) {
         if (!sub) return false;
+        // Reopen is an explicit owner decision. Historical statement evidence
+        // remains for audit, but must not immediately close the same bill again.
+        // A later statement payment clears this flag in recordPayment().
+        if (oneTime && sub.reopened === true) return false;
         if (sub.completed === true || sub.paid === true) return true;
         var history = Array.isArray(sub.history) ? sub.history : [];
         if (history.some(function (h) { return h && (h.month === ym || _monthOf(h.date) === ym) && h.paid !== false; })) return true;
@@ -146,7 +150,7 @@
         var date = (txn && txn.date) || ''; var month = _monthOf(date); var amt = Math.abs(txn && txn.amount) || 0;
         var prevAmount = sub.amount;   // headline amount BEFORE this statement changed it (for exact undo)
         var previousLifecycle = { paid: sub.paid, completed: sub.completed, paidAt: sub.paidAt,
-            paidSource: sub.paidSource, paidStatementKey: sub.paidStatementKey };
+            paidSource: sub.paidSource, paidStatementKey: sub.paidStatementKey, reopened: sub.reopened };
         var dup = sub.history.some(function (h) { return h.date === date && Math.abs((h.amount || 0) - amt) < 0.01; });
         if (!dup) {
             sub.history.push({ month: month, amount: amt, date: date, source: 'statement' });
@@ -157,6 +161,7 @@
             var paidNow = new Date();
             sub.paid = true; sub.completed = true; sub.paidAt = date || _ymd(paidNow.getFullYear(), paidNow.getMonth(), paidNow.getDate());
             sub.paidSource = 'statement';
+            sub.reopened = false;
         }
         return { added: !dup, month: month, amount: amt, prevAmount: prevAmount, previousLifecycle: previousLifecycle };
     }
