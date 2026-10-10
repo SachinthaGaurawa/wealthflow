@@ -6628,10 +6628,9 @@
                         <div class="sh-actions"><button class="btn btn-primary btn-sm" onclick="runMonteCarlo()">@play@ Run
                                 Simulation</button></div>
                     </div>
-                    <div
-                        style="background:rgba(212,175,55,.05);border:1px solid var(--ag);border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:var(--text2);line-height:1.6;">
-                        <b style="color:var(--accent);">@chartLine@ How this works:</b> The simulator uses <b>Geometric Brownian
-                            Motion</b> (the same mathematical model used by hedge funds) to generate thousands of
+                    <div class="wf-note" style="margin-bottom:16px;">
+                        <b class="wf-note-h">@chartLine@ How this works:</b> The simulator uses <b>Geometric Brownian
+                            Motion</b> (a standard model in finance) to generate thousands of
                         possible futures based on your inputs.
                         It outputs a <b>probability distribution</b>, not a single forecast. Past performance does not
                         guarantee future results — markets are inherently uncertain. Use this as a planning aid, not a
@@ -32950,8 +32949,8 @@ Be direct and use real numbers. Avoid generic advice.`;
             }).join('');
 
             wrap.innerHTML = `
-                    <div style="background:linear-gradient(135deg,rgba(212,175,55,0.08),rgba(16,185,129,0.04));border:1px solid rgba(212,175,55,0.2);border-radius:12px;padding:16px;margin-bottom:16px;">
-                        <div style="font-size:14px;font-weight:800;color:var(--accent);margin-bottom:6px;">${_ic('info')} How to Use Debt Demolisher</div>
+                    <div class="wf-note" style="margin-bottom:16px;">
+                        <div class="wf-note-h">${_ic('info')} How to Use Debt Demolisher</div>
                         <div style="font-size:12px;color:var(--text2);line-height:1.6;">
                             This tool helps you pay off debt faster. Enter how much extra cash you can afford to pay each month using the slider. 
                             We calculate two different strategies:
@@ -34153,12 +34152,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 </div>
                 <style>@keyframes pulseGreen { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.7); } 70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); } }</style>
                 <div class="card" style="margin-top:14px;">
-                    <div class="card-header"><div class="card-title">@lock@ Military-Grade Tracking Active</div></div>
-                    <div style="font-size:12px;color:var(--text2);line-height:1.8;">
-                        • <strong style="color:var(--green);">@checkCircle@ Hyper-Accurate Online Status:</strong> Detects offline devices instantly within 25 seconds.<br>
-                        • <strong style="color:var(--text);">@devices@ True Device Identity:</strong> Deep extraction of exact hardware model numbers.<br>
-                        • <strong style="color:var(--text);">@globe@ Deep Network Tracking:</strong> Enterprise-grade ISP detection to spot cellular networks or VPNs.<br>
-                        • <strong style="color:var(--red);">@sparkles@ Instant Kill-Switch:</strong> Revocation terminates unauthorized sessions in milliseconds.
+                    <div class="card-header"><div class="card-title">@lock@ How this list works</div></div>
+                    <div style="font-size:12.5px;color:var(--text2);line-height:1.8;">
+                        • <strong style="color:var(--text);">Online:</strong> a device shows as online if it checked in during the last 75 seconds.<br>
+                        • <strong style="color:var(--text);">Device:</strong> browser, system, memory and cores are what the browser itself reports. A browser cannot report an exact model.<br>
+                        • <strong style="color:var(--text);">Location and network:</strong> looked up from the device's IP address by a public service (ipwho.is, or ipapi.co if that fails). They are approximate, and a VPN shows the VPN's location.<br>
+                        • <strong style="color:var(--text);">Revoke:</strong> asks for your PIN, then signs that device out the next time it opens WealthFlow.
                     </div>
                 </div>
             `;

@@ -899,6 +899,12 @@ html.wf-sheet-open, html.wf-sheet-open body { overscroll-behavior: contain; }
     .mhero { padding: 20px 18px 12px; }
 }
 
+/* ═════════════════ 24. TOOLS AND TRACKING ═══════════════════════════════════ */
+/* An explainer at the top of a tool: quiet, neutral, readable in both themes (it was a gold-bordered box with fixed colours). */
+.wf-note { background: var(--wf-card-2); border: 1px solid var(--wf-line); border-radius: var(--wf-r-md); padding: 14px 16px; font-size: 12.5px; line-height: 1.65; color: var(--wf-text-2); }
+.wf-note .wf-note-h { display: block; margin-bottom: 4px; font-size: 13.5px; font-weight: 650; color: var(--wf-text); }
+.wf-note b:not(.wf-note-h) { color: var(--wf-text); font-weight: 600; }
+
 /* ═════════════════ 21. MOTION PREFERENCES ═══════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
