@@ -112,6 +112,11 @@ describe('subscription payment schedule', () => {
         expect(reopened.created).toBe(false);
     });
 
+    it('the AI bill scan maps every accepted cycle spelling onto the form select values', () => {
+        const v4 = fs.readFileSync(path.join(process.cwd(), 'wealthflow-ai-v4.js'), 'utf8');
+        expect(v4).toMatch(/\^\(once\|one-time\|onetime\)\$\/\.test\(mc\) \? 'once' : \(mc === 'annual' \? 'yearly' : mc\)/);
+    });
+
     it('the page: a Paid answer in the verification queue finishes a one-time bill, and a one-time bill counts in its own past-due month', () => {
         const page = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf8');
         expect(page).toMatch(/if \(row\.oneTime\) \{[^]*?paidSource: 'queue', reopened: false/);

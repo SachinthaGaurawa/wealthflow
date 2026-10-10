@@ -1099,7 +1099,11 @@
         }
         // Billing cycle inference from text
         if ($('sub_cycle')) {
-            if (matchedSub && matchedSub.cycle) $('sub_cycle').value = matchedSub.cycle;
+            if (matchedSub && matchedSub.cycle) {
+                // records may carry the spellings other readers accept; the select only has once / yearly
+                var mc = String(matchedSub.cycle).toLowerCase();
+                $('sub_cycle').value = /^(once|one-time|onetime)$/.test(mc) ? 'once' : (mc === 'annual' ? 'yearly' : mc);
+            }
             else if (result.raw_text) {
                 var rt = result.raw_text.toLowerCase();
                 if (/\b(one[ -]?time|single payment|pay once|once only)\b/.test(rt)) $('sub_cycle').value = 'once';
