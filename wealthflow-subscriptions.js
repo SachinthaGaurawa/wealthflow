@@ -39,8 +39,16 @@
     // Find an existing subscription: first by remembered mapping, then by a
     // confident name/phone match (so we don't create duplicates).
     function findExisting(txn, routeInfo, subs, map) {
-        subs = subs || []; map = map || {};
+        var all = subs || []; map = map || {};
         var key = merchantKey(txn, routeInfo);
+        // A finished one-time bill is closed: a later charge from the same merchant is a new bill,
+        // not a payment on it. Only an exact re-import of a payment it already holds, or a bill the
+        // owner reopened, may still match.
+        var tDate = (txn && txn.date) || '', tAmt = Math.abs(txn && txn.amount) || 0;
+        subs = all.filter(function (s) {
+            if (!_oneTime(s && s.cycle) || !(s.paid === true || s.completed === true) || s.reopened === true) return true;
+            return (s.history || []).some(function (h) { return h && h.date === tDate && Math.abs((h.amount || 0) - tAmt) < 0.01; });
+        });
         if (map[key]) {
             var byMap = subs.filter(function (s) { return s.id === map[key]; })[0];
             if (byMap) return { sub: byMap, key: key, via: 'memory' };

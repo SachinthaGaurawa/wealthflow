@@ -96,6 +96,22 @@ describe('subscription payment schedule', () => {
         expect(S.legacyDueDate({ cycle: 'once', dueDay: 31, createdAt: '2024-02-02T00:00:00Z' })).toBe('2024-02-29');
     });
 
+    it('a finished one-time bill is not matched by a later charge from the same merchant, but an exact re-import and a reopened bill still are', () => {
+        const S = api();
+        const route = { subName: 'Landlord' };
+        const done = { id: 'o1', name: 'Landlord', cycle: 'once', dueDate: '2026-09-20', paid: true, completed: true,
+            merchantKeys: ['desc:landlord'], history: [{ month: '2026-09', amount: 500, date: '2026-09-20', source: 'statement' }] };
+        const later = { date: '2026-10-21', amount: -700, description: 'Landlord' };
+        const r = S.applyToArrays(later, route, [done], {});
+        expect(r.created).toBe(true);
+        expect(r.subscriptions[0].history).toHaveLength(1);
+        const again = S.applyToArrays({ date: '2026-09-20', amount: -500, description: 'Landlord' }, route, [done], {});
+        expect(again.created).toBe(false);
+        expect(again.paymentAdded).toBe(false);
+        const reopened = S.applyToArrays(later, route, [{ ...done, reopened: true }], {});
+        expect(reopened.created).toBe(false);
+    });
+
     it('the page: a Paid answer in the verification queue finishes a one-time bill, and a one-time bill counts in its own past-due month', () => {
         const page = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf8');
         expect(page).toMatch(/if \(row\.oneTime\) \{[^]*?paidSource: 'queue', reopened: false/);
