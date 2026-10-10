@@ -1734,7 +1734,9 @@
             } catch (_) {}
         }).catch(() => {});
 
-        setTimeout(_maybeShowPostUpdate, 1400);
+        // The welcome note is for the signed-in owner: wait for the app to be on screen
+        // (it used to appear over the sign-in form).
+        setTimeout(function _w() { const a = document.getElementById('app'); if (a && a.classList.contains('show')) _maybeShowPostUpdate(); else setTimeout(_w, 1500); }, 1400);
 
         // Flush any feedback queued while offline/closed, and retry when back online.
         setTimeout(() => { _flushQueuedFeedback(); }, 3000);

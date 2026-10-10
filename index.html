@@ -215,25 +215,25 @@
         content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>WealthFlow | Elite Financial System</title>
     <meta name="application-name" content="WealthFlow">
-    <meta name="description" content="WealthFlow Elite Financial System - Manage your wealth with precision">
-    <meta name="theme-color" content="#060a14">
-    <meta property="og:title" content="WealthFlow — Loan Statement">
+    <meta name="description" content="WealthFlow — track income, loans, credit cards, cheques and spending in one private dashboard, with an AI advisor that reads your real numbers.">
+    <meta name="theme-color" content="#0a0d13">
+    <meta property="og:title" content="WealthFlow — your money, in one calm place">
     <meta property="og:description"
-        content="View your secure personal loan account statement from WealthFlow Elite Financial System.">
+        content="Track income, loans, cards, cheques and spending in one private dashboard, with an AI advisor that reads your real numbers.">
     <meta property="og:image"
         content="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="WealthFlow">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="WealthFlow — Loan Statement">
-    <meta name="twitter:description" content="Secure personal loan account statement from WealthFlow.">
+    <meta name="twitter:title" content="WealthFlow — your money, in one calm place">
+    <meta name="twitter:description" content="Track income, loans, cards, cheques and spending in one private dashboard.">
     <meta name="twitter:image"
         content="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="WealthFlow">
-    <meta name="msapplication-TileColor" content="#060a14">
+    <meta name="msapplication-TileColor" content="#0a0d13">
     <meta name="msapplication-tap-highlight" content="no">
     <link rel="manifest" href="/manifest.json">
     <meta name="apple-mobile-web-app-title" content="WealthFlow">
@@ -264,9 +264,13 @@
     <link rel="preconnect" href="https://www.gstatic.com">
     <link rel="preconnect" href="https://firestore.googleapis.com">
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+    <!-- Typeface: Geist is self-hosted (wf-tokens.css). Only Sinhala still comes from Google
+         Fonts, because Geist has no Sinhala glyphs; unicode-range means the file is fetched
+         only when a Sinhala character is actually on screen. -->
     <link
-        href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+Sinhala:wght@400;500;600;700&display=swap"
         rel="stylesheet">
+    <link rel="preload" href="/assets/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 
     <!-- FIREBASE — deferred, and one of them deleted outright.
          These four tags were the "4 third-party scripts block first paint" in #65.
@@ -680,6 +684,8 @@
     <script src="wealthflow-notifications.js" defer></script>
     <!-- Statement import batches + Undo (last 6) -->
     <script src="wealthflow-batches.js" defer></script>
+    <!-- The frame around every screen: phone tab bar, "More" sheet, Ctrl/Cmd+K palette. -->
+    <script src="wealthflow-shell.js" defer></script>
 
     
 
@@ -979,34 +985,6 @@
 
         #authScreen.show {
             display: flex;
-        }
-
-        .auth-bg {
-            position: absolute;
-            inset: 0;
-            overflow: hidden;
-        }
-
-        .auth-orb {
-            position: absolute;
-            border-radius: 50%;
-            filter: blur(100px);
-        }
-
-        .auth-orb1 {
-            width: 500px;
-            height: 500px;
-            background: rgba(212, 175, 55, .05);
-            top: -200px;
-            right: -200px;
-        }
-
-        .auth-orb2 {
-            width: 400px;
-            height: 400px;
-            background: rgba(59, 130, 246, .04);
-            bottom: -100px;
-            left: -150px;
         }
 
         .auth-box {
@@ -5577,18 +5555,19 @@
             .content { max-width: 2400px; width: 100%; margin-inline: auto; padding-inline: clamp(24px, 2vw, 64px); }
         }
     </style>
+    <!-- Design system (v7.70). Order matters: tokens first, then the skin, which re-points the
+         legacy variables above at the tokens and restyles the shared components. They live in
+         files rather than in this page so index.html stays inside its size budget and so the
+         customer portal can load wf-tokens.css on its own. -->
+    <link rel="stylesheet" href="/wf-tokens.css">
+    <link rel="stylesheet" href="/wf-ui.css">
 </head>
 
 <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs><linearGradient id="wfg" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#BE9444"/><stop offset="1" stop-color="#ECCB74"/></linearGradient><clipPath id="wfd"><path d="M1012 172L1100 172L1100 900L600 900L625 830Z"/></clipPath><path id="wfgp" fill-rule="evenodd" d="M1009,170 L803,280 L807,284 L861,305 L864,312 L618,747 L614,745 L548,608 L543,605 L538,611 L525,639 L528,652 L615,827 L620,827 L626,821 L634,807 L658,780 L658,774 L663,773 L722,702 L831,549 L953,369 L957,366 L963,368 L988,387 L1004,404 L1009,407 L1012,405 L1011,172Z"/><symbol id="wf-mark" viewBox="4 164 1014 674"><path fill="url(#wfg)" fill-rule="evenodd" d="M607,478 L589,515 L648,633 L651,634 L670,596 L658,577 L614,485Z M480,477 L474,481 L460,510 L476,542 L481,538 L496,508Z M915,470 L799,639 L750,743 L747,746 L743,743 L727,710 L706,743 L705,750 L746,832 L750,831 L818,689Z M670,284 L351,284 L349,286 L410,410 L421,392 L429,370 L406,322 L409,319 L480,319 L483,324 L276,749 L269,743 L66,324 L67,319 L150,319 L153,321 L296,619 L304,631 L321,600 L322,591 L178,292 L171,284 L10,285 L65,404 L273,831 L277,829 L506,355 L510,352 L555,442 L406,747 L403,750 L399,747 L373,697 L370,698 L353,730 L399,827 L403,829 L406,826 L670,291Z M539,319 L611,319 L613,321 L575,398 L566,385 L536,324Z"/><use href="#wfgp" fill="#44A84F"/><use href="#wfgp" fill="#2C7F4A" clip-path="url(#wfd)"/></symbol></defs></svg>
 
     <div id="splash">
-        <div class="sp-bg">
-            <div class="sp-orb sp-orb1"></div>
-            <div class="sp-orb sp-orb2"></div>
-        </div>
-        <div class="sp-logo"><img
-                src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png"
-                alt="WealthFlow"></div>
+        <div class="sp-logo"><svg class="wf-mark" role="img" aria-label="WealthFlow"><use href="#wf-mark"/></svg></div>
         <div class="sp-title-wrap">
             <div class="sp-title">WealthFlow</div>
             <div class="sp-sub">Infinity Engine</div>
@@ -5693,15 +5672,8 @@
     </script>
 
     <div id="authScreen">
-        <div class="auth-bg">
-            <div class="auth-orb auth-orb1"></div>
-            <div class="auth-orb auth-orb2"></div>
-        </div>
-
         <div class="auth-box" id="authGoogle" style="display:none;">
-            <div class="auth-logo"><img
-                    src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png"
-                    alt="WealthFlow"></div>
+            <div class="auth-logo"><svg class="wf-mark" role="img" aria-label="WealthFlow"><use href="#wf-mark"/></svg></div>
             <div class="auth-title">WealthFlow Cloud</div>
             <div class="auth-sub">Take control of your money — track, plan and grow with confidence</div>
 
@@ -5751,9 +5723,7 @@
         </div>
 
         <div class="auth-box" id="authLogin" style="display:none;">
-            <div class="auth-logo"><img
-                    src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png"
-                    alt="WealthFlow"></div>
+            <div class="auth-logo"><svg class="wf-mark" role="img" aria-label="WealthFlow"><use href="#wf-mark"/></svg></div>
             <div class="auth-title">Welcome Back</div>
             <div class="auth-sub" id="authLoginSub">Enter your 6-digit PIN to unlock</div>
             <div class="pin-dots" id="loginDots"></div>
@@ -5923,8 +5893,7 @@
             <div class="sb-logo">
                 <div class="sb-logomark">
                     <div class="sb-icon">
-                        <img src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png"
-                            alt="WealthFlow Logo" style="max-width: 100%; height: auto;">
+                        <svg class="wf-mark" role="img" aria-label="WealthFlow"><use href="#wf-mark"/></svg>
                     </div>
                     <div>
                         <div class="sb-title">WealthFlow</div>

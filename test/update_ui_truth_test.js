@@ -113,8 +113,10 @@ describe('the hardcoded release history is gone', () => {
         // keyboard-accessible switch state (role/tabindex/ARIA + atomic sync)
         // to the auto-security control. Release-history duplication remains
         // prohibited by the structural assertions immediately above.
+        // Raised from 116_500 (measured 116,770): the welcome note now waits for the app to
+        // be on screen instead of appearing over the sign-in form. One compact poll.
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(116_500);
+        expect(bytes).toBeLessThan(117_000);
     });
 });
 
