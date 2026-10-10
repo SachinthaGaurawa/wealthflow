@@ -7639,7 +7639,7 @@
                     </div>
                     <div class="scan-mode-card" data-mode="frontier" onclick="setScanSetting('scanMode','frontier')">
                         <div style="font-size:20px;">@globe@</div>
-                        <div><div style="font-weight:700;font-size:13px;">Frontier (Gemini 3.1 Pro)</div><div style="font-size:11px;color:var(--text3);">Maximum accuracy. Hard documents, multi-page PDFs. ~20s.</div></div>
+                        <div><div style="font-weight:700;font-size:13px;">Frontier (strongest readers)</div><div style="font-size:11px;color:var(--text3);">Maximum accuracy. Hard documents, multi-page PDFs. Adds the strongest models on top of every other engine. ~20s.</div></div>
                     </div>
                 </div>
             </div>
@@ -29716,7 +29716,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm ai-persona-btn" onclick="openModal('mdAIPersona')">${(window.WFIcon ? WFIcon('bot') : '')} ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
             </div>
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info"><div class="setting-label">${(window.WFIcon ? WFIcon('scan') : '')} AI Scanner Settings</div><div class="setting-desc">Tune scan mode (Quick / Deep / Ultra / Frontier with Gemini 3.1 Pro), TF.js enhancement, and default currency for receipts &amp; PDFs.</div></div>
+                <div class="setting-info"><div class="setting-label">${(window.WFIcon ? WFIcon('scan') : '')} AI Scanner Settings</div><div class="setting-desc">Tune scan mode (Quick / Deep / Ultra / Frontier with the strongest models), TF.js enhancement, and default currency for receipts &amp; PDFs.</div></div>
                 <button class="btn btn-secondary btn-sm" style="color:var(--accent); border-color:var(--accent);" onclick="if(typeof openScannerSettings==='function'){openScannerSettings()}else{notify('Scanner module still loading…','info')}">${_ic('settings')} Configure</button>
             </div>
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
