@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { SI, LANGS, LANG_BUTTON, detectLang, makeT, fill } from '../tenant-lang.js';
+import { SI, LANGS, LANG_BUTTON, detectLang, makeT, fill, noteText } from '../tenant-lang.js';
 import { MSG } from '../tenant-portal.mjs';
 globalThis.__WF_TENANT_NO_BOOT = true;
 const { COPY } = await import('../tenant-page.js');
@@ -126,5 +126,35 @@ describe('nothing is left untranslated', () => {
 
     it('carries no markup and no script: it is only ever put on the page as text, but it should never need to be anything else', () => {
         for (const [en, si] of Object.entries(SI)) { expect(si, en).not.toMatch(/[<>]/); expect(en).not.toMatch(/[<>]/); }
+    });
+});
+
+
+describe('the lender\'s note on a bank account in Sinhala', () => {
+    const SINHALA = /[\u0D80-\u0DFF]/;
+    it('shows the Sinhala note the owner wrote, ahead of anything else', () => {
+        expect(noteText({ note: 'Please write your NIC in the payment references', noteSi: 'මගේ සටහන' }, 'si')).toBe('මගේ සටහන');
+    });
+    it('translates the notes lenders write most, whatever the case or punctuation', () => {
+        for (const note of ['PLEASE WRITE YOUR NIC IN THE PAYMENT REFERENCES', 'Please write your NIC in the payment reference.', 'put your N.I.C. number in the reference', 'Write NIC in ref']) {
+            const out = noteText({ note }, 'si');
+            expect(out, note).toMatch(SINHALA);
+            expect(out, note).not.toMatch(/PLEASE|WRITE/i);
+        }
+        expect(noteText({ note: 'Please send the payment slip on WhatsApp' }, 'si')).toMatch(SINHALA);
+        expect(noteText({ note: 'Call me once you have paid' }, 'si')).toMatch(SINHALA);
+    });
+    it('shows a note it cannot translate exactly as written, and never an empty one', () => {
+        expect(noteText({ note: 'Branch closes at 3pm' }, 'si')).toBe('Branch closes at 3pm');
+        expect(noteText({ note: '' }, 'si')).toBe('');
+        expect(noteText(null, 'si')).toBe('');
+    });
+    it('leaves English readers with what the owner typed', () => {
+        expect(noteText({ note: 'PLEASE WRITE YOUR NIC IN THE PAYMENT REFERENCES', noteSi: 'x' }, 'en')).toBe('PLEASE WRITE YOUR NIC IN THE PAYMENT REFERENCES');
+    });
+    it('the translator carries its language so the page and the PDF can pick the variant', () => {
+        expect(makeT('si').lang).toBe('si');
+        expect(makeT('en').lang).toBe('en');
+        expect(makeT('fr').lang).toBe('en');
     });
 });

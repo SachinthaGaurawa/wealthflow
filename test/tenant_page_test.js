@@ -216,10 +216,12 @@ describe('what a person needs next: when, and where to pay', () => {
         for (const odd of [null, {}, { lenders: 'x', groups: [] }, { lenders: [{ accounts: 'x' }], groups: [] }]) expect(() => statementView(doc, odd, makeT('en'), { copy: () => {} }), JSON.stringify(odd)).not.toThrow();
     });
 
-    it('reads in Sinhala when asked, with the figures, dates and codes untouched', () => {
+    it('reads in Sinhala when asked, with the figures and codes untouched and the dates in Sinhala', () => {
         const text = textOf(statementView(doc, base, makeT('si'), { copy: () => {} }));
         for (const want of ['ගෙවන ආකාරය', 'ඊළඟ පොලිය ලැබිය යුත්තේ', 'ආපසු ගෙවිය යුත්තේ', 'දින 4කට පෙර', 'සියලු විස්තර පිටපත් කරන්න', 'ආයෝජනය', 'ණය']) expect(text, want).toContain(want);
-        for (const same of ['LKR 500,000.00', '5 Nov 2026', 'INV-9990B2', 'DEB-96E5C2', '8001234567', 'Commercial Bank']) expect(text, same).toContain(same);
+        expect(text).toContain('2026 නොවැම්බර් 5');
+        expect(text).not.toContain('5 Nov 2026');
+        for (const same of ['LKR 500,000.00', 'INV-9990B2', 'DEB-96E5C2', '8001234567', 'Commercial Bank']) expect(text, same).toContain(same);
     });
 
     it('turns a refusal into the person\'s language, and the wait with it', () => {
@@ -230,7 +232,11 @@ describe('what a person needs next: when, and where to pay', () => {
     });
 
     it('writes "as at" with the zone in the person\'s language', () => {
-        expect(fmtAsOf('2026-10-05T05:00:00.000Z', makeT('si'))).toBe('5 Oct 2026, 10:30 (ශ්‍රී ලංකා වේලාව)');
+        expect(fmtAsOf('2026-10-05T05:00:00.000Z', makeT('si'))).toBe('2026 ඔක්තෝබර් 5, 10:30 (ශ්‍රී ලංකා වේලාව)');
+        expect(fmtAsOf('2026-10-05T05:00:00.000Z', makeT('en'))).toBe('5 Oct 2026, 10:30 (Sri Lanka time)');
+        expect(fmtDay('2026-01-31', 'si')).toBe('2026 ජනවාරි 31');
+        expect(fmtDay('2026-01-31')).toBe('31 Jan 2026');
+        expect(fmtMonth('2026-12', 'si')).toBe('2026 දෙසැම්බර්');
     });
 
     it('turns an account into plain lines for pasting into a banking app or a message', () => {

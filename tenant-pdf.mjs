@@ -36,7 +36,7 @@
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import { fmtMoney, fmtDay } from './sms-templates.mjs';
-import { makeT } from './tenant-lang.js';
+import { makeT, noteText } from './tenant-lang.js';
 import { LOGO } from './tenant-logo.mjs';
 import { subsetFont, glyphCodePoints } from './pdf-font.mjs';
 import { loadShaper, needsShaping } from './pdf-shape.mjs';
@@ -263,9 +263,15 @@ class Canvas {
 }
 
 const timeOf = (iso) => { const t = Date.parse(iso); if (!Number.isFinite(t)) return ''; const d = new Date(t + 330 * 60000); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
-const dayOf = (iso) => { const t = Date.parse(iso); return Number.isFinite(t) ? fmtDay(new Date(t + 330 * 60000).toISOString()) : ''; };
-const month = (ym) => { const m = /^(\d{4})-(\d{2})$/.exec(String(ym || '')); return m ? fmtDay(`${m[1]}-${m[2]}-01`).slice(3) : '-'; };
-const day = (iso) => fmtDay(iso) || '-';
+/* Dates in the file's language: "05 Oct 2026" in English, "2026 ඔක්තෝබර් 05" in Sinhala. `t` is the file's translator (it knows its language). */
+const MONTHS_SI = ['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'];
+const dayIn = (iso, t) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+    return t && t.lang === 'si' && m && MONTHS_SI[Number(m[2]) - 1] ? `${m[1]} ${MONTHS_SI[Number(m[2]) - 1]} ${m[3]}` : fmtDay(iso);
+};
+const dayOf = (iso, t) => { const ms = Date.parse(iso); return Number.isFinite(ms) ? dayIn(new Date(ms + 330 * 60000).toISOString(), t) : ''; };
+const month = (ym, t) => { const m = /^(\d{4})-(\d{2})$/.exec(String(ym || '')); return m ? (t && t.lang === 'si' ? dayIn(`${m[1]}-${m[2]}-01`, t).replace(/ \d+$/, '') : fmtDay(`${m[1]}-${m[2]}-01`).slice(3)) : '-'; };
+const day = (iso, t) => dayIn(iso, t) || '-';
 const FREQ = { monthly: 'Monthly', quarterly: 'Every 3 months', annual: 'Yearly' };
 const STATUS = { settled: 'Settled', closed: 'Closed', open: 'Open' };
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -284,7 +290,7 @@ function header(c, st) {
     c.text(PAGE.margin, top + 48, t('Account Statement'), { size: 11, bold: true });
     c.text(PAGE.margin, top + 61, t('Your investments and loans with your lender'), { size: 9, color: COLOR.mute });
     const right = PAGE.w - PAGE.margin;
-    const meta = [[t('Statement No'), statementNo(st.asOf)], [t('As at'), `${dayOf(st.asOf)}, ${timeOf(st.asOf)}`], [t('Time zone'), t('Sri Lanka time')]];
+    const meta = [[t('Statement No'), statementNo(st.asOf)], [t('As at'), `${dayOf(st.asOf, t)}, ${timeOf(st.asOf)}`], [t('Time zone'), t('Sri Lanka time')]];
     meta.forEach(([k, v], i) => {
         const base = top + 12 + i * 14;
         c.text(right - c.measure(v, true, 9) - 6, base, `${k}:`, { size: 9, color: COLOR.mute, align: 'r' });
@@ -473,18 +479,18 @@ function investment(c, g, many) {
         [t('Rate'), t('{n}% a year', { n: num(g.ratePct) })],
         [t('Interest paid'), t(FREQ[g.frequency] || FREQ.monthly)],
         [t('Interest each time'), fmtMoney(g.interestPerPeriod, cur)],
-        [t('Started'), day(g.start)],
-        g.end ? [t('Ends'), day(g.end)] : null,
+        [t('Started'), day(g.start, t)],
+        g.end ? [t('Ends'), day(g.end, t)] : null,
     ].filter(Boolean), t('Account status'), [
         [t('Interest received so far'), fmtMoney(g.totalReceived, cur), COLOR.paid],
         [t('Payments received'), String(pays.length)],
-        g.nextInterest ? [t('Next interest due'), day(g.nextInterest.date)] : null,
+        g.nextInterest ? [t('Next interest due'), day(g.nextInterest.date, t)] : null,
         g.nextInterest ? [t('Next interest amount'), fmtMoney(g.nextInterest.amount, cur)] : null,
     ].filter(Boolean));
     if (pays.length) {
         table(c, t('Interest received ({n})', { n: pays.length }), COLOR.paid,
             [{ label: '#', w: 1 }, { label: t('For'), w: 3 }, { label: t('Received on'), w: 3 }, { label: t('Amount ({cur})', { cur }), w: 3, right: true }],
-            pays.map((p, i) => [String(i + 1), month(p.month), day(p.date), { t: fmtMoney(p.amount, cur).slice(4), bold: true }]),
+            pays.map((p, i) => [String(i + 1), month(p.month, t), day(p.date, t), { t: fmtMoney(p.amount, cur).slice(4), bold: true }]),
             [t('Total received ({n})', { n: pays.length }).toUpperCase(), '', '', fmtMoney(g.totalReceived, cur).slice(4)].map((x, i) => (i === 0 ? { t: x, bold: true } : x)));
         // the label of the total spans the first columns: only the first cell carries text
     } else note(c, t('No payments recorded yet.'));
@@ -504,7 +510,7 @@ function loan(c, g, many) {
     detailsAndStatus(c, t('Loan details'), [
         [t('Reference'), g.ref],
         [t('Paid out'), fmtMoney(g.lent, cur)],
-        g.due ? [t('Expected back by'), day(g.due)] : null,
+        g.due ? [t('Expected back by'), day(g.due, t)] : null,
     ].filter(Boolean), t('Account status'), [
         [t('Repaid so far'), fmtMoney(g.repaid, cur), COLOR.paid],
         [t('Outstanding'), fmtMoney(g.outstanding, cur), open ? COLOR.owed : COLOR.paid],
@@ -518,7 +524,7 @@ function loan(c, g, many) {
             [{ label: '#', w: 1 }, { label: t('Date'), w: 3 }, { label: t('Transaction'), w: 4 }, { label: t('Amount ({cur})', { cur }), w: 3, right: true }, { label: t('Balance ({cur})', { cur }), w: 3, right: true }, { label: t('Type'), w: 3, center: true }],
             events.map((e, i) => {
                 const tag = TAG[e.kind];
-                return [String(i + 1), day(e.date), LOAN_EVENT[e.kind] ? t(LOAN_EVENT[e.kind]) : '-', { t: fmtMoney(e.amount, cur).slice(4), bold: true }, { t: fmtMoney(e.balance, cur).slice(4), bold: true, fill: num(e.balance) > 0 ? COLOR.balance : null }, { t: tag ? t(tag).toUpperCase() : '-', color: TAG_COLOR[e.kind] || COLOR.mute, bold: true }];
+                return [String(i + 1), day(e.date, t), LOAN_EVENT[e.kind] ? t(LOAN_EVENT[e.kind]) : '-', { t: fmtMoney(e.amount, cur).slice(4), bold: true }, { t: fmtMoney(e.balance, cur).slice(4), bold: true, fill: num(e.balance) > 0 ? COLOR.balance : null }, { t: tag ? t(tag).toUpperCase() : '-', color: TAG_COLOR[e.kind] || COLOR.mute, bold: true }];
             }),
             [{ t: t('Total repaid ({n})', { n: repayments.length }).toUpperCase(), bold: true }, '', '', fmtMoney(repaidSum, cur).slice(4), fmtMoney(g.outstanding, cur).slice(4), '']);
     } else note(c, t('Nothing recorded yet.'));
@@ -534,7 +540,8 @@ const ACCT = { pad: 16, title: 34, row: 19, valueX: 140 };
 function accountLayout(c, a) {
     const t = c.t;
     const rows = [[t('Account name'), a.holder], [t('Account number'), a.number], a.branch ? [t('Branch'), a.branch] : null, a.swift ? [t('SWIFT / IBAN'), a.swift] : null].filter(Boolean);
-    const noteLines = a.note ? c.wrap(a.note, false, 9, CONTENT_W - 2 * ACCT.pad - 26) : [];
+    const noteBody = noteText(a, t.lang);
+    const noteLines = noteBody ? c.wrap(noteBody, false, 9, CONTENT_W - 2 * ACCT.pad - 26) : [];
     const noteH = noteLines.length ? 24 + noteLines.length * c.lh(12) : 0;
     return { rows, noteLines, noteH, h: ACCT.title + rows.length * ACCT.row + (noteH ? 10 + noteH : 0) + 12 };
 }
@@ -669,7 +676,7 @@ export function statementPdf(statement, { generatedAt, lang = 'en', shaper = nul
     // footers, now that the page count is known
     const total = c.pages.length;
     const no = statementNo(st.asOf);
-    const stamp = `${t('Generated {when}', { when: `${dayOf(new Date(made).toISOString())} ${timeOf(new Date(made).toISOString())}` })} (${t('Sri Lanka time')})`;
+    const stamp = `${t('Generated {when}', { when: `${dayOf(new Date(made).toISOString(), t)} ${timeOf(new Date(made).toISOString())}` })} (${t('Sri Lanka time')})`;
     c.pages.forEach((ops, i) => {
         c.ops = ops;
         c.hline(PAGE.margin, PAGE.w - PAGE.margin, PAGE.h - 34, COLOR.line, 0.5);

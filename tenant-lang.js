@@ -150,7 +150,7 @@ export const SI = Object.freeze({
     /* where to pay */
     'How to pay': 'ගෙවන ආකාරය',
     'Pay by bank transfer to the account below and put the reference of the record in the transfer. If the account details here look different from what your lender told you, check with your lender before sending money.':
-        'පහත ගිණුමට බැංකු හුවමාරුවෙන් ගෙවා, හුවමාරුවේ සටහනේ අදාළ වාර්තාවේ යොමු කේතය (reference) සඳහන් කරන්න. මෙහි ඇති ගිණුම් විස්තර ඔබේ ණය දෙන්නා ඔබට කී ඒවාට වඩා වෙනස් නම්, මුදල් යැවීමට පෙර ඔබේ ණය දෙන්නාගෙන් තහවුරු කරගන්න.',
+        'පහත ගිණුමට බැංකු හුවමාරුවෙන් ගෙවා, හුවමාරුවේ සටහනේ අදාළ වාර්තාවේ යොමු කේතය සඳහන් කරන්න. මෙහි ඇති ගිණුම් විස්තර ඔබේ ණය දෙන්නා ඔබට කී ඒවාට වඩා වෙනස් නම්, මුදල් යැවීමට පෙර ඔබේ ණය දෙන්නාගෙන් තහවුරු කරගන්න.',
     'References: {refs}': 'යොමු කේත: {refs}',
     'Bank': 'බැංකුව',
     'Account name': 'ගිණුමේ නම',
@@ -255,10 +255,31 @@ export const LANG_BUTTON = Object.freeze({ en: 'සිංහල', si: 'English' 
 /** Fills {name} places. A missing value leaves the place as it is, never "undefined". */
 export const fill = (text, vars) => String(text).replace(/\{(\w+)\}/g, (m, k) => (vars && Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m));
 
+/* The lender's note on a bank account is free text the owner typed, so it is not in the table above. In Sinhala the page shows, in this order:
+ * the Sinhala note the owner wrote for the account, then a translation of the notes lenders write most (below), then the note as written. */
+const NOTE_RULES = [
+    [(n) => /\bnic\b|\bnational identity\b/.test(n) && /\breferences?\b|\bref\b/.test(n), 'කරුණාකර ගෙවීමේදී ඔබේ ජාතික හැඳුනුම්පත් අංකය ගෙවීමේ යොමුවේ ලියන්න.'],
+    [(n) => /\b(slip|receipt)\b/.test(n) && /\b(send|share|forward|whatsapp|email|mail)\b/.test(n), 'කරුණාකර ගෙවීමෙන් පසු ගෙවුම් රිසිට්පත එවන්න.'],
+    [(n) => /\b(call|phone|inform|notify|tell)\b/.test(n) && /\b(after|once|when)\b/.test(n) && /\b(pay|paid|payment|transfer)\b/.test(n), 'කරුණාකර ගෙවීම කළ පසු අපට දැනුම් දෙන්න.'],
+];
+
+/** The note on an account in the customer's language (see above). `account` is { note, noteSi? }. */
+export function noteText(account, lang) {
+    const a = account || {};
+    const en = String(a.note == null ? '' : a.note);
+    if (lang !== 'si') return en;
+    if (a.noteSi) return String(a.noteSi);
+    const n = en.toLowerCase().replace(/\bn\.\s*i\.\s*c\b\.?/g, 'nic').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (n) for (const [test, si] of NOTE_RULES) if (test(n)) return si;
+    return en;
+}
+
 /** A translator for one language. English text is the key, so English needs no table. */
 export function makeT(lang) {
     const table = lang === 'si' ? SI : null;
-    return (text, vars) => fill(table && Object.prototype.hasOwnProperty.call(table, text) ? table[text] : text, vars);
+    const t = (text, vars) => fill(table && Object.prototype.hasOwnProperty.call(table, text) ? table[text] : text, vars);
+    t.lang = lang === 'si' ? 'si' : 'en';                     // lets a caller that only holds the translator (the page, the PDF) pick the right free-text variant
+    return t;
 }
 
-export default { LANGS, SI, LANG_BUTTON, detectLang, makeT, fill };
+export default { LANGS, SI, LANG_BUTTON, detectLang, makeT, fill, noteText };
