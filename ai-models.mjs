@@ -56,7 +56,11 @@ export function modelsOf(kind, body) {
 /* ── choosing ─────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 const NOT_CHAT = /embed|rerank|guard|moderat|safety|tts|whisper|transcri|asr\b|image|diffus|flux|sdxl|ocr|reward|parse|translat|speech|audio|video|clip|retriev|bge|e5-|nv-|aqa|imagen|veo|lyria|learnlm|live|native-audio|computer-use|robotics/i;
-const VISION = /vision|\bvl\b|-vl-|pixtral|llava|4o|gemini|llama-3\.2-(?:11|90)b|llama-4|scout|maverick|gemma-?3|multimodal|omni/i;
+/* Which models can READ AN IMAGE. A list that names only last year's vision models leaves a provider with nothing to heal to the day its
+ * vision model is retired (production, 2026-10-10: every vision slug in the book was gone, and Mistral's `mistral-small-latest` — which reads
+ * images — was never a candidate because only `pixtral` matched). Current families are named here; a name that matches and cannot read an image
+ * answers 400, is set aside by the book, and the next one is tried. */
+const VISION = /vision|\bvl\b|-vl-|pixtral|llava|\b4o\b|gpt-4o|gpt-4\.1|gpt-5|gemini|llama-3\.2-(?:11|90)b|llama-4|scout|maverick|gemma-?[34]|multimodal|omni|inkling|kimi|mistral-(?:small|medium|large)|ministral-3|minicpm|molmo|internvl|glm-?\d+(?:\.\d+)?v\b/i;
 
 /** A version number out of an id, for "newest first": gemini-3.8-flash → 3.8; qwen3.8-27b → 3.8. */
 const versionOf = (id) => { const m = /(\d+(?:\.\d+)?)/.exec(String(id)); return m ? Number(m[1]) : 0; };
@@ -73,9 +77,19 @@ const PREFER = {
     Together: [/llama-3\.3-70b/, /llama-4/, /70b/, /instruct|chat/],
     Fireworks: [/gpt-oss-120b/, /llama4|llama-4/, /qwen-?3.*instruct/, /deepseek-v3/, /kimi.*instruct/, /llama-v3p3-70b/, /70b/, /instruct|chat/],
     Cerebras: [/gpt-oss/, /qwen-?3.*(?:235b|32b)/, /glm/, /llama-?3\.3-70b/, /llama/, /./],
+    GitHubModels: [/gpt-4\.1-mini/, /gpt-4o-mini/, /gpt-4\.1$/, /gpt-4o$/, /llama-3\.3-70b/, /gpt|llama|mistral/],
 };
 const OPENROUTER_ROLE = { Finance: [/ling|fin/, /deepseek/, /gpt-oss/, /llama-3\.3/, /gemma/, /mistral/], Qwen: [/qwen/, /deepseek/, /llama/], Nemotron: [/nemotron/, /llama/, /gpt-oss/] };
-const VISION_PREFER = { Mistral: [/pixtral/, /mistral-(?:small|medium)/], NVIDIA: [/llama-3\.2-90b-vision/, /llama-3\.2-11b-vision/, /llama-4/, /vision|vl/], Ollama: [/llama3\.2-vision/, /qwen.*vl/, /gemma3/, /llava/, /vision/], OpenRouter: [/qwen.*vl|qwen3/, /gemma-3/, /llama-4|llama-3\.2/, /gemini/, /vision|vl/] };
+const VISION_PREFER = {
+    Mistral: [/pixtral-large-latest/, /pixtral.*-latest$/, /pixtral/, /^mistral-small-latest$/, /^mistral-medium-latest$/, /mistral-(?:small|medium)/, /mistral-large/],
+    NVIDIA: [/llama-3\.2-90b-vision/, /llama-3\.2-11b-vision/, /llama-4/, /gemma-?4/, /phi-.*(?:vision|multimodal)/, /gemma-?3/, /vision|vl|omni/],
+    Ollama: [/qwen.*vl/, /gemma-?4/, /mistral-large-[34]/, /gemma-?3/, /kimi/, /llama3\.2-vision/, /llava/, /vision/],
+    OpenRouter: [/gemma-?4/, /nemotron.*omni/, /qwen.*vl|qwen3/, /inkling/, /gemma-3/, /llama-4|llama-3\.2/, /gemini/, /vision|vl/],
+    Groq: [/llama-4-scout/, /llama-4-maverick/, /llama-4/, /vision|vl/],
+    Together: [/llama-4/, /llama-3\.2-90b-vision/, /llama-3\.2-11b-vision/, /qwen.*vl/, /vision|vl/],
+    Fireworks: [/llama4|llama-4/, /qwen.*vl/, /llama-v3p2-90b-vision/, /phi-3-vision/, /vision|vl/],
+    GitHubModels: [/gpt-4o$/, /gpt-4\.1$/, /gpt-5/, /4o/, /llama-3\.2.*vision/],
+};
 
 /**
  * The best live model for this role, or ''.
