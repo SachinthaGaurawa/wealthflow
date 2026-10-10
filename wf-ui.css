@@ -838,6 +838,73 @@ html.wf-sheet-open, html.wf-sheet-open body { overscroll-behavior: contain; }
     #wfVerifyQueue .wf-vq { padding: 16px; }
 }
 
+/* ═════════════════ 23. FINANCE PAGES ════════════════════════════════════════
+   Monthly Plan, Income, Investments, Bank Loans, CC Installments, CC One-Time, Cheques.
+   Presentation only: the markup these pages draw is unchanged, so every figure, button
+   and handler is where it was. */
+
+/* A toolbar choice (sort by, table or schedule) is one segmented control, not a row of loose pills. */
+.sort-bar, .exp-view-toggle { gap: 2px; padding: 3px; background: var(--wf-card-2); border: 1px solid var(--wf-line); border-radius: var(--wf-r-md); }
+.sort-bar .sb-btn, .exp-view-toggle .exp-vbtn { height: 30px; padding: 0 12px; border: 0; border-radius: var(--wf-r-sm); }
+.sort-bar .sb-btn:hover, .exp-view-toggle .exp-vbtn:hover { background: var(--wf-hover); }
+.sort-bar .sb-btn.active, .exp-view-toggle .exp-vbtn.active { background: var(--wf-card); color: var(--wf-text); box-shadow: 0 0 0 1px var(--wf-line-2), var(--wf-shadow-1); }
+.sort-bar .sb-lbl { padding: 0 4px 0 9px; }
+.btn-warning, .loan-month-btn.lmb-partial, .sub-due-soon { color: var(--wf-warn); }
+
+/* Monthly Plan */
+.mhero { background: var(--wf-card); border: 1px solid var(--wf-line); border-radius: var(--wf-r-xl); box-shadow: var(--wf-shadow-1); padding: 24px 28px 18px; }
+.mhero::before { background: radial-gradient(circle at 88% 0%, var(--wf-accent-soft), transparent 55%); pointer-events: none; }
+.mhero > * { position: relative; }
+.mh-lbl { font-size: 12px; font-weight: 650; letter-spacing: .08em; color: var(--wf-accent); margin-bottom: 8px; }
+.mh-bal { font-family: var(--wf-font); font-size: clamp(30px, 6vw, 44px); font-weight: 650; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+.mh-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 16px; margin-top: 20px; padding-top: 6px; border-top: 1px solid var(--wf-line); }
+.mhi { min-width: 0; padding: 12px 0 6px; }
+.mhi-lbl { font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--wf-text-3); }
+.mhi-val { margin-top: 3px; font-family: var(--wf-font); font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#monthlyContent > .g2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; }
+#monthlyContent .card-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+#monthlyContent .card-sub { margin-top: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+#monthlyContent .td-r { flex: 0 0 auto; white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+#monthlyContent .card div[style*="justify-content:space-between"] > span:first-child { min-width: 0; padding-right: 14px; }
+#page-monthly .sh { margin-bottom: 10px; }
+#page-monthly .month-tabs { margin-bottom: 16px; }
+
+/* Bank Loans: the card is a statement, so the figure that matters is neutral ink and the one action is the one gold thing. */
+.loan-card { padding: 22px 24px; }
+.loan-top { gap: 16px; margin-bottom: 14px; }
+.loan-name { font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+.loan-bank { margin-top: 4px; font-size: 12.5px; }
+.loan-monthly { font-family: var(--wf-font); font-size: 20px; font-weight: 650; letter-spacing: -.02em; color: var(--wf-text); font-variant-numeric: tabular-nums; }
+.loan-pay-cta {
+    min-height: 52px; padding: 10px 16px; border-radius: var(--wf-r-md); background: var(--wf-accent-fill); color: var(--wf-accent-ink);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .38), 0 1px 2px rgba(0, 0, 0, .14); animation: none;
+}
+.loan-pay-cta:hover { background: var(--wf-gold-300); transform: none; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 4px 14px var(--wf-accent-soft); }
+.loan-card .ld { flex: 1 1 150px; margin: 0 0 12px; padding-right: 16px; min-width: 0; }
+.ld-l { font-size: 11px; font-weight: 550; letter-spacing: .04em; }
+.ld-v { margin-top: 3px; font-family: var(--wf-font); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.loan-projection { border-radius: var(--wf-r-md); }
+
+/* Stat cards on a phone: one figure per line (name left, value right) instead of a tall card each,
+   so the first screen shows the page and not four boxes. */
+@media (max-width: 640px) {
+    .page:not(#page-dashboard) :is(.g3, .g4, .g5) > .stat-card {
+        display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 14px; row-gap: 1px; padding: 12px 16px;
+    }
+    .page:not(#page-dashboard) :is(.g3, .g4, .g5) > .stat-card > .stat-label { grid-column: 1; grid-row: 1; }
+    .page:not(#page-dashboard) :is(.g3, .g4, .g5) > .stat-card > .stat-meta { grid-column: 1; grid-row: 2; }
+    .page:not(#page-dashboard) :is(.g3, .g4, .g5) > .stat-card > .stat-val { grid-column: 2; grid-row: 1 / span 2; margin: 0; text-align: right; font-size: 18px; overflow-wrap: anywhere; }
+    .loan-card { padding: 18px 16px; }
+    .loan-top { flex-wrap: wrap; }
+    .mhero { padding: 20px 18px 12px; }
+}
+
+/* ═════════════════ 24. TOOLS AND TRACKING ═══════════════════════════════════ */
+/* An explainer at the top of a tool: quiet, neutral, readable in both themes (it was a gold-bordered box with fixed colours). */
+.wf-note { background: var(--wf-card-2); border: 1px solid var(--wf-line); border-radius: var(--wf-r-md); padding: 14px 16px; font-size: 12.5px; line-height: 1.65; color: var(--wf-text-2); }
+.wf-note .wf-note-h { display: block; margin-bottom: 4px; font-size: 13.5px; font-weight: 650; color: var(--wf-text); }
+.wf-note b:not(.wf-note-h) { color: var(--wf-text); font-weight: 600; }
+
 /* ═════════════════ 21. MOTION PREFERENCES ═══════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }

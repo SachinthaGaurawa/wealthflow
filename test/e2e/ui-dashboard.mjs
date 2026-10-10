@@ -72,11 +72,11 @@ await page.locator('#wfVerifyQueue [data-vq-toggle]').click();
 const ax = await page.evaluate(() => {
     const t = (vals) => vals.map((v) => ({ value: v }));
     const run = (vals) => vals.map((v, i, a) => fmtAxis(v, i, t(a)));
-    return { m: run([0, 200000, 400000, 600000, 800000, 1000000, 1200000]), l: run([0, 200000, 400000, 600000]), small: run([0, 20000, 40000]) };
+    return { m: run([0, 200000, 400000, 600000, 800000, 1000000, 1200000]), k: run([0, 200000, 400000, 600000]), small: run([0, 2000, 4000]) };
 });
 check(ax.m.join() === '0,0.2M,0.4M,0.6M,0.8M,1.0M,1.2M', `a million-scale axis should use one unit and one precision, got ${ax.m.join()}`);
-check(ax.l.join() === '0,2L,4L,6L', `a lakh-scale axis should read 2L, 4L, 6L, got ${ax.l.join()}`);
-check(!/[ML]/.test(ax.small.join()), `a small axis stays in plain numbers, got ${ax.small.join()}`);
+check(ax.k.join() === '0,200K,400K,600K', `a hundred-thousand-scale axis should read 200K, 400K, 600K, got ${ax.k.join()}`);
+check(ax.small.join() === '0,2,000,4,000', `a small axis stays in plain numbers, got ${ax.small.join()}`);
 
 // ── No sideways scroll, both themes, common widths ───────────────────────────
 for (const theme of ['dark', 'light']) {

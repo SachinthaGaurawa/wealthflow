@@ -1461,7 +1461,16 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
         const touched = (before, after) => JSON.stringify(before) !== JSON.stringify(after);
         const plans = stripped(user.ccinstall, 'payments', row => row && row.statementKey === path);
         if (!changes.ccinstall && touched(user.ccinstall, plans)) changes.ccinstall = plans; else if (changes.ccinstall) changes.ccinstall = stripped(changes.ccinstall, 'payments', row => row && row.statementKey === path);
-        const subs = stripped(user.subscriptions, 'history', row => row && row.statementKey === path).map(sub => {
+        const droppedMonths = new Map((Array.isArray(user.subscriptions) ? user.subscriptions : []).filter(sub => sub && Array.isArray(sub.history)).map(sub => [sub.id, sub.history.filter(row => row && row.statementKey === path).map(row => row.month)]));
+        /* the month's amount the statement wrote goes with the statement, unless another statement payment still stands behind that month */
+        const withoutStatementOverrides = sub => {
+            const months = (droppedMonths.get(sub && sub.id) || []).filter(month => month && sub.monthOverrides && Object.prototype.hasOwnProperty.call(sub.monthOverrides, month) && !(Array.isArray(sub.history) && sub.history.some(row => row && row.month === month)));
+            if (!months.length) return sub;
+            const monthOverrides = { ...sub.monthOverrides };
+            for (const month of months) delete monthOverrides[month];
+            return { ...sub, monthOverrides, _ut: now };
+        };
+        const subs = stripped(user.subscriptions, 'history', row => row && row.statementKey === path).map(withoutStatementOverrides).map(sub => {
             if (!sub || sub.paidSource !== 'statement' || sub.paidStatementKey !== path) return sub;
             const remaining = Array.isArray(sub.history) ? sub.history.filter(row => row && row.source === 'statement') : [];
             if (remaining.length) {

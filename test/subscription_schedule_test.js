@@ -80,9 +80,46 @@ describe('subscription payment schedule', () => {
         expect(S.occurrence(sub, new Date('2026-12-23T12:00:00Z'))).toMatchObject({ active: false, paid: true });
     });
 
+    it('an exact re-import of a payment already on a reopened bill does not close it again', () => {
+        const S = api();
+        const sub = { id: 'o4', cycle: 'once', amount: 1000, dueDay: 20, dueDate: '2026-12-20', createdAt: '2026-10-01T00:00:00Z', reopened: true,
+            history: [{ month: '2026-12', date: '2026-12-18', amount: 1000, source: 'statement' }], monthOverrides: { '2026-12': 1000 } };
+        const r = S.recordPayment(sub, { date: '2026-12-18', amount: 1000 });
+        expect(r.added).toBe(false);
+        expect(sub.reopened).toBe(true);
+        expect(sub.paid).toBeFalsy();
+    });
+
     it('clamps a legacy day 31 to the real last day of a short month', () => {
         const S = api();
         expect(S.legacyDueDate({ cycle: 'once', dueDay: 31, createdAt: '2026-02-02T00:00:00Z' })).toBe('2026-02-28');
         expect(S.legacyDueDate({ cycle: 'once', dueDay: 31, createdAt: '2024-02-02T00:00:00Z' })).toBe('2024-02-29');
+    });
+
+    it('a finished one-time bill is not matched by a later charge from the same merchant, but an exact re-import and a reopened bill still are', () => {
+        const S = api();
+        const route = { subName: 'Landlord' };
+        const done = { id: 'o1', name: 'Landlord', cycle: 'once', dueDate: '2026-09-20', paid: true, completed: true,
+            merchantKeys: ['desc:landlord'], history: [{ month: '2026-09', amount: 500, date: '2026-09-20', source: 'statement' }] };
+        const later = { date: '2026-10-21', amount: -700, description: 'Landlord' };
+        const r = S.applyToArrays(later, route, [done], {});
+        expect(r.created).toBe(true);
+        expect(r.subscriptions[0].history).toHaveLength(1);
+        const again = S.applyToArrays({ date: '2026-09-20', amount: -500, description: 'Landlord' }, route, [done], {});
+        expect(again.created).toBe(false);
+        expect(again.paymentAdded).toBe(false);
+        const reopened = S.applyToArrays(later, route, [{ ...done, reopened: true }], {});
+        expect(reopened.created).toBe(false);
+    });
+
+    it('the AI bill scan maps every accepted cycle spelling onto the form select values', () => {
+        const v4 = fs.readFileSync(path.join(process.cwd(), 'wealthflow-ai-v4.js'), 'utf8');
+        expect(v4).toMatch(/\^\(once\|one-time\|onetime\)\$\/\.test\(mc\) \? 'once' : \(mc === 'annual' \? 'yearly' : mc\)/);
+    });
+
+    it('the page: a Paid answer in the verification queue finishes a one-time bill, and a one-time bill counts in its own past-due month', () => {
+        const page = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf8');
+        expect(page).toMatch(/if \(row\.oneTime\) \{[^]*?paidSource: 'queue', reopened: false/);
+        expect(page).toMatch(/if \(!onceBill && created && \(created\.getFullYear\(\) > year/);
     });
 });

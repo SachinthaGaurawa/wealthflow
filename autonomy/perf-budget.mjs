@@ -318,8 +318,10 @@ export const BUDGETS = {
     // search box for each list (the cards are only hidden, never rebuilt), and one question asked before a new loan for somebody who still owes money. About a third is comments.
     // 2026-10-10 (design system + app shell): 2,229,500 -> 2_233_000 (measured 2,230,551 + ~0.1% headroom). The whole look moved out of the page into wf-tokens.css / wf-ui.css, so the page
     // only gained the head links (font preloads, stylesheets, theme-color), the one inline SVG logo sprite and three <use> marks that replace the old raster logos and orb markup, and one script tag.
-    // 2026-10-10 (dashboard + real one-time payment lifecycle): 2,233,000 -> 2_239_500 (measured 2,236,958 + ~0.1% headroom). The greeting/attention fold and exact due-date, paid/reopen control and cycle-aware status ship together.
-    htmlBytes: 2_239_500,
+    // 2026-10-10 (completed records are permanent): 2,233,000 -> 2_240_000 (measured 2,237,626 + ~0.1% headroom). One shared rule (_wfIsDone / _wfKeepDone / _wfSplitCap) and a Completed section header on five lists,
+    // the guard on seven Delete handlers, and a fallback card so one bad record cannot blank the Investments page. About a third is comments.
+    // 2026-10-10 (real one-time payment lifecycle, merged with the above; measured 2,242,586 + ~0.1% headroom): exact due-date input, paid/reopen control and cycle-aware status replace the label-only implementation.
+    htmlBytes: 2_245_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -653,9 +655,10 @@ export const BUDGETS = {
     // 2026-10-10 (design system + app shell): 2,460,000 -> 2_488_500 (measured 2,485,665 + ~0.1% headroom). wealthflow-shell.js (about 34 KB, a third of it comments) is the phone tab bar, the "More" sheet and
     // the Ctrl/Cmd+K command palette that searches screens, actions and the owner's own records; it reads the sidebar as the one list of screens, writes no data and makes no request. The update
     // screen's wait for the app frame is now a poll (wealthflow-update-system.js) so the new frame cannot race it.
-    // 2026-10-10 (dashboard + one-time lifecycle): 2,488,500 -> 2_501_000 (measured 2,498,441 + ~0.1% headroom). The dashboard greeting/attention fold and the subscription schedule,
-    // verification queue and statement undo paths land together without dropping either feature's measured cost.
-    totalJsBytes: 2_501_000,
+    // 2026-10-10 (dashboard): 2,488,500 -> 2_492_300 (measured 2,489,721 + ~0.1% headroom). The dashboard greeting (wealthflow-shell.js, about 1.2 KB) and the attention feed's
+    // show-more fold with theme-token tones (wealthflow-insights.js). About a third is comments. No new module or request.
+    // 2026-10-10 (one-time lifecycle + verification/statement rollback, merged with the dashboard; measured 2,499,397 + ~0.1% headroom): the schedule, verification queue and statement undo paths now share the same paid/cadence rules.
+    totalJsBytes: 2_502_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

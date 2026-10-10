@@ -1,4 +1,6 @@
-node_modules/
+# No trailing slash on purpose: a node_modules SYMLINK is a file to git and "node_modules/" does not match it.
+# #409 committed one (pointing at a path that only exists on one machine) and the GitHub Pages build failed on it.
+node_modules
 
 # package-lock.json IS COMMITTED ON PURPOSE — do not re-add it here.
 #
