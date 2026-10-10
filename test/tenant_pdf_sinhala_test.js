@@ -246,7 +246,8 @@ withEngine('the Sinhala file', () => {
         const said = meaning(file);
         for (const word of [SI['Account Statement'], SI['How to pay'], SI['Summary'], SI['Account number'], SI['Investment details']]) expect(said, word).toContain(word);
         expect(all).toContain('LKR 500,000.00');                                // amounts stay in Latin digits, as on the page
-        expect(all).toContain('05 Oct 2026');
+        expect(said.some((l) => l.includes('2026 ඔක්තෝබර් 05')) && said.some((l) => l.includes('2026 ජනවාරි 05')), 'dates read in Sinhala too').toBe(true);
+        expect(said.join(' ')).not.toMatch(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/);
         expect(all).not.toMatch(/Account Statement|How to pay|Investment details|Figures are as recorded/);   // no English sentence is left in the middle of it
         expect(file.toString('latin1')).toContain('/Lang (si)');
     });

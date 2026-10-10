@@ -28,7 +28,7 @@ import { normalizeNic } from '../../wealthflow-nic.js';
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 const PAGE_HEADERS = Object.fromEntries(VERCEL.headers.find((h) => h.source === '/t/(.*)').headers.map((h) => [h.key, h.value]));
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.woff2': 'font/woff2' };
 
 const ENV = { TENANT_PORTAL_SECRET: 'e2e-secret-'.repeat(4) };
 const NIC = '853400937V';
@@ -42,7 +42,7 @@ const db = fsx.db;
 fsx.data.set('users/owner1', {
     settings: { currency: 'LKR' },
     payAccounts: [
-        { id: 'acc1', bank: 'Commercial Bank', holder: 'N. Perera', number: '8001234567', branch: 'Colombo 03', swift: 'CCEYLKLX', note: 'Please quote your reference', showTo: 'both', active: true, createdAt: '2026-01-01', _ut: 1 },
+        { id: 'acc1', bank: 'Commercial Bank', holder: 'N. Perera', number: '8001234567', branch: 'Colombo 03', swift: 'CCEYLKLX', note: 'PLEASE WRITE YOUR NIC IN THE PAYMENT REFERENCES', showTo: 'both', active: true, createdAt: '2026-01-01', _ut: 1 },
         { id: 'acc2', bank: 'Closed Bank', holder: 'Old Account', number: '1111222233', showTo: 'both', active: false, createdAt: '2026-01-02' },
     ],
     income: [{ id: 'inv1', name: 'PRIVATE DEPOSIT NAME', company: 'PRIVATE COMPANY', notes: 'PRIVATE NOTE <b>x</b>', amount: 500000, rate: 24, freq: 'monthly', start: '2026-01-05', day: '2026-01-05', sms_notifications_enabled: true, sms_enabled_at: NOW - 30 * 86400e3, nic: NIC, phone: '077 123 4567' }],
@@ -76,7 +76,7 @@ const server = http.createServer((req, res) => {
     const f = path.resolve(ROOT, '.' + file);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end('not found'); }
     // the page's own files, its words, the shared NIC module and nothing else
-    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
+    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|tenant-inter\.woff2|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', ...headers });
     res.end(fs.readFileSync(f));
 });
@@ -190,7 +190,7 @@ await page.setViewportSize({ width: 390, height: 800 });
 /* 6b. what a person needs next: when, where to pay, a PDF, copy, print, their own language ------ */
 assert.ok(/next interest due/i.test(body), 'the investment says when interest is next due');      // labels are upper-cased by the page's style, and innerText reports that
 assert.match(body, /expected back by\s*\S+ \S+ \d{4} \(4 days ago\)/i, 'the loan says when it was expected back, and how late it is');
-for (const want of ['How to pay', 'Commercial Bank', 'N. Perera', '8001234567', 'Colombo 03', 'CCEYLKLX', 'Please quote your reference']) assert.ok(body.includes(want), `the lender's account shows ${want}`);
+for (const want of ['How to pay', 'Commercial Bank', 'N. Perera', '8001234567', 'Colombo 03', 'CCEYLKLX', 'PLEASE WRITE YOUR NIC IN THE PAYMENT REFERENCES']) assert.ok(body.includes(want), `the lender's account shows ${want}`);
 assert.ok(!body.includes('Closed Bank') && !body.includes('1111222233'), 'a switched-off account is not shown');
 assert.ok(!/showTo|acc1|_ut/.test(body), 'no setting or id of the account reaches the page');
 assert.ok(body.toLowerCase().indexOf('how to pay') < body.toLowerCase().indexOf('capital'), 'where to pay comes before the records');
@@ -256,6 +256,43 @@ await page.waitForFunction(() => /Updated just now/.test((document.getElementByI
 assert.ok((await text()).includes('LKR 30,000.00'), 'the same statement is back after a refresh, with no new code');
 assert.ok(await page.locator('.tp-progress progress').count() >= 1, 'the loan shows its progress');
 console.log('5e. extras            -> coming up, calendar file, spreadsheet, jump to pay, refresh without a new code');
+
+// the balance card: amounts can be blurred for reading with someone nearby (and come back after a refresh), the section bar jumps, the typeface loaded
+assert.equal(await page.locator('.tp-hero .tp-holder-nic').count(), 1, 'the balance card shows whose statement it is');
+assert.equal(await page.getAttribute('#tp-eye', 'aria-pressed'), 'false');
+await page.click('#tp-eye');
+assert.equal(await page.getAttribute('#tp-eye', 'aria-pressed'), 'true');
+assert.match(await page.evaluate(() => getComputedStyle(document.querySelector('.tp-hero .tp-money')).filter), /blur/, 'the amounts are blurred');
+await page.click('#tp-refresh');
+await page.waitForFunction(() => /Updated just now/.test((document.getElementById('tp-info') || {}).textContent || ''));
+assert.equal(await page.getAttribute('#tp-eye', 'aria-pressed'), 'true', 'a refresh keeps the amounts hidden');
+await page.click('#tp-eye');
+await page.waitForFunction(() => getComputedStyle(document.querySelector('.tp-hero .tp-money')).filter === 'none', null, { timeout: 3000 });      // 'and showing them again unblurs' (it fades, so it takes a moment)
+assert.ok(await page.evaluate(async () => { await document.fonts.ready; return document.fonts.check('16px Inter'); }), 'the Inter typeface loaded from this site');
+if (await page.locator('.tp-tabs').isVisible()) {
+    await page.locator('.tp-tab[data-to="tp-records"]').click();
+    assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'tp-records', 'the section bar jumps to the records');
+}
+console.log('5f. balance card      -> holder, hide amounts (kept over a refresh), section bar, typeface');
+// 5g. the repayment plan: a loan that is open can be planned, and the answer follows what is typed
+{
+    await page.click('.tp-plan > summary');
+    const planOut = () => page.textContent('.tp-plan-out');
+    assert.match(await planOut(), /Enter an amount/, 'the plan asks for an amount first');
+    await page.selectOption('.tp-plan select', 'weekly');
+    await page.fill('.tp-plan input', '10000');
+    assert.match(await planOut(), /Payments\s*3|3\s*Payments/i, 'three weekly payments of 10,000 clear 30,000');
+    assert.match(await planOut(), /Finished by/i, 'and it says when it ends');
+    await page.fill('.tp-plan input', '0.01');
+    assert.match(await planOut(), /too many payments/, 'a tiny amount is refused in words');
+    await page.fill('.tp-plan input', '10000');
+    const [planIcs] = await Promise.all([page.waitForEvent('download'), page.click('.tp-plan-out .tp-small-btn')]);
+    const planText = fs.readFileSync(await planIcs.path(), 'utf8');
+    assert.match(planText, /RRULE:FREQ=WEEKLY;INTERVAL=1;COUNT=3/, 'the plan downloads as a repeating reminder');
+    assert.ok(await page.locator('.tp-trail .tp-spark').count() >= 1, 'the loan draws its balance over time');
+    await shot('3e-repayment-plan');
+    console.log('5g. repayment plan    -> payments and end date follow the amount, a repeating calendar reminder, balance chart');
+}
 await shot('3d-statement-extras');
 
 // their own language, one tap, nothing remembered
@@ -263,6 +300,18 @@ assert.equal(await page.textContent('#tp-lang'), 'සිංහල');
 await page.click('#tp-lang');
 await page.waitForFunction(() => document.getElementById('tp-lang').textContent === 'English');
 const si = await text();
+const leftovers = await page.evaluate(() => {
+    const out = new Set();
+    const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TITLE']);
+    const walk = (n) => { if (n.nodeType === 3) { const t = n.textContent; (t.match(/[A-Za-z]{3,}/g) || []).forEach((w) => out.add(w)); } else if (n.nodeType === 1 && !skip.has(n.tagName)) n.childNodes.forEach(walk); };
+    walk(document.body);
+    return [...out];
+});
+// nothing on the Sinhala page may be left in English except names, acronyms and the lender's own account data
+const KEEP = new Set(['WealthFlow', 'English', 'LKR', 'PDF', 'CSV', 'DEB', 'INV', 'SWIFT', 'IBAN', 'Commercial', 'Bank', 'Perera', 'Colombo', 'CCEYLKLX']);
+assert.deepEqual(leftovers.filter((w) => !KEEP.has(w)), [], 'English words left on the Sinhala page');
+assert.ok(/[\u0D80-\u0DFF]/.test(await page.textContent('.tp-acct-note p')) && !/PLEASE WRITE/i.test(await page.textContent('.tp-acct-note p')), "the lender's note reads in Sinhala");
+assert.ok(si.includes('ඔක්තෝබර්') || si.includes('ජනවාරි') || /\d{4} [\u0D80-\u0DFF]+ \d{1,2}/.test(si), 'dates read with Sinhala month names');
 for (const want of ['ඔබේ ප්‍රකාශය', 'ගෙවන ආකාරය', 'PDF බාගන්න', 'ණය', 'ආයෝජනය', 'LKR 500,000.00', '8001234567', 'Commercial Bank', 'INV-', 'DEB-']) assert.ok(si.includes(want), `the Sinhala page shows ${want}`);
 assert.equal(await page.evaluate(() => document.documentElement.lang), 'si');
 assert.equal(await page.getAttribute('#tp-lang', 'lang'), 'en');

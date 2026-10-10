@@ -68,7 +68,8 @@ jobs:
         run: |
           set +e
           if [ -z "$HEALTH_URL" ]; then echo "HEALTH_URL not set — skipping."; echo "decision=healthy" >> "$GITHUB_OUTPUT"; exit 0; fi
-          probe() { curl -s -o /dev/null -w "%{http_code}" --max-time 12 "$HEALTH_URL"; }
+          # -L: follow redirects (apex -> www is a 308 by design); the final answer must be 200
+          probe() { curl -sL --max-redirs 5 -o /dev/null -w "%{http_code}" --max-time 12 "$HEALTH_URL"; }
           C1=$(probe); echo "check 1: HTTP $C1"
           if [ "$C1" = "200" ]; then echo "healthy"; echo "decision=healthy" >> "$GITHUB_OUTPUT"; exit 0; fi
           echo "first check failed — waiting 60s to confirm (avoid blips)…"; sleep 60
@@ -83,9 +84,11 @@ jobs:
         if: steps.probe.outputs.decision == 'rollback'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           # if an auto-rollback issue is already open, a human is on it — don't pile on
           OPEN=$(gh issue list --label auto-rollback --state open --json number --jq 'length' 2>/dev/null || echo 0)
+          echo "open auto-rollback issues: $OPEN"
           if [ "$OPEN" != "0" ]; then echo "open auto-rollback issue exists — skipping."; echo "go=no" >> "$GITHUB_OUTPUT";
           else echo "go=yes" >> "$GITHUB_OUTPUT"; fi
 
@@ -107,6 +110,7 @@ jobs:
         if: steps.probe.outputs.decision == 'rollback' && steps.breaker.outputs.go == 'yes'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           CODES: ${{ steps.probe.outputs.codes }}
         run: |
           gh label create auto-rollback --color B60205 --description "Automated health rollback" 2>/dev/null || true

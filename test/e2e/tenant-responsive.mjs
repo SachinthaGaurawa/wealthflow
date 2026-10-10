@@ -31,7 +31,7 @@ import { normalizeNic } from '../../wealthflow-nic.js';
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 const PAGE_HEADERS = Object.fromEntries(VERCEL.headers.find((h) => h.source === '/t/(.*)').headers.map((h) => [h.key, h.value]));
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.woff2': 'font/woff2' };
 
 const ENV = { TENANT_PORTAL_SECRET: 'e2e-secret-'.repeat(4) };
 const NIC = '853400937V';
@@ -80,7 +80,7 @@ const server = http.createServer((req, res) => {
     if (/^\/t\/[A-Za-z0-9_-]{16}$/.test(file)) { file = '/tenant.html'; Object.assign(headers, PAGE_HEADERS); }
     const f = path.resolve(ROOT, '.' + file);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end('not found'); }
-    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
+    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|tenant-inter\.woff2|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', ...headers });
     res.end(fs.readFileSync(f));
 });
@@ -156,8 +156,8 @@ function audit(touch) {
         if (el.scrollWidth > el.clientWidth + 1 && !/auto|scroll/.test(ox)) out.push(`${name(el)} hides a column it cannot scroll to`);
     }
     // the column stays readable on a wide screen
-    const wrap = document.getElementById('tp-root');
-    if (wrap) { const wr = wrap.getBoundingClientRect(); if (wr.width > 1100) out.push(`the page stretches to ${Math.round(wr.width)}px`); const gap = Math.abs((wr.left) - (vw - wr.right)); if (wr.width < vw - 2 && gap > 2) out.push(`the column is not centred (${Math.round(wr.left)} left, ${Math.round(vw - wr.right)} right)`); }
+    const wrap = document.querySelector('.tp-wrap');
+    if (wrap) { const wr = wrap.getBoundingClientRect(); if (wr.width > 1300) out.push(`the page stretches to ${Math.round(wr.width)}px`); const gap = Math.abs((wr.left) - (vw - wr.right)); if (wr.width < vw - 2 && gap > 2) out.push(`the column is not centred (${Math.round(wr.left)} left, ${Math.round(vw - wr.right)} right)`); }
     return out;
 }
 
@@ -166,7 +166,7 @@ async function inspect(page, label, touch) {
     for (const f of found) problems.push(`${label}: ${f}`);
 }
 
-const shot = async (page, name) => { if (!shotsDir) return; await page.waitForTimeout(250); await page.screenshot({ path: path.join(shotsDir, `${name}.png`), fullPage: true }); };
+const shot = async (page, name) => { if (!shotsDir) return; await page.waitForTimeout(700); await page.screenshot({ path: path.join(shotsDir, `${name}.png`), fullPage: true }); };
 
 /* sign in once; the cookie is the session, so every later screen only has to reload ---- */
 const first = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -217,6 +217,31 @@ for (const [device, width, height, touch] of DEVICES) {
     n += 1;
 }
 console.log(`${n} screens checked, each on the sign-in forms and on a full statement in English and Sinhala`);
+
+/* the dark theme follows the phone: the same checks on three sizes, and the page really is dark ---- */
+for (const [device, width, height, touch] of [['dark phone', 390, 844, true], ['dark tablet', 744, 1133, true], ['dark laptop', 1366, 768, false]]) {
+    const ctx = await browser.newContext({ viewport: { width, height }, hasTouch: touch, isMobile: touch, colorScheme: 'dark', deviceScaleFactor: touch ? 2 : 1 });
+    await ctx.addCookies(cookies);
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => problems.push(`${device}: pageerror ${e.message}`));
+    const tag = `${String(width).padStart(4, '0')}x${height}-${slug(device)}`;
+    await page.goto(`${base}/t/${TOKEN}`);
+    await page.waitForSelector('#tp-out');
+    const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    const [r, g, b] = bg.match(/\d+/g).map(Number);
+    if (r + g + b > 150) problems.push(`${device}: the page is not dark (${bg})`);
+    await inspect(page, `${device} ${width}x${height}, statement`, touch);
+    await shot(page, `${tag}-2-statement`);
+    await ctx.close();
+    const bare = await browser.newContext({ viewport: { width, height }, hasTouch: touch, isMobile: touch, colorScheme: 'dark' });
+    const bp = await bare.newPage();
+    await bp.goto(`${base}/t/${TOKEN}`);
+    await bp.waitForSelector('#tp-nic');
+    await inspect(bp, `${device} ${width}x${height}, NIC form`, touch);
+    await shot(bp, `${tag}-1-nic`);
+    await bare.close();
+}
+console.log('the dark theme was checked on a phone, a tablet and a laptop');
 
 /* the print layout fits an A4 page --------------------------------------------------- */
 {

@@ -150,7 +150,7 @@ export const SI = Object.freeze({
     /* where to pay */
     'How to pay': 'ගෙවන ආකාරය',
     'Pay by bank transfer to the account below and put the reference of the record in the transfer. If the account details here look different from what your lender told you, check with your lender before sending money.':
-        'පහත ගිණුමට බැංකු හුවමාරුවෙන් ගෙවා, හුවමාරුවේ සටහනේ අදාළ වාර්තාවේ යොමු කේතය (reference) සඳහන් කරන්න. මෙහි ඇති ගිණුම් විස්තර ඔබේ ණය දෙන්නා ඔබට කී ඒවාට වඩා වෙනස් නම්, මුදල් යැවීමට පෙර ඔබේ ණය දෙන්නාගෙන් තහවුරු කරගන්න.',
+        'පහත ගිණුමට බැංකු හුවමාරුවෙන් ගෙවා, හුවමාරුවේ සටහනේ අදාළ වාර්තාවේ යොමු කේතය සඳහන් කරන්න. මෙහි ඇති ගිණුම් විස්තර ඔබේ ණය දෙන්නා ඔබට කී ඒවාට වඩා වෙනස් නම්, මුදල් යැවීමට පෙර ඔබේ ණය දෙන්නාගෙන් තහවුරු කරගන්න.',
     'References: {refs}': 'යොමු කේත: {refs}',
     'Bank': 'බැංකුව',
     'Account name': 'ගිණුමේ නම',
@@ -175,6 +175,24 @@ export const SI = Object.freeze({
     '1 day overdue': 'දවසක් ප්‍රමාදයි',
     '{n} days overdue': 'දින {n}ක් ප්‍රමාදයි',
     'Add to calendar': 'දින දර්ශනයට එක් කරන්න',
+    'Balance over time': 'ශේෂය කාලයත් සමඟ',
+    'Balance went from {from} to {to}': 'ශේෂය {from} සිට {to} දක්වා වෙනස් විය',
+    'Plan your repayments': 'ඔබේ ආපසු ගෙවීම් සැලසුම් කරන්න',
+    'How often': 'කොපමණ වාර ගණනකට වරක්',
+    'Every week': 'සතියකට වරක්',
+    'Every 2 weeks': 'සති 2කට වරක්',
+    'Every month': 'මාසයකට වරක්',
+    'Amount each time': 'එක් වරකට මුදල',
+    'Clear by the due date: {amount} each time': 'නියමිත දිනට සම්පූර්ණයෙන් ගෙවීමට: වරකට {amount}',
+    'Enter an amount to see when you would finish.': 'ඔබ කවදා අවසන් කරනු ඇත්දැයි බැලීමට මුදලක් ඇතුළත් කරන්න.',
+    'That would take too many payments. Try a larger amount.': 'ඒ සඳහා ගෙවීම් ඉතා වැඩි ගණනක් අවශ්‍ය වේ. විශාල මුදලක් උත්සාහ කරන්න.',
+    'Payments': 'ගෙවීම් ගණන',
+    'First payment': 'පළමු ගෙවීම',
+    'Finished by': 'අවසන් වන දිනය',
+    'Last payment': 'අවසන් ගෙවීම',
+    'This finishes by the due date.': 'මෙය නියමිත දිනට පෙර අවසන් වේ.',
+    'This finishes after the due date. Pay a little more each time to be on time.': 'මෙය නියමිත දිනයෙන් පසුව අවසන් වේ. නියමිත වේලාවට ගෙවීමට වරකට මඳක් වැඩියෙන් ගෙවන්න.',
+    'Add this plan to my calendar': 'මෙම සැලැස්ම මගේ දින දර්ශනයට එක් කරන්න',
     '{n}% repaid': '{n}%ක් ආපසු ගෙවා ඇත',
     'Term: {n}% complete': 'කාලසීමාවෙන් {n}%ක් ගත වී ඇත',
     'Copy reference': 'යොමු අංකය පිටපත් කරන්න',
@@ -218,6 +236,17 @@ export const SI = Object.freeze({
     'This service is temporarily unavailable. Please try again later.': 'මෙම සේවාව තාවකාලිකව නොමැත. කරුණාකර පසුව නැවත උත්සාහ කරන්න.',
     'Try again in about {n} minutes.': 'මිනිත්තු {n}කින් පමණ නැවත උත්සාහ කරන්න.',
     'Try again in {n} seconds.': 'තත්පර {n}කින් නැවත උත්සාහ කරන්න.',
+
+    /* the redesigned page: the section bar, the balance card, the sign-in promises */
+    'Overview': 'සාරාංශය',
+    'Records': 'වාර්තා',
+    'Sections': 'කොටස්',
+    'Quick actions': 'ඉක්මන් ක්‍රියා',
+    'Hide amounts': 'මුදල් සඟවන්න',
+    'Show amounts': 'මුදල් පෙන්වන්න',
+    'Code sent by text message': 'කේතය කෙටි පණිවිඩයෙන් එවයි',
+    'Closes by itself after 20 minutes': 'මිනිත්තු 20කට පසු ස්වයංක්‍රීයව වැසේ',
+    'Nothing is saved on your device': 'ඔබේ උපාංගයේ කිසිවක් සුරකින්නේ නැත',
 });
 
 /** The text that goes on the language button: the language you would switch TO, in its own letters. */
@@ -226,10 +255,31 @@ export const LANG_BUTTON = Object.freeze({ en: 'සිංහල', si: 'English' 
 /** Fills {name} places. A missing value leaves the place as it is, never "undefined". */
 export const fill = (text, vars) => String(text).replace(/\{(\w+)\}/g, (m, k) => (vars && Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m));
 
+/* The lender's note on a bank account is free text the owner typed, so it is not in the table above. In Sinhala the page shows, in this order:
+ * the Sinhala note the owner wrote for the account, then a translation of the notes lenders write most (below), then the note as written. */
+const NOTE_RULES = [
+    [(n) => /\bnic\b|\bnational identity\b/.test(n) && /\breferences?\b|\bref\b/.test(n), 'කරුණාකර ගෙවීමේදී ඔබේ ජාතික හැඳුනුම්පත් අංකය ගෙවීමේ යොමුවේ ලියන්න.'],
+    [(n) => /\b(slip|receipt)\b/.test(n) && /\b(send|share|forward|whatsapp|email|mail)\b/.test(n), 'කරුණාකර ගෙවීමෙන් පසු ගෙවුම් රිසිට්පත එවන්න.'],
+    [(n) => /\b(call|phone|inform|notify|tell)\b/.test(n) && /\b(after|once|when)\b/.test(n) && /\b(pay|paid|payment|transfer)\b/.test(n), 'කරුණාකර ගෙවීම කළ පසු අපට දැනුම් දෙන්න.'],
+];
+
+/** The note on an account in the customer's language (see above). `account` is { note, noteSi? }. */
+export function noteText(account, lang) {
+    const a = account || {};
+    const en = String(a.note == null ? '' : a.note);
+    if (lang !== 'si') return en;
+    if (a.noteSi) return String(a.noteSi);
+    const n = en.toLowerCase().replace(/\bn\.\s*i\.\s*c\b\.?/g, 'nic').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (n) for (const [test, si] of NOTE_RULES) if (test(n)) return si;
+    return en;
+}
+
 /** A translator for one language. English text is the key, so English needs no table. */
 export function makeT(lang) {
     const table = lang === 'si' ? SI : null;
-    return (text, vars) => fill(table && Object.prototype.hasOwnProperty.call(table, text) ? table[text] : text, vars);
+    const t = (text, vars) => fill(table && Object.prototype.hasOwnProperty.call(table, text) ? table[text] : text, vars);
+    t.lang = lang === 'si' ? 'si' : 'en';                     // lets a caller that only holds the translator (the page, the PDF) pick the right free-text variant
+    return t;
 }
 
-export default { LANGS, SI, LANG_BUTTON, detectLang, makeT, fill };
+export default { LANGS, SI, LANG_BUTTON, detectLang, makeT, fill, noteText };

@@ -653,8 +653,10 @@ export const BUDGETS = {
     // 2026-10-10 (design system + app shell): 2,460,000 -> 2_488_500 (measured 2,485,665 + ~0.1% headroom). wealthflow-shell.js (about 34 KB, a third of it comments) is the phone tab bar, the "More" sheet and
     // the Ctrl/Cmd+K command palette that searches screens, actions and the owner's own records; it reads the sidebar as the one list of screens, writes no data and makes no request. The update
     // screen's wait for the app frame is now a poll (wealthflow-update-system.js) so the new frame cannot race it.
-    // 2026-10-10 (one-time lifecycle + verification/statement rollback): 2,488,500 -> 2_495_000 (measured 2,492,235 + ~0.1% headroom). The schedule, verification queue and statement undo paths now share the same paid/cadence rules.
-    totalJsBytes: 2_495_000,
+    // 2026-10-10 (dashboard): 2,488,500 -> 2_492_300 (measured 2,489,721 + ~0.1% headroom). The dashboard greeting (wealthflow-shell.js, about 1.2 KB) and the attention feed's
+    // show-more fold with theme-token tones (wealthflow-insights.js). About a third is comments. No new module or request.
+    // 2026-10-10 (one-time lifecycle + verification/statement rollback, merged with the dashboard; measured 2,499,397 + ~0.1% headroom): the schedule, verification queue and statement undo paths now share the same paid/cadence rules.
+    totalJsBytes: 2_502_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

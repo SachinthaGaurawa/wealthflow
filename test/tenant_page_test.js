@@ -8,13 +8,14 @@
 
 import { describe, it, expect } from 'vitest';
 globalThis.__WF_TENANT_NO_BOOT = true;
-const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, describeFailure, statementView, tokenFromPath, accountText, COPY } = await import('../tenant-page.js');
+const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY } = await import('../tenant-page.js');
 const { makeT } = await import('../tenant-lang.js');
 
 class El {
     constructor(tag) { this.tag = tag; this.attrs = {}; this.kids = []; this._text = ''; this.listeners = {}; }
     setAttribute(k, v) { this.attrs[k] = String(v); }
     append(...k) { this.kids.push(...k); }
+    replaceChildren(...k) { this._text = ''; this.kids = k; }
     addEventListener(t, f) { this.listeners[t] = f; }
     set textContent(v) { this._text = String(v); this.kids = []; }
     get textContent() { return this._text + this.kids.map((k) => k.textContent).join(''); }
@@ -64,6 +65,25 @@ describe('formatting', () => {
     });
 });
 
+describe('the repayment plan on a loan card', () => {
+    const asOf = '2026-10-05T05:00:00.000Z';
+    const loanGroup = (over = {}) => ({ kind: 'loan', ref: 'DEB-96E5C2', currency: 'LKR', lent: 50000, repaid: 20000, outstanding: 30000, status: 'open', due: '2026-12-31', events: [], ...over });
+    const view = (g) => { const out = []; statementView(doc, { asOf, groups: [g], totals: [] }, makeT('en'), null).forEach((c) => c.walk && c.walk((n) => out.push(n))); return out; };
+
+    it('offers a plan on an open loan, with the way to ask for the amount that clears it by the due date', () => {
+        const nodes = view(loanGroup());
+        const plan = nodes.find((n) => n.attrs.class === 'tp-plan');
+        expect(plan && plan.tag).toBe('details');
+        expect(nodes.some((n) => n.tag === 'select')).toBe(true);
+        expect(nodes.some((n) => n.tag === 'input' && n.attrs.inputmode === 'decimal')).toBe(true);
+        expect(nodes.find((n) => /tp-chip-btn/.test(n.attrs.class || '')).textContent).toBe('Clear by the due date: LKR 15,000.00 each time');
+    });
+
+    it('offers nothing on a loan that is settled or has nothing owed', () => {
+        for (const g of [loanGroup({ status: 'settled' }), loanGroup({ outstanding: 0 })]) expect(view(g).some((n) => /tp-plan/.test(n.attrs.class || ''))).toBe(false);
+    });
+});
+
 describe('the statement view', () => {
     const statement = {
         asOf: '2026-10-05T05:00:00.000Z',
@@ -80,8 +100,9 @@ describe('the statement view', () => {
         const nodes = statementView(doc, statement);
         const text = textOf(nodes);
         for (const want of ['LKR 500,000.00', 'LKR 10,000.00', 'INV-9990B2', 'DEB-96E5C2', '24% a year', 'Monthly', '5 Jan 2026', 'Aug 2026', '4 Oct 2026', 'LKR 30,000.00', 'Loan paid out', 'Repayment', '20 Sep 2026', 'Open']) expect(text, want).toContain(want);
-        expect(nodes[3].textContent).toContain('DEB-96E5C2');
-        expect(nodes[3].textContent).not.toMatch(/interest|rate/i);                  // the loan card has no interest on it
+        const loan = nodes.find((n) => n.attrs['aria-label'] === 'Loan DEB-96E5C2');
+        expect(loan.textContent).toContain('DEB-96E5C2');
+        expect(loan.textContent).not.toMatch(/interest|rate/i);                      // the loan card has no interest on it
     });
 
     it('shows every string it is given as text, never as markup', () => {
@@ -134,6 +155,12 @@ describe('what a person needs next: when, and where to pay', () => {
     };
     const textOf = (nodes) => nodes.map((n) => n.textContent).join(' | ');
     const buttonsOf = (nodes) => { const out = []; nodes.forEach((n) => n.walk((e) => { if (e.tag === 'button') out.push(e); })); return out; };
+
+    it('marks the next interest amount like every other figure, so "Hide amounts" blurs it too', () => {
+        const hits = [];
+        statementView(doc, base).forEach((n) => n.walk((e) => { if (e.tag === 'span' && /tp-amt/.test(e.attrs.class || '') && e.textContent === 'LKR 10,000.00') hits.push(e); }));
+        expect(hits.length).toBeGreaterThanOrEqual(2);      // the figure tile and the next-interest line
+    });
 
     it('says when the next interest is due and when a loan is expected back, and how late it is', () => {
         const text = textOf(statementView(doc, base));
@@ -189,10 +216,12 @@ describe('what a person needs next: when, and where to pay', () => {
         for (const odd of [null, {}, { lenders: 'x', groups: [] }, { lenders: [{ accounts: 'x' }], groups: [] }]) expect(() => statementView(doc, odd, makeT('en'), { copy: () => {} }), JSON.stringify(odd)).not.toThrow();
     });
 
-    it('reads in Sinhala when asked, with the figures, dates and codes untouched', () => {
+    it('reads in Sinhala when asked, with the figures and codes untouched and the dates in Sinhala', () => {
         const text = textOf(statementView(doc, base, makeT('si'), { copy: () => {} }));
         for (const want of ['ගෙවන ආකාරය', 'ඊළඟ පොලිය ලැබිය යුත්තේ', 'ආපසු ගෙවිය යුත්තේ', 'දින 4කට පෙර', 'සියලු විස්තර පිටපත් කරන්න', 'ආයෝජනය', 'ණය']) expect(text, want).toContain(want);
-        for (const same of ['LKR 500,000.00', '5 Nov 2026', 'INV-9990B2', 'DEB-96E5C2', '8001234567', 'Commercial Bank']) expect(text, same).toContain(same);
+        expect(text).toContain('2026 නොවැම්බර් 5');
+        expect(text).not.toContain('5 Nov 2026');
+        for (const same of ['LKR 500,000.00', 'INV-9990B2', 'DEB-96E5C2', '8001234567', 'Commercial Bank']) expect(text, same).toContain(same);
     });
 
     it('turns a refusal into the person\'s language, and the wait with it', () => {
@@ -203,7 +232,11 @@ describe('what a person needs next: when, and where to pay', () => {
     });
 
     it('writes "as at" with the zone in the person\'s language', () => {
-        expect(fmtAsOf('2026-10-05T05:00:00.000Z', makeT('si'))).toBe('5 Oct 2026, 10:30 (ශ්‍රී ලංකා වේලාව)');
+        expect(fmtAsOf('2026-10-05T05:00:00.000Z', makeT('si'))).toBe('2026 ඔක්තෝබර් 5, 10:30 (ශ්‍රී ලංකා වේලාව)');
+        expect(fmtAsOf('2026-10-05T05:00:00.000Z', makeT('en'))).toBe('5 Oct 2026, 10:30 (Sri Lanka time)');
+        expect(fmtDay('2026-01-31', 'si')).toBe('2026 ජනවාරි 31');
+        expect(fmtDay('2026-01-31')).toBe('31 Jan 2026');
+        expect(fmtMonth('2026-12', 'si')).toBe('2026 දෙසැම්බර්');
     });
 
     it('turns an account into plain lines for pasting into a banking app or a message', () => {
@@ -285,13 +318,16 @@ describe('the logo, the holder and the note', () => {
         expect(card.textContent).toContain('Nimal Kumara Perera');
         expect(card.textContent).toContain('NIC / ID');
         expect(card.textContent).toContain('853400937V');
-        expect(view[0]).toBe(card);
+        expect(view[0].attrs.class).toContain('tp-hero');                             // the dark balance card is first, and the holder is its heading
+        expect(walk([view[0]])).toContain(card);
+        expect(classes(view, 'tp-avatar')[0].textContent).toBe('NP');
     });
 
     it('draws nothing for a holder that is empty or missing, and never parses a name as markup', () => {
         expect(classes(statementView(doc, base(), makeT('en')), 'tp-holder')).toHaveLength(0);
         expect(classes(statementView(doc, base({ holder: { name: '', nic: '' } }), makeT('en')), 'tp-holder')).toHaveLength(0);
         expect(classes(statementView(doc, base({ holder: 'x' }), makeT('en')), 'tp-holder')).toHaveLength(0);
+        expect(classes(statementView(doc, base({ holder: 'x' }), makeT('en')), 'tp-hero')).toHaveLength(0);
         const [card] = classes(statementView(doc, base({ holder: { name: BAD, nic: '' } }), makeT('en')), 'tp-holder');
         expect(card.textContent).toContain(BAD);
         expect(walk([card]).some((e) => e.tag === 'img')).toBe(false);
@@ -305,5 +341,58 @@ describe('the logo, the holder and the note', () => {
             expect(panel.textContent).toContain('USE THE REFERENCE');
             expect(panel.textContent).toContain(lang === 'en' ? 'Note' : 'සටහන');
         }
+    });
+});
+
+describe('the balance card and the section bar', () => {
+    const walk = (nodes) => { const out = []; for (const n of nodes) n && n.walk && n.walk((e) => out.push(e)); return out; };
+    const classes = (nodes, cls) => walk(nodes).filter((e) => e.attrs && (e.attrs.class || '').split(' ').includes(cls));
+    const st = { asOf: '2026-10-05T05:00:00.000Z', holder: { name: 'Nimal Kumara Perera', nic: '853400937V' }, groups: [
+        { kind: 'investment', ref: 'INV-1', currency: 'LKR', capital: 500000, ratePct: 24, frequency: 'monthly', interestPerPeriod: 10000, start: '2026-01-05', nextInterest: { date: '2026-11-05', amount: 10000 }, totalReceived: 10000, payments: [] },
+        { kind: 'loan', ref: 'DEB-1', currency: 'LKR', lent: 50000, repaid: 20000, outstanding: 30000, status: 'open', events: [] }],
+        totals: [{ currency: 'LKR', invested: 500000, interestReceived: 10000, loanOutstanding: 30000 }], lenders: [{ n: 1, accounts: [{ bank: 'B', holder: 'H', number: '1' }] }], lenderCount: 1 };
+
+    it('makes the round badge from the first and last words of the name', () => {
+        expect(initials('Nimal Kumara Perera')).toBe('NP');
+        expect(initials('  kamal ')).toBe('K');
+        expect(initials('')).toBe('');
+        expect(initials(null)).toBe('');
+        expect(initials('නිමල් පෙරේරා')).toBe('නප');
+    });
+
+    it('splits the page into a glance and a detail column, and names the sections the bar can jump to', () => {
+        const { left, right, sections } = statementColumns(doc, st, makeT('en'), { jump: () => {} });
+        expect(sections.map((s) => s[0])).toEqual(['tp-hero', 'tp-next', 'tp-pay', 'tp-records']);
+        expect(left[0].attrs.id).toBe('tp-hero');
+        expect(left.at(-1).attrs.id).toBe('tp-next');
+        expect(right[0].attrs.id).toBe('tp-pay');
+        expect(right[1].attrs.id).toBe('tp-records');
+        expect(statementColumns(doc, { groups: [], totals: [] }, makeT('en')).sections).toEqual([]);
+    });
+
+    it('shows the main figure large, the others as tiles, with the cents set apart but the characters unchanged', () => {
+        const [hero] = statementView(doc, st, makeT('en'));
+        expect(classes([hero], 'tp-hero-main')[0].textContent).toContain('LKR 500,000.00');
+        expect(classes([hero], 'tp-stat').map((e) => e.textContent)).toEqual(['Interest receivedLKR 10,000.00', 'Loan outstandingLKR 30,000.00']);
+        expect(classes([hero], 'tp-dec')[0].textContent).toBe('.00');
+    });
+
+    it('has the hide-amounts button only when the page can hide them, and tells the page what it did', () => {
+        expect(classes(statementView(doc, st, makeT('en')), 'tp-eye')).toHaveLength(0);
+        let hidden = false;
+        const view = statementView(doc, st, makeT('en'), { hide: () => (hidden = !hidden), hidden: false });
+        const [eye] = classes(view, 'tp-eye');
+        expect(eye.attrs['aria-pressed']).toBe('false');
+        expect(eye.attrs['aria-label']).toBe('Hide amounts');
+        expect(classes([eye], 'tp-eye')).toHaveLength(1);
+        const si = classes(statementView(doc, st, makeT('si'), { hide: () => true, hidden: true }), 'tp-eye')[0];
+        expect(si.attrs['aria-pressed']).toBe('true');
+        expect(si.attrs['aria-label']).toBe('මුදල් පෙන්වන්න');
+    });
+
+    it('marks every amount so that hiding reaches all of them', () => {
+        const amounts = classes(statementView(doc, st, makeT('en')), 'tp-amt');
+        expect(amounts.length).toBeGreaterThan(8);
+        expect(classes(statementView(doc, st, makeT('en')), 'tp-item-amount')[0].attrs.class).toContain('tp-amt');
     });
 });
