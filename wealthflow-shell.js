@@ -291,7 +291,9 @@
         return ov;
     }
     function showOverlay(ov, focusEl) {
-        lastFocus = doc.activeElement;
+        /* A just-closed overlay keeps focus until its fade ends; never remember that as "where I came from". */
+        var was = doc.activeElement;
+        lastFocus = was && was.closest && was.closest('.wf-ov') ? null : was;
         ov.classList.add('open');
         root.classList.add('wf-sheet-open');
         /* Now (so typing straight after Ctrl+K is not lost) and once more after the first frame (iOS). */
@@ -303,6 +305,8 @@
         var was = false;
         [sheetOv, palOv].forEach(function (ov) { if (ov && ov.classList.contains('open')) { ov.classList.remove('open'); was = true; } });
         root.classList.remove('wf-sheet-open');
+        var cur = doc.activeElement;
+        if (was && cur && cur.closest && cur.closest('.wf-ov') && cur.blur) { try { cur.blur(); } catch (_) { /* ignore */ } }
         if (was && lastFocus && lastFocus.focus) { try { lastFocus.focus({ preventScroll: true }); } catch (_) { /* ignore */ } }
         lastFocus = null;
     }

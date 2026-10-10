@@ -16,6 +16,7 @@ on:
       - test/e2e/ui-tools.mjs
       - test/e2e/completed-records.mjs
       - test/e2e/ui-toolbars.mjs
+      - test/e2e/ui-overlays.mjs
       - test/e2e/dashboard-seed.mjs
       - test/e2e/harness.mjs
       - test/e2e/firebase-stub.mjs
@@ -58,6 +59,8 @@ jobs:
         run: node test/e2e/ui-toolbars.mjs
         env:
           WF_TB_ARTIFACTS: shell-artifacts
+      - name: Verify toasts stay clear of dialogs, queue instead of piling up, and the AI button steps aside
+        run: node test/e2e/ui-overlays.mjs
       - name: Preserve screenshots
         if: always()
         uses: actions/upload-artifact@v7
