@@ -321,8 +321,12 @@ export const BUDGETS = {
     // 2026-10-10 (completed records are permanent): 2,233,000 -> 2_240_000 (measured 2,237,626 + ~0.1% headroom). One shared rule (_wfIsDone / _wfKeepDone / _wfSplitCap) and a Completed section header on five lists,
     // the guard on seven Delete handlers, and a fallback card so one bad record cannot blank the Investments page. About a third is comments.
     // 2026-10-10 (real one-time payment lifecycle, merged with the above; measured 2,242,586 + ~0.1% headroom): exact due-date input, paid/reopen control and cycle-aware status replace the label-only implementation.
+
+    // 2026-10-10 (toasts queue instead of piling up, and a phone shows one insight card): 2,245,000 -> 2_249_000 (measured 2,245,812 + ~0.1% headroom). notify() keeps a short queue (3 toasts on a desktop, 2 on a
+    // phone, 1 while a dialog is open; errors are never queued) and _wfStrip asks for a one-card insight strip on a phone. Most of it is the comments recording why. No new script or request.
     // 2026-10-10 (One-Time bills: paid-status field, past-dated bills filed as paid; measured 2,246,313 + ~0.1% headroom): 2,245,000 -> 2_248_500.
-    htmlBytes: 2_248_500,
+    // (both of the above merged: measured at the merge)
+    htmlBytes: 2_251_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

@@ -487,6 +487,11 @@ input[type="date"], input[type="month"] { color-scheme: inherit; }
 
 /* ═════════════════ 14. MODALS ═══════════════════════════════════════════════ */
 .mo { background: var(--wf-overlay); padding: 20px; }
+/* The top 100px of the screen belongs to toasts (§15; the tallest is three lines), so a dialog never opens underneath one. */
+@media (min-width: 641px) {
+    .mo.open { padding-top: 100px; }
+    .mo.open .md { max-height: calc(100dvh - 120px); }
+}
 .mo.open { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
 html.wf-ios-stable .mo.open { background: var(--wf-overlay); }
 .md {
@@ -510,7 +515,7 @@ html.wf-ios-stable .mo.open { background: var(--wf-overlay); }
 @media (max-width: 640px) {
     .mo { padding: 0; align-items: flex-end; }
     .md, .mo > .md[style] {
-        max-width: none !important; width: 100%; max-height: 92dvh !important; border-radius: 22px 22px 0 0;
+        max-width: none !important; width: 100%; max-height: min(92dvh, calc(100dvh - 100px - env(safe-area-inset-top, 0px))) !important; border-radius: 22px 22px 0 0;
         border-left: none; border-right: none; border-bottom: none; padding: 22px 18px max(22px, env(safe-area-inset-bottom));
         transform: translateY(40px); opacity: 0;
     }
@@ -522,15 +527,20 @@ html.wf-ios-stable .mo.open { background: var(--wf-overlay); }
 }
 
 /* ═════════════════ 15. TOASTS ═══════════════════════════════════════════════ */
+/* They stacked bottom-centre, which is exactly where a dialog keeps its Save button, so a message that
+   arrived while a form was open hid the one control the person needed (and on a phone they sat over the
+   sheet's title and its close button). They now drop in from the top edge, centred, where no action row
+   lives. notify() shows three at a time (two on a phone, one while a dialog is open) and queues the rest,
+   and §14 keeps the top of every dialog clear of them. Tap a toast to dismiss it. */
 #notifs {
-    top: auto; bottom: 24px; left: 50%; right: auto; transform: translateX(-50%); max-width: 440px; width: calc(100vw - 32px);
-    flex-direction: column-reverse; gap: 8px; pointer-events: none; align-items: center;
+    top: 12px; bottom: auto; left: 50%; right: auto; transform: translateX(-50%); max-width: none; width: min(420px, calc(100vw - 32px));
+    flex-direction: column; gap: 8px; pointer-events: none; align-items: center;
 }
 .notif {
-    pointer-events: auto; width: fit-content; max-width: 100%;
+    pointer-events: auto; width: fit-content; max-width: 100%; cursor: pointer;
     background: var(--wf-card-2); border: 1px solid var(--wf-line-2); border-radius: var(--wf-r-md); box-shadow: var(--wf-shadow-2);
     padding: 12px 16px; font-size: 13.5px; font-weight: 500; gap: 11px; line-height: 1.45;
-    transform: translateY(10px) scale(.98); opacity: 0; transition: transform .28s var(--wf-ease), opacity .2s var(--wf-ease);
+    transform: translateY(-10px) scale(.98); opacity: 0; transition: transform .28s var(--wf-ease), opacity .2s var(--wf-ease);
     border-left-width: 1px;
 }
 .notif.show { transform: none; opacity: 1; }
@@ -540,13 +550,14 @@ html.wf-ios-stable .mo.open { background: var(--wf-overlay); }
     width: 24px; height: 24px; border-radius: 50%; justify-content: center; font-size: 0; flex-shrink: 0; color: var(--wf-info); background: var(--wf-info-soft);
 }
 .notif-ico svg { width: 14px; height: 14px; stroke-width: 2.2; }
+/* Three lines at most, so the toast never grows taller than the lane a dialog leaves for it. */
+.notif > span:last-child { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
 .notif.success .notif-ico { color: var(--wf-pos); background: var(--wf-pos-soft); }
 .notif.error .notif-ico { color: var(--wf-neg); background: var(--wf-neg-soft); }
 .notif.warn .notif-ico { color: var(--wf-warn); background: var(--wf-warn-soft); }
 @media (max-width: 900px) {
-    #notifs { left: 16px; right: 16px; width: auto; max-width: none; transform: none; top: calc(env(safe-area-inset-top, 0px) + 64px); bottom: auto; flex-direction: column; align-items: stretch; }
-    .notif { width: auto; transform: translateY(-10px) scale(.98); }
-    .notif.show { transform: none; }
+    #notifs { left: 16px; right: 16px; width: auto; transform: none; top: calc(env(safe-area-inset-top, 0px) + 8px); align-items: stretch; }
+    .notif { width: auto; }
 }
 
 /* ═════════════════ 16. PROGRESS, EMPTY STATES, ICON BUTTONS ═════════════════ */
@@ -583,6 +594,8 @@ html.wf-ios-stable .mo.open { background: var(--wf-overlay); }
     width: 48px; height: 48px; border-radius: 50%; color: var(--wf-accent); background: var(--wf-card-2);
     border: 1px solid var(--wf-accent-line); box-shadow: var(--wf-shadow-2);
 }
+/* It floated above a dialog's backdrop, crisp on top of the blur, and over a sheet's form on a phone. */
+body:has(.mo.open) .fab-ai-btn { opacity: 0; pointer-events: none; }
 .fab-ai-btn:hover { transform: translateY(-1px) scale(1.04); background: var(--wf-card-3); box-shadow: var(--wf-shadow-3); }
 .fab-ai-btn svg { width: 22px; height: 22px; stroke-width: 1.8; }
 .floating-ai-input { background: var(--wf-card); border-color: var(--wf-line-2); }

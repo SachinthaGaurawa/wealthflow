@@ -17959,9 +17959,39 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             body.textContent = String(msg == null ? '' : msg);
             if (hasIcon) el.appendChild(ico);
             el.appendChild(body);
-            $('notifs').appendChild(el);
-            requestAnimationFrame(() => el.classList.add('show'));
-            setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, 3600);
+
+            /* How many toasts share the screen. They sit along the top edge (wf-ui.css §15), and a
+             * message that arrives while a dialog is open must not cover the dialog: three at a time
+             * normally, two on a phone, one while a dialog is open. The rest wait their turn rather
+             * than being dropped, because the first thing a person sees on opening the app is often
+             * three or four of them at once. An error never waits. A tap dismisses a toast early. */
+            const host = $('notifs');
+            const queue = host._wfQ || (host._wfQ = []);
+            let cap = 3;
+            try {
+                if (window.matchMedia('(max-width: 900px)').matches) cap = 2;
+                if (document.querySelector('.mo.open')) cap = 1;
+            } catch (_) {}
+            const drain = () => { while (queue.length && host.children.length < cap) queue.shift()(); };
+            let gone = false;
+            const dismiss = () => {
+                if (gone) return;
+                gone = true;
+                el.classList.remove('show');
+                setTimeout(() => { el.remove(); drain(); }, 400);
+            };
+            const show = () => {
+                host.appendChild(el);
+                requestAnimationFrame(() => el.classList.add('show'));
+                setTimeout(dismiss, 3600);
+            };
+            try { el.addEventListener('click', dismiss); } catch (_) {}
+            if (type !== 'error' && (queue.length || host.children.length >= cap)) {
+                queue.push(show);
+                if (queue.length > 10) queue.shift();
+            } else {
+                show();
+            }
         }
 
         // ==================== MODALS ====================
@@ -22862,7 +22892,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     host.style.margin = '0 0 16px';
                     page.insertBefore(host, page.firstChild);
                 }
-                window.WFInsights.renderInto(host, items, { title: title, cap: 2 });
+                // One card on a phone (the rest sit behind "Show N more"): the page's own controls and figures
+                // were pushed a whole screen down by two tall insight cards.
+                var phone = false; try { phone = window.matchMedia('(max-width: 640px)').matches; } catch (_) {}
+                window.WFInsights.renderInto(host, items, { title: title, cap: phone ? 1 : 2 });
             } catch (_) {}
         }
 
