@@ -603,8 +603,21 @@ export function rowsOf(docs, nowMs = Date.now()) {
         });
 }
 
+/** The scheduled sweep is what sends texts while nobody has the app open. Its stamp first exists from this day; before that "no stamp" proves nothing. */
+export const AUTO_STAMP_SINCE = Date.UTC(2026, 9, 11);
+export const AUTO_STALE_MS = 30 * 3600e3;
+
+/** A warning when the scheduled sweep has not looked after this account lately, else ''. */
+export function autoRunLine(status, now, when = () => '') {
+    if (!status || status.configured === undefined) return '';
+    const at = num(status.autoRunAt);
+    const gap = 'Texts that fall due while the app is closed wait for it. Check that CRON_SECRET is set in the deployment settings.';
+    if (at > 0) return now - at > AUTO_STALE_MS ? 'The automatic daily check has not run since ' + when(at) + '. ' + gap : '';
+    return now > AUTO_STAMP_SINCE + AUTO_STALE_MS ? 'The automatic daily check has not run yet. ' + gap : '';
+}
+
 /** The whole panel as markup. Everything is escaped. */
-export function panelHtml({ rows = [], status = null, disabled = false, lastError = '', nameOf = null, fmtWhen = null } = {}) {
+export function panelHtml({ rows = [], status = null, disabled = false, lastError = '', nameOf = null, fmtWhen = null, now = Date.now() } = {}) {
     const when = (ms) => { if (!ms) return ''; try { return fmtWhen ? fmtWhen(ms) : new Date(ms).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
     const colour = { sent: 'var(--green,#30a46c)', failed: 'var(--red,#e5484d)', queued: 'var(--amber,#f5a623)', sending: 'var(--amber,#f5a623)' };
     const lines = [];
@@ -616,6 +629,8 @@ export function panelHtml({ rows = [], status = null, disabled = false, lastErro
     const asOf = known && num(status.unitsAt) ? ' (read ' + when(num(status.unitsAt)) + ')' : '';
     if (status && status.lowCredit === true && known) lines.push('SMS credit is running low: ' + num(status.units) + (num(status.units) === 1 ? ' unit' : ' units') + ' left' + asOf + '. Messages are held, not dropped, when it runs out.');
     if (status && status.creditPaused === true && known && num(status.reserve) > 0 && num(status.units) < num(status.reserve)) lines.push('Late-payment reminders are paused: ' + num(status.units) + ' units are left, under the reserve of ' + num(status.reserve) + '. Receipts and closing notices still go out, and the reminders follow once credit is topped up.');
+    const auto = autoRunLine(status, now, when);
+    if (auto) lines.push(auto);
     for (const i of (status && Array.isArray(status.issues) ? status.issues : []).slice(0, 8)) lines.push(describeIssue(i, nameOf));
     if (lastError) lines.push(lastError);
     const notes = lines.length

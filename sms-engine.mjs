@@ -457,7 +457,7 @@ export async function checkDelivery({ db, uid, client, now }) {
 }
 
 /** Write the owner's status card: what is switched on but cannot work, whether the gateway is configured, whether credit is low. */
-export async function writeStatus({ db, uid, issues, configured, units = null, now, reserve = 0, balanceRead = false }) {
+export async function writeStatus({ db, uid, issues, configured, units = null, now, reserve = 0, balanceRead = false, auto = false }) {
     // A sweep that did not ask the gateway for the balance (the page's nudge after a save) knows nothing about it, and must not erase what the
     // last one that did (the daily sweep) found: writing `units: null` here made the low-credit warning vanish at the owner's next save.
     // A balance that WAS read but could not be made sense of (units null) clears the old warning: a card saying "credit is low, reminders paused"
@@ -465,14 +465,16 @@ export async function writeStatus({ db, uid, issues, configured, units = null, n
     const known = units !== null && units !== undefined;
     const credit = known ? { units, lowCredit: units <= LOW_CREDIT_UNITS, unitsAt: now, reserve, creditPaused: creditPaused(units, reserve) }
         : balanceRead ? { units: null, lowCredit: false, unitsAt: now, reserve, creditPaused: false } : {};
-    await mirror(db, uid, '_status', { kind: 'status', configured: !!configured, issues: issues.slice(0, 50), ...credit }, now);
+    // `autoRunAt`: the last time the SCHEDULED sweep (no page, nobody signed in) looked after this account. A page nudge never sets it, so the panel can
+    // tell "texts go out by themselves" from "texts only go out while the app is open".
+    await mirror(db, uid, '_status', { kind: 'status', configured: !!configured, issues: issues.slice(0, 50), ...credit, ...(auto ? { autoRunAt: now } : {}) }, now);
 }
 
 /**
  * The whole job for one user: derive what is owed, queue it, cancel what is no longer owed, send what is due.
  * `user` is the user's document, already read and trusted by the caller.
  */
-export async function sweepUser({ db, uid, user, client, now = Date.now(), env = process.env, budgetMs = DEFAULT_BUDGET_MS, limits = LIMITS, deps = {}, clock = Date.now }) {
+export async function sweepUser({ db, uid, user, client, now = Date.now(), env = process.env, budgetMs = DEFAULT_BUDGET_MS, limits = LIMITS, deps = {}, clock = Date.now, auto = false }) {
     const startedAt = clock();
     const { events, issues } = deriveEvents(user, now);
     const owned = new Set(events.map((e) => e.key));
@@ -527,7 +529,7 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
     if (units === null && client.configured && typeof client.balance === 'function') {
         try { const b = await client.balance(); if (b && b.ok) { balanceRead = true; units = Number.isFinite(Number(b.units)) && b.units !== null ? Number(b.units) : null; } } catch (_) { /* unknown: the last finding stays */ }
     }
-    await writeStatus({ db, uid, issues, configured: client.configured, units, now, reserve, balanceRead });
+    await writeStatus({ db, uid, issues, configured: client.configured, units, now, reserve, balanceRead, auto });
     return summary;
 }
 
