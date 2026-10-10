@@ -332,7 +332,8 @@ export const BUDGETS = {
     // plain-words failures on the chat and every AI card (_wfAiWhy), the Insights card on the shared books figures, AI Auto-Notifications gating the smart tips (the insight tip built from the books), the scanner's Auto-Categorize switch
     // and a hand-picked category that the title suggestion no longer moves. About a third is comments. No new script or request.
     // Both changes together (merged 2026-10-10): measured 2,265,753, ceiling 2_268_000 (~0.1% headroom).
-    htmlBytes: 2_268_000,
+    // 2026-10-10 (Cheque Tracker review round + main's later edits to index.html): measured 2,268,014 -> 2_270_500. The manual upload now links a cleared cheque to the entry the owner typed for the same payment (the worker already did).
+    htmlBytes: 2_270_500,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
