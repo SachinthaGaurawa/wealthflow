@@ -664,7 +664,8 @@ export const BUDGETS = {
     // show-more fold with theme-token tones (wealthflow-insights.js). About a third is comments. No new module or request.
     // 2026-10-10 (one-time lifecycle + verification/statement rollback, merged with the dashboard; measured 2,499,397 + ~0.1% headroom): the schedule, verification queue and statement undo paths now share the same paid/cadence rules.
     // 2026-10-10 (SMS panel: the "automatic daily check has not run" line, wealthflow-sms.js; measured 2,502,266 + ~0.1% headroom): 2_502_000 -> 2_505_000.
-    totalJsBytes: 2_505_000,
+    // 2026-10-10 (the owner's own due-date alerts in the Text messages panel, wealthflow-sms.js; measured 2,508,375 + ~0.1% headroom): 2_505_000 -> 2_511_000.
+    totalJsBytes: 2_511_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
