@@ -321,7 +321,8 @@ export const BUDGETS = {
     // 2026-10-10 (completed records are permanent): 2,233,000 -> 2_240_000 (measured 2,237,626 + ~0.1% headroom). One shared rule (_wfIsDone / _wfKeepDone / _wfSplitCap) and a Completed section header on five lists,
     // the guard on seven Delete handlers, and a fallback card so one bad record cannot blank the Investments page. About a third is comments.
     // 2026-10-10 (real one-time payment lifecycle, merged with the above; measured 2,242,586 + ~0.1% headroom): exact due-date input, paid/reopen control and cycle-aware status replace the label-only implementation.
-    htmlBytes: 2_245_000,
+    // 2026-10-10 (One-Time bills: paid-status field, past-dated bills filed as paid; measured 2,246,313 + ~0.1% headroom): 2,245,000 -> 2_248_500.
+    htmlBytes: 2_248_500,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -663,7 +664,8 @@ export const BUDGETS = {
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
-    largestModuleBytes: 234_000,
+    // 2026-10-10: 234,000 -> 234_300 (wealthflow-ai-v4.js, measured 234,092): a scanned bill is filed as still to be paid, not as already paid.
+    largestModuleBytes: 234_300,
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely

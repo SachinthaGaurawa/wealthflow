@@ -7536,8 +7536,13 @@
                         placeholder="1,500"></div>
                 <div class="fg" id="sub_day_group"><label class="fl">Due Day of Month *</label><input class="fi" id="sub_day" type="number"
                         min="1" max="31" placeholder="15"></div>
-                <div class="fg" id="sub_due_date_group" style="display:none;"><label class="fl">Payment Due Date *</label><input class="fi" id="sub_due_date" type="date"></div>
+                <div class="fg" id="sub_due_date_group" style="display:none;"><label class="fl">Payment Due Date *</label><input class="fi" id="sub_due_date" type="date" onchange="syncSubscriptionPaidDefault()"></div>
             </div>
+            <div class="fg" id="sub_paid_group" style="display:none;"><label class="fl">One-Time Payment Status</label><select class="fs" id="sub_paid" onchange="this.dataset.touched='1'">
+                    <option value="1">Already paid (pay once, never again) - no reminders</option>
+                    <option value="0">Not paid yet - remind me until I pay</option>
+                </select>
+                <div style="font-size:11px;color:var(--text3);margin-top:4px;line-height:1.5;">A date that has already passed is saved as paid. Choose "Not paid yet" for a bill you still owe and it keeps reminding you until you mark it paid.</div></div>
             <div class="fr">
                 <div class="fg"><label class="fl">Billing Cycle</label><select class="fs" id="sub_cycle" onchange="syncSubscriptionCycleFields()">
                         <option value="monthly">Monthly</option>
@@ -32429,8 +32434,20 @@ Be direct and use real numbers. Avoid generic advice.`;
                 if (oneTime && !$('sub_due_date').value) $('sub_due_date').value = window.WFWhen.today();
             }
             if (oneTime && $('sub_anomaly')) $('sub_anomaly').value = '0';
+            const paidGroup = $('sub_paid_group');
+            if (paidGroup) paidGroup.style.display = oneTime ? '' : 'none';
+            if (oneTime) syncSubscriptionPaidDefault();
         }
         window.syncSubscriptionCycleFields = syncSubscriptionCycleFields;
+        /* A one-time payment is paid once and is over, so a date that is already behind us is a payment already made: it is not left overdue
+         * and reminding for ever. A date today or still ahead is owed until the owner pays it. The owner's own choice is never overwritten. */
+        function syncSubscriptionPaidDefault() {
+            const sel = $('sub_paid'), due = $('sub_due_date');
+            if (!sel || !due || sel.dataset.touched === '1') return;
+            const d = String(due.value || '');
+            sel.value = /^\d{4}-\d{2}-\d{2}$/.test(d) && d < window.WFWhen.today() ? '1' : '0';
+        }
+        window.syncSubscriptionPaidDefault = syncSubscriptionPaidDefault;
 
         function saveSubscription() {
             const name = $('sub_name').value.trim(), cat = $('sub_cat').value, amount = parseMoney($('sub_amount').value);
@@ -32442,6 +32459,10 @@ Be direct and use real numbers. Avoid generic advice.`;
             // Preserve existing per-month overrides / history when editing,
             // and never destroy them by clearing the form.
             const existing = editMode ? arr.find(x => x.id === editMode) : null;
+            // the form's status is the owner's word; a record saved before the field existed keeps what it had
+            const paidSel = $('sub_paid');
+            const wasPaid = oneTime && (paidSel && paidSel.dataset.touched === '1' ? paidSel.value === '1'
+                : (existing ? !!(existing.paid || existing.completed) && existing.reopened !== true : !!paidSel && paidSel.value === '1'));
             const rec = {
                 id: editMode || uid(),
                 // v7.66.0 — subscriptions never carried a createdAt, so _utOf() fell all
@@ -32450,12 +32471,12 @@ Be direct and use real numbers. Avoid generic advice.`;
                 dueDate,
                 cycle,
                 anomalyDetect: oneTime ? false : $('sub_anomaly').value === '1',
-                completed: oneTime ? !!(existing && existing.completed) : false,
-                paid: oneTime ? !!(existing && (existing.paid || existing.completed)) : false,
-                paidAt: oneTime && existing ? (existing.paidAt || null) : null,
-                paidSource: oneTime && existing ? (existing.paidSource || null) : null,
-                paidStatementKey: oneTime && existing ? (existing.paidStatementKey || null) : null,
-                reopened: oneTime ? !!(existing && existing.reopened) : false,
+                completed: oneTime ? wasPaid : false,
+                paid: oneTime ? wasPaid : false,
+                paidAt: oneTime ? (wasPaid ? ((existing && existing.paidAt) || Date.now()) : null) : null,
+                paidSource: oneTime && wasPaid ? ((existing && existing.paidSource) || 'manual') : null,
+                paidStatementKey: oneTime && wasPaid && existing ? (existing.paidStatementKey || null) : null,
+                reopened: oneTime ? (!wasPaid && !!(existing && (existing.reopened || existing.paid || existing.completed))) : false,
                 notes: $('sub_notes').value,
                 history: existing ? (existing.history || []) : [],
                 monthOverrides: existing ? (existing.monthOverrides || {}) : {},
@@ -32475,6 +32496,7 @@ Be direct and use real numbers. Avoid generic advice.`;
             ['sub_name', 'sub_amount', 'sub_day', 'sub_due_date', 'sub_notes'].forEach(id => { if ($(id)) $(id).value = ''; });
             if ($('sub_cycle')) $('sub_cycle').value = 'monthly';
             if ($('sub_anomaly')) $('sub_anomaly').value = '1';
+            if ($('sub_paid')) { $('sub_paid').value = '0'; delete $('sub_paid').dataset.touched; }
             if ($('mdSubscriptionTitle')) $('mdSubscriptionTitle').textContent = 'Add Subscription / Bill';
             syncSubscriptionCycleFields();
         }
@@ -32494,6 +32516,7 @@ Be direct and use real numbers. Avoid generic advice.`;
             }
             if ($('sub_anomaly')) $('sub_anomaly').value = s.anomalyDetect ? '1' : '0';
             if ($('sub_notes'))   $('sub_notes').value   = s.notes || '';
+            if ($('sub_paid')) { $('sub_paid').value = (s.paid === true || s.completed === true) && s.reopened !== true ? '1' : '0'; $('sub_paid').dataset.touched = '1'; }
             syncSubscriptionCycleFields();
             openModal('mdSubscription');
         }
