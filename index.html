@@ -32625,7 +32625,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     const due = s.dueDate ? new Date(s.dueDate + 'T00:00:00') : created;
                     return !!due && !isNaN(due.getTime()) && due.getFullYear() === now.getFullYear() && due.getMonth() === now.getMonth();
                 }
-                if (!created || isNaN(created.getTime())) return false;
+                if (!created || isNaN(created.getTime())) return cycle === 'monthly';
                 const elapsed = (now.getFullYear() - created.getFullYear()) * 12 + now.getMonth() - created.getMonth();
                 if (elapsed < 0) return false;
                 if (cycle === 'quarterly') return elapsed % 3 === 0;

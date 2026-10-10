@@ -156,9 +156,18 @@
                 }
             }
             if (sub && /^(once|one-time|onetime)$/.test(String(sub.cycle || '').toLowerCase())) {
-                var first = (batch.subs || []).find(function (s) { return s.subId === subId && s.previousLifecycle; });
-                var prev = first && first.previousLifecycle;
-                if (prev) {
+                var remaining = (sub.history || []).filter(function (h) { return h && h.source === 'statement' && h.date; });
+                var latest = remaining.length ? remaining[remaining.length - 1] : null;
+                if (latest) {
+                    // A newer import still proves this one-time obligation was
+                    // paid. Undoing an older batch must not reopen it.
+                    var keepKey = latest.statementKey || (sub.paidAt === latest.date ? sub.paidStatementKey : '') || '';
+                    sub.paid = true; sub.completed = true; sub.paidAt = latest.date;
+                    sub.paidSource = 'statement'; sub.paidStatementKey = keepKey; sub.reopened = false;
+                } else {
+                    var first = (batch.subs || []).find(function (s) { return s.subId === subId && s.previousLifecycle; });
+                    var prev = first && first.previousLifecycle;
+                    if (!prev) return;
                     ['paid', 'completed', 'paidAt', 'paidSource', 'paidStatementKey', 'reopened'].forEach(function (key) {
                         if (prev[key] === undefined) delete sub[key]; else sub[key] = prev[key];
                     });
