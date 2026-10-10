@@ -9688,19 +9688,23 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             const p = _wfDisplayPrefs();
             if (p.hide) return c + ' ••••••';
             if (abs >= 1000000) return c + ' ' + (n / 1000000).toFixed(p.round ? 1 : 2) + 'M';
-            if (abs >= 100000) return c + ' ' + (n / 100000).toFixed(p.round ? 1 : 2) + 'L';
+            // Below a million the figure is written out ("LKR 184,000"), not shortened to lakhs: "1.84L" sat next to "3.50M" in the same row and read as the smaller number.
+            if (abs >= 100000) return c + ' ' + Math.round(n).toLocaleString('en-US');
             return c + ' ' + fmtN(n);
         };
+
+        /* The exact figure under an abbreviated one ("LKR 3.50M" -> "LKR 3,500,000.00"); '' under a figure that is already written out, so a card never says the same number twice. */
+        const fmtExact = (n) => (_wfDisplayPrefs().hide || Math.abs(parseFloat(n) || 0) >= 1000000) ? fmt(n) : '';
 
         /* One unit for a whole axis (all M, or all L), without the currency on every tick: the old per-tick fmtS printed 1.20M above 8.00L. */
         const fmtAxis = (v, i, ticks) => {
             if (_wfDisplayPrefs().hide) return '';
             if (v === 0) return '0';
             const top = Math.max.apply(null, (ticks || []).map((t) => Math.abs(t.value)).concat(Math.abs(v)));
-            const d = top >= 1000000 ? 1000000 : top >= 100000 ? 100000 : 0;
-            if (!d) return fmtN(v);
+            const d = top >= 1000000 ? 1000000 : top >= 10000 ? 1000 : 0;
+            if (!d) return Math.round(v).toLocaleString('en-US');
             const frac = (ticks || []).some((t) => Math.abs((t.value / d) % 1) > 1e-9);
-            return (v / d).toFixed(frac ? 1 : 0) + (d === 1000000 ? 'M' : 'L');
+            return (v / d).toFixed(frac ? 1 : 0) + (d === 1000000 ? 'M' : 'K');
         };
 
         const parseMoney = (s) => parseFloat(String(s).replace(/,/g, '')) || 0;
@@ -18972,8 +18976,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             };
 
             el.innerHTML = `<div class="g3" style="margin-bottom:16px;">
-        <div class="stat-card sc-green"><div class="stat-label">Monthly Income</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmt(totM)} active sources</div></div>
-        <div class="stat-card sc-gold"><div class="stat-label">Total Invested Capital</div><div class="stat-val">${fmtS(totI)}</div><div class="stat-meta">${fmt(totI)}</div></div>
+        <div class="stat-card sc-green"><div class="stat-label">Monthly Income</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmtExact(totM) ? fmtExact(totM) + ' · ' : ''}active sources</div></div>
+        <div class="stat-card sc-gold"><div class="stat-label">Total Invested Capital</div><div class="stat-val">${fmtS(totI)}</div><div class="stat-meta">${fmtExact(totI) || 'principal invested'}</div></div>
         <div class="stat-card sc-blue"><div class="stat-label">Active Sources</div><div class="stat-val">${activeArr.length}</div><div class="stat-meta">${endedArr.length > 0 ? endedArr.length + ' ended' : 'All running'}</div></div>
         <div class="stat-card sc-cyan"><div class="stat-label">This Month Confirmed</div><div class="stat-val">${fmtS(totConfirmed)}</div><div class="stat-meta">${activeArr.filter(s => received[s.id + '_' + curMonthStr]).length} of ${activeArr.length} confirmed</div></div>
     </div>`;
@@ -20029,7 +20033,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         const bgGrad = isReduce
                             ? 'linear-gradient(135deg,rgba(16,185,129,0.14),rgba(16,185,129,0.04))'
                             : 'linear-gradient(135deg,rgba(245,158,11,0.14),rgba(245,158,11,0.04))';
-                        const borderCol = isReduce ? 'var(--green)' : 'var(--accent2)';
+                        const borderCol = isReduce ? 'var(--wf-pos)' : 'var(--wf-warn)';
                         const icon = isReduce ? '@sparkles@' : '@alert@';
                         const title = isReduce ? 'You are AHEAD of schedule' : 'You are BEHIND schedule';
                         const verb = isReduce ? 'only need to pay' : 'should pay';
@@ -20146,7 +20150,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             if (interestSaved > 0) html += `<div class="lp-row"><span>Estimated interest saved:</span><span class="lp-saving">~${fmt(interestSaved)}</span></div>`;
                         } else if (diff < -1) {
                             html += `<div class="lp-row"><span>Shortfall from EMI:</span><span style="color:var(--red);font-weight:700;">${fmt(Math.abs(diff))}</span></div>`;
-                            html += `<div class="lp-row"><span>@alert@ Remaining will accrue interest</span><span style="color:var(--accent2);font-size:11px;">Balance carried forward</span></div>`;
+                            html += `<div class="lp-row"><span>@alert@ Remaining will accrue interest</span><span style="color:var(--wf-warn);font-size:11px;">Balance carried forward</span></div>`;
                         } else {
                             html += `<div class="lp-row"><span>Status:</span><span style="color:var(--green);">@checkCircle@ Standard payment</span></div>`;
                         }
@@ -20223,7 +20227,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const totM = arr.reduce((sum, l) => { const e = loanEndDate(l); return e > new Date() ? sum + l.monthly : sum; }, 0);
             const totA = arr.reduce((sum, l) => sum + l.amount, 0);
             el.innerHTML = `<div class="g3" style="margin-bottom:16px;">
-        <div class="stat-card sc-red"><div class="stat-label">Monthly Loan Payments</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmt(totM)}</div></div>
+        <div class="stat-card sc-red"><div class="stat-label">Monthly Loan Payments</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmtExact(totM) || 'across ' + activeLoans.length + ' active loan' + (activeLoans.length === 1 ? '' : 's')}</div></div>
         <div class="stat-card sc-blue"><div class="stat-label">Total Principal</div><div class="stat-val">${fmtS(totA)}</div></div>
         <div class="stat-card sc-purple"><div class="stat-label">Active Loans</div><div class="stat-val">${activeLoans.length}</div></div>
     </div>` + (function () { window._capLoans = _wfCap('loans', arr); return window._capLoans.rows; })().map(l => {
@@ -20338,7 +20342,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         const rec = loanRecalculatedInstallment(l);
                         if (rec.onTrack || rec.remainingMonths <= 0) return '';
                         const isReduce = rec.direction === 'reduce';
-                        const accentCol = isReduce ? 'var(--green)' : 'var(--accent2)';
+                        const accentCol = isReduce ? 'var(--wf-pos)' : 'var(--wf-warn)';
                         const bgGrad = isReduce
                             ? 'linear-gradient(135deg,rgba(16,185,129,0.10),rgba(16,185,129,0.02))'
                             : 'linear-gradient(135deg,rgba(245,158,11,0.10),rgba(245,158,11,0.02))';
@@ -20478,7 +20482,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     const rec = loanRecalculatedInstallment(l);
                     if (rec.onTrack || rec.remainingMonths <= 0) return '';
                     const isReduce = rec.direction === 'reduce';
-                    const accentCol = isReduce ? 'var(--green)' : 'var(--accent2)';
+                    const accentCol = isReduce ? 'var(--wf-pos)' : 'var(--wf-warn)';
                     const bgGrad = isReduce
                         ? 'linear-gradient(135deg,rgba(16,185,129,0.10),rgba(16,185,129,0.02))'
                         : 'linear-gradient(135deg,rgba(245,158,11,0.10),rgba(245,158,11,0.02))';
@@ -22078,7 +22082,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const active = arr.filter(x => !x.completed);
             const totM = active.reduce((sum, x) => sum + x.monthly, 0), totV = active.reduce((sum, x) => sum + x.total, 0);
             $('cciStats').innerHTML = `
-        <div class="stat-card sc-red"><div class="stat-label">Monthly CC Payments</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmt(totM)}</div></div>
+        <div class="stat-card sc-red"><div class="stat-label">Monthly CC Payments</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmtExact(totM) || 'due each month'}</div></div>
         <div class="stat-card sc-gold"><div class="stat-label">Total CC Financed</div><div class="stat-val">${fmtS(totV)}</div></div>
         <div class="stat-card sc-blue"><div class="stat-label">Active Plans</div><div class="stat-val">${active.length}</div></div>
         <div class="stat-card sc-purple" style="opacity:.7;"><div class="stat-label">Completed</div><div class="stat-val">${arr.length - active.length}</div></div>
@@ -22795,7 +22799,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     host.style.margin = '0 0 16px';
                     page.insertBefore(host, page.firstChild);
                 }
-                window.WFInsights.renderInto(host, items, { title: title });
+                window.WFInsights.renderInto(host, items, { title: title, cap: 2 });
             } catch (_) {}
         }
 
@@ -22903,7 +22907,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const catMap = {}; filtered.forEach(x => { catMap[x.cat] = (catMap[x.cat] || 0) + x.amount; });
             const topCat = Object.entries(catMap).sort((a, b) => b[1] - a[1])[0] || ['-', 0];
             $('expStats').innerHTML = `
-        <div class="stat-card sc-red"><div class="stat-label">Total Expenses</div><div class="stat-val">${fmtS(totAmt)}</div><div class="stat-meta">${fmt(totAmt)}</div></div>
+        <div class="stat-card sc-red"><div class="stat-label">Total Expenses</div><div class="stat-val">${fmtS(totAmt)}</div><div class="stat-meta">${fmtExact(totAmt) || 'in this view'}</div></div>
         <div class="stat-card sc-blue"><div class="stat-label">Count</div><div class="stat-val">${filtered.length}</div></div>
         <div class="stat-card sc-gold"><div class="stat-label">Top Category</div><div class="stat-val" style="font-size:15px;">${topCat[0]}</div><div class="stat-meta">${fmtS(topCat[1])}</div></div>
         <div class="stat-card sc-green"><div class="stat-label">Paid</div><div class="stat-val">${filtered.filter(x => x.completed).length}</div><div class="stat-meta">of ${filtered.length}</div></div>
