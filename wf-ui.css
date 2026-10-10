@@ -909,3 +909,23 @@ html.wf-sheet-open, html.wf-sheet-open body { overscroll-behavior: contain; }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
 }
+
+/* ═════════════════ 24. PAGE TOOLBARS ════════════════════════════════════════
+   The controls of a page sit on one row, aligned right, wherever the page has room for them. The row used to shrink to a
+   width that was too small for its last button (Income: "Add Income" fell alone onto a second line although the page had
+   room), so it now takes the whole width of the page. Where the page really is too narrow for everything, the sort chips,
+   the least used control, take their own row, so the main button keeps its place beside the filters. */
+@media (min-width: 641px) {
+    .page > .sh > .sh-actions { flex: 1 1 auto; justify-content: flex-end; }
+}
+@media (min-width: 641px) and (max-width: 1199px) {
+    :is(#page-incRecv, #page-expenses) .sh-actions > .sort-bar { order: 9; flex: 1 0 100%; justify-content: flex-end; }
+}
+@media (max-width: 640px) {
+    /* a phone: the main button first and as wide as the page, the filters under it, nothing left alone on a line */
+    :is(#page-incRecv, #page-expenses) .sh-actions > .btn-primary { order: -1; flex: 1 1 100%; }
+    :is(#page-incRecv, #page-expenses) .sh-actions > .exp-view-toggle,
+    :is(#page-incRecv, #page-expenses) .sh-actions > .sort-bar { flex: 1 1 100%; justify-content: stretch; }
+    :is(#page-incRecv, #page-expenses) .sh-actions > .exp-view-toggle .exp-vbtn,
+    :is(#page-incRecv, #page-expenses) .sh-actions > .sort-bar .sb-btn { flex: 1 1 0; text-align: center; justify-content: center; }
+}

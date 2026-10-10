@@ -14,6 +14,7 @@ on:
       - test/e2e/ui-dashboard.mjs
       - test/e2e/ui-finance.mjs
       - test/e2e/ui-tools.mjs
+      - test/e2e/page-toolbars.mjs
       - test/e2e/dashboard-seed.mjs
       - test/e2e/harness.mjs
       - test/e2e/firebase-stub.mjs
@@ -50,6 +51,8 @@ jobs:
           WF_FIN_ARTIFACTS: shell-artifacts
       - name: Verify page titles, explainer notes and the sessions copy
         run: node test/e2e/ui-tools.mjs
+      - name: Verify the Income and Expenses toolbars at every screen width
+        run: node test/e2e/page-toolbars.mjs
       - name: Preserve screenshots
         if: always()
         uses: actions/upload-artifact@v7
