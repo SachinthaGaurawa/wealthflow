@@ -949,7 +949,7 @@ export function boot(win) {
         ready: true,
         showPhone,
         /** Does this loan or investment match what was typed in a list's search box (name, nickname, full name, NIC, either number)? */
-        recordMatches: People.recordMatches,
+        recordMatches: (rec, query) => People.recordMatches(rec, query, rec && rec[People.LINK_FIELD] ? People.personById(People.listPeople(store()), rec[People.LINK_FIELD]) : null),
         /** The "Saved people" picker for the top of a form. `record` is the loan or investment being edited, or null. */
         pickerHtml(prefix, { record = null, nameId = '' } = {}) { ensureStyle(); autoFile(); return pickerHtml(prefix, { people: People.listPeople(store()), record: freshRecord(record), nameId }); },
         /** The country / number / ID fields. */

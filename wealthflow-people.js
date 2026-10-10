@@ -266,19 +266,27 @@ const lineKey = (v) => { const d = str(v).replace(/\D/g, ''); return d.replace(/
  * keeps them under, the full name, and an investment's title), or in the NIC / ID; a number of three digits or more is looked for in
  * both phone numbers. An empty search matches everything.
  */
-export function recordMatches(rec, query) {
+export function recordMatches(rec, query, person = null) {
     const q = norm(query);
     if (!q) return true;
     const r = rec && typeof rec === 'object' ? rec : {};
-    const names = norm([r.name, r.company, r.fullName].map(str).join(' '));
-    const nic = norm(displayIdentity(r.nic)).replace(/\s+/g, '');
-    const lines = [r.phone, r.phone2].map(lineKey).filter(Boolean);
+    const p = person && typeof person === 'object' ? person : {};
+    // The saved person the record points at is searched too: a record opened before the person was filed, or edited on another device, may not carry the number itself.
+    const names = norm([r.name, r.company, r.fullName, p.name, p.fullName].map(str).join(' '));
+    const nic = [r.nic, p.nic].map((v) => norm(displayIdentity(v)).replace(/\s+/g, '')).filter(Boolean);
+    const lines = [r.phone, r.phone2, p.phone, p.phone2].map(lineKey).filter(Boolean);
+    // A typed number is looked for as the digits were typed: "077" belongs to 0771234567 even though the line key (771234567) has no leading 0.
+    const hasDigits = (typed) => {
+        const t = str(typed).replace(/\D/g, '');
+        if (t.length < 3) return false;
+        const core = lineKey(t);
+        return lines.some((l) => [l, `0${l}`, `94${l}`, `0094${l}`].some((f) => f.includes(t)) || (core.length >= 3 && l.includes(core)));
+    };
     // a number typed with spaces ("77 123 45") is one thing, not three words
-    if (/^[+\d\s()-]+$/.test(q)) { const all = lineKey(q); if (all.length >= 3 && lines.some((l) => l.includes(all))) return true; }
+    if (/^[+\d\s()-]+$/.test(q) && hasDigits(q)) return true;
     return q.split(' ').every((w) => {
-        if (names.includes(w) || (nic && nic.includes(w.replace(/\s+/g, '')))) return true;
-        const digits = lineKey(w);
-        return digits.length >= 3 && /^[+\d()-]+$/.test(w) && lines.some((l) => l.includes(digits));
+        if (names.includes(w) || nic.some((n) => n.includes(w.replace(/\s+/g, '')))) return true;
+        return /^[+\d()-]+$/.test(w) && hasDigits(w);
     });
 }
 
