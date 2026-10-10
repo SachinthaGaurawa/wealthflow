@@ -865,7 +865,7 @@
                 ? '<button type="button" class="wfx-a wfx-fix"'
                     + (it.fix ? ' data-fix="' + esc(it.fix) + '"' : '')
                     + (it.go ? ' data-go="' + esc(it.go) + '"' : '')
-                    + '>' + esc(it.action) + '</button>'
+                    + ' style="cursor:pointer">' + esc(it.action) + '</button>'
                 : '<div class="wfx-a">' + esc(it.action) + '</div>') : '') +
             '</div></div>';
     }
