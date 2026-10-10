@@ -110,6 +110,11 @@
     }
   })();
 
+  // The classifier echoes text taken from the shared SMS, so nothing from it goes into markup unescaped.
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
   function getDeviceToken() {
     let tok = localStorage.getItem('wf_device_token');
     if (!tok) {
@@ -169,10 +174,10 @@
         };
         res.className = 'result ok';
         res.innerHTML = `
-          <div style="font-weight:700;color:var(--wf-pos);margin-bottom:6px;">@checkCircle@ Logged as ${labels[m] || m}</div>
+          <div style="font-weight:700;color:var(--wf-pos);margin-bottom:6px;">@checkCircle@ Logged as ${esc(labels[m] || m)}</div>
           <div style="font-family:var(--wf-font-mono);">
-            ${f.desc || f.source || f.name || ''}<br>
-            <b>${(data.parsed && data.parsed.currency) || 'LKR'} ${(f.amount || 0).toLocaleString()}</b>
+            ${esc(f.desc || f.source || f.name || '')}<br>
+            <b>${esc((data.parsed && data.parsed.currency) || 'LKR')} ${esc((Number(f.amount) || 0).toLocaleString())}</b>
           </div>
           <div style="margin-top:8px;font-size:11px;opacity:.7;">Auto-saved to WealthFlow. Open the app to view.</div>`;
         // Queue the result for the main app to pick up via localStorage

@@ -30,7 +30,7 @@ for (const theme of ['dark', 'light']) {
         await page.addInitScript((t) => { try { localStorage.setItem('wf2_settings', JSON.stringify({ theme: t })); } catch (_) {} }, theme);
         await page.route('**/api/sms-ingest', (route) => route.fulfill({
             contentType: 'application/json',
-            body: JSON.stringify({ ok: true, classified: true, routed: { module: 'expenses', suggested_fields: { desc: 'Keells', amount: 4250 } }, parsed: { currency: 'LKR' } }),
+            body: JSON.stringify({ ok: true, classified: true, routed: { module: 'expenses', suggested_fields: { desc: 'Keells <img src=x onerror="window.__xss=1">', amount: 4250 } }, parsed: { currency: 'LKR' } }),
         }));
         const tag = `share-target ${theme} ${W}`;
         await page.goto(`${base}/share-target.html`);
@@ -56,6 +56,10 @@ for (const theme of ['dark', 'light']) {
         await page.waitForSelector('#result.ok', { timeout: 4000 }).catch(() => {});
         const res = await page.evaluate(() => document.getElementById('result').innerText);
         check(/Logged as/.test(res) && /4,250/.test(res), `${tag}: capture result did not render ("${res.slice(0, 60)}")`);
+        await page.waitForTimeout(300);
+        const injected = await page.evaluate(() => ({ ran: !!window.__xss, img: !!document.querySelector('#result img') }));
+        check(!injected.ran && !injected.img, `${tag}: text echoed from the shared SMS was parsed as markup`);
+        check(/<img src=x/.test(res), `${tag}: echoed text should be shown literally, got "${res.slice(0, 80)}"`);
         await ctx.close();
     }
 }
