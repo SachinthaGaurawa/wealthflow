@@ -326,7 +326,10 @@ export const BUDGETS = {
     // phone, 1 while a dialog is open; errors are never queued) and _wfStrip asks for a one-card insight strip on a phone. Most of it is the comments recording why. No new script or request.
     // 2026-10-10 (One-Time bills: paid-status field, past-dated bills filed as paid; measured 2,246,313 + ~0.1% headroom): 2,245,000 -> 2_248_500.
     // (both of the above merged: measured at the merge)
-    htmlBytes: 2_251_000,
+    // 2026-10-10 (the AI consumer side): 2,251,000 -> 2_261_000 (measured 2,258,304 + ~0.1% headroom). The Settings AI status reads the measured board (?health=1 / ?canary=1) and says how many services answered and how old the reading is,
+    // plain-words failures on the chat and every AI card (_wfAiWhy), the Insights card on the shared books figures, AI Auto-Notifications gating the smart tips (the insight tip built from the books), the scanner's Auto-Categorize switch
+    // and a hand-picked category that the title suggestion no longer moves. About a third is comments. No new script or request.
+    htmlBytes: 2_261_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
