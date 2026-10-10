@@ -210,7 +210,10 @@ describe('the reader: a statement row says what it is', () => {
     it('bank names compare the way people write them', () => {
         expect(sameBank('Sampath Bank PLC', 'Sampath')).toBe(true);
         expect(sameBank('Commercial Bank of Ceylon', 'Commercial Bank')).toBe(true);
-        expect(sameBank('HNB', 'Hatton National Bank')).toBe(false);          // not guessable from letters — never claimed equal
+        expect(sameBank('HNB', 'Hatton National Bank')).toBe(true);           // the app's own list of banks says so
+        expect(sameBank('Hnb', 'Hatton National Bank (HNB)')).toBe(true);
+        expect(sameBank('Dfccbank', 'DFCC Bank')).toBe(true);
+        expect(sameBank('HNB', 'Sampath Bank')).toBe(false);
         expect(sameBank('Sampath', 'BOC')).toBe(false);
         expect(sameBank('', 'BOC')).toBeNull();
     });
@@ -413,6 +416,58 @@ describe('which tracked cheque a row settles', () => {
 });
 
 /* ---- the decision ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- */
+describe('the page finds the typed entry exactly as the worker does', () => {
+    it('typedTwin and manualTwin agree over generated payments and entries', async () => {
+        const { manualTwin } = await import('../statement-links.mjs');
+        const { typedTwin } = Cheques;
+        const days = ['2026-03-10', '2026-03-11', '2026-03-12', '2026-03-13', '2026-03-14', '2026-03-16', '2026-02-27'];
+        const text = fc.constantFrom('Rent - Landlord', 'Cheque 000123', 'Keells', 'Salary advance', 'Landlord rent', 'electricity bill', 'CHQ 000123 PAID', 'payment', 'Dialog top up');
+        const entry = fc.record({
+            id: fc.string({ minLength: 1, maxLength: 4 }), desc: text, amount: fc.constantFrom(25000, 24000, 25000.004, 1500), date: fc.constantFrom(...days, ''),
+            month: fc.constantFrom('2026-03', '2026-02'), recurring: fc.boolean(), source: fc.constantFrom(undefined, 'sms', 'statement'), statementTwin: fc.constantFrom(undefined, { sourcePath: 'x' }),
+            statementKey: fc.constantFrom(undefined, 'k'), uploadClaim: fc.constantFrom(undefined, 'u'),
+        }, { requiredKeys: ['id', 'desc', 'amount'] });
+        fc.assert(fc.property(fc.array(entry, { maxLength: 4 }), fc.constantFrom(...days), fc.constantFrom('CHQ 000123 PAID', 'RENT LANDLORD CHQ 000123', 'CHEQUE 000123'), fc.boolean(), (records, date, description, strict) => {
+            const row = { amount: 25000, date, description, direction: 'debit' };
+            const a = manualTwin(records, row, { strict }), b = typedTwin(records, row, { strict });
+            expect(b ? b.r : null).toBe(a ? a.r : null);
+            if (a) expect(b.gap).toBe(a.gap);
+        }), { numRuns: runs(300) });
+    });
+});
+
+describe('the same cheque number in two bank accounts', () => {
+    const issued = (extra) => ({ id: 'H1', no: '000123', party: 'Landlord', type: OUT, amount: 25000, issue: '2026-03-10', release: '2026-03-10', status: 'pending', bank: 'Hatton National Bank', ...extra });
+    const row = (extra) => ({ description: 'CHQ 000123 PAID', direction: 'debit', amount: 25000, date: '2026-03-12', ...extra });
+    it('a Sampath statement clears the Sampath cheque, never the HNB one that happens to have the exact amount', () => {
+        const list = [issued(), issued({ id: 'S1', bank: 'Sampath Bank', amount: 24500 })];
+        const out = settleCheque(row({ bank: 'Sampath Bank' }), list, {});
+        expect(out.action).toBe('clear');
+        expect(out.cheque.id).toBe('S1');
+        expect(out.patch.amount).toBe(25000);
+    });
+    it('a Sampath statement does not touch an HNB cheque at all: it is a cheque of its own', () => {
+        const out = settleCheque(row({ bank: 'Sampath Bank' }), [issued()], {});
+        expect(out.action).toBe('create');
+        expect(out.record).toMatchObject({ no: '000123', bank: 'Sampath Bank', status: 'cleared' });
+        expect(out.review.join(' ')).toContain('also tracked at Hatton National Bank');
+    });
+    it('a cheque with no bank written on it still matches (the owner did not say)', () => {
+        const out = settleCheque(row({ bank: 'Sampath Bank' }), [issued({ bank: '' })], {});
+        expect(out.action).toBe('clear');
+    });
+    it('the bank that agrees is preferred over one that is unknown, whatever the amounts', () => {
+        const list = [issued({ id: 'U1', bank: '' }), issued({ id: 'S1', bank: 'Sampath Bank', amount: 24500 })];
+        const out = settleCheque(row({ bank: 'Sampath Bank' }), list, {});
+        expect(out.cheque.id).toBe('S1');
+    });
+    it('a received cheque is drawn on someone else\'s bank: the statement bank is not compared', () => {
+        const out = settleCheque({ description: 'CHEQUE DEPOSIT 285943', direction: 'credit', amount: 50000, date: '2026-03-12', bank: 'Sampath Bank' }, [chq({ id: 'R1', bank: 'Commercial Bank' })], {});
+        expect(out.action).toBe('clear');
+        expect(out.cheque.id).toBe('R1');
+    });
+});
+
 describe('the decision for one row', () => {
     const opts = (extra = {}) => ({ id: 'new1', now: '2026-03-12T10:00:00.000Z', source: { statementKey: 'k1', statementRow: 3, bank: 'Commercial Bank' }, note: 'Imported', ...extra });
 
@@ -659,6 +714,51 @@ describe('the email worker files cheque rows into the Cheque Tracker, and counts
         expect(before[0]).toMatchObject({ status: 'pending', amount: 48000 });
     });
 
+    /* a cheque a statement ADDED, then settled by a later statement: unfiling the later one must not take the cheque (nor the earlier statement's record of it) away */
+    const OTHER = 'wf-mail/owner_example_com/items/itemA';
+    const built = (rowA, rowB, bank = 'HNB') => {
+        const created = settleCheque(rowA, [], { id: 'C1', now: '2026-03-14T00:00:00.000Z', source: { statementKey: OTHER, statementRow: 3, bank } });
+        const tracked = [{ ...created.record, countedBy: undefined }];
+        const settled = settleCheque(rowB, tracked, { id: 'X', now: '2026-03-25T00:00:00.000Z', source: { statementKey: SOURCE, statementRow: 1, bank } });
+        Object.assign(tracked[0], settled.patch);
+        return tracked;
+    };
+    it('a cheque statement A added and statement B returned: unfiling B puts it back as A left it, it does not delete it', async () => {
+        const tracked = built({ description: 'CHEQUE DEPOSIT 285943', direction: 'credit', amount: 50000, date: '2026-03-12' }, { description: 'CHQ RTN 285943', direction: 'debit', amount: 50000, date: '2026-03-20' });
+        expect(tracked[0]).toMatchObject({ source: 'statement', status: 'bounced', statementKey: SOURCE });
+        const w = world({ cheques: tracked });
+        w.data.set(SOURCE, { uid: 'u', bank: 'HNB', filename: 'statement.pdf', from: 'statements@hnb.lk', messageId: 'm1', status: 'filed', hasReview: false, filed: true, cursor: 0, receivedMs: Date.parse('2026-04-03T05:00:00Z') });
+        await unfileStatement({ db: w.db, uid: 'u', itemRef: w.db.doc(SOURCE) });
+        const back = w.data.get('users/u').cheques;
+        expect(back).toHaveLength(1);
+        expect(back[0]).toMatchObject({ no: '285943', status: 'cleared', clearedDate: '2026-03-12', statementKey: OTHER, statementRow: 3 });
+        expect(back[0].bouncedDate).toBeUndefined();
+    });
+
+    it('a cheque the owner tracked as cleared and a statement returned: unfiling it brings back the day it cleared', async () => {
+        const mine = chq({ id: 'R1', status: 'cleared', clearedDate: '2026-03-12' });
+        const w = world({ cheques: [mine] });
+        await drain(w, line('20', 'CHQ RTN 285943', '50,000.00', '', '450,000.00'));
+        const once = w.data.get('users/u').cheques[0];
+        expect(once).toMatchObject({ status: 'bounced', bouncedDate: '2026-03-20' });
+        await unfileStatement({ db: w.db, uid: 'u', itemRef: w.db.doc(SOURCE) });
+        const back = w.data.get('users/u').cheques[0];
+        expect(back).toMatchObject({ id: 'R1', status: 'cleared', clearedDate: '2026-03-12' });
+        expect(back.bouncedDate).toBeUndefined();
+        expect(back.statementKey).toBeUndefined();
+    });
+
+    it('a cheque one statement cleared and then returned goes back to the state before that statement', async () => {
+        const w = world({ cheques: [chq({ id: 'R1' })] });
+        await drain(w, [line('12', 'CHEQUE DEPOSIT 285943', '', '50,000.00', '550,000.00'), line('20', 'CHQ RTN 285943', '50,000.00', '', '500,000.00')].join('\n'));
+        expect(w.data.get('users/u').cheques[0]).toMatchObject({ status: 'bounced' });
+        await unfileStatement({ db: w.db, uid: 'u', itemRef: w.db.doc(SOURCE) });
+        const back = w.data.get('users/u').cheques[0];
+        expect(back).toMatchObject({ id: 'R1', status: 'pending' });
+        expect(back.clearedDate).toBeUndefined();
+        expect(back.bouncedDate).toBeUndefined();
+    });
+
     it('a ledger line is written for every cheque row so the statement\'s totals add up', async () => {
         const { data } = await file({}, [line('12', 'CHQ 000123 PAID', '25,000.00', '', '475,000.00'), line('14', 'CHEQUE DEPOSIT RAJ TRADERS 285943', '', '50,000.00', '525,000.00')].join('\n'));
         const entries = ledger(data);
@@ -801,7 +901,7 @@ describe('the manual upload files cheque rows the same way', () => {
             return held >= curNth;
         };
         const run = new Function('window', '_bankShown', 'uid', 'incRecvArr', 'expArr', 'chequeArr', '_noteFor', '_dupIn', 'rows', 'bank', 'WFBatch', 'getCur', 'setCur', `
-            let dup = 0, chq = 0, chqNew = 0, chqCleared = 0, chqBounced = 0, inc = 0, exp = 0, _chequesDirty = false; const chqReview = [];
+            let dup = 0, chq = 0, chqNew = 0, chqCleared = 0, chqBounced = 0, inc = 0, exp = 0, _chequesDirty = false, _expLinked = false; const chqReview = [];
             const _batch = WFBatch.begin('stmt', 'statement');
             rows.forEach((t, i) => {
                 setCur(t._nth || 1);
@@ -914,6 +1014,66 @@ describe('the manual upload files cheque rows the same way', () => {
         expect(up.DB.get('cheques').find((c) => c.id === 'R1')).toMatchObject({ status: 'pending' });
     });
 
+    describe('a payment the owner also typed into Expenses is still one payment', () => {
+        const typed = (extra = {}) => ({ id: 'T1', desc: 'Rent - Landlord', amount: 25000, date: '2026-03-12', month: '2026-03', cat: 'Rent', ...extra });
+        const issued = (extra = {}) => ({ id: 'I1', no: '000123', party: 'Landlord', type: OUT, amount: 25000, issue: '2026-03-10', release: '2026-03-10', status: 'pending', ...extra });
+        const paid = [r('CHQ 000123 PAID', 'debit', 25000, '2026-03-12')];
+
+        it('the tracked cheque is cleared and linked to the typed entry; the month counts the payment once; Undo frees both', () => {
+            const up = upload({ cheques: [issued()], expenses: [typed()] }, paid);
+            expect(up.state.cheques[0]).toMatchObject({ id: 'I1', status: 'cleared', countedBy: 'T1' });
+            expect(up.state.expenses).toHaveLength(1);
+            expect(up.state.expenses[0].statementTwin).toMatchObject({ date: '2026-03-12', cents: 2500000 });
+            expect(monthly(up.state).totalExp).toBe(25000);                       // not 50,000
+            up.undo();
+            expect(up.DB.get('cheques')[0]).toMatchObject({ id: 'I1', status: 'pending' });
+            expect(up.DB.get('cheques')[0].countedBy).toBeUndefined();
+            expect(up.DB.get('expenses')).toHaveLength(1);
+            expect(up.DB.get('expenses')[0].statementTwin).toBeUndefined();
+        });
+
+        it('a cheque nobody tracked is added for the record and linked the same way', () => {
+            const up = upload({ expenses: [typed()] }, paid);
+            expect(up.state.cheques).toHaveLength(1);
+            expect(up.state.cheques[0]).toMatchObject({ no: '000123', status: 'cleared', source: 'statement', countedBy: 'T1' });
+            expect(monthly(up.state).totalExp).toBe(25000);
+            up.undo();
+            expect(up.DB.get('cheques')).toHaveLength(0);
+            expect(up.DB.get('expenses')[0].statementTwin).toBeUndefined();
+        });
+
+        it('a different amount or a different week is another payment: nothing is linked', () => {
+            const a = upload({ cheques: [issued()], expenses: [typed({ amount: 24000 })] }, paid);
+            expect(a.state.cheques[0].countedBy).toBeUndefined();
+            expect(monthly(a.state).totalExp).toBe(49000);
+            const b = upload({ cheques: [issued()], expenses: [typed({ date: '2026-03-02' })] }, paid);
+            expect(b.state.cheques[0].countedBy).toBeUndefined();
+        });
+
+        it('two typed entries that fit equally are never guessed between, and a received cheque is never linked', () => {
+            const two = upload({ cheques: [issued()], expenses: [typed(), typed({ id: 'T2' })] }, paid);
+            expect(two.state.cheques[0].countedBy).toBeUndefined();
+            const received = upload({ cheques: [chq({ id: 'R1' })], expenses: [typed({ amount: 50000 })] }, [r('CHEQUE DEPOSIT 285943', 'credit', 50000, '2026-03-12')]);
+            expect(received.state.cheques[0].countedBy).toBeUndefined();
+            expect(received.state.expenses[0].statementTwin).toBeUndefined();
+        });
+
+        it('uploaded twice, the payment is still counted once and the entry stands for one row', () => {
+            const first = upload({ cheques: [issued()], expenses: [typed()] }, paid);
+            const second = upload(first.state, paid, { claim: 'claim-2' });
+            expect(second.state.cheques).toHaveLength(1);
+            expect(second.state.expenses).toHaveLength(1);
+            expect(monthly(second.state).totalExp).toBe(25000);
+        });
+
+        it('the page and the email worker pick the same typed entry for the same payment', async () => {
+            const w = await file({ cheques: [issued()], expenses: [typed()] }, line('12', 'CHQ 000123 PAID', '25,000.00', '', '475,000.00'));
+            const up = upload({ cheques: [issued()], expenses: [typed()] }, paid);
+            expect(up.state.cheques[0].countedBy).toBe(w.user.cheques[0].countedBy);
+            expect(Object.keys(up.state.expenses[0].statementTwin).sort()).toEqual(Object.keys(w.user.expenses[0].statementTwin).sort());
+        });
+    });
+
     it('one statement through both doors: the Cheque Tracker holds each cheque once, whichever came first', async () => {
         const rows = [r('CHEQUE DEPOSIT 285943', 'credit', 50000, '2026-03-12'), r('CHQ 000123 PAID', 'debit', 25000, '2026-03-14'), r('LOCAL CHEQUE DEPOSIT', 'credit', 33000, '2026-03-15'), r('CHQ RTN 285943', 'debit', 50000, '2026-03-20')];
         const sheet = [line('12', 'CHEQUE DEPOSIT 285943', '', '50,000.00', '550,000.00'), line('14', 'CHQ 000123 PAID', '25,000.00', '', '525,000.00'), line('15', 'LOCAL CHEQUE DEPOSIT', '', '33,000.00', '558,000.00'), line('20', 'CHQ RTN 285943', '50,000.00', '', '508,000.00')].join('\n');
@@ -973,6 +1133,6 @@ describe('the page', () => {
         expect(batches).toContain('_undoCheques');
     });
     it('the module is also exposed on window for the page', () => {
-        expect(Object.keys(Cheques).sort()).toEqual(['incomeCounted', 'matchTracked', 'normNo', 'partyFrom', 'readCheque', 'sameBank', 'sameNo', 'settleCheque']);
+        expect(Object.keys(Cheques).sort()).toEqual(['incomeCounted', 'matchTracked', 'normNo', 'partyFrom', 'readCheque', 'sameBank', 'sameNo', 'settleCheque', 'stampTwin', 'typedTwin']);
     });
 });

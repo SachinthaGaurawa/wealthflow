@@ -36472,7 +36472,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 let cc = 0, ccPay = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0, dup = 0, loanCnt = 0, loanRepl = 0, chq = 0, chqNew = 0, chqCleared = 0, chqBounced = 0;
                 const chqReview = [];     // cheque rows that were settled but deserve a second look (a statement amount that differs, a wording that disagrees, two cheques that fit)
                 let _loansDirty = false;
-                let _chequesDirty = false;
+                let _chequesDirty = false, _expLinked = false;
                 // A statement row dated in the past is already settled → auto-tick it.
                 const _isPast = (d) => { try { const dt = new Date(d + 'T23:59:59'); return dt < new Date(); } catch (_) { return false; } };
                 const _nz = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -36637,6 +36637,19 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         const _res = _W ? _W.settleCheque({ description: desc, direction: _t.direction, amount, date, bank: _bk, key: _source.statementKey, rowNo: _source.statementRow, nth: _t._nth, claim: _source.uploadClaim || '', batch: _batch ? _batch.id : '' },
                             chequeArr, { id: uid(), now: new Date().toISOString(), source: _source, note: _noteFor(date, desc, amount), force: true }) : null;
                         let _moneyFiled = false;
+                        // An issued cheque the bank paid IS the payment — unless the owner already typed the same payment into Expenses (or pasted its SMS): that entry counts the money, the cheque only tracks it,
+                        // so the month counts it once. The entry is found the way the email worker finds it, tied to this row, and freed again by Undo.
+                        const _twinTo = (rec) => {
+                            if (!_W || !_W.typedTwin || !rec || rec.countedBy || !_res || !_res.read || _res.read.type !== 'issued' || _res.read.event !== 'clear') return;
+                            const _row = { amount, date, description: desc, direction: 'debit' };
+                            const _tw = _W.typedTwin(expArr, _row);
+                            if (!_tw) return;
+                            _W.stampTwin(_tw, _row, _source.statementKey || '', _source.statementRow == null ? 0 : _source.statementRow, Date.now());
+                            rec.countedBy = String(_tw.r.id);
+                            rec.notes = (rec.notes ? rec.notes + ' · ' : '') + 'Counted once — your expense "' + String(_tw.r.desc || _tw.r.name || '').slice(0, 40) + '" already holds this payment';
+                            _expLinked = true;
+                            if (_batch && WFBatch.recordTwin) { try { WFBatch.recordTwin(_batch, { expenseId: _tw.r.id, key: _source.statementKey || '', chequeId: rec.id }); } catch (_) {} }
+                        };
                         if (!_res || _res.action === 'none') {
                             // the module did not load, or the row has no money direction: never lose it — file a cleared cheque by the row's own flag, as before
                             const _no = String(_t._chequeNo || '').replace(/\D+/g, '');
@@ -36652,11 +36665,13 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         if (_res.action === 'clear' || _res.action === 'bounce') {
                             const _c = _res.cheque, _prev = JSON.parse(JSON.stringify(_c));
                             Object.assign(_c, _res.patch);
+                            _twinTo(_c);
                             if (_batch && WFBatch.recordCheque) { try { WFBatch.recordCheque(_batch, { id: _c.id, prev: _prev, status: _c.status, now: _c }); } catch (_) {} }
                             if (_res.action === 'bounce') chqBounced++; else chqCleared++;
                             chq++; _chequesDirty = true; _moneyFiled = true;
                         } else if (_res.action === 'create') {
                             const _crec = _res.record;
+                            _twinTo(_crec);
                             if (_batch) { try { WFBatch.tag(_batch, _crec); WFBatch.record(_batch, 'cheques', _crec.id); } catch (_) {} }
                             chequeArr.push(_crec);
                             if (_crec.status === 'bounced') chqBounced++; else chqNew++;
@@ -36687,7 +36702,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 });
                 if (cc) DB.set('cconetime', ccArr);
                 if (ccPay) DB.set('ccPayments', ccPayArr);
-                if (exp) DB.set('expenses', expArr);
+                if (exp || _expLinked) DB.set('expenses', expArr);
                 if (inc) DB.set('incomeRecv', incRecvArr);
                 if (_loansDirty) DB.set('loans', loanArr);
                 if (_chequesDirty) DB.set('cheques', chequeArr);
@@ -36695,7 +36710,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 // Auto-@checkCircle@ match the new payments against outstanding charges (oldest first).
                 try { if (cc || ccPay) reconcileCC(); } catch (_) {}
                 try { renderCCOT(); updateCCOTBadge(); } catch (_) {}
-                try { if (exp && typeof renderExpenses === 'function') renderExpenses(); } catch (_) {}
+                try { if ((exp || _expLinked) && typeof renderExpenses === 'function') renderExpenses(); } catch (_) {}
                 try { if (inc && typeof renderIncRecv === 'function') renderIncRecv(); } catch (_) {}
                 try { if (_loansDirty && typeof renderLoans === 'function') renderLoans(); } catch (_) {}
                 try { if (_chequesDirty && typeof renderCheques === 'function') renderCheques(); } catch (_) {}

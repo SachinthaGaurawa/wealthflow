@@ -1540,9 +1540,14 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
         for (const cheque of Array.isArray(user.cheques) ? user.cheques : []) {
             if (!cheque || cheque.statementKey !== path) { cheques.push(cheque); continue; }
             if (cheque.countedBy) linked.add(String(cheque.countedBy));
-            if (cheque.source === 'statement') { gone.add(String(cheque.id)); tomb.cheques = { ...(tomb.cheques && typeof tomb.cheques === 'object' ? tomb.cheques : {}), [cheque.id]: now }; continue; }
-            const { clearedDate, bouncedDate, statementKey, statementRow, uploadClaim, prevStatus, prevAmount, direction, countedBy, ...rest } = cheque;
-            cheques.push({ ...rest, status: prevStatus || (rest.status === 'cleared' ? 'pending' : rest.status), ...(prevAmount != null ? { amount: prevAmount } : {}), _ut: now });
+            /* only the statement that ADDED the cheque takes it away: one a different statement added, and this one only settled (cleared / returned), goes back to what that statement left */
+            if (cheque.source === 'statement' && (!cheque.createdKey || cheque.createdKey === path)) { gone.add(String(cheque.id)); tomb.cheques = { ...(tomb.cheques && typeof tomb.cheques === 'object' ? tomb.cheques : {}), [cheque.id]: now }; continue; }
+            const { clearedDate, bouncedDate, statementKey, statementRow, uploadClaim, prevStatus, prevAmount, prevDates, prevStatement, direction, countedBy, ...rest } = cheque;
+            const back = { ...rest, status: prevStatus || (rest.status === 'cleared' ? 'pending' : rest.status), ...(prevAmount != null ? { amount: prevAmount } : {}), _ut: now };
+            if (prevDates && prevDates.clearedDate) back.clearedDate = prevDates.clearedDate;
+            if (prevDates && prevDates.bouncedDate) back.bouncedDate = prevDates.bouncedDate;
+            if (prevStatement && prevStatement.statementKey) { back.statementKey = prevStatement.statementKey; if (prevStatement.statementRow != null) back.statementRow = prevStatement.statementRow; if (prevStatement.uploadClaim) back.uploadClaim = prevStatement.uploadClaim; }
+            cheques.push(back);
         }
         if (touched(user.cheques, cheques)) changes.cheques = cheques;
         /* the entry the owner typed that this statement's cheque row was tied to (`countedBy`) stands for no row of a statement that is gone: its stamp is lifted, so the same statement filed again links it afresh and the payment is still counted once */

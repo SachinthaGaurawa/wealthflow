@@ -26,6 +26,8 @@
  * Pure: no network, no clock, no storage. ESM for the server; the page loads it as a module and reads window.WFCheques.
  * ===========================================================================*/
 
+import { institutionFor, displayBank } from './wealthflow-institutions.js';
+
 /* ---- words ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- */
 const STRONG = new Set(['cheque', 'cheques', 'chque', 'chques', 'cheq', 'cheqs', 'chq', 'chqs', 'pdc']);
 const WEAK = new Set(['check', 'chk', 'cq']);                  // "Check In Hotel": a weak marker is a cheque only with a number beside it
@@ -169,8 +171,16 @@ export function readCheque(row) {
 
 /* ---- matching ------------------------------------------------------------------------------------------------------------------------------------------------------------------- */
 const bankWords = (value) => String(value || '').toLowerCase().replace(/\b(?:bank|plc|ltd|limited|of|ceylon|the|pvt|commercial|national|savings|hatton|nations|trust|people'?s|cargills)\b/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
-/** true / false when both sides name a bank, null when either is silent. "Sampath Bank PLC" = "Sampath". */
+/** The institution a bank name stands for ("HNB", "Hnb", "Hatton National Bank (HNB)" are one), or '' when the app does not know that bank. */
+const bankId = (value) => {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    try { const found = institutionFor(displayBank(text)) || institutionFor(text); return found ? String(found.lockId || found.id) : ''; } catch (_) { return ''; }
+};
+/** true / false when both sides name a bank, null when either is silent. "Sampath Bank PLC" = "Sampath"; "HNB" = "Hatton National Bank". */
 export function sameBank(a, b) {
+    const known = bankId(a), other = bankId(b);
+    if (known && other) return known === other;
     const x = String(a || '').toLowerCase().replace(/[^a-z0-9]+/g, ''), y = String(b || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
     if (!x || !y) return null;
     if (x === y || x.includes(y) || y.includes(x)) return true;
@@ -178,6 +188,8 @@ export function sameBank(a, b) {
     if (!p || !q) return false;
     return p.split(' ').some((word) => word.length >= 3 && q.split(' ').includes(word));
 }
+/** true only when BOTH names are banks the app knows and they are different banks. A name it cannot place is never a reason to refuse a match. */
+const surelyAnotherBank = (a, b) => { const x = bankId(a), y = bankId(b); return !!x && !!y && x !== y; };
 
 const dateOf = (cheque) => cheque.release || cheque.issue || '';
 const stateRank = (cheque, event) => event === 'return' ? (cheque.status === 'cleared' ? 0 : cheque.status === 'pending' ? 1 : 2) : (cheque.status === 'pending' ? 0 : cheque.status === 'bounced' ? 1 : 2);
@@ -205,7 +217,8 @@ export function matchTracked(read, row, cheques) {
     const none = (extra) => ({ status: 'none', cheque: null, by: '', already: false, amountDiffers: false, candidates: [], ...(extra || {}) });
     row = row || {};
     if (!read || !read.isCheque || !read.type) return none();
-    const list = Array.isArray(cheques) ? cheques.filter((c) => c && typeof c === 'object' && c.type === read.type) : [];
+    // a cheque the owner ISSUED is drawn on the account the statement belongs to: the same number in another bank's book is another cheque
+    const list = Array.isArray(cheques) ? cheques.filter((c) => c && typeof c === 'object' && c.type === read.type && !(read.type === 'issued' && surelyAnotherBank(c.bank, row.bank))) : [];
     const event = read.event;
     const done = event === 'return' ? 'bounced' : 'cleared';
     const bankKey = (value) => bankWords(value) || String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -213,8 +226,11 @@ export function matchTracked(read, row, cheques) {
     const filed = list.filter((c) => row.key && c.statementKey === row.key && c.statementRow != null && row.rowNo != null && Number(c.statementRow) === Number(row.rowNo));
     if (filed.length) return { status: 'matched', cheque: filed[0], by: 'row', already: true, amountDiffers: false, candidates: filed };
 
-    const pick = (pool, by) => {
-        if (!pool.length) return null;
+    const pick = (all, by) => {
+        if (!all.length) return null;
+        // an issued cheque of the bank the statement belongs to comes before one with no bank written, whatever the amounts (a corrected amount still names the right cheque)
+        const agreeing = read.type === 'issued' ? all.filter((c) => sameBank(c.bank, row.bank) === true) : [];
+        const pool = agreeing.length ? agreeing : all;
         const exact = pool.filter((c) => same(c.amount, row.amount));
         const group = exact.length ? exact : pool;
         const ranked = group.slice().sort((a, b) =>
@@ -268,6 +284,21 @@ export function matchTracked(read, row, cheques) {
 /* ---- the whole decision --------------------------------------------------------------------------------------------------------------------------------------------------------- */
 const stamp = (note, add) => { const left = String(note || '').trim(); return left ? (left.includes(add) ? left : left + ' · ' + add) : add; };
 
+/** What the cheque was before THIS statement first touched it, so unfiling the statement puts it back exactly: its status, the days it cleared / bounced, and whose record of it it was.
+ *  A second row of the same statement (cleared, then returned) keeps the first picture, not the half-way one. */
+function before(cheque, provenance) {
+    if (provenance.statementKey && cheque.statementKey === provenance.statementKey && cheque.prevStatus !== undefined) {
+        const keep = {};
+        for (const field of ['prevStatus', 'prevDates', 'prevStatement']) if (cheque[field] !== undefined) keep[field] = cheque[field];
+        return keep;
+    }
+    return {
+        prevStatus: cheque.status,
+        prevDates: { clearedDate: cheque.clearedDate || '', bouncedDate: cheque.bouncedDate || '' },
+        prevStatement: { statementKey: cheque.statementKey || '', statementRow: cheque.statementRow == null ? null : cheque.statementRow, uploadClaim: cheque.uploadClaim || '' },
+    };
+}
+
 /**
  * Decide what one statement row does to the Cheque Tracker and to the books.
  *   row = { description, direction, amount, signedAmount, date, bank, key (the statement), rowNo, nth, ref }
@@ -309,18 +340,22 @@ export function settleCheque(row, cheques, options) {
         if (hit.already) { out.action = 'already'; return out; }
         if (event === 'return') {
             out.action = 'bounce';
-            out.patch = { status: 'bounced', bouncedDate: date, prevStatus: hit.cheque.status, ...(provenance.statementKey ? { statementKey: provenance.statementKey, statementRow: provenance.statementRow } : {}),
+            out.patch = { status: 'bounced', bouncedDate: date, ...before(hit.cheque, provenance), ...(provenance.statementKey ? { statementKey: provenance.statementKey, statementRow: provenance.statementRow } : {}),
                 ...(provenance.uploadClaim ? { uploadClaim: provenance.uploadClaim } : {}), notes: stamp(hit.cheque.notes, trail('Returned')) };
         } else {
             out.action = 'clear';
-            out.patch = { status: 'cleared', clearedDate: date, prevStatus: hit.cheque.status, ...(provenance.statementKey ? { statementKey: provenance.statementKey, statementRow: provenance.statementRow } : {}),
+            out.patch = { status: 'cleared', clearedDate: date, ...before(hit.cheque, provenance), ...(provenance.statementKey ? { statementKey: provenance.statementKey, statementRow: provenance.statementRow } : {}),
                 ...(provenance.uploadClaim ? { uploadClaim: provenance.uploadClaim } : {}), ...(hit.cheque.bank ? {} : { bank: row.bank || '' }), ...(normNo(hit.cheque.no) ? {} : (read.no ? { no: read.no } : {})), notes: stamp(hit.cheque.notes, trail('Cleared')) };
             // the bank moved this much money: that is the truth the books keep; what was typed in is kept in the note
-            if (hit.amountDiffers && amount) { out.patch.amount = amount; out.patch.prevAmount = hit.cheque.amount; out.patch.notes = stamp(out.patch.notes, 'amount on file was ' + money(hit.cheque.amount)); out.review.push('the statement amount differs from the tracked cheque — the statement amount was kept'); }
+            if (hit.amountDiffers && amount) { out.patch.amount = amount; if (hit.cheque.prevAmount === undefined || !(provenance.statementKey && hit.cheque.statementKey === provenance.statementKey)) out.patch.prevAmount = hit.cheque.amount; out.patch.notes = stamp(out.patch.notes, 'amount on file was ' + money(hit.cheque.amount)); out.review.push('the statement amount differs from the tracked cheque — the statement amount was kept'); }
         }
         return out;
     }
     // nothing tracked: the statement is the record (never lost, never counted twice)
+    if (read.type === 'issued' && read.no) {
+        const elsewhere = (Array.isArray(cheques) ? cheques : []).filter((c) => c && c.type === 'issued' && c.status === 'pending' && sameNo(c.no, read.no) && surelyAnotherBank(c.bank, row.bank));
+        if (elsewhere.length) out.review.push('a cheque numbered ' + read.no + ' is also tracked at ' + (elsewhere[0].bank || 'another bank') + ' — this one was filed on its own; remove the duplicate if they are the same cheque');
+    }
     if (out.ambiguous) { /* several fit: write a record of its own rather than touch the wrong one — the review note says why */ }
     out.action = 'create';
     out.record = {
@@ -328,7 +363,7 @@ export function settleCheque(row, cheques, options) {
         amount, issue: date, release: date, status: event === 'return' ? 'bounced' : 'cleared', source: 'statement',
         ...(event === 'return' ? { bouncedDate: date } : { clearedDate: date }),
         notes: stamp(options.note, trail(event === 'return' ? 'Returned' : 'Cleared')), createdAt: options.now || new Date().toISOString(),
-        ...(provenance.statementKey ? { statementKey: provenance.statementKey, statementRow: provenance.statementRow } : {}),
+        ...(provenance.statementKey ? { statementKey: provenance.statementKey, statementRow: provenance.statementRow, createdKey: provenance.statementKey } : {}),
         ...(provenance.uploadClaim ? { uploadClaim: provenance.uploadClaim } : {}),
     };
     return out;
@@ -356,7 +391,56 @@ export function incomeCounted(row, cheque, incomes) {
     return null;
 }
 
-const API = { readCheque, matchTracked, settleCheque, incomeCounted, normNo, sameNo, sameBank, partyFrom };
+/* ---- the payment the owner ALSO typed in ------------------------------------------------------------------------------------------------------------------------------------------ */
+/* An issued cheque the bank paid IS the payment; but the owner often typed the same payment into Expenses too (or pasted the bank's SMS). The page's manual upload has to find that entry the way
+ * the email worker does (statement-links.mjs manualTwin — the same rule, kept in step by test/cheques_test.js, which runs both over the same cases): the same amount to the cent, the same day or a
+ * day either side (three when the typed words and the narration share a word), not already standing for another row, and never two that fit equally. */
+const TW_STOP = new Set(['payment', 'transfer', 'credit', 'debit', 'online', 'bank', 'card', 'pos', 'transaction', 'purchase', 'salary', 'monthly', 'ceft', 'cefts', 'slips', 'inward', 'outward']);
+const TW_COMMON = new Set(['payment', 'transfer', 'credit', 'debit', 'online', 'bank', 'card', 'pos', 'transaction', 'purchase', 'monthly', 'ceft', 'cefts', 'slips', 'inward', 'outward', 'other', 'expense', 'income']);
+const twWords = (v) => String(v == null ? '' : v).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const twTokens = (v) => twWords(v).split(' ').filter((t) => t.length >= 4 && !TW_STOP.has(t));
+const twShares = (typed, text) => twWords(typed).split(' ').some((w) => w.length >= 4 && !TW_COMMON.has(w) && text.includes(w));
+const twDay = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000 : NaN; };
+const twCents = (v) => Math.round(money(v) * 100);
+/** @returns {{r: object, gap: number, recurring: boolean}|null} the entry the owner typed for this payment, or null */
+export function typedTwin(records, row, { strict = false } = {}) {
+    const want = twCents(row && row.amount), day = twDay(row && row.date);
+    if (!(want > 0) || !Number.isFinite(day)) return null;
+    const month = String((row && row.date) || '').slice(0, 7);
+    const text = twWords(row.description || row.narration);
+    const fits = [];
+    for (const r of Array.isArray(records) ? records : []) {
+        if (!r || r.source === 'statement' || r.statementKey || twCents(r.amount) !== want) continue;
+        if (r.loanLink || r.subscriptionLink) continue;
+        if (r.uploadClaim || r._batch || (r.feeMeta && r.feeMeta.source === 'statement')) continue;
+        const mine = twTokens(r.desc || r.name), named = mine.some((t) => text.includes(t)) || twShares(r.desc || r.name, text);
+        if (r.recurring) {
+            if (r.statementTwins && r.statementTwins[month]) continue;
+            if (!mine.length || !named || String(r.month || '') > month) continue;
+            fits.push({ r, gap: 0, recurring: true });
+            continue;
+        }
+        if (r.statementTwin) continue;
+        const at = twDay(r.date);
+        if (!Number.isFinite(at)) continue;
+        const gap = Math.abs(at - day);
+        if (gap <= (named ? 3 : strict ? 0 : 1)) fits.push({ r, gap, recurring: false });
+    }
+    if (!fits.length) return null;
+    fits.sort((a, b) => a.gap - b.gap);
+    if (fits.length > 1 && fits[0].gap === fits[1].gap) return null;
+    return fits[0];
+}
+/** Tie the typed entry to the statement row it stands for (the stamp the worker writes, statement-links.mjs markTwin), so it stands for no second row. */
+export function stampTwin(twin, row, key, index, now) {
+    const stampOf = { sourcePath: key, index, date: String(row.date || ''), cents: twCents(row.amount), direction: String(row.direction || '') };
+    if (twin.recurring) twin.r.statementTwins = { ...(twin.r.statementTwins || {}), [String(row.date || '').slice(0, 7)]: stampOf };
+    else twin.r.statementTwin = stampOf;
+    twin.r._ut = now;
+    return twin.r;
+}
+
+const API = { readCheque, matchTracked, settleCheque, incomeCounted, normNo, sameNo, sameBank, partyFrom, typedTwin, stampTwin };
 
 if (typeof window !== 'undefined') window.WFCheques = API;
 

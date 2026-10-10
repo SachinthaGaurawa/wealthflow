@@ -675,7 +675,9 @@ export const BUDGETS = {
     // the upload page and the email worker share (cheque number, the way the money went, returned or paid, the tracked cheque it settles); wealthflow-statement-parser.js now keeps a cheque number instead of stripping it
     // as a reference; wealthflow-batches.js can undo a cheque it cleared. No new request: the module loads deferred beside wealthflow-own-money.js.
     // 2026-10-10 (merged with the owner's due-date alerts; Cheque Tracker settled by the statement): measured 2,541,755 + ~0.1% headroom -> 2_544_500.
-    totalJsBytes: 2_544_500,
+    // 2026-10-10 (Cheque Tracker review round): 2_544_500 -> 2_554_000 (measured 2,551,195 + ~0.1% headroom). wealthflow-cheques.js now also finds the entry the owner typed for the same payment (so the manual upload counts it once, as the
+    // worker does), knows one bank from another by the app's own list of banks, and keeps what a cheque was before a statement touched it; wealthflow-batches.js undoes those ties. About a third is the comments recording why.
+    totalJsBytes: 2_554_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

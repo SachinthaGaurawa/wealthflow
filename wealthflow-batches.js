@@ -22,7 +22,7 @@
  *  an op too — { id, prev, status } — and undo puts the cheque back exactly as it
  *  was, unless the owner has changed it since (then it is left alone).
  *
- *  window.WFBatch = { begin, tag, record, recordSub, recordLoan, recordCheque, commit, list, undo, _key }
+ *  window.WFBatch = { begin, tag, record, recordSub, recordLoan, recordCheque, recordTwin, commit, list, undo, _key }
  */
 (function () {
     'use strict';
@@ -85,6 +85,12 @@
         if (!batch || !info || !info.id || !info.prev) return;
         if (!batch.cheques) batch.cheques = [];
         batch.cheques.push({ id: info.id, prev: info.prev, status: info.status || '', post: info.now ? _chequeFields(info.now) : null });
+    }
+    // Note an entry the owner typed that a cheque this batch cleared was tied to (the payment is counted once, by that entry), so Undo can let it go again.
+    function recordTwin(batch, info) {
+        if (!batch || !info || !info.expenseId || !info.chequeId) return;
+        if (!batch.twins) batch.twins = [];
+        batch.twins.push({ expenseId: info.expenseId, key: info.key || '', chequeId: info.chequeId });
     }
     // Note a subscription payment this batch made (for precise undo).
     function recordSub(batch, info) {
@@ -151,6 +157,27 @@
             changed = true;
         });
         if (changed) db.set('cheques', rows);
+    }
+
+    // An entry the owner typed that this batch tied to a cheque stands for no row once the cheque has been put back (or taken away). While the cheque still stands behind it (the owner edited it, so it
+    // was left alone), the tie stays whole.
+    function _undoTwins(batch) {
+        var db = _db(); if (!db) return;
+        var ops = batch.twins || [];
+        if (!ops.length) return;
+        var expenses = db.get('expenses') || [];
+        var cheques = db.get('cheques') || [];
+        var changed = false;
+        ops.forEach(function (op) {
+            var holder = cheques.filter(function (c) { return c && c.id === op.chequeId; })[0];
+            if (holder && holder.countedBy === op.expenseId) return;
+            var entry = expenses.filter(function (e) { return e && e.id === op.expenseId; })[0];
+            if (!entry || !entry.statementTwin) return;
+            if (op.key && entry.statementTwin.sourcePath !== op.key) return;
+            delete entry.statementTwin;
+            changed = true;
+        });
+        if (changed) db.set('expenses', expenses);
     }
 
     function _undoSubs(batch) {
@@ -244,6 +271,7 @@
 
         _undoLoans(batch, removed);
         _undoCheques(batch, removed);
+        _undoTwins(batch);
         _undoSubs(batch);
         removed.subscription = (batch.subs || []).length;
 
@@ -255,6 +283,6 @@
         return { label: batch.label, removed: removed };
     }
 
-    window.WFBatch = { begin: begin, tag: tag, record: record, recordSub: recordSub, recordLoan: recordLoan, recordCheque: recordCheque, commit: commit, list: list, undo: undo, _key: KEY, MAX: MAX };
+    window.WFBatch = { begin: begin, tag: tag, record: record, recordSub: recordSub, recordLoan: recordLoan, recordCheque: recordCheque, recordTwin: recordTwin, commit: commit, list: list, undo: undo, _key: KEY, MAX: MAX };
     try { console.log('[WFBatch] @info@ statement import-batch + full undo ready (v7.49.0 — subscription headline restore on undo)'); } catch (_) {}
 })();
