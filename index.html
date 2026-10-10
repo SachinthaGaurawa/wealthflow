@@ -13624,6 +13624,7 @@ function _wfIsDone(kind, rec) {
             case 'cheque': return rec.status === 'cleared';
             case 'debtor': return window.WFLiquidity ? WFLiquidity.debtorSummary(rec, new Date()).state !== WFLiquidity.DEBT_STATE.OPEN : false;
             case 'target': return rec.amount > 0 && (rec.savings || []).reduce((n, x) => n + (Number(x && x.amount) || 0), 0) >= rec.amount;
+            case 'subscription': return ['once', 'one-time', 'onetime'].includes(String(rec.cycle || '').toLowerCase()) && (rec.paid === true || rec.completed === true) && rec.reopened !== true;
             case 'pawn': return !!rec.redeemedAt || String(rec.state || '').toUpperCase() === 'REDEEMED';
         }
     } catch (_) {}
@@ -32658,6 +32659,7 @@ Be direct and use real numbers. Avoid generic advice.`;
         }
         window.setSubscriptionMonthAmount = setSubscriptionMonthAmount;
         function deleteSubscription(id) {
+            if (_wfKeepDone('subscription', (DB.get('subscriptions') || []).find(x => x && x.id === id))) return;
             showConfirm('@trash@', 'Delete Subscription?', '', 'btn-danger', 'Delete', () => {
                 DB.set('subscriptions', (DB.get('subscriptions') || []).filter(x => x.id !== id)); renderSubscriptions(); notify('Deleted', 'info');
             });
@@ -32730,7 +32732,7 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             const catIcons = { Streaming: '@info@', Telecom: '@devices@', Utilities: '@sparkles@', Insurance: '@shield@', Leasing: '@devices@', Software: '@devices@', 'Gym/Fitness': '@trendUp@', Other: '@receipt@' };
 
-            const _cap = _wfCap('subscriptions', sorted);
+            const _cap = _wfSplitCap('subscriptions', sorted, 'subscription');
             $('subscriptionList').innerHTML = _cap.rows.map(s => {
                 const oneTime = ['once', 'one-time', 'onetime'].includes(String(s.cycle || '').toLowerCase());
                 const occ = window.WFSubs && window.WFSubs.occurrence ? window.WFSubs.occurrence(s, now) : null;
@@ -32785,7 +32787,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     ? `<div class="sub-notes" style="font-size:11.5px;color:var(--text3);margin-top:4px;line-height:1.4;word-wrap:break-word;overflow-wrap:anywhere;font-style:italic;opacity:.85;">@edit@ ${_esc(s.notes)}</div>`
                     : '';
 
-                return `<div class="sub-card">
+                return (s === _cap.firstDone ? _cap.a.bar + _wfDoneLabel(_cap.doneCount, 'one-time payments') : '') + `<div class="sub-card">
                     <div class="sub-icon">${catIcons[s.category] || '@receipt@'}</div>
                     <div style="flex:1 1 0;min-width:0;">
                         <div style="font-size:14px;font-weight:700;word-wrap:break-word;overflow-wrap:break-word;">${_wfEsc(s.name)}</div>
@@ -32805,7 +32807,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                         <button type="button" class="sub-act cta-del" onclick="deleteSubscription('${_wfJsAttr(s.id)}')" title="Delete"><i data-wfi="trash"></i></button>
                     </div>
                 </div>`;
-            }).join('') + _cap.bar;
+            }).join('') + (_cap.firstDone ? '' : _cap.a.bar) + _cap.d.bar;
         }
 
         // ==================== DEBT DEMOLISHER (UPGRADED — Issue 3) ====================
