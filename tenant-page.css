@@ -217,6 +217,13 @@ input:focus-visible, button:focus-visible { outline: 3px solid var(--focus); out
 input[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 4px rgba(180, 35, 24, 0.14); }
 .tp-code { letter-spacing: 0.5em; text-align: center; font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 650; padding-left: calc(14px + 0.5em); }
 
+select {
+    width: 100%; min-height: 52px; padding: 12px 14px; font: inherit; font-size: 18px; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--line-strong); border-radius: 14px;
+}
+select:hover { border-color: var(--primary); }
+select:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
 /* ── buttons ──────────────────────────────────────────────────────────────── */
 .tp-btn {
     display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -578,3 +585,22 @@ td.tp-num, th.tp-num { text-align: right; }
     .tp-steps span.tp-on { background: Highlight; }
     .tp-tab[aria-current="true"] { outline: 2px solid Highlight; }
 }
+
+/* ── the balance chart and the repayment plan ─────────────────────────────── */
+.tp-trail { display: flex; flex-direction: column; gap: 6px; margin: 0 0 16px; }
+.tp-spark { display: block; width: 100%; height: 64px; border-radius: 12px; background: var(--surface-2); }
+.tp-spark-area { fill: var(--primary-weak); stroke: none; }
+.tp-spark-line { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linejoin: round; }
+.tp-plan { margin: 0 0 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); padding: 0 14px 14px; }
+.tp-plan > summary { display: flex; align-items: center; gap: 10px; min-height: 52px; font-weight: 700; color: var(--primary); cursor: pointer; list-style: none; }
+.tp-plan > summary::-webkit-details-marker { display: none; }
+.tp-plan > summary .tp-ico { width: 20px; height: 20px; }
+.tp-plan[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.tp-plan-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
+.tp-chip-btn { font: inherit; font-size: 14px; min-height: 44px; padding: 8px 14px; color: var(--primary); background: var(--primary-weak); border: 1px solid var(--primary-line); cursor: pointer; text-align: left; }
+.tp-chip-btn:hover { filter: brightness(0.97); }
+.tp-plan-out { margin-top: 12px; }
+.tp-plan-ok { color: var(--green); font-weight: 650; margin: 8px 0 0; }
+.tp-plan-late { color: var(--red); font-weight: 650; margin: 8px 0 0; }
+.tp-plan .tp-small-btn { width: auto; min-height: 44px; margin-top: 12px; font-size: 15px; padding: 8px 14px; }
+@media print { .tp-plan { display: none; } }

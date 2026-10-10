@@ -65,6 +65,25 @@ describe('formatting', () => {
     });
 });
 
+describe('the repayment plan on a loan card', () => {
+    const asOf = '2026-10-05T05:00:00.000Z';
+    const loanGroup = (over = {}) => ({ kind: 'loan', ref: 'DEB-96E5C2', currency: 'LKR', lent: 50000, repaid: 20000, outstanding: 30000, status: 'open', due: '2026-12-31', events: [], ...over });
+    const view = (g) => { const out = []; statementView(doc, { asOf, groups: [g], totals: [] }, makeT('en'), null).forEach((c) => c.walk && c.walk((n) => out.push(n))); return out; };
+
+    it('offers a plan on an open loan, with the way to ask for the amount that clears it by the due date', () => {
+        const nodes = view(loanGroup());
+        const plan = nodes.find((n) => n.attrs.class === 'tp-plan');
+        expect(plan && plan.tag).toBe('details');
+        expect(nodes.some((n) => n.tag === 'select')).toBe(true);
+        expect(nodes.some((n) => n.tag === 'input' && n.attrs.inputmode === 'decimal')).toBe(true);
+        expect(nodes.find((n) => /tp-chip-btn/.test(n.attrs.class || '')).textContent).toBe('Clear by the due date: LKR 15,000.00 each time');
+    });
+
+    it('offers nothing on a loan that is settled or has nothing owed', () => {
+        for (const g of [loanGroup({ status: 'settled' }), loanGroup({ outstanding: 0 })]) expect(view(g).some((n) => /tp-plan/.test(n.attrs.class || ''))).toBe(false);
+    });
+});
+
 describe('the statement view', () => {
     const statement = {
         asOf: '2026-10-05T05:00:00.000Z',
