@@ -253,38 +253,18 @@
      *      tab ∈ 'cconetime' | 'expenses' | 'income' | 'cc_payment' | 'skip'
      */
     // ── cheque transactions (bank statements) → Cheque tab ──────────────────────
-    //   A cheque on a statement is real money moving. A DEPOSIT / INWARD cheque is
-    //   money IN (type 'received'); a cheque PAYMENT / ISSUED / OUTWARD is money OUT
-    //   (type 'issued'). It belongs in the dedicated Cheque tab — not generic
-    //   income/expense. Cheque-BOOK / leaf / return FEES are NOT cheque movements;
-    //   they are bank charges, so they are excluded and fall through to the fee logic.
-    //   The cheque NUMBER is read from the narration when present ("...Cheque No: 070283").
-    //   Direction comes from the wording first, then the statement's debit/credit flag.
-    var RE_CHEQUE = /\b(cheques?|chq|chque|cheque no|chq no|check no|cq no|cheque number|deposit cheque|cheque deposit|cheque dep|deposit chq|chq dep|chq dpst|cheque payment|cheque pmt|cheque issued?|cheque issue|inward cheque|outward cheque|cheque clearing|clearing cheque|cheque clear|chq clearing|chq clg|clg cheque|transfer cheque|cheque transfer|cheque returned?|returned cheque|cheque realis(?:e|ed|ation)?|cheque realiz(?:e|ed|ation)?|cheque credit|cheque debit|cheque honou?red|cheque presented|cheque lodg(?:e|ed|ement)?|cheque collection|local cheque|upcountry cheque|outstation cheque|electronic cheque)\b/;
-    var RE_CHEQUE_FEE = /\b(cheque book|cheque leaf|cheque leaves|cheque stationery|cheque return (?:fee|charge|charges)|cheque book (?:fee|charge|charges)|chq book|cheque issue (?:fee|charge|charges)|cheque (?:processing|handling) (?:fee|charge)|cheque dishonou?r (?:fee|charge)|returned cheque (?:fee|charge)|cheque return charges?)\b/;
-    function chequeInfo(desc, dir) {
-        var d = norm(desc);
-        if (RE_CHEQUE_FEE.test(d)) return { isCheque: false };   // a fee, not a cheque movement
-        if (!RE_CHEQUE.test(d)) return { isCheque: false };
-        var src = String(desc || '');
-        // Cheque number — read after a cheque keyword (optionally with a connector
-        // word like dep/clg/payment between), after a bare "No.", after "#", or as a
-        // last-resort 6+ digit serial. Leading zeros preserved; the amount is never
-        // grabbed because extraction is anchored to a cheque/no/# token.
-        var noM = src.match(/(?:che?ques?|chq|chque|check|cq)\s*(?:no\.?|number|num|#|dep(?:osit|t)?|dpst|clg|clearing|payment|credit|debit|collection|lodg(?:e?ment)?|realis\w*|honou?red|presented)?\s*[:\-#.]?\s*(\d{3,})/i)
-            || src.match(/\bno\.?\s*[:\-#]?\s*(\d{4,})\b/i)
-            || src.match(/#\s*(\d{3,})/)
-            || src.match(/\b(\d{6,})\b/);
-        var no = noM ? noM[1] : '';
-        // Direction: the wording wins; the statement's debit/credit flag is the fallback.
-        // Stems use \w* so every inflection is caught (realis→realised/realisation,
-        // lodg→lodgement/lodged, collect→collection/collected, honou?r→honoured…).
-        var type = '';
-        if (/\b(?:deposit\w*|inward\w*|credit\w*|receiv\w*|incoming|in\s+clearing|realis\w*|realiz\w*|lodg\w*|collect\w*)\b/.test(d)) type = 'received';
-        else if (/\b(?:payment\w*|pmt|issu\w*|outward\w*|debit\w*|paid|withdraw\w*|withdrew|outgoing|honou?r\w*|present\w*|encash\w*|drawn)\b/.test(d)) type = 'issued';
-        else if (dir === 'credit') type = 'received';
-        else if (dir === 'debit') type = 'issued';
-        return { isCheque: true, no: no, type: type };
+    //   A cheque on a statement is real money moving. What a row IS — a cheque at all, the way the money went (the bank's debit/credit flag decides; the wording only when there is no flag),
+    //   its number, and whether the bank sent it BACK — is read by wealthflow-cheques.js, the one reading the email worker shares (a row is not one thing here and another by email). Cheque-book,
+    //   leaf, return and stop-payment FEES are bank charges, not cheque movements: they fall through to the fee logic. The module loads as a type="module" script; when it has not, the row is not
+    //   called a cheque and is routed as the income or expense it also is — the money is never lost.
+    function chequeInfo(tx) {
+        var W = root.WFCheques;
+        if (!W || typeof W.readCheque !== 'function') return { isCheque: false };
+        try {
+            // the STATEMENT's own flag (or a signed amount) — never the router's guess from the words, which would make the wording outrank the bank
+            var r = W.readCheque({ description: tx.description || '', direction: tx.direction, signedAmount: typeof tx.signedAmount === 'number' ? tx.signedAmount : (typeof tx.amount === 'number' && tx.amount < 0 ? tx.amount : undefined), amount: tx.amount });
+            return r && r.isCheque ? { isCheque: true, no: r.no || '', type: r.type || '', event: r.event, returned: !!r.returned, needsReview: !!r.needsReview, confidence: r.confidence } : { isCheque: false };
+        } catch (_) { return { isCheque: false }; }
     }
 
     function routeTransaction(tx, accountType) {
@@ -336,13 +316,14 @@
             // "transfer"/"internal"/"clearing" wording (e.g. DFCC's "Transfer Cheque
             // Deposit Cheque No: 070283"). Checking cheque before the own-account
             // transfer-skip guarantees such rows are never silently dropped.
-            var chq = chequeInfo(desc, dir);
+            var chq = chequeInfo(tx);
             if (chq.isCheque) {
                 out.tab = 'cheque';
                 out.chequeType = chq.type || (dir === 'credit' ? 'received' : 'issued');
                 out.chequeNo = chq.no || '';
-                out.reason = 'cheque (' + out.chequeType + ') → Cheque tab';
-                if (!chq.type && lowConf) out.needsReview = true;
+                out.chequeEvent = chq.event || 'clear';
+                out.reason = 'cheque (' + out.chequeType + (chq.returned ? ', returned' : '') + ') → Cheque tab';
+                if (chq.needsReview || (!chq.type && lowConf)) out.needsReview = true;
                 return out;
             }
             // The owner's OWN CREDIT CARD named in a credit ("Cash advance cr 376657******0276": cash drawn on the AMEX arriving in the account) is borrowed money / the owner's
