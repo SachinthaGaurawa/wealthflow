@@ -29,6 +29,7 @@
 import crypto from 'node:crypto';
 import { getAdminDb } from './admin-db.mjs';
 import { TextLkClient } from './textlk.mjs';
+import { platformWaitUntil } from './statement-chain.mjs';
 import { portalSecret } from './tenant-links.mjs';
 import { renderStatementPdf, pdfFileName } from './tenant-pdf.mjs';
 import {
@@ -111,11 +112,18 @@ export async function handlePortal(req, res, deps) {
         const action = String(body.action || '');
 
         if (action === 'request') {
-            const out = await requestCode({ db, client: deps.client(), token: String(body.token || ''), nic: String(body.nic || ''), ip, secret, now, random: deps.randomInt, pad: deps.pad || undefined });
+            const out = await requestCode({ db, client: deps.client(), token: String(body.token || ''), nic: String(body.nic || ''), ip, secret, now, random: deps.randomInt, pad: deps.pad || undefined, defer: deps.waitUntil ? deps.waitUntil() : null });
             return send(res, out);
         }
         if (action === 'verify') {
-            return send(res, await verifyCode({ db, token: String(body.token || ''), nic: String(body.nic || ''), code: String(body.code || ''), ip, secret, now, randomBytes: deps.randomBytes }));
+            const out = await verifyCode({ db, token: String(body.token || ''), nic: String(body.nic || ''), code: String(body.code || ''), ip, secret, now, randomBytes: deps.randomBytes, defer: deps.waitUntil ? deps.waitUntil() : null });
+            // The person who has just proved who they are is going to ask for the statement next: it is read now and sent with this answer, so the
+            // page needs no second trip. If it cannot be read, the answer is the same without it and the page asks for it the usual way.
+            if (out.status === 200 && out.ctx) {
+                try { out.body = { ...out.body, statement: await loadStatement({ db, live: out.ctx, secret, now }) }; }
+                catch (e) { console.warn('[WF-PORTAL] statement not bundled:', scrub(e)); }
+            }
+            return send(res, out);
         }
         if (action === 'statement' || action === 'logout') {
             const gate = await hit(db, `st-${ip}`, LIMITS.statementsPerIpHour, HOUR, now);
@@ -160,6 +168,7 @@ export const defaultDeps = () => ({
     randomInt: crypto.randomInt,
     randomBytes: crypto.randomBytes,
     pad: null,
+    waitUntil: platformWaitUntil,
 });
 
 export default async function handler(req, res) {

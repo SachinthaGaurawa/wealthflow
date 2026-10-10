@@ -859,6 +859,8 @@ export function createPage(env) {
         const res = st.verified ? { status: 200, body: { ok: true } } : await api('verify', { token, nic: st.nic, code });
         if (res.status === 200 && res.body && res.body.ok) {
             st.verified = true;
+            // the answer to a good code already carries the statement; asking again is only the fallback
+            if (res.body.statement) { screenStatement(res.body.statement, res.body.expiresAt); return; }
             const got = await api('statement', { token });
             if (got.status === 200 && got.body && got.body.ok) { screenStatement(got.body.statement, got.body.expiresAt); return; }
             busy(false, t('View my statement'));
