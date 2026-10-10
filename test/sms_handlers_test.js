@@ -8,7 +8,7 @@
  * Nothing here touches a network: the gateway is a stub, Firestore is in memory.
  * ===========================================================================*/
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createFirestore } from './helpers/fake-firestore.js';
 import { handleNotify, MIN_KICK_GAP_MS, HEALTH_TTL_MS, gatewayHealth } from '../sms-notify.js';
 import { handleSweep, MAX_USERS, TOTAL_BUDGET_MS, ACTIVE_PAGE, accountStillAllowed } from '../sms-sweep.js';
@@ -282,6 +282,22 @@ describe('/api/sms-sweep, the cron', () => {
         expect(w.client.calls.balance).toBe(0);
         const m = res(); await handleSweep(cron({ method: 'DELETE' }), m, w.deps);
         expect(m.statusCode).toBe(405);
+    });
+
+    it('says in the log, in words, when a scheduled run is refused, and records the run that was not', async () => {
+        const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const unset = world();
+        await handleSweep(cron(), res(), unset.deps);
+        expect(err.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/\[WF-CRON\] sms-sweep refused \(503\).*CRON_SECRET/);
+        err.mockRestore();
+
+        const w = cronWorld();
+        await putUser(w.fs, 'u1', books()); await w.fs.db.collection('wf-sms').doc('u1').set({ active: true, lastSweepAt: 0 });
+        const r = res(); await handleSweep(cron({ headers: { authorization: 'Bearer cron-secret', 'user-agent': 'vercel-cron/1.0' } }), r, w.deps);
+        expect(r.statusCode).toBe(200);
+        expect(w.fs.data.get('wf-sms/_system').lastRun).toEqual({ at: NOW, accounts: 1, sent: 1, via: 'vercel-cron' });
+        // the account's own status carries the stamp only a scheduled run leaves, and a page's nudge afterwards does not erase it
+        expect(w.fs.data.get('users/u1/smsLog/_status').autoRunAt).toBe(NOW);
     });
 
     it('sweeps every registered account, and only those', async () => {

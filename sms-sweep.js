@@ -125,6 +125,14 @@ async function recordHealth({ db, deps, now, units, reserve, authDegraded, authA
     return told;
 }
 
+/** One line that says when the scheduled sweep last ran and who started it (kept in the system document, read by the daily health check). Never throws. */
+async function recordRun({ db, now, results, via }) {
+    try {
+        const sent = results.reduce((n, r) => n + (Number(r && r.sent) || 0), 0);
+        await withDeadline(db.collection(ROOT).doc(SYSTEM_DOC).set({ lastRun: { at: now, accounts: results.length, sent, via } }, { merge: true }), 3000, 'wf-sms');
+    } catch (e) { console.warn('[WF-SMS] run record failed:', String((e && e.message) || e).slice(0, 120)); }
+}
+
 function j(res, code, body) {
     res.statusCode = code;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -136,7 +144,12 @@ export async function handleSweep(req, res, deps) {
     const method = String(req.method || 'GET').toUpperCase();
     if (!['GET', 'POST'].includes(method)) return j(res, 405, { ok: false, error: 'method not allowed' });
     const auth = cronAuthorized(req, { env: deps.env });
-    if (!auth.ok) return j(res, auth.status, { ok: false, error: auth.reason });
+    if (!auth.ok) {
+        // A scheduled run that is refused leaves no other trace than a status code nobody reads: say it in the log, in words. 503 is the deployment's
+        // own fault (no CRON_SECRET), which is what makes the schedule silently do nothing; 401 is a caller without the secret.
+        console.error(`[WF-CRON] sms-sweep refused (${auth.status}): ${String(auth.reason).slice(0, 140)}`);
+        return j(res, auth.status, { ok: false, error: auth.reason });
+    }
 
     const { db, reason, admin } = await deps.getAdminDb();
     if (!db) return j(res, 503, { ok: false, error: String(reason || 'database unavailable').slice(0, 300) });
@@ -182,7 +195,7 @@ export async function handleSweep(req, res, deps) {
             const userSnap = await withDeadline(db.collection('users').doc(a.uid).get(), 8000, 'users');
             if (!userSnap.exists) { await switchOff(a.uid, 'the account has no data document'); results.push({ uid: a.uid.slice(0, 6), empty: true, deactivated: true }); continue; }
             const summary = await sweepUser({
-                db, uid: a.uid, user: userSnap.data() || {}, client, now, env: deps.env,
+                auto: true, db, uid: a.uid, user: userSnap.data() || {}, client, now, env: deps.env,
                 budgetMs: Math.max(5000, TOTAL_BUDGET_MS - spent - 3000), deps: { ...(deps.engine || {}), units }, clock: deps.clock,
             });
             await db.collection(ROOT).doc(a.uid).set({ lastSweepAt: now }, { merge: true });
@@ -201,6 +214,7 @@ export async function handleSweep(req, res, deps) {
     const alerts = await recordHealth({ db, deps, now, units, reserve, authDegraded, authAnswered: breaker.answered > 0, startedAt });
     if (units !== null && units <= LOW_CREDIT_UNITS) console.warn(`[WF-SMS] gateway balance is low (${units} units)`);
     if (balanceKind) console.warn(`[WF-SMS] gateway balance check failed kind=${balanceKind}`);
+    await recordRun({ db, now, results, via: String(req.headers && (req.headers['user-agent'] || '')).toLowerCase().includes('vercel-cron') ? 'vercel-cron' : 'other' });
     return j(res, 200, { ok: true, accounts: results.length, lowCredit: units !== null && units <= LOW_CREDIT_UNITS, creditPaused: paused, authDegraded, authSkipped, alerts, balanceCheck: balanceKind || 'ok', results });
 }
 

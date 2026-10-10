@@ -452,6 +452,23 @@ describe('the log panel', () => {
         expect(panelHtml({ disabled: true })).toMatch(/not enabled for this account/);
     });
 
+    it('warns when the scheduled sweep has not run lately, and says nothing while it has', () => {
+        const day = 24 * 3600e3;
+        const AT = Date.UTC(2026, 9, 20, 12);
+        const fmt = () => 'then';
+        // ran an hour ago: silent
+        expect(panelHtml({ rows: [], status: { configured: true, autoRunAt: AT - 3600e3 }, now: AT, fmtWhen: fmt })).not.toMatch(/automatic daily check/);
+        // last ran two days ago: warns, and names the setting
+        const stale = panelHtml({ rows: [], status: { configured: true, autoRunAt: AT - 2 * day }, now: AT, fmtWhen: fmt });
+        expect(stale).toMatch(/has not run since then/);
+        expect(stale).toMatch(/CRON_SECRET/);
+        // never stamped, long after the stamp existed: warns that it has not run yet; before the stamp existed, says nothing
+        expect(panelHtml({ rows: [], status: { configured: true }, now: AT, fmtWhen: fmt })).toMatch(/has not run yet/);
+        expect(panelHtml({ rows: [], status: { configured: true }, now: Date.UTC(2026, 9, 10), fmtWhen: fmt })).not.toMatch(/automatic daily check/);
+        // no status at all: nothing to judge
+        expect(panelHtml({ rows: [], now: AT })).not.toMatch(/automatic daily check/);
+    });
+
     it('says plainly that late-payment reminders are paused under the credit reserve, and only then', () => {
         const paused = panelHtml({ rows: [], status: { configured: true, units: 12, reserve: 20, creditPaused: true } });
         expect(paused).toMatch(/Late-payment reminders are paused: 12 units are left, under the reserve of 20/);
