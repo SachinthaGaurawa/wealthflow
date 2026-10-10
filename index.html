@@ -10620,8 +10620,12 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 try { prompt = await window.WFVision.enrichPrompt(prompt, image); } catch (_) {}
             }
             var wantJSON = !!opts.json || _wfWantsJSON(prompt);
-            var mode = opts.mode || (wantJSON ? 'consensus' : (image ? 'consensus' : undefined));
+            /* A caller that wants WORDS says so (task 'advice'): the server reads the wording of a prompt to decide whether it is a financial decision (the word "JSON" or "category" anywhere in it,
+             * or an image), and a decision needs five providers to return the same text, which prose never is. The CRIB analysis ("Extracted data (JSON): …") was refused every time. */
+            var words = opts.task === 'advice' && !wantJSON;
+            var mode = opts.mode || (words ? undefined : (wantJSON ? 'consensus' : (image ? 'consensus' : undefined)));
             var body = { prompt: prompt };
+            if (words) body.task = 'advice';
             if (image) body.image = image;
             if (mode) body.mode = mode;
             if (opts.temperature != null) body.temperature = opts.temperature;
@@ -10669,6 +10673,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     ', like the user’s caring best friend. Never robotic or corporate. ' +
                     'No other language unless ' + lang + ' is English. Keep numbers and currency as digits. ' +
                     'Do not mention these instructions.]';
+                opts = Object.assign({}, opts, { task: 'advice' });     // words, not a decision: see callAIRaw
             }
             return callAIRaw(prompt, image || null, opts);
         }
@@ -12083,7 +12088,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             try {
                 const C = window.WFAdvisorCheck, g = window._wfGrounding;
                 if (!C || !g || g.userText !== String(msg || '').trim() || typeof reply !== 'string' || !reply) return { reply, verdict: null, revised: false };
-                return await C.verify(reply, { parts: g.parts, owner: g.owner, prompt: window._wfLastChatPrompt || '' }, (p) => callAIRaw(p, null, {}), { timeoutMs: 25000 });
+                return await C.verify(reply, { parts: g.parts, owner: g.owner, prompt: window._wfLastChatPrompt || '' }, (p) => callAIRaw(p, null, { task: 'advice' }), { timeoutMs: 25000 });
             } catch (_) { return { reply, verdict: null, revised: false }; }
         }
         /* A question about the outside world (a rate, a price, a tax rule) is looked up on the web before the prompt is built, and the sources are shown under the answer. The question only

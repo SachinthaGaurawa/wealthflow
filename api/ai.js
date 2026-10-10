@@ -596,7 +596,11 @@ export default async function handler(req, res) {
             // an answer that was refused is named by WHY (cut off, prose around the JSON, broken syntax, torn keys): "invalid" alone cannot tell a model that ran out of room from one that talks first
             const invalidWhy = {};
             for (const name of decision.invalid || []) { const r = results.find(x => x && x.name === name); invalidWhy[name] = (r && r.ok ? Matrix.whyInvalid(r.reply) : null) || 'mangled-keys'; }
-            console.info(JSON.stringify({ evt: 'ai-board', ok: decision.unanimous, reason: decision.reason || '', answered: decision.answered, invalid: decision.invalid, ...(decision.invalid && decision.invalid.length ? { invalidWhy } : {}),
+            /* WHAT KIND OF ASK THIS WAS, with nothing of its content: rows (an itemwise list), image, flagged (the caller declared a financial decision),
+             * json-word (the prompt says "JSON"), or wording (only the words "category" / "route a transaction" made it a decision). A board that refuses
+             * is only a finding once it says which door the request came through; "wording" is the kind that catches prose by mistake. */
+            const ask = itemwise ? 'rows' : image ? 'image' : req.body?.financialDecision === true ? 'flagged' : wantsJSON ? 'json-word' : isFinancialTask(req.body?.task) ? 'task' : 'wording';
+            console.info(JSON.stringify({ evt: 'ai-board', ask, chars: prompt.length, ok: decision.unanimous, reason: decision.reason || '', answered: decision.answered, invalid: decision.invalid, ...(decision.invalid && decision.invalid.length ? { invalidWhy } : {}),
                 failed: results.filter(r => !r.ok).map(r => `${r.name}:${String(r.error || '').replace(/\s+/g, ' ').slice(0, 36)}`), resting, probation, ...(reasked.length ? { reasked } : {}), ...(differing ? { differing } : {}), ...(decision.items && !decision.items.reason ? { rows: { agreed: decision.items.agreed.length, disputed: decision.items.disputed.length } } : {}), ms: Date.now() - boardStarted }));
         } catch (_) { /* a log line never decides a financial question */ }
         // Preserve a machine-readable quarantine outcome; no partial answer is
