@@ -750,11 +750,14 @@
            layers re-rasterize every frame — a compositor/GPU spike that crashed
            the iOS/WebView renderer (the app "restarted" and got stuck). Removed on
            the next frame, so the swap is instant and jank-free with zero flash. */
+        /* Paused, not removed: `animation: none` throws every running animation away, and when the class came off two frames
+           later each one started again from its first frame. The page's own entrance animation (.page.active) therefore
+           replayed on every theme switch, so the whole screen dropped 6px and faded in again, a visible jolt each time. */
         html.wf-theme-switching *,
         html.wf-theme-switching *::before,
         html.wf-theme-switching *::after {
             transition: none !important;
-            animation: none !important;
+            animation-play-state: paused !important;
         }
 
         * {
@@ -9766,15 +9769,15 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (state === 'syncing') {
                 if (badge) { badge.className = 'online-badge on'; $('onlineText').textContent = 'Online'; }
                 if (syncInd) { syncInd.classList.add('active'); }
-                if (setBadge) { setBadge.className = 'badge syncing'; setBadge.textContent = 'Syncing...'; }
+                if (setBadge) { setBadge.className = 'badge bg-a wf-sync-badge'; setBadge.textContent = '\u25CF Syncing\u2026'; }
             } else if (state === 'online') {
                 if (badge) { badge.className = 'online-badge on'; $('onlineText').textContent = 'Online'; }
                 if (syncInd) { syncInd.classList.remove('active'); }
-                if (setBadge) { setBadge.className = 'badge bg-g'; setBadge.textContent = '● Connected'; }
+                if (setBadge) { setBadge.className = 'badge bg-g wf-sync-badge'; setBadge.textContent = '\u25CF Connected'; }
             } else {
                 if (badge) { badge.className = 'online-badge off'; $('onlineText').textContent = 'Offline'; }
                 if (syncInd) { syncInd.classList.remove('active'); }
-                if (setBadge) { setBadge.className = 'badge bg-r'; setBadge.textContent = '○ Offline'; }
+                if (setBadge) { setBadge.className = 'badge bg-r wf-sync-badge'; setBadge.textContent = '\u25CB Offline'; }
             }
         }
 
@@ -29671,7 +29674,21 @@ table.amort tbody tr { page-break-inside: avoid; }
             const totalTargets = DB.get('targets').length;
             const totalRecords = totalIncome + totalLoans + totalExpenses + totalTargets + DB.get('ccinstall').length + DB.get('cconetime').length + DB.get('cheques').length;
 
-            $('settingsContent').innerHTML = `
+            // A rebuild must not move the page under the finger. Replacing the markup makes the page SHORTER for a moment
+            // (cards that other modules fill in afterwards are empty placeholders), and the browser clamps the scroll
+            // position to that shorter page and does not give it back when the cards arrive: measured, a rebuild from a
+            // cloud snapshot, a finished backup or a registered fingerprint threw the section the owner was reading
+            // ~380px out of view, in three visible steps. So the page keeps its height and scroll position across it
+            // (released below once the late arrivals have landed) and keyboard focus stays on the same switch.
+            const _stHost = $('settingsContent');
+            let _stY = 0, _stH = 0, _stFocus = '';
+            try {
+                _stY = window.scrollY || 0; _stH = _stHost.offsetHeight;
+                const _fa = document.activeElement;
+                if (_fa && _stHost.contains(_fa)) _stFocus = _fa.getAttribute('data-setting') || '';
+                if (_stH > 0) { _stHost.style.minHeight = _stH + 'px'; clearTimeout(_stHost.__wfHoldT); }
+            } catch (_) {}
+            _stHost.innerHTML = `
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(212,175,55,0.05), var(--card)); border: 1px solid var(--accent); position:relative; overflow:hidden;">
             <div style="position:absolute;top:-20px;right:-20px;font-size:80px;opacity:0.05;">${(window.WFIcon ? WFIcon('user') : '')}</div>
             <div class="settings-title" style="color:var(--accent);">Account & Identity</div>
@@ -29865,7 +29882,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--blue);">Infinity Cloud Sync</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Real-time Connection</div><div class="setting-desc">Engine is monitoring connection to Google Firebase.</div></div>
-                <div><span id="settingsCloudStatus" class="badge ${navigator.onLine ? 'bg-g' : 'bg-r'}" style="padding: 6px 12px;">${navigator.onLine ? '● Securely Connected' : '○ Offline Mode'}</span></div>
+                <div><span id="settingsCloudStatus" class="badge wf-sync-badge ${navigator.onLine ? 'bg-g' : 'bg-r'}" style="padding: 6px 12px;">${navigator.onLine ? '\u25CF Connected' : '\u25CB Offline'}</span></div>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Sync Engine</div><div class="setting-desc">Force a manual cloud synchronization now.</div></div>
@@ -30239,6 +30256,21 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
    `;
+            // Fill every card another module owns in THIS task, so the first paint is the finished page; then hand the
+            // height back once the ones that arrive on their own timer (Autonomous Release) have landed.
+            try { if (window.WFNotif && typeof window.WFNotif.mountSettings === 'function') window.WFNotif.mountSettings(); } catch (_) {}
+            // The Autonomous AI Engine card (476px) used to be put in by the first click anywhere on the page, 400ms
+            // later, in the middle of Settings: whichever switch was tapped first, everything below it jumped down.
+            // Release is placed after it, so it follows in that order.
+            try { if (window.wfIntelPanel && typeof window.wfIntelPanel.inject === 'function') window.wfIntelPanel.inject(); } catch (_) {}
+            try { if (window.wfReleaseApprove && typeof window.wfReleaseApprove._inject === 'function') window.wfReleaseApprove._inject(); } catch (_) {}
+            try {
+                if (_stH > 0) {
+                    if (Math.abs((window.scrollY || 0) - _stY) > 1) window.scrollTo(0, _stY);
+                    _stHost.__wfHoldT = setTimeout(() => { _stHost.style.minHeight = ''; }, 1200);
+                }
+                if (_stFocus) { const _fe = _stHost.querySelector('[data-setting="' + _stFocus.replace(/"/g, '') + '"]'); if (_fe && _fe.focus) _fe.focus({ preventScroll: true }); }
+            } catch (_) {}
             // Update PWA badge after render
             updatePWAStatusBadge();
             // ISSUE 3 FIX — Populate AI language pickers

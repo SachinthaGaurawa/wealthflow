@@ -718,7 +718,9 @@
         wrap('showPage', function () { closePanel(); scheduleRefresh(); });
         wrap('updateCCOTBadge', function () { scheduleRefresh(); });
         wrap('updateChequeBadge', function () { scheduleRefresh(); });
-        wrap('renderSettings', function () { setTimeout(buildSettingsCard, 0); });
+        // Built in the SAME task as the rebuild: a setTimeout(0) here let the browser paint (and clamp the scroll to) a page
+        // with an empty Notifications card in between, which is the jump seen whenever Settings was redrawn.
+        wrap('renderSettings', function () { buildSettingsCard(); });
         buildSettingsCard();
         refresh();
     }
@@ -756,7 +758,7 @@
     window.WFNotif = {
         togglePanel: togglePanel, openPanel: openPanel, closePanel: closePanel,
         _click: clickRow, markAllRead: markAllRead,
-        toggleSetting: toggleSetting, syncSettingsUI: syncSettingsUI, openSettings: openSettings,
+        toggleSetting: toggleSetting, syncSettingsUI: syncSettingsUI, openSettings: openSettings, mountSettings: buildSettingsCard,
         refresh: refresh, compute: compute, _count: unseenCount
     };
 })();

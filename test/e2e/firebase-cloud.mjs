@@ -13,7 +13,9 @@
  *   · set(data, {merge:true}) deep-merges MAPS and replaces ARRAYS (so a map key
  *     can never be removed by a merge-set, exactly as in production)
  *   · update() with FieldPath / FieldValue.delete() removes a field
- *   · runTransaction() reads the current document and commits its set()s
+ *   · runTransaction() reads the current document and commits its set()s, and is OPTIMISTIC like the real one: if another
+ *     device wrote between the read and the commit the commit is refused and the update function runs again on the new
+ *     document (a stub that skipped this made two devices that edit at the same moment lose a write that production keeps)
  *   · onSnapshot() listeners are told about every commit, the writer included
  *
  * A device can be cut off with cloud.cutOff(page): its reads and writes fail
@@ -47,6 +49,7 @@ function mergeInto(target, patch) {
 
 export function createCloud(initial = null) {
     let doc = initial ? clone(initial) : null;
+    let version = 0;
     const pages = new Set();
     const cut = new Set();
     const log = [];
@@ -72,14 +75,17 @@ export function createCloud(initial = null) {
             await page.exposeBinding('__cloudOp', async (src, op, payload) => {
                 const p = src.page;
                 if (cut.has(p)) return { error: 'unavailable' };
-                if (op === 'get') return { exists: !!doc, data: doc ? clone(doc) : null };
+                if (op === 'get') return { exists: !!doc, data: doc ? clone(doc) : null, version };
                 if (op === 'set') {
-                    const { data, merge } = payload;
+                    const { data, merge, expect } = payload;
+                    if (expect !== undefined && expect !== version) return { error: 'aborted' };
+                    version++;
                     if (!doc || !merge) doc = {};
                     mergeInto(doc, data);
                     log.push({ op: 'set', merge: !!merge, keys: Object.keys(data) });
                 } else if (op === 'update') {
                     if (!doc) return { error: 'not-found' };
+                    version++;
                     for (const [path, value] of payload.pairs) {
                         const parts = path.split('\u0000');
                         let t = doc;
@@ -122,6 +128,7 @@ export function cloudStubSource(user = TEST_USER) {
       exists: !!(r && r.exists),
       id: 'u',
       metadata: { fromCache: false, hasPendingWrites: false },
+      __v: r ? r.version : undefined,
       data: function () { return r && r.exists ? JSON.parse(JSON.stringify(r.data)) : null; },
       get: function (k) { return r && r.exists ? r.data[k] : undefined; },
     };
@@ -201,15 +208,21 @@ export function cloudStubSource(user = TEST_USER) {
       doc: function () { return plainDoc(db); },
       batch: function () { return { set: function () {}, update: function () {}, delete: function () {}, commit: function () { return Promise.resolve(); } }; },
       runTransaction: function (fn) {
-        var writes = [];
-        var tx = {
-          get: function (ref) { return ref && ref.__user ? ref.get() : Promise.resolve(emptySnap()); },
-          set: function (ref, data, opts) { if (ref && ref.__user) writes.push([ref, data, opts]); },
-          update: function () {}, delete: function () {},
+        var attempt = 0;
+        var run = function () {
+          var writes = [], readVersion;
+          var tx = {
+            get: function (ref) { return ref && ref.__user ? ref.get().then(function (snap) { readVersion = snap.__v; return snap; }) : Promise.resolve(emptySnap()); },
+            set: function (ref, data, opts) { if (ref && ref.__user) writes.push([ref, data, opts]); },
+            update: function () {}, delete: function () {},
+          };
+          return Promise.resolve(fn(tx)).then(function (out) {
+            return writes.reduce(function (p, w, i) {
+              return p.then(function () { return call('set', { data: enc(w[1]), merge: !!(w[2] && w[2].merge), expect: i === 0 ? readVersion : undefined }); });
+            }, Promise.resolve()).then(function () { return out; });
+          }).catch(function (e) { if (e && e.code === 'aborted' && ++attempt < 6) return run(); throw e; });
         };
-        return Promise.resolve(fn(tx)).then(function (out) {
-          return writes.reduce(function (p, w) { return p.then(function () { return w[0].set(w[1], w[2]); }); }, Promise.resolve()).then(function () { return out; });
-        });
+        return run();
       },
       enablePersistence: function () { return Promise.resolve(); },
       settings: function () {},

@@ -991,6 +991,10 @@ body.wf-compact .chq-card, body.wf-compact .tgt-card, body.wf-compact .sub-card 
 body.wf-compact .card-header { margin-bottom: 12px; }
 body.wf-compact #dashStats .stat-card { padding: 12px 14px 10px; }
 
+/* Settings → Cloud Sync status pill. It changes text and colour with every save (Syncing, Connected, Offline); as three
+   differently sized boxes it moved the row, and on a phone the row changed height, so every switch nudged the page. */
+.wf-sync-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 118px; white-space: nowrap; flex: none; }
+
 /* ═════════════════ 26. SETTINGS CONTROLS ═══════════════════════════════════ */
 /* A select shows the whole of its chosen option ("LKR — Sri Lanka", "3 (default)") instead of a cut-off word: the fixed
    120 to 160px widths in the page left about 67px for the text once the arrow's room was taken. Anything still too long ends in an ellipsis. */
