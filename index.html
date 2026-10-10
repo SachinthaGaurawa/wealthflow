@@ -22116,7 +22116,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         function editCCI(id) {
             const item = DB.get('ccinstall').find(x => x.id === id); if (!item) return;
             editMode = id; $('mdCCITitle').textContent = 'Edit Installment';
-            $('c_product').value = item.product; $('c_buyer').value = item.buyer; $('c_bank').value = item.bank;
+            $('c_product').value = item.product; $('c_buyer').value = item.buyer || ''; $('c_bank').value = item.bank;
             $('c_total').value = fmtN(item.total); $('c_rate').value = item.rate; $('c_dur').value = item.duration;
             // Only pre-fill override if user had manually overridden
             const autoEMI = calcEMI(item.total, item.rate, item.duration);
@@ -22192,7 +22192,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const skipCount = item.skipped?.length || 0;
                 return (item === _cap.firstDone ? _cap.a.row + _wfDoneRow(_cap.doneCount, 'instalments', 11) : '') + `<tr class="${item.completed ? 'done-row' : ''}">
             <td><div style="font-weight:600;">${_wfEsc(item.product)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
-            <td>${item.buyer}</td>
+            <td>${_wfEsc(item.buyer || 'Self')}</td>
             <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
             <td class="td-a">${fmt(item.total)}</td>
             <td class="td-mono">${item.rate > 0 ? item.rate + '%' : '0% Free'}</td>
@@ -29532,7 +29532,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div style="font-size:12px;color:var(--text3);">${userEmail}</div>
                 </div>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;">
+            <div class="wf-acct-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;">
                 <div style="text-align:center;padding:10px;background:var(--bg2);border-radius:10px;">
                     <div style="font-size:20px;font-weight:800;color:var(--accent);">${totalRecords}</div>
                     <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Records</div>
@@ -29817,7 +29817,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(59,130,246,0.05), var(--card)); border: 1px solid var(--border2);">
             <div class="settings-title" style="color:var(--blue);">Advanced Backup & Data</div>
-            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:14px;">
+            <div class="wf-bk-card" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:14px;">
                 <div style="width:42px;height:42px;border-radius:50%;background:rgba(59,130,246,0.12);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">${s.lastBackup ? _ic('cloud') : _ic('alert')}</div>
                 <div style="flex:1;min-width:0;">
                     <div style="font-weight:700;font-size:14px;color:var(--text);">Last Backup</div>
