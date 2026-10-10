@@ -43,6 +43,7 @@ describe('subscription form', () => {
         expect(index).toContain('completed:');
         expect(index).toContain('paidStatementKey: oneTime && existing');
         expect(index).toContain('s.reopened = !done');
+        expect(index).toContain("return cycle === 'monthly';");
     });
 
     it('keeps AI bill auto-fill aligned with the one-time due-date UI', () => {

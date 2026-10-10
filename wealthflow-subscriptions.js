@@ -115,7 +115,17 @@
             return { active: !oncePaid, paid: oncePaid, oneTime: true, date: fixed, month: ym, cycle: cycle };
         }
 
-        if (!anchor) return { active: false, paid: false, oneTime: false, date: '', cycle: cycle, reason: 'missing-anchor' };
+        if (!anchor) {
+            // createdAt did not exist on older monthly records. Preserve their
+            // established monthly behaviour instead of silently dropping them.
+            // Longer cadences need a real anchor; inventing one would create
+            // quarterly/yearly charges in arbitrary months.
+            if (cycle !== 'monthly') return { active: false, paid: false, oneTime: false, date: '', cycle: cycle, reason: 'missing-anchor' };
+            var legacyDate = _ymd(now.getFullYear(), now.getMonth(), sub.dueDay);
+            ym = legacyDate.slice(0, 7);
+            var legacyPaid = _paidInMonth(sub, ym, false);
+            return { active: !legacyPaid, paid: legacyPaid, oneTime: false, date: legacyDate, month: ym, cycle: cycle, legacy: true };
+        }
         var elapsed = (now.getFullYear() - anchor.getFullYear()) * 12 + now.getMonth() - anchor.getMonth();
         var step = cycle === 'quarterly' ? 3 : (cycle === 'yearly' || cycle === 'annual' ? 12 : 1);
         if (elapsed < 0 || elapsed % step !== 0) return { active: false, paid: false, oneTime: false, date: '', cycle: cycle, reason: 'off-cycle' };

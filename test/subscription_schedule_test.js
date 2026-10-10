@@ -44,6 +44,14 @@ describe('subscription payment schedule', () => {
         expect(S.occurrence(y, new Date('2027-08-01T12:00:00Z')).date).toBe('2027-08-05');
     });
 
+    it('keeps legacy monthly bills active when they predate createdAt', () => {
+        const S = api();
+        const sub = { cycle: 'monthly', dueDay: 12, amount: 2500 };
+        expect(S.occurrence(sub, new Date('2026-10-10T12:00:00Z'))).toMatchObject({
+            active: true, paid: false, date: '2026-10-12', cycle: 'monthly',
+        });
+    });
+
     it('recognises a payment recorded for the current cycle', () => {
         const S = api();
         const sub = { cycle: 'monthly', dueDay: 5, createdAt: '2026-01-01T00:00:00Z',
