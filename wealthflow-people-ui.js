@@ -381,6 +381,8 @@ export function accountFormHtml({ account = null, draft = null, errors = {}, ask
         + f('branch', 'Branch (optional)', d.branch, ' placeholder="Colombo 03"', Pay.LIMITS.branch)
         + f('swift', 'SWIFT code or IBAN (optional, for payments from abroad)', d.swift, ' autocapitalize="characters" placeholder="CCEYLKLX"', Pay.LIMITS.swift)
         + f('note', 'Note (optional)', d.note, ' placeholder="Please write your NIC in the payment reference"', Pay.LIMITS.note)
+        + f('noteSi', 'Note in Sinhala (optional)', d.noteSi, ' placeholder="කරුණාකර ගෙවීමේදී ඔබේ NIC අංකය යොමුවේ ලියන්න"', Pay.LIMITS.noteSi)
+        + '<div class="wfp-help">Customers who switch their statement page or PDF to Sinhala see this note. If you leave it empty, the common notes (such as writing the NIC in the payment reference) are translated for you; any other note is shown as you typed it.</div>'
         + '<div class="fg"><label class="fl" for="_pa_show">Who sees it</label><select class="fs" id="_pa_show">'
         + Object.entries(Pay.SHOW_TEXT).map(([k, v]) => '<option value="' + k + '"' + (d.showTo === k ? ' selected' : '') + '>' + esc(v) + '</option>').join('') + '</select></div>'
         + '<label class="wfp-check"><input type="checkbox" id="_pa_active"' + (d.active === false ? '' : ' checked') + '> Show this account on statements</label>'
@@ -851,7 +853,7 @@ export function boot(win) {
         }
 
         function saveAccount() {
-            const f = { bank: read('_pa_bank'), holder: read('_pa_holder'), number: read('_pa_number'), branch: read('_pa_branch'), swift: read('_pa_swift'), note: read('_pa_note'), showTo: read('_pa_show'), active: !!(body.querySelector('#_pa_active') || {}).checked };
+            const f = { bank: read('_pa_bank'), holder: read('_pa_holder'), number: read('_pa_number'), branch: read('_pa_branch'), swift: read('_pa_swift'), note: read('_pa_note'), noteSi: read('_pa_noteSi'), showTo: read('_pa_show'), active: !!(body.querySelector('#_pa_active') || {}).checked };
             const clean = Pay.cleanAccount(f);
             if (!clean.ok) { st.draft = f; st.errors = clean.errors; render(); toast(Object.values(clean.errors)[0], 'error'); return; }
             const sx = store();
@@ -860,7 +862,7 @@ export function boot(win) {
             if (st.id) {
                 const prev = list.find((a) => a.id === st.id);
                 if (!prev) { toast('That account is no longer there', 'error'); st.view = 'list'; render(); return; }
-                sx.set(Pay.PAY_KEY, list.map((a) => (a.id === st.id ? { ...a, ...clean.fields, updatedAt: stamp } : a)));
+                sx.set(Pay.PAY_KEY, list.map((a) => (a.id === st.id ? { ...a, ...clean.fields, noteSi: clean.fields.noteSi || '', updatedAt: stamp } : a)));
             } else {
                 if (list.length >= Pay.LIMITS.accounts) { toast('You can keep up to ' + Pay.LIMITS.accounts + ' accounts', 'error'); return; }
                 sx.set(Pay.PAY_KEY, [...list, { ...clean.fields, id: People.defaultId(), createdAt: stamp, updatedAt: stamp }]);
@@ -901,7 +903,7 @@ export function boot(win) {
                 case 'acc-edit': st.view = 'account'; st.id = id; st.draft = null; st.errors = {}; st.askDelete = false; render(); break;
                 case 'acc-cancel': st.view = 'list'; st.id = ''; st.draft = null; st.errors = {}; st.askDelete = false; render(); break;
                 case 'acc-save': saveAccount(); break;
-                case 'acc-del': st.draft = { bank: read('_pa_bank'), holder: read('_pa_holder'), number: read('_pa_number'), branch: read('_pa_branch'), swift: read('_pa_swift'), note: read('_pa_note'), showTo: read('_pa_show'), active: !!(body.querySelector('#_pa_active') || {}).checked }; st.askDelete = true; render(); break;
+                case 'acc-del': st.draft = { bank: read('_pa_bank'), holder: read('_pa_holder'), number: read('_pa_number'), branch: read('_pa_branch'), swift: read('_pa_swift'), note: read('_pa_note'), noteSi: read('_pa_noteSi'), showTo: read('_pa_show'), active: !!(body.querySelector('#_pa_active') || {}).checked }; st.askDelete = true; render(); break;
                 case 'acc-delgo': { const sx = store(); sx.set(Pay.PAY_KEY, Pay.listAccounts(sx.get(Pay.PAY_KEY)).filter((x) => x.id !== id)); toast('Bank account deleted', 'success'); st.view = 'list'; st.id = ''; st.draft = null; st.askDelete = false; render(); break; }
                 default: break;
             }

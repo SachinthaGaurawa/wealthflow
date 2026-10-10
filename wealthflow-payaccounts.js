@@ -11,7 +11,7 @@
  *     the accounts meant for the kind of record they are on.
  *   - An account can be switched off without deleting it (a closed account, a holiday).
  *   - What leaves the owner's books is a WHITELIST (publicAccounts): bank, holder, number, branch,
- *     SWIFT/IBAN, note. Not the id, not the audience, not a timestamp.
+ *     SWIFT/IBAN, note (and the note in Sinhala, when the owner wrote one). Not the id, not the audience, not a timestamp.
  *
  * Shared by the page (the editor) and the server (the statement and the PDF), so there is one
  * definition of what a valid account is and one of what leaves. Pure. ESM.
@@ -19,7 +19,7 @@
 
 export const PAY_KEY = 'payAccounts';
 export const SHOW = Object.freeze({ BOTH: 'both', DEBTORS: 'debtors', INVESTORS: 'investors' });
-export const LIMITS = Object.freeze({ bank: 60, holder: 80, number: 40, branch: 60, swift: 34, note: 200, accounts: 10 });
+export const LIMITS = Object.freeze({ bank: 60, holder: 80, number: 40, branch: 60, swift: 34, note: 200, noteSi: 400, accounts: 10 });
 
 export const SHOW_TEXT = Object.freeze({
     both: 'Debtors and investors',
@@ -61,6 +61,9 @@ export function cleanAccount(input) {
         showTo,
         active: i.active === false || i.active === 'false' || i.active === 0 ? false : true,
     };
+    // The same note in Sinhala, for the statement page and PDF when the customer reads them in Sinhala. Present only when the owner wrote one.
+    const noteSi = squash(i.noteSi).slice(0, LIMITS.noteSi);
+    if (noteSi) fields.noteSi = noteSi;
     return { ok: Object.keys(errors).length === 0, fields, errors };
 }
 
@@ -93,8 +96,8 @@ export function publicAccounts(raw, layers = ['A', 'B']) {
         if (!want.some((l) => visibleTo(a, l))) continue;
         const clean = cleanAccount(a);
         if (!clean.ok) continue;                                    // a record that would not pass the editor does not go out
-        const { bank, holder, number, branch, swift, note } = clean.fields;
-        out.push({ bank, holder, number, branch, swift, note });
+        const { bank, holder, number, branch, swift, note, noteSi } = clean.fields;
+        out.push(noteSi ? { bank, holder, number, branch, swift, note, noteSi } : { bank, holder, number, branch, swift, note });
         if (out.length >= LIMITS.accounts) break;
     }
     return out;
