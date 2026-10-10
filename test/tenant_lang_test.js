@@ -97,7 +97,7 @@ describe('nothing is left untranslated', () => {
     });
 
     it('so do the table values the page looks up (how often interest is paid, what a loan movement is)', () => {
-        for (const v of ['Monthly', 'Every 3 months', 'Yearly', 'Loan paid out', 'Further advance', 'Repayment']) {
+        for (const v of ['Monthly', 'Every 3 months', 'Yearly', 'Loan paid out', 'Further advance', 'Repayment', 'Light', 'Dark', 'Auto']) {
             expect(PAGE).toContain(`'${v}'`);
             expect(SI[v], v).toBeTruthy();
         }
@@ -105,7 +105,7 @@ describe('nothing is left untranslated', () => {
 
     it('has no entry that nothing uses (a reworded sentence leaves its old translation behind, silently)', () => {
         const used = new Set([...literals(), ...pdfLiterals(), ...Object.values(COPY), ...Object.values(MSG), 'This service is temporarily unavailable. Please try again later.', 'Too many attempts. Please wait a while and try again.',
-            'Monthly', 'Every 3 months', 'Yearly', 'Loan paid out', 'Further advance', 'Repayment']);
+            'Monthly', 'Every 3 months', 'Yearly', 'Loan paid out', 'Further advance', 'Repayment', 'Light', 'Dark', 'Auto']);
         const stale = Object.keys(SI).filter((k) => !used.has(k));
         expect(stale).toEqual([]);
     });
