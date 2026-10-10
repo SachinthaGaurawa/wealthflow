@@ -25058,6 +25058,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const paid = DB.getObj('billPaid', {});
                 paid[row.key] = { confirmedAt: now, month: row.monthKey, amount: row.amount, via: 'queue' };
                 DB.set('billPaid', paid);
+                /* A one-time bill is finished by this answer: the subscription card, the reminders and the cash-flow forecast read its own paid state, not billPaid. */
+                if (row.oneTime) {
+                    const subs = (DB.get('subscriptions') || []).slice();
+                    const at = subs.findIndex((x) => x && x.id === row.sourceId);
+                    if (at >= 0) { subs[at] = { ...subs[at], paid: true, completed: true, paidAt: now, paidSource: 'queue', reopened: false, _ut: now }; DB.set('subscriptions', subs); }
+                }
                 const flagged = DB.getObj('billDelayed', {});
                 if (flagged[row.key]) { delete flagged[row.key]; DB.set('billDelayed', flagged); }
             } else {
@@ -28316,11 +28322,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             DB.get('subscriptions').forEach(s => {
                 if (!s || future) return;
                 const created = s.createdAt ? new Date(s.createdAt) : null;
-                if (created && (created.getFullYear() > year ||
+                const cycle = (s.cycle || 'monthly').toLowerCase();
+                const onceBill = cycle === 'once' || cycle === 'one-time' || cycle === 'onetime';
+                // a one-time bill belongs to its own due-date month, even one before the day it was recorded
+                if (!onceBill && created && (created.getFullYear() > year ||
                                (created.getFullYear() === year && created.getMonth() > month))) return;
                 const overrideAmt = s.monthOverrides && s.monthOverrides[ym];
                 let amt = (typeof overrideAmt === 'number') ? overrideAmt : (s.amount || 0);
-                const cycle = (s.cycle || 'monthly').toLowerCase();
                 if (cycle === 'once' || cycle === 'one-time' || cycle === 'onetime') {
                     // A one-time bill belongs to its exact due-date month. Old
                     // records without dueDate keep their creation-month anchor.

@@ -95,4 +95,10 @@ describe('subscription payment schedule', () => {
         expect(S.legacyDueDate({ cycle: 'once', dueDay: 31, createdAt: '2026-02-02T00:00:00Z' })).toBe('2026-02-28');
         expect(S.legacyDueDate({ cycle: 'once', dueDay: 31, createdAt: '2024-02-02T00:00:00Z' })).toBe('2024-02-29');
     });
+
+    it('the page: a Paid answer in the verification queue finishes a one-time bill, and a one-time bill counts in its own past-due month', () => {
+        const page = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf8');
+        expect(page).toMatch(/if \(row\.oneTime\) \{[^]*?paidSource: 'queue', reopened: false/);
+        expect(page).toMatch(/if \(!onceBill && created && \(created\.getFullYear\(\) > year/);
+    });
 });

@@ -74,6 +74,15 @@ describe('a statement taken from an address that is not on the list is taken bac
         expect(user.cheques.find(c => c.id === 'q1').clearedDate).toBeUndefined();
         expect(user.cheques.find(c => c.id === 'q2')).toMatchObject({ status: 'cleared', statementKey: at('ok') });
     });
+    it('the month amount a removed statement wrote goes with it, so the bill does not stay completed on that evidence', async () => {
+        const w = world({ items: items(), extra: { subscriptions: [{ id: 's2', cycle: 'once', paid: true, completed: true, paidAt: '2026-09-02', paidSource: 'statement', paidStatementKey: at('sib'), amount: 100,
+            monthOverrides: { '2026-09': 100, '2026-10': 7 }, history: [{ month: '2026-09', date: '2026-09-02', source: 'statement', statementKey: at('sib') }] }] } });
+        await run(w);
+        const sub = w.data.get('users/u').subscriptions[0];
+        expect(sub.monthOverrides).toEqual({ '2026-10': 7 });
+        expect(sub.paid).toBeUndefined();
+        expect(sub.history).toEqual([]);
+    });
     it('its ledger rows are released for a re-decision, its waiting reviews are closed, and the statement is retired with the reason', async () => {
         const w = world({ items: items() });
         await run(w);
