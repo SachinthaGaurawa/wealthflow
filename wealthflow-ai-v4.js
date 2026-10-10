@@ -890,7 +890,7 @@
             $('e_month').value = result.date.substring(0, 7);
             filled = true;
         }
-        // Scanner Settings -> Auto-Categorize (scanAutoCategory): off means the scan leaves the category as it was
+        // scanAutoCategory off: leave the category as it was
         var autoCat = !(window.WF_SCAN_SETTINGS && window.WF_SCAN_SETTINGS.autoCategory === false);
         if (autoCat && $('e_cat') && result.category) {
             var sel = $('e_cat');

@@ -376,11 +376,8 @@
         // If the inlined v6.2 engine already transformed this prompt, pass through.
         if (alreadyRewritten(prompt)) return _origCallAI(prompt, image);
 
-        /* ONLY A CHAT TURN (the "--- CONVERSATION ---" envelope sendAIMessage builds) IS THIS WRAPPER'S BUSINESS. Everything else is a one-shot
-         * card or document question that carries its own instructions and figures (the dashboard's AI Insights, the Score plan, the cash-flow
-         * read-out, a document summary, the receipt reader): it goes to the engine exactly as written. It used to be read for an "image of ..."
-         * intent, rewritten around its last line, and — when two answers looked alike — asked a SECOND time for "a fresh answer", which
-         * doubled the wait on a card whose data had not changed. */
+        /* Only a chat turn ("--- CONVERSATION ---") is this wrapper's business. A one-shot card or receipt prompt carries its own instructions
+         * and figures: it goes to the engine as written (it used to be rewritten around its last line and asked twice for a "fresh" answer). */
         if ((prompt || '').indexOf('--- CONVERSATION ---') === -1) return _origCallAI(prompt, image);
 
         var last = lastUserLine(prompt);
