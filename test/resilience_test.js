@@ -553,7 +553,7 @@ describe('every list that measured unbounded is capped', () => {
         'sessions', 'ccinstall', 'cheques', 'subscriptions', 'incRecv', 'ccPayments', 'mailSync']) {
         it(`${key} goes through the cap`, () => {
             expect(HTML, `${key} renders its rows straight from the array again`)
-                .toContain(`_wfCap('${key}'`);
+                .toMatch(new RegExp(`_wf(Split)?Cap\\('${key}'`));
         });
     }
 

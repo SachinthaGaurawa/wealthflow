@@ -318,7 +318,9 @@ export const BUDGETS = {
     // search box for each list (the cards are only hidden, never rebuilt), and one question asked before a new loan for somebody who still owes money. About a third is comments.
     // 2026-10-10 (design system + app shell): 2,229,500 -> 2_233_000 (measured 2,230,551 + ~0.1% headroom). The whole look moved out of the page into wf-tokens.css / wf-ui.css, so the page
     // only gained the head links (font preloads, stylesheets, theme-color), the one inline SVG logo sprite and three <use> marks that replace the old raster logos and orb markup, and one script tag.
-    htmlBytes: 2_233_000,
+    // 2026-10-10 (completed records are permanent): 2,233,000 -> 2_240_000 (measured 2,237,626 + ~0.1% headroom). One shared rule (_wfIsDone / _wfKeepDone / _wfSplitCap) and a Completed section header on five lists,
+    // the guard on seven Delete handlers, and a fallback card so one bad record cannot blank the Investments page. About a third is comments.
+    htmlBytes: 2_240_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
