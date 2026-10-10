@@ -6105,8 +6105,10 @@
                                 <button class="exp-vbtn" id="incViewTable" onclick="setIncRecvView('table',this)">@receipt@ Table</button>
                                 <button class="exp-vbtn active" id="incViewSched" onclick="setIncRecvView('schedule',this)">@calendar@ Schedule</button>
                             </div>
-                            <div class="sort-bar"><span class="sb-btn active" onclick="sortIncRecv('date',this)">Date</span><span class="sb-btn" onclick="sortIncRecv('amount',this)">Amount</span><span class="sb-btn" onclick="sortIncRecv('name',this)">Name</span><span class="sb-btn" onclick="sortIncRecv('type',this)">Type</span></div>
-                            <button class="btn btn-primary btn-sm" onclick="openIncomeRecvModal()"><i data-wfi="plus"></i> Add Income</button>
+                            <div class="sh-end">
+                                <div class="sort-bar"><span class="sb-btn active" onclick="sortIncRecv('date',this)">Date</span><span class="sb-btn" onclick="sortIncRecv('amount',this)">Amount</span><span class="sb-btn" onclick="sortIncRecv('name',this)">Name</span><span class="sb-btn" onclick="sortIncRecv('type',this)">Type</span></div>
+                                <button class="btn btn-primary btn-sm" onclick="openIncomeRecvModal()"><i data-wfi="plus"></i> Add Income</button>
+                            </div>
                         </div>
                     </div>
                     <div class="g3" id="incRecvStats" style="margin-bottom:16px;"></div>
@@ -6298,11 +6300,13 @@
                                 <button class="exp-vbtn" id="expViewSched" onclick="setExpView('schedule',this)">@calendar@
                                     Schedule</button>
                             </div>
-                            <div class="sort-bar"><span class="sb-btn active"
-                                    onclick="sortList('expenses','date',this)">Date</span><span class="sb-btn"
-                                    onclick="sortList('expenses','amount',this)">Amount</span></div>
-                            <button class="btn btn-primary btn-sm"
-                                onclick="clearExpenseForm(); openModal('mdExpense')">+ Add Expense</button>
+                            <div class="sh-end">
+                                <div class="sort-bar"><span class="sb-btn active"
+                                        onclick="sortList('expenses','date',this)">Date</span><span class="sb-btn"
+                                        onclick="sortList('expenses','amount',this)">Amount</span></div>
+                                <button class="btn btn-primary btn-sm"
+                                    onclick="clearExpenseForm(); openModal('mdExpense')">+ Add Expense</button>
+                            </div>
                         </div>
                     </div>
                     <div class="g4" id="expStats" style="margin-bottom:16px;"></div>

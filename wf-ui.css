@@ -430,7 +430,13 @@ html.wf-ios-stable .topbar { background: var(--wf-bg); -webkit-backdrop-filter: 
 
 /* ═════════════════ 11. TABLES ═══════════════════════════════════════════════ */
 .tbl-wrap { border-radius: var(--wf-r-lg); border: 1px solid var(--wf-line); background: var(--wf-card); box-shadow: var(--wf-shadow-1); }
-.tbl-wrap table th:first-child, .tbl-wrap table td:first-child { background: inherit; }
+/* The first column stays in view while the rest slides under it, so it needs a solid background of its own
+   (inheriting the row's transparent one let the scrolled columns show through it, text over text). */
+.tbl-wrap table tbody td:first-child { background: var(--wf-card); }
+.tbl-wrap table thead th:first-child { background: var(--wf-card-2); }
+.tbl-wrap table tbody tr:hover > td:first-child { background: linear-gradient(var(--wf-hover), var(--wf-hover)), var(--wf-card); }
+.tbl-wrap table :is(thead th, tbody td):first-child:not(:last-child) { box-shadow: 10px 0 10px -10px rgba(0, 0, 0, .4); }
+[data-theme="light"] .tbl-wrap table :is(thead th, tbody td):first-child:not(:last-child) { box-shadow: 10px 0 10px -10px rgba(16, 24, 40, .16); }
 table { font-size: 13.5px; }
 thead th {
     background: var(--wf-card-2); color: var(--wf-text-3); font-size: 11.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
@@ -904,6 +910,64 @@ html.wf-sheet-open, html.wf-sheet-open body { overscroll-behavior: contain; }
 .wf-note { background: var(--wf-card-2); border: 1px solid var(--wf-line); border-radius: var(--wf-r-md); padding: 14px 16px; font-size: 12.5px; line-height: 1.65; color: var(--wf-text-2); }
 .wf-note .wf-note-h { display: block; margin-bottom: 4px; font-size: 13.5px; font-weight: 650; color: var(--wf-text); }
 .wf-note b:not(.wf-note-h) { color: var(--wf-text); font-weight: 600; }
+
+/* ═════════════════ 25. PAGE TOOLBARS AND MID-WIDTH TOP BAR ════════════════════════════════════════ */
+/* The top bar names the page, so a page's toolbar is its whole header row: the actions take that row and sit at its end.
+   Left to size to their content, a wrapping flex container came out ~40px narrower than the controls inside it, and the
+   last control (the primary "Add …" button) dropped onto a row of its own at every desktop width. */
+.page > .sh > .sh-actions { flex: 1 1 auto; justify-content: flex-end; }
+/* On the busiest headers (Income, Expenses) the sort control and the primary button travel together: when the row is
+   too narrow they wrap as one unit, so the primary button is never left alone on a row. */
+.sh-actions > .sh-end { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+
+/* Tablets and small laptops: the same controls, a little tighter. */
+@media (max-width: 1180px) {
+    .sh-actions, .sh-actions > .sh-end { gap: 6px; }
+    .sh-actions .sort-bar .sb-btn, .sh-actions .exp-view-toggle .exp-vbtn { padding: 0 9px; }
+    .sh-actions .sort-bar, .sh-actions .exp-view-toggle { gap: 1px; }
+}
+
+/* The top bar at small-laptop and tablet-landscape widths (sidebar still open, up to 1180 px): the 260px search field
+   crushed the page title to a few pixels and wrapped the month badge. Search collapses to its icon button (Ctrl K and the
+   button both still open it), the title never shrinks, and the month badge stays on one line. */
+.month-badge { white-space: nowrap; }
+@media (min-width: 901px) { .tb-left { flex-shrink: 0; } }
+@media (min-width: 901px) and (max-width: 1180px) {
+    .wf-search { display: none; }
+    .wf-search-btn { display: inline-flex; }
+}
+
+/* Phones: the primary action and the month picker share the first row, then the History button and the view switch,
+   then the sort pills as a segmented control. Nothing is hidden and no button is left alone on a row. */
+@media (max-width: 540px) {
+    .sh-actions > .sh-end { display: contents; }
+    :is(#page-incRecv, #page-expenses) .sh-actions .btn-primary { order: -2; flex: 0 0 auto; }
+    :is(#page-incRecv, #page-expenses) .sh-actions > select { order: -1; flex: 1 1 150px; min-width: 0; max-width: none !important; width: auto !important; }
+    :is(#page-incRecv, #page-expenses) .sh-actions > .exp-view-toggle { flex: 1 1 180px; min-width: 0; }
+    :is(#page-incRecv, #page-expenses) .sh-actions > .exp-view-toggle .exp-vbtn { flex: 1 1 0; justify-content: center; }
+    :is(#page-incRecv, #page-expenses, #page-cheques, #page-cconetime) .sh-actions .sort-bar { flex: 1 1 100%; }
+    :is(#page-incRecv, #page-expenses, #page-cheques, #page-cconetime) .sh-actions .sort-bar .sb-btn { flex: 1 1 0; justify-content: center; text-align: center; }
+    /* Cheques and One-Time payments: the primary button leads the first row beside History, the sort control sits under them. */
+    :is(#page-cheques, #page-cconetime) .sh-actions .btn-primary { order: -1; }
+}
+
+/* A table that slides sideways keeps its action buttons (mark done, edit, delete) pinned to the right edge, so they never
+   scroll out of sight on a phone, a tablet or a narrow laptop. On a wide screen nothing overflows and nothing changes. */
+.tbl-wrap table:has(> tbody > tr > td:last-child > :is(.act-btns, .ib)) :is(thead th, tbody td):last-child:not(:first-child) {
+    position: sticky; right: 0; z-index: 2; box-shadow: -10px 0 10px -10px rgba(0, 0, 0, .4);
+}
+.tbl-wrap table:has(> tbody > tr > td:last-child > :is(.act-btns, .ib)) tbody td:last-child:not(:first-child) { background: var(--wf-card); }
+.tbl-wrap table:has(> tbody > tr > td:last-child > :is(.act-btns, .ib)) thead th:last-child:not(:first-child) { background: var(--wf-card-2); z-index: 3; }
+.tbl-wrap table:has(> tbody > tr > td:last-child > :is(.act-btns, .ib)) tbody tr:hover > td:last-child:not(:first-child) { background: linear-gradient(var(--wf-hover), var(--wf-hover)), var(--wf-card); }
+[data-theme="light"] .tbl-wrap table:has(> tbody > tr > td:last-child > :is(.act-btns, .ib)) :is(thead th, tbody td):last-child:not(:first-child) { box-shadow: -10px 0 10px -10px rgba(16, 24, 40, .16); }
+
+/* Tables on tablets and small laptops: headers may wrap and cells are a little tighter, so a table with eight columns
+   needs far less sideways sliding (the headers were the widest thing in their columns). */
+@media (max-width: 1180px) {
+    .tbl-wrap table thead th { white-space: normal; padding: 10px 10px; line-height: 1.3; vertical-align: bottom; }
+    .tbl-wrap table tbody td { padding: 12px 10px; }
+    .tbl-wrap table .act-btns { gap: 2px; }
+}
 
 /* ═════════════════ 21. MOTION PREFERENCES ═══════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
