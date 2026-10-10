@@ -61,6 +61,7 @@ import { debtorSummary, EVENT } from './wealthflow-liquidity.js';
 import { normalizePhone, utcOffsetOf } from './wealthflow-phone.js';
 import { normalizeIdentity } from './wealthflow-nic.js';
 import { KINDS, refCode, currencyOf } from './sms-templates.mjs';
+import { ownerEvents, ownerAlertsOn } from './sms-owner.mjs';
 
 /** The schema fields this feature adds to an investment or a debtor record. */
 export const FIELDS = Object.freeze({
@@ -388,6 +389,9 @@ export function deriveEvents(user, now = Date.now()) {
     const events = []; const issues = [];
     investmentEvents(u, now, currency, events, issues);
     debtorEvents(u, now, currency, events, issues);
+    // the owner's own due-date alerts (sms-owner.mjs): off unless they switched them on
+    const own = ownerEvents(u, now, currency, nextSendWindow);
+    events.push(...own.events); issues.push(...own.issues);
     events.sort((a, b) => a.occurredAt - b.occurredAt || (a.key < b.key ? -1 : 1));
     return { events, issues };
 }
@@ -395,7 +399,7 @@ export function deriveEvents(user, now = Date.now()) {
 /** Does this user have anything switched on at all? A cheap test for "should the sweep even read the document". */
 export function hasSmsRecords(user) {
     const u = user || {};
-    return arr(u.income).some(isOn) || arr(u.debtors).some(isOn);
+    return arr(u.income).some(isOn) || arr(u.debtors).some(isOn) || ownerAlertsOn(u);
 }
 
 export default { FIELDS, LAYER, interestApplies, GRACE_MS, MAX_AGE_MS, CLOCK_SKEW_MS, nextSendWindow, periodInterest, deriveEvents, hasSmsRecords };
