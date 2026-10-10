@@ -36559,7 +36559,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         if (_res.action === 'clear' || _res.action === 'bounce') {
                             const _c = _res.cheque, _prev = JSON.parse(JSON.stringify(_c));
                             Object.assign(_c, _res.patch);
-                            if (_batch && WFBatch.recordCheque) { try { WFBatch.recordCheque(_batch, { id: _c.id, prev: _prev, status: _c.status }); } catch (_) {} }
+                            if (_batch && WFBatch.recordCheque) { try { WFBatch.recordCheque(_batch, { id: _c.id, prev: _prev, status: _c.status, now: _c }); } catch (_) {} }
                             if (_res.action === 'bounce') chqBounced++; else chqCleared++;
                             chq++; _chequesDirty = true; _moneyFiled = true;
                         } else if (_res.action === 'create') {

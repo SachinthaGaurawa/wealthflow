@@ -72,11 +72,19 @@
         if (!batch.loans) batch.loans = [];
         batch.loans.push({ loanId: info.loanId, month: info.month, prev: info.prev || null });
     }
+    // The fields of a cheque the owner can change in the Cheques tab. Undo compares these (not the bookkeeping stamps the system adds) to know whether the owner touched the cheque after the import.
+    var CHEQUE_EDITABLE = ['no', 'party', 'bank', 'type', 'amount', 'issue', 'release', 'notes', 'status'];
+    function _chequeFields(c) {
+        var out = {};
+        CHEQUE_EDITABLE.forEach(function (k) { out[k] = c && c[k] != null ? String(c[k]) : ''; });
+        return out;
+    }
     // Note a tracked cheque this batch settled (cleared / bounced) so undo can put it back as it was.
+    // `now` is the cheque as the import left it: undo only restores a cheque that still looks like that.
     function recordCheque(batch, info) {
         if (!batch || !info || !info.id || !info.prev) return;
         if (!batch.cheques) batch.cheques = [];
-        batch.cheques.push({ id: info.id, prev: info.prev, status: info.status || '' });
+        batch.cheques.push({ id: info.id, prev: info.prev, status: info.status || '', post: info.now ? _chequeFields(info.now) : null });
     }
     // Note a subscription payment this batch made (for precise undo).
     function recordSub(batch, info) {
@@ -132,8 +140,12 @@
         ops.slice().reverse().forEach(function (op) {
             var i = rows.findIndex(function (c) { return c && c.id === op.id; });
             if (i < 0) return;
-            // only a cheque still in the state THIS batch left it in — one the owner has edited or settled since is not touched
+            // only a cheque still in the state THIS batch left it in — one the owner has edited (any field they can change) or settled since is not touched
             if (op.status && rows[i].status !== op.status) return;
+            if (op.post) {
+                var now = _chequeFields(rows[i]);
+                if (CHEQUE_EDITABLE.some(function (k) { return now[k] !== op.post[k]; })) return;
+            }
             rows[i] = op.prev;
             removed.chequesRestored = (removed.chequesRestored || 0) + 1;
             changed = true;

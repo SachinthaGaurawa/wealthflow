@@ -1536,14 +1536,24 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
         if (touched(user.loans, loans)) changes.loans = loans;
         /* A cheque this statement ADDED (it was never tracked) leaves with it, tombstoned; one the owner already tracked and the statement cleared / bounced goes back to the state it was in (wealthflow-cheques.js
          * keeps it in prevStatus) and to the amount the owner typed. A cheque record never changes the owner's own entries beyond that. */
-        const cheques = [];
+        const cheques = [], linked = new Set();
         for (const cheque of Array.isArray(user.cheques) ? user.cheques : []) {
             if (!cheque || cheque.statementKey !== path) { cheques.push(cheque); continue; }
+            if (cheque.countedBy) linked.add(String(cheque.countedBy));
             if (cheque.source === 'statement') { gone.add(String(cheque.id)); tomb.cheques = { ...(tomb.cheques && typeof tomb.cheques === 'object' ? tomb.cheques : {}), [cheque.id]: now }; continue; }
             const { clearedDate, bouncedDate, statementKey, statementRow, uploadClaim, prevStatus, prevAmount, direction, countedBy, ...rest } = cheque;
             cheques.push({ ...rest, status: prevStatus || (rest.status === 'cleared' ? 'pending' : rest.status), ...(prevAmount != null ? { amount: prevAmount } : {}), _ut: now });
         }
         if (touched(user.cheques, cheques)) changes.cheques = cheques;
+        /* the entry the owner typed that this statement's cheque row was tied to (`countedBy`) stands for no row of a statement that is gone: its stamp is lifted, so the same statement filed again links it afresh and the payment is still counted once */
+        if (linked.size) {
+            const expenses = (changes.expenses || user.expenses || []).map(entry => {
+                if (!entry || !linked.has(String(entry.id)) || !entry.statementTwin || entry.statementTwin.sourcePath !== path) return entry;
+                const { statementTwin, ...rest } = entry;
+                return { ...rest, _ut: now };
+            });
+            if (touched(user.expenses, expenses)) changes.expenses = expenses;
+        }
         const more = ledger.docs.length >= CAP;
         for (const doc of ledger.docs) tx.set(doc.ref, { status: 'superseded_by_layout', supersededBy: 'exact-sender-rule', settledAt: now }, { merge: true });
         let closed = 0;

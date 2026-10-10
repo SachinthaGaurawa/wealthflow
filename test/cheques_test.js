@@ -731,6 +731,37 @@ describe('a cheque the bank paid and an expense the owner typed for it count onc
         expect((await healChequeTwins({ db: w.db, uid: 'u', log: () => {} })).merged).toBe(0);      // again: nothing more
     });
 
+    it('the statement is unfiled and read again: the typed entry is linked afresh and the payment still counts once', async () => {
+        const w = world({ expenses: [typed()], cheques: [issued()] });
+        await drain(w, paid);
+        const first = w.data.get('users/u');
+        expect(first.cheques[0]).toMatchObject({ status: 'cleared', countedBy: 'T1' });
+        expect(first.expenses[0].statementTwin).toBeTruthy();
+        await unfileStatement({ db: w.db, uid: 'u', itemRef: w.db.doc(SOURCE) });
+        const back = w.data.get('users/u');
+        expect(back.cheques[0]).toMatchObject({ id: 'I1', status: 'pending' });
+        expect(back.cheques[0].countedBy).toBeUndefined();
+        expect(back.expenses[0].statementTwin).toBeUndefined();     // the typed entry stands for no row of a statement that is gone
+        w.data.set(SOURCE, { uid: 'u', bank: 'HNB', filename: 'statement.pdf', from: 'statements@hnb.lk', messageId: 'm1', status: 'pending', hasReview: false, filed: false, cursor: 0, receivedMs: Date.parse('2026-04-03T05:00:00Z') });
+        await drain(w, paid);
+        const again = w.data.get('users/u');
+        expect(again.cheques[0]).toMatchObject({ status: 'cleared', countedBy: 'T1' });
+        expect(again.expenses).toHaveLength(1);
+        expect(monthly(again).totalExp).toBe(25000);                // not 50,000
+    });
+
+    it('the cheque was untracked and the statement is unfiled: the typed entry is freed as well', async () => {
+        const w = world({ expenses: [typed()] });
+        await drain(w, paid);
+        expect(w.data.get('users/u').expenses[0].statementTwin).toBeTruthy();
+        await unfileStatement({ db: w.db, uid: 'u', itemRef: w.db.doc(SOURCE) });
+        const back = w.data.get('users/u');
+        expect(back.cheques).toHaveLength(0);
+        expect(back.expenses).toHaveLength(1);
+        expect(back.expenses[0].statementTwin).toBeUndefined();
+        expect(monthly(back).totalExp).toBe(25000);
+    });
+
     it('a cheque the owner marked cleared by hand (no statement) is never linked by guess', async () => {
         const w = world({ cheques: [issued({ status: 'cleared', clearedDate: '2026-03-12' })], expenses: [typed()] });
         expect((await healChequeTwins({ db: w.db, uid: 'u', log: () => {} })).merged).toBe(0);
@@ -863,6 +894,24 @@ describe('the manual upload files cheque rows the same way', () => {
         expect(up.DB.get('cheques').find((c) => c.id === 'R1')).toMatchObject({ status: 'pending' });
         expect(up.DB.get('cheques').find((c) => c.id === 'R1').statementKey).toBeUndefined();
         expect(up.DB.get('cheques').find((c) => c.id === 'R2')).toMatchObject({ status: 'pending' });
+    });
+
+    it('Undo leaves a cheque the owner edited after the upload, even when its status is unchanged', () => {
+        const up = upload({ cheques: [chq({ id: 'R1' }), chq({ id: 'R2', no: '777000', amount: 12000, party: 'Silva' })] }, [r('CHEQUE DEPOSIT 285943', 'credit', 50000, '2026-03-12'), r('CHEQUE DEPOSIT 777000', 'credit', 12000, '2026-03-12')]);
+        expect(up.DB.get('cheques').map((c) => c.status)).toEqual(['cleared', 'cleared']);
+        // the owner corrects the payer of R1 and the amount of R2 afterwards; both stay cleared
+        up.DB.set('cheques', up.DB.get('cheques').map((c) => (c.id === 'R1' ? { ...c, party: 'Raj Traders (Pvt) Ltd' } : c.id === 'R2' ? { ...c, notes: 'banked at Galle branch' } : c)));
+        up.undo();
+        const after = up.DB.get('cheques');
+        expect(after.find((c) => c.id === 'R1')).toMatchObject({ status: 'cleared', party: 'Raj Traders (Pvt) Ltd' });
+        expect(after.find((c) => c.id === 'R2')).toMatchObject({ status: 'cleared', notes: 'banked at Galle branch' });
+    });
+
+    it('Undo still restores a cheque that only gained the system\'s own stamps', () => {
+        const up = upload({ cheques: [chq({ id: 'R1' })] }, [r('CHEQUE DEPOSIT 285943', 'credit', 50000, '2026-03-12')]);
+        up.DB.set('cheques', up.DB.get('cheques').map((c) => ({ ...c, countedBy: 'T1', _ut: 123 })));
+        up.undo();
+        expect(up.DB.get('cheques').find((c) => c.id === 'R1')).toMatchObject({ status: 'pending' });
     });
 
     it('one statement through both doors: the Cheque Tracker holds each cheque once, whichever came first', async () => {
