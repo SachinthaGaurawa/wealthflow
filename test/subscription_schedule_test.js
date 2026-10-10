@@ -60,6 +60,18 @@ describe('subscription payment schedule', () => {
         expect(S.occurrence(sub, new Date('2026-12-21T12:00:00Z'))).toMatchObject({ active: false, paid: true });
     });
 
+    it('keeps an explicitly reopened one-time payment actionable despite old statement history', () => {
+        const S = api();
+        const sub = { id: 'o3', cycle: 'once', amount: 1000, dueDay: 20,
+            dueDate: '2026-12-20', createdAt: '2026-10-01T00:00:00Z', reopened: true,
+            history: [{ month: '2026-12', date: '2026-12-18', amount: 1000, source: 'statement' }],
+            monthOverrides: { '2026-12': 1000 } };
+        expect(S.occurrence(sub, new Date('2026-12-21T12:00:00Z'))).toMatchObject({ active: true, paid: false });
+        S.recordPayment(sub, { date: '2026-12-22', amount: 1000 });
+        expect(sub.reopened).toBe(false);
+        expect(S.occurrence(sub, new Date('2026-12-23T12:00:00Z'))).toMatchObject({ active: false, paid: true });
+    });
+
     it('clamps a legacy day 31 to the real last day of a short month', () => {
         const S = api();
         expect(S.legacyDueDate({ cycle: 'once', dueDay: 31, createdAt: '2026-02-02T00:00:00Z' })).toBe('2026-02-28');

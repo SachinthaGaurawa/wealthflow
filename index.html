@@ -32363,6 +32363,9 @@ Be direct and use real numbers. Avoid generic advice.`;
                 completed: oneTime ? !!(existing && existing.completed) : false,
                 paid: oneTime ? !!(existing && (existing.paid || existing.completed)) : false,
                 paidAt: oneTime && existing ? (existing.paidAt || null) : null,
+                paidSource: oneTime && existing ? (existing.paidSource || null) : null,
+                paidStatementKey: oneTime && existing ? (existing.paidStatementKey || null) : null,
+                reopened: oneTime ? !!(existing && existing.reopened) : false,
                 notes: $('sub_notes').value,
                 history: existing ? (existing.history || []) : [],
                 monthOverrides: existing ? (existing.monthOverrides || {}) : {},
@@ -32408,10 +32411,19 @@ Be direct and use real numbers. Avoid generic advice.`;
             const arr = DB.get('subscriptions') || [];
             const s = arr.find(x => x.id === id);
             if (!s || !['once', 'one-time', 'onetime'].includes(String(s.cycle || '').toLowerCase())) return;
-            const done = !(s.completed === true || s.paid === true);
+            const occ = window.WFSubs && window.WFSubs.occurrence ? window.WFSubs.occurrence(s, new Date()) : null;
+            const done = !(occ ? occ.paid : (s.completed === true || s.paid === true));
             s.completed = done;
             s.paid = done;
             s.paidAt = done ? Date.now() : null;
+            s.reopened = !done;
+            if (done) {
+                s.paidSource = 'manual';
+                delete s.paidStatementKey;
+            } else {
+                delete s.paidSource;
+                delete s.paidStatementKey;
+            }
             DB.set('subscriptions', arr);
             renderSubscriptions();
             notify(done ? 'One-time payment marked paid.' : 'One-time payment reopened.', done ? 'success' : 'info');

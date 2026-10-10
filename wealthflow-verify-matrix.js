@@ -269,7 +269,12 @@ export function pendingOutflows(appData, asOf, opts = {}) {
         const day = Math.floor(num(sub.dueDay));
         if (!(day >= 1)) continue;
         const created = parseDay(sub.createdAt);
-        const exactDue = oneTime ? parseDay(sub.dueDate) : null;
+        // Records created before dueDate existed still carry a creation month
+        // and dueDay. Derive the same clamped date used by WFSubs so legacy
+        // one-time obligations do not disappear from this queue.
+        const exactDue = oneTime
+            ? (parseDay(sub.dueDate) || (created ? dueDateFor(day, created.getUTCFullYear(), created.getUTCMonth()) : null))
+            : null;
         if (oneTime && !exactDue) continue;
         const step = cycle === 'quarterly' ? 3 : (cycle === 'yearly' || cycle === 'annual' ? 12 : 1);
 
@@ -287,7 +292,7 @@ export function pendingOutflows(appData, asOf, opts = {}) {
             if (due > today) continue;
             /* Never ask about a month before the bill was recorded. The record
              * is not evidence that the bill existed then. */
-            if (created && due < created) continue;
+            if (!oneTime && created && due < created) continue;
             const mk = monthKeyOf(due);
             const key = billKey(sub.id, mk);
             if (paid[key]) continue;

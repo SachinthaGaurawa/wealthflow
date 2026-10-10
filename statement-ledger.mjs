@@ -125,7 +125,7 @@ function applySubscriptionPayment(sub, row, sourcePath, index, bank, last4, now)
     sub.amount = row.amount; sub._ut = now;
     if (/^(once|one-time|onetime)$/.test(String(sub.cycle || '').toLowerCase())) {
         sub.paid = true; sub.completed = true; sub.paidAt = row.date;
-        sub.paidSource = 'statement'; sub.paidStatementKey = sourcePath;
+        sub.paidSource = 'statement'; sub.paidStatementKey = sourcePath; sub.reopened = false;
     }
     return '';
 }
@@ -418,7 +418,7 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
                 sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: corrected.amount }; sub.amount = corrected.amount; sub._ut = now;
                 if (/^(once|one-time|onetime)$/.test(String(sub.cycle || '').toLowerCase())) {
                     sub.paid = true; sub.completed = true; sub.paidAt = corrected.date;
-                    sub.paidSource = 'statement'; sub.paidStatementKey = context.sourcePath;
+                    sub.paidSource = 'statement'; sub.paidStatementKey = context.sourcePath; sub.reopened = false;
                 }
                 changes.subscriptions = subs;
             } else {
