@@ -982,6 +982,38 @@ html.wf-sheet-open, html.wf-sheet-open body { overscroll-behavior: contain; }
     .tbl-wrap table .act-btns { gap: 2px; }
 }
 
+/* ═════════════════ 26. SETTINGS CONTROLS ═══════════════════════════════════ */
+/* A select shows the whole of its chosen option ("LKR — Sri Lanka", "3 (default)") instead of a cut-off word: the fixed
+   120 to 160px widths in the page left about 67px for the text once the arrow's room was taken. Anything still too long ends in an ellipsis. */
+select.fi, select.fs { text-overflow: ellipsis; }
+#page-settings select.fi { width: auto !important; min-width: 120px; max-width: 100%; }
+/* The "Last Backup" card holds an icon, the text and Backup Now in one row; on a phone that left the text a ~100px column. */
+@media (max-width: 540px) {
+    .wf-bk-card { flex-wrap: wrap; }
+    .wf-bk-card > div:nth-child(2) { flex: 1 1 calc(100% - 60px); }
+    .wf-bk-card > button { flex: 1 1 100%; justify-content: center; }
+    /* AI Advisor header: the status chip takes its own row, the two buttons share the next, and the icon-only Clear chat
+       keeps its icon size (it was stretched into an empty-looking full-width bar). */
+    #page-ai .sh-actions #aiPersonaStatus { flex: 1 1 100%; }
+    #page-ai .sh-actions .btn-ghost { flex: 0 0 auto; }
+    .wf-acct-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+@media (min-width: 541px) { .wf-acct-stats { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; } }
+/* AI Advisor "Your books today": two tiles a row on a phone, and a last tile that would sit alone takes the whole row. */
+@media (max-width: 700px) {
+    .ai-brief-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .ai-brief-stats > .ai-brief-stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
+
+/* A row of four stat cards never leaves one orphan on a second row: on a tablet or small laptop (where the auto-fit grid
+   would fit three) they sit two by two, and the Monthly Plan's six figures sit three by three until the screen is wide enough for one row. */
+@media (min-width: 541px) and (max-width: 1100px) {
+    :is(.g3, .g4):has(> :nth-child(4):last-child) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 541px) and (max-width: 1400px) {
+    .mh-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 /* ═════════════════ 21. MOTION PREFERENCES ═══════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
