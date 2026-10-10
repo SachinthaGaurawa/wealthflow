@@ -320,3 +320,60 @@ describe('the PDF', () => {
         expect(late.file).toBeNull();
     });
 });
+
+describe('speed: nobody waits for what does not change the answer', () => {
+    it('a good code comes back with the statement in the same answer, and it is the statement the next request would have got', async () => {
+        const ctx = {}; Object.assign(ctx, makeDb());
+        const token = await seed(ctx);
+        const { d, gw, advance } = deps({ ctx });
+        await call(d, { body: { action: 'request', token, nic: NIC } });
+        advance(20000);
+        const v = await call(d, { body: { action: 'verify', token, nic: NIC, code: codeIn(gw.sent[0].message) } });
+        expect(v.status).toBe(200);
+        expect(v.json.statement.groups.map((g) => g.kind)).toEqual(['investment', 'loan']);
+        const cookie = String(v.headers['set-cookie']).split(';')[0];
+        const again = await call(d, { body: { action: 'statement', token }, cookie });
+        expect(v.json.statement).toEqual(again.json.statement);
+        // the server-only context never reaches the caller
+        expect(Object.keys(v.json).sort()).toEqual(['expiresAt', 'expiresInSec', 'ok', 'statement']);
+        expect(v.raw).not.toContain('nicHash');
+    });
+
+    it('a wrong code carries no statement', async () => {
+        const ctx = {}; Object.assign(ctx, makeDb());
+        const token = await seed(ctx);
+        const { d } = deps({ ctx });
+        await call(d, { body: { action: 'request', token, nic: NIC } });
+        const bad = await call(d, { body: { action: 'verify', token, nic: NIC, code: '000000' } });
+        expect(bad.status).toBe(401);
+        expect(bad.raw).not.toContain('statement');
+    });
+
+    it('where the platform can finish work after the answer, the text is sent after it, not before', async () => {
+        const ctx = {}; Object.assign(ctx, makeDb());
+        const token = await seed(ctx);
+        const later = [];
+        const gw = gateway();
+        const { d } = deps({ ctx, gw });
+        d.waitUntil = () => (work) => { later.push(work); };
+        const asked = await call(d, { body: { action: 'request', token, nic: NIC } });
+        expect(asked.status).toBe(200);
+        expect(asked.json.ok).toBe(true);
+        expect(later).toHaveLength(1);
+        await Promise.all(later);
+        expect(gw.sent).toHaveLength(1);                         // and it did go out
+    });
+
+    it('a gateway that fails after the answer still leaves the same answer and a failed record for the owner', async () => {
+        const ctx = {}; Object.assign(ctx, makeDb());
+        const token = await seed(ctx);
+        const later = [];
+        const { d } = deps({ ctx, gw: gateway(() => ({ ok: false, kind: 'credit', message: 'no units', retryable: true })) });
+        d.waitUntil = () => (work) => { later.push(work); };
+        const asked = await call(d, { body: { action: 'request', token, nic: NIC } });
+        expect(asked.status).toBe(200);
+        await Promise.all(later);                                // must not throw
+        const mirrored = [...ctx.fs.data.entries()].filter(([k]) => k.includes('/smsLog/otp-')).map(([, v]) => v);
+        expect(mirrored.map((m) => m.status)).toEqual(['failed']);
+    });
+});
