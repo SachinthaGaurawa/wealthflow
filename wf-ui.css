@@ -359,7 +359,8 @@ html.wf-ios-stable .topbar { background: var(--wf-bg); -webkit-backdrop-filter: 
 .btn-xs { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 8px; }
 .btn:disabled { opacity: .45; }
 .btn-lg { height: 46px; padding: 0 22px; font-size: 15px; }
-@media (pointer: coarse) { .btn { min-height: 44px; } .btn-sm { min-height: 40px; } .btn-xs { min-height: 34px; } }
+/* Same floor the app has always held (index.html): 44 px for a finger, on touch screens and at phone widths. */
+@media (pointer: coarse), (max-width: 768px) { .btn, .btn-sm, .btn-xs { min-height: 44px; min-width: 44px; } }
 
 /* ═════════════════ 9. CHIPS + SEGMENTED CONTROLS ════════════════════════════ */
 .sort-bar, .exp-view-toggle, .month-tabs, .dash-view-switch { gap: 6px; align-items: center; }
