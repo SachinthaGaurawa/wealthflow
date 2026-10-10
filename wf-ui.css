@@ -757,6 +757,87 @@ html.wf-sheet-open, html.wf-sheet-open body { overscroll-behavior: contain; }
     .content { padding-left: 40px; padding-right: 40px; }
 }
 
+/* ═════════════════ 22. DASHBOARD ════════════════════════════════════════════
+   The dashboard is a stack of independent blocks that other code fills by id. Making
+   the page a flex column lets `order` choose the reading order (money first, then what
+   needs the owner, then charts, then housekeeping) without moving a single node. */
+#page-dashboard.active { display: flex; flex-direction: column; gap: 16px; }
+#page-dashboard > * { margin-bottom: 0 !important; }
+#page-dashboard > #wfGreet { order: 0; }
+#page-dashboard > #dashStats { order: 1; }
+#page-dashboard > #wfRunway { order: 2; }
+#page-dashboard > #wfBrief { order: 3; }
+#page-dashboard > #wfVerifyQueue { order: 4; }
+#page-dashboard > .dash-view-switch { order: 5; }
+#page-dashboard > .dash-chart-row { order: 6; }
+#page-dashboard > .g2 { order: 7; }
+#page-dashboard > #wfMailSync { order: 8; }
+#page-dashboard > .golden-frame { order: 9; }
+
+.wf-greet { padding: 4px 2px 2px; }
+.wf-greet-h { margin: 0; font-size: clamp(22px, 3.4vw, 28px); font-weight: 650; letter-spacing: -.028em; line-height: 1.15; color: var(--wf-text); }
+.wf-greet-p { margin: 4px 0 0; font-size: 13.5px; color: var(--wf-text-3); }
+
+/* The summary bar: five figures on one surface, divided by hairlines, not five boxes. */
+#dashStats {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0;
+    background: var(--wf-card); border: 1px solid var(--wf-line); border-radius: var(--wf-r-lg); box-shadow: var(--wf-shadow-1); overflow: hidden;
+}
+#dashStats .stat-card { position: relative; background: none; border: 0; border-radius: 0; box-shadow: none; padding: 20px 22px 18px; min-width: 0; }
+#dashStats .stat-card + .stat-card::before { content: ''; position: absolute; left: 0; top: 18px; bottom: 18px; width: 1px; background: var(--wf-line); }
+#dashStats .stat-label { font-size: 12.5px; }
+#dashStats .stat-label::before { display: none; }
+#dashStats .stat-val { font-size: clamp(20px, 2.2vw, 28px); font-weight: 650; font-variant-numeric: tabular-nums; margin: 8px 0 4px; color: var(--wf-text); overflow-wrap: anywhere; }
+#dashStats .sc-green .stat-val { color: var(--wf-pos); }
+#dashStats .sc-red .stat-val, #dashStats .sc-blue .stat-val, #dashStats .sc-cyan .stat-val { color: var(--wf-text); }
+#dashStats .stat-val.is-neg { color: var(--wf-neg); }
+#dashStats .stat-val.is-pos { color: var(--wf-text); }
+#dashStats .sc-gold .stat-val.is-pos { color: var(--wf-pos); }
+#dashStats .stat-meta { font-size: 12px; line-height: 1.4; }
+#dashStats > [style*="grid-column"] { margin: 12px; border-radius: var(--wf-r-md) !important; }
+
+/* The attention feed and the confirmation queue sit on cards of their own. */
+#wfBrief:empty, #wfBrief[style*="display: none"] { display: none; }
+#wfVerifyQueue .wf-vq { padding: 18px 20px; }
+#wfVerifyQueue .btn-primary { background: var(--wf-accent-soft); color: var(--wf-accent); border: 1px solid var(--wf-accent-line); box-shadow: none; }
+#wfVerifyQueue .btn-primary:hover:not(:disabled) { background: var(--wf-accent-fill); color: var(--wf-accent-ink); }
+#wfVerifyQueue .btn-secondary { background: transparent; border-color: var(--wf-line-2); color: var(--wf-text-2); }
+#wfVerifyQueue .wf-vq-row { border-top-color: var(--wf-line) !important; }
+.wf-vq:not(.is-open) .wf-vq-row[data-more] { display: none !important; } /* the rows carry an inline display:flex */
+.wf-vq .wfx-toggle {
+    border: 0; background: none; color: var(--wf-accent); font: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 2px; min-height: 40px; cursor: pointer; border-radius: 8px;
+}
+.wf-vq .wfx-toggle:hover { text-decoration: underline; }
+
+/* The runway keeps its colour cue (clear / tight / critical) as a quiet left edge. */
+#wfRunway .wf-runway { border-left-width: 3px; }
+#wfRunway .wf-runway-when { font-size: 20px; font-weight: 650; letter-spacing: -.02em; }
+#wfRunway .wf-runway-fig { background: var(--wf-card-2); border-radius: var(--wf-r-sm); }
+
+/* Statement sync and the AI card are housekeeping: quieter, and last. */
+.golden-frame { background: var(--wf-card); border-color: var(--wf-line); }
+.golden-frame .gf-btn { background: var(--wf-accent-soft); color: var(--wf-accent); border: 1px solid var(--wf-accent-line); box-shadow: none; }
+.golden-frame .gf-btn:hover { background: var(--wf-accent-fill); color: var(--wf-accent-ink); }
+
+.dash-view-switch { justify-content: flex-end; font-size: 12px; color: var(--wf-text-3); }
+
+@media (max-width: 1100px) {
+    #dashStats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    #dashStats .stat-card:nth-child(n+4)::before { display: block; }
+    #dashStats .stat-card:nth-child(3n+1)::before { display: none; }
+}
+@media (max-width: 900px) {
+    #page-dashboard.active { gap: 14px; }
+    #dashStats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #dashStats .stat-card { padding: 16px 16px 14px; }
+    #dashStats .stat-card::before { display: none !important; }
+    #dashStats .stat-card:nth-child(2n) { border-left: 1px solid var(--wf-line); }
+    #dashStats .stat-card:nth-child(n+3) { border-top: 1px solid var(--wf-line); }
+    #dashStats .stat-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+    #dashStats .stat-val { font-size: clamp(20px, 6vw, 26px); }
+    #wfVerifyQueue .wf-vq { padding: 16px; }
+}
+
 /* ═════════════════ 21. MOTION PREFERENCES ═══════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }

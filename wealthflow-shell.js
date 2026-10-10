@@ -583,9 +583,40 @@
         }
     }
 
+    /* ───────── dashboard greeting ─────────
+       The first line of the dashboard: whom it is for, and today's date. Built from the sidebar's
+       name and the clock only; nothing is read from the books. */
+    function greetText() {
+        var h = new Date().getHours();
+        var part = h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+        var n = doc.querySelector('.sb-user-name');
+        var first = n ? String(n.textContent || '').trim().split(/\s+/)[0] : '';
+        if (/^(wealthflow|user)$/i.test(first)) first = '';
+        return part + (first ? ', ' + first : '');
+    }
+    function installGreeting() {
+        var pg = doc.getElementById('page-dashboard');
+        if (!pg || doc.getElementById('wfGreet')) return;
+        var g = doc.createElement('div');
+        g.id = 'wfGreet';
+        g.className = 'wf-greet';
+        pg.insertBefore(g, pg.firstChild);
+        function paint() {
+            var ds = '';
+            try { ds = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }); } catch (_) {}
+            g.innerHTML = '<h2 class="wf-greet-h">' + esc(greetText()) + '</h2><p class="wf-greet-p">' + esc(ds) + '</p>';
+        }
+        paint();
+        /* The name arrives after sign-in, and the part of the day moves on. */
+        var nm = doc.querySelector('.sb-user-name');
+        if (nm && window.MutationObserver) new MutationObserver(paint).observe(nm, { childList: true, characterData: true, subtree: true });
+        setInterval(paint, 300000);
+    }
+
     /* ───────── boot ───────── */
     function init() {
         installHeader();
+        installGreeting();
         installBrandPanel();
         installTabbar();
         watchPages();

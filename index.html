@@ -9692,6 +9692,17 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             return c + ' ' + fmtN(n);
         };
 
+        /* One unit for a whole axis (all M, or all L), without the currency on every tick: the old per-tick fmtS printed 1.20M above 8.00L. */
+        const fmtAxis = (v, i, ticks) => {
+            if (_wfDisplayPrefs().hide) return '';
+            if (v === 0) return '0';
+            const top = Math.max.apply(null, (ticks || []).map((t) => Math.abs(t.value)).concat(Math.abs(v)));
+            const d = top >= 1000000 ? 1000000 : top >= 100000 ? 100000 : 0;
+            if (!d) return fmtN(v);
+            const frac = (ticks || []).some((t) => Math.abs((t.value / d) % 1) > 1e-9);
+            return (v / d).toFixed(frac ? 1 : 0) + (d === 1000000 ? 'M' : 'L');
+        };
+
         const parseMoney = (s) => parseFloat(String(s).replace(/,/g, '')) || 0;
         function fmtDatePretty(dateStr) {
             if (!dateStr) return '';
@@ -24828,7 +24839,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             };
 
             const body = shown.map((r, i) => `
-                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 0;border-top:1px solid var(--border);">
+                <div class="wf-vq-row"${i >= 4 ? ' data-more="1"' : ''} style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 0;border-top:1px solid var(--border);">
                     <div style="flex:1;min-width:170px;">
                         <div style="font-size:13.5px;font-weight:700;color:var(--text);overflow-wrap:anywhere;">
                             ${_wfEsc(r.name)}${r.company ? ' <span style="color:var(--text3);font-weight:400;">· ' + _wfEsc(r.company) + '</span>' : ''}
@@ -24860,7 +24871,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>`).join('');
 
             host.innerHTML = `
-                <div class="card" style="padding:16px;">
+                <div class="card wf-vq" style="padding:16px;">
                     <div class="card-hdr-row">
                         <div style="font-size:20px;display:flex;align-items:center;color:var(--accent);flex-shrink:0;">${(window.WFIcon && WFIcon.has('checkCircle')) ? WFIcon('checkCircle') : ''}</div>
                         <div class="card-hdr-main">
@@ -24876,11 +24887,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                         confirm the ones that actually happened.
                     </div>
                     ${body}
+                    ${shown.length > 4 ? `<button type="button" class="wfx-toggle" data-vq-toggle aria-expanded="false">Show ${shown.length - 4} more</button>` : ''}
                     ${rows.length > shown.length ? `<div style="font-size:11.5px;color:var(--text3);padding-top:10px;">
                         ${_wfEsc(String(rows.length - shown.length))} more waiting — confirm these and the rest appear.
                     </div>` : ''}
                 </div>`;
 
+            const _vqT = host.querySelector('[data-vq-toggle]');
+            if (_vqT) _vqT.onclick = () => {
+                const open = host.querySelector('.wf-vq').classList.toggle('is-open');
+                _vqT.setAttribute('aria-expanded', String(open));
+                _vqT.textContent = open ? 'Show fewer' : 'Show ' + (shown.length - 4) + ' more';
+            };
             host.querySelectorAll('[data-vq-ok]').forEach((b) => {
                 b.onclick = () => {
                     const r = shown[Number(b.getAttribute('data-vq-ok'))];
@@ -28850,7 +28868,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             // v7.65.0 — what actually needs you today, ranked by urgency then by money.
             try {
-                if (window.WFInsights) window.WFInsights.renderInto('wfBrief', window.WFInsights.brief(5), { title: 'Needs your attention', allClear: true });
+                if (window.WFInsights) window.WFInsights.renderInto('wfBrief', window.WFInsights.brief(5), { title: 'Needs your attention', allClear: true, cap: 3 });
             } catch (_) {}
             try { renderRunwayCard(); } catch (_) {}
             /* The queue of due-but-unconfirmed money, drawn every time the
@@ -28905,9 +28923,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             $('dashStats').innerHTML = predictiveHtml + `
         <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div>${yrPending > 0 ? `<div class="stat-meta">${fmtS(yrPending)} not yet confirmed received</div>` : ''}</div>
         <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div>${yrLoanUnpaid > 0 ? `<div class="stat-meta">${fmtS(yrLoanUnpaid)} of loan installments due, not marked paid</div>` : ''}</div>
-        <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val">${fmtS(yrInc - yrExp)}</div>${forexHtml}</div>
+        <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val ${yrInc - yrExp < 0 ? 'is-neg' : 'is-pos'}">${fmtS(yrInc - yrExp)}</div>${forexHtml}</div>
         <div class="stat-card sc-blue"><div class="stat-label">${periodCardTitle}</div><div class="stat-val">${fmtS(periodExp)}</div><div class="stat-meta">${periodLabel}</div></div>
-        ${DB.getObj('settings', {}).showSavingsRate === false ? '' : `<div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>`}
+        ${DB.getObj('settings', {}).showSavingsRate === false ? '' : `<div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val ${yrInc > 0 && yrInc - yrExp < 0 ? 'is-neg' : 'is-pos'}">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>`}
     `;
 
 
@@ -28934,7 +28952,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             { label: 'Expenses', data: expData, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.4 }
                         ]
                     },
-                    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, hover: { mode: 'index', intersect: false }, plugins: { legend: { display: true, position: 'top', align: 'end', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, color: _wfDashLegendColor(), font: { size: 11 } } }, tooltip: { mode: 'index', intersect: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmtS(v) } } } }
+                    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, hover: { mode: 'index', intersect: false }, plugins: { legend: { display: true, position: 'top', align: 'end', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, color: _wfDashLegendColor(), font: { size: 11 } } }, tooltip: { mode: 'index', intersect: false } }, scales: { y: { beginAtZero: true, title: { display: true, text: _getCurrency(), font: { size: 10 } }, ticks: { callback: fmtAxis } } } }
                 });
             }
 

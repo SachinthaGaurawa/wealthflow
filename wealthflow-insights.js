@@ -780,11 +780,13 @@
     }
 
     /* ── the strip you actually see ─────────────────────────────────────────── */
+    // Colours are theme tokens (wf-tokens.css) so a tile reads in the dark and the light theme alike;
+    // the hex fallbacks are the old dark values for a page that loads this module without the tokens.
     var TONE = {
-        critical: ['#ff5c5c', 'rgba(255,92,92,.13)', 'rgba(255,92,92,.28)'],
-        high:     ['#f0b34e', 'rgba(245,158,11,.11)', 'rgba(245,158,11,.24)'],
-        medium:   ['#7fb2ff', 'rgba(127,178,255,.09)', 'rgba(127,178,255,.2)'],
-        low:      ['#8d99ad', 'rgba(255,255,255,.035)', 'rgba(255,255,255,.08)']
+        critical: ['var(--wf-neg,#ff5c5c)', 'var(--wf-neg-soft,rgba(255,92,92,.13))', 'color-mix(in srgb,var(--wf-neg,#ff5c5c) 34%,transparent)'],
+        high:     ['var(--wf-warn,#f0b34e)', 'var(--wf-warn-soft,rgba(245,158,11,.11))', 'color-mix(in srgb,var(--wf-warn,#f0b34e) 34%,transparent)'],
+        medium:   ['var(--wf-info,#7fb2ff)', 'var(--wf-info-soft,rgba(127,178,255,.09))', 'color-mix(in srgb,var(--wf-info,#7fb2ff) 30%,transparent)'],
+        low:      ['var(--wf-text-3,#8d99ad)', 'var(--wf-hover,rgba(255,255,255,.035))', 'var(--wf-line,rgba(255,255,255,.08))']
     };
     var GLYPH = {
         card_overdue: 'M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
@@ -815,6 +817,7 @@
         inc_drop: 'M23 18l-9.5-9.5-5 5L1 6M17 18h6v-6',
         inc_concentration: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'
     };
+    var openFeeds = {};
     function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
     function styleOnce() {
@@ -822,23 +825,29 @@
         var st = document.createElement('style'); st.id = 'wfx-css';
         st.textContent = [
             '.wfx-wrap{display:flex;flex-direction:column;gap:8px}',
-            '.wfx-hdr{display:flex;align-items:center;gap:8px;margin:0 2px 4px;font-size:11px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:var(--muted,#8d99ad)}',
-            '.wfx-hdr span{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:700;font-size:11px;color:var(--muted,#8d99ad)}',
-            '.wfx{display:flex;gap:11px;align-items:flex-start;padding:11px 12px;border-radius:13px;border:1px solid;line-height:1.42}',
-            '.wfx-ic{flex:0 0 auto;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:rgba(255,255,255,.05)}',
-            '.wfx-t{font-size:13px;font-weight:750;color:var(--text,#eef2f8);margin-bottom:2px}',
-            '.wfx-b{font-size:11.5px;color:var(--muted,#8d99ad)}',
-            '.wfx-a{display:inline-block;margin-top:6px;font-size:11px;font-weight:750;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.06)}',
-            '.wfx-ok{display:flex;gap:9px;align-items:center;padding:13px;border-radius:13px;border:1px solid rgba(52,211,153,.22);background:rgba(52,211,153,.07);color:#34d399;font-size:12.5px;font-weight:650}'
+            '.wfx-hdr{display:flex;align-items:center;gap:8px;margin:0 2px 2px;font-size:11.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--wf-text-3,#8d99ad)}',
+            '.wfx-hdr span{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:600;font-size:11.5px;color:var(--wf-text-3,#8d99ad)}',
+            // the tone lives in three custom properties, so one rule paints a tile in either theme
+            '.wfx{position:relative;display:flex;gap:12px;align-items:flex-start;padding:12px 14px 12px 16px;border-radius:14px;border:1px solid var(--wfx-ln);background:var(--wf-card,rgba(255,255,255,.03));line-height:1.45;overflow:hidden}',
+            '.wfx::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--wfx-c)}',
+            '.wfx-ic{flex:0 0 auto;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--wfx-bg);color:var(--wfx-c)}',
+            '.wfx-t{font-size:13.5px;font-weight:650;color:var(--wf-text,#eef2f8);margin-bottom:2px;letter-spacing:-.005em}',
+            '.wfx-b{font-size:12.5px;color:var(--wf-text-2,#8d99ad)}',
+            '.wfx-a{display:inline-block;margin-top:8px;font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;background:var(--wfx-bg);color:var(--wfx-c);border:1px solid var(--wfx-ln);font-family:inherit}',
+            'button.wfx-a{cursor:pointer}button.wfx-a:hover{filter:brightness(1.12)}',
+            '.wfx-wrap:not(.wfx-open) .wfx[data-more]{display:none}',
+            '.wfx-toggle{align-self:flex-start;border:0;background:none;color:var(--wf-accent,#e4c26b);font:inherit;font-size:12.5px;font-weight:600;padding:8px 4px;min-height:36px;cursor:pointer;border-radius:8px}',
+            '.wfx-toggle:hover{text-decoration:underline}',
+            '.wfx-ok{display:flex;gap:9px;align-items:center;padding:14px;border-radius:14px;border:1px solid color-mix(in srgb,var(--wf-pos,#34d399) 30%,transparent);background:var(--wf-pos-soft,rgba(52,211,153,.07));color:var(--wf-pos,#34d399);font-size:13px;font-weight:600}'
         ].join('');
         document.head.appendChild(st);
     }
 
-    function tile(it) {
+    function tile(it, more) {
         var t = TONE[it.sev] || TONE.low;
         var path = GLYPH[it.kind] || GLYPH.card_util;
-        return '<div class="wfx" style="border-color:' + t[2] + ';background:' + t[1] + '">' +
-            '<div class="wfx-ic" style="color:' + t[0] + '"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg></div>' +
+        return '<div class="wfx"' + (more ? ' data-more="1"' : '') + ' style="--wfx-c:' + t[0] + ';--wfx-bg:' + t[1] + ';--wfx-ln:' + t[2] + '">' +
+            '<div class="wfx-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg></div>' +
             '<div style="min-width:0"><div class="wfx-t">' + esc(it.title) + '</div>' +
             (it.body ? '<div class="wfx-b">' + esc(it.body) + '</div>' : '') +
             // A call to action must BE one. This used to emit a <button> only when
@@ -856,8 +865,8 @@
                 ? '<button type="button" class="wfx-a wfx-fix"'
                     + (it.fix ? ' data-fix="' + esc(it.fix) + '"' : '')
                     + (it.go ? ' data-go="' + esc(it.go) + '"' : '')
-                    + ' style="color:' + t[0] + ';border:1px solid ' + t[2] + ';cursor:pointer;background:rgba(255,255,255,.06)">' + esc(it.action) + '</button>'
-                : '<div class="wfx-a" style="color:' + t[0] + '">' + esc(it.action) + '</div>') : '') +
+                    + '>' + esc(it.action) + '</button>'
+                : '<div class="wfx-a">' + esc(it.action) + '</div>') : '') +
             '</div></div>';
     }
 
@@ -877,9 +886,23 @@
             return 0;
         }
         el.style.display = '';
-        el.innerHTML = '<div class="wfx-wrap">' +
+        // A long feed is the first thing the dashboard shows, so only the first `cap` tiles are open;
+        // the rest are one tap away, and the count in the header is still the true number.
+        var cap = opts.cap > 0 && items.length > opts.cap ? opts.cap : 0;
+        var openKey = el.id || '', isOpen = !!(cap && openKey && openFeeds[openKey]);
+        el.innerHTML = '<div class="wfx-wrap' + (isOpen ? ' wfx-open' : '') + '">' +
             (opts.title ? '<div class="wfx-hdr">' + esc(opts.title) + '<span>' + items.length + '</span></div>' : '') +
-            items.map(tile).join('') + '</div>';
+            items.map(function (it, i) { return tile(it, cap && i >= cap); }).join('') +
+            (cap ? '<button type="button" class="wfx-toggle" aria-expanded="' + isOpen + '">' + (isOpen ? 'Show fewer' : 'Show ' + (items.length - cap) + ' more') + '</button>' : '') + '</div>';
+        try {
+            var tg = el.querySelector('.wfx-toggle');
+            if (tg) tg.onclick = function () {
+                var wrap = tg.parentNode, open = wrap.classList.toggle('wfx-open');
+                if (openKey) openFeeds[openKey] = open;
+                tg.setAttribute('aria-expanded', String(open));
+                tg.textContent = open ? 'Show fewer' : 'Show ' + (items.length - cap) + ' more';
+            };
+        } catch (_) {}
         // wire the one-tap repairs
         try {
             el.querySelectorAll('.wfx-fix').forEach(function (b) {
