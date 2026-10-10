@@ -18,7 +18,7 @@
 }
 
 :root {
-    color-scheme: light dark;
+    color-scheme: light;
     --bg: #f3f6fb;
     --surface: #ffffff;
     --surface-2: #f3f6fb;
@@ -58,8 +58,11 @@
     --radius: 18px;
 }
 
+/* Three looks, chosen with the button in the header: Light (the default), Dark, or Auto (the phone's own choice).
+   The page sets data-theme on <html>; with no script the page is Light. */
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root[data-theme="auto"] {
+        color-scheme: dark;
         --bg: #0a111f;
         --surface: #131c2e;
         --surface-2: #1a2438;
@@ -97,6 +100,45 @@
         --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.28);
         --shadow-hero: 0 14px 34px rgba(0, 0, 0, 0.5);
     }
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0a111f;
+    --surface: #131c2e;
+    --surface-2: #1a2438;
+    --bar: rgba(10, 17, 31, 0.86);
+    --bar-solid: #0f1829;
+    --line: #26334d;
+    --line-strong: #3a4a69;
+    --ink: #e9eef8;
+    --mute: #9fadc7;
+    --primary: #6aa4ff;
+    --primary-dark: #8cb9ff;
+    --primary-weak: #172a4d;
+    --primary-line: #2b4a82;
+    --green: #4cd3a0;
+    --green-weak: #0f2f27;
+    --green-line: #1d5c49;
+    --amber: #f5b64a;
+    --amber-weak: #33260c;
+    --amber-line: #6b4d12;
+    --red: #ff8a80;
+    --red-weak: #3a1714;
+    --red-line: #7a2c25;
+    --note-bg: #2f2410;
+    --note-line: #f59e0b;
+    --note-ink: #f4ead6;
+    --note-label: #fbbf4a;
+    --placeholder: #71819e;
+    --snack: #e9eef8;
+    --snack-ink: #0f1b33;
+    --focus: rgba(140, 185, 255, 0.8);
+    --ring: rgba(106, 164, 255, 0.28);
+    --hero-a: #0b1d44;
+    --hero-b: #0e3d8c;
+    --hero-c: #1250b0;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.28);
+    --shadow-hero: 0 14px 34px rgba(0, 0, 0, 0.5);
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -149,6 +191,7 @@ body {
     transition: background 0.15s, border-color 0.15s;
 }
 .tp-lang { min-width: 88px; }
+.tp-theme { min-width: 64px; }
 .tp-out { color: var(--ink); padding: 8px 14px; }
 .tp-lang:hover, .tp-out:hover { background: var(--primary-weak); border-color: var(--primary); }
 .tp-out .tp-ico { width: 20px; height: 20px; }
@@ -240,7 +283,8 @@ select:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
     cursor: pointer;
     transition: filter 0.15s, background 0.15s, border-color 0.15s, transform 0.1s;
 }
-@media (prefers-color-scheme: dark) { .tp-btn { color: #04122b; } }
+:root[data-theme="dark"] .tp-btn { color: #04122b; }
+@media (prefers-color-scheme: dark) { :root[data-theme="auto"] .tp-btn { color: #04122b; } }
 .tp-btn:hover:not(:disabled) { filter: brightness(1.08); }
 .tp-btn:active:not(:disabled) { transform: translateY(1px); }
 .tp-btn:disabled { opacity: 0.55; cursor: not-allowed; }
@@ -493,7 +537,9 @@ td.tp-num, th.tp-num { text-align: right; }
     .tp-brand { font-size: 16px; gap: 8px; }
     .tp-logo { width: 28px; height: 28px; border-radius: 7px; }
     .tp-top-in { gap: 8px; }
-    .tp-lang { min-width: 56px; padding: 8px 10px; }
+    .tp-top-actions { gap: 4px; }
+    .tp-lang { min-width: 48px; padding: 8px 6px; font-size: 13px; }
+    .tp-theme { min-width: 44px; }
     h2 { font-size: 21px; }
     .tp-card { padding: 14px 10px; }
     .tp-hero-top { gap: 8px; }
@@ -528,6 +574,7 @@ td.tp-num, th.tp-num { text-align: right; }
 @media (pointer: coarse) {
     .tp-btn, .tp-lang, .tp-out, .tp-copy, .tp-small-btn, button.tp-chip.tp-refcopy { min-height: 48px; }
     .tp-lang { min-width: 88px; }
+    .tp-theme { min-width: 64px; }
 }
 
 /* ── motion: a gentle rise for the cards, a breathing placeholder, a smooth scroll; all of it off when the phone asks ─ */

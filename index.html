@@ -13606,6 +13606,50 @@ function _wfCapMore(key) {
 window._wfCap = _wfCap;
 window._wfCapMore = _wfCapMore;
 
+/* ── completed records are permanent ──────────────────────────────────────────
+ * A plan or tracked item that has been finished (investment settled or ended,
+ * loan paid off, instalment complete, card charge paid, cheque cleared, debtor
+ * settled, pawn redeemed, savings target reached) is part of the owner's history. It is never deleted
+ * from the app: the Delete button on it only explains that, and every list
+ * keeps these records on screen in their own "Completed" section. Edit, re-open
+ * and undo still work, so a record marked done by mistake can be put right. */
+function _wfIsDone(kind, rec) {
+    try {
+        if (!rec) return false;
+        switch (kind) {
+            case 'investment': { const end = rec.end ? new Date(rec.end + 'T00:00:00') : null; return Number(rec.closedAt) > 0 || !!(end && end < new Date()); }
+            case 'loan': return loanEndDate(rec) <= new Date() || (rec.duration > 0 && loanProgress(rec).paid >= rec.duration);
+            case 'ccinstall': return !!rec.completed;
+            case 'ccot': return !!rec.paid;
+            case 'cheque': return rec.status === 'cleared';
+            case 'debtor': return window.WFLiquidity ? WFLiquidity.debtorSummary(rec, new Date()).state !== WFLiquidity.DEBT_STATE.OPEN : false;
+            case 'target': return rec.amount > 0 && (rec.savings || []).reduce((n, x) => n + (Number(x && x.amount) || 0), 0) >= rec.amount;
+            case 'pawn': return !!rec.redeemedAt || String(rec.state || '').toUpperCase() === 'REDEEMED';
+        }
+    } catch (_) {}
+    return false;
+}
+function _wfKeepDone(kind, rec) {
+    if (!_wfIsDone(kind, rec)) return false;
+    notify('Completed records are kept for good. You can still edit it' + (kind === 'investment' || kind === 'debtor' ? ' or re-open it.' : '.'), 'info');
+    return true;
+}
+/* The Completed header every list shares: what it is, how many, and why Delete is off. */
+function _wfDoneLabel(n, what) {
+    return '<div class="income-section-label wf-done-label" style="margin-top:20px;color:var(--text3);">@checkCircle@ Completed ' + what + ' (' + n + ') <span style="font-weight:500;font-size:11px;">kept for your records</span></div>';
+}
+function _wfDoneRow(n, what, cols) {
+    return '<tr class="wf-done-sep"><td colspan="' + cols + '" style="padding:14px 10px 6px;font-weight:700;font-size:12px;color:var(--text3);">Completed ' + what + ' (' + n + ') · kept for your records</td></tr>';
+}
+/* Open items first, completed ones after, each group paged on its own so a long Completed list can never push open items off the page. */
+function _wfSplitCap(key, rows, kind) {
+    const act = [], dn = [];
+    (rows || []).forEach((r) => { (_wfIsDone(kind, r) ? dn : act).push(r); });
+    const a = _wfCap(key, act), d = _wfCap(key + 'Done', dn);
+    return { a, d, rows: a.rows.concat(d.rows), firstDone: d.rows[0] || null, doneCount: dn.length };
+}
+window._wfIsDone = _wfIsDone; window._wfKeepDone = _wfKeepDone;
+
 /* ── text from outside must not be rendered as markup ─────────────────────────
  * A bank statement is a file from outside this app. Its narrations become the
  * `desc` on an expense, its payee names become `name`, and those were
@@ -18640,6 +18684,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             calcIncomeM(); openModal('mdIncome'); setTimeout(initAllAC, 100);
         }
         function deleteIncome(id) {
+            if (_wfKeepDone('investment', (DB.get('income') || []).find(x => x && x.id === id))) return;
             showConfirm('@trash@', 'Delete Income Source?', 'This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
                 DB.set('income', DB.get('income').filter(x => x.id !== id)); renderIncome(); renderDash(); notify('Deleted', 'info');
             });
@@ -18974,6 +19019,13 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             ${source.notes ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${_wfEsc(source.notes)}</div>` : ''}
         </div>`;
             };
+            /* One record with bad data must not blank the rest of the page (it used to abort the whole render, including the Completed section). */
+            const safeCard = (src, isArchived) => {
+                try { return renderCard(src, isArchived); } catch (e) {
+                    try { console.warn('[income] could not draw one record:', e && e.message); } catch (_) {}
+                    return `<div class="inc-card"><div style="font-size:15px;font-weight:700;">${_wfEsc((src && src.name) || 'Investment')}</div><div style="font-size:12px;color:var(--text3);margin-top:4px;">This record has incomplete details, so its card cannot be drawn. It is kept. Press Edit to fix it.</div><div class="act-btns" style="margin-top:8px;"><button aria-label="Edit this income source" class="ib e" onclick="editIncome('${_wfJsAttr(src && src.id)}')"><i data-wfi="edit"></i></button></div></div>`;
+                }
+            };
 
             el.innerHTML = `<div class="g3" style="margin-bottom:16px;">
         <div class="stat-card sc-green"><div class="stat-label">Monthly Income</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmtExact(totM) ? fmtExact(totM) + ' · ' : ''}active sources</div></div>
@@ -18985,13 +19037,15 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             if (activeArr.length) {
                 el.innerHTML += `<div class="income-section-label">@wallet@ Active Income Sources (${activeArr.length})</div>`;
                 const _capA = _wfCap('incomeActive', activeArr);
-                el.innerHTML += _capA.rows.map(src => renderCard(src, false)).join('') + _capA.bar;
+                el.innerHTML += _capA.rows.map(src => safeCard(src, false)).join('') + _capA.bar;
             }
 
+            /* Completed investments (settled or past their end date) are permanent and always on screen, in their own section. The old "Show/Hide"
+             * button hid them from view (and read "Show" while they were showing), so it is gone. */
             if (endedArr.length) {
-                el.innerHTML += `<div class="income-section-label" style="margin-top:20px;color:var(--text3);">@folder@ Archived / Ended Sources (${endedArr.length}) <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px;" onclick="toggleEndedIncome()">${($('endedIncomeWrap') ? 'Hide' : 'Show')}</button></div>`;
+                el.innerHTML += _wfDoneLabel(endedArr.length, 'investments');
                 const _capE = _wfCap('incomeEnded', endedArr);
-                el.innerHTML += `<div id="endedIncomeWrap">` + _capE.rows.map(src => renderCard(src, true)).join('') + _capE.bar + `</div>`;
+                el.innerHTML += `<div id="endedIncomeWrap">` + _capE.rows.map(src => safeCard(src, true)).join('') + _capE.bar + `</div>`;
             }
             _wfApplyListSearch('income');
         }
@@ -19372,11 +19426,6 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             });
         }
 
-        function toggleEndedIncome() {
-            const wrap = $('endedIncomeWrap');
-            if (wrap) wrap.style.display = wrap.style.display === 'none' ? '' : 'none';
-        }
-
         // ==================== LOANS ====================
         function saveLoan() {
             const name = $('l_name').value.trim(), bank = $('l_bank').value, amount = parseMoney($('l_amount').value), rate = parseFloat($('l_rate').value) || 0, dur = parseInt($('l_dur').value) || 0, start = $('l_start').value;
@@ -19463,6 +19512,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             calcLoanM(); openModal('mdLoan');
         }
         function deleteLoan(id) {
+            if (_wfKeepDone('loan', (DB.get('loans') || []).find(x => x && x.id === id))) return;
             showConfirm('@trash@', 'Delete Loan?', 'Monthly payments will no longer be tracked.', 'btn-danger', '@trash@ Delete', () => {
                 DB.set('loans', DB.get('loans').filter(x => x.id !== id)); renderLoans(); renderDash(); notify('Loan deleted', 'info');
             });
@@ -20230,7 +20280,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         <div class="stat-card sc-red"><div class="stat-label">Monthly Loan Payments</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmtExact(totM) || 'across ' + activeLoans.length + ' active loan' + (activeLoans.length === 1 ? '' : 's')}</div></div>
         <div class="stat-card sc-blue"><div class="stat-label">Total Principal</div><div class="stat-val">${fmtS(totA)}</div></div>
         <div class="stat-card sc-purple"><div class="stat-label">Active Loans</div><div class="stat-val">${activeLoans.length}</div></div>
-    </div>` + (function () { window._capLoans = _wfCap('loans', arr); return window._capLoans.rows; })().map(l => {
+    </div>` + (function () { window._capLoans = _wfSplitCap('loans', arr, 'loan'); return window._capLoans.rows; })().map(l => {
                 const prog = loanProgress(l), end = loanEndDate(l), active = end > new Date();
                 const months = _loanInstallmentMonths(l);
                 const payments = l.payments || [];
@@ -20268,7 +20318,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     ? `<div style="font-size:10px;color:var(--text3);font-weight:400;line-height:1;">next month (varies)</div>`
                     : '';
 
-                return `<div class="loan-card">
+                return (l === window._capLoans.firstDone ? window._capLoans.a.bar + _wfDoneLabel(window._capLoans.doneCount, 'loans') : '') + `<div class="loan-card">
             <div class="loan-top">
                 <div><div class="loan-name">${_wfEsc(l.name)}</div><div class="loan-bank">@bank@ ${_wfEsc(l.bank)}${l.purpose ? ' · ' + l.purpose : ''} · ${methodBadge}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
@@ -20406,7 +20456,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 </div>
             </div>
         </div>`;
-            }).join('') + (window._capLoans ? window._capLoans.bar : '');
+            }).join('') + (window._capLoans.firstDone ? '' : window._capLoans.a.bar) + window._capLoans.d.bar;
         }
 
         // Modal showing all installments for a loan (Amortization Table)
@@ -22032,6 +22082,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             calcCCIM(); openModal('mdCCI');
         }
         function deleteCCI(id) {
+            if (_wfKeepDone('ccinstall', (DB.get('ccinstall') || []).find(x => x && x.id === id))) return;
             showConfirm('@trash@', 'Delete Installment?', '', 'btn-danger', '@trash@ Delete', () => {
                 DB.set('ccinstall', DB.get('ccinstall').filter(x => x.id !== id)); renderCCI(); renderDash(); notify('Deleted', 'info');
             });
@@ -22090,13 +22141,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             $('skip_plan').innerHTML = '<option value="">Select plan...</option>' + active.map(x => `<option value="${_wfEsc(x.id)}">${_wfEsc(x.product)} (${_wfEsc(x.bank)})</option>`).join('');
             const tbody = $('cciBody');
             if (!arr.length) { tbody.innerHTML = `<tr><td colspan="11">${emptyState('@card@', 'No installments', 'Add credit card installment plans to track payments')}</td></tr>`; return; }
-            const _cap = _wfCap('ccinstall', arr);
+            const _cap = _wfSplitCap('ccinstall', arr, 'ccinstall');
             tbody.innerHTML = _cap.rows.map(item => {
                 const prog = cciProgress(item);
                 const end = new Date(item.date + 'T00:00:00'); end.setMonth(end.getMonth() + item.duration);
                 const isActive = end > new Date() && !item.completed;
                 const skipCount = item.skipped?.length || 0;
-                return `<tr class="${item.completed ? 'done-row' : ''}">
+                return (item === _cap.firstDone ? _cap.a.row + _wfDoneRow(_cap.doneCount, 'instalments', 11) : '') + `<tr class="${item.completed ? 'done-row' : ''}">
             <td><div style="font-weight:600;">${_wfEsc(item.product)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
             <td>${item.buyer}</td>
             <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
@@ -22111,7 +22162,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button aria-label="Edit this instalment plan" class="ib e" onclick="editCCI('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
                 <button aria-label="Delete this instalment plan" class="ib d" onclick="deleteCCI('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
-            }).join('') + _cap.row;
+            }).join('') + (_cap.firstDone ? '' : _cap.a.row) + _cap.d.row;
         }
 
         // ==================== CC ONE-TIME ====================
@@ -22235,6 +22286,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             });
         }
         function deleteCCOT(id) {
+            if (_wfKeepDone('ccot', (DB.get('cconetime') || []).find(x => x && x.id === id))) return;
             showConfirm('@trash@', 'Delete?', '', 'btn-danger', '@trash@ Delete', () => {
                 DB.set('cconetime', DB.get('cconetime').filter(x => x.id !== id)); const _rm = _pruneOrphanPayments(); reconcileCC(); renderCCOT(); updateCCOTBadge(); notify(_rm > 0 ? ('Deleted · ' + _rm + ' orphaned payment' + (_rm > 1 ? 's' : '') + ' cleared') : 'Deleted', 'info');
             });
@@ -22534,7 +22586,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             else arr.sort(_cmpNewest); // ↓ Newest (default)
             const tbody = $('ccotBody');
             if (!arr.length) { tbody.innerHTML = `<tr><td colspan="9">${emptyState('@clock@', _ccotBankFilter === 'all' ? 'No one-time payments' : 'No payments for ' + _ccotBankFilter, 'Track CC purchases with the 50-day repayment rule')}</td></tr>`; return; }
-            const _cap = _wfCap('cconetime', arr);
+            const _cap = _wfSplitCap('cconetime', arr, 'ccot');
             tbody.innerHTML = _cap.rows.map(item => {
                 const dl = dLeft(item.deadline);
                 let cdCls = 'cd-safe', cdTxt = dl + ' days';
@@ -22565,7 +22617,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             : item.type === 'service_fee'
                                 ? `<span class="badge" style="background:rgba(59,130,246,.16);color:#3b82f6;">${typeL}</span>`
                                 : `<span class="badge bg-gr">${typeL}</span>`;
-                return `<tr class="${item.paid ? 'done-row' : ''}">
+                return (item === _cap.firstDone ? _cap.a.row + _wfDoneRow(_cap.doneCount, 'card payments', 9) : '') + `<tr class="${item.paid ? 'done-row' : ''}">
             <td><div style="font-weight:600;">${_wfEsc(item.desc)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
             <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
             <td>${typeBadge}</td>
@@ -22578,7 +22630,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="ib e" onclick="editCCOT('${_wfJsAttr(item.id)}')" title="Edit"><i data-wfi="edit"></i></button>
                 <button class="ib d" onclick="deleteCCOT('${_wfJsAttr(item.id)}')" title="Delete"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
-            }).join('') + _cap.row;
+            }).join('') + (_cap.firstDone ? '' : _cap.a.row) + _cap.d.row;
         }
         // Show a popup explaining the cash-advance fee breakdown.
         function _showCCOTBreakdown(id) {
@@ -22629,6 +22681,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             openModal('mdCheque');
         }
         function deleteCheque(id) {
+            if (_wfKeepDone('cheque', (DB.get('cheques') || []).find(x => x && x.id === id))) return;
             showConfirm('@trash@', 'Delete Cheque?', '', 'btn-danger', '@trash@ Delete', () => {
                 DB.set('cheques', DB.get('cheques').filter(x => x.id !== id)); renderCheques(); updateChequeBadge(); notify('Deleted', 'info');
             });
@@ -22671,7 +22724,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const tbody = $('chequeBody');
             if (!arr.length) { tbody.innerHTML = `<tr><td colspan="10">${emptyState('@fileText@', 'No cheques tracked', 'Add received or issued cheques to monitor them')}</td></tr>`; return; }
             const todayDate = today();
-            const _cap = _wfCap('cheques', arr);
+            const _cap = _wfSplitCap('cheques', arr, 'cheque');
             tbody.innerHTML = _cap.rows.map(item => {
                 const daysToRelease = Math.ceil((new Date(item.release + 'T00:00:00') - new Date()) / 86400000);
                 let cdCls = 'cd-safe', cdTxt = daysToRelease > 0 ? daysToRelease + ' days' : 'Today';
@@ -22680,7 +22733,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 else if (daysToRelease < 0) { cdCls = 'cd-warn'; cdTxt = Math.abs(daysToRelease) + 'd overdue'; }
                 else if (daysToRelease <= 3) { cdCls = 'cd-warn'; cdTxt = daysToRelease + ' days'; }
                 const statusMap = { pending: '<span class="badge bg-a">Pending</span>', cleared: '<span class="badge bg-g">Cleared</span>', bounced: '<span class="badge bg-r">Bounced</span>' };
-                return `<tr class="${item.status !== 'pending' ? 'done-row' : ''}">
+                return (item === _cap.firstDone ? _cap.a.row + _wfDoneRow(_cap.doneCount, 'cheques', 10) : '') + `<tr class="${item.status !== 'pending' ? 'done-row' : ''}">
             <td class="td-mono">${_wfEsc(item.no)}</td>
             <td style="font-weight:600;">${_wfEsc(item.party)}</td>
             <td><span class="badge bg-b">${_wfEsc(item.bank)}</span></td>
@@ -22696,7 +22749,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button aria-label="Delete this cheque" class="ib d" onclick="deleteCheque('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button>
             </div></td>
         </tr>`;
-            }).join('') + _cap.row;
+            }).join('') + (_cap.firstDone ? '' : _cap.a.row) + _cap.d.row;
         }
 
         // ==================== EXPENSES ====================
@@ -23188,6 +23241,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             else notify('Saving added! @wallet@');
         }
         function deleteTarget(id) {
+            if (_wfKeepDone('target', (DB.get('targets') || []).find(x => x && x.id === id))) return;
             showConfirm('@trash@', 'Delete Target?', 'All saving entries will also be deleted.', 'btn-danger', '@trash@ Delete', () => {
                 DB.set('targets', DB.get('targets').filter(x => x.id !== id)); renderTargets(); notify('Deleted', 'info');
             });
@@ -24354,6 +24408,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         function _deletePawn(p) {
             if (!p) return;
+            if (_wfKeepDone('pawn', p)) return;
             showConfirm(
                 'trash', 'Delete this ticket?',
                 'This removes ' + (p.item || 'the ticket') + ' and its interest history from WealthFlow. It cannot be undone.',
@@ -24661,6 +24716,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         function _deleteDebtor(d) {
             if (!d) return;
+            if (_wfKeepDone('debtor', d)) return;
             showConfirm(
                 'trash', 'Delete this debtor?',
                 'This removes ' + (d.name || 'the debtor') + ' and their whole repayment history from WealthFlow. It cannot be undone.',

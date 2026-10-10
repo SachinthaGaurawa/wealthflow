@@ -244,6 +244,11 @@ export const SI = Object.freeze({
     'Quick actions': 'ඉක්මන් ක්‍රියා',
     'Hide amounts': 'මුදල් සඟවන්න',
     'Show amounts': 'මුදල් පෙන්වන්න',
+    /* the colour theme button */
+    'Light': 'ආලෝක',
+    'Dark': 'අඳුරු',
+    'Auto': 'ස්වයං',
+    'Colour theme': 'වර්ණ තේමාව',
     'Code sent by text message': 'කේතය කෙටි පණිවිඩයෙන් එවයි',
     'Closes by itself after 20 minutes': 'මිනිත්තු 20කට පසු ස්වයංක්‍රීයව වැසේ',
     'Nothing is saved on your device': 'ඔබේ උපාංගයේ කිසිවක් සුරකින්නේ නැත',
