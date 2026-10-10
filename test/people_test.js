@@ -961,7 +961,15 @@ describe('recordMatches (the search box over the investments and the debtors)', 
         for (const q of ['0771234567', '+94771234567', '77 123', '771234567', '234 5678', '011234']) expect(P.recordMatches(loan, q), q).toBe(true);
         expect(P.recordMatches(inv, '071 222')).toBe(true);
         expect(P.recordMatches({ ...loan, nic: '' }, '77')).toBe(false);           // two digits are not a number: they match names and NICs only
+        expect(P.recordMatches({ ...loan, nic: '' }, '07')).toBe(false);
         expect(P.recordMatches(loan, '5555555')).toBe(false);
+    });
+    it('a number is found as it is typed from the first digits, "077" and "+9477" included, and through the saved person', () => {
+        for (const q of ['077', '0771', '+9477', '94771', '0094771']) expect(P.recordMatches(loan, q), q).toBe(true);
+        expect(P.recordMatches(loan, '071')).toBe(false);
+        expect(P.recordMatches({ id: 'd2', name: 'Sunil', personId: 'p1' }, '0771234567')).toBe(false);
+        const person = { id: 'p1', name: 'Sunil', fullName: 'Sunil Jayasinghe', phone: '0712223344', phone2: '+94 77 765 4321', nic: '199012345678' };
+        for (const q of ['0712223344', '071', '765 4321', 'jayasinghe', '199012345678', 'sunil 0771']) expect(P.recordMatches({ id: 'd2', name: 'Sunil', personId: 'p1' }, q, person), q).toBe(q === 'sunil 0771' ? false : true);
     });
     it('every word has to be found, and a note or an amount is not searched', () => {
         expect(P.recordMatches({ ...loan, note: 'secret', amount: 777 }, 'nimal 0771234567')).toBe(true);

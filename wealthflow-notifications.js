@@ -210,9 +210,14 @@
                 var amountMonth = occ.month || ym;
                 var amt = money((s.monthOverrides && typeof s.monthOverrides[amountMonth] === 'number') ? s.monthOverrides[amountMonth] : s.amount);
                 var label = occ.oneTime ? 'One-time payment' : 'Bill';
-                var id = 'sub:' + s.id + ':' + (occ.oneTime ? occ.date : amountMonth);
+                // A one-time payment is one big, rare sum: it gets a fortnight's notice, where a bill that comes round every month gets a week's.
+                var lead = occ.oneTime ? 14 : 7;
+                // The id carries the STAGE, because a device alert is sent once per id: with one id for the whole life of the bill the owner was told once, a
+                // week ahead, and never again - not on the day, not when it went overdue. A new stage is a new alert; overdue repeats weekly, not daily.
+                var stage = until < 0 ? 'o' + Math.min(Math.floor(Math.abs(until) / 7), 12) : until === 0 ? 'today' : until <= 3 ? 'd3' : 'soon';
+                var id = 'sub:' + s.id + ':' + (occ.oneTime ? occ.date : amountMonth) + ':' + stage;
                 if (until < 0 && st.urgent) out.push({ id: id, sev: 'urgent', cat: label, icon: 'bill', title: label + ' overdue \u2014 ' + esc(s.name || 'Payment'), sub: 'Due ' + esc(occ.date) + ' \u00b7 ' + amt, when: Math.abs(until) + 'd over', date: occ.date, page: 'subscriptions' });
-                else if (until >= 0 && until <= 7 && st.dueSoon) out.push({ id: id, sev: 'warning', cat: label, icon: 'bill', title: label + ' \u2014 ' + esc(s.name || 'Payment'), sub: 'Due ' + esc(occ.date) + ' \u00b7 ' + amt, when: until === 0 ? 'Today' : 'in ' + until + 'd', date: occ.date, page: 'subscriptions' });
+                else if (until >= 0 && until <= lead && st.dueSoon) out.push({ id: id, sev: 'warning', cat: label, icon: 'bill', title: label + ' \u2014 ' + esc(s.name || 'Payment'), sub: 'Due ' + esc(occ.date) + ' \u00b7 ' + amt, when: until === 0 ? 'Today' : 'in ' + until + 'd', date: occ.date, page: 'subscriptions' });
             });
         }
 
