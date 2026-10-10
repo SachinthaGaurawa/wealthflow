@@ -107,6 +107,8 @@ export function matchSubscriptionForDebit(row, subs) {
     const hits = [];
     for (const sub of arr(subs)) {
         if (!sub || !sub.id || !subscriptionCountedIn(sub, ym)) continue;
+        // a one-time bill that is already paid is finished: a later charge from the same merchant is a new payment, not that bill (reopening it is the owner's call)
+        if (/^(once|one-time|onetime)$/.test(low(sub.cycle)) && (sub.paid || sub.completed)) continue;
         // the subscription's month holds ONE amount: a second charge in the same month is its own payment and is filed as one
         if (arr(sub.history).some((h) => h && h.month === ym && h.source === 'statement')) continue;
         const name = words(sub.name);

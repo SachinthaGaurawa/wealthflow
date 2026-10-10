@@ -254,10 +254,17 @@ describe('commitments', () => {
     it('projects a one-time bill exactly once and never turns it into a monthly renewal', () => {
         const A = LEDGER();
         A.subscriptions = [{ id: 'S10', name: 'Domain setup', amount: 12500, dueDay: 17,
-            cycle: 'once', createdAt: '2026-09-02T00:00:00Z' }];
+            cycle: 'once', dueDate: '2026-12-22', createdAt: '2026-09-02T00:00:00Z' }];
         const dates = of(commitments(A, D('2026-01-01'), D('2027-12-31')), 'subscriptions')
             .map((s) => s.date);
-        expect(dates).toEqual(['2026-09-17']);
+        expect(dates).toEqual(['2026-12-22']);
+    });
+
+    it('does not forecast a one-time payment that has already been completed', () => {
+        const A = LEDGER();
+        A.subscriptions = [{ id: 'S11', name: 'Visa fee', amount: 25000, cycle: 'once',
+            dueDate: '2026-10-20', dueDay: 20, completed: true, paidAt: Date.now() }];
+        expect(of(commitments(A, D('2026-10-01'), D('2026-12-31')), 'subscriptions')).toEqual([]);
     });
 
     it('projects a pending issued cheque out and a pending received cheque in', () => {

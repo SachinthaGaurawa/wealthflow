@@ -123,6 +123,10 @@ function applySubscriptionPayment(sub, row, sourcePath, index, bank, last4, now)
     sub.history.push({ month, amount: row.amount, date: row.date, source: 'statement', statementKey: sourcePath, statementRow: index, ref: String(row.ref || ''), bank, card_last4: last4 });
     sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: row.amount };
     sub.amount = row.amount; sub._ut = now;
+    if (/^(once|one-time|onetime)$/.test(String(sub.cycle || '').toLowerCase())) {
+        sub.paid = true; sub.completed = true; sub.paidAt = row.date;
+        sub.paidSource = 'statement'; sub.paidStatementKey = sourcePath; sub.reopened = false;
+    }
     return '';
 }
 
@@ -411,7 +415,12 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
                 const sub = candidates[0], month = corrected.date.slice(0, 7);
                 if ((sub.history || []).some(payment => payment.date === corrected.date && amountCents(payment.amount) === amountCents(corrected.amount))) throw new Error('matching-existing-entry-dismiss-or-edit');
                 sub.history = [...(sub.history || []), { date: corrected.date, month, amount: corrected.amount, source: 'statement', statementKey: context.sourcePath, statementRow: context.index, bank: context.bank, card_last4: context.last4, ref: String(corrected.ref || '') }];
-                sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: corrected.amount }; sub.amount = corrected.amount; sub._ut = now; changes.subscriptions = subs;
+                sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: corrected.amount }; sub.amount = corrected.amount; sub._ut = now;
+                if (/^(once|one-time|onetime)$/.test(String(sub.cycle || '').toLowerCase())) {
+                    sub.paid = true; sub.completed = true; sub.paidAt = corrected.date;
+                    sub.paidSource = 'statement'; sub.paidStatementKey = context.sourcePath; sub.reopened = false;
+                }
+                changes.subscriptions = subs;
             } else {
                 const record = makeRecord(corrected, verified, context, id, now);
                 changes[module] = [...(user[module] || []), record];

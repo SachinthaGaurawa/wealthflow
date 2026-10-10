@@ -348,6 +348,66 @@ describe('the bills side — insurance premiums and the rest', () => {
         );
         expect(rows.map((r) => r.monthKey)).toEqual(['2026-09']);
     });
+
+    it('asks for a one-time payment only on its exact due date month', () => {
+        const rows = pendingOutflows({ subscriptions: [sub({ cycle: 'once', dueDate: '2026-07-31' })] },
+            AT('2026-09-10'), { lookbackMonths: 6 });
+        expect(rows.map((r) => r.dueISO)).toEqual(['2026-07-31']);
+    });
+
+    it('keeps an explicitly past-due one-time payment even when it predates record creation', () => {
+        const rows = pendingOutflows({ subscriptions: [sub({ cycle: 'once', dueDate: '2026-07-31',
+            createdAt: '2026-08-15T00:00:00Z' })] }, AT('2026-09-10'), { lookbackMonths: 6 });
+        expect(rows.map((r) => r.dueISO)).toEqual(['2026-07-31']);
+    });
+
+    it('derives the same clamped date for a legacy one-time payment with no dueDate', () => {
+        const rows = pendingOutflows({ subscriptions: [sub({ cycle: 'once', dueDay: 31,
+            createdAt: '2026-02-02T00:00:00Z' })] }, AT('2026-03-10'), { lookbackMonths: 2 });
+        expect(rows.map((r) => r.dueISO)).toEqual(['2026-02-28']);
+    });
+
+    it('asks again about a reopened one-time payment although an amount was recorded for its month', () => {
+        const base = { cycle: 'once', dueDate: '2026-07-31', monthOverrides: { '2026-07': 1000 } };
+        expect(pendingOutflows({ subscriptions: [sub({ ...base, reopened: false })] }, AT('2026-09-10'), { lookbackMonths: 6 })).toEqual([]);
+        const rows = pendingOutflows({ subscriptions: [sub({ ...base, reopened: true })] }, AT('2026-09-10'), { lookbackMonths: 6 });
+        expect(rows.map((r) => r.dueISO)).toEqual(['2026-07-31']);
+        expect(rows[0].oneTime).toBe(true);
+    });
+
+    it('asks again about a reopened one-time payment that was earlier answered Paid in the queue', () => {
+        const base = { id: 'sub1', cycle: 'once', dueDate: '2026-07-31' };
+        const billPaid = { [billKey('sub1', '2026-07')]: { at: 1 } };
+        expect(pendingOutflows({ billPaid, subscriptions: [sub({ ...base, reopened: false })] }, AT('2026-09-10'), { lookbackMonths: 6 })).toEqual([]);
+        const rows = pendingOutflows({ billPaid, subscriptions: [sub({ ...base, reopened: true })] }, AT('2026-09-10'), { lookbackMonths: 6 });
+        expect(rows.map((r) => r.dueISO)).toEqual(['2026-07-31']);
+    });
+
+    it('anchors a quarterly bill to the month it was created on the owner\'s own clock (Sri Lanka is UTC+5:30)', () => {
+        const was = process.env.TZ;
+        process.env.TZ = 'Asia/Colombo';
+        try {
+            // 1 July 02:00 in Colombo is still 30 June in UTC: the bill was created in July
+            const rows = pendingOutflows({ subscriptions: [sub({ cycle: 'quarterly', dueDay: 15, createdAt: '2026-06-30T20:30:00Z' })] }, AT('2026-12-20'), { lookbackMonths: 6 });
+            expect(rows.map((r) => r.monthKey)).toEqual(['2026-07', '2026-10']);
+        } finally { if (was === undefined) delete process.env.TZ; else process.env.TZ = was; }
+    });
+
+    it('never asks again for a completed one-time payment', () => {
+        const rows = pendingOutflows({ subscriptions: [sub({ cycle: 'once', dueDate: '2026-07-31', paid: true, completed: true })] },
+            AT('2026-09-10'), { lookbackMonths: 6 });
+        expect(rows).toEqual([]);
+    });
+
+    it('asks quarterly and yearly bills only in their actual cycle months', () => {
+        const quarterly = pendingOutflows({ subscriptions: [sub({ cycle: 'quarterly' })] },
+            AT('2026-09-10'), { lookbackMonths: 3 });
+        expect(quarterly.map((r) => r.monthKey)).toEqual(['2026-07']);
+
+        const yearly = pendingOutflows({ subscriptions: [sub({ cycle: 'yearly' })] },
+            AT('2026-09-10'), { lookbackMonths: 11 });
+        expect(yearly.map((r) => r.monthKey)).toEqual(['2026-01']);
+    });
 });
 
 describe('the total the card shows', () => {

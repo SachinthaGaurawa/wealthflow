@@ -1084,7 +1084,7 @@
             if (result.date && /^\d{4}-\d{2}-(\d{1,2})/.test(result.date)) {
                 day = parseInt(result.date.substring(8, 10), 10);
             }
-            if (matchedSub && matchedSub.day) day = parseInt(matchedSub.day, 10);
+            if (matchedSub && matchedSub.dueDay) day = parseInt(matchedSub.dueDay, 10);
             if (day && day >= 1 && day <= 31) { $('sub_day').value = day; filled = true; }
         }
         // Category map
@@ -1098,13 +1098,28 @@
             }
         }
         // Billing cycle inference from text
-        if ($('sub_cycle') && result.raw_text) {
-            var rt = result.raw_text.toLowerCase();
-            if (/\b(one[ -]?time|single payment|pay once|once only)\b/.test(rt)) $('sub_cycle').value = 'once';
-            else if (/\b(annual|yearly|per year|12 month)\b/.test(rt)) $('sub_cycle').value = 'yearly';
-            else if (/\b(quarter|3 month|every 3 months)\b/.test(rt)) $('sub_cycle').value = 'quarterly';
-            else $('sub_cycle').value = 'monthly';
+        if ($('sub_cycle')) {
+            if (matchedSub && matchedSub.cycle) {
+                // records may carry the spellings other readers accept; the select only has once / yearly
+                var mc = String(matchedSub.cycle).toLowerCase();
+                $('sub_cycle').value = /^(once|one-time|onetime)$/.test(mc) ? 'once' : (mc === 'annual' ? 'yearly' : mc);
+            }
+            else if (result.raw_text) {
+                var rt = result.raw_text.toLowerCase();
+                if (/\b(one[ -]?time|single payment|pay once|once only)\b/.test(rt)) $('sub_cycle').value = 'once';
+                else if (/\b(annual|yearly|per year|12 month)\b/.test(rt)) $('sub_cycle').value = 'yearly';
+                else if (/\b(quarter|3 month|every 3 months)\b/.test(rt)) $('sub_cycle').value = 'quarterly';
+                else $('sub_cycle').value = 'monthly';
+            }
         }
+        if ($('sub_due_date') && $('sub_cycle') && $('sub_cycle').value === 'once') {
+            var exactDue = (matchedSub && matchedSub.dueDate) || result.dueDate || result.due_date || result.date || '';
+            if (/^\d{4}-\d{2}-\d{2}/.test(String(exactDue))) {
+                $('sub_due_date').value = String(exactDue).slice(0, 10);
+                filled = true;
+            }
+        }
+        try { if (typeof window.syncSubscriptionCycleFields === 'function') window.syncSubscriptionCycleFields(); } catch (_) {}
         if ($('sub_notes')) {
             var note = buildSmartNote(result, opts.isPdf, opts.pageCount);
             if (matchedSub) note = (note ? note + ' · ' : '') + '@refresh@ Updates existing: ' + matchedSub.name;

@@ -72,6 +72,15 @@ export function monthKeyOf(d) {
 }
 
 /** Parse 'YYYY-MM-DD' (or an ISO timestamp) to a UTC day. Null if unusable. */
+/** The calendar day a record was created ON THE OWNER'S CLOCK. An ISO instant (…T21:00:00Z) is an hour of somebody's day: read in UTC it can land in the
+ *  previous month for a phone east of Greenwich (Sri Lanka is UTC+5:30), which would shift every quarterly and yearly due month by one. */
+function createdDay(v) {
+    if (typeof v === 'string' && /T\d/.test(v)) {
+        const d = new Date(v);
+        if (isFinite(d.getTime())) return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    }
+    return parseDay(v);
+}
 export function parseDay(v) {
     if (!v) return null;
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v));
@@ -263,26 +272,45 @@ export function pendingOutflows(appData, asOf, opts = {}) {
     const rows = [];
     for (const sub of arr(A.subscriptions)) {
         if (!sub || !sub.id) continue;
+        const cycle = s(sub.cycle || 'monthly').toLowerCase();
+        const oneTime = ['once', 'one-time', 'onetime'].includes(cycle);
+        if (oneTime && (sub.paid === true || sub.completed === true)) continue;
         const day = Math.floor(num(sub.dueDay));
         if (!(day >= 1)) continue;
-        const created = parseDay(sub.createdAt);
+        const created = createdDay(sub.createdAt);
+        // Records created before dueDate existed still carry a creation month
+        // and dueDay. Derive the same clamped date used by WFSubs so legacy
+        // one-time obligations do not disappear from this queue.
+        const exactDue = oneTime
+            ? (parseDay(sub.dueDate) || (created ? dueDateFor(day, created.getUTCFullYear(), created.getUTCMonth()) : null))
+            : null;
+        if (oneTime && !exactDue) continue;
+        const step = cycle === 'quarterly' ? 3 : (cycle === 'yearly' || cycle === 'annual' ? 12 : 1);
 
         for (let back = lookback; back >= 0; back -= 1) {
             const monthIdx = now.getUTCMonth() - back;
-            const due = dueDateFor(day, now.getUTCFullYear(), monthIdx);
+            const candidate = dueDateFor(day, now.getUTCFullYear(), monthIdx);
+            let due = candidate;
+            if (oneTime) {
+                if (monthKeyOf(candidate) !== monthKeyOf(exactDue)) continue;
+                due = exactDue;
+            } else if (created) {
+                const elapsed = (candidate.getUTCFullYear() - created.getUTCFullYear()) * 12 + candidate.getUTCMonth() - created.getUTCMonth();
+                if (elapsed < 0 || elapsed % step !== 0) continue;
+            }
             if (due > today) continue;
             /* Never ask about a month before the bill was recorded. The record
              * is not evidence that the bill existed then. */
-            if (created && due < created) continue;
+            if (!oneTime && created && due < created) continue;
             const mk = monthKeyOf(due);
             const key = billKey(sub.id, mk);
-            if (paid[key]) continue;
+            if (paid[key] && !(oneTime && sub.reopened === true)) continue;   // reopening a one-time bill outranks an earlier queue answer
             /* An amount recorded for that month IS the answer. The per-month
              * override editor already writes one, and asking again about a
              * month the owner has typed a figure into would be the app failing
              * to read its own records. */
             const over = sub.monthOverrides && sub.monthOverrides[mk];
-            if (typeof over === 'number') continue;
+            if (typeof over === 'number' && !(oneTime && sub.reopened === true)) continue;   // a reopened bill is asked about again whatever was recorded before
             const amount = num(sub.amount);
             if (!(amount > 0)) continue;
             rows.push({
@@ -297,6 +325,7 @@ export function pendingOutflows(appData, asOf, opts = {}) {
                 state: stateOf(delayed, key, due, today),
                 daysLate: daysLate(due, today),
                 late: daysLate(due, today) > LATE_AFTER_DAYS,
+                ...(oneTime ? { oneTime: true } : {}),
             });
         }
     }

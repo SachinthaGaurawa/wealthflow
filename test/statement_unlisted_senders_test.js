@@ -22,7 +22,10 @@ function world({ items, senders = SENDERS, extra = {} }) {
             incomeRecv: [rec('i1', 'sib', { name: 'Inward CEFT Transfer', type: 'Other' }), rec('i2', 'ok', { name: 'salary' })],
             cconetime: [rec('c1', 'sib'), rec('c2', 'ok')], ccPayments: [rec('p1', 'sib')],
             ccinstall: [{ id: 'plan', product: 'tv', payments: [{ month: '2026-09', paid: true, statementKey: at('sib') }, { month: '2026-08', paid: true, statementKey: at('ok') }] }],
-            subscriptions: [{ id: 's1', history: [{ month: '2026-09', statementKey: at('sib') }, { month: '2026-08', statementKey: at('ok') }] }],
+            subscriptions: [{ id: 's1', cycle: 'once', paid: true, completed: true, paidAt: '2026-09-02',
+                paidSource: 'statement', paidStatementKey: at('sib'),
+                history: [{ month: '2026-09', date: '2026-09-02', source: 'statement', statementKey: at('sib') },
+                    { month: '2026-08', date: '2026-08-02', source: 'statement', statementKey: at('ok') }] }],
             loans: [{ id: 'L1', payments: [{ month: '2026-09', paid: true, source: 'statement', expenseId: 'lx', via: 'bank' }, { month: '2026-08', paid: true, source: 'statement', expenseId: 'other' }, { month: '2026-07', paid: true, source: 'manual' }] }],
             cheques: [{ id: 'q1', status: 'cleared', clearedDate: '2026-09-01', statementKey: at('sib'), statementRow: 2, no: '1' }, { id: 'q2', status: 'cleared', statementKey: at('ok'), no: '2' }],
             _tomb: { expenses: { old: 1 } },
@@ -63,12 +66,22 @@ describe('a statement taken from an address that is not on the list is taken bac
         await run(w);
         const user = w.data.get('users/u');
         expect(user.ccinstall[0].payments).toEqual([{ month: '2026-08', paid: true, statementKey: at('ok') }]);
-        expect(user.subscriptions[0].history).toEqual([{ month: '2026-08', statementKey: at('ok') }]);
+        expect(user.subscriptions[0].history).toEqual([{ month: '2026-08', date: '2026-08-02', source: 'statement', statementKey: at('ok') }]);
+        expect(user.subscriptions[0]).toMatchObject({ paid: true, completed: true, paidAt: '2026-08-02', paidStatementKey: at('ok') });
         expect(user.loans[0].payments.map(p => p.month)).toEqual(['2026-08', '2026-07']);
         expect(user.cheques.find(c => c.id === 'q1')).toMatchObject({ status: 'pending' });
         expect(user.cheques.find(c => c.id === 'q1').statementKey).toBeUndefined();
         expect(user.cheques.find(c => c.id === 'q1').clearedDate).toBeUndefined();
         expect(user.cheques.find(c => c.id === 'q2')).toMatchObject({ status: 'cleared', statementKey: at('ok') });
+    });
+    it('the month amount a removed statement wrote goes with it, so the bill does not stay completed on that evidence', async () => {
+        const w = world({ items: items(), extra: { subscriptions: [{ id: 's2', cycle: 'once', paid: true, completed: true, paidAt: '2026-09-02', paidSource: 'statement', paidStatementKey: at('sib'), amount: 100,
+            monthOverrides: { '2026-09': 100, '2026-10': 7 }, history: [{ month: '2026-09', date: '2026-09-02', source: 'statement', statementKey: at('sib') }] }] } });
+        await run(w);
+        const sub = w.data.get('users/u').subscriptions[0];
+        expect(sub.monthOverrides).toEqual({ '2026-10': 7 });
+        expect(sub.paid).toBeUndefined();
+        expect(sub.history).toEqual([]);
     });
     it('its ledger rows are released for a re-decision, its waiting reviews are closed, and the statement is retired with the reason', async () => {
         const w = world({ items: items() });

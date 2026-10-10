@@ -25,6 +25,10 @@ books.income.push(
 );
 books.loans.push({ id: 'LDone', name: 'Old personal loan', bank: 'HNB', start: '2023-01-01', duration: 12, monthly: 10000, amount: 120000, rate: 10, paymentMethod: 'emi', payments: [], skipped: [] });
 books.ccinstall.push({ id: 'CDone', product: 'Old fridge', bank: 'HNB', total: 90000, rate: 0, duration: 6, monthly: 15000, date: ago(400), completed: true });
+books.subscriptions = (books.subscriptions || []).concat([
+    { id: 'SPaid', name: 'Paid one-time bill', category: 'Other', amount: 5000, cycle: 'once', dueDate: ago(20), dueDay: 1, paid: true, completed: true, createdAt: new Date(Date.now() - 40 * 86400000).toISOString(), history: [], monthOverrides: {} },
+    { id: 'SOpen', name: 'Open one-time bill', category: 'Other', amount: 7000, cycle: 'once', dueDate: ago(-20), dueDay: 1, createdAt: new Date().toISOString(), history: [], monthOverrides: {} },
+]);
 books.debtors = [
     { id: 'DOpen', name: 'Open Debtor', events: [{ id: 'e1', kind: 'lent', amount: 1000, date: ago(30) }] },
     { id: 'DSettled', name: 'Settled Debtor', events: [{ id: 'e2', kind: 'lent', amount: 1000, date: ago(60) }, { id: 'e3', kind: 'repayment', amount: 1000, date: ago(10) }] },
@@ -79,14 +83,14 @@ check(/Ended FD/.test(html) && /Settled lease/.test(html), 'completed investment
 // ── Delete is refused on a finished record, allowed on an open one ──
 const before = await page.evaluate(() => ({
     income: DB.get('income').length, loans: DB.get('loans').length, ccinstall: DB.get('ccinstall').length, cheques: DB.get('cheques').length,
-    cconetime: DB.get('cconetime').length, debtors: DB.get('debtors').length,
+    cconetime: DB.get('cconetime').length, debtors: DB.get('debtors').length, subs: DB.get('subscriptions').length,
 }));
-await page.evaluate(() => { deleteIncome('invEnded'); deleteIncome('invClosed'); deleteLoan('LDone'); deleteCCI('CDone'); deleteCheque('Q3'); deleteCCOT('K3'); _deleteDebtor(DB.get('debtors').find((d) => d.id === 'DSettled')); });
+await page.evaluate(() => { deleteSubscription('SPaid'); deleteIncome('invEnded'); deleteIncome('invClosed'); deleteLoan('LDone'); deleteCCI('CDone'); deleteCheque('Q3'); deleteCCOT('K3'); _deleteDebtor(DB.get('debtors').find((d) => d.id === 'DSettled')); });
 await page.waitForTimeout(300);
 check(!(await visible('.confirm-overlay, #wfConfirm, .wf-confirm')), 'no "are you sure" dialog should open for a finished record');
 const after = await page.evaluate(() => ({
     income: DB.get('income').length, loans: DB.get('loans').length, ccinstall: DB.get('ccinstall').length, cheques: DB.get('cheques').length,
-    cconetime: DB.get('cconetime').length, debtors: DB.get('debtors').length,
+    cconetime: DB.get('cconetime').length, debtors: DB.get('debtors').length, subs: DB.get('subscriptions').length,
 }));
 check(JSON.stringify(before) === JSON.stringify(after), `finished records must survive Delete: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
 await page.evaluate(() => deleteIncome('inv2'));
@@ -107,6 +111,12 @@ await go('cheques');
 check(/Completed cheques \(\d+\)/.test(await text('#chequeBody')) && /004377/.test(await text('#chequeBody')), 'Cheques: cleared cheque listed under a Completed header');
 const order = await page.evaluate(() => { const r = [...document.querySelectorAll('#chequeBody tr')].map((x) => x.className.includes('wf-done-sep') ? 'SEP' : x.className.includes('done-row') ? 'done' : 'open'); return r.join(','); });
 check(/^(open,)+SEP,(done,?)+$/.test(order), `Cheques: open ones first, then the Completed header, then finished ones: ${order}`);
+await go('subscriptions');
+check(/Completed one-time payments \(1\)/.test(await text('#subscriptionList')) && /Paid one-time bill/.test(await text('#subscriptionList')), 'Subscriptions: a paid one-time bill is listed under a Completed header');
+check(/Open one-time bill/.test(await text('#subscriptionList')) && (await text('#subscriptionList')).indexOf('Open one-time bill') < (await text('#subscriptionList')).indexOf('Completed one-time payments'), 'Subscriptions: open bills come before the Completed header');
+await page.evaluate(() => { const s = DB.get('subscriptions').map((x) => x.id === 'SPaid' ? { ...x, reopened: true, paid: false, completed: false } : x); DB.set('subscriptions', s); deleteSubscription('SPaid'); });
+await page.waitForTimeout(300);
+check(await page.evaluate(() => /Delete Subscription\?/.test(document.body.textContent)), 'a reopened one-time bill can be deleted again');
 await go('liquidity');
 await page.evaluate(() => setLiquidityTab('debt'));
 await page.waitForTimeout(500);

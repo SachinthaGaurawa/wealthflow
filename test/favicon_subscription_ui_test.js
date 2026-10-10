@@ -33,4 +33,23 @@ describe('subscription form', () => {
             .map((o) => ({ value: o.getAttribute('value'), label: o.textContent.trim() }));
         expect(options).toContainEqual({ value: 'once', label: 'One-Time' });
     });
+
+    it('captures the exact due date and completion lifecycle for a one-time payment', () => {
+        const index = read('index.html');
+        const { document } = parseHTML(index);
+        expect(document.querySelector('#sub_due_date')).toBeTruthy();
+        expect(index).toContain('syncSubscriptionCycleFields');
+        expect(index).toContain('toggleOneTimePayment');
+        expect(index).toContain('completed:');
+        expect(index).toContain('paidStatementKey: oneTime && existing');
+        expect(index).toContain('s.reopened = !done');
+        expect(index).toContain("return cycle === 'monthly';");
+    });
+
+    it('keeps AI bill auto-fill aligned with the one-time due-date UI', () => {
+        const ai = read('wealthflow-ai-v4.js');
+        expect(ai).toContain("$('sub_due_date')");
+        expect(ai).toContain('syncSubscriptionCycleFields');
+        expect(ai).toContain('matchedSub.dueDay');
+    });
 });
