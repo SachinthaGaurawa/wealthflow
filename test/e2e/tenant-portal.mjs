@@ -28,7 +28,7 @@ import { normalizeNic } from '../../wealthflow-nic.js';
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 const PAGE_HEADERS = Object.fromEntries(VERCEL.headers.find((h) => h.source === '/t/(.*)').headers.map((h) => [h.key, h.value]));
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.woff2': 'font/woff2' };
 
 const ENV = { TENANT_PORTAL_SECRET: 'e2e-secret-'.repeat(4) };
 const NIC = '853400937V';
@@ -76,7 +76,7 @@ const server = http.createServer((req, res) => {
     const f = path.resolve(ROOT, '.' + file);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end('not found'); }
     // the page's own files, its words, the shared NIC module and nothing else
-    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
+    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|tenant-inter\.woff2|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', ...headers });
     res.end(fs.readFileSync(f));
 });
@@ -256,6 +256,24 @@ await page.waitForFunction(() => /Updated just now/.test((document.getElementByI
 assert.ok((await text()).includes('LKR 30,000.00'), 'the same statement is back after a refresh, with no new code');
 assert.ok(await page.locator('.tp-progress progress').count() >= 1, 'the loan shows its progress');
 console.log('5e. extras            -> coming up, calendar file, spreadsheet, jump to pay, refresh without a new code');
+
+// the balance card: amounts can be blurred for reading with someone nearby (and come back after a refresh), the section bar jumps, the typeface loaded
+assert.equal(await page.locator('.tp-hero .tp-holder-nic').count(), 1, 'the balance card shows whose statement it is');
+assert.equal(await page.getAttribute('#tp-eye', 'aria-pressed'), 'false');
+await page.click('#tp-eye');
+assert.equal(await page.getAttribute('#tp-eye', 'aria-pressed'), 'true');
+assert.match(await page.evaluate(() => getComputedStyle(document.querySelector('.tp-hero .tp-money')).filter), /blur/, 'the amounts are blurred');
+await page.click('#tp-refresh');
+await page.waitForFunction(() => /Updated just now/.test((document.getElementById('tp-info') || {}).textContent || ''));
+assert.equal(await page.getAttribute('#tp-eye', 'aria-pressed'), 'true', 'a refresh keeps the amounts hidden');
+await page.click('#tp-eye');
+await page.waitForFunction(() => getComputedStyle(document.querySelector('.tp-hero .tp-money')).filter === 'none', null, { timeout: 3000 });      // 'and showing them again unblurs' (it fades, so it takes a moment)
+assert.ok(await page.evaluate(async () => { await document.fonts.ready; return document.fonts.check('16px Inter'); }), 'the Inter typeface loaded from this site');
+if (await page.locator('.tp-tabs').isVisible()) {
+    await page.locator('.tp-tab[data-to="tp-records"]').click();
+    assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'tp-records', 'the section bar jumps to the records');
+}
+console.log('5f. balance card      -> holder, hide amounts (kept over a refresh), section bar, typeface');
 await shot('3d-statement-extras');
 
 // their own language, one tap, nothing remembered

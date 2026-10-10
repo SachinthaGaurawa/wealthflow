@@ -218,6 +218,17 @@ export const SI = Object.freeze({
     'This service is temporarily unavailable. Please try again later.': 'මෙම සේවාව තාවකාලිකව නොමැත. කරුණාකර පසුව නැවත උත්සාහ කරන්න.',
     'Try again in about {n} minutes.': 'මිනිත්තු {n}කින් පමණ නැවත උත්සාහ කරන්න.',
     'Try again in {n} seconds.': 'තත්පර {n}කින් නැවත උත්සාහ කරන්න.',
+
+    /* the redesigned page: the section bar, the balance card, the sign-in promises */
+    'Overview': 'සාරාංශය',
+    'Records': 'වාර්තා',
+    'Sections': 'කොටස්',
+    'Quick actions': 'ඉක්මන් ක්‍රියා',
+    'Hide amounts': 'මුදල් සඟවන්න',
+    'Show amounts': 'මුදල් පෙන්වන්න',
+    'Code sent by text message': 'කේතය කෙටි පණිවිඩයෙන් එවයි',
+    'Closes by itself after 20 minutes': 'මිනිත්තු 20කට පසු ස්වයංක්‍රීයව වැසේ',
+    'Nothing is saved on your device': 'ඔබේ උපාංගයේ කිසිවක් සුරකින්නේ නැත',
 });
 
 /** The text that goes on the language button: the language you would switch TO, in its own letters. */
