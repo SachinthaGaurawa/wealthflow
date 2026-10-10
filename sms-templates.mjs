@@ -38,6 +38,7 @@ export const KINDS = Object.freeze({
     B_BALANCE: 'B.balance',          // the owner asked for the current balance to be sent (a part payment was agreed, or they asked)
     B_CLOSED: 'B.closed',            // the loan is fully settled: a text of its own, after the receipt for the payment that settled it
     A_CLOSED: 'A.closed',            // the owner closed the investment as fully settled
+    O_DUE: 'O.due',                  // the owner's own due-date alert: a loan instalment, a card payment or a cheque coming up (opt-in, to the owner's number)
     OTP: 'otp',                    // the portal's one-time code
 });
 
@@ -141,6 +142,16 @@ function render(kind, ctx) {
         text = Number(ctx.balance) > 0
             ? `Balance ${fmtMoney(ctx.balance, cur)}${on}, ref ${ref}.${tail(link)}`
             : `No balance outstanding on ref ${ref}${on}, thank you.${tail(link)}`;
+        break;
+    }
+    case KINDS.O_DUE: {
+        const when = Number(ctx.days) <= 0 ? 'today' : Number(ctx.days) === 1 ? 'tomorrow' : `in ${Number(ctx.days)} days${ctx.dateISO ? ` (${fmtDay(ctx.dateISO)})` : ''}`;
+        const name = s(ctx.label);
+        text = ctx.what === 'once' ? `One-time payment${name ? ` ${name}` : ''} ${amt} is due ${when}.`
+            : ctx.what === 'bill' ? `Bill${name ? ` ${name}` : ''} ${amt} is due ${when}.`
+            : ctx.what === 'cheque' ? `Cheque ${name ? `${name} ` : ''}${amt} clears ${when}. Keep funds ready.`
+            : ctx.what === 'card' ? `Card payment${name ? ` ${name}` : ''} ${amt} is due ${when}.`
+                : `Loan${name ? ` ${name}` : ''} instalment ${amt} is due ${when}.`;
         break;
     }
     default:

@@ -281,6 +281,16 @@ export function signatureOf(user) {
         if (!rec || rec[SMS_FIELDS.ENABLED] === undefined) continue;
         parts.push('D' + stable(rec));
     }
+    // The owner's own due-date alerts (sms-owner.mjs) come from the loans, cards, cheques and bills: while they are on, a change to any of them is a change.
+    const own = u.settings && u.settings.owner_sms;
+    if (own && own.enabled === true) {
+        parts.push('O' + stable(own));
+        for (const [k, pick] of [['loans', (r) => [r.id, r.monthly, r.start, r.duration, (Array.isArray(r.payments) ? r.payments : []).filter((p) => p && p.paid).map((p) => p.month)]],
+            ['cconetime', (r) => [r.id, r.amount, r.deadline, r.paid]], ['cheques', (r) => [r.id, r.amount, r.release, r.status]],
+            ['subscriptions', (r) => [r.id, r.amount, r.cycle, r.dueDate, r.dueDay, r.paid, r.completed, r.reopened, r.createdAt, Object.keys(r.monthOverrides || {}), (Array.isArray(r.history) ? r.history : []).map((h) => h && h.month)]]]) {
+            for (const rec of Array.isArray(u[k]) ? u[k] : []) if (rec && rec.id) parts.push(k[0] + stable(pick(rec)));
+        }
+    }
     if (!parts.length) return '';
     parts.push('C' + s(u.settings && u.settings.currency));
     const text = parts.join('\n');
@@ -617,7 +627,18 @@ export function autoRunLine(status, now, when = () => '') {
 }
 
 /** The whole panel as markup. Everything is escaped. */
-export function panelHtml({ rows = [], status = null, disabled = false, lastError = '', nameOf = null, fmtWhen = null, now = Date.now() } = {}) {
+export function ownerAlertsHtml(owner) {
+    const o = owner && typeof owner === 'object' ? owner : {};
+    return '<div style="border:1px solid var(--border,rgba(128,128,128,.25));border-radius:10px;padding:10px 12px;margin-bottom:10px;">'
+        + '<div style="font-weight:700;font-size:13px;">Alerts to my own number</div>'
+        + '<div style="font-size:12px;color:var(--text3);margin:3px 0 8px;line-height:1.5;">A text to you before a loan instalment, card payment, cheque, bill or one-time payment is due (7, 3 and 1 days, and the day itself; a one-time payment from 14 days). Sent by the server, so it reaches you when the app is closed. Uses SMS credit.</div>'
+        + '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;margin-bottom:6px;"><input type="checkbox" id="_wf_own_on"' + (o.enabled === true ? ' checked' : '') + '> Send me these alerts</label>'
+        + '<div style="display:flex;gap:8px;"><input class="fi" id="_wf_own_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + esc(o.phone || '') + '" style="flex:1;">'
+        + '<button class="btn btn-primary btn-sm" id="_wf_own_save">Save</button></div>'
+        + '<div id="_wf_own_msg" style="font-size:12px;margin-top:6px;min-height:14px;"></div></div>';
+}
+
+export function panelHtml({ rows = [], status = null, disabled = false, lastError = '', nameOf = null, fmtWhen = null, now = Date.now(), owner = null, showOwner = false } = {}) {
     const when = (ms) => { if (!ms) return ''; try { return fmtWhen ? fmtWhen(ms) : new Date(ms).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
     const colour = { sent: 'var(--green,#30a46c)', failed: 'var(--red,#e5484d)', queued: 'var(--amber,#f5a623)', sending: 'var(--amber,#f5a623)' };
     const lines = [];
@@ -646,7 +667,7 @@ export function panelHtml({ rows = [], status = null, disabled = false, lastErro
             + (r.note ? '<div style="font-size:11.5px;color:var(--text3);margin-top:4px;">' + esc(r.note) + '</div>' : '')
             + '</div>').join('')
         : '<div style="padding:18px 0;text-align:center;color:var(--text3);font-size:13px;">No text messages yet. Switch "Send SMS notifications" on for an investment or a debtor and the notices appear here.</div>';
-    return notes + body;
+    return (showOwner ? ownerAlertsHtml(owner) : '') + notes + body;
 }
 
 /* ── the browser glue ─────────────────────────────────────────────────────── */
@@ -656,7 +677,7 @@ export function openPanel(win, getModel) {
     const doc = win.document;
     const overlay = doc.createElement('div');
     overlay.className = 'mo';
-    const draw = () => { const host = overlay.querySelector('#_wf_sms_body'); if (host) host.innerHTML = panelHtml(getModel()); };
+    const draw = () => { const host = overlay.querySelector('#_wf_sms_body'); if (host) host.innerHTML = panelHtml({ ...getModel(), showOwner: false }); };
     overlay.innerHTML = '<div class="md" style="max-width:480px;"><div class="md-hdr"><div class="md-title">Text messages</div>'
         + '<button class="md-x" aria-label="Close" id="_wf_sms_x"><i data-wfi="x"></i></button></div><div id="_wf_sms_body" style="max-height:65vh;overflow:auto;"></div></div>';
     doc.body.appendChild(overlay);
@@ -684,7 +705,30 @@ export function boot(win) {
             return r ? s(r.name || r.company) : '';
         } catch (_) { return ''; }
     };
-    const model = () => ({ rows: rowsOf(live.rows, now()), status: live.status, disabled: !!(live.notifier && live.notifier.state.disabled), lastError: (live.notifier && live.notifier.state.lastError) || '', nameOf });
+    const ownerNow = () => { try { const o = win.appData && win.appData.settings && win.appData.settings.owner_sms; return o && typeof o === 'object' ? { enabled: o.enabled === true, phone: s(o.phone) } : { enabled: false, phone: '' }; } catch (_) { return { enabled: false, phone: '' }; } };
+    const model = () => ({ rows: rowsOf(live.rows, now()), status: live.status, disabled: !!(live.notifier && live.notifier.state.disabled), lastError: (live.notifier && live.notifier.state.lastError) || '', nameOf, owner: ownerNow(), showOwner: !decoy() });
+    /** Save the owner's switch and number into the settings the sync carries, then ask the server to look. Returns { ok, error? }. */
+    function setOwnerAlerts({ enabled, phone }) {
+        const text = s(phone).trim();
+        if (enabled && !text) return { ok: false, error: 'Type the number to send the alerts to.' };
+        if (text) { const p = normalizePhone(text); if (!p.ok) return { ok: false, error: phoneText(p.reason) || 'That number cannot be texted.' }; }
+        try {
+            const cur = win.DB.getObj('settings', {});
+            win.DB.set('settings', { ...cur, owner_sms: { enabled: !!enabled, phone: text, at: now() } });
+        } catch (_) { return { ok: false, error: 'Could not save. Try again.' }; }
+        try { if (live.notifier) live.notifier.afterPush(); } catch (_) { /* the daily check still picks it up */ }
+        return { ok: true };
+    }
+    /** Make the panel's own form do something: called after every draw. */
+    function bindOwner(host) {
+        const save = host && host.querySelector && host.querySelector('#_wf_own_save');
+        if (!save) return;
+        save.onclick = () => {
+            const r = setOwnerAlerts({ enabled: host.querySelector('#_wf_own_on').checked, phone: host.querySelector('#_wf_own_phone').value });
+            const msg = host.querySelector('#_wf_own_msg');
+            if (msg) { msg.textContent = r.ok ? 'Saved.' : r.error; msg.style.color = r.ok ? 'var(--green,#30a46c)' : 'var(--red,#e5484d)'; }
+        };
+    }
 
     function start() {
         if (decoy() || !win.currentUser || !win.currentUser.uid || !win.appData) return false;
@@ -726,13 +770,13 @@ export function boot(win) {
     }
     const api = {
         applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, SMS_FIELDS, BALANCE, balanceWaitMs, requestBalance,
-        start,
+        start, setOwnerAlerts,
         afterPush() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.afterPush(); } catch (_) { /* never into the sync path */ } },
         kickNow() { if (live.notifier) return live.notifier.run({ force: true, reason: 'manual' }); return Promise.resolve({ skipped: 'not-started' }); },
         /** The log, drawn into an element the page owns (the people screens carry it as a tab). Returns the function that stops redrawing it. */
         panelInto(host) {
             start();
-            const draw = () => { try { host.innerHTML = panelHtml(model()); } catch (_) { /* a stale host is not an error */ } };
+            const draw = () => { try { if (host.querySelector && host.querySelector('#_wf_own_phone') && win.document.activeElement === host.querySelector('#_wf_own_phone')) return; host.innerHTML = panelHtml(model()); bindOwner(host); } catch (_) { /* a stale host is not an error */ } };
             win.__wfSmsRedraw = draw;
             draw();
             return () => { if (win.__wfSmsRedraw === draw) win.__wfSmsRedraw = null; };
@@ -753,4 +797,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFSms = boot(window); } catch (e) { console.warn('[WF-SMS] page side did not start:', e && e.message); }
 }
 
-export default { SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue };
+export default { SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, ownerAlertsHtml, describeIssue };
