@@ -9,6 +9,9 @@
  *   loanProgress(g)               how much of a loan has been paid back, 0-100
  *   termProgress(g, asOf)         how far through its term an investment is, 0-100 (or null when it has no end)
  *   calendarFile(item, ...)       an .ics reminder for one of those dates
+ *   payoffPlan(loan, asOf, opts)  "if I pay X every week / fortnight / month, when am I done?", and what clears a loan by its due date
+ *   planFile(plan, ...)           an .ics series with one reminder for every payment of such a plan
+ *   balanceTrail(loan)            the balance after each movement of a loan, for the little chart
  *   csvFile(statement)            every movement and payment as a spreadsheet file
  *
  * Dates are Sri Lanka calendar days: the statement's own `asOf` instant is read in Sri Lanka time, so "today"
@@ -140,6 +143,93 @@ export function calendarFile(item, { t, fmtMoney, asOf }) {
     return `${lines.map(fold).join('\r\n')}\r\n`;
 }
 
+/* ── a repayment plan ────────────────────────────────────────────────────── */
+
+/** How often a person might pay: days between payments (a month is the same day each month, never past the 28th, so every month has it). */
+export const PLAN_EVERY = Object.freeze({ weekly: 7, fortnightly: 14, monthly: 0 });
+const MAX_PAYMENTS = 600;
+
+const monthAdd = (dn, k) => { const d = new Date(dn * DAY); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + k, Math.min(d.getUTCDate(), 28)) / DAY; };
+const stepNo = (start, every, k) => (every === 'monthly' ? monthAdd(start, k) : start + k * PLAN_EVERY[every]);
+const cents = (v) => Math.round(num(v) * 100);
+
+/**
+ * What a plan of equal payments does to an open loan. The figures are only arithmetic on the balance the lender recorded (the
+ * lender's books add no interest or charge to a loan, so none is added here): the first payment is one step after today, and
+ * every payment is the same except the last, which is whatever is left.
+ *
+ * `opts.every` is 'weekly', 'fortnightly' or 'monthly' (monthly by default); `opts.amount` is the payment the person is trying.
+ * Returns null when the loan is not open with something owed or the statement has no usable clock. Otherwise:
+ *   { ref, currency, owed, every, byDue }  byDue is { count, amount } - the smallest equal payment that clears the loan by its
+ *                                          due date - or null when there is no due date ahead
+ *   plus, when the amount is usable: { amount, count, last, first, finish, onTime }
+ *   (onTime: finishing on or before the due date, null without one), or { tooMany: true } when it would take over 600 payments,
+ *   or { amount: 0 } while the amount is empty or not a number.
+ */
+export function payoffPlan(g, asOf, opts = {}) {
+    if (!g || typeof g !== 'object' || g.kind !== 'loan' || g.status !== 'open') return null;
+    const owedC = cents(g.outstanding);
+    const today = todayNo(asOf);
+    if (owedC <= 0 || !Number.isFinite(today)) return null;
+    const every = Object.prototype.hasOwnProperty.call(PLAN_EVERY, opts && opts.every) ? opts.every : 'monthly';
+    const owed = owedC / 100;
+    const dueNo = dayNo(g.due);
+    let fit = 0;
+    if (Number.isFinite(dueNo) && dueNo > today) while (fit < MAX_PAYMENTS && stepNo(today, every, fit + 1) <= dueNo) fit += 1;
+    // a whole rupee when the balance is large (an amount a person can type and remember), cents when it is small
+    const byDue = fit > 0 ? { count: fit, amount: owedC >= 10000 ? Math.ceil(owedC / fit / 100) : Math.ceil(owedC / fit) / 100 } : null;
+    const base = { ref: String(g.ref || ''), currency: g.currency, owed, every, byDue };
+    const amountC = cents(opts && opts.amount);
+    if (!(amountC > 0)) return { ...base, amount: 0 };
+    const count = Math.ceil(owedC / amountC);
+    if (count > MAX_PAYMENTS) return { ...base, amount: amountC / 100, tooMany: true };
+    const first = stepNo(today, every, 1);
+    const finish = stepNo(today, every, count);
+    return {
+        ...base,
+        amount: Math.min(amountC, owedC) / 100,
+        count,
+        last: (owedC - amountC * (count - 1)) / 100,
+        first: isoOfDayNo(first),
+        finish: isoOfDayNo(finish),
+        onTime: Number.isFinite(dueNo) ? finish <= dueNo : null,
+    };
+}
+
+/**
+ * The plan as a calendar file: one repeating all-day event from the first payment, with an alert the day before, as many times as the
+ * plan has payments. '' when the plan has no payments to remind about.
+ */
+export function planFile(plan, { t, fmtMoney, asOf }) {
+    if (!plan || !(plan.count > 0) || !(plan.amount > 0) || !Number.isFinite(dayNo(plan.first))) return '';
+    const first = dayNo(plan.first);
+    const rule = plan.every === 'monthly' ? 'FREQ=MONTHLY;INTERVAL=1' : `FREQ=WEEKLY;INTERVAL=${plan.every === 'fortnightly' ? 2 : 1}`;
+    const title = t('Pay {amount} to your lender ({ref})', { amount: fmtMoney(plan.amount, plan.currency), ref: plan.ref });
+    const note = t('Reminder from your WealthFlow statement. Quote the reference {ref} when you pay.', { ref: plan.ref });
+    const stampMs = Date.parse(String(asOf || ''));
+    const stamp = new Date(Number.isFinite(stampMs) ? stampMs : 0).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const lines = [
+        'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//WealthFlow//Statement//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+        'BEGIN:VEVENT',
+        `UID:plan-${compact(plan.first)}-${String(plan.ref).replace(/[^A-Za-z0-9-]/g, '')}@wealthflow`,
+        `DTSTAMP:${stamp}`,
+        `DTSTART;VALUE=DATE:${compact(plan.first)}`,
+        `DTEND;VALUE=DATE:${compact(isoOfDayNo(first + 1))}`,
+        `RRULE:${rule};COUNT=${plan.count}`,
+        `SUMMARY:${icsText(title)}`,
+        `DESCRIPTION:${icsText(note)}`,
+        'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(title)}`, 'TRIGGER:-P1D', 'END:VALARM',
+        'END:VEVENT', 'END:VCALENDAR',
+    ];
+    return `${lines.map(fold).join('\r\n')}\r\n`;
+}
+
+/** The balance after each movement of a loan, oldest first, as plain numbers; [] when there is nothing to draw. */
+export function balanceTrail(g) {
+    const ev = g && Array.isArray(g.events) ? g.events : [];
+    return ev.map((e) => num(e && e.balance)).filter((n) => Number.isFinite(n));
+}
+
 /* ── a spreadsheet ───────────────────────────────────────────────────────── */
 
 /** A cell as CSV: quoted, and defanged if a spreadsheet would run it as a formula. */
@@ -171,4 +261,4 @@ export function csvFile(statement) {
     return `\uFEFF${rows.map((r) => r.map(csvCell).join(',')).join('\r\n')}\r\n`;
 }
 
-export default { todayNo, upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvCell, csvFile };
+export default { todayNo, upcoming, dayLabel, loanProgress, termProgress, calendarFile, payoffPlan, planFile, balanceTrail, PLAN_EVERY, csvCell, csvFile };

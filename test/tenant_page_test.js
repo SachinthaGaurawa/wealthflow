@@ -65,6 +65,25 @@ describe('formatting', () => {
     });
 });
 
+describe('the repayment plan on a loan card', () => {
+    const asOf = '2026-10-05T05:00:00.000Z';
+    const loanGroup = (over = {}) => ({ kind: 'loan', ref: 'DEB-96E5C2', currency: 'LKR', lent: 50000, repaid: 20000, outstanding: 30000, status: 'open', due: '2026-12-31', events: [], ...over });
+    const view = (g) => { const out = []; statementView(doc, { asOf, groups: [g], totals: [] }, makeT('en'), null).forEach((c) => c.walk && c.walk((n) => out.push(n))); return out; };
+
+    it('offers a plan on an open loan, with the way to ask for the amount that clears it by the due date', () => {
+        const nodes = view(loanGroup());
+        const plan = nodes.find((n) => n.attrs.class === 'tp-plan');
+        expect(plan && plan.tag).toBe('details');
+        expect(nodes.some((n) => n.tag === 'select')).toBe(true);
+        expect(nodes.some((n) => n.tag === 'input' && n.attrs.inputmode === 'decimal')).toBe(true);
+        expect(nodes.find((n) => /tp-chip-btn/.test(n.attrs.class || '')).textContent).toBe('Clear by the due date: LKR 15,000.00 each time');
+    });
+
+    it('offers nothing on a loan that is settled or has nothing owed', () => {
+        for (const g of [loanGroup({ status: 'settled' }), loanGroup({ outstanding: 0 })]) expect(view(g).some((n) => /tp-plan/.test(n.attrs.class || ''))).toBe(false);
+    });
+});
+
 describe('the statement view', () => {
     const statement = {
         asOf: '2026-10-05T05:00:00.000Z',
@@ -136,6 +155,12 @@ describe('what a person needs next: when, and where to pay', () => {
     };
     const textOf = (nodes) => nodes.map((n) => n.textContent).join(' | ');
     const buttonsOf = (nodes) => { const out = []; nodes.forEach((n) => n.walk((e) => { if (e.tag === 'button') out.push(e); })); return out; };
+
+    it('marks the next interest amount like every other figure, so "Hide amounts" blurs it too', () => {
+        const hits = [];
+        statementView(doc, base).forEach((n) => n.walk((e) => { if (e.tag === 'span' && /tp-amt/.test(e.attrs.class || '') && e.textContent === 'LKR 10,000.00') hits.push(e); }));
+        expect(hits.length).toBeGreaterThanOrEqual(2);      // the figure tile and the next-interest line
+    });
 
     it('says when the next interest is due and when a loan is expected back, and how late it is', () => {
         const text = textOf(statementView(doc, base));

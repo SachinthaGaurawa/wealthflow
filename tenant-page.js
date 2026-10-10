@@ -33,7 +33,7 @@
 
 import { identityCandidates } from './wealthflow-nic.js';
 import { makeT, detectLang, LANG_BUTTON } from './tenant-lang.js';
-import { upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvFile } from './tenant-tools.js';
+import { upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvFile, payoffPlan, planFile, balanceTrail } from './tenant-tools.js';
 
 export const ENDPOINT = '/api/tenant-portal';
 export const FETCH_TIMEOUT_MS = 20000;
@@ -234,12 +234,80 @@ function investmentCard(doc, g, st, t, actions) {
             fact(doc, t('Interest each time'), fmtMoney(g.interestPerPeriod, cur), 'tp-amt'),
             fact(doc, t('Started'), fmtDay(g.start)),
             g.end ? fact(doc, t('Ends'), fmtDay(g.end)) : null,
-            next ? fact(doc, t('Next interest due'), `${fmtDay(next.date)} (${fmtMoney(next.amount, cur)})`) : null,
+            next ? h(doc, 'div', {}, h(doc, 'dt', { text: t('Next interest due') }), h(doc, 'dd', {}, `${fmtDay(next.date)} (`, h(doc, 'span', { class: 'tp-amt', text: fmtMoney(next.amount, cur) }), ')')) : null,
             fact(doc, t('Interest received'), fmtMoney(g.totalReceived, cur), 'tp-amt')),
         (() => { const pct = termProgress(g, st.asOf); return pct === null ? null : bar(doc, t('Term: {n}% complete', { n: pct }), pct); })(),
         Array.isArray(g.payments) && g.payments.length
             ? table(doc, t('Payments received, in {cur}', { cur }), [[t('For')], [t('Received on')], [t('Amount'), true]], g.payments.map((p) => [[fmtMonth(p.month)], [fmtDay(p.date)], [fmtNum(p.amount), true]]), t)
             : h(doc, 'p', { class: 'tp-note', text: t('No payments recorded yet.') }));
+}
+
+
+/**
+ * A little chart of a loan's balance after each movement, from the amount paid out down to what is left.
+ * Nothing is drawn for a document that cannot make SVG, or for fewer than two movements.
+ */
+function trailChart(doc, g, t) {
+    const pts = balanceTrail(g);
+    const top = Math.max(...pts, 0);
+    if (typeof doc.createElementNS !== 'function' || pts.length < 2 || !(top > 0)) return null;
+    const W = 240;
+    const H = 64;
+    const x = (i) => Math.round((i / (pts.length - 1)) * W * 10) / 10;
+    const y = (v) => Math.round((H - 6 - (v / top) * (H - 14)) * 10) / 10;
+    let line = `M0 ${y(pts[0])}`;
+    for (let i = 1; i < pts.length; i += 1) line += ` L${x(i)} ${y(pts[i])}`;
+    const svg = doc.createElementNS(SVG_NS, 'svg');
+    for (const [k, v] of Object.entries({ class: 'tp-spark', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', focusable: 'false', 'aria-label': t('Balance went from {from} to {to}', { from: fmtMoney(pts[0], g.currency), to: fmtMoney(pts[pts.length - 1], g.currency) }) })) svg.setAttribute(k, v);
+    const area = doc.createElementNS(SVG_NS, 'path');
+    area.setAttribute('class', 'tp-spark-area');
+    area.setAttribute('d', `${line} L${W} ${H} L0 ${H} Z`);
+    const stroke = doc.createElementNS(SVG_NS, 'path');
+    stroke.setAttribute('class', 'tp-spark-line');
+    stroke.setAttribute('d', line);
+    stroke.setAttribute('vector-effect', 'non-scaling-stroke');
+    svg.append(area, stroke);
+    return h(doc, 'div', { class: 'tp-trail' }, h(doc, 'span', { class: 'tp-progress-label', text: t('Balance over time') }), svg);
+}
+
+const readAmount = (text) => { const n = Number(String(text || '').replace(/[,\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : 0; };
+
+/**
+ * "Plan your repayments": the person picks how often and how much and sees when the loan would be finished, or taps the amount that
+ * clears it by the due date. It is arithmetic on the balance already on the page (tenant-tools.js payoffPlan); nothing is sent anywhere
+ * and nothing is promised to the lender. `actions.planCalendar(plan)` (when the page can) saves the plan as a repeating reminder.
+ */
+function planWidget(doc, g, st, t, actions) {
+    if (!payoffPlan(g, st.asOf)) return null;
+    const id = `tp-plan-${String(g.ref || '').replace(/[^A-Za-z0-9]/g, '')}`;
+    const every = h(doc, 'select', { id: `${id}-every`, 'aria-label': t('How often') }, [h(doc, 'option', { value: 'weekly', text: t('Every week') }), h(doc, 'option', { value: 'fortnightly', text: t('Every 2 weeks') }), h(doc, 'option', { value: 'monthly', text: t('Every month'), selected: true })]);
+    const amount = h(doc, 'input', { id: `${id}-amount`, type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': t('Amount each time'), placeholder: t('Amount each time') });
+    const chips = h(doc, 'div', { class: 'tp-plan-chips' });
+    const out = h(doc, 'div', { class: 'tp-plan-out', 'aria-live': 'polite' });
+    const current = () => payoffPlan(g, st.asOf, { every: every.value || 'monthly', amount: readAmount(amount.value) });
+    function paint() {
+        const plan = current();
+        if (!plan) return;
+        chips.replaceChildren(...(plan.byDue ? [h(doc, 'button', { type: 'button', class: 'tp-chip tp-chip-btn tp-amt', onclick: () => { amount.value = String(plan.byDue.amount); paint(); }, text: t('Clear by the due date: {amount} each time', { amount: fmtMoney(plan.byDue.amount, plan.currency) }) })] : []));
+        if (plan.tooMany) { out.replaceChildren(h(doc, 'p', { class: 'tp-note', text: t('That would take too many payments. Try a larger amount.') })); return; }
+        if (!(plan.count > 0)) { out.replaceChildren(h(doc, 'p', { class: 'tp-note', text: t('Enter an amount to see when you would finish.') })); return; }
+        out.replaceChildren(
+            h(doc, 'dl', { class: 'tp-facts' },
+                fact(doc, t('Payments'), String(plan.count)),
+                fact(doc, t('First payment'), fmtDay(plan.first)),
+                fact(doc, t('Finished by'), fmtDay(plan.finish)),
+                plan.count > 1 && plan.last !== plan.amount ? fact(doc, t('Last payment'), fmtMoney(plan.last, plan.currency), 'tp-amt') : null),
+            plan.onTime === null ? null : h(doc, 'p', { class: plan.onTime ? 'tp-plan-ok' : 'tp-plan-late', text: plan.onTime ? t('This finishes by the due date.') : t('This finishes after the due date. Pay a little more each time to be on time.') }),
+            actions && typeof actions.planCalendar === 'function' ? h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-small-btn', onclick: () => actions.planCalendar(plan) }, icon(doc, 'calendar'), h(doc, 'span', { text: t('Add this plan to my calendar') })) : null);
+    }
+    every.addEventListener('change', paint);
+    amount.addEventListener('input', paint);
+    paint();
+    return h(doc, 'details', { class: 'tp-plan' },
+        h(doc, 'summary', {}, icon(doc, 'clock'), h(doc, 'span', { text: t('Plan your repayments') })),
+        h(doc, 'label', { for: `${id}-every`, text: t('How often') }), every,
+        h(doc, 'label', { for: `${id}-amount`, text: t('Amount each time') }), amount,
+        chips, out);
 }
 
 function loanCard(doc, g, st, t, actions) {
@@ -255,6 +323,8 @@ function loanCard(doc, g, st, t, actions) {
             fact(doc, t('Outstanding'), fmtMoney(g.outstanding, cur), 'tp-amt'),
             due ? fact(doc, t('Expected back by'), due, late ? 'tp-late' : null) : null),
         (() => { const pct = loanProgress(g); return pct === null ? null : bar(doc, t('{n}% repaid', { n: pct }), pct); })(),
+        trailChart(doc, g, t),
+        planWidget(doc, g, st, t, actions),
         Array.isArray(g.events) && g.events.length
             ? table(doc, t('Movements, in {cur}', { cur }), [[t('Date')], [t('Amount'), true], [t('Balance'), true]], g.events.map((e) => [[fmtDay(e.date), false, t(LOAN_EVENT[e.kind] || '-')], [fmtNum(e.amount), true], [fmtNum(e.balance), true]]), t)
             : h(doc, 'p', { class: 'tp-note', text: t('Nothing recorded yet.') }));
@@ -639,6 +709,15 @@ export function createPage(env) {
         showInfo(t(COPY.FILE_READY));
     }
 
+    /** The repayment plan the person tried, as a repeating calendar reminder. */
+    function onPlanCalendar(plan) {
+        const text = planFile(plan, { t, fmtMoney, asOf: st.statement && st.statement.asOf });
+        if (!text) return;
+        showError('');
+        saveFile(new Blob([text], { type: 'text/calendar;charset=utf-8' }), `WealthFlow-plan-${String(plan.ref || 'loan').replace(/[^A-Za-z0-9-]/g, '')}.ics`);
+        showInfo(t(COPY.FILE_READY));
+    }
+
     /** Asks for the statement again inside the same session (no new text message), for after a payment has been recorded. */
     async function onRefresh() {
         if (st.busy) return;
@@ -677,7 +756,7 @@ export function createPage(env) {
         st.els.pdf = pdf; st.els.share = share; st.els.refresh = refresh;
         st.els.err = h(doc, 'p', { class: 'tp-error', role: 'alert' });
         st.els.info = h(doc, 'p', { class: 'tp-info', role: 'status', id: 'tp-info', hidden: true });
-        const { left, right, sections } = statementColumns(doc, statement, t, { copy: onCopy, calendar: onCalendar, jump: jumpTo, hide: onHide, hidden: st.hide });
+        const { left, right, sections } = statementColumns(doc, statement, t, { copy: onCopy, calendar: onCalendar, planCalendar: onPlanCalendar, jump: jumpTo, hide: onHide, hidden: st.hide });
         const actionRow = h(doc, 'div', { class: 'tp-actions', role: 'group', 'aria-label': t('Quick actions') }, pdf, share, csv, print, refresh);
         left.splice(sections.length && sections[0][0] === 'tp-hero' ? 1 : 0, 0, actionRow);
         const tabs = sections.length > 1 ? h(doc, 'nav', { class: 'tp-tabs', 'aria-label': t('Sections') }, sections.map(([id, label, ico]) => {

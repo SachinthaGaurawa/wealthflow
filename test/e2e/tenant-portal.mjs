@@ -274,6 +274,25 @@ if (await page.locator('.tp-tabs').isVisible()) {
     assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'tp-records', 'the section bar jumps to the records');
 }
 console.log('5f. balance card      -> holder, hide amounts (kept over a refresh), section bar, typeface');
+// 5g. the repayment plan: a loan that is open can be planned, and the answer follows what is typed
+{
+    await page.click('.tp-plan > summary');
+    const planOut = () => page.textContent('.tp-plan-out');
+    assert.match(await planOut(), /Enter an amount/, 'the plan asks for an amount first');
+    await page.selectOption('.tp-plan select', 'weekly');
+    await page.fill('.tp-plan input', '10000');
+    assert.match(await planOut(), /Payments\s*3|3\s*Payments/i, 'three weekly payments of 10,000 clear 30,000');
+    assert.match(await planOut(), /Finished by/i, 'and it says when it ends');
+    await page.fill('.tp-plan input', '0.01');
+    assert.match(await planOut(), /too many payments/, 'a tiny amount is refused in words');
+    await page.fill('.tp-plan input', '10000');
+    const [planIcs] = await Promise.all([page.waitForEvent('download'), page.click('.tp-plan-out .tp-small-btn')]);
+    const planText = fs.readFileSync(await planIcs.path(), 'utf8');
+    assert.match(planText, /RRULE:FREQ=WEEKLY;INTERVAL=1;COUNT=3/, 'the plan downloads as a repeating reminder');
+    assert.ok(await page.locator('.tp-trail .tp-spark').count() >= 1, 'the loan draws its balance over time');
+    await shot('3e-repayment-plan');
+    console.log('5g. repayment plan    -> payments and end date follow the amount, a repeating calendar reminder, balance chart');
+}
 await shot('3d-statement-extras');
 
 // their own language, one tap, nothing remembered
