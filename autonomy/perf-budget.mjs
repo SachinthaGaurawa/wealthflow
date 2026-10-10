@@ -316,7 +316,9 @@ export const BUDGETS = {
     // 2026-10-09 (stable Settings controls): 2,219,000 -> 2,222,500 (measured 2,220,002 + ~0.1% headroom). The shared switch renderer, atomic dependent-row sync, keyboard semantics and passcode-free control sync replace whole-page rerenders.
     // 2026-10-09 (full name, search over the investments and debtors, and the "already owes you" question): 2,222,500 -> 2_229_500 (measured 2,227,210 + ~0.1% headroom). The full-name field carried by both forms, one
     // search box for each list (the cards are only hidden, never rebuilt), and one question asked before a new loan for somebody who still owes money. About a third is comments.
-    htmlBytes: 2_229_500,
+    // 2026-10-10 (design system + app shell): 2,229,500 -> 2_233_000 (measured 2,230,551 + ~0.1% headroom). The whole look moved out of the page into wf-tokens.css / wf-ui.css, so the page
+    // only gained the head links (font preloads, stylesheets, theme-color), the one inline SVG logo sprite and three <use> marks that replace the old raster logos and orb markup, and one script tag.
+    htmlBytes: 2_233_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -647,7 +649,12 @@ export const BUDGETS = {
     // tested costs 1,309 bytes; duplicating these rules would avoid the counter
     // while making legacy-link migration inconsistent. The ceiling moves once
     // with less than 0.2% headroom.
-    totalJsBytes: 2_460_000,
+    // 2026-10-10 (design system + app shell): 2,460,000 -> 2_488_500 (measured 2,485,665 + ~0.1% headroom). wealthflow-shell.js (about 34 KB, a third of it comments) is the phone tab bar, the "More" sheet and
+    // the Ctrl/Cmd+K command palette that searches screens, actions and the owner's own records; it reads the sidebar as the one list of screens, writes no data and makes no request. The update
+    // screen's wait for the app frame is now a poll (wealthflow-update-system.js) so the new frame cannot race it.
+    // 2026-10-10 (dashboard): 2,488,500 -> 2_492_300 (measured 2,489,721 + ~0.1% headroom). The dashboard greeting (wealthflow-shell.js, about 1.2 KB) and the attention feed's
+    // show-more fold with theme-token tones (wealthflow-insights.js). About a third is comments. No new module or request.
+    totalJsBytes: 2_492_300,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     largestModuleBytes: 233_000, // measured 232,325
@@ -740,7 +747,8 @@ export const BUDGETS = {
     // 2026-10-08: 86 -> 87 for wealthflow-public-identity.mjs. It is server
     // shared rather than a new browser request, but this budget deliberately
     // counts every deployable module, so the identity authority stays visible.
-    moduleCount: 87,   // measured 87
+    // 2026-10-10: 87 -> 88 for wealthflow-shell.js (tab bar, More sheet, command palette; see totalJsBytes).
+    moduleCount: 88,   // measured 88
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -809,7 +817,8 @@ export const BUDGETS = {
     // 2026-10-04: 77 -> 78 for wealthflow-own-money.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-05: 78 -> 79 for wealthflow-sms.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-05: 79 -> 80 for wealthflow-people-ui.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
-    scriptTags: 80,              // measured 80; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
+    // 2026-10-10: 80 -> 81 for wealthflow-shell.js — a plain deferred script, so renderBlockingScripts below is unchanged at 2.
+    scriptTags: 81,              // measured 81; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

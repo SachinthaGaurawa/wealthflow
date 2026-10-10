@@ -1,0 +1,51 @@
+name: App shell and design system browser verification
+
+on:
+  pull_request:
+    paths:
+      - index.html
+      - wf-tokens.css
+      - wf-ui.css
+      - wealthflow-shell.js
+      - wealthflow-insights.js
+      - assets/fonts/**
+      - assets/wf-mark.svg
+      - test/e2e/ui-shell.mjs
+      - test/e2e/ui-dashboard.mjs
+      - test/e2e/dashboard-seed.mjs
+      - test/e2e/harness.mjs
+      - test/e2e/firebase-stub.mjs
+      - .github/workflows/ui-shell.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false chart.js@4.4.1
+      - run: npx playwright install --with-deps chromium
+      - name: Verify the tab bar, More sheet, command palette, themes and no sideways scroll
+        run: node test/e2e/ui-shell.mjs
+        env:
+          WF_SHELL_ARTIFACTS: shell-artifacts
+      - name: Verify the dashboard order, summary bar, capped feeds and axis units
+        run: node test/e2e/ui-dashboard.mjs
+        env:
+          WF_DASH_ARTIFACTS: shell-artifacts
+      - name: Preserve screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-shell
+          path: shell-artifacts
+          if-no-files-found: ignore
