@@ -332,6 +332,9 @@ export function settleCheque(row, cheques, options) {
     // the books: what carries this row's money
     out.filesIncome = read.type === 'received' && event === 'clear';
     out.filesExpense = read.type === 'received' && event === 'return';
+    // An issued cheque that the owner's own typed entry already counts (countedBy) and the bank then SENDS BACK: the cheque is bounced, but the typed entry still counts a payment that did not happen. The credit that
+    // brings the money back is therefore income — it offsets that entry — instead of being consumed (consumed only when the cheque itself was what carried the payment).
+    if (read.type === 'issued' && event === 'return' && hit.status === 'matched' && hit.cheque && hit.cheque.countedBy) out.filesIncome = true;
     const provenance = options.source && typeof options.source === 'object' ? options.source : {};
     const trail = (verb) => verb + ' on the bank statement ' + date + (row.bank ? ' (' + row.bank + ')' : '');
 

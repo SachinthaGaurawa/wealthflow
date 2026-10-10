@@ -809,6 +809,25 @@ describe('a cheque the bank paid and an expense the owner typed for it count onc
         expect(user.cheques[0].countedBy).toBeUndefined();
     });
 
+    it('the cheque the typed entry stands behind comes back: the credit offsets that entry, so the month does not count a payment that did not happen', async () => {
+        const sheet = [paid, line('20', 'CHQ 000123 RETURNED', '', '25,000.00', '500,000.00')].join('\n');
+        const { user } = await file({ expenses: [typed()], cheques: [issued()] }, sheet);
+        expect(user.cheques[0]).toMatchObject({ id: 'I1', status: 'bounced', bouncedDate: '2026-03-20' });
+        expect(user.expenses).toHaveLength(1);                                   // the owner's entry is never touched
+        expect(user.incomeRecv).toHaveLength(1);
+        expect(user.incomeRecv[0]).toMatchObject({ amount: 25000, date: '2026-03-20' });
+        const month = monthly(user);
+        const credited = user.incomeRecv.reduce((sum, row) => sum + row.amount, 0);
+        expect(month.totalExp - credited).toBe(0);                               // paid out 25,000, got 25,000 back
+    });
+
+    it('an issued cheque that carried the money itself and comes back: the credit is not income (nothing else counts the payment)', async () => {
+        const { user } = await file({ cheques: [issued()] }, [paid, line('20', 'CHQ 000123 RETURNED', '', '25,000.00', '500,000.00')].join('\n'));
+        expect(user.cheques[0]).toMatchObject({ status: 'bounced' });
+        expect(user.incomeRecv).toHaveLength(0);
+        expect(monthly(user).totalExp).toBe(0);
+    });
+
     it('the typed entry is deleted later: the cheque carries the money again', async () => {
         const { user } = await file({ expenses: [typed()], cheques: [issued()] }, paid);
         expect(monthly({ ...user, expenses: [] }).totalExp).toBe(25000);
@@ -1056,6 +1075,15 @@ describe('the manual upload files cheque rows the same way', () => {
             const received = upload({ cheques: [chq({ id: 'R1' })], expenses: [typed({ amount: 50000 })] }, [r('CHEQUE DEPOSIT 285943', 'credit', 50000, '2026-03-12')]);
             expect(received.state.cheques[0].countedBy).toBeUndefined();
             expect(received.state.expenses[0].statementTwin).toBeUndefined();
+        });
+
+        it('the cheque comes back in a later upload: the credit is filed as income and offsets the typed entry', () => {
+            const first = upload({ cheques: [issued()], expenses: [typed()] }, paid);
+            const back = upload(first.state, [r('CHQ 000123 RETURNED', 'credit', 25000, '2026-03-20')], { key: 'stmt-2', claim: 'claim-2' });
+            expect(back.state.cheques[0]).toMatchObject({ status: 'bounced' });
+            expect(back.state.expenses).toHaveLength(1);
+            expect(back.state.incomeRecv).toHaveLength(1);
+            expect(back.state.incomeRecv[0]).toMatchObject({ amount: 25000 });
         });
 
         it('uploaded twice, the payment is still counted once and the entry stands for one row', () => {

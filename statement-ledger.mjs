@@ -93,7 +93,8 @@ function linkInstallment(loans, expenses, record, now) {
 }
 
 /* One statement row against the owner's Cheque Tracker (wealthflow-cheques.js). Writes to the working copy of `user.cheques` and says what it did:
- *   consumed  the row's money is carried by the cheque record itself (an issued cheque paid, or an issued cheque the bank gave back as a credit) — the caller files no expense / income for it
+ *   consumed  the row's money is carried by the cheque record itself (an issued cheque paid, or an issued cheque the bank gave back as a credit) — the caller files no expense / income for it. Not when the owner's own typed
+ *             entry carries the payment (countedBy) and the cheque is sent back: that entry still counts it, so the credit is filed as income and offsets it.
  *   twin      the owner had ALSO typed that payment into Expenses (or pasted its SMS): that entry already counts the money, so the cheque is marked `countedBy` it and the month counts the payment once
  * A deposited cheque (a credit) and the debit that takes one back are NOT consumed: the tracker is updated and the row is then filed as income / expense like any other. null: not a cheque movement. */
 function settleChequeRow({ row, user, index, id, sourcePath, bank, now }) {
@@ -101,7 +102,7 @@ function settleChequeRow({ row, user, index, id, sourcePath, bank, now }) {
         Array.isArray(user.cheques) ? user.cheques : [], { id, now: new Date(now).toISOString(), source: { statementKey: sourcePath, statementRow: index, bank } });
     if (!plan.isCheque || plan.action === 'none') return null;
     const type = plan.read.type, event = plan.read.event;
-    const out = { action: plan.action, cheque: plan.cheque || plan.record || null, changed: false, consumed: type === 'issued', twin: null };
+    const out = { action: plan.action, cheque: plan.cheque || plan.record || null, changed: false, consumed: type === 'issued' && !plan.filesIncome, twin: null };
     out.reason = plan.action === 'already' ? 'cheque-already-tracked' : event === 'return' ? 'cheque-returned' : plan.action === 'create' ? 'cheque-added-from-statement' : 'clears-a-tracked-cheque';
     // an issued cheque the bank paid IS the payment — unless the owner typed the same payment in as an expense (the entry counts it; the cheque only tracks it)
     const counts = type === 'issued' && event === 'clear' && (plan.action === 'clear' || plan.action === 'create');
