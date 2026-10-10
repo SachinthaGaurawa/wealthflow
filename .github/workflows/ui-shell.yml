@@ -18,6 +18,10 @@ on:
       - test/e2e/ui-toolbars.mjs
       - test/e2e/ui-overlays.mjs
       - test/e2e/ui-controls.mjs
+      - test/e2e/ui-standalone-pages.mjs
+      - share-target.html
+      - 404.html
+      - manifest.json
       - test/e2e/dashboard-seed.mjs
       - test/e2e/harness.mjs
       - test/e2e/firebase-stub.mjs
@@ -64,6 +68,8 @@ jobs:
         run: node test/e2e/ui-overlays.mjs
       - name: Verify Settings drop-downs, the Last Backup card and the AI Advisor header
         run: node test/e2e/ui-controls.mjs
+      - name: Verify the Quick Capture page and the 404 notice follow the design tokens and the saved theme
+        run: node test/e2e/ui-standalone-pages.mjs
       - name: Preserve screenshots
         if: always()
         uses: actions/upload-artifact@v7
