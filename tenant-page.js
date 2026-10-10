@@ -35,6 +35,8 @@ import { identityCandidates } from './wealthflow-nic.js';
 import { makeT, detectLang, LANG_BUTTON, noteText } from './tenant-lang.js';
 import { upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvFile, payoffPlan, planFile, balanceTrail } from './tenant-tools.js';
 
+const THEMES = ['light', 'dark', 'auto'];
+
 export const ENDPOINT = '/api/tenant-portal';
 export const FETCH_TIMEOUT_MS = 20000;
 export const TOKEN_PATH_RE = /^\/t\/([A-Za-z0-9_-]{16})\/?$/;
@@ -501,7 +503,7 @@ export function createPage(env) {
     const calm = () => { const w = doc.defaultView; return !!(w && typeof w.matchMedia === 'function' && w.matchMedia('(prefers-reduced-motion: reduce)').matches); };
     const jumpTo = env.jumpTo || ((id) => { const el = doc.getElementById ? doc.getElementById(id) : null; if (el) { if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: calm() ? 'auto' : 'smooth', block: 'start' }); if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } });
     const watchSections = typeof env.watchSections === 'function' ? env.watchSections : null;       // (ids, onActive) => stop: which section is on screen, for the section bar
-    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', codeMessage: '', tick: null, hide: false, unwatch: null, els: {} };
+    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', theme: THEMES.includes(env.theme) ? env.theme : 'light', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', codeMessage: '', tick: null, hide: false, unwatch: null, els: {} };
     let t = makeT(st.lang);
 
     /** One door to the server. With `file`, a PDF answer comes back as a blob (never parsed as JSON); everything else is JSON. */
@@ -545,6 +547,17 @@ export function createPage(env) {
     };
     const applyLang = () => { if (doc.documentElement && typeof doc.documentElement.setAttribute === 'function') doc.documentElement.setAttribute('lang', st.lang); };
 
+    /** Light is the page's own look; Dark and Auto (follow the device) are set on the root element, which the stylesheet reads. Kept in memory only: the page promises nothing is saved on the device. */
+    const applyTheme = () => { if (doc.documentElement && typeof doc.documentElement.setAttribute === 'function') doc.documentElement.setAttribute('data-theme', st.theme); };
+    const themeLabel = () => t(st.theme === 'dark' ? 'Dark' : st.theme === 'auto' ? 'Auto' : 'Light');
+
+    function cycleTheme() {
+        st.theme = THEMES[(THEMES.indexOf(st.theme) + 1) % THEMES.length];
+        applyTheme();
+        const btn = root.querySelector('#tp-theme');
+        if (btn) btn.textContent = themeLabel();
+    }
+
     function toggleLang() {
         const typed = st.els.input ? String(st.els.input.value || '') : '';
         st.lang = st.lang === 'si' ? 'en' : 'si';
@@ -567,9 +580,10 @@ export function createPage(env) {
         st.busy = false;
         if (st.unwatch) { st.unwatch(); st.unwatch = null; }
         const brand = brandEl(doc);
+        const theme = h(doc, 'button', { class: 'tp-lang tp-theme', type: 'button', id: 'tp-theme', 'aria-label': t('Colour theme'), text: themeLabel(), onclick: cycleTheme });
         const lang = h(doc, 'button', { class: 'tp-lang', type: 'button', id: 'tp-lang', lang: st.lang === 'si' ? 'en' : 'si', text: LANG_BUTTON[st.lang], onclick: toggleLang });
         root.replaceChildren(
-            h(doc, 'header', { class: 'tp-top' }, h(doc, 'div', { class: 'tp-top-in' }, brand, h(doc, 'div', { class: 'tp-top-actions' }, lang, ...bar))),
+            h(doc, 'header', { class: 'tp-top' }, h(doc, 'div', { class: 'tp-top-in' }, brand, h(doc, 'div', { class: 'tp-top-actions' }, theme, lang, ...bar))),
             h(doc, 'div', { class: wide ? 'tp-wrap tp-wide' : 'tp-wrap' }, ...nodes));
         const target = focus ? root.querySelector(focus) : root.querySelector('h2');
         if (target && typeof target.focus === 'function') target.focus();
@@ -888,6 +902,7 @@ export function createPage(env) {
     /** Opens on the NIC form, unless this device already has a live session for this link (a reload within 20 minutes costs no new text). */
     async function start() {
         applyLang();
+        applyTheme();
         if (!token) return screenInvalid();
         screenLoading();
         const got = await api('statement', { token });

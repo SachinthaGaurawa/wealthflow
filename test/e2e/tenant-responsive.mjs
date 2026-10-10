@@ -196,6 +196,7 @@ for (const [device, width, height, touch] of DEVICES) {
     const bp = await bare.newPage();
     await bp.goto(`${base}/t/${TOKEN}`);
     await bp.waitForSelector('#tp-nic');
+    await bp.click('#tp-theme');   // dark
     await inspect(bp, `${device} ${width}x${height}, NIC form`, touch);
     await shot(bp, `${tag}-1-nic`);
     await bp.fill('#tp-nic', '1234');
@@ -227,7 +228,12 @@ for (const [device, width, height, touch] of [['dark phone', 390, 844, true], ['
     const tag = `${String(width).padStart(4, '0')}x${height}-${slug(device)}`;
     await page.goto(`${base}/t/${TOKEN}`);
     await page.waitForSelector('#tp-out');
-    const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    const paper = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    const [r0, g0, b0] = (await paper()).match(/\d+/g).map(Number);
+    if (r0 + g0 + b0 < 600) problems.push(`${device}: the page opens dark on a dark device without being asked (the default is light)`);
+    await page.click('#tp-theme');
+    await page.click('#tp-theme');   // light -> dark -> auto: the phone decides, and this one is dark
+    const bg = await paper();
     const [r, g, b] = bg.match(/\d+/g).map(Number);
     if (r + g + b > 150) problems.push(`${device}: the page is not dark (${bg})`);
     await inspect(page, `${device} ${width}x${height}, statement`, touch);

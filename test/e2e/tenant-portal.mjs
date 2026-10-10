@@ -295,6 +295,30 @@ console.log('5f. balance card      -> holder, hide amounts (kept over a refresh)
 }
 await shot('3d-statement-extras');
 
+// light by default, one tap each to dark, auto (the device decides) and back to light; the choice is not stored either
+const paper = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+const luma = (rgb) => { const m = rgb.match(/\d+/g).map(Number); return (m[0] * 299 + m[1] * 587 + m[2] * 114) / 1000; };
+assert.equal(await page.getAttribute('html', 'data-theme'), 'light', 'the portal opens in the light theme');
+assert.equal(await page.textContent('#tp-theme'), 'Light');
+assert.ok(luma(await paper()) > 200, 'and its paper is light');
+await page.click('#tp-theme');
+assert.equal(await page.getAttribute('html', 'data-theme'), 'dark');
+assert.equal(await page.textContent('#tp-theme'), 'Dark');
+assert.ok(luma(await paper()) < 80, 'dark means a dark paper');
+await noOverflow('statement in the dark theme');
+await shot('3b-statement-dark');
+await page.emulateMedia({ colorScheme: 'light' });
+await page.click('#tp-theme');
+assert.equal(await page.getAttribute('html', 'data-theme'), 'auto');
+assert.ok(luma(await paper()) > 200, 'auto follows a light device');
+await page.emulateMedia({ colorScheme: 'dark' });
+assert.ok(luma(await paper()) < 80, 'auto follows a dark device');
+await page.emulateMedia({ colorScheme: 'light' });
+await page.click('#tp-theme');
+assert.equal(await page.getAttribute('html', 'data-theme'), 'light');
+assert.equal(await page.evaluate(() => JSON.stringify([Object.keys(localStorage), Object.keys(sessionStorage)])), '[[],[]]', 'the theme is not stored');
+console.log('5h. colour theme      -> light by default, dark, auto (follows the device), nothing stored');
+
 // their own language, one tap, nothing remembered
 assert.equal(await page.textContent('#tp-lang'), 'සිංහල');
 await page.click('#tp-lang');
