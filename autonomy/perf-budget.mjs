@@ -328,7 +328,11 @@ export const BUDGETS = {
     // (both of the above merged: measured at the merge)
     // 2026-10-10 (Cheque Tracker settled by the statement): 2,251,000 -> 2_259_000 (measured 2,254,911 + ~0.2% headroom, before the final comments). The upload page now clears / bounces the cheque it already tracks instead of skipping
     // it (and files the deposit as income and a returned deposit as an expense), undoes that import exactly, and the Cheques table shows a bank by its proper name. About half of it is the comment recording why.
-    htmlBytes: 2_259_000,
+    // 2026-10-10 (the AI consumer side): 2,251,000 -> 2_261_000 (measured 2,258,304 + ~0.1% headroom). The Settings AI status reads the measured board (?health=1 / ?canary=1) and says how many services answered and how old the reading is,
+    // plain-words failures on the chat and every AI card (_wfAiWhy), the Insights card on the shared books figures, AI Auto-Notifications gating the smart tips (the insight tip built from the books), the scanner's Auto-Categorize switch
+    // and a hand-picked category that the title suggestion no longer moves. About a third is comments. No new script or request.
+    // Both changes together (merged 2026-10-10): measured 2,265,753, ceiling 2_268_000 (~0.1% headroom).
+    htmlBytes: 2_268_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -677,7 +681,8 @@ export const BUDGETS = {
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
     // 2026-10-10: 234,000 -> 234_300 (wealthflow-ai-v4.js, measured 234,092): a scanned bill is filed as still to be paid, not as already paid.
     // 2026-10-10: 234,300 -> 234_500 (wealthflow-ai-v4.js, measured 234,407): the statement-reading prompt keeps a cheque's number (and a Cheque No column's) in the description.
-    largestModuleBytes: 234_500,
+    // 2026-10-10 (merged with the AI consumer side): 234,500 -> 234_700 (wealthflow-ai-v4.js, measured 234,580): both changes edit the statement-reading prompt file.
+    largestModuleBytes: 234_700,
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely

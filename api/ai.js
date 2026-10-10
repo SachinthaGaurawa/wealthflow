@@ -96,8 +96,9 @@ export function boardRoster(eligible, { needed = 1, now = Date.now() } = {}) {
 export function resetProviderCooldowns() { providerCooldown.clear(); deadlineStrikes.clear(); }
 
 /* Every eligible configured engine is started before any result is awaited.
- * A response is reduced only after all members settle or hit their individual
- * deadline, so a late dissent can never be silently discarded. */
+ * A FINANCIAL decision is reduced only after all members settle or hit their individual
+ * deadline, so a late dissent can never be silently discarded. Advice (prose that files
+ * nothing) settles once a quorum has answered plus a short grace — see PROSE_QUORUM below. */
 
 export const config = {
     maxDuration: 45 // seconds — long enough for deep responses
@@ -412,9 +413,11 @@ export default async function handler(req, res) {
     //  • mode=corroborated → wait for every eligible configured engine, then
     //                        let api/ai-matrix.mjs reconcile all testimony.
     //  • mode=consensus    → wait for every engine, then vote (vision / JSON)
-    //  • mode=fastest      → retained as a compatibility alias only. WealthFlow
-    //                        never releases an answer before the full eligible
-    //                        board has settled or reached its per-engine deadline.
+    //  • mode=fastest      → retained as a compatibility alias only, never a
+    //                        one-engine race. A FINANCIAL decision never releases
+    //                        an answer before the full eligible board has settled
+    //                        or reached its per-engine deadline; advice (prose that
+    //                        files nothing) settles on a quorum plus a short grace.
     const errorLog = [];
 
     let engines;
@@ -519,7 +522,29 @@ export default async function handler(req, res) {
     // Start the entire eligible board before awaiting any member, then retain
     // every success, failure and timeout in the decision record.
     const boardStarted = Date.now();
-    const results = await Promise.all(engines.map(run));
+    /* A FINANCIAL DECISION WAITS FOR EVERY MEMBER (below, unchanged). ADVICE DOES NOT.
+     * A chat reply or an AI card is read by a person who is waiting, and nothing is filed from it. It used to wait for the slowest of
+     * up to thirteen free-tier providers too, so a reply that three providers had written in four seconds arrived after twenty-five.
+     * It now settles once PROSE_QUORUM providers have given a usable answer plus a short grace for the near-simultaneous ones, and
+     * Matrix.decide cross-checks the answers it has. Providers still running are reported as `late`, never as failed, so the audit
+     * can tell "slow" from "down". With fewer than PROSE_QUORUM providers configured it waits for all, exactly as before. */
+    const PROSE_QUORUM = 3, PROSE_GRACE_MS = 2500;
+    const collect = (list) => new Promise(resolve => {
+        const settled = new Array(list.length);
+        let finished = 0, usable = 0, grace = null, done = false;
+        const release = () => {
+            if (done) return;
+            done = true; clearTimeout(grace);
+            resolve(list.map((engine, i) => settled[i] || { ok: false, late: true, name: engine.name, error: 'still running when the answer was released', ms: Date.now() - boardStarted }));
+        };
+        list.forEach((engine, i) => run(engine).then(r => {
+            settled[i] = r; finished++;
+            if (r.ok && isValid(r.reply)) usable++;
+            if (finished === list.length) release();
+            else if (usable >= Math.min(PROSE_QUORUM, list.length) && !grace) grace = setTimeout(release, PROSE_GRACE_MS);
+        }));
+    });
+    const results = mode === 'unanimous' ? await Promise.all(engines.map(run)) : await collect(engines);
     const reasked = [];
     if (mode === 'unanimous') {
         /* A DISSENT HAS TO BE REPRODUCIBLE TO VETO. Free-tier models glitch, and any valid dissent vetoes. So when a clear majority (at
@@ -692,7 +717,9 @@ export default async function handler(req, res) {
         },
         trustworthy: proseDecision ? Matrix.trustworthy(proseDecision) : good.length >= 2,
         answered: good.map(r => r.name),
-        failed: results.filter(r => !r.ok).map(r => r.name),
+        failed: results.filter(r => !r.ok && !r.late).map(r => r.name),
+        // asked, still running when a quorum had answered: slow, not down (advice only; a financial board waits for everyone)
+        ...(results.some(r => r.late) ? { late: results.filter(r => r.late).map(r => r.name) } : {}),
         latencyMs: best.ms,
         financialDecision: false, advisoryOnly: true
     });

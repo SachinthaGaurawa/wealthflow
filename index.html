@@ -10290,6 +10290,37 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             return null;
         }
 
+        /* WHY THE AI DID NOT ANSWER, IN WORDS A PERSON CAN ACT ON.
+         * The screen used to say "All Intelligence Engines Offline. Vercel Backend HTTP 503 | Frontend Gemini Failed | Frontend Ollama
+         * Failed | ...": nothing there tells an owner whether to wait a minute, check the phone's signal, or top up an account.
+         * `status` is the endpoint's HTTP status (0 when it was never reached), `body` its JSON, `netErr` the network error. */
+        function _wfAiWhy(status, body, netErr) {
+            const said = String((body && (body.details || body.error)) || '');
+            if (netErr || status === 0) {
+                return (typeof navigator !== 'undefined' && navigator.onLine === false)
+                    ? 'You are offline. Connect to the internet and try again.'
+                    : "Couldn't reach the WealthFlow AI service. Check your connection and try again.";
+            }
+            if (status === 429 || /rate.?limit|too many|\b429\b|temporarily rate-limited/i.test(said)) return 'The free AI services are busy right now (each limits how many questions it answers). Please try again in a minute.';
+            if (status === 504 || /deadline|timed?\s*out|aborted/i.test(said)) return 'The AI took too long to answer. Please try again.';
+            if (status === 422) return 'The AI services could not agree on one safe answer, so nothing was filed. Please try again.';
+            if (/credit|billing|payment|prepayment|depleted|\b402\b/i.test(said)) return 'The AI services have run out of credit on the server. The account owner needs to top them up.';
+            if (status === 503 && /not configured|no ai providers/i.test(said)) return 'The AI service is not set up on the server yet (no provider keys).';
+            return 'The AI service did not answer just now. Please try again in a moment.';
+        }
+        function _wfAiFail(plain, tech) { const e = new Error(plain); e.plain = plain; e.tech = tech || plain; return e; }
+        window._wfAiWhy = _wfAiWhy;
+        // what a screen may print for a failed AI call: the plain reason callAI attached, never a stack message or a provider log
+        function _wfAiErrText(e) { return (e && e.plain) || 'Something went wrong while asking the AI. Please try again.'; }
+        window._wfAiErrText = _wfAiErrText;
+        // "groq:gpt-oss-120b", "openrouter:qwen-free", "github-models" ... -> the name a person knows
+        const _WF_AI_NAMES = { gemini: 'Gemini', groq: 'Groq', deepseek: 'DeepSeek', ollama: 'Ollama', mistral: 'Mistral', openrouter: 'OpenRouter', 'github-models': 'GitHub Models', github: 'GitHub Models', cohere: 'Cohere', cloudflare: 'Cloudflare AI', together: 'Together', fireworks: 'Fireworks', nvidia: 'NVIDIA', pollinations: 'Pollinations' };
+        function _wfAiProviderName(p) {
+            const k = String(p || '').toLowerCase();
+            return _WF_AI_NAMES[k] || _WF_AI_NAMES[k.split(':')[0]] || '';
+        }
+        window._wfAiProviderName = _wfAiProviderName;
+
         async function callAI(prompt, image = null) {
             let errorLogs = [];
             window._wfLastIntent = '';
@@ -10410,8 +10441,12 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                         else if (/[\u0b80-\u0bff]/.test(_lastLine)) _vLang = 'Tamil';
                         else if (/[\u0900-\u097f]/.test(_lastLine)) _vLang = 'Hindi';
                     } catch (_) {}
-                    prompt = prompt +
-                        '\n\n[IMPORTANT: You CAN see the attached image — look at it carefully and describe/analyse exactly what is really in it (objects, text, brand, model, people, scene, numbers). Be specific and accurate. Answer as a warm, helpful friend. Reply in ' + _vLang + '.]';
+                    /* A prompt that asks for ONLY JSON ("Output ONLY the JSON", the receipt reader's) is a machine-read answer: a "warm, helpful friend"
+                     * tail on it invites prose around the object and the parse fails. It gets the sight reminder, no persona. */
+                    const _jsonOnly = /\bONLY\b[^.\n]{0,24}\bJSON\b|\bJSON\b[^.\n]{0,14}\bONLY\b/i.test(prompt || '');
+                    prompt = prompt + (_jsonOnly
+                        ? '\n\n[You CAN see the attached image. Read it carefully and answer exactly in the JSON format asked for, nothing else.]'
+                        : '\n\n[IMPORTANT: You CAN see the attached image — look at it carefully and describe/analyse exactly what is really in it (objects, text, brand, model, people, scene, numbers). Be specific and accurate. Answer as a warm, helpful friend. Reply in ' + _vLang + '.]');
                     window._wfLastIntent = _intent;
                     window._wfLastUserLine = _lastLine;
                     console.log('[AI v6.2] vision prompt preserved, lang=' + _vLang);
@@ -10490,6 +10525,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             // ═══════════════════════════════════════════════════════════════
 
             // 1. Try Vercel Backend First (Handles multi-engine securely)
+            let _serverWhy = '';
             try {
                 const vercelUrl = (typeof window._wfApiUrl === 'function')
                     ? window._wfApiUrl('/api/ai')
@@ -10515,10 +10551,13 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     }
                 } else {
                     errorLogs.push(`Vercel Backend HTTP ${r.status}`);
+                    let _eb = null; try { _eb = await r.json(); } catch (_) { /* a non-JSON refusal says nothing more */ }
+                    _serverWhy = _wfAiWhy(r.status, _eb);
                 }
             } catch (e) {
                 console.warn('[AI] Vercel backend failed:', e.message);
                 errorLogs.push(`Vercel Backend: ${e.message}`);
+                _serverWhy = _wfAiWhy(0, null, e);
             }
 
             // 2. Direct Frontend Fallbacks
@@ -10543,7 +10582,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 errorLogs.push('Frontend DeepSeek Failed');
             }
 
-            throw new Error('All Intelligence Engines Offline. ' + errorLogs.join(' | '));
+            // the reader gets the reason in plain words; the technical trail stays on the error for the console and for a bug report
+            throw _wfAiFail(_serverWhy || _wfAiWhy(0, null, new Error('no answer')), 'All Intelligence Engines Offline. ' + errorLogs.join(' | '));
         }
 
         /* ============================================================================
@@ -10639,39 +10679,40 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
 
         async function generateAIInsights() {
             const area = $('aiInsightsArea');
-            area.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:var(--accent);"><div style="width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);animation:luxuryBlink 1.5s infinite;"></div><span style="font-weight:600;font-size:13px;">Analysing your portfolio with Gemini AI...</span></div>';
+            area.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:var(--accent);"><div style="width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);animation:luxuryBlink 1.5s infinite;"></div><span style="font-weight:600;font-size:13px;">Analysing your portfolio…</span></div>';
 
             try {
-                const income = DB.get('income');
-                const expenses = DB.get('expenses');
-                const loans = DB.get('loans');
+                /* THE SAME NUMBERS THE DASHBOARD AND THE ADVISOR USE (buildFinancialContext: the owner's books, not the Investments list and this
+                 * month's hand-typed rows). The card used to total only active investments as "income" and only this month's typed expenses,
+                 * so it could tell someone with a salary on the Income page that they had no income, or that they were saving 100%. */
+                const ctx = buildFinancialContext();
                 const targets = DB.get('targets');
-                const balData = DB.getObj('balance', { total: 0 });
                 const userName = currentUser ? (currentUser.displayName || 'User').split(' ')[0] : 'User';
 
-                const now = new Date();
-                const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
-                const inc = income.filter(s => { const start = new Date(s.start + 'T00:00:00'); const end = s.end ? new Date(s.end + 'T00:00:00') : null; return start <= now && (!end || end >= now); }).reduce((s, x) => s + (x.monthly || 0), 0);
-                const exp = expenses.filter(e => e.month === curMonthStr).reduce((s, x) => s + (x.amount || 0), 0);
-                const loanTotal = _wfLoanDueNow(loans.filter(l => loanEndDate(l) > now), curMonthStr);   // an installment a bank debit already counts (it is in `exp`) is not added again
+                const inc = ctx.totalMonthlyIncome || 0;
+                const living = Math.round(ctx.avgMonthlyExpenses || 0);
+                const loanTotal = ctx.monthlyLoanPayments || 0;
+                const netCash = ctx.netMonthlyCashFlow || 0;
+                const savingsRate = inc > 0 ? Math.round((netCash / inc) * 100) : 0;
+                const dscr = loanTotal > 0 && inc > 0 ? inc / loanTotal : null;   // only when there is debt to cover: the prompt used to ask about a ratio it never gave
                 const targetTotal = targets.reduce((s, x) => s + (x.amount || 0), 0);
                 const targetSaved = targets.reduce((s, x) => s + (x.savings ? x.savings.reduce((a, b) => a + b.amount, 0) : 0), 0);
-                const netCash = inc - exp - loanTotal;
-                const savingsRate = inc > 0 ? Math.round(((inc - exp - loanTotal) / inc) * 100) : 0;
 
                 const prompt = `You are a premium Sri Lankan financial advisor AI for ${userName}. 
 Analyze their financial data and write exactly 3 specific, actionable insights:
-- Monthly Income: LKR ${inc.toLocaleString()}
-- This Month Expenses: LKR ${exp.toLocaleString()}  
-- Monthly Loan Payments: LKR ${loanTotal.toLocaleString()}
-- Net Cash Flow: LKR ${netCash.toLocaleString()}/month
+- Monthly Income: LKR ${Math.round(inc).toLocaleString()}
+- Typical Monthly Living Costs (debt payments apart): LKR ${living.toLocaleString()}
+- Monthly Loan and Installment Payments: LKR ${Math.round(loanTotal).toLocaleString()}
+- Net Cash Flow: LKR ${Math.round(netCash).toLocaleString()}/month
 - Savings Rate: ${savingsRate}%
-- Savings Progress: LKR ${targetSaved.toLocaleString()} of LKR ${targetTotal.toLocaleString()} goal
-- Balance on Hand: LKR ${(balData.total || 0).toLocaleString()}
+- Savings Progress: LKR ${targetSaved.toLocaleString()} of LKR ${targetTotal.toLocaleString()} goal${ctx.topExpenses ? `
+- Biggest spending categories (monthly average): ${ctx.topExpenses}` : ''}
+- Balance on Hand: LKR ${Math.round(ctx.balanceOnHand || 0).toLocaleString()}${dscr !== null ? `
+- Debt service coverage (income ÷ loan payments): ${dscr.toFixed(2)}` : ''}
 
 FORMAT:
-Write exactly 3 numbered insights, each with a small emoji. Be specific with LKR amounts and percentages.
-Include a risk warning if DSCR < 1.25 or savings rate < 15%.
+Write exactly 3 numbered insights, each with a small emoji. Be specific with LKR amounts and percentages, and use only the figures above.
+Include a risk warning if the debt service coverage is below 1.25 or the savings rate is below 15%.
 After the 3 insights, add this section:
 QUESTIONS: ["Question 1?", "Question 2?"]
 Two smart follow-up questions the user might want to explore.
@@ -10690,21 +10731,23 @@ Keep total under 200 words. No markdown, no asterisks.`;
                     mainText = reply.replace(/QUESTIONS:\s*\[[\s\S]*?\]/, '').trim();
                 }
 
-                const providerLabels = { gemini: '<span class="ai-provider-badge gemini">@sparkles@ Gemini AI</span>', groq: '<span class="ai-provider-badge groq">@sparkles@ Groq AI</span>', deepseek: '<span class="ai-provider-badge deepseek">@bot@ DeepSeek AI</span>' };
-                const badge = providerLabels[_lastAIProvider] || '';
+                // whichever provider wrote it ("groq:gpt-oss-120b", "openrouter:qwen-free" ... as well as the bare names the card knew before)
+                const _provName = _wfAiProviderName(_lastAIProvider);
+                const _provKey = String(_lastAIProvider || '').toLowerCase().split(':')[0];
+                const badge = _provName ? `<span class="ai-provider-badge ${['gemini', 'groq', 'deepseek'].includes(_provKey) ? _provKey : ''}">@sparkles@ ${_wfEsc(_provName)} AI</span>` : '';
 
-                const pillsHTML = questions.length ? `<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:14px;">${questions.map(q => `<button class="ai-followup-pill" onclick="showPage('ai',document.querySelector('[onclick*=\\'ai\\']'));setTimeout(()=>sendAIMessage('${_wfJsAttr(q)}'),300);">${q}</button>`).join('')}</div>` : '';
+                const pillsHTML = questions.length ? `<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:14px;">${questions.filter(q => typeof q === 'string').map(q => `<button class="ai-followup-pill" onclick="showPage('ai',document.querySelector('[onclick*=\\'ai\\']'));setTimeout(()=>sendAIMessage('${_wfJsAttr(q)}'),300);">${_wfEsc(q)}</button>`).join('')}</div>` : '';
 
                 area.innerHTML = `
                     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">${badge}<span style="font-size:11px;color:var(--text3);">Generated at ${new Date().toLocaleTimeString()}</span></div>
-                    <div style="color:var(--text);font-weight:400;line-height:1.85;font-size:13.5px;white-space:pre-wrap;">${mainText}</div>
+                    <div style="color:var(--text);font-weight:400;line-height:1.85;font-size:13.5px;white-space:pre-wrap;">${_wfEsc(mainText)}</div>
                     ${pillsHTML}
                     <div style="margin-top:12px;"><button class="btn btn-secondary btn-sm" onclick="showPage('ai',document.getElementById('aiNavItem'))">@message@ Open AI Advisor</button></div>
                 `;
                 triggerHaptic('success');
             } catch (e) {
-                console.error("AI Insights Error:", e);
-                area.innerHTML = `<div style="display:flex;flex-direction:column;gap:10px;"><span style="color:var(--red);">@alert@ ${e.message || 'AI unavailable'}</span><button class="btn btn-secondary btn-sm" onclick="generateAIInsights()" style="align-self:flex-start;">@refresh@ Retry</button></div>`;
+                console.error("AI Insights Error:", (e && e.tech) || e);
+                area.innerHTML = `<div style="display:flex;flex-direction:column;gap:10px;"><span style="color:var(--red);">@alert@ ${_wfEsc(_wfAiErrText(e))}</span><button class="btn btn-secondary btn-sm" onclick="generateAIInsights()" style="align-self:flex-start;">@refresh@ Retry</button></div>`;
                 triggerHaptic('error');
             }
         }
@@ -11027,10 +11070,13 @@ Keep total under 200 words. No markdown, no asterisks.`;
         function _populateExpenseFromScan(result) {
             if (!result) return false;
             let filled = false;
+            /* Scanner Settings → "Auto-Categorize: AI assigns the best expense category automatically." Nothing read that switch, so turning it
+             * off still chose the category. Off now means the scan fills the vendor, amount, date and items and leaves the category as it was. */
+            const _autoCat = _scanSetting('scanAutoCategory', true) !== false;
             // Refine BEFORE the dropdown match below, so the value being matched is
             // already the app's own vocabulary rather than whatever the model said.
             try {
-                if (result.vendor) {
+                if (_autoCat && result.vendor) {
                     var _refined = _refineScanCategory(result.vendor, result.category);
                     if (_refined) result.category = _refined;
                 }
@@ -11044,7 +11090,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 const dateStr = String(result.date).trim();
                 if (/^\d{4}-\d{2}/.test(dateStr)) { $('e_month').value = dateStr.substr(0, 7); filled = true; }
             }
-            if (result.category) {
+            if (_autoCat && result.category) {
                 const catSel = $('e_cat');
                 const target = (result.category || '').toLowerCase();
                 for (let opt of catSel.options) {
@@ -12210,7 +12256,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 _updateAIContextPills();
 
             } catch (e) {
-                appendAIMessage('bot', `@alert@ I'm having trouble connecting right now. Please try again in a moment!\n\nError: ${e.message}`);
+                console.warn('[AI chat] no answer:', (e && e.tech) || (e && e.message));
+                appendAIMessage('bot', `@alert@ ${_wfAiErrText(e)}`);
             } finally {
                 showAITyping(false);
                 $('aiSendBtn') && ($('aiSendBtn').disabled = false);
@@ -12410,8 +12457,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
             if (role === 'bot') {
                 // One assistant icon; the adjacent text identifies the provider.
-                const provName = { gemini: 'Gemini', groq: 'Groq', deepseek: 'DeepSeek' };
-                const provLabel = _ic('bot') + ' ' + (provName[_lastAIProvider] || 'AI');
+                const provLabel = _ic('bot') + ' ' + (_wfAiProviderName(_lastAIProvider) || 'AI');
                 meta.innerHTML = `<span style="color:var(--accent);font-size:9px;">${provLabel}</span> <span>${timeStr}</span>`;
 
                 // Follow-up pills
@@ -18142,7 +18188,14 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
         // Auto-detect category from expense description
         async function autoDetectCategory(desc) {
-            if (!desc || desc.length < 3) return;
+            const _sel = $('e_cat');
+            if (_sel && !_sel._wfManualWatch) {
+                // a category the owner picked by hand is theirs: typing more of the title must not move it again
+                _sel._wfManualWatch = true;
+                _sel.addEventListener('change', (ev) => { if (ev && ev.isTrusted) _sel.dataset.wfManual = '1'; });
+            }
+            if (!desc || desc.length < 3) { if (_sel && !desc) delete _sel.dataset.wfManual; return; }   // an emptied title starts the suggestion over
+            if (_sel && _sel.dataset.wfManual === '1') return;
             /* "Smart Expense Suggestions — AI suggests expense categories as
              * you type descriptions." This function IS that feature, and the
              * switch that names it was read by nothing: turning it off left the
@@ -22830,7 +22883,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         function clearExpenseForm() {
             editMode = null;
             ['e_desc', 'e_amount', 'e_notes'].forEach(id => { if ($(id)) $(id).value = ''; });
-            if ($('e_cat')) { setExpenseCategoryChoice('Food & Groceries'); } if ($('e_recurring')) $('e_recurring').value = '0';
+            if ($('e_cat')) { setExpenseCategoryChoice('Food & Groceries'); delete $('e_cat').dataset.wfManual; } if ($('e_recurring')) $('e_recurring').value = '0';
             if ($('e_month')) $('e_month').value = today().substring(0, 7);
             if ($('mdExpenseTitle')) $('mdExpenseTitle').textContent = 'Add Monthly Expense';
             setTimeout(initAllAC, 100);
@@ -22839,6 +22892,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const x = DB.get('expenses').find(e => e.id === id); if (!x) return;
             editMode = id; if ($('mdExpenseTitle')) $('mdExpenseTitle').textContent = 'Edit Expense';
             $('e_desc').value = x.desc; setExpenseCategoryChoice(x.cat);
+            $('e_cat').dataset.wfManual = '1';   // a saved expense keeps its category: retyping the title must not let the suggestion change it
             $('e_amount').value = fmtN(x.amount); $('e_month').value = x.month;
             $('e_recurring').value = x.recurringType || (x.recurring ? '1' : '0'); $('e_notes').value = x.notes || '';
             openModal('mdExpense'); setTimeout(initAllAC, 100);
@@ -29599,8 +29653,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:#4285F4;">AI Engine Status</div>
             <div class="setting-row">
                 <div class="setting-info">
-                    <div class="setting-label">Triple-Engine AI System</div>
-                    <div class="setting-desc">Powered by Gemini · DeepSeek · Groq with automatic failover. Keys are securely managed on the backend.</div>
+                    <div class="setting-label">AI services</div>
+                    <div class="setting-desc"><span id="aiEngineDetail">Several independent AI services answer together; anything that touches your money is filed only when they agree. Keys stay on the server.</span></div>
                 </div>
                 <span id="aiEngineHealth" class="badge bg-gr" style="padding:6px 12px;">● Checking…</span>
             </div>
@@ -30541,31 +30595,67 @@ table.amort tbody tr { page-break-inside: avoid; }
             });
         }
 
-        // ── AI Engine Status: ONE robust probe, used by both the auto-refresh
-        //    (on Settings open) and the manual "Run Diagnostic" button. ───────────
-        //  Why the old badge falsely showed "Degraded": it asked the model for the
-        //  word "ONLINE" with maxTokens:16 — a reasoning model can spend all 16
-        //  tokens "thinking", returning an EMPTY reply → false Degraded. Now we
-        //  (a) raise the budget so there's always output room, and (b) treat ANY
-        //  healthy 200-JSON from /api/ai as Online (the endpoint + at least one
-        //  engine answered). Only a real backend error object or a non-200 is
-        //  Degraded; only a non-JSON / network failure is Offline.
-        let _aiHealthCache = { cls: '', txt: '', ts: 0 };
+        // ── AI Engine Status ─────────────────────────────────────────────────────
+        //  The badge reports the MEASURED state of the AI board, not a guess from one chat reply. The old probe sent a "Health check — reply OK."
+        //  prompt to /api/ai every time Settings opened: that asked every free-tier provider a question (spending the same daily quotas the
+        //  advisor needs) and any single reply made it say "Online", however many of the providers were really down.
+        //  Now: GET /api/ai?health=1 returns the last canary report (no provider is called). When there is none, or it is older than
+        //  AI_REPORT_STALE_MS, GET /api/ai?canary=1 measures the real board once (the server rate-limits that to one run per 90 s for everybody).
+        //  "Run Diagnostic" always asks for a fresh canary. The words say how many services answered and agreed, and how old the reading is.
+        const AI_REPORT_STALE_MS = 3 * 60 * 60 * 1000;
+        let _aiHealthCache = { cls: '', txt: '', detail: '', ts: 0 };
+        let _aiProbeBusy = null;
 
-        function _setEngineBadge(txt, cls) {
-            const badge = document.getElementById('aiEngineHealth');
-            if (badge) { badge.textContent = txt; badge.className = 'badge ' + cls; }
-            _aiHealthCache = { cls, txt, ts: Date.now() };
+        function _aiAgeText(sec) {
+            if (!Number.isFinite(sec) || sec < 0) return '';
+            if (sec < 90) return 'just now';
+            if (sec < 5400) return Math.round(sec / 60) + ' min ago';
+            if (sec < 172800) return Math.round(sec / 3600) + ' h ago';
+            return Math.round(sec / 86400) + ' days ago';
         }
 
-        // Apply the badge in real time when Settings opens. Uses a 60s cache so
-        // flipping toggles (which re-render Settings) doesn't spam the backend.
+        function _setEngineBadge(txt, cls, detail) {
+            const badge = document.getElementById('aiEngineHealth');
+            if (badge) { badge.textContent = txt; badge.className = 'badge ' + cls; }
+            const line = document.getElementById('aiEngineDetail');
+            if (line && detail !== undefined) line.textContent = detail;
+            _aiHealthCache = { cls, txt, detail: detail === undefined ? _aiHealthCache.detail : detail, ts: Date.now() };
+        }
+
+        // what a person should read from one stored report: { txt, cls, detail, level }
+        function _aiBoardReading(d) {
+            const report = d && d.report, b = report && report.board;
+            if (!b) return { txt: '● Not measured yet', cls: 'bg-gr', detail: 'No reading of the AI services yet. Press Run Diagnostic to measure them now.', level: 'none' };
+            const age = _aiAgeText(d.ageSec);
+            const when = age ? ' · checked ' + age : '';
+            if (b.unanimous) return { txt: '● Online', cls: 'bg-g', detail: b.answered + ' of ' + b.asked + ' AI services answered and agreed' + when + '.', level: 'good' };
+            if (b.answered >= b.floor) return { txt: '● Degraded', cls: 'bg-a', detail: b.answered + ' of ' + b.asked + ' AI services answered, but they did not agree on the test question' + when + '. Money decisions wait for agreement.', level: 'split' };
+            if (b.answered > 0) return { txt: '● Degraded', cls: 'bg-a', detail: 'Only ' + b.answered + ' of ' + b.asked + ' AI services answered (' + b.floor + ' are needed to file anything)' + when + '. Most free services are busy or out of credit.', level: 'low' };
+            return { txt: '● Offline', cls: 'bg-r', detail: 'None of the ' + b.asked + ' AI services answered' + when + '.', level: 'none-answered' };
+        }
+
+        async function _aiFetchBoard(kind, ms) {
+            const ctrl = new AbortController();
+            const to = setTimeout(() => ctrl.abort(), ms);
+            try {
+                const r = await fetch(window._wfApiUrl('/api/ai') + '?' + kind + '=1', { cache: 'no-store', signal: ctrl.signal });
+                const ct = (r.headers.get('content-type') || '').toLowerCase();
+                // Non-JSON is usually an HTML 405/SPA fallthrough: /api/ai is not deployed as a function here.
+                if (!ct.includes('application/json')) return { notJson: true, status: r.status };
+                const d = await r.json().catch(() => null);
+                return r.ok && d ? d : { status: r.status, body: d };
+            } finally { clearTimeout(to); }
+        }
+
+        // Settings re-renders on many toggles; a 60 s memory keeps those from asking the server each time.
         function refreshAIEngineBadge() {
             const badge = document.getElementById('aiEngineHealth');
             if (!badge) return;
             if (_aiHealthCache.txt && (Date.now() - _aiHealthCache.ts) < 60000) {
                 badge.textContent = _aiHealthCache.txt;
                 badge.className = 'badge ' + _aiHealthCache.cls;
+                const line = document.getElementById('aiEngineDetail');
+                if (line && _aiHealthCache.detail) line.textContent = _aiHealthCache.detail;
                 return;
             }
             badge.textContent = '● Checking…';
@@ -30576,57 +30666,44 @@ table.amort tbody tr { page-break-inside: avoid; }
         async function probeAIEngine(opts) {
             opts = opts || {};
             const manual = !!opts.manual;
-            _setEngineBadge(manual ? '● Testing…' : '● Checking…', 'bg-gr');
-            try {
-                const url = window._wfApiUrl('/api/ai');
-                const ctrl = new AbortController();
-                const to = setTimeout(() => ctrl.abort(), 30000);
-                let r;
+            if (_aiProbeBusy) return _aiProbeBusy;            // a second press while one is running joins it instead of starting another
+            _aiProbeBusy = (async () => {
+                _setEngineBadge(manual ? '● Testing…' : '● Checking…', 'bg-gr', manual ? 'Asking every AI service the same test question. This takes up to 15 seconds.' : undefined);
                 try {
-                    r = await fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        // maxTokens 64 (not 16) so reasoning models still emit output;
-                        // language-proof — we no longer string-match "ONLINE".
-                        body: JSON.stringify({ prompt: 'Health check — reply OK.', maxTokens: 64, temperature: 0 }),
-                        signal: ctrl.signal
-                    });
-                } finally { clearTimeout(to); }
-
-                const ct = (r.headers.get('content-type') || '').toLowerCase();
-                if (!ct.includes('application/json')) {
-                    // Non-JSON (usually an HTML 405/SPA fallthrough) → /api/ai isn't
-                    // deployed as a function on this deployment.
-                    _setEngineBadge('● Offline', 'bg-r');
-                    if (manual) notify('AI endpoint not deployed (got a non-JSON ' + r.status + ' response). Check that /api/ai is live on Vercel.', 'error');
-                    return;
+                    let d = manual ? null : await _aiFetchBoard('health', 8000);
+                    const stale = !d || d.notJson || !d.report || !(d.ageSec >= 0) || d.ageSec * 1000 > AI_REPORT_STALE_MS;
+                    if (manual || (stale && !(d && d.notJson))) {
+                        if (!manual) _setEngineBadge('● Checking…', 'bg-gr', 'Measuring the AI services…');
+                        d = await _aiFetchBoard('canary', 40000);
+                    }
+                    if (d && d.notJson) {
+                        _setEngineBadge('● Offline', 'bg-r', 'The AI service is not deployed on this server (got a non-JSON ' + d.status + ' answer).');
+                        if (manual) notify('The AI endpoint is not live on this deployment (non-JSON ' + d.status + ' answer).', 'error');
+                        return;
+                    }
+                    if (!d || d.status) {
+                        _setEngineBadge('● Degraded', 'bg-a', 'The AI status check did not answer (HTTP ' + ((d && d.status) || '?') + ').');
+                        if (manual) notify('The AI status check did not answer. Try again in a moment.', 'error');
+                        return;
+                    }
+                    const reading = _aiBoardReading(d);
+                    _setEngineBadge(reading.txt, reading.cls, reading.detail);
+                    if (manual) notify(reading.level === 'good' ? 'AI services healthy: ' + reading.detail : 'AI services: ' + reading.detail, reading.level === 'good' ? 'success' : 'error');
+                } catch (e) {
+                    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+                    const why = offline ? 'You are offline.' : (e && e.name === 'AbortError') ? 'The check took too long.' : 'Could not reach the WealthFlow server.';
+                    _setEngineBadge(offline ? '● Offline' : '● Degraded', offline ? 'bg-r' : 'bg-a', why);
+                    if (manual) notify(why + ' Check your connection and try again.', 'error');
                 }
-                let d = {};
-                try { d = await r.json(); } catch (_) { d = {}; }
-
-                if (r.ok && !d.error) {
-                    // Endpoint alive + at least one engine answered (or the keyless
-                    // fallback did) = ONLINE. This is the real, working state.
-                    const prov = d.provider ? (' · ' + String(d.provider).split(':')[0]) : '';
-                    _setEngineBadge('● Online', 'bg-g');
-                    if (manual) notify('AI connection healthy @info@' + prov, 'success');
-                } else {
-                    // A real backend error (e.g. all providers failed / keys missing).
-                    let reason = (d && d.error) ? String(d.error) : ('HTTP ' + r.status);
-                    if (d && d.details) reason += ' — ' + d.details;
-                    _setEngineBadge('● Degraded', 'bg-a');
-                    if (manual) notify('AI backend: ' + reason + (r.status === 503 ? ' (set the provider API keys in Vercel → Environment Variables)' : ''), 'error');
-                }
-            } catch (e) {
-                _setEngineBadge('● Offline', 'bg-r');
-                if (manual) notify('AI engines unreachable: ' + (e && e.message ? e.message : 'network error'), 'error');
-            }
+            })().finally(() => { _aiProbeBusy = null; });
+            return _aiProbeBusy;
         }
 
-        // Manual "Run Diagnostic" button → always a fresh probe with notifications.
+        // Manual "Run Diagnostic" button → always a fresh measurement with a message.
         async function testAIConnection() { _aiHealthCache.ts = 0; return probeAIEngine({ manual: true }); }
         window.refreshAIEngineBadge = refreshAIEngineBadge;
         window.testAIConnection = testAIConnection;
+        window._aiBoardReading = _aiBoardReading;
 
         // Initialize SW + notifications on app launch
         window.addEventListener('load', async () => {
@@ -30651,13 +30728,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 (name, data) => `@clock@ Reminder: ${data.item} — ${data.amount} due in ${data.days} days. Stay ahead!`,
                 (name, data) => `@receipt@ ${name}, don't forget — ${data.item} requires ${data.amount} in ${data.days} days.`
             ],
-            insight: [
-                (name) => `@chartLine@ ${name}, your savings rate is looking strong this month. Keep it up!`,
-                (name) => `@sparkles@ Tip: Review your expense categories to find hidden savings, ${name}.`,
-                (name) => `@target@ ${name}, you're on track with your financial targets. Great discipline!`,
-                (name) => `@trendUp@ ${name}, your net worth trend is positive. Check your dashboard for details.`,
-                (name) => `@bot@ Smart tip: Automate recurring expense entries to save time, ${name}.`
-            ],
+            /* `insight` is built from the owner's own books in triggerSmartNotifications (it used to be five fixed sentences such as "your savings
+             * rate is looking strong" and "you're on track with your targets", sent to everybody whatever their numbers said). */
             target: [
                 (name, data) => `@target@ ${name}, you've saved ${data.pct}% toward "${data.target}". ${data.pct >= 75 ? 'Almost there!' : 'Keep going!'}`,
                 (name, data) => `@wallet@ Great progress! "${data.target}" is at ${data.pct}% completion. ${name}, you're building wealth!`,
@@ -30667,11 +30739,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 (name, data) => `@alert@ ${name}, your CC payment "${_wfEsc(data.desc)}" is overdue by ${Math.abs(data.days)} days!`,
                 (name, data) => `@alert@ Urgent: "${_wfEsc(data.desc)}" overdue! Pay immediately to avoid interest, ${name}.`
             ],
+            // only sentences that are true whatever the books say (the old list also promised "Everything looks great!" and "synced across all devices")
             general: [
                 (name) => `@sparkles@ Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, ${name}! Your WealthFlow dashboard is ready.`,
-                (name) => `@shield@ ${name}, your financial data is secure and synced across all devices.`,
-                (name) => `@gem@ ${name}, WealthFlow is actively monitoring your portfolio. Everything looks great!`,
-                (name) => `@lock@ ${name}, all your financial records are encrypted and safe.`,
                 (name) => `@calendar@ ${name}, review your monthly plan to stay on top of your finances.`
             ]
         };
@@ -30723,6 +30793,9 @@ table.amort tbody tr { page-break-inside: avoid; }
         function triggerSmartNotifications() {
             const settings = DB.getObj('settings', { notifications: true });
             if (settings.notifications === false) return;
+            // "AI Auto-Notifications — AI proactively sends smart financial reminders and insights": this is that function, and it read only the
+            // master switch, so turning the AI switch off still sent a tip every half hour (checkAndSendAIReminders reads it; this did not)
+            if (settings.aiNotifications === false) return;
             if (_isInQuietHours()) return;
 
             const history = getSmartNotifHistory();
@@ -30794,8 +30867,24 @@ table.amort tbody tr { page-break-inside: avoid; }
                         sent = true;
                     }
                 } else if (cat === 'insight' || cat === 'general') {
-                    const templates = NOTIF_TEMPLATES[cat];
-                    const msg = templates[Math.floor(Math.random() * templates.length)](firstName);
+                    let msg = '';
+                    if (cat === 'insight') {
+                        // a sentence about the owner's real month, or nothing: no income on record means nothing true to say
+                        try {
+                            const c = buildFinancialContext();
+                            const income = c.totalMonthlyIncome || 0, left = c.netMonthlyCashFlow || 0;
+                            if (income > 0) {
+                                const pct = Math.round(left / income * 100);
+                                msg = left < 0
+                                    ? `@chartLine@ ${firstName}, living costs and debt payments run about ${fmt(Math.abs(Math.round(left)))} a month above your income. Open the Advisor to see where to trim.`
+                                    : `@chartLine@ ${firstName}, about ${pct}% of your monthly income (${fmt(Math.round(left))}) is left after living costs and debt payments.${pct < 15 ? ' Review your biggest categories to find savings.' : ''}`;
+                            }
+                        } catch (_) { msg = ''; }
+                        if (!msg) continue;
+                    } else {
+                        const templates = NOTIF_TEMPLATES.general;
+                        msg = templates[Math.floor(Math.random() * templates.length)](firstName);
+                    }
                     sendOSNotification('WealthFlow', msg, 'wf-' + cat);
                     // Don't show insight/general as in-app notification — only OS notification
                     history[todayStr] = { category: cat };
@@ -32459,7 +32548,8 @@ Be direct and use real numbers. Avoid generic advice.`;
                 const reply = await callAI(prompt);
                 out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(16,185,129,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">@bot@ Personalized Score Improvement Plan:</b><br><br>${(window.WFFmt && WFFmt.render) ? WFFmt.render(reply) : reply.replace(/\n/g, '<br>')}</div>`;
             } catch (e) {
-                out.innerHTML = `<div style="color:var(--red);font-size:12px;">@alert@ AI analysis unavailable: ${e.message}</div>`;
+                try { console.warn('[AI card] no answer:', (e && e.tech) || e); } catch (_) {}
+                out.innerHTML = `<div style="color:var(--red);font-size:12px;">@alert@ AI analysis unavailable: ${_wfEsc(_wfAiErrText(e))}</div>`;
             }
         }
 
@@ -33334,7 +33424,8 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
                 const reply = await callAI(prompt);
                 out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(239,68,68,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">@bot@ Personalized Debt Strategy:</b><br><br>${(window.WFFmt && WFFmt.render) ? WFFmt.render(reply) : reply.replace(/\n/g, '<br>')}</div>`;
             } catch (e) {
-                out.innerHTML = `<div style="color:var(--red);font-size:12px;">@alert@ AI analysis unavailable: ${e.message}</div>`;
+                try { console.warn('[AI card] no answer:', (e && e.tech) || e); } catch (_) {}
+                out.innerHTML = `<div style="color:var(--red);font-size:12px;">@alert@ AI analysis unavailable: ${_wfEsc(_wfAiErrText(e))}</div>`;
             }
         }
 
@@ -33637,7 +33728,8 @@ Be concrete and reference actual LKR figures. No generic advice.`;
                 const reply = await callAI(prompt);
                 target.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(59,130,246,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">@crystal@ AI Simulation Interpretation:</b><br><br>${(window.WFFmt && WFFmt.render) ? WFFmt.render(reply) : reply.replace(/\n/g, '<br>')}</div>`;
             } catch (e) {
-                target.innerHTML = `<div style="color:var(--red);font-size:12px;">@alert@ AI analysis unavailable: ${e.message}</div>`;
+                try { console.warn('[AI card] no answer:', (e && e.tech) || e); } catch (_) {}
+                target.innerHTML = `<div style="color:var(--red);font-size:12px;">@alert@ AI analysis unavailable: ${_wfEsc(_wfAiErrText(e))}</div>`;
             }
         }
 
@@ -33865,7 +33957,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const reply = await callAI(prompt);
                 out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(16,185,129,.05));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:14px;font-size:13px;color:var(--text);line-height:1.7;"><b style="color:var(--accent);">@bot@ AI Cash Flow Analysis:</b><br><br>${(window.WFFmt && WFFmt.render) ? WFFmt.render(reply) : reply.replace(/\n/g, '<br>')}</div>`;
             } catch (e) {
-                out.innerHTML = `<div style="color:var(--red);font-size:12px;">@alert@ AI analysis unavailable: ${e.message}</div>`;
+                try { console.warn('[AI card] no answer:', (e && e.tech) || e); } catch (_) {}
+                out.innerHTML = `<div style="color:var(--red);font-size:12px;">@alert@ AI analysis unavailable: ${_wfEsc(_wfAiErrText(e))}</div>`;
             }
         }
 
