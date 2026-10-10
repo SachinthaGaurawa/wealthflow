@@ -41,7 +41,8 @@ describe('subscription form', () => {
         expect(index).toContain('syncSubscriptionCycleFields');
         expect(index).toContain('toggleOneTimePayment');
         expect(index).toContain('completed:');
-        expect(index).toContain('paidStatementKey: oneTime && existing');
+        expect(index).toContain('paidStatementKey: oneTime && wasPaid && existing');
+        expect(document.querySelector('#sub_paid')).toBeTruthy();
         expect(index).toContain('s.reopened = !done');
         expect(index).toContain("return cycle === 'monthly';");
     });

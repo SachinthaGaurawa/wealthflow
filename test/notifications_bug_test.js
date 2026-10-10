@@ -137,7 +137,25 @@ describe('one-time and cycle-aware bill reminders', () => {
         }] });
         const list = api.compute();
         expect(list).toHaveLength(1);
-        expect(list[0]).toMatchObject({ id: `sub:ONCE1:${dueDate}`, sev: 'warning', date: dueDate });
+        expect(list[0]).toMatchObject({ id: `sub:ONCE1:${dueDate}:d3`, sev: 'warning', date: dueDate });
+    });
+
+    it('gives a one-time payment a fortnight of notice and a bill that comes round monthly a week', () => {
+        const once = { id: 'ONCE9', name: 'Lifetime licence', amount: 45000, cycle: 'once', dueDate: iso(12), createdAt: iso(-10) };
+        const day = new Date(Date.now() + 12 * 86400000);
+        const monthly = { id: 'M9', name: 'Gym', amount: 3000, cycle: 'monthly', dueDay: day.getDate(), createdAt: iso(-400) };
+        expect(load({ subscriptions: [once] }).api.compute().map((n) => n.id)).toEqual([`sub:ONCE9:${iso(12)}:soon`]);
+        expect(load({ subscriptions: [monthly] }).api.compute().filter((n) => /Gym/.test(n.title))).toEqual([]);
+    });
+
+    it('a new stage is a new alert: the week-ahead, the day itself and every overdue week are each their own id, so a device is told again', () => {
+        const idOf = (offset) => load({ subscriptions: [{ id: 'ST', name: 'Levy', amount: 1000, cycle: 'once', dueDate: iso(offset), createdAt: iso(-90) }] }).api.compute().map((n) => n.id.split(':').pop());
+        expect(idOf(10)).toEqual(['soon']);
+        expect(idOf(2)).toEqual(['d3']);
+        expect(idOf(0)).toEqual(['today']);
+        expect(idOf(-1)).toEqual(['o0']);
+        expect(idOf(-8)).toEqual(['o1']);
+        expect(idOf(-1)).not.toEqual(idOf(-8));
     });
 
     it('never reminds again after a one-time payment is completed', () => {

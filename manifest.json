@@ -12,8 +12,8 @@
     "browser"
   ],
   "orientation": "portrait-primary",
-  "background_color": "#060a14",
-  "theme_color": "#d4af37",
+  "background_color": "#0a0d13",
+  "theme_color": "#0a0d13",
   "lang": "en",
   "dir": "ltr",
   "categories": [

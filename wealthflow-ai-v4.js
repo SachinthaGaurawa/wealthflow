@@ -1120,6 +1120,8 @@
             }
         }
         try { if (typeof window.syncSubscriptionCycleFields === 'function') window.syncSubscriptionCycleFields(); } catch (_) {}
+        // a scanned bill is something still to be paid, whatever date is printed on it: it is not filed as already paid
+        if ($('sub_paid') && $('sub_cycle') && $('sub_cycle').value === 'once' && !matchedSub) { $('sub_paid').value = '0'; $('sub_paid').dataset.touched = '1'; }
         if ($('sub_notes')) {
             var note = buildSmartNote(result, opts.isPdf, opts.pageCount);
             if (matchedSub) note = (note ? note + ' · ' : '') + '@refresh@ Updates existing: ' + matchedSub.name;

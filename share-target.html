@@ -2,55 +2,79 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="color-scheme" content="dark light">
 <title>WealthFlow — Quick Capture</title>
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="assets/wf-mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="wf-tokens.css">
+<script>
+  /* Follow the theme chosen in the app (same key the app reads) so this page never
+     flashes dark on a light device; fall back to the device setting. */
+  (function () {
+    var t = '';
+    try { t = (JSON.parse(localStorage.getItem('wf2_settings') || '{}') || {}).theme || ''; } catch (_) {}
+    if (t !== 'light' && t !== 'dark') {
+      t = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
 <script src="wealthflow-icons.js" defer></script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
-    margin: 0; padding: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0a0e1a; color: #e6e7eb;
-    min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    padding: 20px;
+    margin: 0;
+    font-family: var(--wf-font);
+    background: var(--wf-bg); color: var(--wf-text);
+    min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center;
+    padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
   }
   .card {
-    background: linear-gradient(135deg, rgba(16,185,129,0.08), #14182a);
-    border: 1px solid rgba(16,185,129,0.4);
-    border-radius: 16px; padding: 24px;
+    background: var(--wf-card);
+    border: 1px solid var(--wf-line);
+    border-radius: var(--wf-r-lg); padding: 24px;
     max-width: 480px; width: 100%;
-    box-shadow: 0 8px 40px rgba(0,0,0,.5);
+    box-shadow: var(--wf-shadow-2);
   }
-  h1 { margin: 0 0 16px; font-size: 22px; }
+  .brand { display: block; height: 30px; width: auto; margin: 0 0 18px; }
+  h1 { margin: 0 0 8px; font-size: var(--wf-fs-2xl); letter-spacing: -.01em; }
   .input {
-    width: 100%; padding: 12px; border-radius: 10px;
-    background: #1a1f2e; border: 1px solid rgba(255,255,255,.1);
-    color: #e6e7eb; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
-    resize: vertical; min-height: 100px;
+    width: 100%; padding: 12px; border-radius: var(--wf-r-sm);
+    background: var(--wf-field); border: 1px solid var(--wf-line-3);
+    color: var(--wf-text); font-family: var(--wf-font-mono); font-size: 16px; line-height: 1.45;
+    resize: vertical; min-height: 120px;
   }
+  .input::placeholder { color: var(--wf-text-3); }
+  .input:focus-visible, .btn:focus-visible { outline: none; box-shadow: var(--wf-focus); }
   .btn {
-    width: 100%; padding: 14px; border: none; border-radius: 10px;
-    background: linear-gradient(135deg, #10b981, #d4af37); color: #0a0e1a;
-    font-size: 15px; font-weight: 800; cursor: pointer; margin-top: 12px;
+    width: 100%; padding: 14px; border: none; border-radius: var(--wf-r-sm);
+    background: var(--wf-accent-fill); color: var(--wf-accent-ink);
+    font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 12px;
+    transition: background var(--wf-dur-2) var(--wf-ease), transform var(--wf-dur-1) var(--wf-ease);
   }
+  .btn:hover { background: var(--wf-accent-fill-2); }
+  .btn:active { transform: translateY(1px); }
   .btn-secondary {
-    background: #14182a; border: 1px solid rgba(255,255,255,.3); color: #e6e7eb;
+    background: transparent; border: 1px solid var(--wf-line-3); color: var(--wf-text);
   }
+  .btn-secondary:hover { background: var(--wf-hover); }
   .result {
-    margin-top: 16px; padding: 14px; border-radius: 10px;
-    background: rgba(255,255,255,.04); font-size: 13px; line-height: 1.6;
+    margin-top: 16px; padding: 14px; border-radius: var(--wf-r-sm);
+    background: var(--wf-card-2); font-size: 13px; line-height: 1.6;
     display: none;
   }
-  .result.ok { display: block; border-left: 3px solid #10b981; }
-  .result.err { display: block; border-left: 3px solid #ef4444; color: #fca5a5; }
-  .hint { font-size: 12px; color: rgba(230,231,235,.72); margin-top: 8px; line-height: 1.5; }
+  .result.ok { display: block; border-left: 3px solid var(--wf-pos); }
+  .result.err { display: block; border-left: 3px solid var(--wf-neg); color: var(--wf-neg); }
+  .hint { font-size: var(--wf-fs-sm); color: var(--wf-text-2); margin-top: 8px; line-height: 1.5; }
+  @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
 </style>
 </head>
 <body>
 <div class="card">
+  <img class="brand" src="assets/wf-mark.svg" alt="WealthFlow">
   <h1>@devices@ Quick Capture</h1>
   <div class="hint" style="margin-bottom:14px;">
     Text shared from your SMS app or pasted below will be auto-classified by AutoPilot
@@ -85,6 +109,11 @@
       setTimeout(() => doClassify(), 300);
     }
   })();
+
+  // The classifier echoes text taken from the shared SMS, so nothing from it goes into markup unescaped.
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
 
   function getDeviceToken() {
     let tok = localStorage.getItem('wf_device_token');
@@ -145,10 +174,10 @@
         };
         res.className = 'result ok';
         res.innerHTML = `
-          <div style="font-weight:800;color:#10b981;margin-bottom:6px;">@checkCircle@ Logged as ${labels[m] || m}</div>
-          <div style="font-family:ui-monospace,monospace;">
-            ${f.desc || f.source || f.name || ''}<br>
-            <b>${(data.parsed && data.parsed.currency) || 'LKR'} ${(f.amount || 0).toLocaleString()}</b>
+          <div style="font-weight:700;color:var(--wf-pos);margin-bottom:6px;">@checkCircle@ Logged as ${esc(labels[m] || m)}</div>
+          <div style="font-family:var(--wf-font-mono);">
+            ${esc(f.desc || f.source || f.name || '')}<br>
+            <b>${esc((data.parsed && data.parsed.currency) || 'LKR')} ${esc((Number(f.amount) || 0).toLocaleString())}</b>
           </div>
           <div style="margin-top:8px;font-size:11px;opacity:.7;">Auto-saved to WealthFlow. Open the app to view.</div>`;
         // Queue the result for the main app to pick up via localStorage

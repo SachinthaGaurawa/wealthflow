@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-    SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue, ALERT_TITLE, boot,
+    SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, describeIssue, ALERT_TITLE, boot, ownerAlertsHtml,
 } from '../wealthflow-sms.js';
 import { FIELDS } from '../sms-events.mjs';
 
@@ -889,5 +889,26 @@ describe('"Sent" is not "Delivered" until the gateway says so', () => {
     });
     it('a waiting text paused by the reserve says so', () => {
         expect(rowsOf([{ id: 'w', status: 'queued', kind: 'B.late', error: { kind: 'reserve' }, nextAttemptAt: 1, occurredAt: 1, body: 'r' }], 10)[0].note).toMatch(/under the reserve you set/);
+    });
+});
+
+describe('the owner\'s own due-date alerts', () => {
+    const on = { settings: { owner_sms: { enabled: true, phone: '0771234567', at: 1 } } };
+    it('while on, a change to a bill, a loan, a card payment or a cheque is a change the server must look at; while off it is not', () => {
+        const base = { ...on, subscriptions: [{ id: 's1', amount: 100, cycle: 'once', dueDate: '2026-10-20' }] };
+        const a = signatureOf(base);
+        expect(a).not.toBe('');
+        expect(signatureOf({ ...base, subscriptions: [{ ...base.subscriptions[0], paid: true }] })).not.toBe(a);
+        expect(signatureOf({ ...base, loans: [{ id: 'l1', monthly: 1, payments: [{ month: '2026-10', paid: true }] }] })).not.toBe(a);
+        expect(signatureOf({ ...base, settings: { owner_sms: { enabled: true, phone: '0712223344', at: 2 } } })).not.toBe(a);
+        expect(signatureOf({ subscriptions: base.subscriptions })).toBe('');
+    });
+    it('the panel form shows the saved switch and number, escaped, and only when asked to', () => {
+        const html = panelHtml({ showOwner: true, owner: { enabled: true, phone: '"><b>' } });
+        expect(html).toContain('Alerts to my own number');
+        expect(html).toContain('checked');
+        expect(html).not.toContain('"><b>');
+        expect(panelHtml({ showOwner: false })).not.toContain('Alerts to my own number');
+        expect(ownerAlertsHtml(null)).not.toContain('checked');
     });
 });
