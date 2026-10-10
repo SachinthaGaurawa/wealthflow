@@ -156,6 +156,12 @@ describe('what a person needs next: when, and where to pay', () => {
     const textOf = (nodes) => nodes.map((n) => n.textContent).join(' | ');
     const buttonsOf = (nodes) => { const out = []; nodes.forEach((n) => n.walk((e) => { if (e.tag === 'button') out.push(e); })); return out; };
 
+    it('marks the next interest amount like every other figure, so "Hide amounts" blurs it too', () => {
+        const hits = [];
+        statementView(doc, base).forEach((n) => n.walk((e) => { if (e.tag === 'span' && /tp-amt/.test(e.attrs.class || '') && e.textContent === 'LKR 10,000.00') hits.push(e); }));
+        expect(hits.length).toBeGreaterThanOrEqual(2);      // the figure tile and the next-interest line
+    });
+
     it('says when the next interest is due and when a loan is expected back, and how late it is', () => {
         const text = textOf(statementView(doc, base));
         expect(text).toContain('Next interest due5 Nov 2026 (LKR 10,000.00)');

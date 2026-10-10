@@ -234,7 +234,7 @@ function investmentCard(doc, g, st, t, actions) {
             fact(doc, t('Interest each time'), fmtMoney(g.interestPerPeriod, cur), 'tp-amt'),
             fact(doc, t('Started'), fmtDay(g.start)),
             g.end ? fact(doc, t('Ends'), fmtDay(g.end)) : null,
-            next ? fact(doc, t('Next interest due'), `${fmtDay(next.date)} (${fmtMoney(next.amount, cur)})`) : null,
+            next ? h(doc, 'div', {}, h(doc, 'dt', { text: t('Next interest due') }), h(doc, 'dd', {}, `${fmtDay(next.date)} (`, h(doc, 'span', { class: 'tp-amt', text: fmtMoney(next.amount, cur) }), ')')) : null,
             fact(doc, t('Interest received'), fmtMoney(g.totalReceived, cur), 'tp-amt')),
         (() => { const pct = termProgress(g, st.asOf); return pct === null ? null : bar(doc, t('Term: {n}% complete', { n: pct }), pct); })(),
         Array.isArray(g.payments) && g.payments.length

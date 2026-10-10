@@ -447,7 +447,8 @@ td.tp-num, th.tp-num { text-align: right; }
     .tp-wrap.tp-wide { max-width: 1120px; }
     .tp-dash { display: grid; grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); gap: 24px; align-items: start; }
     .tp-col { display: block; min-width: 0; }
-    .tp-col-a { position: sticky; top: 84px; }
+    /* the glance stays in view while the records scroll, and scrolls on its own when it is taller than the screen (several currencies, many dates) */
+    .tp-col-a { position: sticky; top: 84px; max-height: calc(100vh - 100px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
     dl.tp-facts { grid-template-columns: repeat(2, 1fr); }
     dl.tp-facts.tp-acct-facts { grid-template-columns: 1fr 1fr; }
     .tp-hero .tp-figure { font-size: 38px; }
