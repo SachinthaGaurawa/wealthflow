@@ -16356,7 +16356,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         async function switchGoogleAccount() {
             try {
                 if (window._isDecoyMode === true) {
-                    notify('Lock WealthFlow and enter your real PIN before switching accounts.', 'warn');
+                    notify('Account switching is paused in Decoy Mode. Lock WealthFlow, then unlock with your real PIN to continue.', 'info');
                     return;
                 }
                 await firebase.auth().signOut();
