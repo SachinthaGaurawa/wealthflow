@@ -329,8 +329,7 @@ export const BUDGETS = {
     // 2026-10-10 (the AI consumer side): 2,251,000 -> 2_261_000 (measured 2,258,304 + ~0.1% headroom). The Settings AI status reads the measured board (?health=1 / ?canary=1) and says how many services answered and how old the reading is,
     // plain-words failures on the chat and every AI card (_wfAiWhy), the Insights card on the shared books figures, AI Auto-Notifications gating the smart tips (the insight tip built from the books), the scanner's Auto-Categorize switch
     // and a hand-picked category that the title suggestion no longer moves. About a third is comments. No new script or request.
-    // 2026-10-11 (first-party Firebase redirect): 2,261,000 -> 2,265,000 (measured 2,262,415 + ~0.1% headroom). The inline coordinator records one short-lived redirect intent, waits for LOCAL persistence and getRedirectResult before the auth observer, preserves the PIN store, and blocks account changes in Decoy Mode. It is inline deliberately: no new startup request, module, or script tag.
-    htmlBytes: 2_265_000,
+    htmlBytes: 2_261_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

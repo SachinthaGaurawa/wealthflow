@@ -7792,116 +7792,9 @@
         // is unnecessary) AND we still avoid double-init on redirect.
         // ============================================================
 
-        /* Google authentication coordinator. This lives in the existing app
-         * bundle so the auth repair adds no startup request. */
-        window.WFAuth = (function () {
-            'use strict';
-            var KEY = 'wf_auth_redirect_intent_v1';
-            var MAX_AGE = 15 * 60 * 1000;
-            var consuming = null;
-
-            function failure(code, message, cause) {
-                var error = new Error(message);
-                error.code = code;
-                if (cause) error.cause = cause;
-                return error;
-            }
-            function writeLocal(key, value) { try { localStorage.setItem(key, value); return true; } catch (_) { return false; } }
-            function auth() {
-                if (!window.firebase || !window.firebase.auth) throw failure('wf/auth-sdk-unavailable', 'Google sign-in is temporarily unavailable. Please reload and try again.');
-                return window.firebase.auth();
-            }
-            function clear() { try { sessionStorage.removeItem(KEY); } catch (_) {} }
-            function pending() {
-                try {
-                    var value = JSON.parse(sessionStorage.getItem(KEY) || 'null');
-                    if (!value || value.version !== 1 || !Number.isFinite(value.startedAt)) return null;
-                    if (Date.now() - value.startedAt > MAX_AGE) { clear(); return null; }
-                    return value;
-                } catch (_) { return null; }
-            }
-            function remember(mode) {
-                var value = { version: 1, mode: mode || 'sign-in', returnPath: location.pathname + location.search + location.hash, startedAt: Date.now(), pinWasConfigured: false };
-                try { var saved = JSON.parse(localStorage.getItem('wf2_auth') || 'null'); value.pinWasConfigured = !!(saved && saved.pin); } catch (_) {}
-                sessionStorage.setItem(KEY, JSON.stringify(value));
-                return value;
-            }
-            async function persist(instance) {
-                try {
-                    if (window._wfAuthPersistenceReady) await window._wfAuthPersistenceReady;
-                    else await instance.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
-                } catch (error) { throw failure('wf/auth-persistence-failed', 'The secure sign-in session could not be saved on this browser.', error); }
-            }
-            async function refreshWorkerForAuth() {
-                // A pre-migration PWA worker cached every navigation and can still
-                // control this tab after deploy. Make it fetch the current sw.js
-                // before visiting /__/auth/handler, whose response must never be
-                // replaced by index.html. Failure is non-fatal: browsers without
-                // service workers already use the network directly.
-                try {
-                    if (!navigator.serviceWorker) return;
-                    var registration = await navigator.serviceWorker.getRegistration();
-                    if (!registration) return;
-                    await Promise.race([
-                        registration.update(),
-                        new Promise(function (resolve) { setTimeout(resolve, 4000); }),
-                    ]);
-                } catch (_) {}
-            }
-            function provider() {
-                var google = new firebase.auth.GoogleAuthProvider();
-                google.setCustomParameters({ prompt: 'select_account' });
-                google.addScope('https://www.googleapis.com/auth/drive.file');
-                return google;
-            }
-            async function beginGoogleSignIn(options) {
-                options = options || {};
-                if (window._isDecoyMode === true) throw failure('wf/auth-decoy-mode', 'Account changes are disabled while Decoy Mode is open. Lock WealthFlow and enter the real PIN first.');
-                var instance = auth();
-                await persist(instance);
-                await refreshWorkerForAuth();
-                remember(options.mode);
-                try { await instance.signInWithRedirect(provider()); }
-                catch (error) { clear(); throw failure(error && error.code || 'wf/auth-redirect-failed', error && error.message || 'Google sign-in could not start.', error); }
-            }
-            function driveCredential(result) {
-                try {
-                    var getter = firebase.auth.GoogleAuthProvider.credentialFromResult;
-                    var credential = getter ? getter(result) : result && result.credential;
-                    if (!credential || !credential.accessToken) return null;
-                    var saved = { token: credential.accessToken, expiry: Date.now() + 55 * 60 * 1000 };
-                    // Each write is isolated by the app's retry/notification path.
-                    // A full or policy-blocked local store must not abort redirect
-                    // settlement and leave the Firebase user half signed-in.
-                    writeLocal('wf_drive_token', JSON.stringify(saved));
-                    writeLocal('wf_drive_ever_granted', '1');
-                    return saved;
-                } catch (_) { return null; }
-            }
-            function consumeRedirectResult() {
-                if (consuming) return consuming;
-                consuming = (async function () {
-                    var instance = auth();
-                    var intent = pending();
-                    await persist(instance);
-                    try {
-                        var result = await instance.getRedirectResult();
-                        var token = result && result.user ? driveCredential(result) : null;
-                        if (intent || (result && result.user) || instance.currentUser) clear();
-                        return { user: result && result.user || instance.currentUser || null, credential: result && result.credential || null, driveToken: token, intent: intent };
-                    } catch (error) { clear(); throw failure(error && error.code || 'wf/auth-redirect-result-failed', error && error.message || 'Google sign-in did not complete.', error); }
-                })();
-                return consuming;
-            }
-            return Object.freeze({ beginGoogleSignIn: beginGoogleSignIn, consumeRedirectResult: consumeRedirectResult, pendingIntent: pending, clearIntent: clear });
-        })();
-
         const firebaseConfig = {
             apiKey: "AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4",
-            // The official host reverse-proxies Firebase's reserved helper
-            // routes, making its redirect iframe first-party on modern Safari,
-            // Firefox and Chrome. Previews keep the Firebase Hosting domain.
-            authDomain: window.location.hostname === "www.wealthflow.lk" ? "www.wealthflow.lk" : "wealthflow-6dffb.firebaseapp.com",
+            authDomain: "wealthflow-6dffb.firebaseapp.com",
             projectId: "wealthflow-6dffb",
             storageBucket: "wealthflow-6dffb.firebasestorage.app",
             messagingSenderId: "1020193373377",
@@ -7965,10 +7858,8 @@
         // across app/browser close & reopen so the user never has to log in
         // again (and server-side auto-backup can run on every launch).
         try {
-            window._wfAuthPersistenceReady = firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
-            // Observe immediately to prevent an unhandled rejection; WFAuth
-            // awaits the original promise and shows the same failure to the user.
-            window._wfAuthPersistenceReady.catch(e => console.warn('[Auth] persistence:', e && e.message));
+            firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+                .catch(e => console.warn('[Auth] persistence:', e && e.message));
         } catch (_) {}
 
         // Enable offline persistence (returns a Promise, must use .catch)
@@ -8052,7 +7943,13 @@
         let currentUser = null;
 
         // ==================== GOOGLE AUTHENTICATION ====================
-        async function signInWithGoogle() {
+        function signInWithGoogle() {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            provider.setCustomParameters({ prompt: 'select_account' });
+            // Request Drive file scope UP FRONT so manual/auto backup never
+            // needs a second Google login. The token is captured below.
+            provider.addScope('https://www.googleapis.com/auth/drive.file');
+
             // v7.5.7 — show splash with feedback while Firebase auth state
             // settles. Previously the popup closed and the app sat on the
             // Welcome screen until onAuthStateChanged fired — which was a
@@ -8067,17 +7964,43 @@
                 if (splashText) splashText.textContent = 'Signing you in…';
             } catch (_) {}
 
-            try {
-                if (!window.WFAuth) throw new Error('Authentication coordinator did not load');
-                await window.WFAuth.beginGoogleSignIn({ mode: 'sign-in' });
-            } catch (err) {
+            // Try popup first (works on desktop), fall back to redirect (works on mobile/PWA)
+            firebase.auth().signInWithPopup(provider).then(result => {
                 try {
-                    const splash = document.getElementById('splash');
-                    if (splash) splash.classList.add('hide');
-                } catch (_) {}
-                console.error('[Auth] redirect sign-in failed:', err);
-                notify((err && err.message) || 'Google sign-in could not start. Please try again.', 'error');
-            }
+                    const cred = firebase.auth.GoogleAuthProvider.credentialFromResult
+                        ? firebase.auth.GoogleAuthProvider.credentialFromResult(result)
+                        : (result && result.credential);
+                    if (cred && cred.accessToken) {
+                        gapiToken = cred.accessToken;
+                        // Google OAuth tokens last ~1 hour
+                        const expiry = Date.now() + 55 * 60 * 1000;
+                        _persistLocal('wf_drive_token', { token: gapiToken, expiry });
+                        try { localStorage.setItem('wf_drive_ever_granted', '1'); } catch (_) {}
+                        console.log('[Auth] Drive token captured at sign-in — no second login needed');
+                    }
+                } catch (e) { console.warn('[Auth] could not capture Drive token:', e && e.message); }
+                // v7.5.7 — onAuthStateChanged will now process this sign-in
+                // event automatically (the listener is no longer blocked by
+                // the _authCallbackFired one-shot guard after initial boot).
+                // No further action needed here — the listener will run the
+                // cloud sync + finishBoot pipeline and route the user to the
+                // PIN screen.
+                console.log('[Auth] @checkCircle@ Popup sign-in complete — listener will route to PIN screen');
+            }).catch(err => {
+                console.warn("Popup blocked or failed, trying redirect...", err.code);
+                if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
+                    firebase.auth().signInWithRedirect(provider);
+                } else {
+                    // v7.5.7 — restore the auth screen if sign-in failed so
+                    // the user isn't stuck on the splash spinner.
+                    try {
+                        const splash = document.getElementById('splash');
+                        if (splash) splash.classList.add('hide');
+                    } catch (_) {}
+                    console.error("Sign-in failed:", err);
+                    notify('Sign-in failed: ' + err.message, 'error');
+                }
+            });
         }
 
         async function signOutGoogle() {
@@ -16370,22 +16293,18 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
 
         // Switch to a different Google account
-        async function switchGoogleAccount() {
-            try {
-                if (window._isDecoyMode === true) {
-                    notify('Account switching is paused in Decoy Mode. Lock WealthFlow, then unlock with your real PIN to continue.', 'info');
-                    return;
-                }
-                await firebase.auth().signOut();
-                // Prevent the previous owner's unscoped cache leaking into the
-                // next account; sessionStorage retains the redirect transaction.
+        function switchGoogleAccount() {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            provider.setCustomParameters({ prompt: 'select_account' });
+            firebase.auth().signOut().then(() => {
+                // Clear local state
                 localStorage.clear();
-                if (!window.WFAuth) throw new Error('Authentication coordinator did not load');
-                await window.WFAuth.beginGoogleSignIn({ mode: 'switch-account' });
-            } catch (err) {
-                console.error('[Auth] account switch failed:', err);
-                notify((err && err.message) || 'Could not switch Google account.', 'error');
-            }
+                firebase.auth().signInWithPopup(provider).catch(err => {
+                    if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user') {
+                        firebase.auth().signInWithRedirect(provider);
+                    }
+                });
+            });
         }
 
 
@@ -16653,33 +16572,42 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (window.__wfBootCompleted) window.__wfBootCompleted();
                     finishBoot();
                 } else {
-                    // Start only after redirect settlement; otherwise slow Safari
-                    // can enter offline mode while restoring a valid session.
-                    let authTimeout = null;
+                    // Set a 6-second timeout: if onAuthStateChanged never fires, force proceed
+                    const authTimeout = setTimeout(() => {
+                        if (_authCallbackFired) return;
+                        _authCallbackFired = true;
+                        console.warn('[BOOT] @alert@ Firebase auth timeout — forcing offline boot');
+                        clearInterval(pInt);
+                        if (fillEl) fillEl.style.width = '100%';
+                        if (splashText) splashText.textContent = "Connection timeout...";
+                        // Load from localStorage
+                        Object.keys(appData).forEach(k => {
+                            try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
+                        });
+                        isInitialised = true;
+                        // Signal failsafe: boot completed
+                        if (window.__wfClearFailsafe) window.__wfClearFailsafe();
+                        if (window.__wfBootCompleted) window.__wfBootCompleted();
+                        finishBoot();
+                    }, 6000);
 
                     try {
-                        if (!window.WFAuth) throw new Error('Authentication coordinator did not load');
-                        const redirectAuth = await window.WFAuth.consumeRedirectResult();
-                        if (redirectAuth && redirectAuth.driveToken) {
-                            gapiToken = redirectAuth.driveToken.token;
-                            console.log('[Auth] Drive token captured from redirect');
-                        }
-
-                        authTimeout = setTimeout(() => {
-                            if (_authCallbackFired) return;
-                            _authCallbackFired = true;
-                            console.warn('[BOOT] @alert@ Firebase auth timeout — forcing offline boot');
-                            clearInterval(pInt);
-                            if (fillEl) fillEl.style.width = '100%';
-                            if (splashText) splashText.textContent = "Connection timeout...";
-                            Object.keys(appData).forEach(k => {
-                                try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
-                            });
-                            isInitialised = true;
-                            if (window.__wfClearFailsafe) window.__wfClearFailsafe();
-                            if (window.__wfBootCompleted) window.__wfBootCompleted();
-                            finishBoot();
-                        }, 6000);
+                        // Capture Drive OAuth token from a redirect sign-in
+                        // (mobile/PWA path) so backup never needs a 2nd login.
+                        firebase.auth().getRedirectResult().then(result => {
+                            try {
+                                if (result && result.user) {
+                                    const cred = firebase.auth.GoogleAuthProvider.credentialFromResult
+                                        ? firebase.auth.GoogleAuthProvider.credentialFromResult(result)
+                                        : (result.credential);
+                                    if (cred && cred.accessToken) {
+                                        gapiToken = cred.accessToken;
+                                        _persistLocal('wf_drive_token', { token: gapiToken, expiry: Date.now() + 55 * 60 * 1000 });
+                                        console.log('[Auth] Drive token captured from redirect');
+                                    }
+                                }
+                            } catch (_) {}
+                        }).catch(() => {});
 
                         firebase.auth().onAuthStateChanged(async (user) => {
                             if (window.WFStatementCloud) window.WFStatementCloud.authChanged(user);

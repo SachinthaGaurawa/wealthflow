@@ -43,9 +43,6 @@ const SYNC_TIMEOUT_MS = 20000;
 //
 //  NEVER CACHED (correctness beats offline for all of these):
 //    · /api/*        — live server calls; a cached reply is a wrong reply
-//    · /__/auth/*    — Firebase's first-party OAuth helper; replacing it with
-//                      the cached app shell makes redirect sign-in loop forever
-//    · /__/firebase/*— Firebase's same-origin bootstrap namespace
 //    · version.json  — the update check itself; caching it freezes the app on
 //                      whatever version it first saw, which is the very bug
 //    · non-GET       — POSTs are not cacheable and must never be replayed
@@ -57,7 +54,6 @@ function _isNeverCacheable(request, url) {
     if (request.method !== 'GET') return true;
     if (url.origin !== self.location.origin) return true;
     if (url.pathname.startsWith('/api/')) return true;
-    if (url.pathname.startsWith('/__/auth/') || url.pathname.startsWith('/__/firebase/')) return true;
     if (url.pathname === '/version.json') return true;
     return false;
 }
