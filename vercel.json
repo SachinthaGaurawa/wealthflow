@@ -33,18 +33,6 @@
   ],
   "headers": [
     {
-      "source": "/__/auth/:path*",
-      "headers": [
-        { "key": "Cache-Control", "value": "private, no-store, max-age=0, must-revalidate" }
-      ]
-    },
-    {
-      "source": "/__/firebase/:path*",
-      "headers": [
-        { "key": "Cache-Control", "value": "private, no-store, max-age=0, must-revalidate" }
-      ]
-    },
-    {
       "source": "/index.html",
       "headers": [
         {
@@ -264,14 +252,6 @@
     {
       "source": "/api/(.*)",
       "destination": "/api/router?path=$1"
-    },
-    {
-      "source": "/__/auth/:path*",
-      "destination": "https://wealthflow-6dffb.firebaseapp.com/__/auth/:path*"
-    },
-    {
-      "source": "/__/firebase/:path*",
-      "destination": "https://wealthflow-6dffb.firebaseapp.com/__/firebase/:path*"
     },
     {
       "source": "/favicon.ico",
