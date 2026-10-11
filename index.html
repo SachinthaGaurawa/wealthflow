@@ -7832,22 +7832,6 @@
                     else await instance.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
                 } catch (error) { throw failure('wf/auth-persistence-failed', 'The secure sign-in session could not be saved on this browser.', error); }
             }
-            async function refreshWorkerForAuth() {
-                // A pre-migration PWA worker cached every navigation and can still
-                // control this tab after deploy. Make it fetch the current sw.js
-                // before visiting /__/auth/handler, whose response must never be
-                // replaced by index.html. Failure is non-fatal: browsers without
-                // service workers already use the network directly.
-                try {
-                    if (!navigator.serviceWorker) return;
-                    var registration = await navigator.serviceWorker.getRegistration();
-                    if (!registration) return;
-                    await Promise.race([
-                        registration.update(),
-                        new Promise(function (resolve) { setTimeout(resolve, 4000); }),
-                    ]);
-                } catch (_) {}
-            }
             function provider() {
                 var google = new firebase.auth.GoogleAuthProvider();
                 google.setCustomParameters({ prompt: 'select_account' });
@@ -7859,7 +7843,6 @@
                 if (window._isDecoyMode === true) throw failure('wf/auth-decoy-mode', 'Account changes are disabled while Decoy Mode is open. Lock WealthFlow and enter the real PIN first.');
                 var instance = auth();
                 await persist(instance);
-                await refreshWorkerForAuth();
                 remember(options.mode);
                 try { await instance.signInWithRedirect(provider()); }
                 catch (error) { clear(); throw failure(error && error.code || 'wf/auth-redirect-failed', error && error.message || 'Google sign-in could not start.', error); }

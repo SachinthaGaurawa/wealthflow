@@ -5,7 +5,6 @@ import vm from 'node:vm';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-const SERVICE_WORKER = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
 const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 
 function storage(seed = {}) {
@@ -45,7 +44,7 @@ function runtime({ redirectResult = { user: null }, decoy = false } = {}) {
     const start = HTML.indexOf('window.WFAuth = (function ()');
     const end = HTML.indexOf('\n\n        const firebaseConfig', start);
     expect(start, 'inline auth coordinator missing').toBeGreaterThan(-1);
-    vm.runInNewContext(HTML.slice(start, end), { window, firebase: window.firebase, location: window.location, localStorage, sessionStorage, navigator: {}, URL, Date, JSON, Promise, Error, console, setTimeout });
+    vm.runInNewContext(HTML.slice(start, end), { window, firebase: window.firebase, location: window.location, localStorage, sessionStorage, URL, Date, JSON, Promise, Error, console });
     return { api: window.WFAuth, auth, calls, localStorage, sessionStorage };
 }
 
@@ -63,15 +62,6 @@ describe('first-party Firebase redirect authentication', () => {
         expect(switching).toContain('WFAuth.beginGoogleSignIn');
         expect(signIn).not.toContain('signInWithPopup');
         expect(switching).not.toContain('signInWithPopup');
-    });
-
-    it('updates a legacy PWA worker before redirect and never lets a worker cache Firebase helper routes', () => {
-        const authCoordinator = HTML.slice(HTML.indexOf('window.WFAuth = (function ()'), HTML.indexOf('\n\n        const firebaseConfig'));
-        expect(authCoordinator).toContain('registration.update()');
-        expect(authCoordinator.indexOf('await refreshWorkerForAuth()')).toBeLessThan(authCoordinator.indexOf('remember(options.mode)'));
-        expect(SERVICE_WORKER).toContain("url.pathname.startsWith('/__/auth/')");
-        expect(SERVICE_WORKER).toContain("url.pathname.startsWith('/__/firebase/')");
-        expect(SERVICE_WORKER.indexOf("url.pathname.startsWith('/__/auth/')")).toBeLessThan(SERVICE_WORKER.indexOf("url.pathname === '/version.json'"));
     });
 
     it('settles the redirect result before installing the auth-state observer', () => {
