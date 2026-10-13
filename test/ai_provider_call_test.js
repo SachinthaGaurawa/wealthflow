@@ -51,7 +51,8 @@ describe('askProvider: the plain cases', () => {
         const sent = jpeg.chats()[0].body;
         expect(sent.model).toBe(PROVIDERS.Mistral.vision);
         expect(sent.messages[0].content[0]).toEqual({ type: 'text', text: 'read it' });
-        expect(sent.messages[0].content[1].image_url.url).toMatch(/^data:image\/jpeg;base64,\/9j\//);
+        // Mistral documents image_url as the data-URL string itself (the shape the scanner always sent it); every other provider takes { url }
+        expect(sent.messages[0].content[1].image_url).toMatch(/^data:image\/jpeg;base64,\/9j\//);
         expect(jpeg.chats()[0].init.headers.Authorization).toBe('Bearer k');
 
         const png = net({ chat: () => chatOf('ok') });

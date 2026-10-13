@@ -28,7 +28,7 @@ const OPENROUTER_HEADERS = { 'HTTP-Referer': OFFICIAL_ORIGIN, 'X-Title': 'Wealth
 export const PROVIDERS = Object.freeze({
     Ollama:       { kind: 'ollama', url: 'https://ollama.com/api/chat', list: 'https://ollama.com/api/tags', key: 'ollamaKey', text: 'gpt-oss:120b', vision: 'gemma4:31b' },
     Groq:         { url: 'https://api.groq.com/openai/v1/chat/completions', list: 'https://api.groq.com/openai/v1/models', key: 'groqKey', text: 'openai/gpt-oss-120b', vision: 'meta-llama/llama-4-scout-17b-16e-instruct', visionCap: 2048, jsonMode: true },
-    Mistral:      { url: 'https://api.mistral.ai/v1/chat/completions', list: 'https://api.mistral.ai/v1/models', key: 'mistralKey', text: 'mistral-small-latest', vision: 'mistral-small-latest', jsonMode: true },
+    Mistral:      { url: 'https://api.mistral.ai/v1/chat/completions', list: 'https://api.mistral.ai/v1/models', key: 'mistralKey', text: 'mistral-small-latest', vision: 'mistral-small-latest', jsonMode: true, imageUrlIsString: true },
     Together:     { url: 'https://api.together.xyz/v1/chat/completions', list: 'https://api.together.xyz/v1/models', key: 'togetherKey', text: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', vision: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo' },
     Fireworks:    { url: 'https://api.fireworks.ai/inference/v1/chat/completions', list: 'https://api.fireworks.ai/inference/v1/models', key: 'fireworksKey', text: 'accounts/fireworks/models/llama-v3p3-70b-instruct', vision: 'accounts/fireworks/models/llama4-maverick-instruct-basic' },
     NVIDIA:       { url: 'https://integrate.api.nvidia.com/v1/chat/completions', list: 'https://integrate.api.nvidia.com/v1/models', key: 'nvidiaKey', text: 'nvidia/llama-3.1-nemotron-70b-instruct', vision: 'meta/llama-3.2-90b-vision-instruct' },
@@ -80,7 +80,9 @@ export async function askProvider(name, { keys = {}, image = '', prompt, fetcher
         if (p.kind === 'ollama') {
             body = { model, messages: [{ role: 'user', content: prompt, ...(image ? { images: [image] } : {}) }], stream: false, ...(json ? { format: 'json' } : {}), options: { temperature, num_predict: maxTokens(room) }, ...extra };
         } else {
-            const content = image ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:${mime};base64,${image}` } }] : prompt;
+            const dataUrl = image ? `data:${mime};base64,${image}` : '';
+            // Mistral documents `image_url` as the data-URL string itself (what the scanner always sent it); the others take the OpenAI object.
+            const content = image ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: p.imageUrlIsString ? dataUrl : { url: dataUrl } }] : prompt;
             body = { model, messages: [{ role: 'user', content }], temperature, max_tokens: maxTokens(room), ...extra };
             if (json && !image && p.jsonMode) body.response_format = { type: 'json_object' };
         }

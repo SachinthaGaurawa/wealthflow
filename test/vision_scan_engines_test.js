@@ -57,6 +57,8 @@ beforeEach(() => {
 });
 afterEach(() => { geminiBook.reset(); resetGeminiLearning(); resetReasoningLearning(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
+/** The data URL of a chat request's picture, whichever shape that provider takes it in (a string for Mistral, { url } for the rest). */
+const imageUrlOf = (c) => { const v = c.body.messages[0].content[1].image_url; return typeof v === 'string' ? v : v.url; };
 const scan = async (mode, image = CANARY_IMAGE_B64) => { const res = response(); await handler({ method: 'POST', body: { image, mode, hints: {} } }, res); return res; };
 
 describe('ultra scan: every engine asks a model its provider serves today', () => {
@@ -94,7 +96,12 @@ describe('ultra scan: every engine asks a model its provider serves today', () =
         const chats = w.log.filter((c) => c.body && c.body.messages);
         const openAiShaped = chats.filter((c) => Array.isArray(c.body.messages[0].content));
         expect(openAiShaped.length).toBeGreaterThan(3);
-        for (const c of openAiShaped) expect(c.body.messages[0].content[1].image_url.url, c.u).toMatch(/^data:image\/jpeg;base64,\/9j\//);
+        for (const c of openAiShaped) expect(imageUrlOf(c), c.u).toMatch(/^data:image\/jpeg;base64,\/9j\//);
+        // Mistral takes the data URL as the string itself, everyone else as { url }
+        const mistral = openAiShaped.filter((c) => /api\.mistral\.ai/.test(c.u));
+        expect(mistral.length).toBeGreaterThan(0);
+        for (const c of mistral) expect(typeof c.body.messages[0].content[1].image_url).toBe('string');
+        for (const c of openAiShaped.filter((x) => !/api\.mistral\.ai/.test(x.u))) expect(c.body.messages[0].content[1].image_url, c.u).toEqual({ url: expect.stringMatching(/^data:/) });
         const ollama = chats.filter((c) => /ollama\.com\/api\/chat/.test(c.u));
         expect(ollama.length).toBeGreaterThan(0);
         for (const c of ollama) expect(c.body.messages[0].images).toEqual([CANARY_IMAGE_B64]);
@@ -106,7 +113,7 @@ describe('ultra scan: every engine asks a model its provider serves today', () =
         await scan('deep', png);
         const sent = w.log.filter((c) => c.body && Array.isArray(c.body.messages && c.body.messages[0].content));
         expect(sent.length).toBeGreaterThan(0);
-        for (const c of sent) expect(c.body.messages[0].content[1].image_url.url).toMatch(/^data:image\/png;base64,/);
+        for (const c of sent) expect(imageUrlOf(c)).toMatch(/^data:image\/png;base64,/);
     });
 
     it('GitHub Models is asked with the token that carries the Models permission first (GH_PAT), not the one that answered "OK"', async () => {
