@@ -90,7 +90,7 @@
     function recordTwin(batch, info) {
         if (!batch || !info || !info.expenseId || !info.chequeId) return;
         if (!batch.twins) batch.twins = [];
-        batch.twins.push({ expenseId: info.expenseId, key: info.key || '', chequeId: info.chequeId });
+        batch.twins.push({ expenseId: info.expenseId, key: info.key || '', chequeId: info.chequeId, month: info.month || '' });
     }
     // Note a subscription payment this batch made (for precise undo).
     function recordSub(batch, info) {
@@ -172,10 +172,18 @@
             var holder = cheques.filter(function (c) { return c && c.id === op.chequeId; })[0];
             if (holder && holder.countedBy === op.expenseId) return;
             var entry = expenses.filter(function (e) { return e && e.id === op.expenseId; })[0];
-            if (!entry || !entry.statementTwin) return;
-            if (op.key && entry.statementTwin.sourcePath !== op.key) return;
-            delete entry.statementTwin;
-            changed = true;
+            if (!entry) return;
+            // the single stamp, or — for an entry that stands for every month — this upload's month of it; a stamp another statement wrote stays
+            if (entry.statementTwin && (!op.key || entry.statementTwin.sourcePath === op.key)) { delete entry.statementTwin; changed = true; }
+            var months = entry.statementTwins;
+            if (months && typeof months === 'object') {
+                Object.keys(months).forEach(function (m) {
+                    if (op.month ? m !== op.month : !op.key) return;
+                    if (op.key && !(months[m] && months[m].sourcePath === op.key)) return;
+                    delete months[m]; changed = true;
+                });
+                if (!Object.keys(months).length) delete entry.statementTwins;
+            }
         });
         if (changed) db.set('expenses', expenses);
     }

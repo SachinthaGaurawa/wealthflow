@@ -36653,7 +36653,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             rec.countedBy = String(_tw.r.id);
                             rec.notes = (rec.notes ? rec.notes + ' · ' : '') + 'Counted once — your expense "' + String(_tw.r.desc || _tw.r.name || '').slice(0, 40) + '" already holds this payment';
                             _expLinked = true;
-                            if (_batch && WFBatch.recordTwin) { try { WFBatch.recordTwin(_batch, { expenseId: _tw.r.id, key: _source.statementKey || '', chequeId: rec.id }); } catch (_) {} }
+                            if (_batch && WFBatch.recordTwin) { try { WFBatch.recordTwin(_batch, { expenseId: _tw.r.id, key: _source.statementKey || '', chequeId: rec.id, month: String(date || '').slice(0, 7) }); } catch (_) {} }
                         };
                         if (!_res || _res.action === 'none') {
                             // the module did not load, or the row has no money direction: never lose it — file a cleared cheque by the row's own flag, as before

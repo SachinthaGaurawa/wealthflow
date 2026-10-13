@@ -10,7 +10,7 @@ import { incomeIn } from '../wealthflow-reactive.js';
 import { loadParser } from './statement-fixtures.mjs';
 import fc from 'fast-check';
 import { runs } from './fuzz-config.js';
-import Cheques, { readCheque, matchTracked, settleCheque, incomeCounted, normNo, sameNo, sameBank, partyFrom } from '../wealthflow-cheques.js';
+import Cheques, { readCheque, matchTracked, settleCheque, incomeCounted, normNo, sameNo, sameBank, partyFrom, unsettleCheque } from '../wealthflow-cheques.js';
 
 /* THE CHEQUE TRACKER READS A BANK STATEMENT THE WAY A PERSON DOES.
  * "CHEQUE DEPOSIT 285943" says it is a cheque, that money came IN, and which cheque. It used to be lost three ways: the statement parser deleted the number (it looks like a reference), the page
@@ -512,6 +512,45 @@ describe('the decision for one row', () => {
         expect(out.review.join(' ')).toContain('differs');
     });
 
+    describe('a cheque the owner already marked cleared, and the bank moved a different amount', () => {
+        const byHand = (extra = {}) => chq({ amount: 48000, status: 'cleared', clearedDate: '2026-03-12', ...extra });
+
+        it('the statement\'s amount is kept, the typed one stays in the note, and a review is raised', () => {
+            const out = settleCheque(deposit(), [byHand()], opts());
+            expect(out.action).toBe('clear');
+            expect(out.patch).toMatchObject({ amount: 50000, prevAmount: 48000, prevStatus: 'cleared', statementKey: 'k1', statementRow: 3 });
+            expect(out.patch.notes).toContain('amount on file was 48000');
+            expect(out.review.join(' ')).toContain('differs');
+            expect(out.filesIncome).toBe(true);
+        });
+
+        it('the same amount is just "already", as before', () => {
+            expect(settleCheque(deposit(), [byHand({ amount: 50000 })], opts()).action).toBe('already');
+        });
+
+        it('the same statement read again after the owner edited the amount: the owner\'s edit is left alone', () => {
+            const list = [chq({ amount: 48000 })];
+            const first = settleCheque(deposit(), list, opts());
+            Object.assign(list[0], first.patch);                                   // the statement cleared it at 50,000
+            list[0].amount = 49500;                                                // the owner corrects it afterwards
+            const again = settleCheque(deposit(), list, opts());
+            expect(again.action).toBe('already');
+            expect(again.patch).toBeNull();
+        });
+
+        it('cleared by ANOTHER statement at a different amount: neither is overwritten, the owner is told', () => {
+            const out = settleCheque(deposit(), [byHand({ statementKey: 'k0', statementRow: 1 })], opts());
+            expect(out.action).toBe('already');
+            expect(out.patch).toBeNull();
+            expect(out.review.join(' ')).toContain('another statement');
+        });
+
+        it('a returned cheque is not touched by this (the amount of a return is not corrected)', () => {
+            const out = settleCheque(returnRow(), [byHand({ status: 'bounced', bouncedDate: '2026-03-20' })], opts());
+            expect(out.action).toBe('already');
+        });
+    });
+
     it('an unnumbered tracked cheque is given the number the statement printed', () => {
         const out = settleCheque(deposit(), [chq({ no: '' })], opts());
         expect(out.action).toBe('clear');
@@ -759,11 +798,199 @@ describe('the email worker files cheque rows into the Cheque Tracker, and counts
         expect(back.bouncedDate).toBeUndefined();
     });
 
+    it('a cheque the owner marked cleared at another amount: the bank\'s amount is kept, the month shows what moved, and unfiling gives the owner\'s figure back', async () => {
+        const mine = { id: 'I1', no: '000123', party: 'Landlord', type: OUT, amount: 24000, issue: '2026-03-10', release: '2026-03-10', status: 'cleared', clearedDate: '2026-03-12' };
+        const w = world({ cheques: [mine] });
+        await drain(w, line('12', 'CHQ 000123 PAID', '25,000.00', '', '475,000.00'));
+        const filed = w.data.get('users/u');
+        expect(filed.cheques).toHaveLength(1);
+        expect(filed.cheques[0]).toMatchObject({ id: 'I1', status: 'cleared', clearedDate: '2026-03-12', amount: 25000, prevAmount: 24000, statementKey: SOURCE });
+        expect(filed.cheques[0].notes).toContain('amount on file was 24000');
+        expect(monthly(filed).totalExp).toBe(25000);
+        await unfileStatement({ db: w.db, uid: 'u', itemRef: w.db.doc(SOURCE) });
+        const back = w.data.get('users/u').cheques[0];
+        expect(back).toMatchObject({ id: 'I1', status: 'cleared', clearedDate: '2026-03-12', amount: 24000 });
+        expect(back.statementKey).toBeUndefined();
+    });
+
     it('a ledger line is written for every cheque row so the statement\'s totals add up', async () => {
         const { data } = await file({}, [line('12', 'CHQ 000123 PAID', '25,000.00', '', '475,000.00'), line('14', 'CHEQUE DEPOSIT RAJ TRADERS 285943', '', '50,000.00', '525,000.00')].join('\n'));
         const entries = ledger(data);
         expect(entries).toHaveLength(2);
         expect(entries.every((e) => e.module === 'cheque' || e.module === 'incomeRecv')).toBe(true);
+    });
+});
+
+/* ---- two or three statements on one cheque: each can be taken away on its own, in any order ------------------------------------------------------------------------------------------- */
+describe('statements layered on one cheque are unfiled one at a time', () => {
+    const KA = `${MAIL}/items/itemA`, KB = SOURCE, KC = `${MAIL}/items/itemC`;
+    // one row applied the way the worker applies it: the decision's patch merged into the tracked cheque
+    const apply = (list, row, key, rowNo = 1) => {
+        const out = settleCheque(row, list, { id: 'N' + key.slice(-1) + rowNo, now: '2026-03-25T00:00:00.000Z', source: { statementKey: key, statementRow: rowNo, bank: 'HNB' } });
+        if (out.action === 'create') list.push(out.record);
+        else if (out.patch) Object.assign(out.cheque, out.patch);
+        return out;
+    };
+    const dep = (extra = {}) => ({ description: 'CHEQUE DEPOSIT 285943', direction: 'credit', amount: 50000, date: '2026-03-12', bank: 'HNB', ...extra });
+    const rtn = (extra = {}) => ({ description: 'CHQ RTN 285943', direction: 'debit', amount: 50000, date: '2026-03-20', bank: 'HNB', ...extra });
+    const unfile = async (w, path) => {
+        w.data.set(path, { uid: 'u', bank: 'HNB', filename: 's.pdf', from: 'statements@hnb.lk', messageId: 'm-' + path, status: 'filed', hasReview: false, filed: true, cursor: 0, receivedMs: Date.parse('2026-04-03T05:00:00Z') });
+        await unfileStatement({ db: w.db, uid: 'u', itemRef: w.db.doc(path) });
+        return w.data.get('users/u');
+    };
+
+    it('A corrected the amount and B returned it: unfiling B gives back A\'s state with A\'s amount, and unfiling A then gives back the owner\'s cheque', async () => {
+        const list = [chq({ id: 'R1', amount: 48000 })];
+        apply(list, dep(), KA, 3);
+        apply(list, rtn(), KB, 1);
+        expect(list[0]).toMatchObject({ status: 'bounced', statementKey: KB });
+        const w = world({ cheques: list });
+        const afterB = (await unfile(w, KB)).cheques[0];
+        expect(afterB).toMatchObject({ id: 'R1', status: 'cleared', amount: 50000, clearedDate: '2026-03-12', statementKey: KA, statementRow: 3, prevAmount: 48000, prevStatus: 'pending' });
+        expect(afterB.bouncedDate).toBeUndefined();
+        const afterA = (await unfile(w, KA)).cheques[0];
+        expect(afterA).toMatchObject({ id: 'R1', status: 'pending', amount: 48000 });
+        for (const gone of ['statementKey', 'clearedDate', 'bouncedDate', 'prevStatus', 'prevAmount', 'under']) expect(afterA[gone]).toBeUndefined();
+    });
+
+    it('in the other order, unfiling A while B stands keeps B\'s return and the owner\'s amount; B then goes back to the owner\'s cheque', async () => {
+        const list = [chq({ id: 'R1', amount: 48000 })];
+        apply(list, dep(), KA, 3);
+        apply(list, rtn(), KB, 1);
+        const w = world({ cheques: list });
+        const afterA = (await unfile(w, KA)).cheques[0];
+        expect(afterA).toMatchObject({ id: 'R1', status: 'bounced', bouncedDate: '2026-03-20', amount: 48000, statementKey: KB, prevStatus: 'pending' });
+        expect(afterA.under).toBeUndefined();
+        const afterB = (await unfile(w, KB)).cheques[0];
+        expect(afterB).toMatchObject({ id: 'R1', status: 'pending', amount: 48000 });
+        for (const gone of ['statementKey', 'bouncedDate', 'clearedDate', 'prevStatus', 'under']) expect(afterB[gone]).toBeUndefined();
+    });
+
+    it('a cheque the owner tracked as bounced, deposited again by A and returned by B: unfiling both brings "bounced" and its day back', async () => {
+        const list = [chq({ id: 'R1', status: 'bounced', bouncedDate: '2026-03-02' })];
+        apply(list, dep(), KA, 2);
+        apply(list, rtn(), KB, 1);
+        const w = world({ cheques: list });
+        const afterB = (await unfile(w, KB)).cheques[0];
+        expect(afterB).toMatchObject({ status: 'cleared', clearedDate: '2026-03-12', statementKey: KA });
+        const afterA = (await unfile(w, KA)).cheques[0];
+        expect(afterA).toMatchObject({ status: 'bounced', bouncedDate: '2026-03-02' });
+        expect(afterA.clearedDate).toBeUndefined();
+        expect(afterA.statementKey).toBeUndefined();
+    });
+
+    it('three statements: taking the middle one away leaves the last one standing, and the last one then goes back to the first', async () => {
+        const list = [chq({ id: 'R1' })];
+        apply(list, dep(), KA, 3);
+        apply(list, rtn(), KB, 1);
+        apply(list, dep({ date: '2026-03-27' }), KC, 2);
+        expect(list[0]).toMatchObject({ status: 'cleared', clearedDate: '2026-03-27', statementKey: KC });
+        const w = world({ cheques: list });
+        const noB = (await unfile(w, KB)).cheques[0];
+        expect(noB).toMatchObject({ status: 'cleared', clearedDate: '2026-03-27', statementKey: KC });
+        const noC = (await unfile(w, KC)).cheques[0];
+        expect(noC).toMatchObject({ status: 'cleared', clearedDate: '2026-03-12', statementKey: KA, statementRow: 3 });
+        const noA = (await unfile(w, KA)).cheques[0];
+        expect(noA).toMatchObject({ status: 'pending' });
+        expect(noA.statementKey).toBeUndefined();
+    });
+
+    it('a cheque A added and B returned: unfiling A keeps it for B (B is what stands behind it now); unfiling B then removes it', async () => {
+        const list = [];
+        apply(list, dep(), KA, 3);
+        apply(list, rtn(), KB, 1);
+        expect(list[0]).toMatchObject({ source: 'statement', createdKey: KA, status: 'bounced', statementKey: KB });
+        const w = world({ cheques: list });
+        const afterA = (await unfile(w, KA)).cheques;
+        expect(afterA).toHaveLength(1);
+        expect(afterA[0]).toMatchObject({ status: 'bounced', createdKey: KB });
+        const afterB = (await unfile(w, KB)).cheques;
+        expect(afterB).toHaveLength(0);
+    });
+
+    it('A cleared an issued cheque the owner also typed, B returned it: unfiling B leaves the cheque tied to the typed entry, so the month counts the payment once', async () => {
+        const typed = { id: 'T1', desc: 'Rent - Landlord', amount: 25000, date: '2026-03-12', month: '2026-03', cat: 'Rent' };
+        const w = world({ expenses: [typed], cheques: [{ id: 'I1', no: '000123', party: 'Landlord', type: OUT, amount: 25000, issue: '2026-03-10', release: '2026-03-10', status: 'pending' }] });
+        await drain(w, line('12', 'CHQ 000123 PAID', '25,000.00', '', '475,000.00'));
+        const user = w.data.get('users/u');
+        expect(user.cheques[0]).toMatchObject({ status: 'cleared', countedBy: 'T1', statementKey: SOURCE });
+        apply(user.cheques, { description: 'CHQ 000123 RETURNED', direction: 'credit', amount: 25000, date: '2026-03-20', bank: 'HNB' }, KC, 1);
+        w.data.set('users/u', user);
+        expect(user.cheques[0]).toMatchObject({ status: 'bounced', countedBy: 'T1' });
+        const back = await unfile(w, KC);
+        expect(back.cheques[0]).toMatchObject({ status: 'cleared', countedBy: 'T1', statementKey: SOURCE });
+        expect(back.expenses[0].statementTwin).toBeTruthy();                       // the entry still stands for A's row
+        expect(monthly(back).totalExp).toBe(25000);                                // not 50,000
+        const noA = await unfile(w, SOURCE);
+        expect(noA.cheques[0]).toMatchObject({ status: 'pending' });
+        expect(noA.cheques[0].countedBy).toBeUndefined();
+        expect(noA.expenses[0].statementTwin).toBeUndefined();                     // A is gone: the entry is free again
+    });
+
+    it('A cleared an issued cheque the owner also typed, B returned it: unfiling A first (B standing) frees A\'s tie; B then goes back to the owner\'s cheque', async () => {
+        const typed = { id: 'T1', desc: 'Rent - Landlord', amount: 25000, date: '2026-03-12', month: '2026-03', cat: 'Rent' };
+        const w = world({ expenses: [typed], cheques: [{ id: 'I1', no: '000123', party: 'Landlord', type: OUT, amount: 25000, issue: '2026-03-10', release: '2026-03-10', status: 'pending', notes: 'rent for March' }] });
+        await drain(w, line('12', 'CHQ 000123 PAID', '25,000.00', '', '475,000.00'));
+        const user = w.data.get('users/u');
+        apply(user.cheques, { description: 'CHQ 000123 RETURNED', direction: 'credit', amount: 25000, date: '2026-03-20', bank: 'HNB' }, KC, 1);
+        w.data.set('users/u', user);
+        const noA = await unfile(w, SOURCE);
+        expect(noA.cheques[0]).toMatchObject({ status: 'bounced', statementKey: KC });
+        expect(noA.cheques[0].countedBy).toBeUndefined();
+        expect(noA.expenses[0].statementTwin).toBeUndefined();
+        const noC = await unfile(w, KC);
+        expect(noC.cheques[0]).toMatchObject({ status: 'pending', notes: 'rent for March' });
+        for (const gone of ['statementKey', 'bouncedDate', 'clearedDate', 'countedBy', 'prevStatus', 'under']) expect(noC.cheques[0][gone]).toBeUndefined();
+    });
+
+    it('unfiling brings back the owner\'s notes: the lines the system added go, the owner\'s own words stay', async () => {
+        const w = world({ cheques: [chq({ id: 'R1', notes: 'from Raj, post-dated' })] });
+        await drain(w, line('12', 'CHEQUE DEPOSIT 285943', '', '50,000.00', '550,000.00'));
+        expect(w.data.get('users/u').cheques[0].notes).toContain('Cleared on the bank statement');
+        expect((await unfile(w, SOURCE)).cheques[0].notes).toBe('from Raj, post-dated');
+        // the owner wrote something of their own after the statement was filed: nothing of theirs is cut
+        const w2 = world({ cheques: [chq({ id: 'R1', notes: 'from Raj, post-dated' })] });
+        await drain(w2, line('12', 'CHEQUE DEPOSIT 285943', '', '50,000.00', '550,000.00'));
+        const mine = w2.data.get('users/u');
+        mine.cheques[0].notes += ' · call him on Friday';
+        w2.data.set('users/u', mine);
+        expect((await unfile(w2, SOURCE)).cheques[0].notes).toContain('call him on Friday');
+    });
+
+    describe('any number of statements, taken away in any order, leave the owner\'s cheque exactly as it was', () => {
+        const KEYS = [KA, KB, KC, `${MAIL}/items/itemD`];
+        const view = (c) => { const { _ut, ...rest } = c; return JSON.parse(JSON.stringify(rest)); };
+
+        it('property: apply up to four statements (a deposit or a return each), then unfile them in a random order', async () => {
+            const events = fc.array(fc.record({ kind: fc.constantFrom('dep', 'rtn'), day: fc.integer({ min: 1, max: 27 }), amount: fc.constantFrom(50000, 48000) }), { minLength: 1, maxLength: 4 });
+            await fc.assert(fc.asyncProperty(events, fc.infiniteStream(fc.nat()), async (rows, dice) => {
+                const original = chq({ id: 'R1', amount: 50000, notes: 'mine', release: '2026-03-10' });
+                const list = [structuredClone(original)];
+                const used = [];
+                rows.forEach((row, at) => {
+                    const date = `2026-03-${String(row.day).padStart(2, '0')}`;
+                    const out = apply(list, row.kind === 'dep' ? dep({ date, amount: row.amount }) : rtn({ date, amount: row.amount }), KEYS[at], at + 1);
+                    if (out.action === 'clear' || out.action === 'bounce') used.push(KEYS[at]);
+                });
+                expect(list).toHaveLength(1);                                        // never a second cheque
+                const w = world({ cheques: list });
+                const order = used.slice(); const roll = dice[Symbol.iterator]();
+                for (let i = order.length - 1; i > 0; i -= 1) { const j = roll.next().value % (i + 1); [order[i], order[j]] = [order[j], order[i]]; }
+                let user = w.data.get('users/u');
+                for (const key of order) user = await unfile(w, key);
+                expect(user.cheques).toHaveLength(1);
+                const back = view(user.cheques[0]);
+                for (const gone of ['statementKey', 'statementRow', 'clearedDate', 'bouncedDate', 'prevStatus', 'prevDates', 'prevStatement', 'prevAmount', 'prevCountedBy', 'prevNotes', 'under', 'countedBy', 'uploadClaim']) expect(back[gone]).toBeUndefined();
+                expect(back).toMatchObject({ status: 'pending', amount: 50000, notes: 'mine' });
+            }), { numRuns: runs(60) });
+        });
+    });
+
+    it('a statement that never touched the cheque, or an empty key, changes nothing', () => {
+        const c = { id: 'R1', no: '285943', type: IN, amount: 50000, status: 'cleared', statementKey: KA, prevStatus: 'pending' };
+        expect(unsettleCheque(c, KB, 1)).toMatchObject({ change: 'none', cheque: c, lift: [] });
+        expect(unsettleCheque(c, '', 1)).toMatchObject({ change: 'none', cheque: c });
+        expect(unsettleCheque(null, KA, 1)).toMatchObject({ change: 'none' });
     });
 });
 
@@ -867,6 +1094,29 @@ describe('a cheque the bank paid and an expense the owner typed for it count onc
         expect(again.cheques[0]).toMatchObject({ status: 'cleared', countedBy: 'T1' });
         expect(again.expenses).toHaveLength(1);
         expect(monthly(again).totalExp).toBe(25000);                // not 50,000
+    });
+
+    it('the typed entry is a recurring one: unfiling frees that month\'s stamp, other months keep theirs, and the same statement filed again still counts once', async () => {
+        const rent = typed({ id: 'T1', desc: 'Rent Landlord', recurring: true, date: '2026-01-05', month: '2026-01', statementTwins: { '2026-02': { sourcePath: 'wf-mail/x/items/feb', index: 2, date: '2026-02-12', cents: 2500000, direction: 'debit' } } });
+        const rentPaid = line('12', 'CHQ 000123 PAID LANDLORD RENT', '25,000.00', '', '475,000.00');
+        const w = world({ expenses: [rent], cheques: [issued()] });
+        await drain(w, rentPaid);
+        const first = w.data.get('users/u');
+        expect(first.cheques[0]).toMatchObject({ status: 'cleared', countedBy: 'T1' });
+        expect(first.expenses[0].statementTwins['2026-03']).toMatchObject({ sourcePath: SOURCE });
+        expect(monthly(first).totalExp).toBe(25000);
+        await unfileStatement({ db: w.db, uid: 'u', itemRef: w.db.doc(SOURCE) });
+        const back = w.data.get('users/u');
+        expect(back.cheques[0]).toMatchObject({ status: 'pending' });
+        expect(back.cheques[0].countedBy).toBeUndefined();
+        expect(back.expenses[0].statementTwins['2026-03']).toBeUndefined();         // March is free again
+        expect(back.expenses[0].statementTwins['2026-02']).toMatchObject({ sourcePath: 'wf-mail/x/items/feb' });   // February's row is another statement's
+        w.data.set(SOURCE, { uid: 'u', bank: 'HNB', filename: 'statement.pdf', from: 'statements@hnb.lk', messageId: 'm1', status: 'pending', hasReview: false, filed: false, cursor: 0, receivedMs: Date.parse('2026-04-03T05:00:00Z') });
+        await drain(w, rentPaid);
+        const again = w.data.get('users/u');
+        expect(again.cheques[0]).toMatchObject({ status: 'cleared', countedBy: 'T1' });
+        expect(again.expenses).toHaveLength(1);
+        expect(monthly(again).totalExp).toBe(25000);                                // not 50,000
     });
 
     it('the cheque was untracked and the statement is unfiled: the typed entry is freed as well', async () => {
@@ -1051,6 +1301,22 @@ describe('the manual upload files cheque rows the same way', () => {
             expect(up.DB.get('expenses')[0].statementTwin).toBeUndefined();
         });
 
+        it('a recurring entry is the twin: Undo frees that month\'s stamp (not the others), and the same upload links it again', () => {
+            const rent = typed({ desc: 'Rent Landlord', recurring: true, date: '2026-01-05', month: '2026-01', statementTwins: { '2026-02': { sourcePath: 'other-statement', index: 1 } } });
+            const rentPaid = [r('CHQ 000123 PAID LANDLORD RENT', 'debit', 25000, '2026-03-12')];
+            const up = upload({ cheques: [issued()], expenses: [rent] }, rentPaid);
+            expect(up.state.cheques[0]).toMatchObject({ status: 'cleared', countedBy: 'T1' });
+            expect(up.state.expenses[0].statementTwins['2026-03']).toMatchObject({ sourcePath: 'stmt-1' });
+            up.undo();
+            expect(up.DB.get('cheques')[0]).toMatchObject({ status: 'pending' });
+            expect(up.DB.get('cheques')[0].countedBy).toBeUndefined();
+            expect(up.DB.get('expenses')[0].statementTwins['2026-03']).toBeUndefined();
+            expect(up.DB.get('expenses')[0].statementTwins['2026-02']).toMatchObject({ sourcePath: 'other-statement' });
+            const again = upload({ cheques: up.DB.get('cheques'), expenses: up.DB.get('expenses') }, rentPaid, { key: 'stmt-2', claim: 'claim-2' });
+            expect(again.state.cheques[0]).toMatchObject({ status: 'cleared', countedBy: 'T1' });
+            expect(monthly(again.state).totalExp).toBe(25000);
+        });
+
         it('a cheque nobody tracked is added for the record and linked the same way', () => {
             const up = upload({ expenses: [typed()] }, paid);
             expect(up.state.cheques).toHaveLength(1);
@@ -1161,6 +1427,6 @@ describe('the page', () => {
         expect(batches).toContain('_undoCheques');
     });
     it('the module is also exposed on window for the page', () => {
-        expect(Object.keys(Cheques).sort()).toEqual(['incomeCounted', 'matchTracked', 'normNo', 'partyFrom', 'readCheque', 'sameBank', 'sameNo', 'settleCheque', 'stampTwin', 'typedTwin']);
+        expect(Object.keys(Cheques).sort()).toEqual(['incomeCounted', 'matchTracked', 'normNo', 'partyFrom', 'readCheque', 'sameBank', 'sameNo', 'settleCheque', 'stampTwin', 'typedTwin', 'unsettleCheque']);
     });
 });

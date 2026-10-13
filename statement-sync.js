@@ -40,7 +40,7 @@ import { repairByArithmetic } from './statement-repair.mjs';
 import { buildHistory } from './statement-history.mjs';
 import { ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins, tailsIn } from './statement-transfers.mjs';
 import { ownMoney } from './wealthflow-own-money.js';
-import { readCheque } from './wealthflow-cheques.js';
+import { readCheque, unsettleCheque } from './wealthflow-cheques.js';
 import { isolateMerchant } from './statement-merchant-name.mjs';
 import { totalsAgree } from './statement-totals.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
@@ -1534,28 +1534,29 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
         if (touched(user.subscriptions, subs)) changes.subscriptions = subs;
         const loans = stripped(user.loans, 'payments', row => row && row.source === 'statement' && gone.has(String(row.expenseId)));
         if (touched(user.loans, loans)) changes.loans = loans;
-        /* A cheque this statement ADDED (it was never tracked) leaves with it, tombstoned; one the owner already tracked and the statement cleared / bounced goes back to the state it was in (wealthflow-cheques.js
-         * keeps it in prevStatus) and to the amount the owner typed. A cheque record never changes the owner's own entries beyond that. */
-        const cheques = [], linked = new Set();
+        /* A cheque this statement ADDED (it was never tracked) leaves with it, tombstoned, unless a later statement settled it since (that one stands behind it now). One the owner already tracked and the statement
+         * cleared / bounced goes back to the state it was in, and when several statements settled the cheque each is taken away on its own, in any order (wealthflow-cheques.js unsettleCheque keeps one picture per
+         * statement). A cheque record never changes the owner's own entries beyond that. */
+        const cheques = [], lifted = new Set();
         for (const cheque of Array.isArray(user.cheques) ? user.cheques : []) {
-            if (!cheque || cheque.statementKey !== path) { cheques.push(cheque); continue; }
-            if (cheque.countedBy) linked.add(String(cheque.countedBy));
-            /* only the statement that ADDED the cheque takes it away: one a different statement added, and this one only settled (cleared / returned), goes back to what that statement left */
-            if (cheque.source === 'statement' && (!cheque.createdKey || cheque.createdKey === path)) { gone.add(String(cheque.id)); tomb.cheques = { ...(tomb.cheques && typeof tomb.cheques === 'object' ? tomb.cheques : {}), [cheque.id]: now }; continue; }
-            const { clearedDate, bouncedDate, statementKey, statementRow, uploadClaim, prevStatus, prevAmount, prevDates, prevStatement, direction, countedBy, ...rest } = cheque;
-            const back = { ...rest, status: prevStatus || (rest.status === 'cleared' ? 'pending' : rest.status), ...(prevAmount != null ? { amount: prevAmount } : {}), _ut: now };
-            if (prevDates && prevDates.clearedDate) back.clearedDate = prevDates.clearedDate;
-            if (prevDates && prevDates.bouncedDate) back.bouncedDate = prevDates.bouncedDate;
-            if (prevStatement && prevStatement.statementKey) { back.statementKey = prevStatement.statementKey; if (prevStatement.statementRow != null) back.statementRow = prevStatement.statementRow; if (prevStatement.uploadClaim) back.uploadClaim = prevStatement.uploadClaim; }
-            cheques.push(back);
+            const out = unsettleCheque(cheque, path, now);
+            if (out.change === 'none') { cheques.push(cheque); continue; }
+            for (const id of out.lift) lifted.add(String(id));
+            if (out.change === 'drop') { gone.add(String(cheque.id)); tomb.cheques = { ...(tomb.cheques && typeof tomb.cheques === 'object' ? tomb.cheques : {}), [cheque.id]: now }; continue; }
+            cheques.push(out.cheque);
         }
         if (touched(user.cheques, cheques)) changes.cheques = cheques;
-        /* the entry the owner typed that this statement's cheque row was tied to (`countedBy`) stands for no row of a statement that is gone: its stamp is lifted, so the same statement filed again links it afresh and the payment is still counted once */
-        if (linked.size) {
+        /* the entry the owner typed that this statement's cheque row was tied to (`countedBy`) stands for no row of a statement that is gone: its stamp (the single one, or this statement's month of a recurring
+         * entry) is lifted, so the same statement filed again links it afresh and the payment is still counted once. A stamp another statement wrote stays. */
+        if (lifted.size) {
             const expenses = (changes.expenses || user.expenses || []).map(entry => {
-                if (!entry || !linked.has(String(entry.id)) || !entry.statementTwin || entry.statementTwin.sourcePath !== path) return entry;
-                const { statementTwin, ...rest } = entry;
-                return { ...rest, _ut: now };
+                if (!entry || !lifted.has(String(entry.id))) return entry;
+                const mine = entry.statementTwin && entry.statementTwin.sourcePath === path;
+                const months = Object.keys(entry.statementTwins || {}).filter(month => entry.statementTwins[month] && entry.statementTwins[month].sourcePath === path);
+                if (!mine && !months.length) return entry;
+                const { statementTwin, statementTwins, ...rest } = entry;
+                const left = Object.fromEntries(Object.entries(statementTwins || {}).filter(([month]) => !months.includes(month)));
+                return { ...rest, ...(statementTwin && !mine ? { statementTwin } : {}), ...(Object.keys(left).length ? { statementTwins: left } : {}), _ut: now };
             });
             if (touched(user.expenses, expenses)) changes.expenses = expenses;
         }

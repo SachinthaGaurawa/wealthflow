@@ -284,19 +284,47 @@ export function matchTracked(read, row, cheques) {
 /* ---- the whole decision --------------------------------------------------------------------------------------------------------------------------------------------------------- */
 const stamp = (note, add) => { const left = String(note || '').trim(); return left ? (left.includes(add) ? left : left + ' · ' + add) : add; };
 
-/** What the cheque was before THIS statement first touched it, so unfiling the statement puts it back exactly: its status, the days it cleared / bounced, and whose record of it it was.
- *  A second row of the same statement (cleared, then returned) keeps the first picture, not the half-way one. */
+/* Every statement that settles a cheque leaves a picture of the cheque as it was just before (a LAYER): its status, the days it cleared / bounced, whose record of it it was, its amount, and the typed
+ * entry it was tied to. The newest layer sits on the cheque itself (prevStatus …), the older ones in `under`, oldest first, each named by the statement it belongs to. Taking a statement away
+ * (unsettleCheque) then needs nothing but those pictures, in whatever order the statements are taken away. */
+const layerOf = (cheque) => ({
+    key: cheque.statementKey, prevStatus: cheque.prevStatus, prevDates: cheque.prevDates, prevStatement: cheque.prevStatement,
+    prevCountedBy: cheque.prevCountedBy ? String(cheque.prevCountedBy) : '', prevAmount: cheque.prevAmount == null ? null : cheque.prevAmount,
+    ...(typeof cheque.prevNotes === 'string' ? { prevNotes: cheque.prevNotes } : {}),
+});
+const SNAPSHOT = ['prevStatus', 'prevDates', 'prevStatement', 'prevCountedBy', 'prevAmount', 'prevNotes', 'under'];
+
+/** What the cheque was before THIS statement first touched it, so unfiling the statement puts it back exactly. The statement that touched it before keeps its own picture (it moves down into `under`).
+ *  A second row of the same statement (cleared, then returned) keeps the first picture, not the half-way one. `prevAmount` is null until this statement corrects the amount. */
 function before(cheque, provenance) {
     if (provenance.statementKey && cheque.statementKey === provenance.statementKey && cheque.prevStatus !== undefined) {
         const keep = {};
-        for (const field of ['prevStatus', 'prevDates', 'prevStatement']) if (cheque[field] !== undefined) keep[field] = cheque[field];
+        for (const field of SNAPSHOT) if (cheque[field] !== undefined) keep[field] = cheque[field];
         return keep;
     }
+    const under = Array.isArray(cheque.under) ? cheque.under.slice() : [];
+    if (cheque.statementKey && cheque.prevStatus !== undefined) under.push(layerOf(cheque));
     return {
         prevStatus: cheque.status,
         prevDates: { clearedDate: cheque.clearedDate || '', bouncedDate: cheque.bouncedDate || '' },
         prevStatement: { statementKey: cheque.statementKey || '', statementRow: cheque.statementRow == null ? null : cheque.statementRow, uploadClaim: cheque.uploadClaim || '' },
+        prevCountedBy: cheque.countedBy ? String(cheque.countedBy) : '',
+        prevAmount: null,
+        prevNotes: String(cheque.notes || ''),
+        ...(under.length ? { under } : {}),
     };
+}
+
+/** The notes as they were before a statement added its lines to them — only when what is there now is exactly those notes plus lines the system itself wrote (the owner's own words are never cut). */
+const TRAIL_LINE = /^(?:(?:Cleared|Returned) on the bank statement \d{4}-\d{2}-\d{2}(?: \([^)]*\))?|amount on file was -?[\d.]+|Counted once — your expense ".*" already holds this payment)$/;
+function notesBefore(now, was) {
+    if (typeof was !== 'string') return null;
+    const text = String(now || '');
+    if (!text.startsWith(was)) return null;
+    const rest = text.slice(was.length);
+    if (!rest) return was;
+    if (was && !rest.startsWith(' · ')) return null;
+    return rest.replace(/^ · /, '').split(' · ').every((line) => TRAIL_LINE.test(line)) ? was : null;
 }
 
 /**
@@ -340,7 +368,20 @@ export function settleCheque(row, cheques, options) {
 
     if (hit.status === 'matched' && hit.cheque) {
         out.cheque = hit.cheque;
-        if (hit.already) { out.action = 'already'; return out; }
+        if (hit.already) {
+            out.action = 'already';
+            // The tracker shows this clearing but for another amount than the bank moved. The bank's figure is the truth the books keep — unless the statement that wrote the cheque is THIS one (the owner may have
+            // corrected it since), or another statement cleared it (two statements disagreeing is for the owner to settle, not for a guess).
+            if (event === 'clear' && hit.amountDiffers && amount) {
+                if (provenance.statementKey && hit.cheque.statementKey === provenance.statementKey) return out;
+                if (hit.cheque.statementKey) { out.review.push('this cheque was already cleared by another statement for ' + money(hit.cheque.amount) + ' — this one shows ' + amount + '; left as it is'); return out; }
+                out.action = 'clear';
+                out.patch = { ...before(hit.cheque, provenance), ...(provenance.statementKey ? { statementKey: provenance.statementKey, statementRow: provenance.statementRow } : {}), ...(provenance.uploadClaim ? { uploadClaim: provenance.uploadClaim } : {}),
+                    amount, prevAmount: hit.cheque.amount, notes: stamp(stamp(hit.cheque.notes, trail('Cleared')), 'amount on file was ' + money(hit.cheque.amount)) };
+                out.review.push('the statement amount differs from the cheque you marked cleared — the statement amount was kept');
+            }
+            return out;
+        }
         if (event === 'return') {
             out.action = 'bounce';
             out.patch = { status: 'bounced', bouncedDate: date, ...before(hit.cheque, provenance), ...(provenance.statementKey ? { statementKey: provenance.statementKey, statementRow: provenance.statementRow } : {}),
@@ -350,7 +391,7 @@ export function settleCheque(row, cheques, options) {
             out.patch = { status: 'cleared', clearedDate: date, ...before(hit.cheque, provenance), ...(provenance.statementKey ? { statementKey: provenance.statementKey, statementRow: provenance.statementRow } : {}),
                 ...(provenance.uploadClaim ? { uploadClaim: provenance.uploadClaim } : {}), ...(hit.cheque.bank ? {} : { bank: row.bank || '' }), ...(normNo(hit.cheque.no) ? {} : (read.no ? { no: read.no } : {})), notes: stamp(hit.cheque.notes, trail('Cleared')) };
             // the bank moved this much money: that is the truth the books keep; what was typed in is kept in the note
-            if (hit.amountDiffers && amount) { out.patch.amount = amount; if (hit.cheque.prevAmount === undefined || !(provenance.statementKey && hit.cheque.statementKey === provenance.statementKey)) out.patch.prevAmount = hit.cheque.amount; out.patch.notes = stamp(out.patch.notes, 'amount on file was ' + money(hit.cheque.amount)); out.review.push('the statement amount differs from the tracked cheque — the statement amount was kept'); }
+            if (hit.amountDiffers && amount) { out.patch.amount = amount; if (out.patch.prevAmount == null) out.patch.prevAmount = hit.cheque.amount; out.patch.notes = stamp(out.patch.notes, 'amount on file was ' + money(hit.cheque.amount)); out.review.push('the statement amount differs from the tracked cheque — the statement amount was kept'); }
         }
         return out;
     }
@@ -370,6 +411,84 @@ export function settleCheque(row, cheques, options) {
         ...(provenance.uploadClaim ? { uploadClaim: provenance.uploadClaim } : {}),
     };
     return out;
+}
+
+/* ---- taking a statement away again ------------------------------------------------------------------------------------------------------------------------------------------------------ */
+/**
+ * What a cheque becomes when the statement `key` is unfiled (the email worker's unfileStatement; the page's Undo keeps a copy of the cheque of its own instead).
+ *   none     the statement never touched this cheque
+ *   drop     the statement ADDED the cheque and nothing since has touched it: it goes with the statement
+ *   keep     the cheque stays — this statement added it but a later one settled it (that one stands behind it now), or this statement settled it UNDER a later one (the later one's "before" becomes what the
+ *            cheque was before this statement, so taking that one away later does not bring this one back)
+ *   restore  this statement settled it last: back to what it was — status, the days it cleared / bounced, whose record of it it was, its amount, its tie to a typed entry — and the statement below it
+ *            (if any) is the newest again
+ * → { change, cheque (the record to keep, never mutated in place), lift: ids of typed entries the cheque no longer stands behind — the caller frees a stamp only when THIS statement wrote it }
+ */
+export function unsettleCheque(cheque, key, now) {
+    const none = { change: 'none', cheque, lift: [] };
+    if (!cheque || typeof cheque !== 'object' || !key) return none;
+    const under = (Array.isArray(cheque.under) ? cheque.under : []).filter((layer) => layer && typeof layer === 'object' && layer.key);
+    const top = cheque.statementKey === key;
+    const created = cheque.source === 'statement' && (cheque.createdKey ? cheque.createdKey === key : top);
+    if (!top && !created && !under.some((layer) => layer.key === key)) return none;
+    const tie = cheque.countedBy ? String(cheque.countedBy) : '';
+
+    if (created) {
+        if (top) return { change: 'drop', cheque, lift: tie ? [tie] : [] };
+        // a later statement settled it: that one is what stands behind the cheque now
+        const heir = (under.find((layer) => layer.key !== key) || { key: cheque.statementKey }).key;
+        if (!heir) return { change: 'drop', cheque, lift: tie ? [tie] : [] };
+        const { under: _older, ...bare } = cheque;
+        const rest = under.filter((layer) => layer.key !== key);
+        return { change: 'keep', cheque: { ...bare, createdKey: heir, ...(rest.length ? { under: rest } : {}), _ut: now }, lift: [] };
+    }
+
+    const layers = under.map((layer) => ({ ...layer }));
+    if (cheque.statementKey) layers.push(layerOf(cheque));
+    const work = { ...cheque };
+    const lift = [];
+    let change = 'keep';
+    for (let at = layers.map((layer) => layer.key).lastIndexOf(key); at >= 0; at = layers.map((layer) => layer.key).lastIndexOf(key)) {
+        const gone = layers[at];
+        if (at === layers.length - 1) {
+            change = 'restore';
+            // the newest: the cheque goes back to the state before it
+            work.status = gone.prevStatus || (work.status === 'cleared' ? 'pending' : work.status);
+            for (const field of ['clearedDate', 'bouncedDate', 'statementKey', 'statementRow', 'uploadClaim', 'direction']) delete work[field];
+            if (gone.prevDates && gone.prevDates.clearedDate) work.clearedDate = gone.prevDates.clearedDate;
+            if (gone.prevDates && gone.prevDates.bouncedDate) work.bouncedDate = gone.prevDates.bouncedDate;
+            const was = gone.prevStatement;
+            if (was && was.statementKey) { work.statementKey = was.statementKey; if (was.statementRow != null) work.statementRow = was.statementRow; if (was.uploadClaim) work.uploadClaim = was.uploadClaim; }
+            if (gone.prevAmount != null) work.amount = gone.prevAmount;
+            const plain = notesBefore(work.notes, gone.prevNotes);
+            if (plain !== null) work.notes = plain;
+            const heldBefore = gone.prevCountedBy ? String(gone.prevCountedBy) : '';
+            const heldNow = work.countedBy ? String(work.countedBy) : '';
+            if (heldNow && heldNow !== heldBefore) lift.push(heldNow);
+            if (heldBefore) work.countedBy = heldBefore; else delete work.countedBy;
+        } else {
+            // under a newer statement: that statement stays, and its "before" is now what the cheque was before THIS one
+            const next = layers[at + 1];
+            const made = next.prevCountedBy !== gone.prevCountedBy ? String(next.prevCountedBy || '') : '';
+            next.prevStatus = gone.prevStatus; next.prevDates = gone.prevDates; next.prevStatement = gone.prevStatement; next.prevCountedBy = gone.prevCountedBy || '';
+            if (typeof gone.prevNotes === 'string') next.prevNotes = gone.prevNotes; else delete next.prevNotes;
+            if (gone.prevAmount != null) {
+                const corrector = layers.slice(at + 1).find((layer) => layer.prevAmount != null);
+                if (corrector) corrector.prevAmount = gone.prevAmount; else work.amount = gone.prevAmount;
+            }
+            if (made) { lift.push(made); if (String(work.countedBy || '') === made) { if (gone.prevCountedBy) work.countedBy = gone.prevCountedBy; else delete work.countedBy; } }
+        }
+        layers.splice(at, 1);
+    }
+    // the newest remaining layer is the one written on the cheque; the older ones stay in `under`
+    for (const field of SNAPSHOT) delete work[field];
+    const newest = layers[layers.length - 1];
+    if (newest) {
+        for (const field of ['prevStatus', 'prevDates', 'prevStatement', 'prevCountedBy', 'prevAmount', 'prevNotes']) if (newest[field] !== undefined) work[field] = newest[field];
+        if (layers.length > 1) work.under = layers.slice(0, -1);
+    }
+    work._ut = now;
+    return { change, cheque: work, lift: [...new Set(lift)] };
 }
 
 /**
@@ -443,7 +562,7 @@ export function stampTwin(twin, row, key, index, now) {
     return twin.r;
 }
 
-const API = { readCheque, matchTracked, settleCheque, incomeCounted, normNo, sameNo, sameBank, partyFrom, typedTwin, stampTwin };
+const API = { readCheque, matchTracked, settleCheque, unsettleCheque, incomeCounted, normNo, sameNo, sameBank, partyFrom, typedTwin, stampTwin };
 
 if (typeof window !== 'undefined') window.WFCheques = API;
 
