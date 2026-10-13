@@ -109,11 +109,12 @@ function numberIn(tokens, amount) {
         if (!labelled && length >= 8 && /^(?:19|20)\d{6}$/.test(token)) return;           // a yyyymmdd date
         if (!labelled && length >= 9) return;                                              // an account or a reference
         const score = size + label;
-        if (score >= 5) picks.push({ token, score, at: i });
+        // tied: the number stands against the cheque's own words ("CHEQUE DEPOSIT 285943", "CHQ NO 285943"); untied: it only happens to be a number somewhere in the narration
+        if (score >= 5) picks.push({ token, score, at: i, tied: label > 0 });
     });
-    if (!picks.length) return { no: '', others: [] };
+    if (!picks.length) return { no: '', others: [], tied: false };
     picks.sort((a, b) => b.score - a.score || a.at - b.at);
-    return { no: picks[0].token, others: picks.slice(1).filter((p) => p.score >= picks[0].score - 1).map((p) => p.token) };
+    return { no: picks[0].token, others: picks.slice(1).filter((p) => p.score >= picks[0].score - 1).map((p) => p.token), tied: picks[0].tied };
 }
 
 /** Cheque text left once the cheque words, the event words and the numbers are taken out — usually the other party's name. */
@@ -138,7 +139,7 @@ export function readCheque(row) {
     const none = (extra) => ({ isCheque: false, fee: false, type: '', event: 'clear', no: '', returned: false, direction: directionOf(row), confidence: 'high', conflict: false, needsReview: false, reason: '', ...(extra || {}) });
     if (!tokens.length || TITLE_BEFORE.test(text)) return none();
     const strong = tokens.some((token) => STRONG.has(token));
-    const { no, others } = numberIn(tokens, row.amount);
+    const { no, others, tied } = numberIn(tokens, row.amount);
     const weakNumbered = tokens.some((token, i) => WEAK.has(token) && (/^\d{3,12}$/.test(tokens[i + 1] || '') || (NO_WORDS.has(tokens[i + 1] || '') && /^\d{3,12}$/.test(tokens[i + 2] || ''))));
     if (!strong && !weakNumbered) return none();
     // a bank charge about a cheque, never the cheque itself
@@ -166,7 +167,7 @@ export function readCheque(row) {
         reason = type ? 'cheque ' + (no ? no + ' ' : '') + 'read from the wording (the statement gave no debit/credit flag)' : 'a cheque, but which way the money went is not stated';
     }
     if (!no) confidence = confidence === 'high' ? 'medium' : 'low';
-    return { isCheque: true, fee: false, type, event: returned ? 'return' : 'clear', no, returned, direction: dir, confidence, conflict, needsReview: conflict || !type, reason, otherNumbers: others };
+    return { isCheque: true, fee: false, type, event: returned ? 'return' : 'clear', no, returned, direction: dir, confidence, conflict, needsReview: conflict || !type, reason, otherNumbers: others, noTied: Boolean(no) && tied };
 }
 
 /* ---- matching ------------------------------------------------------------------------------------------------------------------------------------------------------------------- */
@@ -256,9 +257,12 @@ export function matchTracked(read, row, cheques) {
             if (hit) return hit;
         }
     }
-    // 3. by amount and days: a cheque logged without its number (or a row that prints none), the money equal, the days fitting — and only one that fits
+    // 3. by amount and days: a cheque logged without its number (or a row that prints none), the money equal, the days fitting — and only one that fits.
+    //    A number that is only somewhere in the narration ("987654 CHEQUE DEPOSIT", "CHQ DEP BR 045 987654": a reference, a journal number) and that no tracked cheque carries is not proof of ANOTHER
+    //    cheque: it must not hide the one the owner is waiting on, so the numbered cheques are looked at too. A number set against the cheque's words ("CHEQUE DEPOSIT 987654") still means that cheque.
     const unnumbered = (c) => !normNo(c.no);
-    const open = list.filter((c) => (!read.no || unnumbered(c)) && same(c.amount, row.amount) && (event === 'return' ? (c.status === 'cleared' || c.status === 'pending') : c.status === 'pending'));
+    const untied = Boolean(read.no) && read.noTied === false;
+    const open = list.filter((c) => (!read.no || untied || unnumbered(c)) && same(c.amount, row.amount) && (event === 'return' ? (c.status === 'cleared' || c.status === 'pending') : c.status === 'pending'));
     const fitting = open.filter((c) => {
         const gap = (asDate(row.date) - asDate(dateOf(c))) / 86400000;
         if (!Number.isFinite(gap)) return false;

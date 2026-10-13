@@ -280,6 +280,90 @@ describe('the statement parser keeps the cheque number in the narration', () => 
         const text = String(rows[0].narration || rows[0].description || '');
         expect(readCheque({ description: text, direction: rows[0].direction, amount: rows[0].amount })).toMatchObject({ isCheque: true, no });
     });
+
+    /* a number that is only somewhere in the narration is not proof of another cheque — see "a number that is only somewhere in the narration" below */
+    const readLine = (text, side = 'credit') => {
+        const parsed = parser.parseStatement(statement([side === 'credit' ? `12/03/2026 12/03/2026 ${text} 50,000.00 550,000.00` : `12/03/2026 12/03/2026 ${text} 50,000.00 450,000.00`]));
+        const rows = parsed.rows || parsed.transactions || [];
+        expect(rows.length).toBe(1);
+        const description = String(rows[0].narration || rows[0].description || '');
+        return { description, read: readCheque({ description, direction: rows[0].direction, amount: rows[0].amount }) };
+    };
+    it.each([
+        ['987654 CHEQUE DEPOSIT 285943', '285943'],         // the number is the one set against the words, not the reference in front
+        ['TXN987654 CHEQUE DEPOSIT 285943', '285943'],
+        ['CHEQUE DEPOSIT 285943 REF 8801234567', '285943'],
+        ['CHEQUE DEPOSIT 15/03/2026 285943', '285943'],     // a date or an amount between the words and the number does not set it apart
+        ['CHEQUE DEPOSIT 25,000.00 285943', '285943'],
+        ['CHQ DEPOSIT-LOCAL 345678', '345678'],
+        ['Chq Returned - Refer to Drawer 345678', '345678'],
+        ['Transfer Cheque Deposit Cheque No: 070283', '070283'],
+        ['CHEQUE PAYMENT - 880011', '880011'],
+        ['PAYMENT BY CHEQUE 000123', '000123'],
+        ['CHQ285943', '285943'],                             // glued to the word
+        ['987654 CHQ285943 DEPOSIT', '285943'],
+        ['CHEQUE DEPOSIT 004512', '004512'],
+        ['CHEQUE DEPOSIT RAJ TRADERS 285943', '285943'],    // a name before the number: still the number the bank printed
+    ])('through the parser, %s gives number %s', (text, no) => {
+        expect(readLine(text).read).toMatchObject({ isCheque: true, no });
+    });
+});
+
+/* ---- a number that is only somewhere in the narration ----------------------------------------------------------------------------------------------------------------------------------------- */
+describe('a number that is only somewhere in the narration is not proof of another cheque', () => {
+    /* "987654 CHEQUE DEPOSIT": the bank printed a reference, not the cheque's number. Read as the number, it made the tracker look only for a cheque of that number, find none, and file a second cheque beside
+     * the one the owner is waiting on. A number set against the cheque's own words ("CHEQUE DEPOSIT 285943") is still the cheque's number. */
+    it.each([
+        ['987654 CHEQUE DEPOSIT'],
+        ['987654 CHQ DEP COLOMBO'],
+        ['CHEQUE DEPOSIT RAJ TRADERS 987654'],
+        ['CHQ DEP BR 045 987654'],
+        ['CHEQUE DEPOSIT CITY OFFICE 987654'],
+    ])('%s: the number is read but not tied to the cheque', (text) => {
+        expect(readCheque(asRow(text, 'credit', 50000))).toMatchObject({ isCheque: true, no: '987654', noTied: false });
+    });
+    it.each([
+        ['CHEQUE DEPOSIT 987654'], ['CHQ DEP 987654'], ['CHQ NO 987654'], ['CHQ987654'], ['CHEQUE NO: 987654 PAID'], ['Cheque Deposit - Cheque No: 987654'], ['CHEQUE DEPOSIT 15/03/2026 987654'],
+        ['CHQ 987654 DEP BR 045'], ['PAYMENT BY CHEQUE 987654'],
+    ])('%s: the number is tied to the cheque', (text) => {
+        expect(readCheque(asRow(text, 'credit', 50000))).toMatchObject({ isCheque: true, no: '987654', noTied: true });
+    });
+    it('the CORPUS: a number is untied only where the narration puts something between the cheque words and it', () => {
+        for (const [text, direction, amount, expected] of CORPUS) {
+            const read = readCheque(asRow(text, direction, amount));
+            if (!expected.no) continue;
+            expect(read.no, text).toBe(expected.no);
+            expect(typeof read.noTied, text).toBe('boolean');
+        }
+    });
+
+    const tracked = (extra = {}) => chq({ id: 'R1', no: '285943', release: '2026-03-10', issue: '2026-03-05', ...extra });
+    const opts = (extra = {}) => ({ id: 'new1', now: '2026-03-12T00:00:00.000Z', source: { statementKey: 'k1', statementRow: 3, bank: 'Commercial Bank' }, ...extra });
+    it('a reference in front of the words: the tracked cheque is cleared by amount and day, and no second cheque is filed', () => {
+        for (const description of ['987654 CHEQUE DEPOSIT', 'CHEQUE DEPOSIT RAJ TRADERS 987654', 'CHQ DEP BR 045 987654']) {
+            const out = settleCheque(deposit({ description }), [tracked()], opts());
+            expect(out, description).toMatchObject({ action: 'clear', filesIncome: true });
+            expect(out.cheque, description).toMatchObject({ id: 'R1', no: '285943' });
+        }
+    });
+    it('the same number set against the words is another cheque: it is filed on its own, the tracked one is left waiting', () => {
+        const out = settleCheque(deposit({ description: 'CHEQUE DEPOSIT 987654' }), [tracked()], opts());
+        expect(out).toMatchObject({ action: 'create' });
+        expect(out.record).toMatchObject({ no: '987654' });
+    });
+    it('an untied number that IS a tracked cheque\'s number still finds it by number', () => {
+        const out = settleCheque(deposit({ description: 'CHEQUE DEPOSIT RAJ TRADERS 285943', amount: 49000 }), [tracked(), tracked({ id: 'R2', no: '777777', amount: 49000 })], opts());
+        expect(out.cheque).toMatchObject({ id: 'R1' });
+    });
+    it('two tracked cheques fit the amount and day: the row is not guessed between', () => {
+        const out = settleCheque(deposit({ description: '987654 CHEQUE DEPOSIT' }), [tracked(), tracked({ id: 'R2', no: '777777' })], opts());
+        expect(out.action).not.toBe('clear');
+        expect(out.cheque || null).toBeNull();
+    });
+    it('a tracked cheque of another amount, or one that is not waiting any more, is not cleared by an untied number', () => {
+        expect(settleCheque(deposit({ description: '987654 CHEQUE DEPOSIT' }), [tracked({ amount: 40000 })], opts()).action).toBe('create');
+        expect(settleCheque(deposit({ description: '987654 CHEQUE DEPOSIT' }), [tracked({ status: 'cleared', clearedDate: '2026-02-01' })], opts()).action).toBe('create');
+    });
 });
 
 /* ---- properties: any number, any wording, any bank ------------------------------------------------------------------------------------------------------------------------------------- */
@@ -672,6 +756,13 @@ describe('the email worker files cheque rows into the Cheque Tracker, and counts
         expect(user.incomeRecv[0]).toMatchObject({ amount: 50000 });
         expect(user.expenses).toHaveLength(0);
         expect(monthly(user).totalExp).toBe(0);
+    });
+
+    it('a bank reference in front of the words is not the cheque\'s number: the tracked cheque is cleared by amount and day, no second cheque is filed', async () => {
+        const { user } = await file({ cheques: [chq({ id: 'R1', no: '285943', release: '2026-03-10', issue: '2026-03-05' })] }, line('12', '987654 CHEQUE DEPOSIT', '', '50,000.00', '550,000.00'));
+        expect(user.cheques).toHaveLength(1);
+        expect(user.cheques[0]).toMatchObject({ id: 'R1', no: '285943', status: 'cleared', clearedDate: '2026-03-12' });
+        expect(user.incomeRecv).toHaveLength(1);
     });
 
     it('a cheque the owner issued, paid: the cheque carries the money — no second expense; the month shows it once', async () => {

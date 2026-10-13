@@ -221,6 +221,9 @@ function filedRecord(user, sourcePath, index, id, matchedId) {
 async function settledRowVerdict({ entry, row, user, sourcePath, index, id, readReview, at = Date.now() }) {
     const now = { date: String(row?.date || ''), cents: amountCents(row?.amount), direction: String(row?.direction || '') };
     if (entry.status === 'filed' || entry.status === 'duplicate') {
+        /* A CHEQUE ROW KEEPS ITS OWN MONEY ON ITS LEDGER LINE: one statement can clear a cheque and then return it, and the cheque record only holds the last row's place and figures — so reading it back
+         * would hold a clearing row against the return's direction (and find nothing at all for the first row). A line written before this was kept falls through to the cheque, as it always did. */
+        if (entry.module === 'cheque' && entry.money && typeof entry.money === 'object') return compareMoney(entry.money, now);
         const found = filedRecord(user, sourcePath, index, id, entry.matchedId);
         // no record to compare: the owner deleted it (a tombstone), or it is too old to tell a deletion from a loss — it stays as the ledger has it
         if (!found) return entry.status === 'filed' && (tombstoned(user, entry.module, id) || outsideWindow(entry, user, at)) ? 'same' : 'no-record';
@@ -331,7 +334,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                         if (plan.changed) changes.cheques = user.cheques;
                         if (plan.twin) changes.expenses = user.expenses;
                         if (plan.consumed) {
-                            writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: plan.action === 'already' ? 'duplicate' : 'filed', module: 'cheque', reason: plan.reason, fingerprint, ...(plan.cheque ? { matchedId: String(plan.cheque.id || '') } : {}), settledAt: now }]);
+                            writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: plan.action === 'already' ? 'duplicate' : 'filed', module: 'cheque', reason: plan.reason, fingerprint, money: { date: String(row.date || ''), cents: amountCents(row.amount), direction: String(row.direction || '') }, ...(plan.cheque ? { matchedId: String(plan.cheque.id || '') } : {}), settledAt: now }]);
                             if (plan.action === 'already') outcome.duplicates++; else outcome.filed++;
                             continue;
                         }
