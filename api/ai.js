@@ -312,7 +312,7 @@ export default async function handler(req, res) {
                 ...extra
             })
         }));
-        const dflt = image ? 'llama3.2-vision' : 'gpt-oss:120b';
+        const dflt = image ? 'gemma4:31b' : 'gpt-oss:120b';
         try {
             const out = await askChat({ name: 'Ollama', slot, book: modelBook, defaultModel: dflt, tokens, cap: 4096, kind: 'ollama', send, vision: !!image, log: console.info,
                 load: () => loadModels({ kind: 'ollama', url: 'https://ollama.com/api/tags', key: ollamaKey, fetcher: fetchWithTimeout }) });
@@ -357,12 +357,12 @@ export default async function handler(req, res) {
 
     // mistral-large-latest is paid-tier only (confirmed live: 403 "not available in
     // your subscription tier"); mistral-small-latest is served on the free plan.
-    const fetchMistral = makeOAI({ name: 'Mistral', provider: 'mistral', key: mistralKey, url: 'https://api.mistral.ai/v1/chat/completions', list: 'https://api.mistral.ai/v1/models', textModel: 'mistral-small-latest', visionModel: 'pixtral-12b-2409', jsonMode: true });
+    const fetchMistral = makeOAI({ name: 'Mistral', provider: 'mistral', key: mistralKey, url: 'https://api.mistral.ai/v1/chat/completions', list: 'https://api.mistral.ai/v1/models', textModel: 'mistral-small-latest', visionModel: 'mistral-small-latest', jsonMode: true });
     const fetchTogether = makeOAI({ name: 'Together', provider: 'together', key: togetherKey, url: 'https://api.together.xyz/v1/chat/completions', list: 'https://api.together.xyz/v1/models', textModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', visionModel: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo' });
-    const fetchFireworks = makeOAI({ name: 'Fireworks', provider: 'fireworks', key: fireworksKey, url: 'https://api.fireworks.ai/inference/v1/chat/completions', list: 'https://api.fireworks.ai/inference/v1/models', textModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct', visionModel: 'accounts/fireworks/models/llama-v3p2-90b-vision-instruct' });
+    const fetchFireworks = makeOAI({ name: 'Fireworks', provider: 'fireworks', key: fireworksKey, url: 'https://api.fireworks.ai/inference/v1/chat/completions', list: 'https://api.fireworks.ai/inference/v1/models', textModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct', visionModel: 'accounts/fireworks/models/llama4-maverick-instruct-basic' });
     const openRouterHeaders = { 'HTTP-Referer': OFFICIAL_ORIGIN, 'X-Title': 'WealthFlow' };
     const fetchOpenRouterFinance = makeOAI({ name: 'OpenRouterFinance', provider: 'openrouter:ling-fin-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Finance', textModel: 'inclusionai/ling-3.0-flash-fin:free', visionModel: null, extraHeaders: openRouterHeaders });
-    const fetchOpenRouterQwen = makeOAI({ name: 'OpenRouterQwen', provider: 'openrouter:qwen-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Qwen', textModel: 'qwen/qwen3.8-27b:free', visionModel: 'qwen/qwen3.8-27b:free', jsonMode: false, extraHeaders: openRouterHeaders });
+    const fetchOpenRouterQwen = makeOAI({ name: 'OpenRouterQwen', provider: 'openrouter:qwen-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Qwen', textModel: 'qwen/qwen3.8-27b:free', visionModel: 'google/gemma-4-26b-a4b-it:free', jsonMode: false, extraHeaders: openRouterHeaders });
     const fetchOpenRouterNemotron = makeOAI({ name: 'OpenRouterNemotron', provider: 'openrouter:nemotron-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', list: 'https://openrouter.ai/api/v1/models', role: 'Nemotron', textModel: 'nvidia/nemotron-3-ultra-550b-a55b:free', visionModel: null, extraHeaders: openRouterHeaders });
     // meta/llama-3.3-70b-instruct reached end of life 2026-08-26 (confirmed live:
     // 410 Gone). meta/llama-3.1-8b-instruct is NVIDIA's smaller, currently-documented
@@ -372,7 +372,7 @@ export default async function handler(req, res) {
     // "Llama-3.3-70B-Instruct") are retired (confirmed live: fetch failed — the host no
     // longer resolves for this traffic). Current: models.github.ai/inference, with every
     // model namespaced "<publisher>/<model>".
-    const fetchGitHubOnce = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.github.ai/inference/chat/completions', textModel: 'openai/gpt-4o-mini', visionModel: 'openai/gpt-4o', jsonMode: true, extraHeaders: { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } });
+    const fetchGitHubOnce = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.github.ai/inference/chat/completions', list: 'https://models.github.ai/catalog/models', textModel: 'openai/gpt-4o-mini', visionModel: 'openai/gpt-4o', jsonMode: true, extraHeaders: { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } });
     // a failure says which variable the token came from and what kind it is (never any of its characters): the one question the canary could
     // not answer after the owner gave GH_PAT the Models permission and GitHub Models still replied 200 "OK" -- is that token even the one in use?
     const githubKeyKind = /^github_pat_/.test(githubKey || '') ? 'fine-grained' : /^ghp_/.test(githubKey || '') ? 'classic' : /^gh[sou]_/.test(githubKey || '') ? 'app/oauth' : 'other';

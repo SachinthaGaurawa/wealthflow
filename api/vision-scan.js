@@ -1,23 +1,20 @@
 // ==================== WealthFlow Vision Engine v3.0 — Frontier Multi-Provider ====================
 //
-// 12+ AI engines including 2026's frontier models:
+// Many AI engines, none of them asked for a model by a name this file remembers:
 //   GEMINI:   a fast and a strong reader, each finding its own live model (gemini-client.mjs)
-//   OPEN:     Ollama llama3.2-vision, qwen2.5vl
-//   FAST:     Groq Llava 90B, Cerebras Llama 3.3 70B
-//   AGGREGATOR: OpenRouter (Qwen2.5-VL free, DeepSeek free)
-//   ANCHOR:   OCR.space + text-LLM structuring
-//   FALLBACK: Mistral Pixtral, Cohere Command R+
+//   OTHERS:   Ollama, Groq, Mistral, Together, NVIDIA, Fireworks, GitHub Models, OpenRouter — one table (ai-provider-call.mjs) that asks a model
+//             the provider serves NOW and replaces a retired one from the provider's own list (ai-models.mjs)
+//   ANCHOR:   Google Cloud Vision / OCR.space + text-LLM structuring (Cohere, then the same providers as text readers)
 //
 // MODES: quick | deep | ultra | frontier
 //
 // ENV (all optional except WealthFlow_API_Key):
-//   WealthFlow_API_Key, OLLAMA_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY,
-//   OPENROUTER_API_KEY, MISTRAL_API_KEY, COHERE_API_KEY, DEEPSEEK_API_KEY,
-//   OCR_SPACE_API_KEY
+//   WealthFlow_API_Key, OLLAMA_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, MISTRAL_API_KEY, COHERE_API_KEY,
+//   DEEPSEEK_API_KEY, TOGETHER_API_KEY, NVIDIA_API_KEY, FIREWORKS_API_KEY, GH_PAT (GitHub Models), OCR_SPACE_API_KEY
 
 import { geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
 import { fetchWithBodyDeadline } from '../fetch-timeout.mjs';
-import { OFFICIAL_ORIGIN } from '../wealthflow-public-identity.mjs';
+import { askProvider, PROVIDERS } from '../ai-provider-call.mjs';
 
 export const config = {
     maxDuration: 60,
@@ -225,119 +222,10 @@ async function callGeminiVision(image, prompt, geminiKey, { tier = 'fast', isUni
     return result.text;
 }
 
-async function callOllamaVision(image, prompt, ollamaKey) {
-    if (!ollamaKey) throw new Error('no_key');
-    const resp = await fetchWithTimeout('https://ollama.com/api/chat', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${ollamaKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: 'llama3.2-vision',
-            messages: [{ role: 'user', content: prompt, images: [image] }],
-            stream: false, format: 'json',
-            options: { temperature: 0.05, num_predict: 2048 }
-        })
-    }, 30000);
-    if (!resp.ok) throw new Error(`status ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-    const data = await resp.json();
-    const text = data.message?.content;
-    if (!text) throw new Error('empty');
-    return text;
-}
 
-async function callOllamaQwen(image, prompt, ollamaKey) {
-    if (!ollamaKey) throw new Error('no_key');
-    const resp = await fetchWithTimeout('https://ollama.com/api/chat', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${ollamaKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: 'qwen2.5vl',
-            messages: [{ role: 'user', content: prompt, images: [image] }],
-            stream: false, format: 'json',
-            options: { temperature: 0.05, num_predict: 2048 }
-        })
-    }, 30000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    const text = data.message?.content;
-    if (!text) throw new Error('empty');
-    return text;
-}
 
-async function callGroqLlava(image, prompt, groqKey) {
-    if (!groqKey) throw new Error('no_key');
-    const resp = await fetchWithTimeout('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: 'llama-3.2-90b-vision-preview',
-            messages: [{
-                role: 'user',
-                content: [
-                    { type: 'text', text: prompt },
-                    { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } }
-                ]
-            }],
-            temperature: 0.05, max_tokens: 2048
-        })
-    }, 18000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    const text = data.choices?.[0]?.message?.content;
-    if (!text) throw new Error('empty');
-    return text;
-}
 
-async function callMistralPixtral(image, prompt, mistralKey) {
-    if (!mistralKey) throw new Error('no_key');
-    const resp = await fetchWithTimeout('https://api.mistral.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${mistralKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: 'pixtral-large-latest',
-            messages: [{
-                role: 'user',
-                content: [
-                    { type: 'text', text: prompt },
-                    { type: 'image_url', image_url: `data:image/jpeg;base64,${image}` }
-                ]
-            }],
-            temperature: 0.05, max_tokens: 2048,
-            response_format: { type: 'json_object' }
-        })
-    }, 25000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    const text = data.choices?.[0]?.message?.content;
-    if (!text) throw new Error('empty');
-    return text;
-}
 
-async function callOpenRouterVision(image, prompt, openrouterKey) {
-    if (!openrouterKey) throw new Error('no_key');
-    const resp = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${openrouterKey}`, 'Content-Type': 'application/json',
-            'HTTP-Referer': OFFICIAL_ORIGIN, 'X-Title': 'WealthFlow'
-        },
-        body: JSON.stringify({
-            model: 'qwen/qwen-2.5-vl-72b-instruct:free',
-            messages: [{
-                role: 'user',
-                content: [
-                    { type: 'text', text: prompt },
-                    { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } }
-                ]
-            }],
-            temperature: 0.05, max_tokens: 2048
-        })
-    }, 25000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    const text = data.choices?.[0]?.message?.content;
-    if (!text) throw new Error('empty');
-    return text;
-}
 
 // ── Google Cloud Vision — DOCUMENT_TEXT_DETECTION ──────────────────────────
 // Far superior to generic OCR for dense, small or zoomed-out text (bank
@@ -395,6 +283,10 @@ async function callOcrSpace(image, ocrKey) {
     return parsed;
 }
 
+/* Who structures OCR text, in order: the ones whose free plan has answered most reliably first. A provider with no key is skipped. */
+const STRUCTURE_ORDER = ['Mistral', 'Groq', 'DeepSeek', 'Ollama', 'NVIDIA', 'OpenRouterScan', 'GitHubModels', 'Together', 'Fireworks'];
+const STRUCTURE_BUDGET_MS = 24000;
+
 async function structureRawText(rawText, hints, keys) {
     const today = todayFor(hints);
     const currency = hints?.currency || 'LKR';
@@ -417,18 +309,7 @@ ${rawText.slice(0, 4000)}
             if (result.text) return result.text;
         } catch (_) {}
     }
-    if (keys.cerebrasKey) {
-        try {
-            const r = await fetchWithTimeout('https://api.cerebras.ai/v1/chat/completions', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${keys.cerebrasKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'llama-3.3-70b',
-                  messages: [{ role: 'user', content: sysPrompt }],
-                  temperature: 0.05, max_tokens: 1024 })
-            }, 8000);
-            if (r.ok) { const d = await r.json(); const t = d.choices?.[0]?.message?.content; if (t) return t; }
-        } catch (_) {}
-    }
+    // Cohere speaks its own shape (v2 chat); everything else goes through the one shared caller, which asks a model the provider still serves.
     if (keys.cohereKey) {
         try {
             const r = await fetchWithTimeout('https://api.cohere.com/v2/chat', {
@@ -439,167 +320,24 @@ ${rawText.slice(0, 4000)}
                   temperature: 0.05, max_tokens: 1024,
                   response_format: { type: 'json_object' } })
             }, 12000);
-            if (r.ok) { const d = await r.json(); const t = d.message?.content?.[0]?.text; if (t) return t; }
+            if (r.ok) { const d = await r.json(); const t = d.message?.content?.[0]?.text; if (t && extractJSON(t)) return t; }
         } catch (_) {}
     }
-    if (keys.deepseekKey) {
+    // One at a time, each with its own short deadline and a total budget: a scan has a minute (maxDuration) and the vision engines have already spent some of it.
+    const startedAt = Date.now();
+    for (const name of STRUCTURE_ORDER) {
+        if (Date.now() - startedAt > STRUCTURE_BUDGET_MS) break;
+        if (!keys[PROVIDERS[name].key]) continue;
         try {
-            const r = await fetchWithTimeout('https://api.deepseek.com/chat/completions', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${keys.deepseekKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'deepseek-chat',
-                  messages: [{ role: 'user', content: sysPrompt }],
-                  temperature: 0.05, max_tokens: 1024,
-                  response_format: { type: 'json_object' } })
-            }, 15000);
-            if (r.ok) { const d = await r.json(); const t = d.choices?.[0]?.message?.content; if (t) return t; }
-        } catch (_) {}
-    }
-    if (keys.groqKey) {
-        try {
-            const r = await fetchWithTimeout('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${keys.groqKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'llama-3.3-70b-versatile',
-                  messages: [{ role: 'user', content: sysPrompt }],
-                  temperature: 0.05, max_tokens: 1024,
-                  response_format: { type: 'json_object' } })
-            }, 12000);
-            if (r.ok) { const d = await r.json(); const t = d.choices?.[0]?.message?.content; if (t) return t; }
-        } catch (_) {}
-    }
-    if (keys.openrouterKey) {
-        try {
-            const r = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${keys.openrouterKey}`, 'Content-Type': 'application/json',
-                           'HTTP-Referer': OFFICIAL_ORIGIN, 'X-Title': 'WealthFlow' },
-                body: JSON.stringify({ model: 'deepseek/deepseek-chat:free',
-                  messages: [{ role: 'user', content: sysPrompt }],
-                  temperature: 0.05, max_tokens: 1024,
-                  response_format: { type: 'json_object' } })
-            }, 15000);
-            if (r.ok) { const d = await r.json(); const t = d.choices?.[0]?.message?.content; if (t) return t; }
-        } catch (_) {}
-    }
-    // SambaNova — ultra-fast Llama 3.3 70B (FREE tier)
-    if (keys.sambanovaKey) {
-        try {
-            const r = await fetchWithTimeout('https://api.sambanova.ai/v1/chat/completions', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${keys.sambanovaKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'Meta-Llama-3.3-70B-Instruct',
-                  messages: [{ role: 'user', content: sysPrompt }],
-                  temperature: 0.05, max_tokens: 1024 })
-            }, 8000);
-            if (r.ok) { const d = await r.json(); const t = d.choices?.[0]?.message?.content; if (t) return t; }
-        } catch (_) {}
-    }
-    // GitHub Models — DeepSeek-R1 FREE (requires GitHub PAT)
-    if (keys.githubToken) {
-        try {
-            const r = await fetchWithTimeout('https://models.github.ai/inference/chat/completions', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${keys.githubToken}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'DeepSeek-R1',
-                  messages: [{ role: 'user', content: sysPrompt }],
-                  temperature: 0.05, max_tokens: 1024 })
-            }, 18000);
-            if (r.ok) { const d = await r.json(); const t = d.choices?.[0]?.message?.content; if (t) return t; }
-        } catch (_) {}
-    }
-    // NVIDIA NIM — Mistral Nemotron 70B (FREE tier)
-    if (keys.nvidiaKey) {
-        try {
-            const r = await fetchWithTimeout('https://integrate.api.nvidia.com/v1/chat/completions', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${keys.nvidiaKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify({ model: 'nvidia/llama-3.1-nemotron-70b-instruct',
-                  messages: [{ role: 'user', content: sysPrompt }],
-                  temperature: 0.05, max_tokens: 1024 })
-            }, 18000);
-            if (r.ok) { const d = await r.json(); const t = d.choices?.[0]?.message?.content; if (t) return t; }
+            const r = await askProvider(name, { keys, prompt: sysPrompt, fetcher: fetchWithTimeout, tokens: 1024, json: true, timeoutMs: 12000, deadlineMs: 15000 });
+            if (r.text && extractJSON(r.text)) return r.text;
         } catch (_) {}
     }
     throw new Error('No text LLM available for structuring');
 }
 
-// ---- GitHub Models (FREE — OpenAI-compatible, GPT-4o vision, requires GitHub PAT) ----
-async function callGitHubModelsGPT4o(image, prompt, githubToken) {
-    if (!githubToken) throw new Error('no_key');
-    const resp = await fetchWithTimeout('https://models.github.ai/inference/chat/completions', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${githubToken}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-            model: 'gpt-4o',
-            messages: [{
-                role: 'user',
-                content: [
-                    { type: 'text', text: prompt },
-                    { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } }
-                ]
-            }],
-            temperature: 0.05, max_tokens: 2048,
-            response_format: { type: 'json_object' }
-        })
-    }, 30000);
-    if (!resp.ok) throw new Error(`status ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-    const data = await resp.json();
-    const text = data.choices?.[0]?.message?.content;
-    if (!text) throw new Error('empty');
-    return text;
-}
 
-// ---- Together AI (FREE tier — Llama 3.2 90B Vision Instruct) ----
-async function callTogetherVision(image, prompt, togetherKey) {
-    if (!togetherKey) throw new Error('no_key');
-    const resp = await fetchWithTimeout('https://api.together.xyz/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${togetherKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo',
-            messages: [{
-                role: 'user',
-                content: [
-                    { type: 'text', text: prompt },
-                    { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } }
-                ]
-            }],
-            temperature: 0.05, max_tokens: 2048
-        })
-    }, 28000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    const text = data.choices?.[0]?.message?.content;
-    if (!text) throw new Error('empty');
-    return text;
-}
 
-// ---- NVIDIA NIM (FREE tier — Llama 3.2 90B Vision Instruct) ----
-async function callNvidiaVision(image, prompt, nvidiaKey) {
-    if (!nvidiaKey) throw new Error('no_key');
-    const resp = await fetchWithTimeout('https://integrate.api.nvidia.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${nvidiaKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({
-            model: 'meta/llama-3.2-90b-vision-instruct',
-            messages: [{
-                role: 'user',
-                content: `${prompt}\n<img src="data:image/jpeg;base64,${image}" />`
-            }],
-            temperature: 0.05, max_tokens: 2048, top_p: 1, stream: false
-        })
-    }, 30000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    const text = data.choices?.[0]?.message?.content;
-    if (!text) throw new Error('empty');
-    return text;
-}
 
 // ---- xAI Grok 2 Vision ----
 async function callXaiGrokVision(image, prompt, xaiKey) {
@@ -655,30 +393,6 @@ async function callAnthropicClaude(image, prompt, anthropicKey) {
     return text;
 }
 
-// ---- Fireworks AI (Phi-3 Vision) ----
-async function callFireworksVision(image, prompt, fireworksKey) {
-    if (!fireworksKey) throw new Error('no_key');
-    const resp = await fetchWithTimeout('https://api.fireworks.ai/inference/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${fireworksKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: 'accounts/fireworks/models/phi-3-vision-128k-instruct',
-            messages: [{
-                role: 'user',
-                content: [
-                    { type: 'text', text: prompt },
-                    { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } }
-                ]
-            }],
-            temperature: 0.05, max_tokens: 2048
-        })
-    }, 25000);
-    if (!resp.ok) throw new Error(`status ${resp.status}`);
-    const data = await resp.json();
-    const text = data.choices?.[0]?.message?.content;
-    if (!text) throw new Error('empty');
-    return text;
-}
 
 // ---- HuggingFace Inference (Qwen2-VL-7B free serverless) ----
 async function callHuggingFaceVision(image, prompt, hfKey) {
@@ -832,10 +546,11 @@ async function runEngine(name, fn, hints) {
     const isUniversal = hints && (hints.taskType === 'universal_vision' || hints.customPrompt);
     try {
         const raw = await fn();
+        const model = fn.model ? { model: String(fn.model).slice(0, 80) } : {};
         if (isUniversal) {
             // Universal-vision mode: return raw text — do NOT force receipt JSON
             return {
-                name, success: true, ms: Date.now() - start,
+                name, success: true, ms: Date.now() - start, ...model,
                 fields: {
                     raw_text: typeof raw === 'string' ? raw : JSON.stringify(raw),
                     vendor: null, amount: null, date: null, category: null,
@@ -850,9 +565,9 @@ async function runEngine(name, fn, hints) {
         if (!fields || (fields.amount === null && !fields.vendor)) {
             throw new Error('no_useful_fields');
         }
-        return { name, success: true, ms: Date.now() - start, fields };
+        return { name, success: true, ms: Date.now() - start, ...model, fields };
     } catch (e) {
-        return { name, success: false, ms: Date.now() - start, error: String(e.message || e).slice(0, 200) };
+        return { name, success: false, ms: Date.now() - start, error: String(e.message || e).slice(0, 360) };
     }
 }
 
@@ -882,7 +597,6 @@ export default async function handler(req, res) {
         ollamaKey: process.env.OLLAMA_API_KEY,
         groqKey: process.env.GROQ_API_KEY,
         deepseekKey: process.env.DEEPSEEK_API_KEY,
-        cerebrasKey: process.env.CEREBRAS_API_KEY,
         openrouterKey: process.env.OPENROUTER_API_KEY,
         mistralKey: process.env.MISTRAL_API_KEY,
         cohereKey: process.env.COHERE_API_KEY,
@@ -891,14 +605,24 @@ export default async function handler(req, res) {
         // OCR anchor for dense/small/zoomed-out text.
         visionKey: process.env.GOOGLE_VISION_API_KEY || process.env.CLOUD_VISION_API_KEY || process.env.VISION_API_KEY || process.env.WealthFlow_API_Key || process.env.GEMINI_API_KEY,
         // ---- new in v3.5 ----
-        githubToken: process.env.GITHUB_MODELS_TOKEN || process.env.GITHUB_TOKEN,
+        // GH_PAT first, as api/ai.js reads it: the token carrying the "Models: read" permission is that one (GITHUB_MODELS_TOKEN answered 200 "OK" to every call)
+        githubToken: process.env.GH_PAT || process.env.GITHUB_MODELS_TOKEN || process.env.GITHUB_TOKEN,
         togetherKey: process.env.TOGETHER_API_KEY,
         nvidiaKey: process.env.NVIDIA_API_KEY || process.env.NIM_API_KEY,
         xaiKey: process.env.XAI_API_KEY,
         anthropicKey: process.env.ANTHROPIC_API_KEY,
         fireworksKey: process.env.FIREWORKS_API_KEY,
-        hfKey: process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN,
-        sambanovaKey: process.env.SAMBANOVA_API_KEY
+        hfKey: process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN
+    };
+    /* One reader per provider, asked with a model the provider still serves (ai-provider-call.mjs): the nine hand-named models that stood here
+     * were all retired, and every scan fell through to OCR alone. The engine reports which model answered. */
+    const reader = (provider, extra = {}) => {
+        const fn = async () => {
+            const out = await askProvider(provider, { keys, image, prompt, fetcher: fetchWithTimeout, tokens: 2048, ...extra });
+            fn.model = out.model;
+            return out.text;
+        };
+        return fn;
     };
     // If the client provides a customPrompt (e.g. for universal vision tasks like
     // identifying a car), use that instead of the receipt-specific prompt.
@@ -909,11 +633,13 @@ export default async function handler(req, res) {
     if (mode === 'quick') {
         const engines = [];
         if (keys.geminiKey)  engines.push({ name: 'gemini-flash', fn: () => callGeminiVision(image, prompt, keys.geminiKey, { tier: 'fast', timeoutMs: 18000 }) });
-        if (keys.ollamaKey)  engines.push({ name: 'ollama-llama3.2-vision', fn: () => callOllamaVision(image, prompt, keys.ollamaKey) });
-        if (keys.groqKey)    engines.push({ name: 'groq-llava', fn: () => callGroqLlava(image, prompt, keys.groqKey) });
-        if (keys.mistralKey) engines.push({ name: 'mistral-pixtral', fn: () => callMistralPixtral(image, prompt, keys.mistralKey) });
-        if (keys.togetherKey) engines.push({ name: 'together-llama-3.2-vision', fn: () => callTogetherVision(image, prompt, keys.togetherKey) });
-        if (keys.githubToken) engines.push({ name: 'github-models-gpt4o', fn: () => callGitHubModelsGPT4o(image, prompt, keys.githubToken) });
+        // one after another, so each gets a short deadline of its own: the first reader that answers ends the scan
+        const quick = { deadlineMs: 16000, timeoutMs: 14000 };
+        if (keys.ollamaKey)  engines.push({ name: 'ollama', fn: reader('Ollama', { ...quick, json: !isUniversal }) });
+        if (keys.groqKey)    engines.push({ name: 'groq', fn: reader('Groq', quick) });
+        if (keys.mistralKey) engines.push({ name: 'mistral', fn: reader('Mistral', quick) });
+        if (keys.togetherKey) engines.push({ name: 'together', fn: reader('Together', quick) });
+        if (keys.githubToken) engines.push({ name: 'github-models', fn: reader('GitHubModels', quick) });
         for (const e of engines) {
             const r = await runEngine(e.name, e.fn, hints);
             if (r.success) {
@@ -941,21 +667,20 @@ export default async function handler(req, res) {
         engines.push({ name: 'gemini-flash', fn: () => callGeminiVision(image, prompt, keys.geminiKey, { tier: 'fast', isUniversal, timeoutMs: 25000 }) });
     }
     if (keys.ollamaKey) {
-        engines.push({ name: 'ollama-llama3.2-vision', fn: () => callOllamaVision(image, prompt, keys.ollamaKey) });
+        engines.push({ name: 'ollama', fn: reader('Ollama', { timeoutMs: 30000, json: !isUniversal }) });
     }
     if (mode === 'ultra' || mode === 'frontier') {
-        if (keys.ollamaKey)   engines.push({ name: 'ollama-qwen2.5vl', fn: () => callOllamaQwen(image, prompt, keys.ollamaKey) });
-        if (keys.togetherKey) engines.push({ name: 'together-llama-3.2-vision', fn: () => callTogetherVision(image, prompt, keys.togetherKey) });
-        if (keys.nvidiaKey)   engines.push({ name: 'nvidia-llama-3.2-vision', fn: () => callNvidiaVision(image, prompt, keys.nvidiaKey) });
-        if (keys.githubToken) engines.push({ name: 'github-models-gpt4o', fn: () => callGitHubModelsGPT4o(image, prompt, keys.githubToken) });
+        if (keys.togetherKey) engines.push({ name: 'together', fn: reader('Together', { timeoutMs: 28000 }) });
+        if (keys.nvidiaKey)   engines.push({ name: 'nvidia', fn: reader('NVIDIA', { timeoutMs: 30000 }) });
+        if (keys.githubToken) engines.push({ name: 'github-models', fn: reader('GitHubModels', { timeoutMs: 30000 }) });
         if (keys.xaiKey)      engines.push({ name: 'xai-grok-2-vision', fn: () => callXaiGrokVision(image, prompt, keys.xaiKey) });
-        if (keys.fireworksKey) engines.push({ name: 'fireworks-phi-3-vision', fn: () => callFireworksVision(image, prompt, keys.fireworksKey) });
+        if (keys.fireworksKey) engines.push({ name: 'fireworks', fn: reader('Fireworks') });
         if (keys.hfKey)       engines.push({ name: 'huggingface-qwen2-vl', fn: () => callHuggingFaceVision(image, prompt, keys.hfKey) });
     }
-    if (keys.groqKey)    engines.push({ name: 'groq-llava', fn: () => callGroqLlava(image, prompt, keys.groqKey) });
-    if (keys.mistralKey) engines.push({ name: 'mistral-pixtral', fn: () => callMistralPixtral(image, prompt, keys.mistralKey) });
+    if (keys.groqKey)    engines.push({ name: 'groq', fn: reader('Groq', { timeoutMs: 18000 }) });
+    if (keys.mistralKey) engines.push({ name: 'mistral', fn: reader('Mistral') });
     if (keys.openrouterKey && (mode === 'ultra' || mode === 'frontier'))
-        engines.push({ name: 'openrouter-qwen2.5vl-free', fn: () => callOpenRouterVision(image, prompt, keys.openrouterKey) });
+        engines.push({ name: 'openrouter', fn: reader('OpenRouterScan') });
 
     if (engines.length === 0) {
         return res.status(503).json({
