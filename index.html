@@ -750,11 +750,14 @@
            layers re-rasterize every frame — a compositor/GPU spike that crashed
            the iOS/WebView renderer (the app "restarted" and got stuck). Removed on
            the next frame, so the swap is instant and jank-free with zero flash. */
+        /* Paused, not removed: `animation: none` throws every running animation away, and when the class came off two frames
+           later each one started again from its first frame. The page's own entrance animation (.page.active) therefore
+           replayed on every theme switch, so the whole screen dropped 6px and faded in again, a visible jolt each time. */
         html.wf-theme-switching *,
         html.wf-theme-switching *::before,
         html.wf-theme-switching *::after {
             transition: none !important;
-            animation: none !important;
+            animation-play-state: paused !important;
         }
 
         * {
@@ -8064,9 +8067,19 @@
             sweeps: [],
             _tomb: {},   // v7.52.0 — per-key deletion tombstones {key:{id:deleteTs}} for convergent multi-device merge
             _kut: {},    // v7.53.0 — per-KEY update stamps {key:ts} for the non-record fields (see _wfMergeKeyed)
+            /* Per-FIELD update stamps {key:{field:ts}}, the clock that lets a device that never touched a setting keep its hands off it.
+             * DECLARED HERE ON PURPOSE: the boot hydration only reads back the keys this object declares, and for a long time this one was
+             * written to disk and never read — so every refresh made a device forget which settings it had really changed, and a stale
+             * device then reverted other devices' settings. See test/settings_sync_revert_test.js. */
+            _kuf: {},
             _wipedAck: 0,// v7.54.0 — the newest factory-reset marker this device has already honoured
             settings: { backupFreq: 'weekly', lastBackup: null, theme: 'dark', autoLock: 15, haptics: true, currency: 'LKR', notifications: true, compactMode: false }
         };
+        /* What appData looked like BEFORE anything was read from disk or the cloud. A field that still equals its default has not been
+         * chosen by anyone; _wfStampFields uses this as the baseline when a key has never been written to disk, so the first toggle of
+         * one setting does not also claim every other setting at that moment (which is how a device that had never saved its settings
+         * reverted the phone's choices the first time it touched anything). */
+        const _WF_DEFAULTS = JSON.parse(JSON.stringify(appData));
         let isInitialised = false;
         let inactivityTimer = 0;
         let isDirty = localStorage.getItem('wf2_isDirty') === 'true';
@@ -8342,6 +8355,14 @@
         // REMOVAL has its own path (DB.delKey → a real server field-delete),
         // because a merge-write cannot express a deletion at all.
         const _WF_KUT_EXEMPT = { auth: 1 };   // credentials: dedicated PIN-conflict path above; never unioned across devices
+        /* ...except for the fields of an exempt key that are PREFERENCES, not credentials.
+         * auth.skipLock ("Passcode-free entry") rides in auth so it travels with the
+         * PIN, but it is a switch like any other: "cloud copy wins" meant a switch
+         * flipped on a phone that had not pushed yet — offline, or inside the second
+         * before the debounced push — was silently put back by the next cloud read,
+         * which is the switch that "turns itself off after a few hours". It now has
+         * its own per-field clock; the credentials around it still never merge. */
+        const _WF_KUT_EXEMPT_FIELDS = { auth: { skipLock: 1 } };
         function _wfStampKey(k) {
             if (_WF_KUT_EXEMPT[k] || _WF_SYNC_META_KEYS[k] || _WF_RECORD_KEYS.indexOf(k) !== -1) return;
             if (!appData._kut || typeof appData._kut !== 'object') appData._kut = {};
@@ -8380,10 +8401,80 @@
          * value as it was last written, which is exactly the "before" this diff
          * needs. Changing getObj to copy would touch 97 call sites and a hot
          * read path; reading disk touches one function. */
+        /* A field INSIDE a field is stamped by its path, `notif~sms` for settings.notif.sms, in one flat map. Nested objects are real:
+         * settings.notif holds the notification switches, and treating it as ONE field meant touching a single switch claimed all of
+         * them, so a stale device reverted its siblings. A flat map because Firestore merges maps key by key and cannot mangle one. */
+        const _WF_KUF_SEP = '~';
+        const _WF_KUF_DEPTH = 3;
+        function _wfPlainObj(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+        // Same content whatever the key order. Firestore hands maps back with their keys sorted, so JSON text of identical data differs,
+        // and "differs" is what used to make every device push an unchanged document each minute.
+        function _wfSameValue(a, b) {
+            if (a === b) return true;
+            if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return a !== a && b !== b;   // NaN equals NaN
+            const arrA = Array.isArray(a);
+            if (arrA !== Array.isArray(b)) return false;
+            if (arrA) {
+                if (a.length !== b.length) return false;
+                for (let i = 0; i < a.length; i++) if (!_wfSameValue(a[i], b[i])) return false;
+                return true;
+            }
+            const ka = Object.keys(a).filter((k) => a[k] !== undefined);
+            const kb = Object.keys(b).filter((k) => b[k] !== undefined);
+            if (ka.length !== kb.length) return false;
+            for (const k of ka) if (!Object.prototype.hasOwnProperty.call(b, k) || !_wfSameValue(a[k], b[k])) return false;
+            return true;
+        }
+        // JSON with sorted keys: a tie-break that gives the same answer on every device whatever order its objects were built in.
+        function _wfCanonJson(v) {
+            if (Array.isArray(v)) return '[' + v.map(_wfCanonJson).join(',') + ']';
+            if (_wfPlainObj(v)) return '{' + Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => JSON.stringify(k) + ':' + _wfCanonJson(v[k])).join(',') + '}';
+            const j = JSON.stringify(v);
+            return j === undefined ? 'null' : j;
+        }
+        // Every leaf path whose value differs between `before` and `after`.
+        function _wfChangedLeaves(before, after, prefix, out, depth) {
+            for (const f of Object.keys(after)) {
+                if (after[f] === undefined) continue;
+                const p = prefix ? prefix + _WF_KUF_SEP + f : f;
+                const was = (_wfPlainObj(before) && Object.prototype.hasOwnProperty.call(before, f)) ? before[f] : undefined;
+                if (depth < _WF_KUF_DEPTH && _wfPlainObj(after[f]) && _wfPlainObj(was)) _wfChangedLeaves(was, after[f], p, out, depth + 1);
+                else if (!_wfSameValue(was, after[f])) out.push(p);
+            }
+            return out;
+        }
+        // The stamp one side holds for a leaf path: its own, or its parent's (a stamp on `notif` covers every switch in it, which is how
+        // a build that stamped whole objects is still understood). A side with no field clock at all answers with `fallback`, its key stamp.
+        function _wfKufStampOf(map, leafPath, fallback) {
+            if (!map) return fallback;
+            let best = 0;
+            const parts = leafPath.split(_WF_KUF_SEP);
+            for (let n = parts.length; n >= 1; n--) {
+                const v = map[parts.slice(0, n).join(_WF_KUF_SEP)];
+                if (typeof v === 'number' && isFinite(v) && v > best) best = v;
+            }
+            return best;
+        }
+        // Two field clocks {key:{path:ts}} become one: the newest stamp per path. Both devices computing this reach the same map.
+        function _wfMergeKufMaps(a, b) {
+            const out = {};
+            [a, b].forEach((src) => {
+                if (!_wfPlainObj(src)) return;
+                Object.keys(src).forEach((key) => {
+                    const m = src[key];
+                    if (!_wfPlainObj(m)) return;
+                    const dst = out[key] || (out[key] = {});
+                    Object.keys(m).forEach((path) => {
+                        const t = m[path];
+                        if (typeof t === 'number' && isFinite(t) && (dst[path] == null || t > dst[path])) dst[path] = t;
+                    });
+                });
+            });
+            return out;
+        }
         function _wfStampFields(k, nextVal) {
-            if (_WF_KUT_EXEMPT[k] || _WF_SYNC_META_KEYS[k] || _WF_RECORD_KEYS.indexOf(k) !== -1) return;
-            const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
-            if (!plain(nextVal)) return;
+            if ((_WF_KUT_EXEMPT[k] && !_WF_KUT_EXEMPT_FIELDS[k]) || _WF_SYNC_META_KEYS[k] || _WF_RECORD_KEYS.indexOf(k) !== -1) return;
+            if (!_wfPlainObj(nextVal)) return;
 
             let prev = null;
             try {
@@ -8391,22 +8482,28 @@
                 if (raw != null) prev = JSON.parse(raw);
             } catch (_) { prev = null; }
 
-            const now = _wfStampNow();
-            if (!appData._kuf || typeof appData._kuf !== 'object') appData._kuf = {};
-            const forKey = (appData._kuf[k] && typeof appData._kuf[k] === 'object') ? appData._kuf[k] : {};
-
-            /* A key with nothing on disk is a first write: stamp every field, so
-             * this device has a real claim on each rather than an empty one. */
-            const before = plain(prev) ? prev : {};
-            let changed = false;
-            for (const f of Object.keys(nextVal)) {
-                if (JSON.stringify(before[f]) !== JSON.stringify(nextVal[f])) { forKey[f] = now; changed = true; }
+            /* A key with nothing on disk is compared with its DEFAULTS, not with
+             * nothing: a field still at its default was never chosen by anyone, so
+             * claiming it would let a device that merely never saved its settings
+             * overwrite another device's real choice the first time it touched
+             * anything. (A key with no default at all is a genuine first write and
+             * every field is stamped.) */
+            let base = _wfPlainObj(prev) ? prev : null;
+            if (!base) {
+                try { base = (typeof _WF_DEFAULTS !== 'undefined' && _wfPlainObj(_WF_DEFAULTS[k])) ? _WF_DEFAULTS[k] : {}; } catch (_) { base = {}; }
             }
+            let changed = _wfChangedLeaves(base, nextVal, '', [], 0);
+            // An exempt key (auth) only clocks its preference fields, never a credential.
+            if (_WF_KUT_EXEMPT[k]) changed = changed.filter((path) => _WF_KUT_EXEMPT_FIELDS[k][path]);
             /* A field the caller REMOVED keeps its old stamp deliberately: removal
              * across devices is _tomb's job, and inventing a stamp for something
              * that is no longer there would let this device win an argument about
              * a value it does not hold. */
-            if (!changed) return;
+            if (!changed.length) return;
+            const now = _wfStampNow();
+            if (!appData._kuf || typeof appData._kuf !== 'object') appData._kuf = {};
+            const forKey = _wfPlainObj(appData._kuf[k]) ? appData._kuf[k] : {};
+            changed.forEach((path) => { forKey[path] = now; });
             appData._kuf[k] = forKey;
             _persistRaw('wf2__kuf', JSON.stringify(appData._kuf));
         }
@@ -8414,7 +8511,7 @@
         // deterministic content compare so both devices choose the same side. The
         // result is commutative: a device holding (X@10, cloud Y@20) and a device
         // holding (Y@20, cloud X@10) compute the identical value.
-        function _wfMergeKeyed(localVal, cloudVal, lts, cts, lFields, cFields) {
+        function _wfMergeKeyed(localVal, cloudVal, lts, cts, lFields, cFields, winners) {
             if (localVal === undefined) return cloudVal;
             if (cloudVal === undefined) return localVal;
 
@@ -8425,47 +8522,56 @@
              * a device only wins what it actually touched. Falls back to the key
              * stamp for a field neither side has stamped — a document written
              * before this existed — so an old cloud copy still converges instead
-             * of being treated as having no opinion at all. */
-            const plainF = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
-            const lf = plainF(lFields) ? lFields : null;
-            const cf = plainF(cFields) ? cFields : null;
-            if ((lf || cf) && plainF(localVal) && plainF(cloudVal)) {
-                const out = {};
-                const names = {};
-                Object.keys(localVal).forEach((n) => { names[n] = 1; });
-                Object.keys(cloudVal).forEach((n) => { names[n] = 1; });
-                /* NO FIELD MAP AT ALL means a document written before field
-                 * stamps existed: fall back to the key stamp, so it keeps a real
-                 * claim instead of losing everything.
-                 *
-                 * A field map that simply LACKS THIS FIELD means the opposite —
-                 * that device has been stamping fields and never stamped this
-                 * one, so it has not touched it. Reading the key stamp there was
-                 * a hole straight back into the bug: a stale device with a huge
-                 * key stamp would win a field it never edited, which is the
-                 * whole complaint. Caught by driving the real toggleSetting
-                 * rather than DB.set — the version of this that only tested
-                 * DB.set passed. */
-                const at = (m, n, fallback) => {
-                    if (!m) return fallback;
-                    const v = m[n];
-                    return (typeof v === 'number' && isFinite(v)) ? v : 0;
+             * of being treated as having no opinion at all.
+             *
+             * It descends into nested objects (settings.notif is a bag of
+             * switches, not one value), comparing each leaf by its own path.
+             * `winners`, when given, is filled with {path: stamp} for every leaf
+             * where the two sides really disagreed: the caller records those so
+             * the stamp that won travels with the value that won. */
+            const lf = _wfPlainObj(lFields) ? lFields : null;
+            const cf = _wfPlainObj(cFields) ? cFields : null;
+            if ((lf || cf) && _wfPlainObj(localVal) && _wfPlainObj(cloudVal)) {
+                const mergeLevel = (l, c, prefix, depth) => {
+                    const out = {};
+                    const names = {};
+                    Object.keys(l).forEach((n) => { names[n] = 1; });
+                    Object.keys(c).forEach((n) => { names[n] = 1; });
+                    /* NO FIELD MAP AT ALL means a document written before field
+                     * stamps existed: fall back to the key stamp, so it keeps a real
+                     * claim instead of losing everything.
+                     *
+                     * A field map that simply LACKS THIS FIELD means the opposite —
+                     * that device has been stamping fields and never stamped this
+                     * one, so it has not touched it. Reading the key stamp there was
+                     * a hole straight back into the bug: a stale device with a huge
+                     * key stamp would win a field it never edited, which is the
+                     * whole complaint. Caught by driving the real toggleSetting
+                     * rather than DB.set — the version of this that only tested
+                     * DB.set passed. (_wfKufStampOf draws exactly this line.) */
+                    for (const n of Object.keys(names)) {
+                        const inL = Object.prototype.hasOwnProperty.call(l, n);
+                        const inC = Object.prototype.hasOwnProperty.call(c, n);
+                        if (!inC) { out[n] = l[n]; continue; }
+                        if (!inL) { out[n] = c[n]; continue; }
+                        const path = prefix ? prefix + _WF_KUF_SEP + n : n;
+                        if (depth < _WF_KUF_DEPTH && _wfPlainObj(l[n]) && _wfPlainObj(c[n])) {
+                            out[n] = mergeLevel(l[n], c[n], path, depth + 1);
+                            continue;
+                        }
+                        const a = _wfKufStampOf(lf, path, lts);
+                        const b = _wfKufStampOf(cf, path, cts);
+                        /* Same tie-break as the key path, so both devices choose the
+                         * same side without talking to each other. */
+                        const localWinsField = (a !== b)
+                            ? a > b
+                            : _wfCanonJson(l[n]) >= _wfCanonJson(c[n]);
+                        out[n] = localWinsField ? l[n] : c[n];
+                        if (winners && !_wfSameValue(l[n], c[n])) winners[path] = localWinsField ? a : b;
+                    }
+                    return out;
                 };
-                for (const n of Object.keys(names)) {
-                    const inL = Object.prototype.hasOwnProperty.call(localVal, n);
-                    const inC = Object.prototype.hasOwnProperty.call(cloudVal, n);
-                    if (!inC) { out[n] = localVal[n]; continue; }
-                    if (!inL) { out[n] = cloudVal[n]; continue; }
-                    const a = at(lf, n, lts);
-                    const b = at(cf, n, cts);
-                    /* Same tie-break as the key path, so both devices choose the
-                     * same side without talking to each other. */
-                    const localWinsField = (a !== b)
-                        ? a > b
-                        : JSON.stringify(localVal[n]) >= JSON.stringify(cloudVal[n]);
-                    out[n] = localWinsField ? localVal[n] : cloudVal[n];
-                }
-                return out;
+                return mergeLevel(localVal, cloudVal, '', 0);
             }
             // Neither side has ever been stamped — a document written before this
             // clock existed. Keep LOCAL, which is both the behaviour settings had
@@ -8570,6 +8676,8 @@
                 _persistRaw('wf2__tomb', JSON.stringify(appData._tomb));
                 appData._kut = (cloudData._kut && typeof cloudData._kut === 'object') ? cloudData._kut : {};
                 _persistRaw('wf2__kut', JSON.stringify(appData._kut));
+                appData._kuf = (cloudData._kuf && typeof cloudData._kuf === 'object') ? cloudData._kuf : {};
+                _persistRaw('wf2__kuf', JSON.stringify(appData._kuf));
                 appData._wipedAck = _wipedAt; _persistRaw('wf2__wipedAck', String(_wipedAt));
                 res.nonSessionChanged = true;
                 return res;   // adopted in full — there is nothing left to merge
@@ -8604,6 +8712,7 @@
             const localKuf = (appData._kuf && typeof appData._kuf === 'object') ? appData._kuf : {};
             const cloudKuf = (cloudData._kuf && typeof cloudData._kuf === 'object') ? cloudData._kuf : {};
             const _stampOf = (m, k) => (typeof m[k] === 'number' && isFinite(m[k]) ? m[k] : 0);
+            const wonKuf = {};   // field stamps earned by this merge: {key:{path:ts}}
             const _plainKeys = {};
             Object.keys(cloudData).forEach(k => { _plainKeys[k] = 1; });
             Object.keys(appData).forEach(k => { _plainKeys[k] = 1; });
@@ -8618,24 +8727,61 @@
                     // auth only. Left on cloud-copy deliberately: the PIN-conflict
                     // branch in the snapshot listener owns that decision, and merging
                     // two devices' credentials into one object is not a safe default.
-                    const cjA = JSON.stringify(cloudData[key]);
+                    /* One exception to "cloud copy wins": a cloud copy WITHOUT a PIN
+                     * must never replace a local one that HAS it. A brand-new account
+                     * writes its profile (auth: {}) before the person has chosen a PIN;
+                     * the first sync after the PIN is set then read that empty auth
+                     * back and erased the PIN just created, so the unlock screen
+                     * answered "Incorrect PIN" to the code that had been typed twice.
+                     * Nothing in the app clears a PIN, so "no PIN in the cloud" can only
+                     * mean "the cloud has not heard yet" — keep ours and send it. */
+                    if (key === 'auth' && appData[key] && appData[key].pin && !(cloudData[key] && cloudData[key].pin)) {
+                        res.needPush = true;
+                        return;
+                    }
+                    let adopted = cloudData[key];
+                    const prefs = _WF_KUT_EXEMPT_FIELDS[key];
+                    if (prefs && _wfPlainObj(adopted) && _wfPlainObj(appData[key])) {
+                        Object.keys(prefs).forEach((f) => {
+                            if (typeof appData[key][f] !== 'boolean' || adopted[f] === appData[key][f]) return;
+                            const lt = _wfKufStampOf(localKuf[key], f, 0);
+                            const ct = _wfKufStampOf(cloudKuf[key], f, 0);
+                            // Strictly newer here: this device chose it after the cloud's copy was written.
+                            if (lt > ct) {
+                                adopted = Object.assign({}, adopted);
+                                adopted[f] = appData[key][f];
+                                res.needPush = true;
+                            }
+                        });
+                    }
+                    const cjA = JSON.stringify(adopted);
                     if (cjA !== JSON.stringify(appData[key])) {
-                        appData[key] = cloudData[key];
+                        appData[key] = adopted;
                         _persistRaw('wf2_' + key, cjA);
                         res.nonSessionChanged = true;
                     }
                     return;
                 }
+                const winners = {};
                 const merged = _wfMergeKeyed(appData[key], cloudData[key],
                     _stampOf(localKut, key), _stampOf(cloudKut, key),
-                    localKuf[key], cloudKuf[key]);
-                const mj = JSON.stringify(merged);
-                if (mj !== JSON.stringify(appData[key])) {
+                    localKuf[key], cloudKuf[key], winners);
+                /* The stamp that WON travels with the value that won. Without it a
+                 * value adopted from a device with no field clock keeps the loser's
+                 * smaller stamp, and a third device could take it back. */
+                if (Object.keys(winners).length) {
+                    const forKey = Object.assign({}, _wfPlainObj(wonKuf[key]) ? wonKuf[key] : {});
+                    Object.keys(winners).forEach((path) => { if (!(forKey[path] >= winners[path])) forKey[path] = winners[path]; });
+                    wonKuf[key] = forKey;
+                }
+                /* Same CONTENT, not same text: Firestore returns map keys sorted, and
+                 * comparing JSON strings made key order alone look like a change. */
+                if (!_wfSameValue(merged, appData[key])) {
                     appData[key] = merged;
-                    _persistRaw('wf2_' + key, mj);
+                    _persistRaw('wf2_' + key, JSON.stringify(merged));
                     res.nonSessionChanged = true;
                 }
-                if (mj !== JSON.stringify(cloudData[key])) res.needPush = true;
+                if (!_wfSameValue(merged, cloudData[key])) res.needPush = true;
             });
             // 4) Converge the key-stamps themselves — max per key, so the next merge
             //    on either device starts from the same clock. Decided AFTER step 3,
@@ -8646,12 +8792,19 @@
                 const t = _stampOf(cloudKut, k);
                 if (mergedKut[k] == null || t > mergedKut[k]) mergedKut[k] = t;
             });
-            const mkJson = JSON.stringify(mergedKut);
-            if (mkJson !== JSON.stringify(localKut)) {
+            if (!_wfSameValue(mergedKut, localKut)) {
                 appData._kut = mergedKut;
-                _persistRaw('wf2__kut', mkJson);
+                _persistRaw('wf2__kut', JSON.stringify(mergedKut));
             }
-            if (mkJson !== JSON.stringify(cloudKut)) res.needPush = true;
+            if (!_wfSameValue(mergedKut, cloudKut)) res.needPush = true;
+            // 5) And the field clocks: the newest stamp per field, plus the ones this merge just earned. After this both devices hold
+            //    the same claims, which is what lets a refreshed device keep its hands off a setting it never touched.
+            const mergedKuf = _wfMergeKufMaps(_wfMergeKufMaps(localKuf, cloudKuf), wonKuf);
+            if (!_wfSameValue(mergedKuf, localKuf)) {
+                appData._kuf = mergedKuf;
+                _persistRaw('wf2__kuf', JSON.stringify(mergedKuf));
+            }
+            if (!_wfSameValue(mergedKuf, cloudKuf)) res.needPush = true;
             return res;
         }
         try { window._wfApplyCloudData = _wfApplyCloudData; } catch (_) {}
@@ -9616,15 +9769,15 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (state === 'syncing') {
                 if (badge) { badge.className = 'online-badge on'; $('onlineText').textContent = 'Online'; }
                 if (syncInd) { syncInd.classList.add('active'); }
-                if (setBadge) { setBadge.className = 'badge syncing'; setBadge.textContent = 'Syncing...'; }
+                if (setBadge) { setBadge.className = 'badge bg-a wf-sync-badge'; setBadge.textContent = '\u25CF Syncing\u2026'; }
             } else if (state === 'online') {
                 if (badge) { badge.className = 'online-badge on'; $('onlineText').textContent = 'Online'; }
                 if (syncInd) { syncInd.classList.remove('active'); }
-                if (setBadge) { setBadge.className = 'badge bg-g'; setBadge.textContent = '● Connected'; }
+                if (setBadge) { setBadge.className = 'badge bg-g wf-sync-badge'; setBadge.textContent = '\u25CF Connected'; }
             } else {
                 if (badge) { badge.className = 'online-badge off'; $('onlineText').textContent = 'Offline'; }
                 if (syncInd) { syncInd.classList.remove('active'); }
-                if (setBadge) { setBadge.className = 'badge bg-r'; setBadge.textContent = '○ Offline'; }
+                if (setBadge) { setBadge.className = 'badge bg-r wf-sync-badge'; setBadge.textContent = '\u25CB Offline'; }
             }
         }
 
@@ -13192,6 +13345,14 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
              * sweep rather than on the next reload. */
             const _aiPrefs = DB.getObj('settings', {});
             if (_aiPrefs.aiNotifications === false) return;
+            /* This sweep also sends the salary-day and loan-due reminders, and it
+             * went around every other switch that names them: "All Notifications",
+             * "Salary / Payday Alerts", "Loan Payment Reminders" and Quiet Hours
+             * were all honoured by the other reminder paths and ignored here, so a
+             * phone set to silent overnight, or with loan reminders off, still
+             * buzzed. Same switches, same answer. */
+            if (_aiPrefs.notifications === false) return;
+            try { if (_isInQuietHours()) return; } catch (_) {}
             const now = new Date();
             const day = now.getDate();
             const hour = now.getHours();
@@ -13206,7 +13367,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
             // Check salary day reminders (1st–5th of month)
             if (day >= 1 && day <= 5) {
-                const incomes = DB.get('income').filter(i => i.payDay && i.payDay == day);
+                const incomes = _aiPrefs.notifPayday === false ? [] : DB.get('income').filter(i => i.payDay && i.payDay == day);
                 incomes.forEach(inc => {
                     const notifKey = `wf_notif_salary_${inc.id}_${curMonth}`;
                     if (!localStorage.getItem(notifKey)) {
@@ -13217,7 +13378,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             }
 
             // Loan payment reminders (7 days before)
-            loans.forEach(loan => {
+            if (_aiPrefs.notifLoan !== false) loans.forEach(loan => {
                 if (!loan.payDay) return;
                 const daysUntil = loan.payDay - day;
                 if (daysUntil === 7 || daysUntil === 3 || daysUntil === 1) {
@@ -29555,6 +29716,8 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ==================== SETTINGS (ULTRA-PREMIUM UPGRADE v5.2) ====================
         function renderSettings() {
             const s = DB.getObj('settings', { backupFreq: 'weekly', lastBackup: null, theme: 'dark', autoLock: 15, haptics: true, currency: 'LKR', notifications: true, compactMode: false });
+            // The lock timer treats a missing value as 15 minutes; the menu must show what the timer does, not the first row.
+            const _autoLockMin = (s.autoLock === 0 || s.autoLock > 0) ? s.autoLock : 15;
             const auth = DB.getObj('auth');
             const userEmail = currentUser ? currentUser.email : 'Not connected';
             const userName = currentUser ? (currentUser.displayName || 'WealthFlow User') : 'Offline User';
@@ -29570,7 +29733,21 @@ table.amort tbody tr { page-break-inside: avoid; }
             const totalTargets = DB.get('targets').length;
             const totalRecords = totalIncome + totalLoans + totalExpenses + totalTargets + DB.get('ccinstall').length + DB.get('cconetime').length + DB.get('cheques').length;
 
-            $('settingsContent').innerHTML = `
+            // A rebuild must not move the page under the finger. Replacing the markup makes the page SHORTER for a moment
+            // (cards that other modules fill in afterwards are empty placeholders), and the browser clamps the scroll
+            // position to that shorter page and does not give it back when the cards arrive: measured, a rebuild from a
+            // cloud snapshot, a finished backup or a registered fingerprint threw the section the owner was reading
+            // ~380px out of view, in three visible steps. So the page keeps its height and scroll position across it
+            // (released below once the late arrivals have landed) and keyboard focus stays on the same switch.
+            const _stHost = $('settingsContent');
+            let _stY = 0, _stH = 0, _stFocus = '';
+            try {
+                _stY = window.scrollY || 0; _stH = _stHost.offsetHeight;
+                const _fa = document.activeElement;
+                if (_fa && _stHost.contains(_fa)) _stFocus = _fa.getAttribute('data-setting') || '';
+                if (_stH > 0) { _stHost.style.minHeight = _stH + 'px'; clearTimeout(_stHost.__wfHoldT); }
+            } catch (_) {}
+            _stHost.innerHTML = `
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(212,175,55,0.05), var(--card)); border: 1px solid var(--accent); position:relative; overflow:hidden;">
             <div style="position:absolute;top:-20px;right:-20px;font-size:80px;opacity:0.05;">${(window.WFIcon ? WFIcon('user') : '')}</div>
             <div class="settings-title" style="color:var(--accent);">Account & Identity</div>
@@ -29649,9 +29826,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="setting-row">
                 <div class="setting-info">
                     <div class="setting-label">AI services</div>
-                    <div class="setting-desc"><span id="aiEngineDetail">Several independent AI services answer together; anything that touches your money is filed only when they agree. Keys stay on the server.</span></div>
+                    <!-- the live reading sits over invisible copies of the two longest things it can say, so the row is the same height whether it reads "Checking…", "Offline" or the long "Degraded" sentence -->
+                    <div class="setting-desc wf-ai-detail-stack"><span id="aiEngineDetail">Several independent AI services answer together; anything that touches your money is filed only when they agree. Keys stay on the server.</span><span class="wf-ai-detail-ghost" aria-hidden="true">Several independent AI services answer together; anything that touches your money is filed only when they agree. Keys stay on the server.</span><span class="wf-ai-detail-ghost" aria-hidden="true">Only 3 of 8 AI services answered (4 are needed to file anything) · checked 59 min ago. Most free services are busy or out of credit.</span></div>
                 </div>
-                <span id="aiEngineHealth" class="badge bg-gr" style="padding:6px 12px;">● Checking…</span>
+                <span id="aiEngineHealth" class="badge bg-gr wf-ai-badge" style="padding:6px 12px;">● Checking…</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info">
@@ -29732,12 +29910,12 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Lock Timer</div><div class="setting-desc">Secure the vault after inactivity to prevent unauthorized access.</div></div>
                 <select class="fi" style="width:140px; border-color:var(--border2);" onchange="updateAutoLock(this.value)">
-                    <option value="0" ${s.autoLock === 0 ? 'selected' : ''}>Disabled (Unsafe)</option>
-                    <option value="1" ${s.autoLock === 1 ? 'selected' : ''}>1 Minute</option>
-                    <option value="5" ${s.autoLock === 5 ? 'selected' : ''}>5 Minutes</option>
-                    <option value="15" ${s.autoLock === 15 ? 'selected' : ''}>15 Minutes</option>
-                    <option value="30" ${s.autoLock === 30 ? 'selected' : ''}>30 Minutes</option>
-                    <option value="60" ${s.autoLock === 60 ? 'selected' : ''}>1 Hour</option>
+                    <option value="0" ${_autoLockMin === 0 ? 'selected' : ''}>Disabled (Unsafe)</option>
+                    <option value="1" ${_autoLockMin === 1 ? 'selected' : ''}>1 Minute</option>
+                    <option value="5" ${_autoLockMin === 5 ? 'selected' : ''}>5 Minutes</option>
+                    <option value="15" ${_autoLockMin === 15 ? 'selected' : ''}>15 Minutes</option>
+                    <option value="30" ${_autoLockMin === 30 ? 'selected' : ''}>30 Minutes</option>
+                    <option value="60" ${_autoLockMin === 60 ? 'selected' : ''}>1 Hour</option>
                 </select>
             </div>
             <div class="setting-row">
@@ -29764,7 +29942,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--blue);">Infinity Cloud Sync</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Real-time Connection</div><div class="setting-desc">Engine is monitoring connection to Google Firebase.</div></div>
-                <div><span id="settingsCloudStatus" class="badge ${navigator.onLine ? 'bg-g' : 'bg-r'}" style="padding: 6px 12px;">${navigator.onLine ? '● Securely Connected' : '○ Offline Mode'}</span></div>
+                <div><span id="settingsCloudStatus" class="badge wf-sync-badge ${navigator.onLine ? 'bg-g' : 'bg-r'}" style="padding: 6px 12px;">${navigator.onLine ? '\u25CF Connected' : '\u25CB Offline'}</span></div>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Sync Engine</div><div class="setting-desc">Force a manual cloud synchronization now.</div></div>
@@ -29949,7 +30127,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <select class="fi" style="width:140px;" onchange="toggleSetting('autoBackupFreq', this.value); scheduleAutoBackup();">
                     <option value="off" ${(s.autoBackupFreq || 'off') === 'off' ? 'selected' : ''}>Off</option>
                     <option value="daily" ${(s.autoBackupFreq || 'off') === 'daily' ? 'selected' : ''}>Daily (23:55)</option>
-                    <option value="weekly" ${(s.autoBackupFreq || 'off') === 'weekly' ? 'selected' : ''}>Weekly (Sun)</option>
+                    <option value="weekly" ${(s.autoBackupFreq || 'off') === 'weekly' ? 'selected' : ''}>Weekly (${_weekStartDay() === 0 ? 'Sat' : 'Sun'})</option>
                     <option value="monthly" ${(s.autoBackupFreq || 'off') === 'monthly' ? 'selected' : ''}>Monthly (End)</option>
                 </select>
             </div>
@@ -30009,10 +30187,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Hide Sensitive Numbers</div><div class="setting-desc">Privacy mode — replaces amounts with • • • • until tapped.</div></div>
-                ${settingSwitch('privacyMode', !!s.privacyMode, 'setTgl_privacyMode')}
+                ${settingSwitch('privacyMode', !!(s.privacyMode || s.hideSensitive), 'setTgl_privacyMode')}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Week Starts On</div><div class="setting-desc">Affects monthly plan and recurring schedules.</div></div>
+                <div class="setting-info"><div class="setting-label">Week Starts On</div><div class="setting-desc">The first day of your week. The weekly auto-backup runs on the last day of it (Sunday for a Monday start, Saturday for a Sunday start).</div></div>
                 <select class="fi" style="width:140px;" onchange="toggleSetting('weekStart', this.value)">
                     <option value="monday"  ${(s.weekStart || 'monday') === 'monday' ? 'selected' : ''}>Monday</option>
                     <option value="sunday"  ${(s.weekStart || 'monday') === 'sunday' ? 'selected' : ''}>Sunday</option>
@@ -30138,6 +30316,24 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
    `;
+            // Fill every card another module owns in THIS task, so the first paint is the finished page; then hand the
+            // height back once the ones that arrive on their own timer (Autonomous Release) have landed.
+            try { if (window.WFNotif && typeof window.WFNotif.mountSettings === 'function') window.WFNotif.mountSettings(); } catch (_) {}
+            // The Autonomous AI Engine card (476px) used to be put in by the first click anywhere on the page, 400ms
+            // later, in the middle of Settings: whichever switch was tapped first, everything below it jumped down.
+            // Release is placed after it, so it follows in that order.
+            try { if (window.wfIntelPanel && typeof window.wfIntelPanel.inject === 'function') window.wfIntelPanel.inject(); } catch (_) {}
+            try { if (window.wfReleaseApprove && typeof window.wfReleaseApprove._inject === 'function') window.wfReleaseApprove._inject(); } catch (_) {}
+            // The AI services badge is only measured when Settings is opened; a rebuild (a cloud snapshot, a finished backup) put the template's
+            // "Checking…" back and left it there. Show the last reading in this same task instead.
+            try { if (typeof refreshAIEngineBadge === 'function') refreshAIEngineBadge({ paintOnly: true }); } catch (_) {}
+            try {
+                if (_stH > 0) {
+                    if (Math.abs((window.scrollY || 0) - _stY) > 1) window.scrollTo(0, _stY);
+                    _stHost.__wfHoldT = setTimeout(() => { _stHost.style.minHeight = ''; }, 1200);
+                }
+                if (_stFocus) { const _fe = _stHost.querySelector('[data-setting="' + _stFocus.replace(/"/g, '') + '"]'); if (_fe && _fe.focus) _fe.focus({ preventScroll: true }); }
+            } catch (_) {}
             // Update PWA badge after render
             updatePWAStatusBadge();
             // ISSUE 3 FIX — Populate AI language pickers
@@ -30347,14 +30543,14 @@ table.amort tbody tr { page-break-inside: avoid; }
             s[key] = val;
             // Round Display Amounts and Hide Sensitive Numbers are mutually
             // exclusive — turning one ON forces the other OFF. (Both can be OFF.)
+            // ONE switch with two names (an older build called it hideSensitive), and the
+            // display code hides amounts when EITHER is true. Switching it OFF used to clear
+            // only the alias that was clicked, so on an account that still carried the
+            // other one, "Hide Sensitive Numbers: off" went on hiding every amount.
+            if (key === 'privacyMode' || key === 'hideSensitive') { s.privacyMode = !!val; s.hideSensitive = !!val; }
             if (val === true) {
                 if (key === 'roundAmounts') { s.privacyMode = false; s.hideSensitive = false; }
-                if (key === 'privacyMode' || key === 'hideSensitive') {
-                    s.roundAmounts = false;
-                    // keep the two privacy aliases in sync
-                    s.privacyMode = (key === 'privacyMode') ? true : s.privacyMode;
-                    s.hideSensitive = (key === 'hideSensitive') ? true : s.hideSensitive;
-                }
+                if (key === 'privacyMode' || key === 'hideSensitive') s.roundAmounts = false;
             }
             DB.set('settings', s);
             if (typeof val === 'boolean') {
@@ -30403,7 +30599,14 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
             if (key === 'roundAmounts') notify(val ? 'Amounts rounded' : 'Showing full decimals', 'success');
             if (key === 'privacyMode' || key === 'hideSensitive') notify(val ? '@lock@ Sensitive numbers hidden' : '@eye@ Numbers visible', 'success');
-            if (key === 'weekStart') notify(`Week now starts on ${String(val).charAt(0).toUpperCase()+String(val).slice(1)}`, 'success');
+            if (key === 'weekStart') {
+                notify(`Week now starts on ${String(val).charAt(0).toUpperCase()+String(val).slice(1)}`, 'success');
+                // The weekly backup follows the week: move its day and say so in the schedule's own label.
+                try {
+                    document.querySelectorAll('#settingsContent option[value="weekly"]').forEach((o) => { o.textContent = 'Weekly (' + (_weekStartDay() === 0 ? 'Sat' : 'Sun') + ')'; });
+                    if (typeof scheduleAutoBackup === 'function') scheduleAutoBackup();
+                } catch (_) {}
+            }
             if (key === 'dashPeriod') notify('Dashboard period updated', 'success');
         }
 
@@ -30643,16 +30846,18 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         // Settings re-renders on many toggles; a 60 s memory keeps those from asking the server each time.
-        function refreshAIEngineBadge() {
+        function refreshAIEngineBadge(opts) {
             const badge = document.getElementById('aiEngineHealth');
             if (!badge) return;
-            if (_aiHealthCache.txt && (Date.now() - _aiHealthCache.ts) < 60000) {
+            const paintOnly = !!(opts && opts.paintOnly);                 // a page rebuild: show what was last measured, ask nobody
+            if (_aiHealthCache.txt && (paintOnly || (Date.now() - _aiHealthCache.ts) < 60000)) {
                 badge.textContent = _aiHealthCache.txt;
                 badge.className = 'badge ' + _aiHealthCache.cls;
                 const line = document.getElementById('aiEngineDetail');
                 if (line && _aiHealthCache.detail) line.textContent = _aiHealthCache.detail;
                 return;
             }
+            if (paintOnly) return;                                         // nothing measured yet: the probe that Settings opening started fills it in
             badge.textContent = '● Checking…';
             badge.className = 'badge bg-gr';
             probeAIEngine({ manual: false });
@@ -30814,14 +31019,22 @@ table.amort tbody tr { page-break-inside: avoid; }
             for (const cat of eligible) {
                 if (sent) break;
 
+                /* EACH KIND ANSWERS TO THE SWITCH THAT NAMES IT. These rotating nudges
+                 * were gated only by the master switch, so "Loan Payment Reminders",
+                 * "CC One-Time Deadline Alerts" and "Target Progress Updates" could be
+                 * off and a loan EMI, a card deadline or a target still arrived as a
+                 * reminder — the deadline checker below honours them, this one did not. */
+                if (cat === 'target' && settings.notifTarget === false) continue;
+                if (cat === 'overdue' && settings.notifCCOT === false) continue;
+
                 if (cat === 'payment') {
                     // Find upcoming payments in next 7 days
                     const upcoming = [];
-                    DB.get('cconetime').filter(x => !x.paid).forEach(x => {
+                    if (settings.notifCCOT !== false) DB.get('cconetime').filter(x => !x.paid).forEach(x => {
                         const dl = dLeft(x.deadline);
                         if (dl >= 0 && dl <= 7) upcoming.push({ item: x.desc, amount: fmt(x.amount), days: dl });
                     });
-                    DB.get('loans').forEach(l => {
+                    if (settings.notifLoan !== false) DB.get('loans').forEach(l => {
                         const nextD = getNextOccurenceDate(l.start);
                         const daysDiff = Math.ceil((nextD - new Date()) / 86400000);
                         if (daysDiff >= 0 && daysDiff <= 7 && loanEndDate(l) > nextD) {
@@ -35306,9 +35519,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 return target;
             }
             if (freq === 'weekly') {
-                // Sunday = 0. Schedule fires Sunday at 23:55.
-                const daysToSunday = (7 - now.getDay()) % 7;
-                target.setDate(target.getDate() + daysToSunday);
+                /* The LAST day of the week, at 23:55. "Week Starts On" in Settings said
+                 * it "affects recurring schedules" and nothing read it; this is the one
+                 * schedule in the app that is weekly, so it is where the choice lands:
+                 * Monday-start weeks end on Sunday (as it always ran), Sunday-start
+                 * weeks end on Saturday. */
+                const lastDow = (_weekStartDay() + 6) % 7;
+                const daysToEnd = (lastDow - now.getDay() + 7) % 7;
+                target.setDate(target.getDate() + daysToEnd);
                 if (target <= now) target.setDate(target.getDate() + 7);
                 return target;
             }

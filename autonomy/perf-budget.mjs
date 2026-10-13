@@ -329,7 +329,10 @@ export const BUDGETS = {
     // 2026-10-10 (the AI consumer side): 2,251,000 -> 2_261_000 (measured 2,258,304 + ~0.1% headroom). The Settings AI status reads the measured board (?health=1 / ?canary=1) and says how many services answered and how old the reading is,
     // plain-words failures on the chat and every AI card (_wfAiWhy), the Insights card on the shared books figures, AI Auto-Notifications gating the smart tips (the insight tip built from the books), the scanner's Auto-Categorize switch
     // and a hand-picked category that the title suggestion no longer moves. About a third is comments. No new script or request.
-    htmlBytes: 2_261_000,
+    // 2026-10-10 (Settings audit: stamps survive a refresh, one switch claims one setting, the weekly backup follows Week Starts On, the bell answers to the older switches, and a Settings rebuild or a switch no longer
+    // moves the page): 2,261,000 -> 2_278_000 (measured 2,275,810 at the merge with the AI consumer work + ~0.1% headroom). Most of it is the sync-clock helpers (_wfStampFields / _wfMergeKeyed / _wfApplyCloudData now merge per field and keep the stamps),
+    // the PIN and Passcode-free guards, and the comments recording why each exists. No new script or request.
+    htmlBytes: 2_278_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -668,7 +671,8 @@ export const BUDGETS = {
     // 2026-10-10 (one-time lifecycle + verification/statement rollback, merged with the dashboard; measured 2,499,397 + ~0.1% headroom): the schedule, verification queue and statement undo paths now share the same paid/cadence rules.
     // 2026-10-10 (SMS panel: the "automatic daily check has not run" line, wealthflow-sms.js; measured 2,502,266 + ~0.1% headroom): 2_502_000 -> 2_505_000.
     // 2026-10-10 (the owner's own due-date alerts in the Text messages panel, wealthflow-sms.js; measured 2,508,375 + ~0.1% headroom): 2_505_000 -> 2_511_000.
-    totalJsBytes: 2_511_000,
+    // 2026-10-10 (Settings: sub-switches written one at a time, the older switches also gate the bell; wealthflow-notifications.js, measured 2,511,092 + ~0.1% headroom): 2_511_000 -> 2_514_000.
+    totalJsBytes: 2_514_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

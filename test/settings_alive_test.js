@@ -202,9 +202,11 @@ describe('what the browser confirmed, kept as a contract', () => {
         /* They are not in appData.settings directly — WFNotif keeps them under
          * settings.notif and saves with the same DB.set, so they sync like
          * everything else. Written down because reading the top level made nine
-         * working controls look broken. */
+         * working controls look broken. Only the switch that was tapped is put
+         * into settings.notif (see settings_behaviour_test.js for why), merged
+         * over what is already stored. */
         const notif = fs.readFileSync(path.join(ROOT, 'wealthflow-notifications.js'), 'utf8');
-        expect(notif).toContain("s.notif = n;");
+        expect(notif).toContain("s.notif = next;");
         expect(notif).toContain("window.DB.set('settings', s)");
     });
 
