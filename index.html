@@ -29826,9 +29826,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="setting-row">
                 <div class="setting-info">
                     <div class="setting-label">AI services</div>
-                    <div class="setting-desc"><span id="aiEngineDetail">Several independent AI services answer together; anything that touches your money is filed only when they agree. Keys stay on the server.</span></div>
+                    <!-- the live reading sits over invisible copies of the two longest things it can say, so the row is the same height whether it reads "Checking…", "Offline" or the long "Degraded" sentence -->
+                    <div class="setting-desc wf-ai-detail-stack"><span id="aiEngineDetail">Several independent AI services answer together; anything that touches your money is filed only when they agree. Keys stay on the server.</span><span class="wf-ai-detail-ghost" aria-hidden="true">Several independent AI services answer together; anything that touches your money is filed only when they agree. Keys stay on the server.</span><span class="wf-ai-detail-ghost" aria-hidden="true">Only 3 of 8 AI services answered (4 are needed to file anything) · checked 59 min ago. Most free services are busy or out of credit.</span></div>
                 </div>
-                <span id="aiEngineHealth" class="badge bg-gr" style="padding:6px 12px;">● Checking…</span>
+                <span id="aiEngineHealth" class="badge bg-gr wf-ai-badge" style="padding:6px 12px;">● Checking…</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info">
@@ -30323,6 +30324,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             // Release is placed after it, so it follows in that order.
             try { if (window.wfIntelPanel && typeof window.wfIntelPanel.inject === 'function') window.wfIntelPanel.inject(); } catch (_) {}
             try { if (window.wfReleaseApprove && typeof window.wfReleaseApprove._inject === 'function') window.wfReleaseApprove._inject(); } catch (_) {}
+            // The AI services badge is only measured when Settings is opened; a rebuild (a cloud snapshot, a finished backup) put the template's
+            // "Checking…" back and left it there. Show the last reading in this same task instead.
+            try { if (typeof refreshAIEngineBadge === 'function') refreshAIEngineBadge({ paintOnly: true }); } catch (_) {}
             try {
                 if (_stH > 0) {
                     if (Math.abs((window.scrollY || 0) - _stY) > 1) window.scrollTo(0, _stY);
@@ -30842,16 +30846,18 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         // Settings re-renders on many toggles; a 60 s memory keeps those from asking the server each time.
-        function refreshAIEngineBadge() {
+        function refreshAIEngineBadge(opts) {
             const badge = document.getElementById('aiEngineHealth');
             if (!badge) return;
-            if (_aiHealthCache.txt && (Date.now() - _aiHealthCache.ts) < 60000) {
+            const paintOnly = !!(opts && opts.paintOnly);                 // a page rebuild: show what was last measured, ask nobody
+            if (_aiHealthCache.txt && (paintOnly || (Date.now() - _aiHealthCache.ts) < 60000)) {
                 badge.textContent = _aiHealthCache.txt;
                 badge.className = 'badge ' + _aiHealthCache.cls;
                 const line = document.getElementById('aiEngineDetail');
                 if (line && _aiHealthCache.detail) line.textContent = _aiHealthCache.detail;
                 return;
             }
+            if (paintOnly) return;                                         // nothing measured yet: the probe that Settings opening started fills it in
             badge.textContent = '● Checking…';
             badge.className = 'badge bg-gr';
             probeAIEngine({ manual: false });

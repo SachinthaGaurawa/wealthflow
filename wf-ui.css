@@ -994,6 +994,11 @@ body.wf-compact #dashStats .stat-card { padding: 12px 14px 10px; }
 /* Settings → Cloud Sync status pill. It changes text and colour with every save (Syncing, Connected, Offline); as three
    differently sized boxes it moved the row, and on a phone the row changed height, so every switch nudged the page. */
 .wf-sync-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 118px; white-space: nowrap; flex: none; }
+/* the AI services row: one badge box for every reading ("Checking…" to "Not measured yet") and a line that is as tall as the longest thing it can say */
+.wf-ai-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 150px; white-space: nowrap; flex: none; }
+.wf-ai-detail-stack { display: grid; }
+.wf-ai-detail-stack > * { grid-area: 1 / 1; }
+.wf-ai-detail-ghost { visibility: hidden; pointer-events: none; }
 
 /* ═════════════════ 26. SETTINGS CONTROLS ═══════════════════════════════════ */
 /* A select shows the whole of its chosen option ("LKR — Sri Lanka", "3 (default)") instead of a cut-off word: the fixed

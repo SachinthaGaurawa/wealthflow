@@ -8,6 +8,8 @@
  *      anywhere, 476px, in the middle of the page)
  *   C. a rebuild of the page (a cloud snapshot, a finished backup) leaves the section being read exactly where it was
  *   D. flipping each switch leaves the switch itself and the page scroll where they were
+ *   E. the AI services row is the same height, with the same badge box, whatever it reads (Checking, Online, Offline, Degraded, Not measured),
+ *      and a rebuild shows the last reading again instead of putting "Checking..." back
  */
 import { bootDevices } from './devices.mjs';
 
@@ -89,6 +91,31 @@ try {
         const worstY = Math.max(...rb.map((s) => Math.abs(s.sy - before.sy)));
         const worstH = Math.max(...rb.map((s) => Math.abs(s.h - before.h)));
         note(`C. [${width}px] rebuilding the page keeps the section on screen in place for every frame`, worst <= 1 && worstY <= 1 && worstH <= 2, `max move ${worst}px, scroll ${worstY}px, height ${worstH}px`);
+
+        // ---- E. the AI services row
+        const reads = [
+            ['\u25CF Checking\u2026', 'bg-gr', 'Several independent AI services answer together; anything that touches your money is filed only when they agree. Keys stay on the server.'],
+            ['\u25CF Online', 'bg-g', '8 of 8 AI services answered and agreed \u00B7 checked just now.'],
+            ['\u25CF Offline', 'bg-r', 'The AI service is not deployed on this server (got a non-JSON 404 answer).'],
+            ['\u25CF Degraded', 'bg-a', 'Only 3 of 8 AI services answered (4 are needed to file anything) \u00B7 checked 59 min ago. Most free services are busy or out of credit.'],
+            ['\u25CF Not measured yet', 'bg-gr', 'No reading of the AI services yet. Press Run Diagnostic to measure them now.'],
+        ];
+        const rows = await page.evaluate((rs) => rs.map(([txt, cls, detail]) => {
+            const b = document.getElementById('aiEngineHealth'); const l = document.getElementById('aiEngineDetail');
+            b.textContent = txt; b.className = 'badge ' + cls + ' wf-ai-badge'; l.textContent = detail;
+            const sec = b.closest('.settings-section'); const r = b.getBoundingClientRect();
+            return { txt, h: Math.round(sec.getBoundingClientRect().height), w: Math.round(r.width) };
+        }), reads);
+        note(`E. [${width}px] the AI services row keeps one height and one badge width for all five readings`, new Set(rows.map((r) => r.h)).size === 1 && new Set(rows.map((r) => r.w)).size === 1 && rows[0].w > 0, JSON.stringify(rows.map((r) => r.h + '/' + r.w)));
+        const kept = await page.evaluate(() => {
+            const want = '\u25CF Online';
+            _aiHealthCache = { cls: 'bg-g', txt: want, detail: '8 of 8 AI services answered and agreed \u00B7 checked just now.', ts: Date.now() };
+            renderSettings();
+            const b = document.getElementById('aiEngineHealth'); const l = document.getElementById('aiEngineDetail');
+            return { badge: b.textContent, cls: b.className, detail: l.textContent, want };
+        });
+        note(`E. [${width}px] a rebuild shows the last AI reading in its first frame, not "Checking..."`, kept.badge === kept.want && /bg-g/.test(kept.cls) && /8 of 8/.test(kept.detail), JSON.stringify(kept));
+        await settle();
 
         // ---- D. every switch
         const keys = await page.evaluate(() => [...new Set([...document.querySelectorAll('#settingsContent .toggle[data-setting]')].map((e) => e.dataset.setting))]);
