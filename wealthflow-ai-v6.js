@@ -376,6 +376,10 @@
         // If the inlined v6.2 engine already transformed this prompt, pass through.
         if (alreadyRewritten(prompt)) return _origCallAI(prompt, image);
 
+        /* Only a chat turn ("--- CONVERSATION ---") is this wrapper's business. A one-shot card or receipt prompt carries its own instructions
+         * and figures: it goes to the engine as written (it used to be rewritten around its last line and asked twice for a "fresh" answer). */
+        if ((prompt || '').indexOf('--- CONVERSATION ---') === -1) return _origCallAI(prompt, image);
+
         var last = lastUserLine(prompt);
         var intent = classifyIntent(last, !!image);
 

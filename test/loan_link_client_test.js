@@ -163,11 +163,15 @@ describe('a card charge for a tracked subscription is counted by the subscriptio
 });
 
 describe('no screen adds up raw loan installments any more', () => {
-    it('the AI insights context counts the loans through the same one-count rule as the dashboard', () => {
+    it('the AI insights context takes its figures from the shared financial context, never its own loan sums', () => {
+        // buildFinancialContext (the books profile) keeps living costs apart from debt payments, so an installment a bank debit already
+        // counts is not added a second time; the card used to total the Investments list and this month's typed rows itself.
         const start = html.indexOf('async function generateAIInsights()');
         const body = html.slice(start, html.indexOf('\n        }\n', start));
-        expect(body).toContain('const loanTotal = _wfLoanDueNow(loans.filter(l => loanEndDate(l) > now), curMonthStr);');
+        expect(body).toContain('const ctx = buildFinancialContext();');
+        expect(body).toContain('const loanTotal = ctx.monthlyLoanPayments || 0;');
         expect(body).not.toMatch(/loans\.filter\(l => loanEndDate\(l\) > now\)\.reduce/);
+        expect(body).not.toContain("DB.get('loans')");
     });
     it('the only place that still sums installments per loan skips the ones a bank debit counts', () => {
         const sums = html.split('\n').filter(line => /loans[^;]*\.reduce\([^;]*\.monthly/.test(line));

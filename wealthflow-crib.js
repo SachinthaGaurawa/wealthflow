@@ -256,7 +256,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
     }
     function _aiText(prompt, image) {
         if (typeof window.callAIInLanguage === 'function') return window.callAIInLanguage(prompt, image || null);
-        if (typeof window.callAIRaw === 'function') return window.callAIRaw(_langGate(prompt), image || null);
+        if (typeof window.callAIRaw === 'function') return window.callAIRaw(_langGate(prompt), image || null, { task: 'advice' });
         if (typeof window.callAI === 'function') return window.callAI(_langGate(prompt), image || null);
         return Promise.reject(new Error('AI engine unavailable'));
     }

@@ -33,6 +33,71 @@ describe('parallel unanimous endpoint', () => {
         expect(res.body.requestedMode).toBe('fastest');
     });
 
+    /* Advice is read by a person who is waiting and files nothing, so it settles on a quorum plus a short grace instead of the slowest of
+     * thirteen free-tier providers (a chat reply that three providers wrote in four seconds used to arrive after twenty-five). */
+    it('releases advice after three usable answers plus the grace, and names the slow ones as late (not failed)', async () => {
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY']) vi.stubEnv(key, 'test');
+        vi.useFakeTimers();
+        try {
+            vi.stubGlobal('fetch', vi.fn(url => /googleapis|together/.test(url)
+                ? new Promise(() => {})   // never answers
+                : Promise.resolve({ ok: true, json: async () => ({ choices: [{ message: { content: 'Keep three months of expenses in cash.' } }] }) })));
+            const res = response();
+            const pending = handler({ method: 'POST', body: { prompt: 'Give advisory guidance', task: 'advice' } }, res);
+            await vi.advanceTimersByTimeAsync(200);
+            expect(res.body, 'released before the grace ran out').toBeUndefined();
+            await vi.advanceTimersByTimeAsync(2000);
+            expect(res.body, 'released early, inside the grace').toBeUndefined();
+            await vi.advanceTimersByTimeAsync(500);
+            await pending;
+            expect(res.code).toBe(200);
+            expect(res.body.answered).toEqual(['Groq', 'Mistral', 'Fireworks']);
+            expect(res.body.late).toEqual(['Gemini', 'Together']);
+            expect(res.body.failed).toEqual([]);
+            expect(res.body.financialDecision).toBe(false);
+        } finally { vi.useRealTimers(); }
+    });
+    it('does not release advice on a quorum while fewer than three providers have answered', async () => {
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'MISTRAL_API_KEY', 'FIREWORKS_API_KEY']) vi.stubEnv(key, 'test');
+        vi.useFakeTimers();
+        try {
+            vi.stubGlobal('fetch', vi.fn(url => /googleapis|fireworks/.test(url)
+                ? new Promise(resolve => setTimeout(() => resolve({ ok: true, json: async () => url.includes('googleapis')
+                    ? { candidates: [{ content: { parts: [{ text: 'Keep three months of expenses in cash.' }] } }] }
+                    : { choices: [{ message: { content: 'Keep three months of expenses in cash.' } }] } }), 9000))
+                : Promise.resolve({ ok: true, json: async () => ({ choices: [{ message: { content: 'Keep three months of expenses in cash.' } }] }) })));
+            const res = response();
+            const pending = handler({ method: 'POST', body: { prompt: 'Give advisory guidance', task: 'advice' } }, res);
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(res.body, 'two answers are not a quorum').toBeUndefined();
+            await vi.advanceTimersByTimeAsync(5000);
+            await pending;
+            expect(res.code).toBe(200);
+            expect(res.body.answered).toHaveLength(4);
+            expect(res.body.late).toBeUndefined();
+        } finally { vi.useRealTimers(); }
+    });
+    it('never releases a financial decision early: the board waits for its slowest member', async () => {
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY']) vi.stubEnv(key, 'test');
+        vi.useFakeTimers();
+        try {
+            const reply = '{"category":"Groceries"}';
+            vi.stubGlobal('fetch', vi.fn(url => url.includes('together')
+                ? new Promise(resolve => setTimeout(() => resolve({ ok: true, json: async () => ({ choices: [{ message: { content: reply } }] }) }), 12000))
+                : Promise.resolve({ ok: true, json: async () => url.includes('googleapis')
+                    ? { candidates: [{ content: { parts: [{ text: reply }] } }] }
+                    : { choices: [{ message: { content: reply } }] } })));
+            const res = response();
+            const pending = handler({ method: 'POST', body: { prompt: 'Categorize this transaction as JSON', financialDecision: true } }, res);
+            await vi.advanceTimersByTimeAsync(8000);
+            expect(res.body, 'a financial decision was released before its slowest member').toBeUndefined();
+            await vi.advanceTimersByTimeAsync(5000);
+            await pending;
+            expect(res.code).toBe(200);
+            expect(res.body.unanimous).toBe(true);
+            expect(res.body.answered).toHaveLength(5);
+        } finally { vi.useRealTimers(); }
+    });
     it('starts both configured engines before either completes and cannot use fastest override', async () => {
         vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
         const releases = [];

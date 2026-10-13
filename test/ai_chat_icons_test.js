@@ -138,9 +138,13 @@ describe('the AI chat message', () => {
         /* Deliberate: the vendor's NAME is the text beside the icon, so a
          * different glyph per vendor distinguished nothing the words did not.
          * Asserted rather than left implicit, so the choice is visible. */
+        // The names live in one table (_WF_AI_NAMES, read by _wfAiProviderName) so the chat, the Insights card and the Settings status
+        // all call a provider the same thing — including "groq:gpt-oss-120b", "openrouter:qwen-free" and the others the board returns.
+        const NAMES = (HTML.match(/const _WF_AI_NAMES = (\{[^;]*\});/) || [])[1] || '';
         for (const name of ['Gemini', 'Groq', 'DeepSeek']) {
-            expect(APPEND, `the ${name} label is gone`).toContain(`'${name}'`);
+            expect(NAMES, `the ${name} label is gone`).toContain(`'${name}'`);
         }
+        expect(APPEND).toContain("_wfAiProviderName(_lastAIProvider)");
         expect(APPEND).toContain("_ic('bot')");
         expect(APPEND, 'the unknown-provider fallback is gone').toContain("|| 'AI'");
     });

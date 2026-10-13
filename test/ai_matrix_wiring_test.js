@@ -51,8 +51,9 @@ describe('api/ai.js is wired to the matrix', () => {
         expect(line).not.toMatch(/:\s*'fastest'/);
     });
 
-    it('settles the full eligible board before reducing it', () => {
-        expect(SRC).toContain('await Promise.all(engines.map(run))');
+    it('settles the full eligible board before reducing a financial decision', () => {
+        // the unanimous board waits for every member; only advice (prose) may release on a quorum
+        expect(SRC).toContain("mode === 'unanimous' ? await Promise.all(engines.map(run))");
         expect(SRC).not.toContain('valid >= target');
     });
 
