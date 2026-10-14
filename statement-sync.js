@@ -2,7 +2,8 @@ import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { getAdminDb } from './admin-db.mjs';
 import { identify, userKeyFor, sendersOf } from './gmail-link.mjs';
-import { accessTokenFrom, authed } from './google-oauth.mjs';
+import { authed } from './google-oauth.mjs';
+import { mintAccessToken } from './gmail-auth-state.mjs';
 import { syncMailbox } from './gmail-hook.js';
 import { policyFrom, matchSender, normalizeList, approvedClauses, hasApproved } from './wealthflow-mail-senders.mjs';
 import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf, gridOf, gridLines, chainOf, chainLines } from './statement-coverage.mjs';
@@ -23,6 +24,7 @@ import { claimOrder, CLAIM_WINDOW, failurePatch, redriveDeadLetters, aiBreaker, 
 import { tieredAsk } from './statement-llm-router.mjs';
 import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
 import { VIA, identityOf, lookup, releaseStatement, registryDuplicatePatch } from './statement-registry.mjs';
+import { runSteps } from './statement-budget.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
@@ -72,7 +74,7 @@ const SAFE_WHOLE_REPLAY = new Set([
 ]);
 const PUBLIC_SYNC_REASONS = new Set([
     'autonomous-mailbox-not-enabled', 'gmail-profile-unavailable', 'gmail-profile-owner-mismatch',
-    'gmail-intake-unavailable', 'verified-owner-required', 'statement-worker-retry-required'
+    'gmail-intake-unavailable', 'verified-owner-required', 'statement-worker-retry-required', 'gmail-reconnect-required'
 ]);
 const PUBLIC_REVIEW_SOURCE_REASONS = new Set([
     'PASSWORD_FAILED', 'NO_VAULT_KEYS', 'PDF_UNREADABLE',
@@ -2422,7 +2424,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const mailRef = db.collection('wf-mail').doc(userKeyFor(email));
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
-    const token = await accessTokenFrom(mail.refresh_token, env, f);
+    const token = await mintAccessToken({ ref: mailRef, mail, env, f });     // a sign-in Google has refused: gmail-auth-state.mjs marks it, tells the owner and throws `gmail-reconnect-required`
     /* A MODEL PROVIDER THAT IS DOWN IS FOUND OUT ONCE, NOT ONCE PER STATEMENT. The board and the extractor are wrapped: after a
      * failure they are not asked again for a few minutes (remembered on the mailbox, so the next invocation does not pay for
      * it either), and not at all when too little of this invocation is left to wait for them. A disagreement between
@@ -2522,13 +2524,24 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
             await mailRef.set({ lastRecoveryMs: Date.now() }, { merge: true });
         } catch (_) { /* advice only: the next run tries again */ }
     }
-    if (Date.now() - start < budgetMs - 8000 && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
+    /* THE HOUSEKEEPING AT THE END OF A RUN STOPS WHEN THE TIME IS UP AND CARRIES ON FROM THERE (statement-budget.mjs). Production, 2026-10-11 and 10-12: the daily run hit the platform's sixty seconds in
+     * this tail (the pairing of the owner's own transfers took longer as the books grew; fixed in statement-legs.mjs). Each step reads and rewrites the owner's whole document, so the time is
+     * checked before EACH one, not once before all six; the place a pass stopped at is kept on the mailbox, and the pass is "done" (its time stamped) only when it got to the end. */
+    const tail = {};
+    const tailUntil = start + budgetMs - 8000;
+    if (Date.now() < tailUntil && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
+        const began = Date.now();
         try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
+        tail.censusMs = Date.now() - began;
     }
-    if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
+    if (Date.now() < tailUntil && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
         // each on its own: one that fails (a document in a shape it did not expect) must not stop the others from ever running
-        for (const heal of [() => healLoanInstallments({ db, uid }), () => healHandMadeTwins({ db, uid }), () => healStatementCopies({ db, mailRef, uid }), () => healOwnTransfers({ db, uid }), () => healCardSettlement({ db, uid }), () => repairCardInstallments({ db, uid })]) { try { await heal(); } catch (_) { /* the next run tries again */ } }
-        try { await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
+        const pass = await runSteps({ from: mail.loanHealNext, until: tailUntil, steps: [
+            { name: 'loan-installments', run: () => healLoanInstallments({ db, uid }) }, { name: 'hand-made-twins', run: () => healHandMadeTwins({ db, uid }) },
+            { name: 'statement-copies', run: () => healStatementCopies({ db, mailRef, uid }) }, { name: 'own-transfers', run: () => healOwnTransfers({ db, uid }) },
+            { name: 'card-settlement', run: () => healCardSettlement({ db, uid }) }, { name: 'card-installments', run: () => repairCardInstallments({ db, uid }) }] });
+        tail.heal = { ran: pass.ran.length, failed: pass.failed, ms: pass.ms, ...(pass.done ? {} : { skipped: pass.skipped }) };
+        try { await mailRef.set(pass.done ? { lastLoanHealMs: Date.now(), loanHealNext: 0 } : { loanHealNext: pass.next }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     const [pending, processing] = await Promise.all([
         mailRef.collection('items').where('status', '==', 'pending').limit(200).get(),
@@ -2557,7 +2570,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     try {
         const byBank = {};
         for (const doc of pending.docs) { const bank = String(doc.data()?.bank || '?').slice(0, 24); byBank[bank] = (byBank[bank] || 0) + 1; }
-        console.info(JSON.stringify({ evt: 'statement-sync-run', merchantList: REGISTRY_SIZE, ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', ...(frontIncomplete ? { frontIncomplete: true } : {}), redriven: redrive.redriven, deadLettered: redrive.waiting,
+        console.info(JSON.stringify({ evt: 'statement-sync-run', merchantList: REGISTRY_SIZE, ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', ...(frontIncomplete ? { frontIncomplete: true } : {}), ...(Object.keys(tail).length ? { tail } : {}), redriven: redrive.redriven, deadLettered: redrive.waiting,
             pending: pending.docs.length, processing: processing.docs.length, byBank, collectionMore, aiDown: Object.entries(breaker.health).filter(([, v]) => Number(v?.downUntil) > Date.now()).map(([k, v]) => `${k}:${String(v.reason || '').slice(0, 40)}`) }));
     } catch (_) { /* a log line never stops a sync */ }
     return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, orphansHealed, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, /* THE LAST REPORT STANDS WHEN THIS RUN MADE NO NEW ONE. The report (statements checked in, emails refused, closed months, the audit log) was returned only by a run that did the mailbox
@@ -2595,7 +2608,7 @@ async function withReviewAttachment({ db, owner, review, env, f, open, attachmen
             entries = await open(owner.uid, vault.data());
             passwords = candidatesFor(source.bank || '', entries);
         }
-        const token = await accessTokenFrom(mail.refresh_token, env, f);
+        const token = await mintAccessToken({ ref: mailRef, mail, env, f });
         const bytes = await attachment(source, sourceRef, token, sendersOf(mail), f, mail.email);
         return await use({ source, sourceRef, bytes, passwords });
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }

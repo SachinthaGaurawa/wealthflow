@@ -62,6 +62,13 @@ export const CONCURRENCY = 3;
 export const ENQUEUE_PER_RUN = 100;               // notices put into the ledger per run
 export const SCAN_PER_RUN = 600;                  // notices looked at per run (most are already there)
 export const DEFAULT_BUDGET_MS = 40000;
+/* THE SWEEP'S OTHER PHASES KEEP TO THE SAME CLOCK THE SENDS DO (2026-10-11, `[WF-SLOW]` on /api/sms-notify): putting notices in the ledger is a transaction each, asking the gateway what became of a text is a request each,
+ * and neither was bounded by `budgetMs` (only the starts of sends were), so a sweep with many notices or a slow gateway ran past the function's limit. What a phase had no time for is simply left: it is the
+ * ledger's state that carries over (a notice not yet queued is still owed, a text not yet asked about is still `dlrPending`), so the next run takes it up. */
+export const ENQUEUE_SHARE = 0.4;                 // of the budget, the most that queueing may take before the sends get their turn
+export const ENQUEUE_RESUME_MIN = 40;              // fewer notices than this are always looked at in full: no place to resume from is kept
+export const DELIVERY_RESERVE_MS = 4000;          // kept back at the end of the budget for the balance and the status card
+export const DELIVERY_CONCURRENCY = 4;
 export const LIMITS = Object.freeze({ perUserPerDay: 300, perRecipientPerDay: 12 });
 export const LOW_CREDIT_UNITS = 5;
 
@@ -113,7 +120,7 @@ const mirrorOf = (d, extra = {}) => ({
  * Put every owed notice into the ledger once. Returns what happened to each.
  * @returns {{created:number, existing:number, rephoned:number, reopened:number, linked:number, noLink:number}}
  */
-export async function enqueue({ db, uid, events, now, env = process.env, deps = {}, pause = false }) {
+export async function enqueue({ db, uid, events, now, env = process.env, deps = {}, pause = false, until = 0, clock = Date.now, from = 0 }) {
     const out = { created: 0, existing: 0, rephoned: 0, reopened: 0, refreshed: 0, linked: 0, noLink: 0 };
     if (pause) out.paused = 0;
     const col = eventsCol(db, uid);
@@ -135,9 +142,14 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
 
     // Look at every owed notice, oldest first, but only PUT ENQUEUE_PER_RUN new ones in: the first hundred are already in the ledger on the
     // next run, so counting looks instead of puts would leave notice 101 and everything after it unqueued for ever.
-    let looked = 0;
-    for (const ev of events) {
+    /* OUT OF TIME, THE NEXT RUN STARTS WHERE THIS ONE STOPPED. Starting again from the oldest each time would look at the same already-queued notices first and never reach the newer ones
+     * once they alone took the whole time; so a run that is cut short says where (`resume`), the caller keeps it, and the next one takes the list from there round to the start again. */
+    const start = Number.isInteger(from) && from > 0 && from < events.length ? from : 0;
+    let looked = 0, seen = 0;
+    for (const ev of start ? [...events.slice(start), ...events.slice(0, start)] : events) {
+        seen += 1;
         if (out.created + out.reopened >= ENQUEUE_PER_RUN || looked >= SCAN_PER_RUN) break;
+        if (until > 0 && clock() >= until) { out.deferred = events.length - seen + 1; out.resume = (start + seen - 1) % events.length; break; }
         // Under the credit reserve the reminders nobody is waiting for are left owed, not queued (see sms-guard.mjs): they are put in once the balance is back.
         if (pause && isPausedKind(ev.kind)) { out.paused += 1; continue; }
         looked += 1;
@@ -376,6 +388,15 @@ async function pool(items, n, work) {
     return results;
 }
 
+/** The promise's answer, or `{ ok: false }` once `ms` have passed (0: no limit); the request itself is not cancelled, only no longer waited for. Never rejects with the promise's error. */
+function within(promise, ms) {
+    if (!(ms > 0)) return Promise.resolve(promise).catch(() => ({ ok: false }));
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve({ ok: false, late: true }), ms);
+        Promise.resolve(promise).then((value) => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve({ ok: false }); });
+    });
+}
+
 /** Everything in the ledger that is due, oldest first. */
 async function dueIds({ db, uid, now }) {
     const out = [];
@@ -428,11 +449,12 @@ export const DELIVERY_RECHECK_MS = 3 * 3600e3;
  * shown as that and not as "Delivered" for ever. An answer that is neither a clear yes nor a clear no is asked again later; one that cannot be
  * asked (no lookup on the client, the gateway down) changes nothing.
  */
-export async function checkDelivery({ db, uid, client, now }) {
+export async function checkDelivery({ db, uid, client, now, until = 0, clock = Date.now }) {
     const out = { checked: 0, delivered: 0, undelivered: 0 };
     if (!client || !client.configured || typeof client.lookup !== 'function') return out;
     const snap = await eventsCol(db, uid).where('dlrPending', '==', true).limit(100).get();
-    let asked = 0;
+    const late = () => until > 0 && clock() >= until;
+    const todo = [];
     for (const doc of snap.docs) {
         const d = doc.data() || {};
         const age = now - num(d.sentAt);
@@ -441,18 +463,24 @@ export async function checkDelivery({ db, uid, client, now }) {
             await db.runTransaction(async (tx) => { const cur = await tx.get(doc.ref); if (cur.exists && (cur.data() || {}).status === STATUS.SENT) tx.set(doc.ref, next); });
             await mirror(db, uid, doc.id, mirrorOf(next), now);
         };
-        if (d.status !== STATUS.SENT || !d.gatewayId || age > DELIVERY_WATCH_MS) { await finish({ dlrPending: false }); continue; }
+        if (d.status !== STATUS.SENT || !d.gatewayId || age > DELIVERY_WATCH_MS) { if (late()) break; await finish({ dlrPending: false }); continue; }
         if (d.delivery && now - num(d.delivery.checkedAt) < DELIVERY_RECHECK_MS) continue;
-        if (asked >= DELIVERY_CHECKS_PER_RUN) break;
-        asked += 1;
+        if (todo.length >= DELIVERY_CHECKS_PER_RUN) break;
+        todo.push({ doc, d, finish });
+    }
+    // The lookups are independent requests to the gateway: a few at a time, and none started once the time is up. One that has not answered when it is
+    // is left as it was (the text is still `dlrPending` and is asked about next run).
+    await pool(todo, DELIVERY_CONCURRENCY, async ({ d, finish }) => {
+        if (late()) return;
+        const wait = until > 0 ? Math.max(1, until - clock()) : 0;
         let r;
-        try { r = await client.lookup(d.gatewayId); } catch (_) { r = { ok: false }; }
+        try { r = await within(client.lookup(d.gatewayId), wait); } catch (_) { r = { ok: false }; }
         out.checked += 1;
-        if (!r || !r.ok) continue;
+        if (!r || !r.ok) return;
         if (r.state === 'delivered') { out.delivered += 1; await finish({ dlrPending: false, delivery: { state: 'delivered', checkedAt: now } }); }
         else if (r.state === 'undelivered') { out.undelivered += 1; await finish({ dlrPending: false, delivery: { state: 'undelivered', checkedAt: now, note: s(r.raw).slice(0, 40) } }); console.warn(`[WF-SMS] gateway reports not delivered ref=${d.ref} status="${s(r.raw).slice(0, 40)}"`); }
         else await finish({ delivery: { state: 'pending', checkedAt: now } });
-    }
+    });
     return out;
 }
 
@@ -476,6 +504,11 @@ export async function writeStatus({ db, uid, issues, configured, units = null, n
  */
 export async function sweepUser({ db, uid, user, client, now = Date.now(), env = process.env, budgetMs = DEFAULT_BUDGET_MS, limits = LIMITS, deps = {}, clock = Date.now, auto = false }) {
     const startedAt = clock();
+    // The send gate below keeps the injected clock (a suite moves it); the phases around it are measured and bounded by the wall clock they share with the platform's limit.
+    const wallStart = Date.now(); let lapAt = wallStart;
+    const phases = {};
+    const lap = (name) => { const at = Date.now(); phases[name] = at - lapAt; lapAt = at; };
+    const wallLeft = () => budgetMs - (Date.now() - wallStart);
     const { events, issues } = deriveEvents(user, now);
     const owned = new Set(events.map((e) => e.key));
     const summary = { derived: events.length, issues: issues.length, configured: client.configured, enqueued: {}, cancelled: 0, sent: 0, held: 0, retry: 0, failed: 0, remaining: 0 };
@@ -499,7 +532,15 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
 
     summary.cancelled = await cancelUnowed({ db, uid, ownedKeys: owned, now });
     const hold = await paused(events.some((e) => isPausedKind(e.kind)));
-    summary.enqueued = await enqueue({ db, uid, events, now, env, deps, pause: hold });
+    lap('derive');
+    // Where the last run that was cut short stopped (kept on the user's root document); read only when there are enough notices for the time to matter.
+    const rootRef = db.collection(ROOT).doc(uid);
+    let from = 0;
+    if (events.length > ENQUEUE_RESUME_MIN) { try { from = num(((await rootRef.get()).data() || {}).enqueueFrom); } catch (_) { /* from the start */ } }
+    summary.enqueued = await enqueue({ db, uid, events, now, env, deps, pause: hold, until: wallStart + Math.floor(budgetMs * ENQUEUE_SHARE), from });
+    const resume = summary.enqueued.resume === undefined ? 0 : summary.enqueued.resume;
+    if (resume !== from) { try { await rootRef.set({ enqueueFrom: resume }, { merge: true }); } catch (_) { /* the next run starts from the start */ } }
+    lap('enqueue');
 
     if (client.configured) {
         let due = await dueIds({ db, uid, now });
@@ -522,14 +563,18 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
             }
         });
     }
-    try { summary.delivery = await checkDelivery({ db, uid, client, now }); } catch (e) { console.warn('[WF-SMS] delivery check failed:', s(e && e.message).slice(0, 120)); }
+    lap('send');
+    try { summary.delivery = await checkDelivery({ db, uid, client, now, until: wallStart + budgetMs - DELIVERY_RESERVE_MS }); } catch (e) { console.warn('[WF-SMS] delivery check failed:', s(e && e.message).slice(0, 120)); }
     // Every run leaves a balance that is current, not the one the last daily sweep saw (a card still saying "reserve 20" after the reserve was
     // switched off was the owner's "this is false"). Free call, only when this run did not already have one.
+    lap('delivery');
     let balanceRead = creditAsked;
-    if (units === null && client.configured && typeof client.balance === 'function') {
-        try { const b = await client.balance(); if (b && b.ok) { balanceRead = true; units = Number.isFinite(Number(b.units)) && b.units !== null ? Number(b.units) : null; } } catch (_) { /* unknown: the last finding stays */ }
+    if (units === null && client.configured && typeof client.balance === 'function' && wallLeft() > 3000) {         // (not when the time is spent: the last finding stands)
+        try { const b = await within(client.balance(), Math.min(6000, wallLeft())); if (b && b.ok) { balanceRead = true; units = Number.isFinite(Number(b.units)) && b.units !== null ? Number(b.units) : null; } } catch (_) { /* unknown: the last finding stays */ }
     }
     await writeStatus({ db, uid, issues, configured: client.configured, units, now, reserve, balanceRead, auto });
+    lap('status');
+    summary.phases = { ...phases, total: Date.now() - wallStart };
     return summary;
 }
 

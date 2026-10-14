@@ -660,7 +660,8 @@ export default async function handler(req, res) {
     }
 
     try {
-        await withDeadline(ref.set(linkRecord(who.email, token), { merge: true }), 8000, 'wf-mail');
+        /* A NEW SIGN-IN CLEARS THE MARK THAT THE OLD ONE WAS TURNED DOWN (gmail-auth-state.mjs), and the old watch failure that said the same thing (gmail-renew.js). */
+        await withDeadline(ref.set({ ...linkRecord(who.email, token), gmailAuth: null, renewError: '' }, { merge: true }), 8000, 'wf-mail');
     } catch (_) {
         return j(res, 503, { ok: false, error: 'could not save' });
     }

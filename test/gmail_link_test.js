@@ -221,6 +221,8 @@ describe('the record, and the answer', () => {
                  * which is the honest answer, and the one that makes the card
                  * say "no senders approved yet" rather than looking curated. */
                 senderCount: 0,
+                // Google has not turned the saved sign-in down (gmail-auth-state.mjs)
+                needsReconnect: false,
             });
     });
 

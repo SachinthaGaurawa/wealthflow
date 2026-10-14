@@ -35,7 +35,8 @@
 
 import { getAdminDb, withDeadline } from './admin-db.mjs';
 import { cronAuthorized } from './cron-auth.mjs';
-import { accessTokenFrom, authed } from './google-oauth.mjs';
+import { authed } from './google-oauth.mjs';
+import { mintAccessToken } from './gmail-auth-state.mjs';
 import { MAIL_ROOT, topicNameFrom, missingWatchConfig, watchBody, watchRecord } from './gmail-watch.mjs';
 import { RENEW_MAX_PER_RUN, RENEW_SCAN_MAX, RENEW_FAIL, RENEW_FAIL_TEXT, dueFrom, renewReport } from './gmail-renew.mjs';
 
@@ -58,7 +59,7 @@ function j(res, code, body) {
 async function renewOne(ref, data, topic, env, f) {
     let token;
     try {
-        token = await accessTokenFrom(data.refresh_token, env, f);
+        token = await mintAccessToken({ ref, mail: data, env, f });
     } catch (_) {
         return { ok: false, reason: RENEW_FAIL.TOKEN };
     }

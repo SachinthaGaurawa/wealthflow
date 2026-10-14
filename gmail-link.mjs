@@ -38,6 +38,8 @@
  * mailbox, which is the whole boundary once rules stop having a vote.
  * ===========================================================================*/
 
+import { publicAuth } from './gmail-auth-state.mjs';
+
 /** The state document root. Must match gmail-hook.js exactly. */
 export const MAIL_ROOT = 'wf-mail';
 
@@ -299,6 +301,8 @@ export function statusOf(doc) {
          * where the scanner is still guessing and the owner has a decision to
          * make — instead of looking identical to a curated one. */
         senderCount: sendersOf(d).filter((e) => e && e.status === 'approved').length,
+        /* Whether Google has turned the saved sign-in down (gmail-auth-state.mjs): the card says so, in red, instead of "Connected". Never more than a kind and a time. */
+        ...publicAuth(d),
     };
 }
 

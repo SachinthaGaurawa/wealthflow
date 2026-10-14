@@ -43,7 +43,8 @@ import {
 } from './wealthflow-mail-senders.mjs';
 import { policyWithReach } from './bank-reach.mjs';
 import { monthKey } from './wealthflow-sender-discovery.js';
-import { accessTokenFrom, authed } from './google-oauth.mjs';
+import { authed } from './google-oauth.mjs';
+import { mintAccessToken, refusalText } from './gmail-auth-state.mjs';
 import {
     planMessage, planWrite, planHold, repairManifest, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
 } from './wealthflow-mail-ingest.mjs';
@@ -145,7 +146,7 @@ export default async function handler(req, res, deps) {
 
     let token;
     try {
-        token = await accessTokenFrom(state.refresh_token, env, f);
+        token = await mintAccessToken({ ref, mail: state, env, f });
     } catch (e) {
         /* A timeout or a Google 5xx on the token exchange mends itself; a rejected refresh token does not. */
         if (e && e.transient === true) {
@@ -153,8 +154,9 @@ export default async function handler(req, res, deps) {
         }
         return j(res, 502, {
             ok: false,
-            error: 'Gmail refused the saved token. Disconnect and connect the mailbox again.',
+            error: refusalText(e),
             retryable: false,
+            ...(e && e.reconnect === true ? { reconnect: true } : {}),
         });
     }
 
