@@ -573,7 +573,7 @@ async function runEngine(name, fn, hints) {
 
 /* Wait for the engines, but not for a straggler once the scan already has an answer. `Promise.all` held an ultra scan for the slowest provider: with
  * NVIDIA stalling at its 30 s budget, a receipt that Ollama and Fireworks had read in 2.5 s came back after 37 s. Once `enough` engines have answered,
- * the others get `graceMs` more and are then reported as cut (an engine that answers in the grace still counts). `run` never rejects (runEngine). */
+ * the others get `graceMs` more and are then reported as cut (an engine that answers in the grace still counts). */
 export async function gatherEngines(engines, run, { enough = 2, graceMs = 8000 } = {}) {
     const startedAt = Date.now();
     const results = new Array(engines.length);
@@ -581,7 +581,8 @@ export async function gatherEngines(engines, run, { enough = 2, graceMs = 8000 }
     const settled = new Promise((resolve) => { release = resolve; });
     if (pending === 0) return [];
     engines.forEach((e, i) => {
-        run(e.name, e.fn).then((r) => {
+        // runEngine never rejects; if a different `run` ever did, that engine must count as failed, not leave `pending` stuck and the scan hanging
+        Promise.resolve().then(() => run(e.name, e.fn)).catch((err) => ({ name: e.name, success: false, ms: Date.now() - startedAt, error: String((err && err.message) || err).slice(0, 360) })).then((r) => {
             results[i] = r; pending -= 1;
             if (r && r.success) answered += 1;
             if (pending === 0) release();

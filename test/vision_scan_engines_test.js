@@ -187,6 +187,12 @@ describe('a stalled provider does not hold a scan that has already been read', (
         expect(out[1].error).toBeUndefined();
     });
 
+    it('an engine whose run rejects counts as failed and does not hang the scan', async () => {
+        const out = await gatherEngines([{ name: 'a', fn: 1 }, { name: 'b', fn: 2 }], (name) => (name === 'a' ? Promise.reject(new Error('boom')) : Promise.resolve({ name, success: true, ms: 5 })), { enough: 2, graceMs: 8000 });
+        expect(out[0]).toMatchObject({ name: 'a', success: false, error: 'boom' });
+        expect(out[1]).toMatchObject({ name: 'b', success: true });
+    });
+
     it('no engines is an empty result, not a hang', async () => {
         expect(await gatherEngines([], run)).toEqual([]);
     });
