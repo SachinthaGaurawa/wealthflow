@@ -122,27 +122,9 @@ export function matchSubscriptionForDebit(row, subs) {
     return hits.length === 1 ? hits[0] : null;
 }
 
-/* ── 3. A DEBIT THAT IS A CHEQUE THE OWNER ISSUED ──────────────────────────────────────────────────────────────────────────────────────────── */
-const CHEQUE_WORD = /\b(chq|cheque|check|chk)\b/;
-/** The one issued cheque this bank debit clears: the cheque number in the narration, or the same amount to the cent within ten days of its date. */
-export function matchChequeForDebit(row, cheques) {
-    const text = low(row && (row.description || row.narration)), amount = cents(row && row.amount), day = dayNumber(row && row.date);
-    if (!CHEQUE_WORD.test(text) || !(amount > 0) || !Number.isFinite(day)) return null;
-    const digits = text.match(/\d{3,}/g) || [];
-    const fits = [];
-    for (const c of arr(cheques)) {
-        if (!c || c.type === 'received' || c.status === 'bounced' || cents(c.amount) !== amount) continue;
-        const no = String(c.no || '').replace(/\D/g, '');
-        const byNumber = no.length >= 3 && digits.some((d) => d.replace(/^0+/, '') === no.replace(/^0+/, ''));
-        const at = dayNumber(c.release || c.issue);
-        const byDate = Number.isFinite(at) && Math.abs(at - day) <= 10;
-        if (byNumber || byDate) fits.push({ c, byNumber });
-    }
-    if (!fits.length) return null;
-    const numbered = fits.filter((f) => f.byNumber);
-    const pool = numbered.length ? numbered : fits;
-    return pool.length === 1 ? pool[0].c : null;
-}
+/* ── 3. A CHEQUE THE OWNER ISSUED ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+ * A bank row that clears a cheque the owner issued (or deposited) is read and matched in wealthflow-cheques.js — by cheque number first, then by amount and days — and settled against the Cheque
+ * Tracker by statement-ledger.mjs. It used to be matched here by the amount alone. */
 
 /* ── 4. THE BANK PAYING A CREDIT CARD ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 const CARD_PAYMENT = /\b(?:credit\s*card|card|cc|amex|visa|master\s*card|mastercard)\s*(?:payment|settlement|bill|repayment|dues?|instal?ment)\b|\bpayment\s+(?:to|for|of)\s+(?:my\s+)?(?:credit\s*)?card\b|\bpay\s+(?:to\s+)?(?:credit\s*)?card\b/i;
@@ -214,4 +196,4 @@ export function repairInstallmentRecords(user, now) {
     return done;
 }
 
-export default { manualTwin, markTwin, accountedCopy, planCountedIn, matchInstallmentPlan, applyPlanPayment, repairInstallmentRecords, subscriptionCountedIn, matchSubscriptionForDebit, matchChequeForDebit, cardSettlementDebit };
+export default { manualTwin, markTwin, accountedCopy, planCountedIn, matchInstallmentPlan, applyPlanPayment, repairInstallmentRecords, subscriptionCountedIn, matchSubscriptionForDebit, cardSettlementDebit };

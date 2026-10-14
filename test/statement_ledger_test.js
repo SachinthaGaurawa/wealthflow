@@ -137,6 +137,55 @@ describe('statement ledger', () => {
         await expect(settleStatement(args)).rejects.toThrow('statement-cursor-or-content-changed');
         expect([...args.db.docs]).toEqual(before);
     });
+    /* A CHEQUE THE BANK PAID AND THEN SENT BACK IN ONE STATEMENT: the cheque record carries only the LAST row's place and money, so a replay that words the rows differently could not tell a clear row from
+     * a return row by reading the cheque. Each cheque ledger line now keeps its own row's day, amount and direction. */
+    describe('a cheque row replayed with another wording is compared with its own row, not with the cheque\'s latest state', () => {
+        const issued = { id: 'I1', no: '000123', party: 'Landlord', type: 'issued', amount: 25000, issue: '2026-09-01', release: '2026-09-01', status: 'pending' };
+        const paid = { date: '2026-09-12', amount: 25000, description: 'CHQ 000123 PAID', direction: 'debit', directionSource: 'column', needsReview: false };
+        const back = { date: '2026-09-20', amount: 25000, description: 'OUTWARD CHEQUE RETURN 000123', direction: 'credit', directionSource: 'column', needsReview: false };
+        const decisions = [{ module: 'expenses', category: 'Other', verified: true }, { module: 'incomeRecv', category: 'Other', verified: true }];
+        const filedTwice = async () => {
+            const args = fixture({ cheques: [{ ...issued }] });
+            Object.assign(args, { rows: [paid, back], decisions, totalRows: 2 });
+            expect(await settleStatement(args)).toMatchObject({ filed: 2, duplicates: 0 });
+            expect(args.db.docs.get('users/u').cheques[0]).toMatchObject({ status: 'bounced', statementRow: 1 });
+            const renew = () => args.db.docs.set('sources/s', { ...args.db.docs.get('sources/s'), cursor: 0, leaseToken: 'token', leaseUntil: 2000 });
+            return { args, renew };
+        };
+        const reworded = [{ ...paid, description: 'CHEQUE NO 000123 PRESENTED' }, { ...back, description: 'OUTWARD CHQ RTN 000123 REFER TO DRAWER' }];
+        it('keeps the row\'s own day, amount and direction on its ledger line', async () => {
+            const { args } = await filedTwice();
+            const lines = [...args.db.docs.entries()].filter(([path]) => path.includes('/statementLedger/')).map(([, data]) => data).sort((a, b) => a.index - b.index);
+            expect(lines.map(line => line.module)).toEqual(['cheque', 'cheque']);
+            expect(lines[0].money).toEqual({ date: '2026-09-12', cents: 2500000, direction: 'debit' });
+            expect(lines[1].money).toEqual({ date: '2026-09-20', cents: 2500000, direction: 'credit' });
+        });
+        it('the same money worded differently is the same statement: both rows are acknowledged, nothing is filed twice', async () => {
+            const { args, renew } = await filedTwice();
+            renew();
+            args.rows = reworded;
+            expect(await settleStatement(args)).toMatchObject({ duplicates: 2, filed: 0 });
+            expect(args.db.docs.get('users/u').cheques).toHaveLength(1);
+            expect(args.db.docs.get('users/u').cheques[0]).toMatchObject({ status: 'bounced', statementRow: 1 });
+        });
+        it('a row whose money really changed is still refused, naming what differs', async () => {
+            for (const [which, change, differs] of [[0, { amount: 26000 }, 'amount'], [1, { direction: 'debit' }, 'direction'], [1, { amount: 24000 }, 'amount']]) {
+                const { args, renew } = await filedTwice();
+                renew();
+                args.rows = reworded.map((r, i) => i === which ? { ...r, ...change } : r);
+                const before = structuredClone([...args.db.docs]);
+                await expect(settleStatement(args)).rejects.toMatchObject({ message: 'statement-cursor-or-content-changed', detail: { index: which, differs } });
+                expect([...args.db.docs]).toEqual(before);
+            }
+        });
+        it('a line filed before the money was kept is still compared with the cheque, as it was', async () => {
+            const { args, renew } = await filedTwice();
+            for (const [path, data] of args.db.docs) if (path.includes('/statementLedger/') && data.module === 'cheque') { const { money, ...old } = data; args.db.docs.set(path, old); }
+            renew();
+            args.rows = [paid, { ...back, description: 'OUTWARD CHQ RTN 000123 REFER TO DRAWER' }];
+            await expect(settleStatement(args)).resolves.toMatchObject({ duplicates: 2 });     // the return row is the cheque's last row: found, same money (its day is the clearing day: tolerated)
+        });
+    });
     it('replaces an occurrence deliberately superseded by a corrected layout', async () => {
         const args = fixture(), id = sourceOccurrenceId(args.sourceRef.path, 0);
         args.db.docs.set('users/u/statementLedger/' + id, { uid: 'u', sourcePath: args.sourceRef.path, index: 0, status: 'superseded_by_layout', fingerprint: 'old' });
