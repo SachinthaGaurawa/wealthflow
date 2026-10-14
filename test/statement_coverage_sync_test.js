@@ -140,7 +140,11 @@ describe('coverage: which months did the mailbox not give us', () => {
             return s.f(url);
         });
         const intake = vi.fn(async () => ({ body: { ok: true, collectionPending: false } }));
-        const result = await runStatementSync({ db: s.db, owner, action: 'collect', env: {}, f, intake, maxSteps: 1, open: async () => [], loadAttachment: async () => ({}) });
+        // the sync reads the real clock for "which months are over"; the answer must not change as the calendar moves on
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        let result;
+        try { result = await runStatementSync({ db: s.db, owner, action: 'collect', env: {}, f, intake, maxSteps: 1, open: async () => [], loadAttachment: async () => ({}) }); } finally { vi.useRealTimers(); }
         expect(result.coverage).toMatchObject({ missing: 1, series: [{ missing: ['2026-03'] }] });
     }
 });
