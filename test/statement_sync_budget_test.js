@@ -4,7 +4,7 @@ import { runSteps } from '../statement-budget.mjs';
 import { runStatementSync } from '../statement-sync.js';
 
 /* THE HOUSEKEEPING AT THE END OF A RUN STOPS WHEN THE TIME IS UP AND CARRIES ON FROM WHERE IT STOPPED.
- * Production, 2026-10-11 (`/api/statement-sync` GET: 60 s timeout) and 10-12 (`[WF-SLOW]`): the six heals at the end of the daily run were gated once, before the first, and stamped "done"
+ * Production, 2026-10-11 (`/api/statement-sync` GET: 60 s timeout) and 10-12 (`[WF-SLOW]`): the heals at the end of the daily run were gated once, before the first, and stamped "done"
  * afterwards. A run that began them late could not stop between two of them. */
 
 afterEach(() => vi.restoreAllMocks());
@@ -56,7 +56,7 @@ describe('runSteps: the clock is looked at before each step', () => {
     });
 });
 
-describe('the daily run: the six heals share the time that is left', () => {
+describe('the daily run: the heals share the time that is left', () => {
     const owner = { uid: 'u', email: 'owner@example.com' };
     const mailPath = 'wf-mail/owner_example_com';
     const T0 = 1_900_000_000_000;
@@ -79,26 +79,33 @@ describe('the daily run: the six heals share the time that is left', () => {
         return { result, log, mail: seeded.data.get(mailPath), elapsed: now - T0 };
     }
 
-    it('with time to spare all six run, the pass is stamped, and the place to resume from is cleared', async () => {
+    /** How many heals a whole pass has (the list grows: the test follows it instead of counting). */
+    const wholePass = async () => (await run({ readMs: 1 })).log.tail.heal.ran;
+
+    it('with time to spare all of them run, the pass is stamped, and the place to resume from is cleared', async () => {
         const { log, mail } = await run({ readMs: 1 });
-        expect(log.tail.heal.ran).toBe(6);
+        expect(log.tail.heal.ran).toBeGreaterThanOrEqual(6);
         expect(log.tail.heal.skipped).toBeUndefined();
         expect(mail.lastLoanHealMs).toBeGreaterThan(0);
         expect(mail.loanHealNext).toBe(0);
     });
     it('when the reads are slow the pass stops between two heals, is NOT stamped, and keeps the place it stopped at', async () => {
+        const total = await wholePass();
+        vi.restoreAllMocks();
         const { log, mail, elapsed } = await run({ readMs: 11000 });
-        expect(log.tail.heal.ran).toBeLessThan(6);
-        expect(log.tail.heal.skipped.length).toBe(6 - log.tail.heal.ran);
+        expect(log.tail.heal.ran).toBeLessThan(total);
+        expect(log.tail.heal.skipped.length).toBe(total - log.tail.heal.ran);
         expect(mail.lastLoanHealMs).toBeUndefined();
         expect(mail.loanHealNext).toBe(log.tail.heal.ran);
         expect(elapsed).toBeLessThan(60000);                                 // the run answered inside the platform's limit
     });
     it('the next run carries on from that heal, finishes the pass and starts the half hour from there', async () => {
+        const total = await wholePass();
+        vi.restoreAllMocks();
         const first = await run({ readMs: 11000 });
         vi.restoreAllMocks();
         const second = await run({ readMs: 1, mail: { loanHealNext: first.mail.loanHealNext } });
-        expect(second.log.tail.heal.ran).toBe(6 - first.mail.loanHealNext);
+        expect(second.log.tail.heal.ran).toBe(total - first.mail.loanHealNext);
         expect(second.mail.lastLoanHealMs).toBeGreaterThan(0);
         expect(second.mail.loanHealNext).toBe(0);
     });

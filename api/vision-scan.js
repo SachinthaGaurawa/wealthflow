@@ -571,6 +571,29 @@ async function runEngine(name, fn, hints) {
     }
 }
 
+/* Wait for the engines, but not for a straggler once the scan already has an answer. `Promise.all` held an ultra scan for the slowest provider: with
+ * NVIDIA stalling at its 30 s budget, a receipt that Ollama and Fireworks had read in 2.5 s came back after 37 s. Once `enough` engines have answered,
+ * the others get `graceMs` more and are then reported as cut (an engine that answers in the grace still counts). */
+export async function gatherEngines(engines, run, { enough = 2, graceMs = 8000 } = {}) {
+    const startedAt = Date.now();
+    const results = new Array(engines.length);
+    let answered = 0, pending = engines.length, timer = null, release;
+    const settled = new Promise((resolve) => { release = resolve; });
+    if (pending === 0) return [];
+    engines.forEach((e, i) => {
+        // runEngine never rejects; if a different `run` ever did, that engine must count as failed, not leave `pending` stuck and the scan hanging
+        Promise.resolve().then(() => run(e.name, e.fn)).catch((err) => ({ name: e.name, success: false, ms: Date.now() - startedAt, error: String((err && err.message) || err).slice(0, 360) })).then((r) => {
+            results[i] = r; pending -= 1;
+            if (r && r.success) answered += 1;
+            if (pending === 0) release();
+            else if (answered >= enough && !timer) timer = setTimeout(release, graceMs);
+        });
+    });
+    await settled;
+    clearTimeout(timer);
+    return engines.map((e, i) => results[i] || { name: e.name, success: false, ms: Date.now() - startedAt, error: `still reading ${Math.round(graceMs / 1000)} s after ${enough} other readers had answered, so the scan did not wait for it` });
+}
+
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -689,7 +712,10 @@ export default async function handler(req, res) {
         });
     }
 
-    const results = await Promise.all(engines.map(e => runEngine(e.name, e.fn, hints)));
+    // frontier waits for its strongest readers on purpose (Gemini Pro has a 45-60 s budget); the other modes do not wait for a stalled one
+    const results = mode === 'frontier'
+        ? await Promise.all(engines.map(e => runEngine(e.name, e.fn, hints)))
+        : await gatherEngines(engines, (name, fn) => runEngine(name, fn, hints));
 
     if (mode === 'ultra' || mode === 'frontier') {
         // Primary OCR anchor: Google Cloud Vision (best for dense/small text),
