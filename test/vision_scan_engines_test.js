@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import handler from '../api/vision-scan.js';
+import handler, { gatherEngines } from '../api/vision-scan.js';
 import { geminiBook, resetGeminiLearning } from '../gemini-client.mjs';
 import { resetReasoningLearning } from '../ai-chat.mjs';
 import { CANARY_IMAGE_B64 } from '../ai-canary-image.mjs';
@@ -146,5 +146,79 @@ describe('the source', () => {
     });
     it('Cerebras and SambaNova (removed from the board) are no longer asked to structure OCR text', () => {
         expect(source).not.toMatch(/cerebras\.ai|sambanova\.ai/i);
+    });
+});
+
+describe('a stalled provider does not hold a scan that has already been read', () => {
+    const engine = (name, ms, ok = true) => ({ name, fn: () => new Promise((resolve) => setTimeout(() => resolve({ name, success: ok, ms }), ms)) });
+    const run = (name, fn) => fn();
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('after two readers answered, the rest get the grace and are reported as cut', async () => {
+        const p = gatherEngines([engine('ollama', 900), engine('fireworks', 2500), engine('nvidia', 30000), engine('groq', 150, false)], run, { enough: 2, graceMs: 8000 });
+        let done = false; p.then(() => { done = true; });
+        await vi.advanceTimersByTimeAsync(2500 + 7900);
+        expect(done).toBe(false);
+        await vi.advanceTimersByTimeAsync(200);
+        const out = await p;
+        expect(out.map((r) => r.name)).toEqual(['ollama', 'fireworks', 'nvidia', 'groq']);
+        expect(out[0].success && out[1].success).toBe(true);
+        expect(out[2]).toMatchObject({ name: 'nvidia', success: false });
+        expect(out[2].error).toMatch(/did not wait for it/);
+        expect(out[3]).toMatchObject({ name: 'groq', success: false, ms: 150 });
+    });
+
+    it('an engine that answers inside the grace still counts', async () => {
+        const p = gatherEngines([engine('a', 500), engine('b', 1000), engine('c', 6000)], run, { enough: 2, graceMs: 8000 });
+        await vi.advanceTimersByTimeAsync(6100);
+        const out = await p;
+        expect(out.every((r) => r.success)).toBe(true);
+    });
+
+    it('with fewer than two answers it waits for everyone, as Promise.all did', async () => {
+        const p = gatherEngines([engine('a', 500), engine('b', 25000, false), engine('c', 29000)], run, { enough: 2, graceMs: 8000 });
+        let done = false; p.then(() => { done = true; });
+        await vi.advanceTimersByTimeAsync(28000);
+        expect(done).toBe(false);
+        await vi.advanceTimersByTimeAsync(1100);
+        const out = await p;
+        expect(out.map((r) => r.success)).toEqual([true, false, true]);
+        expect(out[1].error).toBeUndefined();
+    });
+
+    it('no engines is an empty result, not a hang', async () => {
+        expect(await gatherEngines([], run)).toEqual([]);
+    });
+});
+
+describe('an ultra scan with one provider stalled', () => {
+    it('answers once the readers that work have answered and the grace has run, naming the one it did not wait for', async () => {
+        const w = world();
+        const stalled = vi.fn(async (url, init) => (/integrate\.api\.nvidia\.com\/v1\/chat/.test(String(url)) ? new Promise(() => {}) : w.fetch(url, init)));
+        vi.stubGlobal('fetch', stalled);
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        try {
+            const res = response();
+            const done = handler({ method: 'POST', body: { image: CANARY_IMAGE_B64, mode: 'ultra', hints: {} } }, res);
+            await vi.advanceTimersByTimeAsync(9000);
+            await vi.advanceTimersByTimeAsync(2000);
+            await done;
+            expect(res.code).toBe(200);
+            expect(res.body.result).toMatchObject({ vendor: 'ACME MART', amount: 1250 });
+            const by = Object.fromEntries(res.body.engines.map((e) => [e.name, e]));
+            expect(by.ollama.success).toBe(true);
+            expect(by.nvidia).toMatchObject({ success: false });
+            expect(by.nvidia.error).toMatch(/did not wait for it/);
+            expect(res.body.elapsedMs).toBeLessThan(15000);
+        } finally { vi.useRealTimers(); }
+    });
+});
+
+describe('the source (stalled providers)', () => {
+    const source = fs.readFileSync(path.join(ROOT, 'api/vision-scan.js'), 'utf8');
+    it('frontier keeps waiting for all of its readers, every other mode uses the grace', () => {
+        expect(source).toMatch(/mode === 'frontier'\s*\?\s*await Promise\.all\(/);
+        expect(source).toMatch(/: await gatherEngines\(engines,/);
     });
 });
