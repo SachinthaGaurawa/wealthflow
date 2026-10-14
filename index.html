@@ -25346,6 +25346,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <b>${missing.map(_wfEsc).join('</b>, <b>')}</b>. Without these a push cannot be
                         verified even once a token is saved.</div>` : ''}
                 </div>`;
+            } else if (connected === true && _mailStatus && _mailStatus.authProblem) {
+                /* Google turned the saved sign-in down (gmail-auth-state.mjs); 'client' = the server's OAuth settings, which reconnecting does not mend. */
+                const own = _mailStatus.authProblem === 'client';
+                banner = `<div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.28);border-radius:10px;padding:11px 13px;font-size:12.5px;color:var(--text2);line-height:1.6;">
+                    <b style="color:var(--red);">${own ? 'Google turned down WealthFlow\'s Gmail settings.' : 'Gmail needs to be reconnected.'}</b>
+                    ${own ? 'Statements will not arrive until GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET on the server are corrected.' : 'Google no longer accepts the saved sign-in. Disconnect the mailbox and connect it again; nothing already filed is touched.'}
+                </div>`;
             } else if (connected === true && _mailWatch && _mailWatch.watching === false) {
                 /* THE STATE THIS CHANGE EXISTS FOR. A mailbox can be perfectly
                  * connected and still deliver nothing, because Google pushes only
@@ -26737,6 +26744,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         async function _mailBootCheck() {
             try {
                 _mailSyncState.connected = await _mailConnected();
+                if (_mailSyncState.connected && _mailStatus && _mailStatus.authProblem && !window._wfGmailToldOnce) { window._wfGmailToldOnce = true; try { notify('Gmail sync is stopped — open Statement Sync for the fix.', 'error'); } catch (_) {} }
                 if (!_mailSyncState.connected) { renderMailSync(); return; }
                 if (!window.WFMailIntake) { renderMailSync(); return; }
 

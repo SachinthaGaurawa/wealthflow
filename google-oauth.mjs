@@ -15,6 +15,8 @@
  * ===========================================================================*/
 
 export const TOKEN_URL = 'https://oauth2.googleapis.com/token';
+/** The `error` words Google's token endpoint answers with (RFC 6749 §5.2); anything else it says is not carried. */
+const GOOGLE_ERRORS = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client', 'invalid_request', 'invalid_scope', 'access_denied', 'unsupported_grant_type']);
 
 /**
  * Exchange a refresh token for a short-lived access token.
@@ -42,7 +44,13 @@ export async function accessTokenFrom(refreshToken, env, fetchImpl) {
             signal: AbortSignal.timeout(8000),
         });
     } catch (_) { throw Object.assign(new Error('token refresh unreachable'), { transient: true }); }
-    if (!r.ok) throw Object.assign(new Error('token refresh rejected'), { transient: r.status === 429 || r.status >= 500 });  // never includes the token
+    if (!r.ok) {
+        /* WHICH rejection it was, for the one caller that has to tell a revoked token from a wrong client (gmail-auth-state.mjs). Google's own `error` word
+         * ("invalid_grant"…) is kept only when it is one of the known ones — nothing else of the answer, and never the token. */
+        let code = '';
+        try { const said = typeof r.json === 'function' ? await r.json() : null; code = said && typeof said.error === 'string' && GOOGLE_ERRORS.has(said.error) ? said.error : ''; } catch (_) { /* the status is enough */ }
+        throw Object.assign(new Error('token refresh rejected'), { transient: r.status === 429 || r.status >= 500, status: Number(r.status) || 0, ...(code ? { code } : {}) });  // never includes the token
+    }
     const out = await r.json();
     if (!out.access_token) throw new Error('token refresh returned no access token');
     return out.access_token;
