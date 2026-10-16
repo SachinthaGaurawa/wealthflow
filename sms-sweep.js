@@ -160,7 +160,7 @@ export async function handleSweep(req, res, deps) {
     let units = null; let balanceKind = null;
     if (client.configured) {
         const b = await client.balance();
-        if (b.ok) { units = b.units; console.info(`[WF-SMS] gateway balance read: units=${units === null ? 'unknown' : units} fields=${JSON.stringify(b.fields || {})}`); } else balanceKind = b.kind;
+        if (b.ok) { units = b.units; console.info(`[WF-SMS] gateway balance read: units=${units === null ? 'unknown' : units} fields=${JSON.stringify(b.fields || {})}${b.shape ? ` shape=${b.shape}` : ''}`); } else balanceKind = b.kind;
     }
 
     const allowed = deps.accountAllowed || ((uid) => accountStillAllowed({ admin, uid, env: deps.env, sleep: deps.sleep }));

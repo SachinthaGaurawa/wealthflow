@@ -286,10 +286,14 @@ export class TextLkClient {
         if (out.problem) return out.problem;
         const { response, json, text } = out;
         const status = s(json && json.status).trim().toLowerCase();
-        if (status === 'success' && json && json.data) {
-            const d = json.data;
-            const { units, fields } = readUnits(d);
-            return { ok: true, units, fields, expiresOn: s(d.expired_on || d.expires_on || '') || null };
+        // `data` may be an object, a bare figure (0 and "" included) or missing altogether (the figure beside `status`): all are read, none is assumed.
+        const hasData = !!json && json.data !== undefined && json.data !== null;
+        if (status === 'success' && json && (hasData || Object.keys(json).some((k) => k !== 'status' && k !== 'message'))) {
+            const d = hasData ? json.data : json;
+            const { units, fields, conflict } = readUnits(d);
+            const expiry = d && typeof d === 'object' && !Array.isArray(d) ? s(d.expired_on || d.expires_on || '') : '';
+            // An answer with no figure in it names what it did hold (the NAMES of its keys, never their values), so the next log shows the real shape.
+            return { ok: true, units, fields, expiresOn: expiry || null, ...(units === null && !conflict ? { shape: shapeOf(d) } : {}) };
         }
         const kind = classifyFailure(response.status, s(json && json.message) || text);
         return this._fail(kind === KIND.REJECTED && response.status === 404 ? KIND.UNKNOWN : kind, s(json && json.message) || `HTTP ${response.status}`, { httpStatus: response.status });
@@ -297,7 +301,10 @@ export class TextLkClient {
 }
 
 /** The fields the gateway has used for "what is left on the account". The shape of its answer was never verified against a live account, so every one is read. */
-const BALANCE_FIELDS = ['remaining_unit', 'remaining_units', 'remaining', 'sms_unit', 'sms_units', 'sms_balance', 'balance', 'credit', 'units'];
+const BALANCE_FIELDS = ['remaining_unit', 'remaining_units', 'remaining', 'sms_unit', 'sms_units', 'sms_balance', 'balance', 'credit', 'credits', 'units', 'available', 'available_units', 'remaining_balance', 'remaining_credit'];
+/** When none of those is there the answer is searched, up to three levels down, for a key that reads like a balance and is not a total, a limit, a price or a date. */
+const LIKELY_KEY = /remain|balance|credit|unit|avail|\bleft\b/i;
+const NOT_BALANCE_KEY = /total|limit|used|sent|spent|purchas|bought|max|min|cost|price|rate|expir|date|time|(^|_)id$|uid|name|email|phone|status|currency|plan|per_/i;
 
 /**
  * A figure out of what the gateway wrote: 10, "10", "1,250.50", "LKR 1,250.50". Nothing, "" or text without a number is NOT a figure
@@ -306,21 +313,55 @@ const BALANCE_FIELDS = ['remaining_unit', 'remaining_units', 'remaining', 'sms_u
 export function figureOf(v) {
     if (typeof v === 'number') return Number.isFinite(v) ? v : null;
     if (typeof v !== 'string') return null;
-    const m = v.replace(/ /g, ' ').match(/-?\d[\d,]*(?:\.\d+)?|-?\.\d+/);
+    const m = v.replace(/\u00a0/g, ' ').match(/-?\d[\d,]*(?:\.\d+)?|-?\.\d+/);
     if (!m) return null;
     const n = Number(m[0].replace(/,/g, ''));
     return Number.isFinite(n) ? n : null;
 }
 
+function searchFigures(node, path, out, depth) {
+    if (!node || typeof node !== 'object' || depth > 3) return;
+    for (const k of Object.keys(node)) {
+        const v = node[k];
+        const here = path ? `${path}.${k}` : k;
+        if (v && typeof v === 'object') { searchFigures(v, here, out, depth + 1); continue; }
+        if (LIKELY_KEY.test(k) && !NOT_BALANCE_KEY.test(k)) { const n = figureOf(v); if (n !== null) out[here] = n; }
+    }
+}
+
+/** The key names of an answer (never its values), for the log line that says what a balance answer without a figure did contain. */
+export function shapeOf(data) {
+    if (data === null || data === undefined) return 'none';
+    if (typeof data !== 'object') return typeof data;
+    if (Array.isArray(data)) return `array(${data.length})`;
+    const keys = [];
+    const walk = (o, path, depth) => {
+        for (const k of Object.keys(o)) {
+            const here = path ? `${path}.${k}` : k;
+            const v = o[k];
+            if (v && typeof v === 'object' && !Array.isArray(v) && depth < 2) walk(v, here, depth + 1); else keys.push(`${here}:${Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v}`);
+        }
+    };
+    walk(data, '', 0);
+    return keys.slice(0, 16).join(',').replace(/[^\w.:,()-]/g, '').slice(0, 300);
+}
+
 /**
- * Units left from the balance answer's `data`. Every known field that holds a figure is read; when they disagree (one says 0, another 120) the
- * answer is "unknown" (null), because the system must never tell an owner who has credit that it has run out, and unknown never stops a text.
+ * Units left from the balance answer's `data` (an object, or the figure itself). Every known field that holds a figure is read; failing that,
+ * the answer is searched for one that reads like a balance. When they disagree (one says 0, another 120) the answer is "unknown" (null),
+ * because the system must never tell an owner who has credit that it has run out, and unknown never stops a text.
  * `fields` names what was found, for the logs and the owner's health check.
  */
 export function readUnits(data) {
-    const d = data && typeof data === 'object' ? data : {};
     const fields = {};
+    if (data !== null && typeof data !== 'object') {
+        const n = figureOf(data);
+        if (n !== null) { fields.data = n; return { units: n, fields }; }
+        return { units: null, fields };
+    }
+    const d = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
     for (const k of BALANCE_FIELDS) { const n = figureOf(d[k]); if (n !== null) fields[k] = n; }
+    if (!Object.keys(fields).length) searchFigures(Array.isArray(data) ? data[0] : d, '', fields, 0);
     const values = [...new Set(Object.values(fields))];
     if (values.length === 1) return { units: values[0], fields };
     if (values.length > 1) return { units: null, fields, conflict: true };
