@@ -448,6 +448,11 @@ describe('the log panel', () => {
         expect(html).toMatch(/TEXTLK_API_TOKEN/);
         expect(html).toMatch(/3 units left/);
         expect(html.indexOf('not connected')).toBeLessThan(html.indexOf('Sent'));
+        // the credit left is shown whenever the gateway reported a figure, not only when it is low
+        expect(panelHtml({ rows: [], fmtWhen: () => '10 Oct, 18:59', status: { configured: true, units: 120, lowCredit: false, unitsAt: 1 } })).toMatch(/SMS credit left: <b>120 units<\/b>.*read 10 Oct, 18:59/);
+        expect(panelHtml({ rows: [], status: { configured: true, units: 1, unitsAt: 1 } })).toMatch(/<b>1 unit<\/b>/);
+        expect(panelHtml({ rows: [], fmtWhen: () => '10 Oct, 18:59', status: { configured: true, units: null, unitsAt: 1 } })).toMatch(/did not report a figure \(read 10 Oct, 18:59\)/);
+        expect(panelHtml({ rows: [], status: { configured: true } })).not.toMatch(/SMS credit left/);
         expect(panelHtml({ rows: [] })).toMatch(/No text messages yet/);
         expect(panelHtml({ disabled: true })).toMatch(/not enabled for this account/);
     });
