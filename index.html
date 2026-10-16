@@ -5721,6 +5721,13 @@
                 </svg>
                 Continue with Google
             </button>
+            <div id="authErr" role="alert" aria-live="assertive"
+                style="display:none;margin-top:14px;padding:12px 14px;border-radius:12px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.5);color:var(--text);font-size:13px;line-height:1.5;text-align:left;">
+                <div id="authErrTitle" style="font-weight:700;margin-bottom:4px;"></div>
+                <div id="authErrBody"></div>
+                <div id="authErrCause" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid rgba(239,68,68,.35);"></div>
+                <div id="authErrCode" style="margin-top:6px;font-size:11px;opacity:.7;word-break:break-word;"></div>
+            </div>
             <div style="margin-top:16px;font-size:11px;color:var(--text3);line-height:1.6;display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;"><i data-wfi="lock"></i> End-to-end encrypted ·
                 Your data stays yours · Powered by Google Firebase &amp; Gemini AI</div>
         </div>
@@ -7946,7 +7953,79 @@
         let currentUser = null;
 
         // ==================== GOOGLE AUTHENTICATION ====================
+        // Why sign-in did not finish, said where the person is looking. Until
+        // 2026-10-16 every failure went to a toast that sits UNDER the sign-in
+        // screen (z-index 600 vs 1000), and a failed redirect result was swallowed
+        // by an empty catch: the window closed and the Welcome screen came back
+        // with no word, whatever the cause. The panel (#authErr) lives inside the
+        // sign-in card; /api/auth-health then names the real cause (a domain
+        // missing from Firebase, a switched-off provider, a deleted OAuth client).
+        const WF_AUTH_ERR = {
+            'auth/unauthorized-domain': ['This address is not allowed to sign in', '{host} is not on Firebase\'s list of authorized domains. The owner must add it in Firebase console → Authentication → Settings → Authorized domains.'],
+            'auth/operation-not-allowed': ['Google sign-in is switched off', 'The Google sign-in provider is disabled in the Firebase project. The owner must enable it in Firebase console → Authentication → Sign-in method → Google.'],
+            'auth/popup-closed-by-user': ['The sign-in window closed before it finished', 'If you did not close it yourself, Google or Firebase stopped the sign-in. The reason is shown below when it can be found.'],
+            'auth/popup-blocked': ['Your browser blocked the sign-in window', 'Allow pop-ups for this site, or try again and the page will sign you in without a pop-up.'],
+            'auth/network-request-failed': ['No connection to the sign-in service', 'Check your internet connection (or a VPN / ad blocker) and try again.'],
+            'auth/web-storage-unsupported': ['This browser is blocking storage', 'Sign-in needs cookies and site storage. Turn off private mode or "block all cookies" for this site and try again.'],
+            'auth/internal-error': ['The sign-in service returned an error', 'Firebase could not start the Google sign-in. The reason is shown below when it can be found.'],
+            'auth/firebase-app-check-token-is-invalid': ['Sign-in is blocked by Firebase App Check', 'Firebase App Check is enforced for Authentication, but this app sends no App Check token. The owner must set Authentication to Unenforced in Firebase console → App Check → APIs.'],
+            'auth/invalid-api-key': ['The app\'s Firebase key is refused', 'Google rejected the web API key. The owner must check the key\'s restrictions in Google Cloud console → Credentials.'],
+            'auth/app-not-authorized': ['This app is not allowed to use Firebase', 'The web API key is not allowed for this address. The owner must check the key\'s restrictions in Google Cloud console → Credentials.'],
+            'auth/too-many-requests': ['Too many attempts', 'Wait a few minutes and try again.'],
+            'auth/user-disabled': ['This account is disabled', 'This Google account has been disabled in the WealthFlow project.']
+        };
+
+        function wfAuthDiagnose(ms) {
+            // Ask the server (which can talk to Firebase and Google directly) what is
+            // wrong with sign-in. Never throws; resolves null when it cannot answer.
+            return new Promise(resolve => {
+                let done = false;
+                const finish = v => { if (!done) { done = true; resolve(v); } };
+                try {
+                    const ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+                    const timer = setTimeout(() => { try { ctl && ctl.abort(); } catch (_) {} finish(null); }, ms || 6000);
+                    fetch('/api/auth-health', { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+                        .then(r => r.ok ? r.json() : null)
+                        .then(d => { clearTimeout(timer); finish(d && typeof d === 'object' ? d : null); })
+                        .catch(() => { clearTimeout(timer); finish(null); });
+                } catch (_) { finish(null); }
+            });
+        }
+
+        function wfAuthShowError(err, diag) {
+            try {
+                const box = document.getElementById('authErr');
+                if (!box) return;
+                const code = (err && err.code) || '';
+                const m = WF_AUTH_ERR[code] || ['Google sign-in did not finish', (err && err.message) || 'Something stopped the sign-in.'];
+                document.getElementById('authErrTitle').textContent = m[0];
+                document.getElementById('authErrBody').textContent = m[1].replace('{host}', location.hostname);
+                document.getElementById('authErrCode').textContent = code ? ('Code: ' + code) : '';
+                const cause = document.getElementById('authErrCause');
+                const showCause = d => {
+                    const p = d && Array.isArray(d.problems) ? d.problems.find(x => x && x.scope === 'signin' && x.severity === 'critical') : null;
+                    if (!p) { cause.style.display = 'none'; return; }
+                    cause.textContent = 'Cause found: ' + p.title + '  → ' + p.fix;
+                    cause.style.display = 'block';
+                };
+                box.style.display = 'block';
+                if (diag) showCause(diag);
+                else wfAuthDiagnose(6000).then(showCause);
+            } catch (_) { /* the panel is a courtesy; never break sign-in over it */ }
+        }
+
+        function wfAuthFail(err, diag) {
+            try {
+                const splash = document.getElementById('splash');
+                if (splash) splash.classList.add('hide');
+            } catch (_) {}
+            console.error('Sign-in failed:', err);
+            wfAuthShowError(err, diag);
+            try { notify('Sign-in failed: ' + ((err && err.message) || (err && err.code) || 'unknown'), 'error'); } catch (_) {}
+        }
+
         function signInWithGoogle() {
+            try { const b = document.getElementById('authErr'); if (b) b.style.display = 'none'; } catch (_) {}
             const provider = new firebase.auth.GoogleAuthProvider();
             provider.setCustomParameters({ prompt: 'select_account' });
             // Request Drive file scope UP FRONT so manual/auto backup never
@@ -7990,18 +8069,29 @@
                 // PIN screen.
                 console.log('[Auth] @checkCircle@ Popup sign-in complete — listener will route to PIN screen');
             }).catch(err => {
-                console.warn("Popup blocked or failed, trying redirect...", err.code);
-                if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
-                    firebase.auth().signInWithRedirect(provider);
+                const code = (err && err.code) || '';
+                console.warn('Popup blocked or failed:', code);
+                const redirect = () => {
+                    try { firebase.auth().signInWithRedirect(provider).catch(e2 => wfAuthFail(e2)); }
+                    catch (e2) { wfAuthFail(e2); }
+                };
+                if (code === 'auth/popup-blocked') {
+                    redirect();
+                } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+                    // A window that closes on its own looks the same whether the
+                    // person closed it or Firebase's page failed and closed it.
+                    // Ask the server whether Google sign-in can work at all: if
+                    // it cannot, say why now, instead of a redirect that fails
+                    // the same way and comes back silent. Otherwise redirect, as
+                    // before (mobile / PWA).
+                    wfAuthDiagnose(5000).then(d => {
+                        if (d && d.signInOk === false) wfAuthFail(err, d);
+                        else redirect();
+                    });
                 } else {
                     // v7.5.7 — restore the auth screen if sign-in failed so
                     // the user isn't stuck on the splash spinner.
-                    try {
-                        const splash = document.getElementById('splash');
-                        if (splash) splash.classList.add('hide');
-                    } catch (_) {}
-                    console.error("Sign-in failed:", err);
-                    notify('Sign-in failed: ' + err.message, 'error');
+                    wfAuthFail(err);
                 }
             });
         }
@@ -14023,7 +14113,7 @@ async function _wfRedirectToGoogleForCode() {
         var scope = 'https://www.googleapis.com/auth/drive.file';
         try { if (localStorage.getItem('wf_clean_drive_browser') === '1') scope += ' https://www.googleapis.com/auth/drive.readonly'; } catch (_) {}
         var q = {
-            client_id: '1020193373377-paqvs1sgqr75l0lbcs9hju02fmouc0da.apps.googleusercontent.com',
+            client_id: '1020193373377-i2p46jo266q77mtmqd9uekrhdsa94oqa.apps.googleusercontent.com',
             redirect_uri: redirectUri,
             response_type: 'code',
             scope: scope,
@@ -14101,7 +14191,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             if (typeof google === 'undefined') return;
 
             tokenClient = google.accounts.oauth2.initTokenClient({
-                client_id: '1020193373377-paqvs1sgqr75l0lbcs9hju02fmouc0da.apps.googleusercontent.com',
+                client_id: '1020193373377-i2p46jo266q77mtmqd9uekrhdsa94oqa.apps.googleusercontent.com',
                 scope: 'https://www.googleapis.com/auth/drive.file',
                 // Pre-fill the Google account the user already signed in with so
                 // the chooser does NOT appear again.
@@ -14875,7 +14965,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) return resolve(null);
                     if (!_wfRoTokenClient) {
                         _wfRoTokenClient = google.accounts.oauth2.initTokenClient({
-                            client_id: '1020193373377-paqvs1sgqr75l0lbcs9hju02fmouc0da.apps.googleusercontent.com',
+                            client_id: '1020193373377-i2p46jo266q77mtmqd9uekrhdsa94oqa.apps.googleusercontent.com',
                             scope: _WF_DRIVE_RO_SCOPE,
                             login_hint: (window.currentUser && window.currentUser.email) ? window.currentUser.email : undefined,
                             callback: (resp) => {
@@ -16305,6 +16395,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 firebase.auth().signInWithPopup(provider).catch(err => {
                     if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user') {
                         firebase.auth().signInWithRedirect(provider);
+                    } else {
+                        wfAuthShowError(err);
                     }
                 });
             });
@@ -16610,7 +16702,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                     }
                                 }
                             } catch (_) {}
-                        }).catch(() => {});
+                        }).catch(e => { try { wfAuthShowError(e); } catch (_) {} });
 
                         firebase.auth().onAuthStateChanged(async (user) => {
                             if (window.WFStatementCloud) window.WFStatementCloud.authChanged(user);

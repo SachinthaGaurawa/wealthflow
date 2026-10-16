@@ -119,6 +119,8 @@ const HANDLERS = {
     'gmail-scan': () => import('../gmail-scan.js'),
     // What the web says about the outside world (a rate, a price, a tax rule), looked up for the Advisor with the sources it came from. The question only, scrubbed of figures; never the books.
     'advisor-research': () => import('../advisor-research.js'),
+    // Why Google sign-in fails, asked of Firebase and Google directly: authorized domains, the provider and its OAuth client, the hosting handler. Public config only; no secrets, no data.
+    'auth-health': () => import('../auth-health.js'),
     'health': () => import('../health.js'),
     'inbox-ack': () => import('../inbox-ack.js'),
     'inbox-pull': () => import('../inbox-pull.js'),

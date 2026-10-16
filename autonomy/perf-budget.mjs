@@ -333,7 +333,9 @@ export const BUDGETS = {
     // and a hand-picked category that the title suggestion no longer moves. About a third is comments. No new script or request.
     // Both changes together (merged 2026-10-10): measured 2,265,753, ceiling 2_268_000 (~0.1% headroom).
     // 2026-10-10 (Cheque Tracker review round + main's later edits to index.html): measured 2,268,014 -> 2_270_500. The manual upload now links a cleared cheque to the entry the owner typed for the same payment (the worker already did).
-    htmlBytes: 2_270_500,
+    // 2026-10-16 (Google sign-in failures are shown and diagnosed): 2,270,500 -> 2_279_000 (measured 2,276,353 + ~0.1% headroom). A sign-in error panel inside the sign-in card, the error-code
+    // wording, one call to /api/auth-health, and the redirect result that used to be swallowed by an empty catch. About a third is comments. No new script or request at load.
+    htmlBytes: 2_279_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
