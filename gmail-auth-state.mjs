@@ -13,6 +13,9 @@
  *     occasional probe is also what un-marks the mailbox if the refusal was a one-off (the observed one was): the first token that is minted clears the mark.
  *   · NOTHING IS DELETED. The refresh token stays where it is, so disconnecting (which removes it) and connecting again (which writes a new one and clears this mark) remain the owner's decision.
  *   · NO TOKEN, NO ADDRESS, NO GOOGLE TEXT is logged, stored or sent: the record carries a kind, a Google error word from a fixed list, a status number and times.
+ *   · A NEW TOKEN IS CHECKED WHEN IT IS PASTED (`verifyNewToken`). 2026-10-16: the owner pasted a fresh token twice and was told "Gmail connected" both times; Google had answered `invalid_grant` ("Bad Request": a token that
+ *     was not issued to this app's OAuth client) within seconds, at the first watch call, and the card turned red afterwards. A token Google definitely refuses is now not saved, and the owner is told why while the
+ *     paste box is still open: expired/revoked (a consent screen in Testing expires refresh tokens after 7 days), a token from another OAuth client, or the server's own client settings. A timeout or a 5xx never blocks a save.
  * ===========================================================================*/
 
 import { accessTokenFrom } from './google-oauth.mjs';
@@ -24,6 +27,8 @@ export const AUTH_FIELD = 'gmailAuth';
 export const PROBE_FIRST_MS = 6 * 3600e3, PROBE_MAX_MS = 24 * 3600e3, ALERT_EVERY_MS = 24 * 3600e3;
 
 const num = value => { const n = Number(value); return Number.isFinite(n) ? n : 0; };
+/** Only the two words google-oauth.mjs `hintFrom` can produce survive; anything else (an old or damaged record) reads as no hint. */
+const hintOnly = value => (value === 'expired' || value === 'mismatch' ? value : '');
 
 /**
  * What a failed exchange was.
@@ -44,7 +49,7 @@ export function classify(error) {
 export function authOf(doc) {
     const raw = doc && doc[AUTH_FIELD];
     if (!raw || typeof raw !== 'object' || !raw.kind) return null;
-    return { kind: String(raw.kind), since: num(raw.since), lastAt: num(raw.lastAt), attempts: Math.max(1, num(raw.attempts)), alertedAt: num(raw.alertedAt), code: String(raw.code || ''), status: num(raw.status) };
+    return { kind: String(raw.kind), since: num(raw.since), lastAt: num(raw.lastAt), attempts: Math.max(1, num(raw.attempts)), alertedAt: num(raw.alertedAt), code: String(raw.code || ''), status: num(raw.status), hint: hintOnly(raw.hint) };
 }
 
 /** How long Google is left alone after the n-th refusal in a row. */
@@ -56,7 +61,7 @@ export const mayAsk = (auth, now = Date.now()) => !auth || now - auth.lastAt >= 
 /** The record after another refusal: `since` stays at the first one, the count grows, the alert mark is kept. */
 export function afterRefusal(auth, error, now = Date.now()) {
     const kind = classify(error);
-    return { kind, since: auth ? auth.since : now, lastAt: now, attempts: (auth ? auth.attempts : 0) + 1, alertedAt: auth ? auth.alertedAt : 0, code: String(error && error.code || ''), status: num(error && error.status) };
+    return { kind, since: auth ? auth.since : now, lastAt: now, attempts: (auth ? auth.attempts : 0) + 1, alertedAt: auth ? auth.alertedAt : 0, code: String(error && error.code || ''), status: num(error && error.status), hint: hintOnly(error && error.hint) };
 }
 
 /** What the app may be told: whether the owner must reconnect, why, and since when. Nothing of the token or of Google's answer. */
@@ -82,6 +87,35 @@ export const refusalText = error => (error && error.kind === 'client'
     : 'Gmail refused the saved token. Disconnect and connect the mailbox again.');
 
 /**
+ * The sentence the owner reads when a token they just pasted was refused: what happened and the one thing to do about it. Names the OAuth client id (public, like the one in the page) so the owner can match it to the one in Google Cloud.
+ * Never carries the token or any of Google's own text.
+ */
+export function saveRefusalText(kind, hint, env = process.env) {
+    const clientId = String((env && env.GOOGLE_OAUTH_CLIENT_ID) || '').trim();
+    if (kind === 'client') return 'Google turned down the app\'s own OAuth settings (GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET on the server), so no token can be saved yet. Check those two values in Vercel; a new token will not help.';
+    if (hint === 'expired') return 'Google says this refresh token has expired or been revoked, so it was not saved. If the Google OAuth consent screen is in "Testing", refresh tokens last only 7 days: publish the app (Google Cloud, Google Auth Platform, Audience, Publish app), then create a new token.';
+    return 'Google did not accept this token for WealthFlow\'s OAuth client' + (clientId ? ' (' + clientId + ')' : '') + ', so it was not saved. A refresh token only works with the client that issued it: in the OAuth Playground tick "Use your own OAuth credentials", enter that client\'s id and secret, authorize the Gmail read-only scope and paste the whole refresh_token. (A token cut short when pasted is refused the same way.)';
+}
+
+/**
+ * Ask Google, once, whether a token that is about to be saved works for this app. Only a DEFINITE refusal blocks the save; no OAuth client configured, a timeout, a 429 or a 5xx say nothing about the token, so it is saved as before.
+ * @returns {Promise<{checked: boolean, refused: boolean, kind?: string, hint?: string, text?: string}>}
+ */
+export async function verifyNewToken({ token, env = process.env, f = fetch, mint = accessTokenFrom, log = console.warn }) {
+    if (!String((env && env.GOOGLE_OAUTH_CLIENT_ID) || '').trim() || !String((env && env.GOOGLE_OAUTH_CLIENT_SECRET) || '').trim()) return { checked: false, refused: false };
+    try {
+        await mint(token, env, f);
+        return { checked: true, refused: false };
+    } catch (error) {
+        const kind = classify(error);
+        if (kind === 'transient' || kind === 'other') return { checked: false, refused: false };
+        const hint = hintOnly(error && error.hint);
+        try { log(JSON.stringify({ evt: 'gmail-token-refused-on-save', kind, code: String(error && error.code || ''), status: num(error && error.status), hint })); } catch (_) { /* a log line never blocks the answer */ }
+        return { checked: true, refused: true, kind, hint, text: saveRefusalText(kind, hint, env) };
+    }
+}
+
+/**
  * An access token for the mailbox, or an error: the exchange's own (a timeout, a 5xx — unchanged), or `gmail-reconnect-required` when Google has refused the saved sign-in.
  * Writes only the `gmailAuth` field of the mailbox document (a refusal sets it, the first token that works clears it). Never throws for a failed write or a failed alert.
  * @param {object} o
@@ -103,11 +137,11 @@ export async function mintAccessToken({ ref, mail, env = process.env, f = fetch,
             try { const sent = await alert({ env, text: kind === 'client' ? ALERT_TEXT.client : ALERT_TEXT.other, extra: { kind } }); if (sent && sent.sent) next.alertedAt = now; } catch (_) { /* an alert never stops the caller */ }
         }
         try { if (ref && typeof ref.set === 'function') await ref.set({ [AUTH_FIELD]: next }, { merge: true }); } catch (_) { /* the refusal is still thrown */ }
-        try { log(JSON.stringify({ evt: 'gmail-auth-refused', kind, code: next.code, status: next.status, attempts: next.attempts, firstAt: next.since })); } catch (_) { /* a log line never stops a sync */ }
+        try { log(JSON.stringify({ evt: 'gmail-auth-refused', kind, code: next.code, status: next.status, hint: next.hint, attempts: next.attempts, firstAt: next.since })); } catch (_) { /* a log line never stops a sync */ }
         throw reconnectError(next);
     }
     if (auth) { try { if (ref && typeof ref.set === 'function') await ref.set({ [AUTH_FIELD]: null }, { merge: true }); } catch (_) { /* the next token clears it */ } }
     return token;
 }
 
-export default { RECONNECT_REASON, AUTH_FIELD, classify, authOf, probeGapMs, mayAsk, afterRefusal, publicAuth, reconnectError, refusalText, mintAccessToken };
+export default { RECONNECT_REASON, AUTH_FIELD, classify, authOf, probeGapMs, mayAsk, afterRefusal, publicAuth, reconnectError, refusalText, saveRefusalText, verifyNewToken, mintAccessToken };

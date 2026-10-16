@@ -42,6 +42,7 @@ import {
     MAIL_ROOT, identify, looksLikeRefreshToken, linkRecord, statusOf, missingConfig,
     SENDERS_FIELD, sendersOf, heldOf,
 } from './gmail-link.mjs';
+import { verifyNewToken } from './gmail-auth-state.mjs';
 import { dedupeStored, BANKS, releasedBy } from './wealthflow-mail-ingest.mjs';
 import { nameVerdict, VERDICT as STATEMENT_ID } from './wealthflow-statement-identity.js';
 import {
@@ -647,7 +648,7 @@ export default async function handler(req, res) {
     }
 
     const body = await readBody(req);
-    const token = body && body.refresh_token;
+    const token = body && typeof body.refresh_token === 'string' ? body.refresh_token.trim() : body && body.refresh_token;
     if (!looksLikeRefreshToken(token)) {
         /* Says WHICH mistake without echoing the value back — an error that
          * quotes the credential it rejected is how secrets reach logs. */
@@ -658,6 +659,12 @@ export default async function handler(req, res) {
                  + 'authorization code (4/…), not the client secret, and not the whole JSON.',
         });
     }
+
+    /* ASKED OF GOOGLE BEFORE IT IS SAVED. Saving only checked the SHAPE, so a token Google would never accept (one made for another OAuth client, an expired one, one cut short when pasted) was stored, the card said
+     * "connected", and the refusal showed up minutes later at the first watch call. Only a definite refusal blocks the save and it is answered here, in the paste box, with the reason and the one thing to do
+     * (gmail-auth-state.mjs `verifyNewToken`); a timeout, a 5xx or an unconfigured OAuth client still saves, as before. Nothing of the token or of Google's own text is returned or logged. */
+    const check = await verifyNewToken({ token });
+    if (check.refused) return j(res, 422, { ok: false, error: check.text, refused: check.kind, hint: check.hint || undefined });
 
     try {
         /* A NEW SIGN-IN CLEARS THE MARK THAT THE OLD ONE WAS TURNED DOWN (gmail-auth-state.mjs), and the old watch failure that said the same thing (gmail-renew.js). */

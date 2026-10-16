@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFirestore } from './helpers/fake-firestore.js';
-import { accessTokenFrom } from '../google-oauth.mjs';
+import { accessTokenFrom, hintFrom } from '../google-oauth.mjs';
 import {
-    classify, authOf, probeGapMs, mayAsk, afterRefusal, publicAuth, mintAccessToken, refusalText, RECONNECT_REASON,
+    classify, authOf, probeGapMs, mayAsk, afterRefusal, publicAuth, mintAccessToken, refusalText, RECONNECT_REASON, verifyNewToken, saveRefusalText,
     PROBE_FIRST_MS, PROBE_MAX_MS, ALERT_EVERY_MS,
 } from '../gmail-auth-state.mjs';
 import { statusOf, linkRecord } from '../gmail-link.mjs';
@@ -242,5 +242,106 @@ describe('every door the mailbox\'s token is spent at', () => {
         const again = await runStatementSync({ db, owner, env: ENV, f: tokenRefused(calls) }).catch(e => e);
         expect(again.message).toBe(RECONNECT_REASON);
         expect(calls).toHaveLength(1);                                               // no retry spam on the schedule or an open app
+    });
+});
+
+/* 2026-10-16: the owner pasted a fresh refresh token twice; the card said "connected" and Google had already answered `invalid_grant` ("Bad Request") at the first watch call.
+ * A token Google definitely refuses is now caught in the paste box, with the reason, and not saved. */
+describe('google-oauth: which invalid_grant it was (two fixed words, never Google\'s text)', () => {
+    const answer = body => async () => ({ ok: false, status: 400, json: async () => body });
+    it.each([
+        ['Token has been expired or revoked.', 'expired'],
+        ['Token has been expired or revoked', 'expired'],
+        ['Bad Request', 'mismatch'],
+        ['bad request.', 'mismatch'],
+        ['Some other sentence', ''],
+        ['', ''], [undefined, ''], [null, ''], [42, ''],
+    ])('%j -> %j', (text, hint) => { expect(hintFrom(text)).toBe(hint); });
+    it('rides on the refusal as a word, and none of the description or the token goes with it', async () => {
+        const mismatch = await accessTokenFrom(REFRESH, ENV, answer({ error: 'invalid_grant', error_description: 'Bad Request' })).catch(e => e);
+        expect(mismatch).toMatchObject({ code: 'invalid_grant', status: 400, hint: 'mismatch' });
+        const expired = await accessTokenFrom(REFRESH, ENV, answer({ error: 'invalid_grant', error_description: `Token has been expired or revoked ${REFRESH}` })).catch(e => e);
+        expect(expired.hint).toBe('expired');
+        expect(JSON.stringify({ ...expired, message: expired.message })).not.toContain(REFRESH);
+        expect(await accessTokenFrom(REFRESH, ENV, answer({ error: 'invalid_grant' })).catch(e => e)).not.toHaveProperty('hint');
+    });
+});
+
+describe('the hint is kept on the mark and in the log line, as one of the two words only', () => {
+    it('a refusal records it; an old or damaged mark reads as no hint', async () => {
+        const m = mailbox(), lines = [];
+        await mintAccessToken({ ref: m.ref, mail: m.doc, env: ENV, now: T0, mint: async () => { throw Object.assign(refused('invalid_grant'), { hint: 'mismatch' }); }, alert: async () => ({ sent: false }), log: line => lines.push(line) }).catch(() => {});
+        expect(m.doc.gmailAuth).toMatchObject({ kind: 'revoked', hint: 'mismatch' });
+        expect(JSON.parse(lines[0])).toMatchObject({ evt: 'gmail-auth-refused', hint: 'mismatch' });
+        expect(authOf({ gmailAuth: { kind: 'revoked', hint: 'anything Google said' } }).hint).toBe('');
+        expect(authOf({ gmailAuth: { kind: 'revoked' } }).hint).toBe('');
+        expect(afterRefusal(null, refused('invalid_grant'), T0).hint).toBe('');
+    });
+    it('the app is still told only a kind and a time', () => {
+        expect(statusOf({ refresh_token: REFRESH, gmailAuth: { kind: 'revoked', since: T0, lastAt: T0, attempts: 1, hint: 'mismatch' } })).not.toHaveProperty('hint');
+    });
+});
+
+describe('verifyNewToken: a pasted token is asked of Google before it is saved', () => {
+    const ID = '1020193373377-i2p46jo266q77mtmqd9uekrhdsa94oqa.apps.googleusercontent.com';
+    const ENV2 = { GOOGLE_OAUTH_CLIENT_ID: ID, GOOGLE_OAUTH_CLIENT_SECRET: 'GOCSPX-server-secret-value' };
+    const check = (mint, env = ENV2, log = () => {}) => verifyNewToken({ token: REFRESH, env, mint, log });
+
+    it('a token Google gives an access token for is accepted', async () => {
+        const mint = vi.fn(async () => 'ya29.fine');
+        expect(await check(mint)).toEqual({ checked: true, refused: false });
+        expect(mint).toHaveBeenCalledTimes(1);
+        expect(mint.mock.calls[0][0]).toBe(REFRESH);
+    });
+    it('"Bad Request" says the token was not made for this app\'s OAuth client, names that client, and tells what to do', async () => {
+        const out = await check(async () => { throw Object.assign(refused('invalid_grant'), { hint: 'mismatch' }); });
+        expect(out).toMatchObject({ checked: true, refused: true, kind: 'revoked', hint: 'mismatch' });
+        expect(out.text).toContain(ID);
+        expect(out.text).toMatch(/Use your own OAuth credentials/);
+        expect(out.text).toMatch(/not saved/);
+    });
+    it('"expired or revoked" points at the 7-day Testing limit and Publish app', async () => {
+        const out = await check(async () => { throw Object.assign(refused('invalid_grant'), { hint: 'expired' }); });
+        expect(out).toMatchObject({ refused: true, hint: 'expired' });
+        expect(out.text).toMatch(/7 days/); expect(out.text).toMatch(/Publish app/);
+    });
+    it('a refusal with no hint, and a bare 400/401/403, get the client advice', async () => {
+        for (const error of [refused('invalid_grant'), refused('', 400), refused('', 403), refused('invalid_request', 400)]) {
+            const out = await check(async () => { throw error; });
+            expect(out).toMatchObject({ refused: true });
+            expect(out.text).toContain(ID);
+        }
+    });
+    it('a refused OAuth client says the server\'s settings need checking, not the token', async () => {
+        const out = await check(async () => { throw refused('invalid_client', 401); });
+        expect(out).toMatchObject({ refused: true, kind: 'client' });
+        expect(out.text).toMatch(/GOOGLE_OAUTH_CLIENT_ID/); expect(out.text).toMatch(/a new token will not help/);
+    });
+    it('a timeout, a 429, a 5xx and an unexpected answer never block a save', async () => {
+        for (const error of [transient(), Object.assign(new Error('x'), { transient: true, status: 429 }), Object.assign(new Error('x'), { transient: true, status: 503 }), new Error('token refresh returned no access token')]) {
+            expect(await check(async () => { throw error; })).toEqual({ checked: false, refused: false });
+        }
+    });
+    it('with no OAuth client configured Google is not asked at all', async () => {
+        const mint = vi.fn();
+        for (const env of [{}, { GOOGLE_OAUTH_CLIENT_ID: ID }, { GOOGLE_OAUTH_CLIENT_SECRET: 'x' }, { GOOGLE_OAUTH_CLIENT_ID: ' ', GOOGLE_OAUTH_CLIENT_SECRET: ' ' }]) {
+            expect(await check(mint, env)).toEqual({ checked: false, refused: false });
+        }
+        expect(mint).not.toHaveBeenCalled();
+    });
+    it('neither the answer nor the log line carries the token, the secret or any text of Google\'s', async () => {
+        const lines = [];
+        const out = await check(async () => { throw Object.assign(refused('invalid_grant'), { hint: 'mismatch', message: `Bad Request ${REFRESH}` }); }, ENV2, line => lines.push(line));
+        const seen = JSON.stringify([out, lines]);
+        expect(seen).not.toContain(REFRESH); expect(seen).not.toContain(ENV2.GOOGLE_OAUTH_CLIENT_SECRET);
+        expect(JSON.parse(lines[0])).toEqual({ evt: 'gmail-token-refused-on-save', kind: 'revoked', code: 'invalid_grant', status: 400, hint: 'mismatch' });
+    });
+    it('a failing log line never changes the answer', async () => {
+        const out = await check(async () => { throw refused('invalid_grant'); }, ENV2, () => { throw new Error('log'); });
+        expect(out).toMatchObject({ refused: true });
+    });
+    it('saveRefusalText works with no environment at all', () => {
+        expect(saveRefusalText('revoked', '', {})).toMatch(/OAuth Playground/);
+        expect(saveRefusalText('revoked', '', {})).not.toMatch(/\(\)/);
     });
 });
