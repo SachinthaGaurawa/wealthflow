@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
-    FIREBASE, APP_HOSTS, isAuthorizedDomain, hostsToCheck, decodeAuthError,
+    FIREBASE, APP_HOSTS, isAuthorizedDomain, hostsToCheck, apiKeyFromPage, decodeAuthError,
     classifyOAuthResponse, clientIdFromAuthUri, toolkitErrorCode, buildProblems
 } from '../auth-health.js';
 import { DEFAULT_CLIENT_ID } from '../drive-auth.js';
@@ -28,9 +28,22 @@ describe('constants match what the page ships', () => {
         const m = INDEX.match(/const firebaseConfig = \{([\s\S]*?)\};/);
         expect(m).toBeTruthy();
         const get = (k) => (m[1].match(new RegExp(`${k}:\\s*"([^"]+)"`)) || [])[1];
-        expect(FIREBASE.apiKey).toBe(get('apiKey'));
         expect(FIREBASE.authDomain).toBe(get('authDomain'));
         expect(FIREBASE.projectId).toBe(get('projectId'));
+    });
+
+    it('the apiKey is read from the page, never written in the server file (the CI secret scan allows it in index.html only)', () => {
+        const key = apiKeyFromPage(INDEX);
+        expect(key).toMatch(/^AIza[0-9A-Za-z_-]{35}$/);
+        const src = fs.readFileSync(path.join(ROOT, 'auth-health.js'), 'utf8');
+        expect(src).not.toMatch(/AIza[0-9A-Za-z_-]{20,}/);
+        expect(src).not.toContain(key);
+    });
+
+    it('apiKeyFromPage finds the key in the firebaseConfig literal and nowhere else', () => {
+        expect(apiKeyFromPage('const firebaseConfig = { apiKey: "k-1", authDomain: "a" };')).toBe('k-1');
+        expect(apiKeyFromPage('const other = { apiKey: "nope" };')).toBe('');
+        expect(apiKeyFromPage('')).toBe('');
     });
 
     it('the Drive client the server defaults to is the one the page hard-codes', () => {
@@ -106,6 +119,7 @@ describe('buildProblems', () => {
     const healthy = () => ({
         hosts: ['www.wealthflow.lk'],
         firebase: {
+            apiKeyFound: true,
             domains: { list: ['wealthflow.lk'], hosts: [{ host: 'www.wealthflow.lk', authorized: true }] },
             handler: { status: 200 }, iframe: { status: 200 },
             googleProvider: { ok: true, clientId: 'c.apps.googleusercontent.com' }
@@ -177,6 +191,15 @@ describe('buildProblems', () => {
         expect(p.fix).toContain('GOOGLE_OAUTH_CLIENT_ID');
         expect(p.scope).toBe('drive');
     });
+    it('without an apiKey it says so once, as a warning, instead of three confusing errors', () => {
+        const r = healthy();
+        r.firebase.apiKeyFound = false;
+        r.firebase.domains = { error: 'no key', hosts: [] };
+        r.firebase.googleProvider = { ok: false, error: 'no key', errorCode: 'NO_API_KEY' };
+        const p = buildProblems(r);
+        expect(p.map((x) => x.code)).toEqual(['api-key-unknown']);
+        expect(p[0].severity).toBe('warning');
+    });
     it('an unreadable domain list is a warning, not a verdict', () => {
         const r = healthy();
         r.firebase.domains = { error: 'status 500', hosts: [] };
@@ -199,14 +222,16 @@ describe('GET /api/auth-health', () => {
             json(b) { o.body = b; return o; }
         });
     };
-    const reply = (status, body, headers = {}) => ({
-        status, headers: { get: (k) => headers[String(k).toLowerCase()] ?? null }, json: async () => body
+    const reply = (status, body, headers = {}, text = '') => ({
+        status, headers: { get: (k) => headers[String(k).toLowerCase()] ?? null }, json: async () => body, text: async () => text
     });
+    const FAKE_KEY = 'test-key-not-a-real-credential';
 
     beforeEach(async () => {
         vi.resetModules();
         calls = [];
         process.env.GOOGLE_OAUTH_CLIENT_SECRET = SECRET;
+        process.env.FIREBASE_API_KEY = FAKE_KEY;
         delete process.env.GOOGLE_OAUTH_CLIENT_ID;
         vi.spyOn(console, 'log').mockImplementation(() => {});
         vi.stubGlobal('fetch', vi.fn(async (url, init = {}) => {
@@ -223,7 +248,7 @@ describe('GET /api/auth-health', () => {
         }));
         ({ default: handler } = await import('../auth-health.js'));
     });
-    afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); delete process.env.GOOGLE_OAUTH_CLIENT_SECRET; });
+    afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); delete process.env.GOOGLE_OAUTH_CLIENT_SECRET; delete process.env.FIREBASE_API_KEY; });
 
     it('names the deleted Drive client as the one problem, and a working provider as fine', async () => {
         const r = res();
@@ -244,6 +269,28 @@ describe('GET /api/auth-health', () => {
         const text = JSON.stringify(r.body);
         expect(text).not.toContain(SECRET);
         expect(r.body.oauth.serverClientSecretSet).toBe(true);
+    });
+
+    it('uses FIREBASE_API_KEY for Firebase, and the page\'s own key when the variable is unset', async () => {
+        await handler({ method: 'GET', headers: {} }, res());
+        expect(calls.filter((c) => c.url.includes('identitytoolkit')).every((c) => c.url.includes('key=' + FAKE_KEY))).toBe(true);
+
+        vi.resetModules();
+        delete process.env.FIREBASE_API_KEY;
+        calls.length = 0;
+        const base = fetch.getMockImplementation();
+        fetch.mockImplementation(async (url, init = {}) => {
+            if (String(url) === 'https://www.wealthflow.lk/') {
+                calls.push({ url: String(url), method: 'GET' });
+                return reply(200, null, {}, 'const firebaseConfig = { apiKey: "page-key-1", authDomain: "x" };');
+            }
+            return base(url, init);
+        });
+        const { default: h2 } = await import('../auth-health.js');
+        const r = res();
+        await h2({ method: 'GET', headers: {} }, r);
+        expect(r.body.firebase.apiKeyFound).toBe(true);
+        expect(calls.some((c) => c.url.includes('identitytoolkit') && c.url.includes('key=page-key-1'))).toBe(true);
     });
 
     it('is read-only: a POST is refused and nothing is fetched', async () => {

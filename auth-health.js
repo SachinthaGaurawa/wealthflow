@@ -42,13 +42,16 @@
  * ---------------------------------------------------------------------------
  */
 
-import { fetchWithTimeout } from './fetch-timeout.mjs';
+import { fetchWithTimeout, fetchWithBodyDeadline } from './fetch-timeout.mjs';
 import { DEFAULT_CLIENT_ID as DRIVE_DEFAULT_CLIENT_ID } from './drive-auth.js';
 
-// Public web config of the Firebase project (the same values as the firebaseConfig
-// literal in index.html; test/auth_health_test.js asserts the two stay equal).
+// Public web config of the Firebase project (the values of the firebaseConfig literal in
+// index.html; test/auth_health_test.js asserts they stay equal). The web apiKey is
+// deliberately NOT written here: it is a public identifier, but a credential-shaped
+// literal in a server file would need an exception in the CI secret scan. It is read
+// from FIREBASE_API_KEY (as statement-view.js does) or, failing that, from the page
+// the app actually serves, which is also the truth about what a browser sends.
 export const FIREBASE = Object.freeze({
-    apiKey: 'AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4',
     authDomain: 'wealthflow-6dffb.firebaseapp.com',
     projectId: 'wealthflow-6dffb'
 });
@@ -87,6 +90,12 @@ export function hostsToCheck(req) {
     add(hd['x-forwarded-host']);
     add(hd.host);
     return out;
+}
+
+/** The web apiKey inside the page's `const firebaseConfig = { … }` literal. */
+export function apiKeyFromPage(html) {
+    const m = String(html || '').match(/firebaseConfig\s*=\s*\{[^}]*?apiKey\s*:\s*["']([^"']+)["']/);
+    return m ? m[1] : '';
 }
 
 /** Read the `authError` blob Google puts on its error page address. It is a
@@ -156,7 +165,7 @@ export function buildProblems(r) {
     const push = (code, severity, title, fix, scope = 'signin') => p.push({ code, severity, scope, title, fix });
 
     if (r.firebase.domains.error) {
-        push('domains-unreadable', 'warning',
+        if (r.firebase.apiKeyFound !== false) push('domains-unreadable', 'warning',
             'Could not read the list of authorized domains from Firebase.',
             'Firebase console → Authentication → Settings → Authorized domains: check that www.wealthflow.lk (or wealthflow.lk) is listed.');
     } else {
@@ -181,7 +190,11 @@ export function buildProblems(r) {
     const prov = r.firebase.googleProvider;
     if (prov.error) {
         const code = prov.errorCode;
-        if (code === 'OPERATION_NOT_ALLOWED') {
+        if (code === 'NO_API_KEY') {
+            push('api-key-unknown', 'warning',
+                'The diagnostic could not find the Firebase web apiKey, so it could not ask Firebase anything.',
+                'Set FIREBASE_API_KEY in Vercel (the same public value as apiKey in the firebaseConfig of index.html), or check that https://www.wealthflow.lk/ loads.');
+        } else if (code === 'OPERATION_NOT_ALLOWED') {
             push('provider-disabled', 'critical',
                 'The Google sign-in provider is switched off in Firebase.',
                 'Firebase console → Authentication → Sign-in method → Google → Enable → Save.');
@@ -233,10 +246,24 @@ export function buildProblems(r) {
 /* ---------------------------------------------------------------- network */
 
 async function getJson(url, init) {
-    const r = await fetchWithTimeout(url, init, PROBE_MS);
+    // the deadline keeps running while the body is read: a quiet upstream must not hold the endpoint
+    const r = await fetchWithBodyDeadline(url, init, PROBE_MS);
     let body = null;
     try { body = await r.json(); } catch (_) { /* not JSON */ }
     return { status: r.status, body };
+}
+
+let knownKey = '';
+/** The web apiKey: FIREBASE_API_KEY, else the page's own firebaseConfig (remembered for the life of the instance). */
+async function resolveApiKey() {
+    const env = String(process.env.FIREBASE_API_KEY || '').trim();
+    if (env) return env;
+    if (knownKey) return knownKey;
+    try {
+        const r = await fetchWithBodyDeadline(`https://${APP_HOSTS[0]}/`, { method: 'GET', headers: { 'user-agent': UA } }, 8000);
+        if (r.status === 200) knownKey = apiKeyFromPage(await r.text());
+    } catch (_) { /* reported as api-key-unknown */ }
+    return knownKey;
 }
 
 async function pageStatus(url) {
@@ -260,10 +287,10 @@ async function probeOAuthClient(clientId, redirectUri, { responseType = 'code', 
     }
 }
 
-async function readAuthorizedDomains() {
+async function readAuthorizedDomains(apiKey) {
     try {
         const { status, body } = await getJson(
-            `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(FIREBASE.apiKey)}`,
+            `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(apiKey)}`,
             { method: 'GET', headers: { 'user-agent': UA } });
         if (status === 200 && body && Array.isArray(body.authorizedDomains)) return { list: body.authorizedDomains };
         const msg = body && body.error && body.error.message;
@@ -273,10 +300,10 @@ async function readAuthorizedDomains() {
     }
 }
 
-async function readGoogleProvider() {
+async function readGoogleProvider(apiKey) {
     try {
         const { status, body } = await getJson(
-            `https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key=${encodeURIComponent(FIREBASE.apiKey)}`,
+            `https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key=${encodeURIComponent(apiKey)}`,
             {
                 method: 'POST',
                 headers: { 'content-type': 'application/json', 'user-agent': UA },
@@ -303,11 +330,13 @@ async function collect(req) {
     use(DRIVE_DEFAULT_CLIENT_ID, 'Google Drive (page)');
     use(envClient || DRIVE_DEFAULT_CLIENT_ID, envClient ? 'Gmail / Drive server' : 'Gmail / Drive server (default)');
 
+    const apiKey = await resolveApiKey();
+    const NOKEY = { error: 'the web apiKey could not be found (FIREBASE_API_KEY is unset and the page could not be read)' };
     const [domains, handler, iframe, provider, ...clientProbes] = await Promise.all([
-        readAuthorizedDomains(),
+        apiKey ? readAuthorizedDomains(apiKey) : NOKEY,
         pageStatus(handlerUri),
         pageStatus(`https://${FIREBASE.authDomain}/__/auth/iframe`),
-        readGoogleProvider(),
+        apiKey ? readGoogleProvider(apiKey) : { ok: false, error: NOKEY.error, errorCode: 'NO_API_KEY' },
         ...[...serverClients.keys()].map((id) =>
             probeOAuthClient(id, `https://${hosts[0] || APP_HOSTS[0]}/`, { responseType: 'token', scope: 'https://www.googleapis.com/auth/drive.file' }))
     ]);
@@ -329,6 +358,7 @@ async function collect(req) {
         hosts,
         firebase: {
             authDomain: FIREBASE.authDomain,
+            apiKeyFound: !!apiKey,
             domains: domains.error
                 ? { error: domains.error, hosts: [] }
                 : { list: domains.list, hosts: hosts.map((h) => ({ host: h, authorized: isAuthorizedDomain(h, domains.list) })) },
