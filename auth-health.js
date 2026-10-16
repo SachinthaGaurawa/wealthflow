@@ -189,6 +189,10 @@ export function buildProblems(r) {
             push('provider-not-configured', 'critical',
                 'Firebase has no usable Google provider configuration.',
                 'Firebase console → Authentication → Sign-in method → Google → set the support email, Enable, Save. If it was just re-enabled, wait a minute and retry.');
+        } else if (/App ?Check/i.test(prov.error)) {
+            push('app-check-enforced', 'critical',
+                `Firebase App Check is enforced for Authentication, but the app sends no App Check token (Firebase says: ${prov.error}). Firebase therefore stops every Google sign-in before it reaches Google.`,
+                'Firebase console → Build → App Check → APIs tab → Authentication → Unenforce (or Monitor) → Confirm. Enforce it again only after the app registers App Check (reCAPTCHA Enterprise) and ships the token.');
         } else if (/API_KEY|API key|referer|blocked/i.test(prov.error)) {
             push('api-key-refused', 'critical',
                 `Google refused the web API key: ${prov.error}`,

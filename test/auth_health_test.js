@@ -136,10 +136,21 @@ describe('buildProblems', () => {
         expect(codes(r)).toEqual(['provider-disabled']);
         r.firebase.googleProvider = { ok: false, error: 'CONFIGURATION_NOT_FOUND', errorCode: 'CONFIGURATION_NOT_FOUND' };
         expect(codes(r)).toEqual(['provider-not-configured']);
+        r.firebase.googleProvider = { ok: false, error: 'Firebase App Check token is invalid.', errorCode: '' };
+        expect(codes(r)).toEqual(['app-check-enforced']);
         r.firebase.googleProvider = { ok: false, error: 'API key not valid', errorCode: 'API' };
         expect(codes(r)).toEqual(['api-key-refused']);
         r.firebase.googleProvider = { ok: false, error: 'something else', errorCode: '' };
         expect(codes(r)).toEqual(['provider-error']);
+    });
+    it('App Check enforcement (the 2026-10-16 outage) is named, with the console path to lift it', () => {
+        const r = healthy();
+        r.firebase.googleProvider = { ok: false, error: 'Firebase App Check token is invalid.', errorCode: '' };
+        const [p] = buildProblems(r);
+        expect(p.code).toBe('app-check-enforced');
+        expect(p.severity).toBe('critical');
+        expect(p.scope).toBe('signin');
+        expect(p.fix).toMatch(/App Check → APIs.*Authentication.*Unenforce/);
     });
     it('a deleted provider client is critical and the fix says how to restore or recreate it', () => {
         const r = healthy();
