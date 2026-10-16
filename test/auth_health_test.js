@@ -169,6 +169,7 @@ describe('buildProblems', () => {
     it('a deleted provider client is critical and the fix says how to restore or recreate it', () => {
         const r = healthy();
         r.oauth.provider = { clientId: 'c.apps.googleusercontent.com', state: 'deleted', code: 'deleted_client' };
+        r.oauth.serverClients = [];   // no live client known: the generic way out
         const [p] = buildProblems(r);
         expect(p.code).toBe('provider-client-deleted');
         expect(p.severity).toBe('critical');
@@ -181,6 +182,29 @@ describe('buildProblems', () => {
         const [p] = buildProblems(r);
         expect(p.code).toBe('provider-redirect-mismatch');
         expect(p.fix).toContain(`https://${FIREBASE.authDomain}/__/auth/handler`);
+    });
+    it('a deleted provider client points at a live client the app already uses, when there is one', () => {
+        const r = healthy();
+        r.oauth.provider = { clientId: 'dead.apps.googleusercontent.com', state: 'deleted', code: 'deleted_client' };
+        r.oauth.serverClients = [{ clientId: 'live.apps.googleusercontent.com', uses: ['Gmail / Drive server'], state: 'ok' }];
+        const [p] = buildProblems(r);
+        expect(p.fix).toContain('Web client ID = live.apps.googleusercontent.com');
+        expect(p.fix).toContain('Add secret');
+    });
+    it('a Drive client without the app\'s root address as a redirect URI is a warning that names both hosts', () => {
+        const r = healthy();
+        r.oauth.serverClients = [{ clientId: 'drv.apps.googleusercontent.com', uses: ['Google Drive (page)'], state: 'ok', redirectMismatch: true }];
+        const [p] = buildProblems(r);
+        expect(p.code).toBe('drive-redirect-missing');
+        expect(p.severity).toBe('warning');
+        expect(p.scope).toBe('drive');
+        expect(p.fix).toContain('https://www.wealthflow.lk/');
+        expect(p.fix).toContain('https://wealthflow.lk/');
+    });
+    it('a redirect mismatch on a server-only (Gmail) client is not a Drive problem', () => {
+        const r = healthy();
+        r.oauth.serverClients = [{ clientId: 'gm.apps.googleusercontent.com', uses: ['Gmail / Drive server'], state: 'ok', redirectMismatch: true }];
+        expect(buildProblems(r)).toEqual([]);
     });
     it('a deleted Drive/Gmail client is critical and says what it breaks', () => {
         const r = healthy();

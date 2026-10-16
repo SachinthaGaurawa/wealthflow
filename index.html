@@ -14113,7 +14113,7 @@ async function _wfRedirectToGoogleForCode() {
         var scope = 'https://www.googleapis.com/auth/drive.file';
         try { if (localStorage.getItem('wf_clean_drive_browser') === '1') scope += ' https://www.googleapis.com/auth/drive.readonly'; } catch (_) {}
         var q = {
-            client_id: '1020193373377-paqvs1sgqr75l0lbcs9hju02fmouc0da.apps.googleusercontent.com',
+            client_id: '1020193373377-i2p46jo266q77mtmqd9uekrhdsa94oqa.apps.googleusercontent.com',
             redirect_uri: redirectUri,
             response_type: 'code',
             scope: scope,
@@ -14191,7 +14191,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             if (typeof google === 'undefined') return;
 
             tokenClient = google.accounts.oauth2.initTokenClient({
-                client_id: '1020193373377-paqvs1sgqr75l0lbcs9hju02fmouc0da.apps.googleusercontent.com',
+                client_id: '1020193373377-i2p46jo266q77mtmqd9uekrhdsa94oqa.apps.googleusercontent.com',
                 scope: 'https://www.googleapis.com/auth/drive.file',
                 // Pre-fill the Google account the user already signed in with so
                 // the chooser does NOT appear again.
@@ -14965,7 +14965,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) return resolve(null);
                     if (!_wfRoTokenClient) {
                         _wfRoTokenClient = google.accounts.oauth2.initTokenClient({
-                            client_id: '1020193373377-paqvs1sgqr75l0lbcs9hju02fmouc0da.apps.googleusercontent.com',
+                            client_id: '1020193373377-i2p46jo266q77mtmqd9uekrhdsa94oqa.apps.googleusercontent.com',
                             scope: _WF_DRIVE_RO_SCOPE,
                             login_hint: (window.currentUser && window.currentUser.email) ? window.currentUser.email : undefined,
                             callback: (resp) => {

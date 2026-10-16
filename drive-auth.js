@@ -54,7 +54,7 @@ const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 
 // The app's OAuth 2.0 "Web application" client. Overridable via env.
 export const DEFAULT_CLIENT_ID =
-    '1020193373377-paqvs1sgqr75l0lbcs9hju02fmouc0da.apps.googleusercontent.com';
+    '1020193373377-i2p46jo266q77mtmqd9uekrhdsa94oqa.apps.googleusercontent.com';
 
 function _applyCommonHeaders(req, res) {
     try {

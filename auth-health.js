@@ -218,10 +218,14 @@ export function buildProblems(r) {
     }
 
     const pc = r.oauth.provider;
+    const live = r.oauth.serverClients.find((c) => c.state === 'ok');
     if (pc && (pc.state === 'deleted' || pc.state === 'invalid')) {
         push('provider-client-deleted', 'critical',
             `The OAuth client behind Google sign-in (${pc.clientId}) ${pc.state === 'deleted' ? 'was deleted' : 'does not exist'} in Google Cloud. Google rejects every sign-in that uses it.`,
-            'Google Cloud console (project wealthflow-6dffb) → APIs & Services → Credentials → "Restore deleted credentials" (a deleted client can be restored for 30 days). If it cannot be restored: Firebase console → Authentication → Sign-in method → Google → turn it off, Save, turn it on again, Save (Firebase creates a new client).');
+            'Either (A) Google Cloud console (project wealthflow-6dffb) → APIs & Services → Credentials → "Restore deleted credentials" (a deleted client can be restored for 30 days), or (B) point Firebase at a live client: '
+            + (live
+                ? `Firebase console → Authentication → Sign-in method → Google → Web SDK configuration → Web client ID = ${live.clientId} and Web client secret = a secret of that client (Google Cloud → Credentials → that client → Add secret; the existing secret keeps working) → Save.`
+                : 'Firebase console → Authentication → Sign-in method → Google → turn it off, Save, turn it on again, Save (Firebase creates a new client).'));
     } else if (pc && pc.state === 'redirect-mismatch') {
         push('provider-redirect-mismatch', 'critical',
             `The OAuth client behind Google sign-in (${pc.clientId}) does not list ${handlerUri} as an authorized redirect URI.`,
@@ -233,6 +237,12 @@ export function buildProblems(r) {
     }
 
     for (const c of r.oauth.serverClients) {
+        if (c.redirectMismatch && c.uses.some((u) => /Drive \(page\)/.test(u))) {
+            push('drive-redirect-missing', 'warning',
+                `The OAuth client ${c.clientId} does not list https://${APP_HOSTS[0]}/ as an authorized redirect URI, so the durable Google Drive connection (sign-in by redirect) is refused.`,
+                `Google Cloud console → APIs & Services → Credentials → that client → Authorized redirect URIs → add https://${APP_HOSTS[0]}/ and https://${APP_HOSTS[1]}/ → Save.`,
+                'drive');
+        }
         if (c.state === 'deleted' || c.state === 'invalid') {
             push('server-client-deleted', 'critical',
                 `The OAuth client ${c.clientId} (${c.uses.join(', ')}) ${c.state === 'deleted' ? 'was deleted' : 'does not exist'} in Google Cloud. ${c.uses.join(' and ')} cannot get tokens.`,
@@ -351,7 +361,7 @@ async function collect(req) {
     const serverList = [...serverClients.entries()].map(([id, uses], i) => {
         const pr = clientProbes[i];
         const state = pr.state === 'redirect-mismatch' ? 'ok' : pr.state;
-        return { clientId: id, uses, state, code: pr.code, status: pr.status };
+        return { clientId: id, uses, state, code: pr.code, status: pr.status, redirectMismatch: pr.state === 'redirect-mismatch' };
     });
 
     return {
