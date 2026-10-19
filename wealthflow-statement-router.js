@@ -270,7 +270,39 @@ const named = (table, name) => (typeof name === 'string' && Object.prototype.has
 export const expenseEntryName = (name) => named(EXPENSE_ENTRY_NAME, name);
 export const classifierName = (name) => named(CLASSIFIER_NAME, name);
 
-const API = { routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName };
+/* THE ROWS FILED BEFORE THAT TABLE EXISTED. Statement expenses filed before the ledger used the dropdown's names (before PR #351) are still stored under the classifier's word
+ * ("Groceries"), a separate slice on the dashboard from the owner's own "Food & Groceries". relabelApply renames exactly those records and nothing else: only a record the
+ * statement filed (`source: 'statement'`), only a category in EXPENSE_ENTRY_NAME, only once (a record that already carries `catWas` is left). The old word is kept on the record
+ * as `catWas`, so the change is reversible (relabelUndo) and visible; the amount, date, description, bank and every other field are not touched. It does not mutate its input.
+ * Banks are not renamed: a bank label is the key a card's statements, locks and totals are filed under (see displayBank in wealthflow-institutions.js). */
+const record = (r) => !!r && typeof r === 'object';
+/** @returns {{records: object[], changes: {id: *, name: string, amount: *, from: string, to: string}[]}} the list with the renamed records replaced, and what was renamed */
+export function relabelApply(records) {
+  const list = Array.isArray(records) ? records : [];
+  const changes = [];
+  const out = list.map((r) => {
+    if (!record(r) || r.source !== 'statement' || typeof r.cat !== 'string' || r.catWas != null) return r;
+    if (!Object.prototype.hasOwnProperty.call(EXPENSE_ENTRY_NAME, r.cat)) return r;
+    const to = EXPENSE_ENTRY_NAME[r.cat];
+    changes.push({ id: r.id, name: String(r.desc || r.name || ''), amount: r.amount, from: r.cat, to });
+    return { ...r, cat: to, catWas: r.cat };
+  });
+  return { records: changes.length ? out : list, changes };
+}
+/** Put back the old word on a record that still carries the name relabelApply gave it. A record the owner has edited since (its category is no longer the one we set) is left as it is. */
+export function relabelUndo(records) {
+  const list = Array.isArray(records) ? records : [];
+  const restored = [];
+  const out = list.map((r) => {
+    if (!record(r) || typeof r.catWas !== 'string' || !Object.prototype.hasOwnProperty.call(EXPENSE_ENTRY_NAME, r.catWas) || r.cat !== EXPENSE_ENTRY_NAME[r.catWas]) return r;
+    const { catWas, ...rest } = r;
+    restored.push({ id: r.id, from: r.cat, to: catWas });
+    return { ...rest, cat: catWas };
+  });
+  return { records: restored.length ? out : list, changes: restored };
+}
+
+const API = { routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo };
 
 if (typeof window !== 'undefined') window.WFStatementRouter = API;
 
