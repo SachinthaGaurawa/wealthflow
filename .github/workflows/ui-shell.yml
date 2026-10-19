@@ -8,6 +8,7 @@ on:
       - wf-ui.css
       - wealthflow-shell.js
       - wealthflow-insights.js
+      - wealthflow-statement-cloud.js
       - assets/fonts/**
       - assets/wf-mark.svg
       - test/e2e/ui-shell.mjs
@@ -19,6 +20,7 @@ on:
       - test/e2e/ui-overlays.mjs
       - test/e2e/ui-controls.mjs
       - test/e2e/ui-standalone-pages.mjs
+      - test/e2e/statement-review-overlay.mjs
       - share-target.html
       - 404.html
       - manifest.json
@@ -70,6 +72,10 @@ jobs:
         run: node test/e2e/ui-controls.mjs
       - name: Verify the Quick Capture page and the 404 notice follow the design tokens and the saved theme
         run: node test/e2e/ui-standalone-pages.mjs
+      - name: Verify Open reviews shows its list (never a dark empty screen), Dismiss asks above it, and no empty dark layer is left behind
+        run: node test/e2e/statement-review-overlay.mjs
+        env:
+          WF_REVIEW_ARTIFACTS: shell-artifacts
       - name: Preserve screenshots
         if: always()
         uses: actions/upload-artifact@v7
