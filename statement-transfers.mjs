@@ -17,6 +17,7 @@
  * ===========================================================================*/
 
 import { transferEvidence } from './statement-ledger.mjs';
+import { nameOfOwnerIn } from './wealthflow-own-money.js';
 
 const textOf = row => String((row && (row.narration || row.description || row.desc || row.name)) || '');
 const cents = value => Math.round(Math.abs(Number(value)) * 100);
@@ -53,14 +54,15 @@ const TITLES = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'rev', 'prof', 'sir']);
 /**
  * The owner's own name, as the statement and the mailbox give it: the words of "Client Name: MR K S G KULASOORIYA" and the mailbox address ("gaurawasachintha@…"). A transfer that names the owner
  * ("Transfer Credit-Mobilebanking Gaurawa") is the owner's own money from another account of theirs. Initials and titles are not names.
- * @returns {{names:Set<string>, local:string}}
+ * @returns {{names:Set<string>, initials:Set<string>, local:string}} initials: the first letter of every part of the client name, for a house name that carries one (wealthflow-own-money.js `nameOfOwnerIn`)
  */
 export function ownerWords({ text = '', email = '' } = {}) {
-    const names = new Set();
+    const names = new Set(), initials = new Set();
     const line = /(?:client|customer|account\s*holder)\s*name\s*[:\-]\s*([^\n\r]+)/i.exec(String(text || '').slice(0, 20000));
     for (const word of (line ? line[1] : '').toLowerCase().match(/[a-z]{4,}/g) || []) if (!TITLES.has(word)) names.add(word);
+    for (const token of (line ? line[1] : '').toLowerCase().match(/[a-z]+/g) || []) if (!TITLES.has(token)) initials.add(token[0]);       // "MR K S G KULASOORIYA": k, s, g
     const local = String(email || '').toLowerCase().split('@')[0].replace(/[^a-z]/g, '');
-    return { names, local: local.length >= 6 ? local : '' };
+    return { names, initials, local: local.length >= 6 ? local : '' };
 }
 
 /**
@@ -73,8 +75,7 @@ export function ownTransferEvidence(row, own = {}) {
     const text = textOf(row), tails = own.tails instanceof Set ? own.tails : new Set(Array.isArray(own.tails) ? own.tails : []);
     if (tailsIn(text).some(tail => tails.has(tail))) return 'own-account-number';
     if (OWN_WORDS.test(text)) return 'own-account-words';
-    const words = text.toLowerCase().match(/[a-z]{5,}/g) || [];
-    if (words.some(word => (own.names && own.names.has(word)) || (own.local && word.length >= 6 && own.local.includes(word)))) return 'own-name';
+    if (nameOfOwnerIn(text, own)) return 'own-name';                                 // the same reading the manual upload makes (wealthflow-own-money.js), "-ge" house names included
     if (own.paired && typeof own.paired.has === 'function' && own.paired.has(row)) return 'other-leg-on-the-statement';
     return '';
 }

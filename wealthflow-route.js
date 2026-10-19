@@ -169,7 +169,26 @@
         if (!W || typeof W.ownMoney !== 'function') return null;
         var reg = {};
         try { if (root.wfCardRegistry && typeof root.wfCardRegistry.get === 'function') reg = root.wfCardRegistry.get() || {}; } catch (_) { reg = {}; }
-        try { return W.ownMoney({ description: desc, direction: dir, registry: reg, tails: Object.keys(reg) }); } catch (_) { return null; }
+        var who = ownerWordsOnPage();
+        try { return W.ownMoney({ description: desc, direction: dir, registry: reg, tails: Object.keys(reg), names: who.names, initials: who.initials, local: who.local }); } catch (_) { return null; }
+    }
+
+    /* THE OWNER'S OWN NAME, as the page knows it (the email worker reads the statement's client name and the mailbox; statement-transfers.mjs `ownerWords`): the name on the payment accounts the owner saved and the
+     * local part of the address they signed in with. Nothing here, nothing matched: a row that names no one is routed exactly as before. */
+    function ownerWordsOnPage() {
+        var names = [], initials = [], local = '';
+        try {
+            var accounts = root.DB && typeof root.DB.get === 'function' ? root.DB.get('payAccounts') : [];
+            if (root.WFOwnMoney && typeof root.WFOwnMoney.holderName === 'function') {
+                var who = root.WFOwnMoney.holderName((Array.isArray(accounts) ? accounts : []).map(function (a) { return a && a.holder; }));
+                names = who.words; initials = who.initials;
+            }
+        } catch (_) { names = []; initials = []; }
+        try {
+            var email = root.currentUser && root.currentUser.email ? String(root.currentUser.email).toLowerCase().split('@')[0].replace(/[^a-z]/g, '') : '';
+            if (email.length >= 6) local = email;
+        } catch (_) { local = ''; }
+        return { names: names, initials: initials, local: local };
     }
 
     function ccDebitType(desc) {
@@ -327,7 +346,8 @@
                 return out;
             }
             // The owner's OWN CREDIT CARD named in a credit ("Cash advance cr 376657******0276": cash drawn on the AMEX arriving in the account) is borrowed money / the owner's
-            // own money moving, not income. A payment TO the owner's own card (a debit) keeps going to the Card Payments tab through WFMerchants.refine.
+            // own money moving, not income. A payment TO the owner's own card is left out the same way (the card's own statement settles the card; WFMerchants.refine does not
+            // override it), and so is a transfer that names the owner. The row's destination can still be changed by hand in the review list.
             var ownCard = ownMoneyOf(desc, dir);
             if (ownCard && root.WFOwnMoney.leavesTheBooks(ownCard)) {
                 out.tab = 'skip';

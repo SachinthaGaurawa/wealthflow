@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import OwnMoney, { ownMoney, numbersIn, leavesTheBooks } from '../wealthflow-own-money.js';
+import OwnMoney, { ownMoney, numbersIn, leavesTheBooks, nameOfOwnerIn } from '../wealthflow-own-money.js';
 import { deterministicDecision, classifySlice } from '../statement-sync.js';
 import { validateSettlementRow, settleStatement } from '../statement-ledger.mjs';
 
@@ -65,7 +65,7 @@ describe('the rule itself (wealthflow-own-money.js)', () => {
 
     it('a payment to the owner\'s own card is named, so the doors can file it as a card payment', () => {
         expect(rule('Outward Ceft Transfer 376657Xxxxx0276', 'debit')).toMatchObject({ kind: 'card-payment-out', last4: '0276' });
-        expect(leavesTheBooks(rule('Outward Ceft Transfer 376657Xxxxx0276', 'debit'))).toBe(false);
+        expect(leavesTheBooks(rule('Outward Ceft Transfer 376657Xxxxx0276', 'debit'))).toBe(true);       // the card's own statement carries the payment: the bank's line is not filed a second time
     });
 
     it('says nothing about a card\'s own statement, a row of unknown direction, or a row that names no card', () => {
@@ -102,7 +102,7 @@ describe('both doors read the same rows the same way', () => {
     const pageDest = (description, direction) => {
         const routed = page.WFRoute.routeTransaction({ description, amount: 1000, direction }, 'bank_account');
         let dest = routed.tab;
-        const refined = page.WFMerchants.refine(description, direction, { tab: dest, category: routed.category, subName: routed.subName, subPhone: routed.subPhone });
+        const refined = page.WFMerchants.refine(description, direction, { tab: dest, category: routed.category, subName: routed.subName, subPhone: routed.subPhone, ownMoney: routed.ownMoney });
         if (refined) dest = refined.tab;
         return dest;
     };
@@ -138,10 +138,58 @@ describe('both doors read the same rows the same way', () => {
         expect(workerModule('Ceft Charges 376657Xxxxx0276', 'debit')).toMatchObject({ module: 'expenses', category: 'Bank Charges' });
     });
 
-    it('a payment to the owner\'s own card is a card payment to both: the page files it, the worker leaves the bank side to the card\'s own statement', () => {
-        expect(pageDest('Outward Ceft Transfer 376657Xxxxx0276', 'debit')).toBe('cc_payment');
-        expect(page.WFMerchants.refine('Outward Ceft Transfer 376657Xxxxx0276', 'debit', { tab: 'expenses' })).toMatchObject({ tab: 'cc_payment', ccLast4: '0276' });
+    it('a payment to the owner\'s own card is left to the card\'s own statement by both (the page used to file it as a second Card Payment)', () => {
+        expect(pageDest('Outward Ceft Transfer 376657Xxxxx0276', 'debit')).toBe('skip');
         expect(workerModule('Outward Ceft Transfer 376657Xxxxx0276', 'debit')).toMatchObject({ module: 'skip', ownTransfer: expect.any(String) });
+        const routed = page.WFRoute.routeTransaction({ description: 'Outward Ceft Transfer 376657Xxxxx0276', amount: 30000, direction: 'debit' }, 'bank_account');
+        expect(routed).toMatchObject({ tab: 'skip', ownMoney: 'card-payment-out', ccLast4: '0276' });
+        // the owner can still choose Card Payment in the review list: the row names the card it is filed against
+        expect(routed.reason).toMatch(/Card Payment/);
+    });
+
+    it('a number that is no card of the owner\'s is not "the owner\'s own card": the rule leaves it alone (the page still reads a card-shaped number as a card bill, the worker as money paid out)', () => {
+        expect(pageDest('Outward Ceft Transfer 411111Xxxxx9999', 'debit')).toBe('cc_payment');
+        expect(workerModule('Outward Ceft Transfer 411111Xxxxx9999', 'debit')).toMatchObject({ module: 'expenses', autoDecided: 'transfer-to-others' });
+    });
+
+    describe('a transfer that names the owner (the family name, or the house name made from it)', () => {
+        const NAME = 'CEFTS/6454/KULASOORIYAGE S/Transfer';
+        const names = new Set(['kulasooriya']), initials = new Set(['k', 's', 'g']), local = 'gaurawasachintha';
+        it('the rule reads "-ge" as the family\'s word, whole words only, and never a fee or a refund', () => {
+            expect(ownMoney({ description: NAME, direction: 'credit', names, initials, local })).toMatchObject({ kind: 'own-name-transfer', evidence: 'own-name' });
+            expect(ownMoney({ description: 'Transfer Credit-Mobilebanking Gaurawa', direction: 'credit', names, initials, local })).toMatchObject({ kind: 'own-name-transfer' });
+            expect(ownMoney({ description: 'Outward Ceft Transfer Kulasooriya', direction: 'debit', names, initials, local })).toMatchObject({ kind: 'own-name-transfer' });
+            expect(ownMoney({ description: NAME, direction: 'credit' })).toBeNull();                                   // no name known, nothing matched
+            expect(ownMoney({ description: 'CEFTS/6454/PERERAGE S/Transfer', direction: 'credit', names, initials, local })).toBeNull();
+            expect(ownMoney({ description: 'Transfer Kulasooriyage fee', direction: 'debit', names, initials, local })).toBeNull();
+            expect(ownMoney({ description: 'Transfer refund Kulasooriya', direction: 'credit', names, initials, local })).toBeNull();
+            expect(ownMoney({ description: 'POS Kulasooriya Stores', direction: 'debit', names, initials, local })).toBeNull();     // not worded as a transfer
+            expect(ownMoney({ description: NAME, direction: 'credit', names, initials, local, isCard: true })).toBeNull();     // a card statement's own line
+            expect(nameOfOwnerIn('Kulasooriyage S', { names, initials })).toBe('kulasooriyage');
+            expect(nameOfOwnerIn('Gamage S', { names, initials })).toBe('');
+            // a family has more than one member: the house name alone, or another member's initial, is not the owner
+            expect(nameOfOwnerIn('Kulasooriyage S', { names })).toBe('');
+            expect(nameOfOwnerIn('CEFTS/6454/KULASOORIYAGE P/Transfer', { names, initials })).toBe('');
+            expect(nameOfOwnerIn('CEFTS/6454/KULASOORIYAGE SUNIL/Transfer', { names, initials })).toBe('');
+            expect(nameOfOwnerIn('Transfer to Kulasooriya', { names })).toBe('kulasooriya');                     // the family name itself keeps the bar it always had
+        });
+        it('the worker skips it, with the owner\'s name read from the statement\'s client name', () => {
+            const a = allocations({ ownerWords: { names, initials, local } });
+            expect(deterministicDecision({ narration: NAME, description: NAME, direction: 'credit', amount: 9000, date: '2026-07-11', directionSource: 'balance', needsReview: false }, a)).toMatchObject({ module: 'skip', ownTransfer: 'own-name' });
+            expect(deterministicDecision({ narration: NAME, description: NAME, direction: 'credit', amount: 9000, date: '2026-07-11', directionSource: 'balance', needsReview: false }, allocations())).toMatchObject({ module: 'incomeRecv' });
+        });
+        it('the page skips it the same way, naming the owner from the accounts they saved and the address they signed in with', () => {
+            const saved = { DB: page.DB, currentUser: page.currentUser };
+            try {
+                page.DB = { get: (key) => (key === 'payAccounts' ? [{ holder: 'K S G Kulasooriya', bank: 'DFCC' }] : []) };
+                page.currentUser = { email: 'gaurawasachintha@gmail.com' };
+                expect(pageDest(NAME, 'credit')).toBe('skip');
+                expect(page.WFRoute.routeTransaction({ description: NAME, amount: 9000, direction: 'credit' }, 'bank_account')).toMatchObject({ tab: 'skip', ownMoney: 'own-name-transfer' });
+                expect(pageDest('CEFTS/6454/PERERAGE S/Transfer', 'credit')).toBe('income');
+                page.DB = undefined; page.currentUser = undefined;                                                       // nothing known about the owner: routed as it always was
+                expect(pageDest(NAME, 'credit')).toBe('income');
+            } finally { page.DB = saved.DB; page.currentUser = saved.currentUser; }
+        });
     });
 
     it('without the module loaded the page routes a row as it always did (nothing is lost, nothing is invented)', () => {
@@ -150,6 +198,13 @@ describe('both doors read the same rows the same way', () => {
             page.WFOwnMoney = undefined;
             expect(page.WFRoute.routeTransaction({ description: 'Cash advance cr 376657******0276', amount: 1, direction: 'credit' }, 'bank_account')).toMatchObject({ tab: 'income' });
         } finally { page.WFOwnMoney = saved; }
+    });
+
+    it('the review list keeps the rule\'s answer: refine is told the row is the owner\'s own money, and a row switched to Card Payment is filed on the card it names', () => {
+        const html = read('index.html');
+        expect(html).toMatch(/refine\(t\.description, t\.direction, \{[^}]*ownMoney: t\._ownMoney \}\)/);
+        expect(html).toMatch(/t\._ownCard = routed\.ccLast4 \|\| ''/);
+        expect(html).toMatch(/card_last4: _payT\._ccLast4 \|\| _payT\._ownCard \|\| _source\.card_last4/);
     });
 
     it('the AI auto-sort hands the queue each row\'s real direction (it used to hand every credit over as a debit)', () => {
@@ -225,13 +280,13 @@ describe('the email system, end to end, on the owner\'s July statement', () => {
     ];
     const parsed = { rows, verdict: 'parsed', understood: true, reason: '', invalidDates: 0, balanceMismatches: 0, layout: { statementType: 'bank_account', accountLast4: '5555' },
         reconciliation: { opening: 0, closing: 0, credits: 110181, debits: 3929.67, expected: 0, difference: 0, ok: true } };
-    const world = async (cardRegistry) => {
+    const world = async (cardRegistry, extraUser = {}) => {
         const { createFirestore } = await import('./helpers/fake-firestore.js');
         const { runStatementSync } = await import('../statement-sync.js');
         const w = createFirestore({
             [mail]: { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, lastSettleMs: 0, senders: [{ id: 'statements@dfccbank.com', kind: 'address', status: 'approved', name: 'DFCC', domain: 'dfccbank.com' }] },
             'wf-statement-vault/u': { uid: 'u' },
-            'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], settings: { cardRegistry } },
+            'users/u': { expenses: [], incomeRecv: [], cconetime: [], ccPayments: [], subscriptions: [], settings: { cardRegistry }, ...extraUser },
             [itemPath]: { uid: 'u', bank: 'DFCC', filename: 'DFCC_Statement_202607.html', from: 'statements@dfccbank.com', messageId: 'm0', status: 'pending', hasReview: false, filed: false, cursor: 0, intent: 'stated' },
         });
         const out = await runStatementSync({ action: 'drain', db: w.db, owner, env: {}, intake: async () => ({ body: { ok: true } }), open: async () => [], maxSteps: 1, budgetMs: 40000, settle: settleStatement,
@@ -253,6 +308,14 @@ describe('the email system, end to end, on the owner\'s July statement', () => {
         expect(ledger(w).filter((e) => e.status === 'skipped')).toHaveLength(1);
         expect(ledger(w).filter((e) => e.status === 'review')).toHaveLength(0);
         expect([...w.data.keys()].some((key) => key.includes('/statementReview/'))).toBe(false);
+    });
+
+    it('the transfer from an account in the owner\'s own name is left out too once the owner\'s saved accounts say whose name that is', async () => {
+        const { w, out } = await world({ '0276': { type: 'credit_card', bank: 'AMEX', network: 'Amex', last4: '0276' } }, { payAccounts: [{ holder: 'K S G Kulasooriya', bank: 'DFCC', number: '1234567890' }] });
+        expect(out.status).toBe('filed');
+        expect(w.data.get('users/u').incomeRecv.map((r) => r.name)).toEqual(['Monthly MemberCash savings']);
+        expect(ledger(w).filter((e) => e.status === 'skipped')).toHaveLength(2);
+        expect(ledger(w).filter((e) => e.status === 'review')).toHaveLength(0);
     });
 
     it('with no card registered at all, a "cash advance" credit is still not income (only the account holder can draw cash into their own account)', async () => {

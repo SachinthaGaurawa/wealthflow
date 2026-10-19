@@ -67,8 +67,9 @@ describe('a transfer that names the owner is the owner\'s own', () => {
     const own = ownerWords({ text: 'Client Name: MR K S G KULASOORIYA\nAccount Number: 1', email: 'gaurawasachintha@gmail.com' });
     it('reads the owner\'s words from the statement\'s client name and the mailbox address, and no initials or titles', () => {
         expect([...own.names]).toEqual(['kulasooriya']);
+        expect([...own.initials].sort()).toEqual(['g', 'k', 's']);
         expect(own.local).toBe('gaurawasachintha');
-        expect(ownerWords()).toEqual({ names: new Set(), local: '' });
+        expect(ownerWords()).toEqual({ names: new Set(), initials: new Set(), local: '' });
         expect(ownerWords({ email: 'a@b.c' }).local).toBe('');
     });
     it('"Transfer Credit-Mobilebanking Gaurawa" is the owner\'s money from another account; a stranger\'s name is not', () => {

@@ -26,7 +26,7 @@ await page.evaluate(() => window.wfCardRegistry.set({
 const where = (description, direction) => page.evaluate(([d, dir]) => {
     const routed = window.WFRoute.routeTransaction({ description: d, amount: 100000, direction: dir }, 'bank_account');
     let dest = routed.tab;
-    const refined = window.WFMerchants.refine(d, dir, { tab: dest, category: routed.category });
+    const refined = window.WFMerchants.refine(d, dir, { tab: dest, category: routed.category, ownMoney: routed.ownMoney });
     if (refined) dest = refined.tab;
     return { dest, why: routed.reason, own: routed.ownMoney || '' };
 }, [description, direction]);
@@ -52,7 +52,20 @@ assert.equal(refund.dest, 'income', 'a reversal reduces an expense already in th
 
 const pay = await where('Outward Ceft Transfer 376657Xxxxx0276', 'debit');
 console.log('5. paying the card   ->', pay.dest);
-assert.equal(pay.dest, 'cc_payment', 'a payment to the owner\'s own card is still filed as a Card Payment');
+assert.equal(pay.dest, 'skip', 'a payment to the owner\'s own card is left to the card\'s own statement, as the email worker does (the owner can still pick Card Payment for the row)');
+
+// a transfer from an account in the owner's own name: the owner's saved payment accounts say whose name that is
+const before = await where('CEFTS/6454/KULASOORIYAGE S/Transfer', 'credit');
+await page.evaluate(() => DB.set('payAccounts', [{ id: 'pa1', bank: 'DFCC Bank', holder: 'K S G Kulasooriya', number: '1234567890', showTo: 'both', active: true }]));
+const named = await where('CEFTS/6454/KULASOORIYAGE S/Transfer', 'credit');
+const stranger = await where('CEFTS/6454/PERERAGE S/Transfer', 'credit');
+console.log('5b. own name         ->', before.dest, '/', named.dest, '/', stranger.dest);
+assert.equal(before.dest, 'income', 'nothing known about the owner\'s name: routed as it always was');
+assert.equal(named.dest, 'skip', 'a transfer from the owner\'s own name is the owner\'s own money');
+assert.equal(stranger.dest, 'income', 'another family\'s house name is income');
+const relative = await where('CEFTS/6454/KULASOORIYAGE P/Transfer', 'credit');
+assert.equal(relative.dest, 'income', 'another member of the owner\'s house (another initial) is not the owner');
+await page.evaluate(() => DB.set('payAccounts', []));
 
 // what the owner does in the Expenses list: open a statement row and save it under another category
 const learned = await page.evaluate(() => {
