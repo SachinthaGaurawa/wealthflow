@@ -8100,6 +8100,13 @@
             });
         }
 
+        /* Where the browser goes once signed out: this page's path with a one-off mark, so
+         * the navigation is to a new address and never a same-address reload. The mark is
+         * removed again by stripSignedOutMark() as soon as the page loads. */
+        function _wfSignedOutUrl() {
+            try { return (window.location.pathname || '/app') + '?signedout=' + Date.now().toString(36); } catch (_) { return '/app'; }
+        }
+
         async function signOutGoogle() {
             // ISSUE 2 FIX — True full Google sign-out (no silent re-login)
             try {
@@ -8124,8 +8131,11 @@
                 localStorage.clear();
                 sessionStorage.clear();
 
-                // Hard navigate (replace) so back button can't revive the session
-                window.location.replace(window.location.pathname);
+                // Hard navigate (replace) so back button can't revive the session.
+                // To a fresh address, never the one the browser is already on: that
+                // is a reload, which revalidates the page and is the one navigation
+                // that has ended as a downloaded empty file called "app".
+                window.location.replace(_wfSignedOutUrl());
             } catch (err) {
                 console.error('Sign-out failed:', err);
                 localStorage.clear();
@@ -16251,6 +16261,17 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 $('recovErr').textContent = '@x@ Biometric check cancelled or failed: ' + err.message;
             }
         }
+
+        // The one-off ?signedout= mark that signOutGoogle() adds is not part of the address.
+        (function stripSignedOutMark() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                if (!params.has('signedout')) return;
+                params.delete('signedout');
+                const rest = params.toString();
+                history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : '') + window.location.hash);
+            } catch (e) { }
+        })();
 
         // ISSUE 9 FIX — Detect recovery URL synchronously, BEFORE Firebase auth state runs.
         // This way `finishBoot()` knows to skip PIN entry and go straight to new-PIN setup.
@@ -35389,7 +35410,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 } catch (e) { }
                 localStorage.removeItem('wf_google_account');
                 // 4) Force a hard reload so the user lands at the Google sign-in screen, not the app
-                setTimeout(() => { location.replace(location.pathname); }, 700);
+                setTimeout(() => { location.replace(_wfSignedOutUrl()); }, 700);
             } catch (e) {
                 console.error('[Revoke] Hard sign-out failed:', e);
                 location.reload();
