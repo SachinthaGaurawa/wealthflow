@@ -152,6 +152,63 @@ export function linkRecord(email, refreshToken, now = Date.now()) {
     };
 }
 
+/* ── THE "CONNECT GMAIL" BUTTON: GOOGLE'S OWN CONSENT SCREEN, THEN THIS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * Until now the only way in was to make a refresh token by hand in the OAuth Playground and paste it. That works for the owner and cannot be the product: a person who is not a developer is never going to
+ * do it, and Google's verification review wants to SEE the consent screen the user goes through, with the scope, the app name and the client id.
+ *
+ * The page sends the browser to Google (full-page redirect, PKCE, scope gmail.readonly and nothing else, access_type=offline). Google sends it back to the site's own address with a one-time `code`. The page
+ * hands that code here and the SERVER exchanges it, because only the server holds the client secret. What is stored is exactly what the paste box stores; the only difference is where the token came from.
+ */
+export const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+/** The only addresses the code may have been issued for. Google already refuses a redirect_uri that is not registered on the OAuth client; this keeps a stray one (a preview deployment, a typo) from ever reaching the exchange. */
+export const CONSENT_REDIRECTS = Object.freeze(['https://www.wealthflow.lk/', 'https://wealthflow.lk/']);
+
+/** Shape only, like looksLikeRefreshToken: Google's codes are opaque, URL-safe, a few dozen to a few hundred characters. */
+export function looksLikeAuthCode(v) {
+    const s = String(v == null ? '' : v).trim();
+    return s.length >= 10 && s.length <= 2048 && /^[\w\-./~%]+$/.test(s);
+}
+/** RFC 7636: 43 to 128 characters from the unreserved set. */
+export function looksLikeCodeVerifier(v) {
+    return typeof v === 'string' && /^[A-Za-z0-9\-._~]{43,128}$/.test(v);
+}
+
+/**
+ * Turn a consent-screen result into a refresh token, or into the sentence that says what to do.
+ *
+ * `exchange` is google-oauth.mjs `exchangeCode`, injected so this stays testable without a network. Nothing returned or thrown here ever contains the code, the verifier or a token.
+ * @returns {Promise<{ok:true, token:string} | {ok:false, status:number, error:string, kind:string}>}
+ */
+export async function redeemConsent({ body, env = {}, exchange }) {
+    const fail = (status, kind, error) => ({ ok: false, status, kind, error });
+    const code = body && typeof body.code === 'string' ? body.code.trim() : '';
+    if (!looksLikeAuthCode(code)) return fail(400, 'bad-code', 'that does not look like a Google authorization code. Press Connect Gmail again.');
+    const redirectUri = body && typeof body.redirect_uri === 'string' ? body.redirect_uri.trim() : '';
+    if (!CONSENT_REDIRECTS.includes(redirectUri)) return fail(400, 'bad-redirect', 'that return address is not one WealthFlow uses. Open WealthFlow at https://www.wealthflow.lk and try again.');
+    const verifier = body && body.code_verifier != null ? body.code_verifier : '';
+    if (verifier !== '' && !looksLikeCodeVerifier(verifier)) return fail(400, 'bad-verifier', 'the sign-in check value is malformed. Press Connect Gmail again.');
+    if (!oauthConfigured(env)) return fail(503, 'not-configured', 'Google sign-in is not set up on the server yet (GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are required).');
+
+    let got;
+    try {
+        got = await exchange({ code, redirectUri, codeVerifier: verifier || undefined, env });
+    } catch (e) {
+        if (e && e.transient) return fail(503, 'transient', 'Google did not answer in time. Press Connect Gmail again in a moment.');
+        const word = String((e && e.code) || '');
+        if (word === 'invalid_grant') return fail(422, 'code-used', 'Google turned that sign-in down: the code was already used or has expired. Press Connect Gmail and approve again.');
+        if (word === 'redirect_uri_mismatch') return fail(422, 'redirect-mismatch', 'Google says this return address is not registered on the OAuth client. Add ' + redirectUri + ' under Authorized redirect URIs in Google Cloud, then try again.');
+        if (word === 'invalid_client' || word === 'unauthorized_client') return fail(422, 'client', 'Google does not accept the OAuth client the server is using. GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET must belong to the same client the sign-in used.');
+        return fail(422, 'rejected', 'Google did not accept that sign-in. Press Connect Gmail and try again.');
+    }
+
+    const granted = String((got && got.scope) || '').split(/\s+/);
+    if (!granted.includes(GMAIL_SCOPE)) return fail(422, 'scope-missing', 'The Gmail permission was not ticked on Google\'s screen, and WealthFlow cannot read statements without it. Press Connect Gmail and leave "View your email messages and settings" ticked.');
+    const token = got && typeof got.refreshToken === 'string' ? got.refreshToken.trim() : '';
+    if (!looksLikeRefreshToken(token)) return fail(422, 'no-refresh', 'Google did not hand back a long-lived sign-in. Open myaccount.google.com/permissions, remove WealthFlow, then press Connect Gmail again.');
+    return { ok: true, token };
+}
+
 /**
  * What the client is allowed to learn.
  *
@@ -331,6 +388,7 @@ const API = {
     MAIL_ROOT, LINK,
     userKeyFor, bearerOf, identify, looksLikeRefreshToken,
     linkRecord, statusOf, oauthConfigured, missingConfig,
+    GMAIL_SCOPE, CONSENT_REDIRECTS, looksLikeAuthCode, looksLikeCodeVerifier, redeemConsent,
 };
 
 export default API;

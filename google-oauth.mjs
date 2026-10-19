@@ -16,7 +16,7 @@
 
 export const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 /** The `error` words Google's token endpoint answers with (RFC 6749 §5.2); anything else it says is not carried. */
-const GOOGLE_ERRORS = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client', 'invalid_request', 'invalid_scope', 'access_denied', 'unsupported_grant_type']);
+const GOOGLE_ERRORS = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client', 'invalid_request', 'invalid_scope', 'access_denied', 'unsupported_grant_type', 'redirect_uri_mismatch']);
 
 /**
  * Which of Google's two `invalid_grant` sentences it was — the one thing in `error_description` that changes what the owner must do, and never the free text itself (it can echo what was sent).
@@ -72,6 +72,47 @@ export async function accessTokenFrom(refreshToken, env, fetchImpl) {
     const out = await r.json();
     if (!out.access_token) throw new Error('token refresh returned no access token');
     return out.access_token;
+}
+
+/**
+ * Exchange the one-time authorization code from Google's consent screen for a refresh token (the "Connect Gmail" button).
+ *
+ * Returns ONLY the refresh token and the scopes Google says were granted. The short-lived access token Google sends alongside is dropped on the floor: the caller stores the long-lived credential and mints
+ * access tokens itself from then on (accessTokenFrom), so there is no reason for a second credential to leave this function.
+ * Errors carry the same `transient` / `status` / `code` words as accessTokenFrom and never a code, a verifier, a secret or a token.
+ */
+export async function exchangeCode({ code, redirectUri, codeVerifier, env, fetchImpl }) {
+    const f = fetchImpl || fetch;
+    const form = new URLSearchParams({
+        code: String(code),
+        client_id: env.GOOGLE_OAUTH_CLIENT_ID,
+        client_secret: env.GOOGLE_OAUTH_CLIENT_SECRET,
+        redirect_uri: String(redirectUri),
+        grant_type: 'authorization_code',
+    });
+    if (codeVerifier) form.set('code_verifier', String(codeVerifier));
+    let r;
+    try {
+        r = await f(TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: form.toString(),
+            signal: AbortSignal.timeout(8000),
+        });
+    } catch (_) { throw Object.assign(new Error('code exchange unreachable'), { transient: true }); }
+    if (!r.ok) {
+        let errCode = '';
+        try {
+            const said = typeof r.json === 'function' ? await r.json() : null;
+            errCode = said && typeof said.error === 'string' && GOOGLE_ERRORS.has(said.error) ? said.error : '';
+        } catch (_) { /* the status is enough */ }
+        throw Object.assign(new Error('code exchange rejected'), { transient: r.status === 429 || r.status >= 500, status: Number(r.status) || 0, ...(errCode ? { code: errCode } : {}) });
+    }
+    const out = await r.json();
+    return {
+        refreshToken: typeof out.refresh_token === 'string' ? out.refresh_token : '',
+        scope: typeof out.scope === 'string' ? out.scope : '',
+    };
 }
 
 /** `Authorization: Bearer …`, the one place that header is spelled. */

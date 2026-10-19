@@ -5,7 +5,8 @@
  * where gmail-hook.js looks for it, and reports back whether one is there.
  *
  * GET   /api/gmail-link   → { connected, email?, linkedAt?, lastPushMs?, missing[] }
- * POST  /api/gmail-link   { refresh_token }  → { ok, connected }
+ * POST  /api/gmail-link   { refresh_token }  → { ok, connected }          (a token pasted by hand)
+ * POST  /api/gmail-link   { code, redirect_uri, code_verifier }  → same   (the "Connect Gmail" button: Google's consent screen, then this)
  * DELETE /api/gmail-link  → { ok, connected: false }
  *
  * ── WHY AN ENDPOINT AND NOT A FIRESTORE WRITE FROM THE PAGE ─────────────────
@@ -40,8 +41,9 @@
 import { getAdminDb, withDeadline } from './admin-db.mjs';
 import {
     MAIL_ROOT, identify, looksLikeRefreshToken, linkRecord, statusOf, missingConfig,
-    SENDERS_FIELD, sendersOf, heldOf,
+    SENDERS_FIELD, sendersOf, heldOf, redeemConsent,
 } from './gmail-link.mjs';
+import { exchangeCode } from './google-oauth.mjs';
 import { verifyNewToken } from './gmail-auth-state.mjs';
 import { dedupeStored, BANKS, releasedBy } from './wealthflow-mail-ingest.mjs';
 import { nameVerdict, VERDICT as STATEMENT_ID } from './wealthflow-statement-identity.js';
@@ -628,6 +630,8 @@ export default async function handler(req, res) {
              * can name the missing piece instead of saying "not connected",
              * which is the sentence that sent somebody reading the source. */
             missing: missingConfig(process.env),
+            /* The OAuth client id is public (it is in the address bar of every Google consent screen). Served so the "Connect Gmail" button always asks Google for the SAME client the server will exchange the code with. */
+            clientId: String(process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim() || undefined,
         });
     }
 
@@ -648,23 +652,32 @@ export default async function handler(req, res) {
     }
 
     const body = await readBody(req);
-    const token = body && typeof body.refresh_token === 'string' ? body.refresh_token.trim() : body && body.refresh_token;
-    if (!looksLikeRefreshToken(token)) {
-        /* Says WHICH mistake without echoing the value back — an error that
-         * quotes the credential it rejected is how secrets reach logs. */
-        return j(res, 400, {
-            ok: false,
-            error: 'that does not look like a refresh token. It should be the '
-                 + 'refresh_token value alone — not an access token (ya29.…), not the '
-                 + 'authorization code (4/…), not the client secret, and not the whole JSON.',
-        });
-    }
+    let token;
+    if (body && body.code !== undefined) {
+        /* THE "CONNECT GMAIL" BUTTON (gmail-link.mjs `redeemConsent`): the page came back from Google's consent screen with a one-time code, and only this side holds the client secret to turn it into a refresh token. The
+         * token Google just issued to our own client needs no second round trip to be checked; everything after this point is the same as a pasted one. */
+        const got = await redeemConsent({ body, env: process.env, exchange: exchangeCode });
+        if (!got.ok) return j(res, got.status, { ok: false, error: got.error, refused: got.kind });
+        token = got.token;
+    } else {
+        token = body && typeof body.refresh_token === 'string' ? body.refresh_token.trim() : body && body.refresh_token;
+        if (!looksLikeRefreshToken(token)) {
+            /* Says WHICH mistake without echoing the value back — an error that
+             * quotes the credential it rejected is how secrets reach logs. */
+            return j(res, 400, {
+                ok: false,
+                error: 'that does not look like a refresh token. It should be the '
+                     + 'refresh_token value alone — not an access token (ya29.…), not the '
+                     + 'authorization code (4/…), not the client secret, and not the whole JSON.',
+            });
+        }
 
-    /* ASKED OF GOOGLE BEFORE IT IS SAVED. Saving only checked the SHAPE, so a token Google would never accept (one made for another OAuth client, an expired one, one cut short when pasted) was stored, the card said
-     * "connected", and the refusal showed up minutes later at the first watch call. Only a definite refusal blocks the save and it is answered here, in the paste box, with the reason and the one thing to do
-     * (gmail-auth-state.mjs `verifyNewToken`); a timeout, a 5xx or an unconfigured OAuth client still saves, as before. Nothing of the token or of Google's own text is returned or logged. */
-    const check = await verifyNewToken({ token });
-    if (check.refused) return j(res, 422, { ok: false, error: check.text, refused: check.kind, hint: check.hint || undefined });
+        /* ASKED OF GOOGLE BEFORE IT IS SAVED. Saving only checked the SHAPE, so a token Google would never accept (one made for another OAuth client, an expired one, one cut short when pasted) was stored, the card said
+         * "connected", and the refusal showed up minutes later at the first watch call. Only a definite refusal blocks the save and it is answered here, in the paste box, with the reason and the one thing to do
+         * (gmail-auth-state.mjs `verifyNewToken`); a timeout, a 5xx or an unconfigured OAuth client still saves, as before. Nothing of the token or of Google's own text is returned or logged. */
+        const check = await verifyNewToken({ token });
+        if (check.refused) return j(res, 422, { ok: false, error: check.text, refused: check.kind, hint: check.hint || undefined });
+    }
 
     try {
         /* A NEW SIGN-IN CLEARS THE MARK THAT THE OLD ONE WAS TURNED DOWN (gmail-auth-state.mjs), and the old watch failure that said the same thing (gmail-renew.js). */

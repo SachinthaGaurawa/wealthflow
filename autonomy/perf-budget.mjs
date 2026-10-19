@@ -340,7 +340,9 @@ export const BUDGETS = {
     // the PIN and Passcode-free guards, and the comments recording why each exists. No new script or request.
     // 2026-10-19 (older statement expenses renamed to the dropdown's category names, reversibly): 2_297_000 -> 2_300_500 (measured 2,298,282 + ~0.1% headroom). _migrateStatementCategoryNames and its undo
     // (the rule itself, relabelApply / relabelUndo, is in wealthflow-statement-router.js). About half of it is the comment recording why. No new script or request.
-    htmlBytes: 2_300_500,
+    // 2026-10-19 (Connect Gmail with Google, so the Mailbox card no longer depends on a hand-pasted token): 2_300_500 -> 2_308_500 (measured 2,306,205 + ~0.1% headroom). The button, the redirect to Google's consent
+    // screen (_wfStartGmailConsent), the return handler (_wfCompleteGmailConsent) and the Mailbox card's new first block. About a third is comments. No new script or request at load.
+    htmlBytes: 2_308_500,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
