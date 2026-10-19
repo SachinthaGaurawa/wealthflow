@@ -124,6 +124,17 @@ export function subDues(sub, todayDay) {
     return out;
 }
 
+/**
+ * A card charge the bank already told the owner about and a statement or a forwarded bank text filed on its own (a purchase, fuel, a fee). It is personal spending, not money the
+ * owner manages in WealthFlow, the bank sent its own alert, and its "due date" is only the charge date plus an estimate. A card payment the owner typed in themselves is a deliberate
+ * obligation and is still texted.
+ */
+export function bankFiled(record) {
+    const r = record || {};
+    const meta = r.feeMeta && typeof r.feeMeta === 'object' ? r.feeMeta : {};
+    return r.source === 'statement' || meta.source === 'statement' || r.auto === true || !!str(r.statementKey) || !!str(r.hash);
+}
+
 const paidMonth = (loan, mk) => arr(loan && loan.payments).some((p) => p && p.month === mk && p.paid);
 
 /**
@@ -167,7 +178,7 @@ export function ownerEvents(user, now, currency, nextWindow) {
         }
     }
     for (const c of arr(user.cconetime)) {
-        if (!c || !c.id || c.paid || !(num(c.amount) > 0)) continue;
+        if (!c || !c.id || c.paid || !(num(c.amount) > 0) || bankFiled(c)) continue;
         push({ type: 'card', id: c.id, tag: str(c.deadline).slice(0, 10), name: c.desc, label: 'card', amount: num(c.amount), dueISO: c.deadline, bands: CARD_BANDS });
     }
     for (const c of arr(user.cheques)) {
@@ -183,4 +194,4 @@ export function ownerEvents(user, now, currency, nextWindow) {
     return { events, issues };
 }
 
-export default { OWNER_FIELD, LOAN_BANDS, CARD_BANDS, CHEQUE_BANDS, ONCE_BANDS, BILL_BANDS, subDues, ownerSettings, ownerAlertsOn, bandFor, loanDues, ownerEvents };
+export default { bankFiled, OWNER_FIELD, LOAN_BANDS, CARD_BANDS, CHEQUE_BANDS, ONCE_BANDS, BILL_BANDS, subDues, ownerSettings, ownerAlertsOn, bandFor, loanDues, ownerEvents };

@@ -631,7 +631,7 @@ export function ownerAlertsHtml(owner) {
     const o = owner && typeof owner === 'object' ? owner : {};
     return '<div style="border:1px solid var(--border,rgba(128,128,128,.25));border-radius:10px;padding:10px 12px;margin-bottom:10px;">'
         + '<div style="font-weight:700;font-size:13px;">Alerts to my own number</div>'
-        + '<div style="font-size:12px;color:var(--text3);margin:3px 0 8px;line-height:1.5;">A text to you before a loan instalment, card payment, cheque, bill or one-time payment is due (7, 3 and 1 days, and the day itself; a one-time payment from 14 days). Sent by the server, so it reaches you when the app is closed. Uses SMS credit.</div>'
+        + '<div style="font-size:12px;color:var(--text3);margin:3px 0 8px;line-height:1.5;">A text to you before a loan instalment, cheque, bill, one-time payment or a card payment you entered yourself is due (7, 3 and 1 days, and the day itself; a one-time payment from 14 days). Card purchases your bank already texts you about are not repeated here. Sent by the server, so it reaches you when the app is closed. Uses SMS credit.</div>'
         + '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;margin-bottom:6px;"><input type="checkbox" id="_wf_own_on"' + (o.enabled === true ? ' checked' : '') + '> Send me these alerts</label>'
         + '<div style="display:flex;gap:8px;"><input class="fi" id="_wf_own_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + esc(o.phone || '') + '" style="flex:1;">'
         + '<button class="btn btn-primary btn-sm" id="_wf_own_save">Save</button></div>'
