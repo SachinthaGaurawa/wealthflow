@@ -133,10 +133,14 @@ describe('the skin', () => {
     it('uses tokens, not literals: the only hex colours are the brand tile and the sign-in panel', () => {
         const css = SKIN.replace(/\/\*[\s\S]*?\*\//g, '');
         const hexes = new Set([...css.matchAll(/#[0-9a-f]{3,8}\b/gi)].map((m) => m[0].toLowerCase()));
-        // Brand art (the logo tile and the dark sign-in panel are dark in BOTH themes on purpose) and
-        // the ink that sits on a solid success/warning button.
-        const allowed = new Set(['#1b2236', '#0c101b', '#0f1522', '#0a0d13', '#eef1f7', '#fff', '#ffffff', '#aab3c5', '#98a2b6', '#7e8aa1',
-            '#efd58a', '#d4a94a', '#6fd49b', '#04150c', '#1f1303',
+        // Brand art (the logo tile and the sign-in screen are dark in BOTH themes on purpose; the sign-in
+        // screen pins the palette of the public landing page: navy field, gold accent, so the first screen
+        // after "Sign in" looks like the page the visitor came from) and the ink that sits on a solid
+        // success/warning button.
+        const allowed = new Set(['#1b2236', '#0c101b', '#eef1f7', '#fff', '#ffffff', '#04150c', '#1f1303',
+            // sign-in screen: landing palette (field, card, lines, text, gold, status)
+            '#050d1c', '#071226', '#07142b', '#0b1d3d', '#0e2144', '#12294f', '#7385ab', '#8e9bb4', '#aab5cb', '#b4bfd4', '#e9edf6',
+            '#d4af37', '#e4c26b', '#f1d98d', '#17120a', '#3dd28d', '#ff6b78',
             '#000' /* an opaque mask stop, not a visible colour */]);
         const stray = [...hexes].filter((h) => !allowed.has(h));
         expect(stray, `hard-coded colours outside the allow-list: ${stray.join(', ')}`).toEqual([]);
