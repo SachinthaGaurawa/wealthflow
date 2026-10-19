@@ -667,7 +667,12 @@ export function panelHtml({ rows = [], status = null, disabled = false, lastErro
             + (r.note ? '<div style="font-size:11.5px;color:var(--text3);margin-top:4px;">' + esc(r.note) + '</div>' : '')
             + '</div>').join('')
         : '<div style="padding:18px 0;text-align:center;color:var(--text3);font-size:13px;">No text messages yet. Switch "Send SMS notifications" on for an investment or a debtor and the notices appear here.</div>';
-    return (showOwner ? ownerAlertsHtml(owner) : '') + notes + body;
+    // The credit left, always, when the gateway reported a figure (the card above only appears when it is low). A reading that was made but had no
+    // figure in it says so rather than staying silent.
+    const credit = known
+        ? '<div id="_wf_sms_credit" style="font-size:12.5px;margin-bottom:10px;">SMS credit left: <b>' + num(status.units) + (num(status.units) === 1 ? ' unit' : ' units') + '</b>' + (asOf ? '<span style="color:var(--text3);">' + esc(asOf) + '</span>' : '') + '</div>'
+        : (status && status.configured !== false && num(status.unitsAt) ? '<div id="_wf_sms_credit" style="font-size:12.5px;margin-bottom:10px;color:var(--text3);">SMS credit left: the gateway did not report a figure (read ' + esc(when(num(status.unitsAt))) + ').</div>' : '');
+    return (showOwner ? ownerAlertsHtml(owner) : '') + credit + notes + body;
 }
 
 /* ── the browser glue ─────────────────────────────────────────────────────── */

@@ -181,6 +181,82 @@ describe('the token lands where gmail-hook.js looks for it', () => {
     });
 });
 
+describe('a pasted token is asked of Google before it is saved', () => {
+    const ID = '1020193373377-i2p46jo266q77mtmqd9uekrhdsa94oqa.apps.googleusercontent.com';
+    const SECRET = 'GOCSPX-server-secret-value-123456';
+    let saved;
+    beforeEach(() => { saved = { id: process.env.GOOGLE_OAUTH_CLIENT_ID, secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET }; process.env.GOOGLE_OAUTH_CLIENT_ID = ID; process.env.GOOGLE_OAUTH_CLIENT_SECRET = SECRET; vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+    afterEach(() => {
+        for (const [k, v] of [['GOOGLE_OAUTH_CLIENT_ID', saved.id], ['GOOGLE_OAUTH_CLIENT_SECRET', saved.secret]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+        vi.restoreAllMocks();
+    });
+    const google = (status, body) => { const calls = []; globalThis.fetch = async (url, init) => { calls.push({ url: String(url), body: String((init && init.body) || '') }); return { ok: status === 200, status, json: async () => body }; }; return calls; };
+
+    it('a token Google accepts is saved, and Google was asked once with this app\'s client', async () => {
+        const calls = google(200, { access_token: 'ya29.fine' });
+        const seen = await call({ method: 'POST', body: { refresh_token: TOKEN } });
+        expect(seen.status).toBe(200);
+        expect(fake.docs.get(`wf-mail/${OWNER_KEY}`).refresh_token).toBe(TOKEN);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].url).toBe('https://oauth2.googleapis.com/token');
+        expect(calls[0].body).toContain(`client_id=${encodeURIComponent(ID)}`);
+    });
+    it('"Bad Request" is answered 422 in the paste box, names the client, and writes nothing', async () => {
+        google(400, { error: 'invalid_grant', error_description: 'Bad Request' });
+        const seen = await call({ method: 'POST', body: { refresh_token: TOKEN } });
+        expect(seen.status).toBe(422);
+        expect(seen.body).toMatchObject({ ok: false, refused: 'revoked', hint: 'mismatch' });
+        expect(seen.body.error).toContain(ID);
+        expect(seen.body.error).toMatch(/not saved/);
+        expect(fake.docs.has(`wf-mail/${OWNER_KEY}`)).toBe(false);
+    });
+    it('an expired token points at the 7-day Testing limit', async () => {
+        google(400, { error: 'invalid_grant', error_description: 'Token has been expired or revoked.' });
+        const seen = await call({ method: 'POST', body: { refresh_token: TOKEN } });
+        expect(seen.status).toBe(422);
+        expect(seen.body.error).toMatch(/Publish app/);
+        expect(fake.docs.has(`wf-mail/${OWNER_KEY}`)).toBe(false);
+    });
+    it('a refused refusal does not disturb a token that is already saved', async () => {
+        google(200, { access_token: 'ya29.fine' });
+        await call({ method: 'POST', body: { refresh_token: TOKEN } });
+        google(400, { error: 'invalid_grant', error_description: 'Bad Request' });
+        const other = TOKEN.replace(/A+$/, 'C'.repeat(40));
+        expect((await call({ method: 'POST', body: { refresh_token: other } })).status).toBe(422);
+        expect(fake.docs.get(`wf-mail/${OWNER_KEY}`).refresh_token).toBe(TOKEN);
+    });
+    it('a refused OAuth client is answered 422 as the server\'s problem', async () => {
+        google(401, { error: 'invalid_client' });
+        const seen = await call({ method: 'POST', body: { refresh_token: TOKEN } });
+        expect(seen.status).toBe(422);
+        expect(seen.body).toMatchObject({ refused: 'client' });
+        expect(seen.body.error).toMatch(/GOOGLE_OAUTH_CLIENT_SECRET/);
+    });
+    it('Google being slow or down never blocks the save', async () => {
+        google(503, {});
+        expect((await call({ method: 'POST', body: { refresh_token: TOKEN } })).status).toBe(200);
+        fake.reset();
+        fake.setVerifier(async (t) => { if (t !== 'good-token') throw new Error('invalid token'); return { email: OWNER, email_verified: true, uid: 'uid-1' }; });
+        globalThis.fetch = async () => { throw new Error('offline'); };
+        expect((await call({ method: 'POST', body: { refresh_token: TOKEN } })).status).toBe(200);
+        expect(fake.docs.get(`wf-mail/${OWNER_KEY}`).refresh_token).toBe(TOKEN);
+    });
+    it('what is stored and what was asked of Google is the token without the spaces around it', async () => {
+        const calls = google(200, { access_token: 'ya29.fine' });
+        await call({ method: 'POST', body: { refresh_token: `  ${TOKEN}\n` } });
+        expect(fake.docs.get(`wf-mail/${OWNER_KEY}`).refresh_token).toBe(TOKEN);
+        expect(calls[0].body).toContain(`refresh_token=${encodeURIComponent(TOKEN)}`);
+    });
+    it('nothing of the token or the server\'s secret is in the answer or in the log', async () => {
+        google(400, { error: 'invalid_grant', error_description: `Bad Request ${TOKEN}` });
+        const seen = await call({ method: 'POST', body: { refresh_token: TOKEN } });
+        const logged = console.warn.mock.calls.map(c => c.join(' ')).join('\n');
+        expect(JSON.stringify(seen.body) + logged).not.toContain(TOKEN);
+        expect(JSON.stringify(seen.body) + logged).not.toContain(SECRET);
+        expect(logged).toContain('gmail-token-refused-on-save');
+    });
+});
+
 describe('disconnecting removes the credential and keeps the history', () => {
     it('deletes refresh_token but leaves historyId alone', async () => {
         await call({ method: 'POST', body: { refresh_token: TOKEN } });

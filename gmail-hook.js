@@ -61,7 +61,8 @@ import { DISCOVERY_VERSION, DISCOVERY_EVERY_MS, DISCOVERY_MAX_IDS, discoveryQuer
 import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld, REFUSED_FIELD, mergeRefused, refusedOf, SECURITY_FIELD, mergeSecurity } from './gmail-link.mjs';
 import { MAIL_STATE, logStates, firstUnsettled, stateForPlan, DISCOVERY_DROP } from './mail-state.mjs';
 import { getInboxDb } from './inbox-store.mjs';
-import { accessTokenFrom, authed } from './google-oauth.mjs';
+import { authed } from './google-oauth.mjs';
+import { mintAccessToken, RECONNECT_REASON } from './gmail-auth-state.mjs';
 import { createHash } from 'node:crypto';
 
 const TOKENINFO = 'https://oauth2.googleapis.com/tokeninfo?id_token=';
@@ -420,8 +421,11 @@ async function ingestMailbox(db, note, env, f, res) {
 
     let token;
     try {
-        token = await accessTokenFrom(state.refresh_token, env, f);
-    } catch (_) {
+        token = await mintAccessToken({ ref: stateRef, mail: state, env, f });
+    } catch (error) {
+        /* A sign-in Google has turned down is not mended by Pub/Sub delivering the same push again (a 500 made it retry for days): it is answered 204 so the retries stop. Nothing is lost —
+         * the bookmark is not moved, so what arrives meanwhile is read once the owner has reconnected. The mailbox is marked, and the owner told, by mintAccessToken (gmail-auth-state.mjs). */
+        if (error && error.reconnect === true) return j(res, 204, { ok: false, skipped: RECONNECT_REASON });
         return j(res, 500, { ok: false, error: 'could not mint an access token' });
     }
 

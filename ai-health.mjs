@@ -11,6 +11,9 @@
  *                          the first words of its reply, or the (redacted) reason it did not. Rate-limited: a report younger than
  *                          CANARY_GAP_MS is served from the store and no provider is called, so the address cannot be used to burn quota.
  *   GET /api/ai?health=1   the last report, and its age. Never calls a provider.
+ *   GET /api/ai?canary=vision / ?health=vision   the same, for READING AN IMAGE: one made-up receipt (ai-canary-image.mjs) shown to every provider
+ *                          that takes images, and each says what it read — vendor and amount — or why it could not. The text canary cannot see this:
+ *                          on 2026-10-10 every vision model the scanner named had been retired and nothing said so.
  *
  * WHY TEN ROWS. The first canary asked ONE row and said nine of fourteen providers were fine; real boards of ten rows saw five to seven valid voters, because two of those nine
  * (NVIDIA and OpenRouter's Nemotron, thinking models) are valid on a one-line answer and not on a long one. A health check that asks an easier question than the work is optimistic by
@@ -23,12 +26,16 @@
 
 import { boardAnswer, boardReading, whyInvalid } from './api/ai-matrix.mjs';
 import { proposalPrompt, PROPOSAL } from './statement-board.mjs';
+import { CANARY_IMAGE_B64, CANARY_IMAGE_TRUTH } from './ai-canary-image.mjs';
 
 export const CANARY_GAP_MS = 90 * 1000;
 /** The room and the time a statement's board gives its providers (statement-sync.js askBoard): the canary asks with the same, or it measures an easier question than the work. */
 export const CANARY_MAX_TOKENS = 3500;
 export const CANARY_DEADLINE_MS = 13000;
 export const DOC = { collection: 'wf-ai', id: 'canary' };
+export const VISION_DOC = { collection: 'wf-ai', id: 'canary-vision' };
+export const VISION_CANARY_DEADLINE_MS = 22000;
+export const VISION_CANARY_PROMPT = 'Read this receipt image. Return ONLY JSON {"vendor":"","amount":0} where amount is the TOTAL as a plain number.';
 
 /** Ten rows, each with ONE clearly right answer in the board's own vocabulary. Nothing of the owner's: invented merchants, invented amounts. */
 export const CANARY_ROWS = Object.freeze([
@@ -128,7 +135,7 @@ export function rowsOf(items, rows = CANARY_ROWS) {
  */
 export function reportOf({ decision, probe = [], ms = 0, at = Date.now() }) {
     const detail = (p) => {
-        if (!p.ok) return { error: redact(p.error) };
+        if (!p.ok) return { error: redact(p.error, 400) };   // long enough to keep the list of models that were tried, which is at the END of the message
         const rows = scoreRows(p.reply);
         const why = whyInvalid(p.reply) || (rows ? null : 'not-a-list-of-decisions');
         return {
@@ -173,27 +180,66 @@ export function verdictOf(report) {
     return `BELOW THE FLOOR — only ${b.answered} of ${b.asked} answered (need ${b.floor}); reason ${b.reason}${rows}`;
 }
 
+/** What one provider's reply read off the made-up receipt: { vendor, amount } as booleans — or null when it is not a JSON object at all. */
+export function scoreVision(reply, truth = CANARY_IMAGE_TRUTH) {
+    const text = String(reply == null ? '' : reply).replace(/```json/gi, '').replace(/```/g, '');
+    const m = text.match(/\{[\s\S]*\}/);
+    let value = null;
+    if (m) { try { value = JSON.parse(m[0]); } catch (_) { value = null; } }
+    if (!value || typeof value !== 'object') return null;
+    const amount = Number(String(value.amount == null ? (value.total == null ? '' : value.total) : value.amount).replace(/[^0-9.\-]/g, ''));
+    return {
+        vendor: String(value.vendor || value.merchant || '').toUpperCase().includes(String(truth.vendor).split(' ')[0].toUpperCase()),
+        amount: Number.isFinite(amount) && Math.abs(amount - truth.amount) < 0.005,
+    };
+}
+
+/** The report a vision canary run makes: for each provider that was asked, whether it answered, with which model, and what it read. */
+export function visionReportOf({ decision, probe = [], ms = 0, at = Date.now() }) {
+    const providers = probe.map((p) => {
+        if (!p.ok) return { name: String(p.name), ok: false, ms: Number(p.ms) || 0, error: redact(p.error, 400) };
+        const read = scoreVision(p.reply);
+        return { name: String(p.name), ok: true, ms: Number(p.ms) || 0, model: redact(p.provider, 60), reply: redact(p.reply, 90), read: read || { vendor: false, amount: false }, ...(read ? {} : { why: 'not-json' }) };
+    }).sort((a, b) => Number(b.ok) - Number(a.ok) || Number(Boolean(b.read && b.read.amount)) - Number(Boolean(a.read && a.read.amount)) || a.ms - b.ms);
+    const reading = providers.filter((p) => p.ok && p.read && p.read.amount && p.read.vendor).map((p) => p.name);
+    return {
+        at, ms, kind: 'vision',
+        board: { unanimous: Boolean(decision && decision.unanimous), reason: (decision && decision.reason) || null, asked: providers.length, answered: providers.filter((p) => p.ok).length, floor: (decision && decision.minimumProviders) || 5 },
+        providers,
+        summary: { reading, answeredWrong: providers.filter((p) => p.ok && !reading.includes(p.name)).map((p) => p.name), failing: providers.filter((p) => !p.ok).map((p) => `${p.name}: ${p.error}`) },
+    };
+}
+
+/** How the vision report reads to a person. */
+export function visionVerdictOf(report) {
+    if (!report || !report.summary) return 'no vision report yet';
+    const { reading, answeredWrong } = report.summary, asked = report.board ? report.board.asked : 0;
+    if (!asked) return 'NO PROVIDER ASKED — no image-capable provider has a key';
+    if (!reading.length) return `NO PROVIDER READ THE RECEIPT — ${report.board.answered} of ${asked} answered${answeredWrong.length ? ` (read it wrong: ${answeredWrong.join(', ')})` : ''}`;
+    return `${reading.length >= 2 ? 'GOOD' : 'THIN'} — ${reading.length} of ${asked} providers read the receipt right (${reading.join(', ')})${answeredWrong.length ? `; answered but read it wrong: ${answeredWrong.join(', ')}` : ''}`;
+}
+
 /** Read the last stored report, or null. The store is a Firestore doc; `getDb` is admin-db's getAdminDb. Never throws. */
-export async function loadReport(getDb, withDeadline) {
+export async function loadReport(getDb, withDeadline, doc = DOC) {
     try {
         const { db } = await getDb();
         if (!db) return null;
-        const snap = await withDeadline(db.collection(DOC.collection).doc(DOC.id).get(), 2000);
+        const snap = await withDeadline(db.collection(doc.collection).doc(doc.id).get(), 2000);
         const data = snap && snap.exists ? snap.data() : null;
         return data && data.report ? data.report : null;
     } catch (_) { return null; }
 }
-export async function saveReport(getDb, withDeadline, report) {
+export async function saveReport(getDb, withDeadline, report, doc = DOC) {
     try {
         const { db } = await getDb();
         if (!db) return false;
-        await withDeadline(db.collection(DOC.collection).doc(DOC.id).set({ report, at: report.at }), 2000);
+        await withDeadline(db.collection(doc.collection).doc(doc.id).set({ report, at: report.at }), 2000);
         return true;
     } catch (_) { return false; }
 }
 
-let memoryReport = null;
-export function resetHealthMemory() { memoryReport = null; }
+let memoryReport = null, memoryVision = null;
+export function resetHealthMemory() { memoryReport = null; memoryVision = null; }
 
 /**
  * The GET side of the endpoint. `run` is the endpoint's own POST handler: the canary is that handler, asked one fixed question with the probe
@@ -204,20 +250,29 @@ export async function serveHealth(req, res, { run, getDb, withDeadline, now = Da
     try { params = new URL(req.url || '', 'http://local').searchParams; } catch (_) { params = new URLSearchParams(); }
     const query = req.query || {};
     const wantsCanary = params.has('canary') || query.canary !== undefined;
+    const kind = String(params.get('canary') || params.get('health') || query.canary || query.health || '');
+    const vision = kind === 'vision';
     if (!wantsCanary && !params.has('health') && query.health === undefined) { res.status(405); return res.json({ error: 'Method not allowed' }); }
     res.setHeader('Cache-Control', 'no-store');
-    let report = (await loadReport(getDb, withDeadline)) || memoryReport;
+    const doc = vision ? VISION_DOC : DOC;
+    let report = (await loadReport(getDb, withDeadline, doc)) || (vision ? memoryVision : memoryReport);
     let cached = true;
     if (wantsCanary && (!report || now() - report.at >= CANARY_GAP_MS)) {
         cached = false;
         const captured = {};
         const quiet = { setHeader() {}, status(code) { captured.code = code; return this; }, json(body) { captured.body = body; return this; } };
         const started = now();
-        await run({ method: 'POST', body: { prompt: CANARY_PROMPT, financialDecision: true, mode: 'unanimous', temperature: 0, maxTokens: CANARY_MAX_TOKENS, deadlineMs: Number(env.AI_CANARY_DEADLINE_MS) || CANARY_DEADLINE_MS, itemwise: { path: PROPOSAL.path, id: PROPOSAL.id } }, __probe: true }, quiet);
-        report = reportOf({ decision: captured.body || {}, probe: (captured.body && captured.body.probe) || [], ms: now() - started, at: now() });
-        memoryReport = report;
-        await saveReport(getDb, withDeadline, report);
+        if (vision) {
+            await run({ method: 'POST', body: { prompt: VISION_CANARY_PROMPT, image: CANARY_IMAGE_B64, financialDecision: true, mode: 'unanimous', temperature: 0, maxTokens: 700, deadlineMs: Number(env.AI_CANARY_DEADLINE_MS) || VISION_CANARY_DEADLINE_MS }, __probe: true }, quiet);
+            report = visionReportOf({ decision: captured.body || {}, probe: (captured.body && captured.body.probe) || [], ms: now() - started, at: now() });
+            memoryVision = report;
+        } else {
+            await run({ method: 'POST', body: { prompt: CANARY_PROMPT, financialDecision: true, mode: 'unanimous', temperature: 0, maxTokens: CANARY_MAX_TOKENS, deadlineMs: Number(env.AI_CANARY_DEADLINE_MS) || CANARY_DEADLINE_MS, itemwise: { path: PROPOSAL.path, id: PROPOSAL.id } }, __probe: true }, quiet);
+            report = reportOf({ decision: captured.body || {}, probe: (captured.body && captured.body.probe) || [], ms: now() - started, at: now() });
+            memoryReport = report;
+        }
+        await saveReport(getDb, withDeadline, report, doc);
     }
     res.status(200);
-    return res.json({ ok: true, cached, ageSec: report ? Math.round((now() - report.at) / 1000) : null, verdict: verdictOf(report), report: report || null });
+    return res.json({ ok: true, cached, ageSec: report ? Math.round((now() - report.at) / 1000) : null, verdict: vision ? visionVerdictOf(report) : verdictOf(report), report: report || null });
 }

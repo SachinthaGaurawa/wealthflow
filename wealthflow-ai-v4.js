@@ -682,6 +682,8 @@
             'and key phrases like "Inward Ceft Transfer <name>", "Outward Ceft Transfer <name>", ' +
             '"POS Transaction - <merchant>", "CASH DEP", "ATM WTD", "MB BillPmt/<biller>". Do NOT shorten, ' +
             'abbreviate or paraphrase it — the full text is what lets the system pick the right category.\n' +
+            '- A CHEQUE keeps its number: "CHEQUE DEPOSIT 285943", "CHQ PAID 000123", "CHQ RTN 285943". When the statement prints the cheque number in a ' +
+            'column of its own (Cheque No / Chq No), put it at the end of the description as "Cheque No <digits>" with its leading zeros. Never drop it.\n' +
             '- Include the FULL ORIGINAL amount printed. NEVER round or truncate.\n' +
             '- "direction" must be EXACTLY "debit" or "credit" — THIS IS CRITICAL, get it right for every row:\n' +
             '  • "debit"  = money OUT / a charge: purchases, cash advances, fees, interest, fuel, POS, withdrawals.\n' +

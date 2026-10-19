@@ -2,7 +2,8 @@ import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { getAdminDb } from './admin-db.mjs';
 import { identify, userKeyFor, sendersOf } from './gmail-link.mjs';
-import { accessTokenFrom, authed } from './google-oauth.mjs';
+import { authed } from './google-oauth.mjs';
+import { mintAccessToken } from './gmail-auth-state.mjs';
 import { syncMailbox } from './gmail-hook.js';
 import { policyFrom, matchSender, normalizeList, approvedClauses, hasApproved } from './wealthflow-mail-senders.mjs';
 import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf, gridOf, gridLines, chainOf, chainLines } from './statement-coverage.mjs';
@@ -23,6 +24,7 @@ import { claimOrder, CLAIM_WINDOW, failurePatch, redriveDeadLetters, aiBreaker, 
 import { tieredAsk } from './statement-llm-router.mjs';
 import { findFiledTwin, duplicatePatch } from './statement-index.mjs';
 import { VIA, identityOf, lookup, releaseStatement, registryDuplicatePatch } from './statement-registry.mjs';
+import { runSteps } from './statement-budget.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
@@ -40,6 +42,7 @@ import { repairByArithmetic } from './statement-repair.mjs';
 import { buildHistory } from './statement-history.mjs';
 import { ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins, tailsIn } from './statement-transfers.mjs';
 import { ownMoney } from './wealthflow-own-money.js';
+import { readCheque, unsettleCheque } from './wealthflow-cheques.js';
 import { isolateMerchant } from './statement-merchant-name.mjs';
 import { totalsAgree } from './statement-totals.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
@@ -72,7 +75,7 @@ const SAFE_WHOLE_REPLAY = new Set([
 ]);
 const PUBLIC_SYNC_REASONS = new Set([
     'autonomous-mailbox-not-enabled', 'gmail-profile-unavailable', 'gmail-profile-owner-mismatch',
-    'gmail-intake-unavailable', 'verified-owner-required', 'statement-worker-retry-required'
+    'gmail-intake-unavailable', 'verified-owner-required', 'statement-worker-retry-required', 'gmail-reconnect-required'
 ]);
 const PUBLIC_REVIEW_SOURCE_REASONS = new Set([
     'PASSWORD_FAILED', 'NO_VAULT_KEYS', 'PDF_UNREADABLE',
@@ -216,6 +219,7 @@ function subscriptionWords(allocations) {
 }
 function needsBoard(row, rule, words) {
     if (rule.ownMoney) return false;      // the owner's own card, named in the row: nothing for a board to name
+    if (rule.cheque) return false;        // a cheque is read from the row's own words and the bank's own debit/credit flag (wealthflow-cheques.js)
     if (rule.verified && (rule.autoDecided === 'transfer-to-others' || rule.autoDecided === 'transfer-from-others')) return false;      // what the rules know of a transfer is all there is to know: there is no merchant for the board to name
     if (!rule.verified || rule.category === 'Other' || rule.category === 'Income') return true;
     if (!words.length) return false;
@@ -315,6 +319,16 @@ export function deterministicDecision(row, allocations = {}) {
      * the account, not income; the card statement carries the advance. It is decided from the Cards & Accounts registry and the owner's own statements before any wording of a transfer is asked for. */
     const own = ownMoney({ description, direction: row?.direction, isCard: isCreditCardRow(row || {}, allocations), registry: allocations.cardRegistry, tails: allocations.own });
     if (own) return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true, ownTransfer: own.kind, ownMoney: own };
+    /* A CHEQUE ON A BANK STATEMENT IS READ, NOT GUESSED (wealthflow-cheques.js — the rule the manual upload applies): "CHEQUE DEPOSIT 285943" is a cheque, money in, number 285943; "CHQ PAID 000123" a cheque the owner
+     * issued; "CHQ RTN 285943" one the bank sent back. The statement's own debit/credit flag decides the way the money went, so there is nothing for an AI board to name and nothing to ask the owner: the row is
+     * decided by that flag and settled against the Cheque Tracker when it is filed (statement-ledger.mjs). A cheque-book / return / stop-payment FEE is not a cheque movement and is read as the bank charge it is.
+     * This comes before the wording of a transfer ("Transfer Cheque Deposit Cheque No: 070283" is a cheque), and never on a card statement. */
+    if ((row?.direction === 'debit' || row?.direction === 'credit') && !isCreditCardRow(row || {}, allocations)) {
+        const cheque = readCheque({ description, direction: row.direction, amount: row.amount });
+        if (cheque.isCheque && cheque.type) return row.direction === 'debit'
+            ? { module: 'expenses', category: 'Bank Charges', allocationId: '', verified: true, deterministic: true, cheque: true }
+            : { module: 'incomeRecv', category: 'Other', allocationId: '', verified: true, deterministic: true, cheque: true };
+    }
     if (transferEvidence({ description })) {
         /* A TRANSFER IS LEFT OUT OF THE BOOKS ONLY WHEN IT IS THE OWNER'S OWN MONEY MOVING BETWEEN THE OWNER'S OWN ACCOUNTS (statement-transfers.mjs): the account number of one of their own cards, their own words
          * ("my DFCC"), or the other leg on the same statement. "Outward Ceft Transfer Car", "Inward Ceft Transfer Dip Refund" are money paid to and received from other people — spending and income. They were all
@@ -826,6 +840,43 @@ export async function healHandMadeTwins({ db, uid, now = Date.now(), log = conso
         return { merged: chosen.length, more: pairs.length > chosen.length && chosen.length >= limit };
     });
     if (result.merged) log(JSON.stringify({ evt: 'hand-twin-heal', merged: result.merged, ...(result.more ? { more: true } : {}) }));
+    return result;
+}
+
+/* A CHEQUE THE BANK PAID AND AN EXPENSE THE OWNER TYPED FOR THE SAME PAYMENT ARE ONE PAYMENT. The Cheque Tracker counts a cleared issued cheque in the month the bank cleared it; an expense typed in (or pasted from an
+ * SMS) for that very payment counts it too. When the statement came first and the entry was typed after — or the upload was the owner's own, which does not look at what was typed — both were in the month.
+ * The cheque is then marked `countedBy` that entry (the month's total skips it while the entry exists) and the entry is marked as the row's twin; nothing is deleted, the cheque stays in the tracker
+ * with its number and status, and the owner's entry keeps its category and notes. Only a cheque a statement cleared (it carries the statement's key); same cents, the same day or a named match
+ * within three days; two that fit equally are never guessed between. Counts only are logged. */
+export async function healChequeTwins({ db, uid, now = Date.now(), log = console.info, limit = 60 }) {
+    const userRef = db.collection('users').doc(uid);
+    const peek = (await userRef.get()).data() || {};
+    const isTyped = record => !!record && record.source !== 'statement' && !record.statementKey;
+    const isOpen = cheque => !!cheque && cheque.type === 'issued' && cheque.status === 'cleared' && !!cheque.statementKey && !cheque.countedBy;
+    if (!(Array.isArray(peek.cheques) ? peek.cheques : []).some(isOpen) || !(Array.isArray(peek.expenses) ? peek.expenses : []).some(isTyped)) return { merged: 0, more: false };
+    const result = await db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), user = structuredClone(snap.data() || {});
+        if (!Array.isArray(user.cheques) || !Array.isArray(user.expenses)) return { merged: 0, more: false };
+        const typed = user.expenses.filter(isTyped), pairs = [], claims = new Map();
+        for (const cheque of user.cheques.filter(isOpen)) {
+            const date = String(cheque.clearedDate || cheque.release || cheque.issue || '').slice(0, 10);
+            const row = { amount: cheque.amount, date, description: `${cheque.party || ''} cheque ${cheque.no || ''}`, direction: 'debit' };
+            const twin = manualTwin(typed, row, { strict: true });
+            if (!twin) continue;
+            pairs.push({ cheque, twin, row });
+            claims.set(String(twin.r.id), (claims.get(String(twin.r.id)) || 0) + 1);
+        }
+        const chosen = pairs.filter(pair => claims.get(String(pair.twin.r.id)) === 1).slice(0, limit);
+        if (!chosen.length) return { merged: 0, more: false };
+        for (const { cheque, twin, row } of chosen) {
+            markTwin(twin, row.date.slice(0, 7), cheque.statementKey, cheque.statementRow == null ? 0 : cheque.statementRow, now, row);
+            cheque.countedBy = String(twin.r.id); cheque._ut = now;
+            cheque.notes = (cheque.notes ? cheque.notes + ' · ' : '') + 'Counted once — your expense "' + String(twin.r.desc || twin.r.name || '').slice(0, 40) + '" already holds this payment';
+        }
+        tx.set(userRef, { cheques: user.cheques, expenses: user.expenses, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        return { merged: chosen.length, more: pairs.length > chosen.length && chosen.length >= limit };
+    });
+    if (result.merged) log(JSON.stringify({ evt: 'cheque-twin-heal', merged: result.merged, ...(result.more ? { more: true } : {}) }));
     return result;
 }
 
@@ -1485,12 +1536,32 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
         if (touched(user.subscriptions, subs)) changes.subscriptions = subs;
         const loans = stripped(user.loans, 'payments', row => row && row.source === 'statement' && gone.has(String(row.expenseId)));
         if (touched(user.loans, loans)) changes.loans = loans;
-        const cheques = (Array.isArray(user.cheques) ? user.cheques : []).map(cheque => {
-            if (!cheque || cheque.statementKey !== path) return cheque;
-            const { clearedDate, statementKey, statementRow, ...rest } = cheque;
-            return { ...rest, status: rest.status === 'cleared' ? 'pending' : rest.status, _ut: now };
-        });
+        /* A cheque this statement ADDED (it was never tracked) leaves with it, tombstoned, unless a later statement settled it since (that one stands behind it now). One the owner already tracked and the statement
+         * cleared / bounced goes back to the state it was in, and when several statements settled the cheque each is taken away on its own, in any order (wealthflow-cheques.js unsettleCheque keeps one picture per
+         * statement). A cheque record never changes the owner's own entries beyond that. */
+        const cheques = [], lifted = new Set();
+        for (const cheque of Array.isArray(user.cheques) ? user.cheques : []) {
+            const out = unsettleCheque(cheque, path, now);
+            if (out.change === 'none') { cheques.push(cheque); continue; }
+            for (const id of out.lift) lifted.add(String(id));
+            if (out.change === 'drop') { gone.add(String(cheque.id)); tomb.cheques = { ...(tomb.cheques && typeof tomb.cheques === 'object' ? tomb.cheques : {}), [cheque.id]: now }; continue; }
+            cheques.push(out.cheque);
+        }
         if (touched(user.cheques, cheques)) changes.cheques = cheques;
+        /* the entry the owner typed that this statement's cheque row was tied to (`countedBy`) stands for no row of a statement that is gone: its stamp (the single one, or this statement's month of a recurring
+         * entry) is lifted, so the same statement filed again links it afresh and the payment is still counted once. A stamp another statement wrote stays. */
+        if (lifted.size) {
+            const expenses = (changes.expenses || user.expenses || []).map(entry => {
+                if (!entry || !lifted.has(String(entry.id))) return entry;
+                const mine = entry.statementTwin && entry.statementTwin.sourcePath === path;
+                const months = Object.keys(entry.statementTwins || {}).filter(month => entry.statementTwins[month] && entry.statementTwins[month].sourcePath === path);
+                if (!mine && !months.length) return entry;
+                const { statementTwin, statementTwins, ...rest } = entry;
+                const left = Object.fromEntries(Object.entries(statementTwins || {}).filter(([month]) => !months.includes(month)));
+                return { ...rest, ...(statementTwin && !mine ? { statementTwin } : {}), ...(Object.keys(left).length ? { statementTwins: left } : {}), _ut: now };
+            });
+            if (touched(user.expenses, expenses)) changes.expenses = expenses;
+        }
         const more = ledger.docs.length >= CAP;
         for (const doc of ledger.docs) tx.set(doc.ref, { status: 'superseded_by_layout', supersededBy: 'exact-sender-rule', settledAt: now }, { merge: true });
         let closed = 0;
@@ -2422,7 +2493,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const mailRef = db.collection('wf-mail').doc(userKeyFor(email));
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
-    const token = await accessTokenFrom(mail.refresh_token, env, f);
+    const token = await mintAccessToken({ ref: mailRef, mail, env, f });     // a sign-in Google has refused: gmail-auth-state.mjs marks it, tells the owner and throws `gmail-reconnect-required`
     /* A MODEL PROVIDER THAT IS DOWN IS FOUND OUT ONCE, NOT ONCE PER STATEMENT. The board and the extractor are wrapped: after a
      * failure they are not asked again for a few minutes (remembered on the mailbox, so the next invocation does not pay for
      * it either), and not at all when too little of this invocation is left to wait for them. A disagreement between
@@ -2522,13 +2593,24 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
             await mailRef.set({ lastRecoveryMs: Date.now() }, { merge: true });
         } catch (_) { /* advice only: the next run tries again */ }
     }
-    if (Date.now() - start < budgetMs - 8000 && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
+    /* THE HOUSEKEEPING AT THE END OF A RUN STOPS WHEN THE TIME IS UP AND CARRIES ON FROM THERE (statement-budget.mjs). Production, 2026-10-11 and 10-12: the daily run hit the platform's sixty seconds in
+     * this tail (the pairing of the owner's own transfers took longer as the books grew; fixed in statement-legs.mjs). Each step reads and rewrites the owner's whole document, so the time is
+     * checked before EACH one, not once before all of them; the place a pass stopped at is kept on the mailbox, and the pass is "done" (its time stamped) only when it got to the end. */
+    const tail = {};
+    const tailUntil = start + budgetMs - 8000;
+    if (Date.now() < tailUntil && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
+        const began = Date.now();
         try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
+        tail.censusMs = Date.now() - began;
     }
-    if (Date.now() - start < budgetMs - 8000 && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
+    if (Date.now() < tailUntil && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
         // each on its own: one that fails (a document in a shape it did not expect) must not stop the others from ever running
-        for (const heal of [() => healLoanInstallments({ db, uid }), () => healHandMadeTwins({ db, uid }), () => healStatementCopies({ db, mailRef, uid }), () => healOwnTransfers({ db, uid }), () => healCardSettlement({ db, uid }), () => repairCardInstallments({ db, uid })]) { try { await heal(); } catch (_) { /* the next run tries again */ } }
-        try { await mailRef.set({ lastLoanHealMs: Date.now() }, { merge: true }); } catch (_) { /* the next run tries again */ }
+        const pass = await runSteps({ from: mail.loanHealNext, until: tailUntil, steps: [
+            { name: 'loan-installments', run: () => healLoanInstallments({ db, uid }) }, { name: 'hand-made-twins', run: () => healHandMadeTwins({ db, uid }) },
+            { name: 'cheque-twins', run: () => healChequeTwins({ db, uid }) }, { name: 'statement-copies', run: () => healStatementCopies({ db, mailRef, uid }) }, { name: 'own-transfers', run: () => healOwnTransfers({ db, uid }) },
+            { name: 'card-settlement', run: () => healCardSettlement({ db, uid }) }, { name: 'card-installments', run: () => repairCardInstallments({ db, uid }) }] });
+        tail.heal = { ran: pass.ran.length, failed: pass.failed, ms: pass.ms, ...(pass.done ? {} : { skipped: pass.skipped }) };
+        try { await mailRef.set(pass.done ? { lastLoanHealMs: Date.now(), loanHealNext: 0 } : { loanHealNext: pass.next }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }
     const [pending, processing] = await Promise.all([
         mailRef.collection('items').where('status', '==', 'pending').limit(200).get(),
@@ -2557,7 +2639,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     try {
         const byBank = {};
         for (const doc of pending.docs) { const bank = String(doc.data()?.bank || '?').slice(0, 24); byBank[bank] = (byBank[bank] || 0) + 1; }
-        console.info(JSON.stringify({ evt: 'statement-sync-run', merchantList: REGISTRY_SIZE, ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', ...(frontIncomplete ? { frontIncomplete: true } : {}), redriven: redrive.redriven, deadLettered: redrive.waiting,
+        console.info(JSON.stringify({ evt: 'statement-sync-run', merchantList: REGISTRY_SIZE, ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', ...(frontIncomplete ? { frontIncomplete: true } : {}), ...(Object.keys(tail).length ? { tail } : {}), redriven: redrive.redriven, deadLettered: redrive.waiting,
             pending: pending.docs.length, processing: processing.docs.length, byBank, collectionMore, aiDown: Object.entries(breaker.health).filter(([, v]) => Number(v?.downUntil) > Date.now()).map(([k, v]) => `${k}:${String(v.reason || '').slice(0, 40)}`) }));
     } catch (_) { /* a log line never stops a sync */ }
     return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, orphansHealed, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, /* THE LAST REPORT STANDS WHEN THIS RUN MADE NO NEW ONE. The report (statements checked in, emails refused, closed months, the audit log) was returned only by a run that did the mailbox
@@ -2595,7 +2677,7 @@ async function withReviewAttachment({ db, owner, review, env, f, open, attachmen
             entries = await open(owner.uid, vault.data());
             passwords = candidatesFor(source.bank || '', entries);
         }
-        const token = await accessTokenFrom(mail.refresh_token, env, f);
+        const token = await mintAccessToken({ ref: mailRef, mail, env, f });
         const bytes = await attachment(source, sourceRef, token, sendersOf(mail), f, mail.email);
         return await use({ source, sourceRef, bytes, passwords });
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }

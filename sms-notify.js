@@ -52,7 +52,7 @@ function queryOf(req) {
 export async function gatewayHealth(client) {
     if (!client.configured) return { configured: false, tokenAccepted: false, lowCredit: false, senderId: client.senderId };
     const b = await client.balance();
-    if (b.ok) return { configured: true, reachable: true, tokenAccepted: true, lowCredit: b.units !== null && b.units <= 5, senderId: client.senderId, balanceReadable: b.units !== null, balanceFields: Object.keys(b.fields || {}) };
+    if (b.ok) return { configured: true, reachable: true, tokenAccepted: true, lowCredit: b.units !== null && b.units <= 5, senderId: client.senderId, balanceReadable: b.units !== null, balanceFields: Object.keys(b.fields || {}), ...(b.shape ? { balanceShape: b.shape } : {}) };
     return { configured: true, reachable: ![KIND.NETWORK, KIND.TIMEOUT, KIND.SERVER].includes(b.kind), tokenAccepted: b.kind !== KIND.AUTH, lowCredit: b.kind === KIND.CREDIT, failure: b.kind, senderId: client.senderId };
 }
 
@@ -78,7 +78,7 @@ async function healthFor(req, client, deps, now) {
         const verifier = admin && typeof admin.auth === 'function' ? async (tk) => admin.auth().verifyIdToken(tk) : null;
         let claims = null;
         const who = await identify(req, { verifyIdToken: verifier ? async (tk) => { claims = await verifier(tk); return claims; } : null });
-        if (who.ok && smsAllowed({ email: who.email, claims }, deps.env).ok) return { ...base, reachable: h.reachable, lowCredit: h.lowCredit, senderId: h.senderId, ...(h.balanceFields ? { balanceReadable: h.balanceReadable, balanceFields: h.balanceFields } : {}), ...(h.failure ? { failure: h.failure } : {}) };
+        if (who.ok && smsAllowed({ email: who.email, claims }, deps.env).ok) return { ...base, reachable: h.reachable, lowCredit: h.lowCredit, senderId: h.senderId, ...(h.balanceFields ? { balanceReadable: h.balanceReadable, balanceFields: h.balanceFields, ...(h.balanceShape ? { balanceShape: h.balanceShape } : {}) } : {}), ...(h.failure ? { failure: h.failure } : {}) };
     } catch (_) { /* an unreadable identity is the anonymous answer */ }
     return base;
 }

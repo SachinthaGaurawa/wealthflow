@@ -143,6 +143,7 @@ export function friendly(reason) {
         'statement-sync-unavailable': 'Processing is unavailable; the safe queue will retry.',
         'statement-worker-retry-required': 'A statement needs retry; it will not block the others.',
         'autonomous-mailbox-not-enabled': 'Reconnect Gmail to resume background processing.',
+        'gmail-reconnect-required': 'Google turned down the saved Gmail sign-in. Reconnect Gmail in Statement Sync to bring statements in again.',
         'gmail-profile-unavailable': 'Gmail is unavailable; automatic retry is queued.',
         'gmail-profile-owner-mismatch': 'Connected Gmail does not match this WealthFlow owner.',
         'gmail-intake-unavailable': 'Gmail collection paused safely and will retry.',
@@ -614,7 +615,7 @@ export async function guardRelease(id){const r=await guardCall({action:'release'
 if (typeof window !== 'undefined') {
     window.addEventListener('wf-statement-cloud', () => {
         const text = document.getElementById('_statement_cloud_status');
-        if (text) text.textContent = state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
+        if (text) text.textContent = state.error === 'gmail-reconnect-required' ? friendly(state.error) : state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
     });
     window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, coverageSummary, retryAttemptsSummary, senderFunnel, guard: { file: guardFile, parsed: guardParsed, claim: guardClaim, mail: guardMail, release: guardRelease, identify: guardIdentify, accountTailOf } };
     const start=()=>{

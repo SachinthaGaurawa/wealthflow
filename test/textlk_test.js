@@ -14,7 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     TextLkClient, KIND, normalizePhone, maskPhone, normalizeSenderId, sameSender, analyzeSms, classifyFailure,
-    redact, retryAfterMs, DEFAULT_BASE, DEFAULT_SENDER, MAX_SEGMENTS, figureOf, readUnits,
+    redact, retryAfterMs, DEFAULT_BASE, DEFAULT_SENDER, MAX_SEGMENTS, figureOf, readUnits, shapeOf,
 } from '../textlk.mjs';
 
 const TOKEN = '1234|SuperSecretTokenValue0123456789abcdef';
@@ -334,6 +334,39 @@ describe('balance', () => {
     it('fields that disagree make the balance unknown (never "credit has run out" on a guess), and the field names are reported', () => {
         expect(readUnits({ remaining_unit: 0, balance: '250.00' })).toEqual({ units: null, fields: { remaining_unit: 0, balance: 250 }, conflict: true });
         expect(readUnits({ remaining_unit: '10', sms_unit: 10 })).toMatchObject({ units: 10 });
+    });
+});
+
+describe('balance: whatever shape the gateway answers in (the 18:59 UTC sweep read `units=unknown fields={}`)', () => {
+    const read = async (body) => clientWith(() => reply(200, body)).c.balance();
+    it('reads a bare figure in `data`, as text or number, zero included', async () => {
+        expect(await read({ status: 'success', data: '1,250.00' })).toMatchObject({ ok: true, units: 1250 });
+        expect(await read({ status: 'success', data: 87 })).toMatchObject({ ok: true, units: 87 });
+        expect(await read({ status: 'success', data: 0 })).toMatchObject({ ok: true, units: 0 });
+    });
+    it('reads the figure beside `status` when there is no `data`', async () => {
+        expect(await read({ status: 'success', balance: '42.50' })).toMatchObject({ ok: true, units: 42.5 });
+    });
+    it('finds a balance one or two levels down under a name it did not know', async () => {
+        expect(await read({ status: 'success', data: { account: { sms_credit: '30' } } })).toMatchObject({ ok: true, units: 30, fields: { 'account.sms_credit': 30 } });
+        expect(readUnits({ remaining_balance: '12', expired_on: '2030-01-01' })).toMatchObject({ units: 12 });
+    });
+    it('does not take a total, a limit, a price or a date for the balance', () => {
+        expect(readUnits({ plan: { sms_limit: 100 }, total_units: 500, unit_price: '1.20', expired_on: '2030-01-01', uid: '123' })).toEqual({ units: null, fields: {} });
+    });
+    it('conflicting guesses are still unknown, never a wrong figure', () => {
+        expect(readUnits({ a: { credit: 5 }, b: { balance: 90 } })).toMatchObject({ units: null, conflict: true });
+    });
+    it('an answer with no figure names its keys (never values) so the log shows the real shape', async () => {
+        const b = await read({ status: 'success', data: { uid: 'abc', owner: { name: 'Sachintha' }, flags: ['x'] } });
+        expect(b).toMatchObject({ ok: true, units: null });
+        expect(b.shape).toBe('uid:string,owner.name:string,flags:array');
+        expect(b.shape).not.toMatch(/Sachintha|abc/);
+        expect(shapeOf('x')).toBe('string');
+        expect(shapeOf(null)).toBe('none');
+    });
+    it('a figure that was read carries no shape', async () => {
+        expect((await read({ status: 'success', data: { remaining_unit: '10' } })).shape).toBeUndefined();
     });
 });
 

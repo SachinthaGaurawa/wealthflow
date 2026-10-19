@@ -38,7 +38,8 @@
 
 import { getAdminDb, withDeadline } from './admin-db.mjs';
 import { identify } from './gmail-link.mjs';
-import { accessTokenFrom, authed } from './google-oauth.mjs';
+import { authed } from './google-oauth.mjs';
+import { mintAccessToken, refusalText } from './gmail-auth-state.mjs';
 import {
     MAIL_ROOT, topicNameFrom, missingWatchConfig, watchBody, watchRecord,
     needsRenewal, watchStatusOf,
@@ -137,14 +138,16 @@ export default async function handler(req, res, deps) {
 
     let token;
     try {
-        token = await accessTokenFrom(record.refresh_token, env, f);
-    } catch (_) {
+        token = await mintAccessToken({ ref, mail: record, env, f });
+    } catch (e) {
+        // a timeout or a Google 5xx on the exchange mends itself: it is not a reason to send the owner to reconnect
+        if (e && e.transient === true) return j(res, 502, { ok: false, error: 'Google did not answer the sign-in check. Trying again.', connected: true, retryable: true });
         /* The stored refresh token no longer works — revoked, or the OAuth
          * client changed. Reported as a reconnect, because that is the action,
          * and WITHOUT the token appearing anywhere in the message. */
         return j(res, 502, {
             ok: false,
-            error: 'Gmail refused the saved token. Disconnect and connect the mailbox again.',
+            error: refusalText(e),
             connected: true,
         });
     }

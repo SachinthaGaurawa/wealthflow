@@ -126,6 +126,11 @@ describe('coverage: which months did the mailbox not give us', () => {
         expect(s.mailSnap().lastGapSearchMs).toBeUndefined();
     });
     it('is returned by the sync itself, in a compact form', async () => {
+        // the sync reads the clock itself; a month is due 12 days after it ends, so on the real clock this test failed from the 13th of every month on (September from 13 October)
+        vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(NOW);
+        try { await compactForm(); } finally { vi.useRealTimers(); }
+    });
+    async function compactForm() {
         const s = setup({ inbox: [] });
         s.data.set('users/u', { expenses: [] });
         const owner = { uid: 'u', email: 'owner@example.com' };
@@ -135,14 +140,13 @@ describe('coverage: which months did the mailbox not give us', () => {
             return s.f(url);
         });
         const intake = vi.fn(async () => ({ body: { ok: true, collectionPending: false } }));
-        // the sync reads the real clock, and which months count as "should have arrived by now" moves with it: pin it to the day the fixture was written for
+        // the sync reads the real clock for "which months are over"; the answer must not change as the calendar moves on
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(NOW);
         let result;
-        try { result = await runStatementSync({ db: s.db, owner, action: 'collect', env: {}, f, intake, maxSteps: 1, open: async () => [], loadAttachment: async () => ({}) }); }
-        finally { vi.useRealTimers(); }
+        try { result = await runStatementSync({ db: s.db, owner, action: 'collect', env: {}, f, intake, maxSteps: 1, open: async () => [], loadAttachment: async () => ({}) }); } finally { vi.useRealTimers(); }
         expect(result.coverage).toMatchObject({ missing: 1, series: [{ missing: ['2026-03'] }] });
-    });
+    }
 });
 
 describe('an unattended collection does not stop after ten messages', () => {

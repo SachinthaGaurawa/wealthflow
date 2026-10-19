@@ -32,6 +32,18 @@ export const CARD_BEFORE_DAYS = 1, CARD_AFTER_DAYS = 4, BANK_DAYS = 2;
 
 const cents = value => Math.round(Math.abs(Number(value)) * 100);
 const textOf = record => String((record && (record.desc || record.name)) || '');
+/** Credits grouped by their amount to the cent, each group in the order the books list them: a debit can only be paired with a credit of exactly its own amount, so it need only look in its own group (the books grew; every debit used to look at every credit). An amount that is not a number joins no group — it equals nothing, itself included. */
+const byAmount = (items, amountOf) => {
+    const groups = new Map();
+    for (const item of items) {
+        const key = cents(amountOf(item));
+        if (Number.isNaN(key)) continue;
+        const group = groups.get(key);
+        if (group) group.push(item); else groups.set(key, [item]);
+    }
+    return groups;
+};
+const NONE = Object.freeze([]);
 const dayOf = date => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(date || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000 : NaN; };
 /** A credit on a card that is money coming BACK from a shop, not the owner paying the card. */
 const GIVEN_BACK = /\b(?:refund(?:ed)?|revers(?:al|ed)|return(?:ed)?|cash\s*back|rebate|waiver|adjust(?:ment)?|reward|charge\s*back)\b/i;
@@ -56,17 +68,19 @@ export function ownMoneyLegs(user) {
     const debits = list('expenses').filter(record => system(record) && record.direction !== 'credit');
     const cardCredits = list('ccPayments').filter(record => system(record) && !GIVEN_BACK.test(textOf(record)));
     const bankCredits = list('incomeRecv').filter(system);
+    const cardByAmount = byAmount(cardCredits, record => record.amount), bankByAmount = byAmount(bankCredits, record => record.amount);
     const fits = []; let unworded = 0;                                                     // every (debit, credit) that could be one payment
     for (const debit of debits) {
         const at = dayOf(debit.date);
         if (!Number.isFinite(at)) continue;
-        if (asTransfer(debit)) for (const credit of cardCredits) {
+        const amount = cents(debit.amount);
+        if (asTransfer(debit)) for (const credit of cardByAmount.get(amount) || NONE) {
             const gap = dayOf(credit.date) - at;
             if (credit.statementKey === debit.statementKey || cents(credit.amount) !== cents(debit.amount) || !(gap >= -CARD_BEFORE_DAYS && gap <= CARD_AFTER_DAYS)) continue;
             if (debit.card_last4 && credit.card_last4 && String(debit.card_last4) === String(credit.card_last4)) continue;      // the card's own account is not the account that paid it
             fits.push({ debit, credit, kind: 'card', store: 'ccPayments' });
         }
-        for (const credit of bankCredits) {
+        for (const credit of bankByAmount.get(amount) || NONE) {
             const gap = Math.abs(dayOf(credit.date) - at);
             if (credit.statementKey === debit.statementKey || cents(credit.amount) !== cents(debit.amount) || !(gap <= BANK_DAYS)) continue;
             if (!bankKeyOf(debit.bank) || !bankKeyOf(credit.bank) || bankKeyOf(debit.bank) === bankKeyOf(credit.bank)) continue;   // two banks, or it is not this rule's business
@@ -78,8 +92,8 @@ export function ownMoneyLegs(user) {
     }
     const byDebit = new Map(), byCredit = new Map();
     for (const fit of fits) {
-        byDebit.set(fit.debit, [...(byDebit.get(fit.debit) || []), fit]);
-        byCredit.set(fit.credit, [...(byCredit.get(fit.credit) || []), fit]);
+        if (byDebit.has(fit.debit)) byDebit.get(fit.debit).push(fit); else byDebit.set(fit.debit, [fit]);
+        if (byCredit.has(fit.credit)) byCredit.get(fit.credit).push(fit); else byCredit.set(fit.credit, [fit]);
     }
     const remove = []; let pairs = 0, left = 0;
     for (const [debit, mine] of byDebit) {
@@ -104,9 +118,10 @@ export function looseLegsWhy(user) {
     const debits = [...list('expenses').map(record => ({ record, store: 'expenses' })), ...list('cconetime').map(record => ({ record, store: 'cconetime' }))].filter(({ record }) => record.direction !== 'credit');
     const credits = [...list('incomeRecv').map(record => ({ record, store: 'incomeRecv' })), ...list('ccPayments').map(record => ({ record, store: 'ccPayments' }))];
     const strict = ownMoneyLegs(user), planned = new Set(strict.remove.map(entry => entry.record));
+    const creditsByAmount = byAmount(credits, into => into.record.amount);
     const reasons = {}; let pairs = 0;
     for (const out of debits) {
-        for (const into of credits) {
+        for (const into of creditsByAmount.get(cents(out.record.amount)) || NONE) {
             const gap = dayOf(into.record.date) - dayOf(out.record.date);
             if (into.record.statementKey === out.record.statementKey || cents(into.record.amount) !== cents(out.record.amount) || !(Math.abs(gap) <= 3)) continue;
             if (!asTransfer(out.record) && !asTransfer(into.record)) continue;                      // not a loose pair at all

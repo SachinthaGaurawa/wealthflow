@@ -100,7 +100,7 @@ describe('browser and provider public-link consumers', () => {
     });
 
     it('attributes OpenRouter requests to the official website', () => {
-        for (const file of ['api/ai.js', 'api/vision-scan.js']) {
+        for (const file of ['api/ai.js', 'ai-provider-call.mjs']) {     // the receipt scanner asks OpenRouter through ai-provider-call.mjs
             const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
             expect(source, file).toContain("'HTTP-Referer': OFFICIAL_ORIGIN");
         }
