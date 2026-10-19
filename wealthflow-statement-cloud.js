@@ -132,7 +132,7 @@ export async function authChanged(next){
     if(user?.uid===next?.uid&&next)return;
     unsubscribe?.();unsubscribe=user=null;pending=[];coverage=null;state.reviews=0;
     Object.assign(state,{configured:null,saved:false,count:0,savedAt:null,error:'',queued:0});change();
-    if(!next){clearTimeout(continuationTimer);continuationTimer=null;clearTimeout(autoTimer);autoTimer=null;overlay?.remove();overlay=null;return}
+    if(!next){clearTimeout(continuationTimer);continuationTimer=null;clearTimeout(autoTimer);autoTimer=null;closeReview();return}
     adoptUser(next);try{await status();await reconcileLogin();await sync()}catch(_){}
 }
 
@@ -276,7 +276,7 @@ async function resumeStatement(entry, { quiet = false } = {}) {
             if (stopped) say(`${r.filed > 0 ? `${r.filed} more transaction${r.filed === 1 ? '' : 's'} filed, but the statement` : 'The statement'} stopped again. ${WHOLE_TEXT[r.replayReason] || 'It still needs a look.'} Nothing was lost and nothing is filed twice.`, 'warn');
             else if (r.resumed) say(r.filed > 0 ? `${r.filed} more transaction${r.filed === 1 ? '' : 's'} filed. The rest of this statement is being finished from where it stopped; nothing is filed twice.` : 'This statement is being finished from where it stopped; nothing is filed twice.', 'success');
             else say(r.state === 'filed' ? 'This statement is already filed, so its review is closed.' : r.state === 'busy' ? 'WealthFlow is working on this statement right now.' : 'This review was already handled.', 'info');
-            overlay?.remove(); overlay = null;
+            closeReview();
         }
         if (r.resumed || r.state === 'filed') { await refreshFinancialData().catch(() => {}); if (!quiet) await sync().catch(() => {}); }
         return true;
@@ -297,7 +297,7 @@ async function mapRenderedStatement(entry) {
         else if (result.replayStatus === 'filed') say('This statement has no transactions — its balances did not change — so there was nothing to file.', 'info');
         else if (result.replayStatus === 'needs_review') say('The statement was read on your device, but its transactions need your confirmation. Open the review and map its layout.', 'warn');
         else say('Statement read on your device. The remaining rows are continuing in the background.', 'info');
-        overlay?.remove(); overlay = null;
+        closeReview();
         await refreshFinancialData().catch(() => {});
         await sync().catch(() => say('The statement was read, but the immediate processing request failed. It remains queued for retry.', 'warn'));
     } else if (!(error?.mightAlreadyBeMapped && await resumeStatement(entry))) {
@@ -357,7 +357,7 @@ async function mapLayout(entry) {
     try {
         const source = await request('/api/statement-sync', 'POST', { action: 'review-source', id: entry.id });
         if (!source.text || typeof source.text !== 'string') throw new Error('statement-text-unavailable');
-        overlay?.remove(); overlay = null;
+        closeReview();
         window._teachStatementLayout([{ key: entry.id, text: source.text, bank: source.bank || 'Bank', fileName: source.filename || 'Statement', index: 0, last4: source.last4 || '' }], async learned => {
             if (!learned?.[0]?.rows?.length) { say('No complete layout was confirmed. The statement remains in Needs Review.', 'warn'); openReview(); return; }
             try {
@@ -419,7 +419,7 @@ export function review(entry) {
     if (typeof window._showCCReviewModal !== 'function') return say('Statement review is not loaded yet.', 'warn');
     const row = entry.row;
     if (!row || entry.index < 0) return mapLayout(entry);
-    overlay?.remove(); overlay = null;
+    closeReview();
     try {
         window._showCCReviewModal({ transactions: [{ ...row, description: row.description || row.narration, _needsReview: true, _reviewWhy: reviewReasonText(entry.reason) }],
             fileName: 'Cloud statement review', card_last4: row.card_last4 || '',
@@ -449,12 +449,38 @@ export function dismissReview(entry) {
     if (typeof window.confirm === 'function' && window.confirm('Ignore this statement without importing its transactions?')) return commit();
 }
 
+/* The list is one of the app's own dialogs (.mo around .md), like every other. It used to be a hand-made full-screen layer around a bare `.md`, and the design
+ * system keeps a `.md` invisible until its `.mo` is open: after "Open reviews" the screen went dark with nothing on it, and every click was caught by the layer. */
+function closeReview() { const gone = overlay; overlay = null; gone?.remove(); }
+
+function reviewHeader(text) {
+    const head = document.createElement('div'); head.className = 'md-hdr';
+    const title = document.createElement('div'); title.className = 'md-title'; title.textContent = text; head.appendChild(title);
+    const close = document.createElement('button'); close.className = 'btn btn-secondary btn-sm'; close.textContent = 'Close'; close.onclick = closeReview; head.appendChild(close);
+    return head;
+}
+
+/* What is shown when the list itself cannot be built (a record in a shape nobody expected). The person is never left with a dark screen and no way out. */
+function reviewFailed(error) {
+    try { console.error('[statement-review] the list could not be drawn:', error); } catch (_) {}
+    const box = document.createElement('section'); box.className = 'md'; box.style.cssText = 'max-width:720px;';
+    box.appendChild(reviewHeader('Statements needing review'));
+    const why = document.createElement('p'); why.style.cssText = 'margin:0;color:var(--text2);'; why.textContent = 'The list could not be shown this time. Nothing was changed and every statement is still waiting. Close this and open it again, or use Check now.'; box.appendChild(why);
+    return box;
+}
+
 function drawReview() {
     if (!overlay) return;
-    overlay.replaceChildren();
-    const box = document.createElement('section'); box.className = 'md'; box.style.cssText = 'max-width:720px;width:94%;max-height:85vh;overflow:auto;padding:20px;background:var(--card);border-radius:16px;';
-    const title = document.createElement('h3'); title.textContent = pending.length ? 'Statements needing review' : 'Your email bank statements'; box.appendChild(title);
-    const close = document.createElement('button'); close.className = 'btn btn-secondary'; close.textContent = 'Close'; close.onclick = () => { overlay.remove(); overlay = null; }; box.appendChild(close);
+    // Closed from outside (Escape closes every open dialog): nothing is on screen to keep up to date.
+    if (overlay.classList?.contains?.('open') === false) return closeReview();
+    let box;
+    try { box = buildReview(); } catch (error) { box = reviewFailed(error); }
+    overlay.replaceChildren(box);
+}
+
+function buildReview() {
+    const box = document.createElement('section'); box.className = 'md'; box.style.cssText = 'max-width:720px;';
+    box.appendChild(reviewHeader(pending.length ? 'Statements needing review' : 'Your email bank statements'));
     const summary = document.createElement('p');
     summary.textContent = `${pending.length} review item${pending.length === 1 ? '' : 's'} shown${state.queued ? ` · ${state.queued} statement${state.queued === 1 ? '' : 's'} still processing automatically` : ' · processing queue is clear'}.`;
     summary.style.cssText = 'margin:12px 0;color:var(--text2);'; box.appendChild(summary);
@@ -532,15 +558,17 @@ function drawReview() {
         if (entry.index < 0 || !entry.row?.amount) { const dismiss = document.createElement('button'); dismiss.className = 'btn btn-ghost btn-sm'; dismiss.textContent = 'Dismiss statement'; dismiss.style.marginLeft = '8px'; dismiss.onclick = () => dismissReview(entry); item.appendChild(dismiss); }
     }
     if (pending.length === 500) { const p = document.createElement('p'); p.textContent = 'Showing the first 500 pending reviews. Resolve items to reveal any older remainder.'; box.appendChild(p); }
-    overlay.appendChild(box);
+    return box;
 }
 
 export function openReview() {
     adoptUser(currentUser());
     if (!currentUser()) return say('Sign in to review cloud statements.', 'warn');
-    overlay?.remove(); overlay = document.createElement('div'); overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true');
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;';
-    document.body.appendChild(overlay); drawReview();
+    closeReview();
+    const mine = overlay = document.createElement('div'); mine.className = 'mo wf-statement-review'; mine.setAttribute('role', 'dialog'); mine.setAttribute('aria-modal', 'true'); mine.setAttribute('aria-label', 'Statements needing review');
+    mine.addEventListener?.('click', event => { if (event.target === mine && overlay === mine) closeReview(); });
+    mine.classList?.add('open');
+    drawReview(); document.body.appendChild(mine);
 }
 
 

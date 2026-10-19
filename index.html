@@ -25822,7 +25822,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                 openBankVault({ closeOnUnlock: true, onClose: _resumeMailSyncAfterVault });
             };
             const rb = host.querySelector('#_ms_reviews');
-            if (rb) rb.onclick = () => window.WFStatementCloud?.openReview();
+            if (rb) rb.onclick = () => {
+                try { window.WFStatementCloud.openReview(); }
+                catch (_) { notify('The review list could not be opened. Try again in a moment.', 'warn'); }
+            };
             /* REMOVING A STATEMENT IS THE ONE ACTION HERE THAT CANNOT BE UNDONE,
              * so it asks first and says exactly what it will do. The bills and
              * receipts already in the store are what this is for: #167 stopped
@@ -36500,10 +36503,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     }).catch(function () {});
                 }
             } catch (_) {}
+            /* The layer joins the page only once its contents exist (below): building them can throw, and a layer attached first stayed as a black screen with nothing on it. */
             const overlay = document.createElement('div');
             overlay.className = 'mo';
-            document.body.appendChild(overlay);
-            requestAnimationFrame(() => overlay.classList.add('open'));
 
             const _destOpts = (sel) => [
                 ['cconetime', 'CC One-Time'],
@@ -36682,6 +36684,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     </div>
                     <div style="padding:0 16px 12px;font-size:11px;color:var(--text3);line-height:1.5;">${parsed.cloudReview ? 'Confirm the category, amount, date and direction. Cloud review remains pending until the server confirms the transaction was saved.' : '@bot@ <b>Auto-sort</b> sends the ticked rows to the background AI, which routes each to its correct tab (groceries → Expenses, salary → Income, etc.), learns merchants, and removes duplicates — you can close this and keep working.'}</div>
                 </div>`;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
 
             const $ovl = (sel) => overlay.querySelector(sel);
             const closeOvl = () => { try { overlay.classList.remove('open'); } catch(_){} setTimeout(() => overlay.remove(), 180); };

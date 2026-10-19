@@ -497,6 +497,11 @@ html.wf-ios-stable .mo.open { background: var(--wf-overlay); }
 .md {
     background: var(--wf-card); border: 1px solid var(--wf-line); border-radius: 22px; padding: 26px; max-width: 580px;
     box-shadow: var(--wf-shadow-3);
+    transform: none;
+}
+/* A dialog box is hidden only while the `.mo` around it is closed. It used to be hidden everywhere, so a `.md` placed in any other layer showed as nothing:
+   the statement review list sat invisible under its dark layer and the whole screen went black after "Open reviews". */
+.mo .md {
     transform: translateY(18px) scale(.985); opacity: 0;
     transition: transform .3s var(--wf-ease), opacity .2s var(--wf-ease);
 }
@@ -517,8 +522,8 @@ html.wf-ios-stable .mo.open { background: var(--wf-overlay); }
     .md, .mo > .md[style] {
         max-width: none !important; width: 100%; max-height: min(92dvh, calc(100dvh - 100px - env(safe-area-inset-top, 0px))) !important; border-radius: 22px 22px 0 0;
         border-left: none; border-right: none; border-bottom: none; padding: 22px 18px max(22px, env(safe-area-inset-bottom));
-        transform: translateY(40px); opacity: 0;
     }
+    .mo .md, .mo > .md[style] { transform: translateY(40px); opacity: 0; }
     .mo.open .md { transform: none; opacity: 1; }
     .md::before {
         content: ''; display: block; width: 38px; height: 4px; border-radius: 4px; background: var(--wf-line-2); margin: -8px auto 14px;

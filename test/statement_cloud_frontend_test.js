@@ -164,6 +164,96 @@ describe('an unclear empty month is one question with one answer', () => {
     });
 });
 
+describe('the review list is one of the app\'s own dialogs and never a bare dark layer', () => {
+    // A recording stand-in: which element is the dialog layer, what is put in it and when it joins the page.
+    const recorder = () => {
+        const made = [], joined = [], buttons = [];
+        const element = tag => {
+            const e = { ...fakeElement(), tag, _t: '', kids: [], removed: false, opened: false, handlers: {},
+                set textContent(v) { this._t = v; }, get textContent() { return this._t; },
+                appendChild(k) { this.kids.push(k); return k; },
+                replaceChildren(...k) { this.kids = k; this.replaced = (this.replaced || 0) + 1; },
+                remove() { this.removed = true; },
+                addEventListener(type, fn) { this.handlers[type] = fn; },
+                classList: { add: c => { if (c === 'open') e.opened = true; }, contains: c => c === 'open' && e.opened },
+            };
+            made.push(e); if (tag === 'button') buttons.push(e);
+            return e;
+        };
+        vi.stubGlobal('document', { createElement: element, body: { appendChild: e => { joined.push({ e, children: e.kids.length, opened: e.opened }); } } });
+        return { made, joined, buttons };
+    };
+    const serve = docs => { window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => ({ onSnapshot: ok => { window.__push = list => ok({ docs: list }); ok({ docs }); return () => {}; } }) }) }) }) }) }; };
+    const signedIn = async docs => {
+        await authChanged(null); serve(docs);
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0 }));
+        await authChanged(active);
+    };
+    const whole = { id: 'w1', data: () => ({ index: -1, reason: 'statement-layout-or-reconciliation-needs-review', bank: 'HNB', filename: 'a.pdf' }) };
+
+    it('is the app\'s dialog layer (.mo), open, with its contents drawn before it joins the page', async () => {
+        const rec = recorder();
+        await signedIn([whole]);
+        await openReview();
+        const layer = rec.made[0];
+        expect(layer.className).toMatch(/\bmo\b/);                        // the design system hides a bare .md until its .mo is open
+        expect(layer.style.cssText).toBeUndefined();                      // no hand-made full-screen layer
+        expect(layer.opened).toBe(true);
+        expect(rec.joined).toHaveLength(1);
+        expect(rec.joined[0].e).toBe(layer);
+        expect(rec.joined[0].children).toBe(1);                           // never attached empty
+        expect(typeof layer.handlers.click).toBe('function');             // a tap on the dark area closes it
+        await authChanged(null);
+    });
+
+    it('a tap on the dark area closes it, a tap inside does not', async () => {
+        const rec = recorder();
+        await signedIn([whole]);
+        await openReview();
+        const layer = rec.made[0];
+        layer.handlers.click({ target: {} });
+        expect(layer.removed).toBe(false);
+        layer.handlers.click({ target: layer });
+        expect(layer.removed).toBe(true);
+        await authChanged(null);
+    });
+
+    it('a list that cannot be built says so and can be closed, instead of leaving an empty layer', async () => {
+        const rec = recorder();
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        await signedIn([whole]);
+        await openReview();
+        const layer = rec.made[0];
+        // a record nobody expected: joining its words throws while the list is being built
+        window.__push([{ id: 'bad', data: () => ({ index: -1, reason: 'x', row: { description: { toString() { throw new Error('unreadable record'); } } } }) }]);
+        const box = layer.kids[0];
+        expect(layer.kids).toHaveLength(1);                               // something is on screen
+        const words = [];
+        const walk = e => { words.push(e._t); (e.kids || []).forEach(walk); };
+        walk(box);
+        expect(words.some(w => /could not be shown/.test(w || ''))).toBe(true);
+        const close = rec.buttons.filter(b => b._t === 'Close').at(-1);
+        expect(close).toBeTruthy();
+        close.onclick();
+        expect(layer.removed).toBe(true);
+        spy.mockRestore();
+        await authChanged(null);
+    });
+
+    it('a list closed from outside (Escape closes every dialog) is forgotten at the next snapshot, not redrawn', async () => {
+        const rec = recorder();
+        await signedIn([whole]);
+        await openReview();
+        const layer = rec.made[0];
+        layer.opened = false;                                             // what the app's Escape handler does
+        const before = layer.replaced;
+        window.__push([whole]);
+        expect(layer.replaced).toBe(before);                              // not redrawn into a hidden layer
+        expect(layer.removed).toBe(true);
+        await authChanged(null);
+    });
+});
+
 describe('private statement cloud frontend transport', () => {
     it('exposes a defensive state snapshot to the real browser integration', () => {
         const first = getState();
