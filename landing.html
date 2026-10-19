@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WealthFlow | Personal finance for Sri Lanka</title>
+<meta name="description" content="WealthFlow is a private personal-finance app for Sri Lanka. Sync bank statements from your own Gmail, let several AI models classify every transaction, track loans, cards and cheques, and see your DSCR at a glance.">
+<link rel="canonical" href="https://www.wealthflow.lk/">
+<meta name="theme-color" content="#071226">
+<meta name="color-scheme" content="dark">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WealthFlow">
+<meta property="og:title" content="WealthFlow | Personal finance for Sri Lanka">
+<meta property="og:description" content="Sync bank statements from your own Gmail, cross-check every transaction with several AI models, and track loans, cards, cheques and DSCR in one private place.">
+<meta property="og:url" content="https://www.wealthflow.lk/">
+<meta property="og:image" content="https://www.wealthflow.lk/icon-512.png">
+<link rel="icon" href="/assets/wf-mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="wf-landing" content="1">
+<!-- Signed-in visitors, installed-app launches and OAuth / magic-link / share-target
+     returns land on "/" exactly as they did before this page existed; this sends
+     them straight on to the app gateway (/app) with the query and hash intact.
+     A first-time or signed-out visitor, a search engine and Google's verification
+     crawler have none of those signals and see this public page. -->
+<script>
+(function () {
+    try {
+        var l = window.location, q = l.search || '', h = l.hash || '';
+        if (/[?&]public=1(?:&|$)/.test(q)) return;
+        var go = false;
+        if (q.length > 1) {
+            new URLSearchParams(q).forEach(function (_v, k) {
+                if (!/^(utm_[a-z_]+|fbclid|gclid|ref)$/i.test(k)) go = true;
+            });
+        }
+        if (h.length > 1 && /[=&]/.test(h)) go = true;
+        if (!go && window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) go = true;
+        if (!go && window.navigator && window.navigator.standalone === true) go = true;
+        if (!go) { try { if (window.localStorage.getItem('wf_returning') === '1') go = true; } catch (_) {} }
+        if (go) l.replace('/app' + q + h);
+    } catch (_) {}
+})();
+</script>
+<style>
+@font-face{font-family:'Geist';font-style:normal;font-weight:100 900;font-display:swap;src:url(/assets/fonts/geist-latin-ext.woff2) format('woff2');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:'Geist';font-style:normal;font-weight:100 900;font-display:swap;src:url(/assets/fonts/geist-latin.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+:root{
+    --navy-950:#050d1c;--navy-900:#071226;--navy-800:#0b1d3d;--navy-700:#10274f;--navy-600:#173263;
+    --gold-300:#f1d98d;--gold-400:#e6c565;--gold-500:#d4af37;--gold-600:#b8912a;
+    --ivory:#f6f1e3;--text:#e9edf6;--text-2:#b4bfd4;--text-3:#8e9bb4;
+    --line:rgba(212,175,55,.22);--line-soft:rgba(255,255,255,.08);
+    --green:#4cc38a;
+    --font:'Geist','Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Noto Sans Sinhala','Noto Sans',sans-serif;
+    --max:1120px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;font-family:var(--font);color:var(--text);background:var(--navy-900);line-height:1.6;font-size:16px;
+    background-image:radial-gradient(1200px 600px at 85% -10%,rgba(212,175,55,.14),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(23,50,99,.7),transparent 60%),linear-gradient(180deg,var(--navy-900),var(--navy-950));
+    background-attachment:fixed}
+a{color:var(--gold-400);text-underline-offset:3px}
+a:hover{color:var(--gold-300)}
+:focus-visible{outline:2px solid var(--gold-400);outline-offset:3px;border-radius:6px}
+.wrap{width:100%;max-width:var(--max);margin:0 auto;padding:0 20px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--gold-500);color:#1a1405;padding:8px 14px;border-radius:8px;z-index:100}
+.skip:focus{left:8px}
+
+/* header */
+header.top{position:sticky;top:0;z-index:50;background:rgba(7,18,38,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line-soft)}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:68px}
+.brand{display:flex;align-items:center;gap:12px;color:var(--ivory);text-decoration:none;font-weight:700;letter-spacing:.2px;font-size:19px}
+.brand img{height:34px;width:auto;display:block}
+nav.main{display:flex;align-items:center;gap:22px}
+nav.main a.link{color:var(--text-2);text-decoration:none;font-size:14.5px;font-weight:500}
+nav.main a.link:hover{color:var(--gold-300)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 22px;border-radius:12px;font-weight:650;font-size:15px;text-decoration:none;border:1px solid transparent;cursor:pointer;transition:transform .15s,box-shadow .2s,background .2s;min-height:44px;font-family:inherit}
+.btn-gold{background:linear-gradient(135deg,var(--gold-300),var(--gold-500) 55%,var(--gold-600));color:#1a1405;box-shadow:0 8px 28px rgba(212,175,55,.28)}
+.btn-gold:hover{color:#1a1405;transform:translateY(-1px);box-shadow:0 12px 34px rgba(212,175,55,.4)}
+.btn-ghost{background:rgba(255,255,255,.04);border-color:var(--line);color:var(--ivory)}
+.btn-ghost:hover{background:rgba(212,175,55,.1);color:var(--gold-300)}
+.btn-sm{padding:9px 16px;font-size:14px;min-height:40px}
+
+/* hero */
+.hero{padding:72px 0 56px}
+.hero-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:48px;align-items:center}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;letter-spacing:1.6px;text-transform:uppercase;color:var(--gold-400);font-weight:600;border:1px solid var(--line);border-radius:999px;padding:6px 14px;background:rgba(212,175,55,.06)}
+h1{font-size:clamp(34px,5.4vw,58px);line-height:1.07;margin:20px 0 18px;color:var(--ivory);letter-spacing:-1px;font-weight:750}
+h1 .gold{background:linear-gradient(135deg,var(--gold-300),var(--gold-500));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lead{font-size:clamp(16px,2vw,19px);color:var(--text-2);max-width:56ch;margin:0 0 28px}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:18px}
+.fine{font-size:13px;color:var(--text-3);max-width:60ch}
+.panel{position:relative;border:1px solid var(--line);border-radius:22px;padding:26px;background:linear-gradient(160deg,rgba(23,50,99,.75),rgba(11,29,61,.85));box-shadow:0 30px 80px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.06)}
+.panel .tag{position:absolute;top:14px;right:16px;font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-3)}
+.panel h2{font-size:14px;letter-spacing:1.4px;text-transform:uppercase;color:var(--gold-400);margin:0 0 14px;font-weight:600}
+.gauge{display:block;width:100%;max-width:340px;margin:6px auto 0}
+.panel p.cap{font-size:13px;color:var(--text-2);text-align:center;margin:8px 0 0}
+.mini{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}
+.mini div{border:1px solid var(--line-soft);border-radius:12px;padding:10px 12px;background:rgba(5,13,28,.5);font-size:12.5px;color:var(--text-2)}
+.mini b{display:block;color:var(--ivory);font-size:13.5px;margin-bottom:2px}
+
+/* sections */
+section{padding:64px 0}
+.sec-head{max-width:68ch;margin:0 0 36px}
+.sec-head .eyebrow{margin-bottom:14px}
+h2.title{font-size:clamp(26px,3.6vw,38px);line-height:1.15;margin:0 0 12px;color:var(--ivory);letter-spacing:-.5px;font-weight:720}
+.sec-head p{margin:0;color:var(--text-2)}
+.grid{display:grid;gap:18px}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+.card{border:1px solid var(--line-soft);border-radius:18px;padding:24px;background:linear-gradient(180deg,rgba(16,39,79,.55),rgba(11,29,61,.55));transition:border-color .2s,transform .2s}
+.card:hover{border-color:var(--line);transform:translateY(-2px)}
+.card .ic{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:rgba(212,175,55,.1);border:1px solid var(--line);color:var(--gold-400);margin-bottom:14px}
+.card h3{margin:0 0 8px;font-size:18px;color:var(--ivory);font-weight:650}
+.card p{margin:0;color:var(--text-2);font-size:15px}
+.band{background:linear-gradient(180deg,rgba(11,29,61,.55),rgba(7,18,38,.2));border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
+.steps{counter-reset:s;list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.steps li{counter-increment:s;border:1px solid var(--line-soft);border-radius:16px;padding:22px;background:rgba(5,13,28,.45)}
+.steps li::before{content:counter(s);display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--gold-300),var(--gold-600));color:#1a1405;font-weight:750;margin-bottom:12px}
+.steps b{display:block;color:var(--ivory);margin-bottom:6px}
+.steps span{color:var(--text-2);font-size:14.5px}
+.check{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.check li{position:relative;padding-left:28px;color:var(--text-2);font-size:15px}
+.check li::before{content:"";position:absolute;left:0;top:7px;width:14px;height:8px;border-left:2px solid var(--gold-400);border-bottom:2px solid var(--gold-400);transform:rotate(-45deg)}
+.check b{color:var(--ivory)}
+.notice{border:1px solid var(--line);border-radius:16px;padding:20px 22px;background:rgba(212,175,55,.06);color:var(--text-2);font-size:14.5px}
+.notice b{color:var(--ivory)}
+.cta-band{text-align:center;padding:72px 0}
+.cta-band .panel{max-width:760px;margin:0 auto;padding:44px 28px}
+.cta-band h2{font-size:clamp(26px,3.6vw,36px);text-transform:none;letter-spacing:-.4px;color:var(--ivory);margin:0 0 10px}
+.cta-band p{color:var(--text-2);margin:0 auto 24px;max-width:52ch}
+
+footer{border-top:1px solid var(--line-soft);padding:36px 0 44px;color:var(--text-3);font-size:14px}
+.foot{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:28px}
+.foot h4{margin:0 0 10px;color:var(--ivory);font-size:14px;letter-spacing:.4px}
+.foot ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.foot a{color:var(--text-2);text-decoration:none}
+.foot a:hover{color:var(--gold-300);text-decoration:underline}
+.legal{margin-top:26px;padding-top:18px;border-top:1px solid var(--line-soft);font-size:12.5px}
+
+@media (max-width:900px){
+    .hero-grid{grid-template-columns:1fr;gap:34px}
+    .g3{grid-template-columns:1fr 1fr}
+    .steps{grid-template-columns:1fr 1fr}
+    .foot{grid-template-columns:1fr 1fr}
+}
+@media (max-width:640px){
+    .hero{padding:44px 0 36px}
+    section{padding:44px 0}
+    nav.main a.link{display:none}
+    .g3,.g2,.steps,.foot{grid-template-columns:1fr}
+    .mini{grid-template-columns:1fr}
+    .brand span{font-size:17px}
+    .btn{width:100%}
+    .cta .btn{width:100%}
+    nav.main .btn{width:auto}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top">
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="WealthFlow home"><img src="/assets/wf-mark.svg" alt="" width="52" height="34"><span>WealthFlow</span></a>
+        <nav class="main" aria-label="Primary">
+            <a class="link" href="#features">Features</a>
+            <a class="link" href="#how">How it works</a>
+            <a class="link" href="#data">Your data</a>
+            <a class="link" href="/privacy">Privacy Policy</a>
+            <a class="btn btn-gold btn-sm" href="/app">Login / Register</a>
+        </nav>
+    </div>
+</header>
+
+<main id="main">
+<section class="hero" aria-labelledby="h1">
+    <div class="wrap hero-grid">
+        <div>
+            <span class="eyebrow">Personal finance · Sri Lanka</span>
+            <h1 id="h1">Your money, <span class="gold">in one calm, private place.</span></h1>
+            <p class="lead"><b>WealthFlow</b> is a personal-finance app built for Sri Lankan households. It reads the bank statements that land in <em>your own</em> Gmail, files every transaction with the help of several independent AI models, and keeps your loans, credit cards, cheques and bills in one dashboard, with your debt-service coverage (DSCR) always up to date.</p>
+            <div class="cta">
+                <a class="btn btn-gold" href="/app">Login / Register</a>
+                <a class="btn btn-ghost" href="#features">See what it does</a>
+            </div>
+            <p class="fine">Sign in with your Google account. WealthFlow shows information only about your own money; you choose what to connect. Read how your data is handled in the <a href="/privacy">Privacy Policy</a> and the <a href="/terms">Terms of Service</a>.</p>
+        </div>
+        <aside class="panel" aria-label="Illustration of the DSCR gauge">
+            <span class="tag">Illustration</span>
+            <h2>Debt-service coverage</h2>
+            <svg class="gauge" viewBox="0 0 320 190" role="img" aria-label="Illustrative DSCR gauge showing a healthy ratio">
+                <defs>
+                    <linearGradient id="gArc" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0" stop-color="#e5736b"/><stop offset=".5" stop-color="#e6c565"/><stop offset="1" stop-color="#4cc38a"/>
+                    </linearGradient>
+                </defs>
+                <path d="M30 165 A130 130 0 0 1 290 165" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="18" stroke-linecap="round"/>
+                <path d="M30 165 A130 130 0 0 1 290 165" fill="none" stroke="url(#gArc)" stroke-width="18" stroke-linecap="round" stroke-dasharray="408" stroke-dashoffset="96"/>
+                <line x1="160" y1="165" x2="232" y2="78" stroke="#f1d98d" stroke-width="4" stroke-linecap="round"/>
+                <circle cx="160" cy="165" r="9" fill="#d4af37"/>
+                <text x="30" y="186" fill="#8e9bb4" font-size="12" font-family="Geist,sans-serif">Tight</text>
+                <text x="262" y="186" fill="#8e9bb4" font-size="12" font-family="Geist,sans-serif">Healthy</text>
+            </svg>
+            <p class="cap">Income against loan and card obligations, at a glance. Example only; your own numbers appear after you sign in.</p>
+            <div class="mini">
+                <div><b>Loans</b>Instalments &amp; balances</div>
+                <div><b>Cards</b>Limits &amp; due dates</div>
+                <div><b>Cheques</b>Issued &amp; cleared</div>
+            </div>
+        </aside>
+    </div>
+</section>
+
+<section id="features" class="band" aria-labelledby="f-title">
+    <div class="wrap">
+        <div class="sec-head">
+            <span class="eyebrow">What WealthFlow does</span>
+            <h2 class="title" id="f-title">Built around the way Sri Lankan banking really works</h2>
+            <p>Statements arrive by email, cards and cheques are everywhere, and loans have instalments. WealthFlow brings them together and does the filing for you.</p>
+        </div>
+        <div class="grid g3">
+            <article class="card">
+                <div class="ic" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></div>
+                <h3>Autonomous email sync</h3>
+                <p>Connect your Gmail once, read-only, and approve the bank senders you trust. New statements are found and filed automatically, with a scheduled check as a safety net. Only mail from the senders you approve is looked at.</p>
+            </article>
+            <article class="card">
+                <div class="ic" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><circle cx="12" cy="12" r="2.4"/><path d="m6.7 7.3 3.6 3.4M17.3 7.3l-3.6 3.4M6.7 16.7l3.6-3.4M17.3 16.7l-3.6-3.4"/></svg></div>
+                <h3>Parallel AI Matrix</h3>
+                <p>Instead of trusting one model, a transaction that the rules cannot place is put to several independent AI providers at the same time. A row is filed only when they agree; anything disputed is left for you to review.</p>
+            </article>
+            <article class="card">
+                <div class="ic" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18a8 8 0 1 1 16 0"/><path d="m12 18 4-6"/><circle cx="12" cy="18" r="1.2"/></svg></div>
+                <h3>DSCR calculator</h3>
+                <p>See your debt-service coverage ratio, income against loan and card obligations, as a clear gauge with plain-language advice, so you know how much room you really have.</p>
+            </article>
+            <article class="card">
+                <div class="ic" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></div>
+                <h3>Statement scanning</h3>
+                <p>Upload a bank or card statement PDF and WealthFlow reads the rows, recognises the bank, and refuses duplicate uploads so nothing is counted twice.</p>
+            </article>
+            <article class="card">
+                <div class="ic" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/></svg></div>
+                <h3>Loans, cards, cheques &amp; bills</h3>
+                <p>Track loan instalments, credit-card limits and due dates, cheques from issue to clearing, and recurring subscriptions, with reminders before things fall due.</p>
+            </article>
+            <article class="card">
+                <div class="ic" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg></div>
+                <h3>AI financial advisor</h3>
+                <p>Ask questions about your own finances. The advisor is given the same figures your dashboard shows, so its answers match what you see on screen.</p>
+            </article>
+        </div>
+    </div>
+</section>
+
+<section id="how" aria-labelledby="how-title">
+    <div class="wrap">
+        <div class="sec-head">
+            <span class="eyebrow">How it works</span>
+            <h2 class="title" id="how-title">From inbox to insight in four steps</h2>
+        </div>
+        <ol class="steps">
+            <li><b>Sign in with Google</b><span>Use your Google account to log in or register. Your name and email identify your private workspace.</span></li>
+            <li><b>Connect what you choose</b><span>Optionally link Gmail (read-only) for statements and Google Drive for backups. Both can be disconnected at any time.</span></li>
+            <li><b>WealthFlow files it</b><span>Rules and the AI matrix sort income, expenses, cards and loans. You review only what is genuinely unclear.</span></li>
+            <li><b>You stay in control</b><span>Dashboards, DSCR, reminders and an advisor that works from your real numbers, behind your own PIN or biometric lock.</span></li>
+        </ol>
+    </div>
+</section>
+
+<section id="data" class="band" aria-labelledby="d-title">
+    <div class="wrap">
+        <div class="sec-head">
+            <span class="eyebrow">Your data</span>
+            <h2 class="title" id="d-title">Your financial data is yours</h2>
+            <p>A short version of what the <a href="/privacy">Privacy Policy</a> explains in full.</p>
+        </div>
+        <div class="grid g2">
+            <div class="card">
+                <h3>What we access</h3>
+                <ul class="check">
+                    <li><b>Google sign-in:</b> your name, email address and profile picture, to create and open your account.</li>
+                    <li><b>Gmail (optional, read-only):</b> statement emails from the bank senders you approve, to file them for you. WealthFlow never sends, deletes or changes mail.</li>
+                    <li><b>Google Drive (optional):</b> only files WealthFlow itself creates, for your backups.</li>
+                    <li><b>What you add:</b> incomes, expenses, loans, cards, cheques and statements you upload.</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>How it is protected</h3>
+                <ul class="check">
+                    <li>Traffic is encrypted with HTTPS; data is stored in Google Firebase with per-user access rules, so one account cannot read another's.</li>
+                    <li>Gmail access tokens live only on the server, in a store that browsers cannot read.</li>
+                    <li>Some on-device data and the bank-password vault are encrypted on your device before they are stored.</li>
+                    <li>No advertising, no data sales, no tracking pixels.</li>
+                </ul>
+            </div>
+        </div>
+        <div class="notice" style="margin-top:18px">
+            <b>Google API Services User Data Policy.</b> WealthFlow's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener noreferrer" target="_blank">Google API Services User Data Policy</a>, including the Limited Use requirements. Data from your Gmail is used only to provide the statement-filing feature you can see in the app.
+        </div>
+    </div>
+</section>
+
+<section class="cta-band" aria-labelledby="cta-title">
+    <div class="wrap">
+        <div class="panel">
+            <h2 id="cta-title">Ready to see your money clearly?</h2>
+            <p>Log in or register with your Google account and the app gateway opens straight away.</p>
+            <a class="btn btn-gold" href="/app">Login / Register</a>
+        </div>
+    </div>
+</section>
+</main>
+
+<footer>
+    <div class="wrap">
+        <div class="foot">
+            <div>
+                <a class="brand" href="/" style="font-size:17px"><img src="/assets/wf-mark.svg" alt="" width="45" height="30" style="height:30px"><span>WealthFlow</span></a>
+                <p style="margin:12px 0 0;max-width:38ch">A private personal-finance app for Sri Lanka, available at <a href="https://www.wealthflow.lk">www.wealthflow.lk</a>.</p>
+            </div>
+            <div>
+                <h4>Product</h4>
+                <ul>
+                    <li><a href="#features">Features</a></li>
+                    <li><a href="#how">How it works</a></li>
+                    <li><a href="/app">Login / Register</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4>Legal &amp; contact</h4>
+                <ul>
+                    <li><a href="/privacy">Privacy Policy</a></li>
+                    <li><a href="/terms">Terms of Service</a></li>
+                    <li><a href="mailto:gaurawasachintha@gmail.com">gaurawasachintha@gmail.com</a></li>
+                    <li><a href="mailto:info@wealthflow.lk">info@wealthflow.lk</a></li>
+                </ul>
+            </div>
+        </div>
+        <p class="legal">&copy; 2026 WealthFlow. All rights reserved. WealthFlow is an information and record-keeping tool; it is not a bank, lender or licensed financial adviser, and nothing in the app is financial, tax or legal advice.</p>
+    </div>
+</footer>
+</body>
+</html>

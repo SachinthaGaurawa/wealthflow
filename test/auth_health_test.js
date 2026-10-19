@@ -304,7 +304,7 @@ describe('GET /api/auth-health', () => {
         calls.length = 0;
         const base = fetch.getMockImplementation();
         fetch.mockImplementation(async (url, init = {}) => {
-            if (String(url) === 'https://www.wealthflow.lk/') {
+            if (String(url) === 'https://www.wealthflow.lk/app') {
                 calls.push({ url: String(url), method: 'GET' });
                 return reply(200, null, {}, 'const firebaseConfig = { apiKey: "page-key-1", authDomain: "x" };');
             }

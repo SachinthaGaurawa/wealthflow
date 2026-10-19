@@ -1670,9 +1670,9 @@
                 if (/^https?:\/\//i.test(src) && src.indexOf(location.origin) !== 0) continue;
                 out.push(src);
             }
-            // index.html itself is the shell every module hangs off, so it belongs
-            // in the count the user watches.
-            out.push('/index.html');
+            // The app document ('/app': '/' is the public home page) is the shell
+            // every module hangs off, so it belongs in the count the user watches.
+            out.push('/app');
             return out;
         } catch (_) { return []; }
     }

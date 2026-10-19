@@ -503,7 +503,7 @@ describe('Vercel actually runs it, and the headers are safe if it does not', () 
     const vercel = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 
     it('the build command is set, AND the output directory with it', () => {
-        expect(vercel.buildCommand).toBe('node build.mjs --write');
+        expect(vercel.buildCommand).toBe('node build.mjs --write && node publish-layout.mjs');
         /* ONE WITHOUT THE OTHER IS A FAILED DEPLOY, and that is not a guess —
          * it is what the preview said:
          *
