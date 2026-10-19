@@ -982,6 +982,24 @@ html.wf-sheet-open, html.wf-sheet-open body { overscroll-behavior: contain; }
     .tbl-wrap table .act-btns { gap: 2px; }
 }
 
+/* ═════════════════ 20b. COMPACT MODE ════════════════════════════════════
+   Settings → Compact Mode adds body.wf-compact. The base rules for it live in index.html and lose to the
+   rules above (the summary bar's id selector, the card family's own padding), so the switch moved the page
+   gutter and little else. These are the same intent, written where they win. */
+body.wf-compact .card, body.wf-compact .loan-card, body.wf-compact .inc-card,
+body.wf-compact .chq-card, body.wf-compact .tgt-card, body.wf-compact .sub-card { padding: 14px; }
+body.wf-compact .card-header { margin-bottom: 12px; }
+body.wf-compact #dashStats .stat-card { padding: 12px 14px 10px; }
+
+/* Settings → Cloud Sync status pill. It changes text and colour with every save (Syncing, Connected, Offline); as three
+   differently sized boxes it moved the row, and on a phone the row changed height, so every switch nudged the page. */
+.wf-sync-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 118px; white-space: nowrap; flex: none; }
+/* the AI services row: one badge box for every reading ("Checking…" to "Not measured yet") and a line that is as tall as the longest thing it can say */
+.wf-ai-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 150px; white-space: nowrap; flex: none; }
+.wf-ai-detail-stack { display: grid; }
+.wf-ai-detail-stack > * { grid-area: 1 / 1; }
+.wf-ai-detail-ghost { visibility: hidden; pointer-events: none; }
+
 /* ═════════════════ 26. SETTINGS CONTROLS ═══════════════════════════════════ */
 /* A select shows the whole of its chosen option ("LKR — Sri Lanka", "3 (default)") instead of a cut-off word: the fixed
    120 to 160px widths in the page left about 67px for the text once the arrow's room was taken. Anything still too long ends in an ellipsis. */

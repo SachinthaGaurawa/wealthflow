@@ -335,7 +335,10 @@ export const BUDGETS = {
     // 2026-10-10 (Cheque Tracker review round + main's later edits to index.html): measured 2,268,014 -> 2_270_500. The manual upload now links a cleared cheque to the entry the owner typed for the same payment (the worker already did).
     // 2026-10-16 (Google sign-in failures are shown and diagnosed): 2,270,500 -> 2_279_000 (measured 2,276,353 + ~0.1% headroom). A sign-in error panel inside the sign-in card, the error-code
     // wording, one call to /api/auth-health, and the redirect result that used to be swallowed by an empty catch. About a third is comments. No new script or request at load.
-    htmlBytes: 2_279_000,
+    // 2026-10-10 (Settings audit: stamps survive a refresh, one switch claims one setting, the weekly backup follows Week Starts On, the bell answers to the older switches, and a Settings rebuild or a switch no longer
+    // moves the page): 2_279_000 -> 2_297_000 (measured 2,294,748 at the merge with main's sign-in, Gmail and receipt-scan work + ~0.1% headroom). Most of it is the sync-clock helpers (_wfStampFields / _wfMergeKeyed / _wfApplyCloudData now merge per field and keep the stamps),
+    // the PIN and Passcode-free guards, and the comments recording why each exists. No new script or request.
+    htmlBytes: 2_297_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -682,7 +685,8 @@ export const BUDGETS = {
     // worker does), knows one bank from another by the app's own list of banks, and keeps what a cheque was before a statement touched it; wealthflow-batches.js undoes those ties. About a third is the comments recording why.
     // 2026-10-13 (Cheque Tracker review round 3): 2_554_000 -> 2_565_000 (measured 2,562,245 + ~0.1% headroom). wealthflow-cheques.js now keeps one picture of the cheque per statement and can take any one of them away
     // (unsettleCheque, shared by the email worker's unfile; about half is the comments recording why), and settles a cheque the owner marked cleared at another amount.
-    totalJsBytes: 2_565_000,
+    // 2026-10-10 (Settings: sub-switches written one at a time, the older switches also gate the bell; wealthflow-notifications.js, measured 2,511,092 + ~0.1% headroom): 2_565_000 -> 2_569_000 (measured 2,566,347 at the merge with the Cheque Tracker work + ~0.1% headroom).
+    totalJsBytes: 2_569_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

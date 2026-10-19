@@ -1,0 +1,46 @@
+name: Settings switches really act, stay put and survive a refresh
+on:
+  pull_request:
+    paths:
+      - index.html
+      - wf-ui.css
+      - wf-tokens.css
+      - wealthflow-notifications.js
+      - wealthflow-update-system.js
+      - wealthflow-intel-panel.js
+      - wealthflow-release-approve.js
+      - test/e2e/settings-effects.mjs
+      - test/e2e/settings-lock.mjs
+      - test/e2e/settings-sync.mjs
+      - test/e2e/settings-stability.mjs
+      - test/e2e/settings-runtime.mjs
+      - test/e2e/devices.mjs
+      - test/e2e/firebase-cloud.mjs
+      - test/e2e/firebase-stub.mjs
+      - test/e2e/harness.mjs
+      - .github/workflows/settings-stability.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Every switch and select flips, stores, mirrors to its twin and flips back, and the page does not scroll.
+      - run: node test/e2e/settings-runtime.mjs
+      # Each control's real EFFECT: a number format, a haptic pattern, a withheld alert, the weekly-backup day, the bell, the AI preferences.
+      - run: node test/e2e/settings-effects.mjs
+      # Passcode-free entry opens straight to the app after a refresh; the auto-lock menu drives the idle timer.
+      - run: node test/e2e/settings-lock.mjs
+      # Two devices, one cloud document: a switch changed on one is not undone by the other after a refresh or a reconnect.
+      - run: node test/e2e/settings-sync.mjs
+      # Nothing on the page moves when a switch is flipped, the page is rebuilt or the theme is swapped (phone, tablet and laptop widths).
+      - run: node test/e2e/settings-stability.mjs
