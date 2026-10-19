@@ -688,7 +688,9 @@ export const BUDGETS = {
     // 2026-10-13 (Cheque Tracker review round 3): 2_554_000 -> 2_565_000 (measured 2,562,245 + ~0.1% headroom). wealthflow-cheques.js now keeps one picture of the cheque per statement and can take any one of them away
     // (unsettleCheque, shared by the email worker's unfile; about half is the comments recording why), and settles a cheque the owner marked cleared at another amount.
     // 2026-10-10 (Settings: sub-switches written one at a time, the older switches also gate the bell; wealthflow-notifications.js, measured 2,511,092 + ~0.1% headroom): 2_565_000 -> 2_569_000 (measured 2,566,347 at the merge with the Cheque Tracker work + ~0.1% headroom).
-    totalJsBytes: 2_569_000,
+    // 2026-10-19 (the owner's own money, round 2; measured 2,571,599 + ~0.1% headroom): 2_569_000 -> 2_575_000. wealthflow-own-money.js now also names a transfer from the owner's own name and a payment to the owner's own card
+    // (both doors leave them to the other side's statement), and wealthflow-route.js reads the owner's name from the saved payment accounts; about a third is the comments recording why.
+    totalJsBytes: 2_575_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

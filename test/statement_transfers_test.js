@@ -265,8 +265,29 @@ describe('the owner\'s own money already filed as spending or income is taken ou
             await removeOwnTransferRecords({ db: w.db, mailRef: mailRef(w.db), uid: 'u' });
             expect(w.data.get('users/u/statementTrash/expenses_r1')).toMatchObject({ reason: 'own-transfer-rule', record: { id: 'r1', amount: 150000 } });
         });
-        it('runs again for an owner whose first pass ran under version 1', () => {
-            expect(OWN_TRANSFER_VERSION).toBe(2);
+        it('runs again for an owner whose first pass ran under an older version', () => {
+            expect(OWN_TRANSFER_VERSION).toBe(3);
+        });
+    });
+    describe('a transfer from an account in the owner\'s own name (the family\'s house name), filed as income before the rule knew the name', () => {
+        const from = (id, extra = {}) => ({ id, source: 'statement', statementKey: stmt, date: '2026-07-11', amount: 9000, direction: 'credit', bank: 'DFCC Bank', name: 'CEFTS/6454/KULASOORIYAGE S/Transfer', type: 'Other', ...extra });
+        it('is taken out when the owner saved an account in that name, kept whole in statementTrash, and the ledger says why', async () => {
+            const w = world({ incomeRecv: [from('k1'), from('s1', { name: 'CEFTS/6454/PERERAGE S/Transfer' })], payAccounts: [{ holder: 'K S G Kulasooriya', bank: 'DFCC' }] });
+            w.data.set('users/u/statementLedger/k1', { uid: 'u', sourcePath: stmt, index: 3, status: 'filed', module: 'incomeRecv', fingerprint: 'f' });
+            expect(await removeOwnTransferRecords({ db: w.db, mailRef: mailRef(w.db), uid: 'u' })).toEqual({ removed: 1, more: false });
+            const user = w.data.get('users/u');
+            expect(user.incomeRecv.map(r => r.id)).toEqual(['s1']);
+            expect(user._tomb.incomeRecv.k1).toBeGreaterThan(0);
+            expect(w.data.get('users/u/statementTrash/incomeRecv_k1')).toMatchObject({ reason: 'own-transfer-rule', record: { id: 'k1', amount: 9000, name: 'CEFTS/6454/KULASOORIYAGE S/Transfer' } });
+            expect(w.data.get('users/u/statementLedger/k1')).toMatchObject({ status: 'skipped', module: 'skip', reason: 'own-account' });
+        });
+        it('is left alone when nothing says whose name it is, when the owner changed or typed it, and when it is not worded as a transfer', async () => {
+            const w = world({ incomeRecv: [from('a')] });                                                              // no saved account, mailbox owner@example.com
+            expect(await removeOwnTransferRecords({ db: w.db, mailRef: mailRef(w.db), uid: 'u' })).toEqual({ removed: 0, more: false });
+            const keep = [from('b', { type: 'Loan' }), from('c', { source: 'manual' }), from('d', { name: 'Kulasooriyage S rent' }), from('e', { statementKey: '' }), from('f', { name: 'CEFTS/6454/KULASOORIYAGE P/Transfer' })];
+            const w2 = world({ incomeRecv: keep, payAccounts: [{ holder: 'K S G Kulasooriya' }] });
+            expect(await removeOwnTransferRecords({ db: w2.db, mailRef: mailRef(w2.db), uid: 'u' })).toEqual({ removed: 0, more: false });
+            expect(w2.data.get('users/u').incomeRecv.map(r => r.id)).toEqual(['b', 'c', 'd', 'e', 'f']);       // f: another member of the house (another initial)
         });
     });
     it('is bounded, says when there is more, and does not invent a ledger entry that does not exist', async () => {

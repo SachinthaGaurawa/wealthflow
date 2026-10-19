@@ -36285,6 +36285,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     let routed = { tab: 'cconetime', ccType: t.type || 'purchase' };
                     if (window.WFRoute) routed = window.WFRoute.routeTransaction({ description: t.description, amount: t.amount, direction: t.direction }, _acctType);
                     t._dest = routed.tab;                 // cconetime | expenses | income | cc_payment | subscription | skip
+                    t._ownMoney = routed.ownMoney || '';  // the owner's own money (wealthflow-own-money.js): left out by the rule both doors share
+                    t._ownCard = routed.ccLast4 || '';    // the card an own-money row names: a row the owner switches to Card Payment is filed against it (and only then)
                     t._cat = routed.category || '';
                     t._incType = routed.incomeType || '';
                     t._subKind = routed.subKind || '';
@@ -36318,7 +36320,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     //    card charge; only a recurring merchant may move to Subscriptions.
                     try {
                         if (window.WFMerchants) {
-                            const _ref = window.WFMerchants.refine(t.description, t.direction, { tab: t._dest, category: t._cat, subName: t._subName, subPhone: t._subPhone });
+                            const _ref = window.WFMerchants.refine(t.description, t.direction, { tab: t._dest, category: t._cat, subName: t._subName, subPhone: t._subPhone, ownMoney: t._ownMoney });
                             if (_ref && (_acctType === 'bank_account' || _ref.tab === 'subscription')) {
                                 t._dest = _ref.tab;
                                 if (_ref.category) t._cat = _ref.category;
@@ -36967,7 +36969,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // outstanding charges, oldest first. NOT a ledger income/expense.
                         if (_dupIn(ccPayArr, date, amount, desc, 'amount', _source)) { dup++; return; }
                         const _payT = t || {};
-                        const _pay = { id: uid(), ..._source, card_last4: _payT._ccLast4 || _source.card_last4, amount, date, desc, source: 'statement', createdAt: new Date().toISOString() };
+                        const _pay = { id: uid(), ..._source, card_last4: _payT._ccLast4 || _payT._ownCard || _source.card_last4, amount, date, desc, source: 'statement', createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _pay); WFBatch.record(_batch, 'ccPayments', _pay.id); }
                         ccPayArr.push(_pay);
                         ccPay++;

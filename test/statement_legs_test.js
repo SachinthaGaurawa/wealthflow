@@ -184,6 +184,54 @@ describe('why a loose pair is not taken out', () => {
     });
 });
 
+describe('a payment to the owner\'s own card filed twice: by the bank line (the manual upload\'s old Card Payment) and by the card statement', () => {
+    const registry = { '0276': { type: 'credit_card', bank: 'AMEX', network: 'Amex', last4: '0276' }, '1861': { type: 'bank_account', bank: 'HNB', last4: '1861' } };
+    const bankLine = (extra = {}) => sys('b', 'ccPayments', '2026-07-16', 30000, 'Outward Ceft Transfer 376657Xxxxx0276', { bank: 'DFCC', card_last4: '0276', k: 'dfccjuly', ...extra });
+    const cardSide = (extra = {}) => sys('c', 'ccPayments', '2026-07-18', 30000, 'PAYMENT RECEIVED - THANK YOU', { bank: 'AMEX', card_last4: '0276', k: 'amexjuly', ...extra });
+    const user = (extra = {}) => ({ settings: { cardRegistry: registry }, ccPayments: [bankLine(), cardSide()], ...extra });
+    it('the bank line goes and the card statement\'s payment stays', () => {
+        const out = ownMoneyLegs(user());
+        expect(ids(out)).toEqual(['b']);
+        expect(out.remove[0]).toMatchObject({ store: 'ccPayments', kind: 'cardpay', partner: { id: 'c' } });
+        expect(out).toMatchObject({ pairs: 1, left: 0 });
+    });
+    it('needs the owner\'s own card in Cards & Accounts: no registry, a bank account\'s number, or another card, nothing is taken out', () => {
+        expect(ownMoneyLegs({ ccPayments: [bankLine(), cardSide()] }).remove).toEqual([]);
+        expect(ownMoneyLegs(user({ settings: { cardRegistry: { '0276': { type: 'bank_account' } } } })).remove).toEqual([]);
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ card_last4: '9999' })] })).remove).toEqual([]);
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine({ card_last4: '9999' }), cardSide()] })).remove).toEqual([]);   // the record says another card than the words do
+    });
+    it('the same day window as a card paid by a transfer, the same amount to the cent, another statement', () => {
+        for (const [posted, found] of [['2026-07-15', true], ['2026-07-14', false], ['2026-07-16', true], ['2026-07-20', true], ['2026-07-21', false]]) {
+            expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ date: posted })] })).remove.length === 1, posted).toBe(found);
+        }
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ amount: 30000.01 })] })).remove).toEqual([]);
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ k: 'dfccjuly' })] })).remove).toEqual([]);                  // one statement is not two
+    });
+    it('never on a coincidence: two payments of the same amount to the same card, a refund, a note the owner wrote, a loan tie', () => {
+        const two = ownMoneyLegs(user({ ccPayments: [bankLine(), bankLine({ id: 'b2', k: 'dfccjuly2', date: '2026-07-17' }), cardSide()] }));
+        expect(two.remove).toEqual([]); expect(two.left).toBe(2);
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ desc: 'REFUND - MERCHANT REVERSAL' })] })).remove).toEqual([]);
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine({ notes: 'paid for Nuwan' }), cardSide()] })).remove).toEqual([]);
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine({ loanLink: { loanId: 'L', month: '2026-07' } }), cardSide()] })).remove).toEqual([]);
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine({ source: 'manual' }), cardSide()] })).remove).toEqual([]);                // typed by hand, not a statement's line
+    });
+    it('the heal removes the bank line with the whole record kept in statementTrash and a tombstone; the card payment is stamped; a second pass finds nothing', async () => {
+        const w = createFirestore({ 'users/u': user() });
+        const lines = [];
+        const res = await healOwnTransfers({ db: w.db, uid: 'u', now: 9000, log: line => lines.push(line) });
+        const hash = ownTransferHash('cardpay', bankLine(), cardSide());
+        expect(res).toMatchObject({ pairs: 1, removed: 1, kinds: { cardpay: 1 } });
+        const after = w.data.get('users/u');
+        expect(after.ccPayments.map(r => r.id)).toEqual(['c']);
+        expect(after.ccPayments[0]).toMatchObject({ ownTransfer: hash, ownTransferLabel: OWN_TRANSFER_LABEL, ownTransferOf: 'b' });
+        expect(after._tomb).toEqual({ ccPayments: { b: 9000 } });
+        expect(w.data.get('users/u/statementTrash/ccPayments_b')).toMatchObject({ uid: 'u', store: 'ccPayments', reason: 'own-account-pair', kind: 'cardpay', pairedWith: 'c', record: { id: 'b', amount: 30000, desc: 'Outward Ceft Transfer 376657Xxxxx0276', card_last4: '0276', bank: 'DFCC' } });
+        expect(await healOwnTransfers({ db: w.db, uid: 'u', now: 9500, log: () => {} })).toEqual({ pairs: 0, removed: 0, more: false });
+        expect(lines.join('')).not.toMatch(/0276|Outward|30000|dfccjuly/i);
+    });
+});
+
 describe('the heal: each pair is one movement of the owner\'s money, locked under one hash', () => {
     const card = (extra = {}) => sys('cc', 'ccPayments', '2026-03-21', 3000, 'PAYMENT RECEIVED THANK YOU', { bank: 'AMEX', card_last4: '0276', k: 'cardstmt', ...extra });
     const debit = (extra = {}) => sys('d', 'expenses', '2026-03-20', 3000, 'CEFT TRANSFER 0741234567', { k: 'bankstmt', ...extra });

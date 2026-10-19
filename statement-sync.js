@@ -41,7 +41,7 @@ import { formKind } from './statement-document-kind.mjs';
 import { repairByArithmetic } from './statement-repair.mjs';
 import { buildHistory } from './statement-history.mjs';
 import { ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins, tailsIn } from './statement-transfers.mjs';
-import { ownMoney } from './wealthflow-own-money.js';
+import { ownMoney, holderName } from './wealthflow-own-money.js';
 import { readCheque, unsettleCheque } from './wealthflow-cheques.js';
 import { isolateMerchant } from './statement-merchant-name.mjs';
 import { totalsAgree } from './statement-totals.mjs';
@@ -334,7 +334,7 @@ export function deterministicDecision(row, allocations = {}) {
          * ("my DFCC"), or the other leg on the same statement. "Outward Ceft Transfer Car", "Inward Ceft Transfer Dip Refund" are money paid to and received from other people — spending and income. They were all
          * left out, and a statement that is half of those showed the owner a month with half of it missing. Where the direction is not proven, the row is not filed (the rows below ask for it as any row). */
         const tails = ownTails({ cardRegistry: allocations.cardRegistry, statementTails: allocations.own ? [...allocations.own] : [], thisTail: allocations.card_last4 });
-        const own = ownTransferEvidence(row, { tails, paired: allocations.pairedRows, names: allocations.ownerWords?.names, local: allocations.ownerWords?.local });
+        const own = ownTransferEvidence(row, { tails, paired: allocations.pairedRows, names: allocations.ownerWords?.names, initials: allocations.ownerWords?.initials, local: allocations.ownerWords?.local });
         if (own || isCreditCardRow(row, allocations)) return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true, ...(own ? { ownTransfer: own } : {}) };
         if (row.direction === 'debit') return { module: 'expenses', category: expenseCategoryFor(row) || 'Other', allocationId: '', verified: true, deterministic: true, autoDecided: 'transfer-to-others' };
         if (row.direction === 'credit') return { module: 'incomeRecv', category: incomeCategoryFor(row) || 'Other', allocationId: '', verified: true, deterministic: true, autoDecided: 'transfer-from-others' };
@@ -938,7 +938,7 @@ export async function healOwnTransfers({ db, uid, now = Date.now(), log = consol
         if (!plan.remove.length) return { pairs: 0, removed: 0, more: false, left: plan.left };
         const hashes = [...new Set(plan.remove.map(entry => entry.hash))].slice(0, limit), take = new Set(hashes);
         const chosen = plan.remove.filter(entry => take.has(entry.hash));
-        const kept = chosen.filter(entry => entry.kind === 'card').map(entry => ({ entry, record: entry.partner }));     // a card statement's payment stays: stamped, not removed
+        const kept = chosen.filter(entry => entry.kind === 'card' || entry.kind === 'cardpay').map(entry => ({ entry, record: entry.partner }));     // a card statement's payment stays: stamped, not removed
         const ledgerOf = new Map();
         for (const record of [...chosen.map(entry => entry.record), ...kept.map(item => item.record)]) if (!ledgerOf.has(record)) ledgerOf.set(record, await tx.get(userRef.collection('statementLedger').doc(String(record.id))));
         const tomb = user._tomb && typeof user._tomb === 'object' ? { ...user._tomb } : {}, gone = new Set(chosen.map(entry => entry.record)), kinds = {};
@@ -947,6 +947,8 @@ export async function healOwnTransfers({ db, uid, now = Date.now(), log = consol
             const { store, record, partner, kind, hash } = entry;
             tomb[store] = { ...(tomb[store] && typeof tomb[store] === 'object' ? tomb[store] : {}), [record.id]: now };
             kinds[kind] = (kinds[kind] || 0) + 1;
+            // the whole record is kept (a line the manual upload filed has no ledger row to hold its snapshot), the way statement-copies keeps what it removes
+            tx.set(userRef.collection('statementTrash').doc(`${store}_${String(record.id)}`.slice(0, 200)), { uid, store, record: JSON.parse(JSON.stringify(record)), reason: 'own-account-pair', kind, ownTransfer: hash, pairedWith: String(partner.id), source: String(record.statementKey || ''), removedAt: now }, { merge: false });
             const ledger = ledgerOf.get(record);
             if (ledger.exists) tx.set(ledger.ref, { status: 'skipped', module: 'skip', reason: 'own-account-pair', label: OWN_TRANSFER_LABEL, ownTransfer: hash, pairedWith: String(partner.id), supersededBy: 'own-transfer-pair', removed: snapshot(store, record), settledAt: now }, { merge: true });
         }
@@ -1434,14 +1436,18 @@ export async function reopenSkippedTransfers({ db, uid, limit = 3, until = Infin
 
 /* THE OWNER'S OWN MONEY, ALREADY FILED AS SPENDING OR INCOME, IS TAKEN OUT. Before a transfer was recognised as the owner's own (their own card's number, their own words), "Outward Ceft Transfer 376657XXXXX0276 150,000.00" —
  * the owner paying their AMEX — was filed as an expense, and the card statement counts the same payment: counted twice. Version 2 adds the rule the manual upload shares (wealthflow-own-money.js): "Cash advance cr 376657******0276
- * 100,000.00", cash drawn on the owner's AMEX arriving in the account, was filed as Income · Other. Each record the statement worker filed (never one the owner typed, and never one whose category the owner changed) that today's
+ * 100,000.00", cash drawn on the owner's AMEX arriving in the account, was filed as Income · Other. Version 3 adds the owner's name (a transfer from "KULASOORIYAGE S", the family's house name, is their own
+ * account's money) read from their saved payment accounts and mailbox. Each record the statement worker filed (never one the owner typed, and never one whose category the owner changed) that today's
  * rule calls the owner's own money is removed with a tombstone (so no heal brings it back) and its ledger entry says why. The record itself is kept whole in users/{uid}/statementTrash (the way statement-copies.mjs keeps what it
  * removes), so the owner can have it back. Counts only are logged. */
-export const OWN_TRANSFER_VERSION = 2;
+export const OWN_TRANSFER_VERSION = 3;
 export async function removeOwnTransferRecords({ db, mailRef, uid, now = Date.now(), limit = 100 }) {
     const userRef = db.collection('users').doc(uid);
     const before = (await userRef.get()).data() || {};
-    const own = { tails: await ownAccountTails({ mailRef, user: before }) };
+    const who = ownerWords({ email: ((await mailRef.get()).data() || {}).email }), saved = holderName((Array.isArray(before.payAccounts) ? before.payAccounts : []).map(account => account && account.holder));
+    for (const word of saved.words) who.names.add(word);
+    for (const letter of saved.initials) who.initials.add(letter);
+    const own = { tails: await ownAccountTails({ mailRef, user: before }), names: who.names, initials: who.initials, local: who.local };
     const registry = before.settings?.cardRegistry || {};
     const KEYS = [['expenses', 'desc', 'cat', 'debit'], ['incomeRecv', 'name', 'type', 'credit']];
     const whyOwn = (record, textKey, catKey, direction) => {
@@ -2079,7 +2085,11 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             // the owner's own accounts and cards (so a transfer to one of them is not counted as spending), and the rows of this statement that are two legs of one transfer
             Object.defineProperty(allocations, 'own', { value: await ownAccountTails({ mailRef, user }), enumerable: false });
             Object.defineProperty(allocations, 'pairedRows', { value: pairedTransfers(parsed.rows), enumerable: false });
-            Object.defineProperty(allocations, 'ownerWords', { value: ownerWords({ text, email: currentMail.email }), enumerable: false });
+            /* the owner's name: the statement's client name and the mailbox, and the account holders on the payment accounts they saved (their own accounts) — the words the manual upload reads too */
+            const who = ownerWords({ text, email: currentMail.email }), saved = holderName((Array.isArray(user.payAccounts) ? user.payAccounts : []).map(account => account && account.holder));
+            for (const word of saved.words) who.names.add(word);
+            for (const letter of saved.initials) who.initials.add(letter);
+            Object.defineProperty(allocations, 'ownerWords', { value: who, enumerable: false });
             /* A STATEMENT BEING RESUMED (resumePartialStatements) is replayed from its first row: the rows the ledger already holds are
              * checked against this reading by fingerprint inside the settlement, and cost no classification here. */
             /* THE COMPOSITE KEY, TAKEN BEFORE A ROW IS FILED: bank + account + the statement's month (+ the file's bytes). If the owner's upload (or another

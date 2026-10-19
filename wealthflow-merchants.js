@@ -737,9 +737,10 @@
 
     // ── refine(): plug into the import — improve WFRoute's routing when we're sure
     function refine(desc, direction, routed) {
+        routed = routed || {};
+        if (routed.ownMoney) return null;                       // the owner's own money (wealthflow-own-money.js) was decided by the rule both doors share: not overridden here
         var c = classify(desc, direction);
         if (!c.goesTo || c.confidence < 0.85) return null;      // not sure enough → keep WFRoute/AI
-        routed = routed || {};
         // never fight a confident CHEQUE or own-account SKIP that WFRoute structurally found,
         // unless we matched a real recurring merchant (sub) — those must be rescued from "skip".
         if ((routed.tab === 'cheque') && c.goesTo !== 'subscription') return null;

@@ -13,6 +13,9 @@
  *          them worded as a transfer (pairedTransfers' own bar for two legs of one statement) and the other not a purchase, a withdrawal or a bill. Both legs go.
  * Every pair carries ONE internal hash (`ownTransferHash`, "ot_…", from the kind and the two records' ids) and the label "Own Transfer": the heal writes it on the ledger rows of both legs and on the
  * card payment that stays, so the two statements' lines are visibly one movement of money and the pair is never decided twice.
+ *   cardpay  a bank statement's line that names the owner's own card by its masked number ("Outward Ceft Transfer 376657Xxxxx0276"), filed by the manual upload as a Card Payment on that card (its old rule), and the card
+ *          statement's own "payment received" for the same amount to the cent, on the same card, from a day before to four days after it. Two records of one payment would settle the card's charges twice: the
+ *          bank-side line goes (the manual upload no longer files it), the card statement's payment stays.
  * Fees are not part of the pair: a bank's transfer fee is its own line on its own statement (a real cost, kept as an expense), so the principal on one side is the principal on the other, to the cent.
  * Never on a coincidence: a debit or credit that more than one record could be the other leg of is left alone (the log counts them), a refund / reversal on a card is not a payment, one tied to a
  * loan or a subscription, one the owner wrote a note on, and one that did not come from a statement are never taken out, and two legs on one bank (the same consolidated statement is
@@ -24,6 +27,7 @@
  * ===========================================================================*/
 
 import { transferEvidence } from './statement-ledger.mjs';
+import { ownMoney } from './wealthflow-own-money.js';
 import { bankKeyOf } from './statement-coverage.mjs';
 import { createHash } from 'node:crypto';
 
@@ -61,7 +65,7 @@ export const ownTransferHash = (kind, debit, credit) => `ot_${createHash('sha256
 
 /**
  * @param {object} user the owner's document
- * @returns {{remove: {store:string, record:object, partner:object, kind:'card'|'bank', hash:string, label:string}[], pairs:number, left:number, unworded:number}} `left`: debits with more than one possible other leg, or a leg two debits claim; `unworded`: lines of the right amount and days that neither says transfer
+ * @returns {{remove: {store:string, record:object, partner:object, kind:'card'|'bank'|'cardpay', hash:string, label:string}[], pairs:number, left:number, unworded:number}} `left`: debits with more than one possible other leg, or a leg two debits claim; `unworded`: lines of the right amount and days that neither says transfer
  */
 export function ownMoneyLegs(user) {
     const list = key => (Array.isArray(user && user[key]) ? user[key] : []);
@@ -96,6 +100,31 @@ export function ownMoneyLegs(user) {
         if (byCredit.has(fit.credit)) byCredit.get(fit.credit).push(fit); else byCredit.set(fit.credit, [fit]);
     }
     const remove = []; let pairs = 0, left = 0;
+    // cardpay: a bank line paying one of the owner's own cards, filed on that card, and the card statement's own payment of the same money
+    const registry = user && user.settings && typeof user.settings.cardRegistry === 'object' && user.settings.cardRegistry ? user.settings.cardRegistry : {};
+    const bankSide = new Set(), viaBank = record => { const own = ownMoney({ description: textOf(record), direction: 'debit', registry, tails: Object.keys(registry) }); return !!own && own.kind === 'card-payment-out' && !!record.card_last4 && own.last4 === String(record.card_last4); };
+    for (const record of cardCredits) if (viaBank(record)) bankSide.add(record);
+    const paid = [];                                                                       // every (bank-side line, card-side payment) that could be one payment
+    for (const line of bankSide) {
+        const at = dayOf(line.date);
+        if (!Number.isFinite(at)) continue;
+        for (const credit of cardByAmount.get(cents(line.amount)) || NONE) {
+            const gap = dayOf(credit.date) - at;
+            if (credit === line || bankSide.has(credit) || credit.statementKey === line.statementKey || String(credit.card_last4 || '') !== String(line.card_last4) || !(gap >= -CARD_BEFORE_DAYS && gap <= CARD_AFTER_DAYS)) continue;
+            paid.push({ line, credit });
+        }
+    }
+    const paidByLine = new Map(), paidByCredit = new Map();
+    for (const fit of paid) {
+        if (paidByLine.has(fit.line)) paidByLine.get(fit.line).push(fit); else paidByLine.set(fit.line, [fit]);
+        if (paidByCredit.has(fit.credit)) paidByCredit.get(fit.credit).push(fit); else paidByCredit.set(fit.credit, [fit]);
+    }
+    for (const [line, mine] of paidByLine) {
+        if (mine.length !== 1 || paidByCredit.get(mine[0].credit).length !== 1) { left += 1; continue; }
+        const { credit } = mine[0], hash = ownTransferHash('cardpay', line, credit);
+        pairs += 1;
+        remove.push({ store: 'ccPayments', record: line, partner: credit, kind: 'cardpay', hash, label: OWN_TRANSFER_LABEL });
+    }
     for (const [debit, mine] of byDebit) {
         if (mine.length !== 1 || byCredit.get(mine[0].credit).length !== 1) { left += 1; continue; }
         const { credit, kind, store } = mine[0], hash = ownTransferHash(kind, debit, credit);
