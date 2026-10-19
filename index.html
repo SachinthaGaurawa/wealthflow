@@ -14275,6 +14275,10 @@ function _wfMaybeRunDriveAuth() {
         var params = new URLSearchParams(qs);
         var code = params.get('code');
         var state = params.get('state');
+        if (state && state.indexOf('wfgmail_') === 0 && (code || params.get('error'))) {   // Connect Gmail callback
+            if (typeof window._wfCompleteGmailConsent === 'function') window._wfCompleteGmailConsent(code, state, params.get('error'));
+            return;
+        }
         if (code && state && state.indexOf('wfdrive_') === 0) {   // OAuth callback
             window._wfIsDriveLinkInstance = true;
             _wfCompleteDriveAuthCallback(code, state);
@@ -28004,6 +28008,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                         The mailbox credential is already stored; no replacement is needed.
                     </div>` : `
                     <div style="font-size:12.5px;color:var(--text2);line-height:1.65;margin-bottom:12px;">
+                        Connect the Gmail account that receives your bank statements and alerts. Google
+                        shows you exactly what you are allowing before anything is shared. WealthFlow asks
+                        for <b>read-only</b> access (<code>gmail.readonly</code>): it cannot send, delete or
+                        change any mail, and it only opens messages from the senders you approve. Disconnect
+                        at any time here or at myaccount.google.com/permissions.
+                        <a href="/privacy" target="_blank" rel="noopener" style="color:var(--accent);">Privacy policy</a>
+                    </div>
+                    <button class="btn btn-primary" id="_gl_google" style="width:100%;justify-content:center;">${(window.WFIcon ? WFIcon('cloudDownload') : '')} Connect Gmail with Google</button>
+                    <div id="_gl_gerr" style="color:var(--red);font-size:12px;min-height:18px;margin-top:6px;"></div>
+                    <details id="_gl_adv" style="margin-top:14px;">
+                    <summary style="cursor:pointer;font-size:12px;color:var(--text3);">Advanced: paste a refresh token instead</summary>
+                    <div style="font-size:12.5px;color:var(--text2);line-height:1.65;margin:10px 0 12px;">
                         Paste the <b>refresh token</b> for the Google account whose statements you want
                         read. It is stored on the server for this account only, is never sent back to
                         this page, and can be revoked at any time from your Google account.
@@ -28022,13 +28038,28 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <input class="fi" id="_gl_tok" type="password" autocomplete="off" spellcheck="false"
                             placeholder="1//0g…" style="width:100%;font-family:var(--mono);">
                     </div>
-                    <div id="_gl_err" style="color:var(--red);font-size:12px;min-height:18px;"></div>`}
+                    <div id="_gl_err" style="color:var(--red);font-size:12px;min-height:18px;"></div>
+                    </details>`}
                     <div class="md-ftr">
                         ${st.connected ? '<button class="btn btn-ghost" id="_gl_unlink" style="color:var(--red);">Disconnect</button>' : '<span></span>'}
-                        ${st.connected ? '' : `<button class="btn btn-primary" id="_gl_save">${(window.WFIcon ? WFIcon('lock') : '')} Save token</button>`}
+                        ${st.connected ? '' : `<button class="btn btn-primary" id="_gl_save" style="display:none;">${(window.WFIcon ? WFIcon('lock') : '')} Save token</button>`}
                     </div>`;
 
+                /* GOOGLE'S OWN CONSENT SCREEN. The pasted token stays as the advanced route (its Save button only shows while that box is open). */
+                const goog = body.querySelector('#_gl_google');
+                if (goog) goog.onclick = async () => {
+                    goog.disabled = true;
+                    const gerr = body.querySelector('#_gl_gerr');
+                    if (gerr) gerr.textContent = '';
+                    const started = await _wfStartGmailConsent(st.clientId);
+                    if (started !== true) {
+                        goog.disabled = false;
+                        if (gerr) gerr.textContent = 'Could not open Google sign-in. Please try again.';
+                    }
+                };
+                const adv = body.querySelector('#_gl_adv');
                 const save = body.querySelector('#_gl_save');
+                if (adv && save) adv.addEventListener('toggle', () => { save.style.display = adv.open ? '' : 'none'; });
                 if (save) save.onclick = async () => {
                     const el = body.querySelector('#_gl_tok');
                     const err = body.querySelector('#_gl_err');
@@ -28078,6 +28109,69 @@ table.amort tbody tr { page-break-inside: avoid; }
             setTimeout(() => { const el = body.querySelector('#_gl_tok'); if (el) el.focus(); }, 250);
         }
         window.openGmailLink = openGmailLink;
+
+        /* ── CONNECT GMAIL WITH GOOGLE ── full-page redirect to Google's consent screen (PKCE, the one scope gmail.readonly, access_type=offline); Google returns to the site with a one-time `code`,
+         * _wfMaybeRunDriveAuth passes a `wfgmail_` state to _wfCompleteGmailConsent, and /api/gmail-link exchanges it server-side (only the server holds the client secret) and stores the token as a pasted one.
+         * No include_granted_scopes: this sign-in must not carry along Drive scopes granted earlier. */
+        const _WF_GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+        const _WF_GMAIL_CLIENT_FALLBACK = '1020193373377-i2p46jo266q77mtmqd9uekrhdsa94oqa.apps.googleusercontent.com';
+
+        async function _wfStartGmailConsent(clientId) {
+            try {
+                const verifier = _wfPkceVerifier();
+                const challenge = await _wfPkceChallenge(verifier);
+                const s256 = challenge !== verifier;
+                const state = 'wfgmail_' + _wfRandId();
+                try { localStorage.setItem('wf_gmail_oauth', JSON.stringify({ v: s256 ? verifier : '', s: state, t: Date.now() })); } catch (_) { return false; }
+                const q = {
+                    client_id: String(clientId || _WF_GMAIL_CLIENT_FALLBACK),
+                    redirect_uri: window._wfPublicUrl('/'),
+                    response_type: 'code',
+                    scope: _WF_GMAIL_SCOPE,
+                    access_type: 'offline',
+                    prompt: 'consent',
+                    state,
+                };
+                if (s256) { q.code_challenge = challenge; q.code_challenge_method = 'S256'; }
+                try { if (currentUser && currentUser.email) q.login_hint = currentUser.email; } catch (_) {}
+                location.assign('https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams(q).toString());
+                return true;
+            } catch (_) { return false; }
+        }
+
+        async function _wfCompleteGmailConsent(code, state, errorWord) {
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem('wf_gmail_oauth') || 'null'); } catch (_) {}
+            try { localStorage.removeItem('wf_gmail_oauth'); } catch (_) {}
+            /* The one-time code leaves the address bar (and the history entry) before anything else happens. */
+            try { history.replaceState(null, '', location.origin + location.pathname); } catch (_) {}
+            if (!saved || saved.s !== state || Date.now() - Number(saved.t || 0) > 30 * 60 * 1000) {
+                notify('The Gmail sign-in could not be checked. Open the Mailbox card and press Connect Gmail again.', 'error');
+                return;
+            }
+            if (errorWord || !code) {
+                notify(errorWord === 'access_denied' ? 'Gmail was not connected: the request was cancelled on Google\'s screen.' : 'Google did not connect Gmail. Please try again.', 'warn');
+                return;
+            }
+            /* The page is still waking up on the way back from Google: wait for the Firebase sign-in the endpoint needs. */
+            for (let i = 0; i < 120 && !(window.currentUser && typeof window.currentUser.getIdToken === 'function'); i++) await new Promise((r) => setTimeout(r, 500));
+            if (!window.currentUser) { notify('Sign in to WealthFlow, then press Connect Gmail again.', 'warn'); return; }
+            let res = null;
+            try { res = await _gmailLink('POST', { code, redirect_uri: window._wfPublicUrl('/'), code_verifier: saved.v || undefined }); } catch (_) { res = null; }
+            if (!res || !res.body || res.body.ok !== true) {
+                notify((res && res.body && res.body.error) || 'Could not connect Gmail. Please try again.', 'error');
+                return;
+            }
+            try { triggerHaptic('success'); } catch (_) {}
+            _mailSyncState.connected = true;
+            try { renderMailSync(); } catch (_) {}
+            let w = null;
+            try { w = await _ensureMailWatch({ force: true }); } catch (_) { w = null; }
+            if (w && w.watching) notify('Gmail connected: watching for statements', 'success');
+            else notify('Gmail connected, but it is not watching yet', 'error');
+            try { renderMailSync(); } catch (_) {}
+        }
+        window._wfCompleteGmailConsent = _wfCompleteGmailConsent;
 
         function renderSweeper() {
             const host = $('wfSweeper');

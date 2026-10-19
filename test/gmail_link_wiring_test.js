@@ -151,11 +151,11 @@ describe('the card can say which piece is missing', () => {
         expect(fn('openGmailLink')).toContain("_gmailLink('POST', { refresh_token:");
     });
 
-    it('does not claim it can obtain the token itself', () => {
-        /* Getting one needs a Google Cloud project, an OAuth client and a
-         * consent flow. A "Connect" button that opened nothing would be the
-         * same species of dishonesty as a pipeline described as live. */
+    it('the Connect button really leaves for Google, and the paste box stays as the advanced route', () => {
+        /* A "Connect" button that opened nothing would be the same species of dishonesty as a pipeline described as live. This one starts Google's consent screen (test/gmail_connect_consent_test.js pins the
+         * redirect and the return); the pasted refresh token remains for the owner and for anyone whose browser blocks the redirect. */
         const f = fn('openGmailLink');
+        expect(f).toContain('_wfStartGmailConsent(st.clientId)');
         expect(f).toContain('Paste the <b>refresh token</b>');
     });
 
