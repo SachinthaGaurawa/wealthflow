@@ -338,7 +338,9 @@ export const BUDGETS = {
     // 2026-10-10 (Settings audit: stamps survive a refresh, one switch claims one setting, the weekly backup follows Week Starts On, the bell answers to the older switches, and a Settings rebuild or a switch no longer
     // moves the page): 2_279_000 -> 2_297_000 (measured 2,294,748 at the merge with main's sign-in, Gmail and receipt-scan work + ~0.1% headroom). Most of it is the sync-clock helpers (_wfStampFields / _wfMergeKeyed / _wfApplyCloudData now merge per field and keep the stamps),
     // the PIN and Passcode-free guards, and the comments recording why each exists. No new script or request.
-    htmlBytes: 2_297_000,
+    // 2026-10-19 (older statement expenses renamed to the dropdown's category names, reversibly): 2_297_000 -> 2_300_500 (measured 2,298,282 + ~0.1% headroom). _migrateStatementCategoryNames and its undo
+    // (the rule itself, relabelApply / relabelUndo, is in wealthflow-statement-router.js). About half of it is the comment recording why. No new script or request.
+    htmlBytes: 2_300_500,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

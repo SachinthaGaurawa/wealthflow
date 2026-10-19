@@ -9596,6 +9596,47 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             } catch (e) { console.warn('[Migrate] bank names:', e && e.message); }
         }
 
+        // Statement expenses filed before the ledger used the dropdown's names are still under the classifier's word ("Groceries", not "Food & Groceries"), a separate slice from the
+        // owner's own. Rename those and only those: the old word stays on the record (`catWas`, synced with it) and a copy of what changed stays on this device; amounts, dates and
+        // every other field are untouched. The rule is relabelApply in wealthflow-statement-router.js. Idempotent (a renamed record is skipped), so it is free to run on every launch
+        // and every Expenses draw; _wfUndoStatementCategoryRelabel puts the old words back and switches it off for good. Banks are not renamed (a bank label is a key; see displayBank).
+        function _migrateStatementCategoryNames() {
+            try {
+                if (window._isDecoyMode === true || localStorage.getItem('wf2_catrelabel_off')) return 0;
+                const router = window.WFStatementRouter;
+                if (!router || typeof router.relabelApply !== 'function') return 0;
+                const arr = DB.get('expenses');
+                if (!Array.isArray(arr) || !arr.length) return 0;
+                const out = router.relabelApply(arr);
+                if (!out.changes.length) return 0;
+                let kept = [];
+                try { kept = JSON.parse(localStorage.getItem('wf2_catrelabel_backup') || '[]'); } catch (_) { kept = []; }
+                if (!Array.isArray(kept)) kept = [];
+                kept.push({ at: new Date().toISOString(), changes: out.changes });
+                _persistRaw('wf2_catrelabel_backup', JSON.stringify(kept.slice(-5)));
+                DB.set('expenses', out.records);
+                if (typeof setDirty === 'function') setDirty(true);
+                const by = {};
+                out.changes.forEach(c => { const k = c.from + ' -> ' + c.to; by[k] = (by[k] || 0) + 1; });
+                const parts = Object.keys(by).map(k => by[k] + ' x ' + k).join(', ');
+                console.log('[Migrate] statement category names: renamed ' + out.changes.length + ' (' + parts + '); amounts unchanged');
+                try { notify('Renamed ' + out.changes.length + ' older statement expense' + (out.changes.length === 1 ? '' : 's') + ' to your category names (' + parts + '). Amounts are unchanged.', 'success'); } catch (_) {}
+                return out.changes.length;
+            } catch (e) { console.warn('[Migrate] statement category names:', e && e.message); return 0; }
+        }
+        function _wfUndoStatementCategoryRelabel() {
+            try {
+                const router = window.WFStatementRouter;
+                if (!router || typeof router.relabelUndo !== 'function') return 0;
+                _persistRaw('wf2_catrelabel_off', '1');
+                const out = router.relabelUndo(DB.get('expenses') || []);
+                if (out.changes.length) { DB.set('expenses', out.records); if (typeof setDirty === 'function') setDirty(true); }
+                console.log('[Migrate] statement category names: put back ' + out.changes.length);
+                return out.changes.length;
+            } catch (e) { console.warn('[Migrate] undo statement category names:', e && e.message); return 0; }
+        }
+        window._wfUndoStatementCategoryRelabel = _wfUndoStatementCategoryRelabel;
+
         // v7.27.0 — one-time correction for the old `paid:past` CC-statement import bug.
         // That bug marked EVERY imported charge "Paid" (statement dates are always in
         // the past). A real charge is unpaid until settled. We safely un-pay ONLY
@@ -17554,6 +17595,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 try { scheduleAutoBackup(); } catch (e) { console.error('[LAUNCH] scheduleAutoBackup error:', e); }
                 // Migrate legacy bank names ("AMEX" → "American Express (AMEX)") once per launch
                 try { _migrateBankNames(); } catch (e) { console.error('[LAUNCH] _migrateBankNames error:', e); }
+                try { _migrateStatementCategoryNames(); } catch (e) { console.error('[LAUNCH] _migrateStatementCategoryNames error:', e); }
                 try { _migrateIncomeSplit(); } catch (e) { console.error('[LAUNCH] _migrateIncomeSplit error:', e); }
                 // v7.27.0 — one-time fix for the old `paid:past` import bug + initial auto-match
                 try { _migrateCCOTPaidFix(); } catch (e) { console.error('[LAUNCH] _migrateCCOTPaidFix error:', e); }
@@ -23217,6 +23259,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         function renderExpenses() {
+            try { _migrateStatementCategoryNames(); } catch (_) {}
             // v7.68.0 — double charges, bank fees, spikes, where the money really goes,
             // bills you are not tracking, and whether this month is running hot. All read
             // from data you already had; none of it was ever shown to you.
