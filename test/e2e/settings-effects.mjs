@@ -176,7 +176,7 @@ try {
         // roll over and move the due date, so take the nearest day, up to three out, whose day exists in the month before it.
         const l = (() => { for (let n = 3; n >= 0; n--) { const d = plus(n); const prevLen = new Date(d.getFullYear(), d.getMonth(), 0).getDate(); if (d.getDate() <= prevLen) return new Date(d.getFullYear(), d.getMonth() - 1, d.getDate(), 12); } return plus(0); })();
         DB.set('loans', [{ id: 'ln1', name: 'Probe loan', amount: 120000, rate: 10, duration: 12, monthly: 10500, start: ymd(l), bank: 'Test', type: 'bank' }]);
-        DB.set('cheques', [{ id: 'ch1', status: 'pending', release: ymd(plus(3)), party: 'Probe party', amount: 2500, number: '777', type: 'issued' }]);
+        DB.set('cheques', [{ id: 'ch1', status: 'pending', release: ymd(plus(3)), party: 'Probe party', amount: 2500, no: '777', type: 'issued' }]);
         DB.set('targets', [{ id: 't1', name: 'Probe target', amount: 1000, start: ymd(plus(-5)), end: ymd(plus(60)), savings: [{ id: 's1', amount: 600, date: ymd(plus(-1)) }] }]);
         DB.set('income', [{ id: 'in1', name: 'Probe salary', company: 'Probe', amount: 100000, monthly: 100000, freq: 'monthly', day: ymd(plus(0)), start: ymd(plus(-60)), rate: 0 }]);
         DB.set('subscriptions', [{ id: 'sb1', name: 'Probe sub', amount: 1000, monthOverrides: { [ymd(plus(0)).slice(0, 7)]: 2000 }, cycle: 'monthly' }]);
