@@ -61,8 +61,13 @@ function _isNeverCacheable(request, url) {
 /** True for the app's own executable/shell assets — the things a version owns. */
 function _isAppShell(url) {
     const p = url.pathname;
+    // "/" is the public home page and "/app" is the app (vercel.json,
+    // publish-layout.mjs). Both are shell documents: an installed app that
+    // launches at "/" offline gets the cached home page, which forwards to "/app".
     return p === '/'
         || p === '/index.html'
+        || p === '/app'
+        || p === '/app.html'
         || p === '/manifest.json'
         || /^\/wealthflow-[a-zA-Z0-9-]+\.js$/.test(p)
         // The design system. Without these an offline cold start would render the
@@ -76,9 +81,10 @@ function _isAppShell(url) {
 /* Query-string launch variants are one document, not separate 1.6 MB cache
  * entries. Assets keep their exact request key. */
 function _shellCacheKey(request, url) {
-    return request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html'
-        ? '/index.html'
-        : request;
+    const p = url.pathname;
+    if (p === '/app' || p === '/app.html') return '/app';
+    if (p === '/' || p === '/index.html') return '/';
+    return request;
 }
 
 self.addEventListener('fetch', (event) => {
@@ -101,7 +107,7 @@ self.addEventListener('fetch', (event) => {
             // is 'navigate' re-derives the request and downgrades that mode, which
             // is a spec corner sharp enough to cost a white screen on the app's
             // own entry point. It is also unnecessary — vercel.json already serves
-            // '/', '/index.html' and '/wealthflow-*.js' with
+            // '/', '/app' and '/wealthflow-*.js' with
             // `Cache-Control: no-cache, must-revalidate`, so the browser
             // revalidates these every time regardless. Freshness is already
             // guaranteed by the header; re-asserting it here would buy nothing and
@@ -153,7 +159,10 @@ self.addEventListener('fetch', (event) => {
             // A navigation with nothing cached still deserves the shell rather
             // than a browser error page.
             if (event.request.mode === 'navigate') {
-                const shell = await cache.match('/index.html') || await cache.match('/');
+                // The app, never the public home page: an offline navigation to any
+                // shell URL should open the working app. '/index.html' is where
+                // releases before the public home page stored it.
+                const shell = await cache.match('/app') || await cache.match('/index.html');
                 if (shell) return shell;
             }
             // Genuinely offline with nothing stored: surface the real network
@@ -190,7 +199,7 @@ self.addEventListener('push', (event) => {
         icon: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
         badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
         tag: 'wealthflow-notification',
-        data: { url: '/' }
+        data: { url: '/app' }
     };
 
     if (event.data) {
@@ -208,7 +217,7 @@ self.addEventListener('push', (event) => {
         badge: data.badge,
         tag: data.tag,
         vibrate: [5, 40, 5, 40, 12, 60, 20],
-        data: data.data || { url: '/' },
+        data: data.data || { url: '/app' },
         actions: data.actions || [],
         requireInteraction: false,
         renotify: true,
@@ -303,7 +312,7 @@ self.addEventListener('notificationclick', (event) => {
 
     const action = event.action || '';
     const data = event.notification.data || {};
-    const urlToOpen = data.url || '/';
+    const urlToOpen = data.url || '/app';
 
     // An answer that can be settled in the background is written down and the
     // app is left closed. If the write fails — no IndexedDB, a private window,

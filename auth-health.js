@@ -50,7 +50,7 @@ import { DEFAULT_CLIENT_ID as DRIVE_DEFAULT_CLIENT_ID } from './drive-auth.js';
 // deliberately NOT written here: it is a public identifier, but a credential-shaped
 // literal in a server file would need an exception in the CI secret scan. It is read
 // from FIREBASE_API_KEY (as statement-view.js does) or, failing that, from the page
-// the app actually serves, which is also the truth about what a browser sends.
+// the app actually serves (/app; "/" is the public landing page), which is also the truth about what a browser sends.
 export const FIREBASE = Object.freeze({
     authDomain: 'wealthflow-6dffb.firebaseapp.com',
     projectId: 'wealthflow-6dffb'
@@ -193,7 +193,7 @@ export function buildProblems(r) {
         if (code === 'NO_API_KEY') {
             push('api-key-unknown', 'warning',
                 'The diagnostic could not find the Firebase web apiKey, so it could not ask Firebase anything.',
-                'Set FIREBASE_API_KEY in Vercel (the same public value as apiKey in the firebaseConfig of index.html), or check that https://www.wealthflow.lk/ loads.');
+                'Set FIREBASE_API_KEY in Vercel (the same public value as apiKey in the firebaseConfig of index.html), or check that https://www.wealthflow.lk/app loads ("/" is the public home page, the app itself is served at /app).');
         } else if (code === 'OPERATION_NOT_ALLOWED') {
             push('provider-disabled', 'critical',
                 'The Google sign-in provider is switched off in Firebase.',
@@ -270,7 +270,7 @@ async function resolveApiKey() {
     if (env) return env;
     if (knownKey) return knownKey;
     try {
-        const r = await fetchWithBodyDeadline(`https://${APP_HOSTS[0]}/`, { method: 'GET', headers: { 'user-agent': UA } }, 8000);
+        const r = await fetchWithBodyDeadline(`https://${APP_HOSTS[0]}/app`, { method: 'GET', headers: { 'user-agent': UA } }, 8000);
         if (r.status === 200) knownKey = apiKeyFromPage(await r.text());
     } catch (_) { /* reported as api-key-unknown */ }
     return knownKey;

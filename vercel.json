@@ -1,5 +1,5 @@
 {
-  "buildCommand": "node build.mjs --write",
+  "buildCommand": "node build.mjs --write && node publish-layout.mjs",
   "outputDirectory": ".",
   "functions": {
     "api/*.js": {
@@ -29,6 +29,31 @@
       ],
       "destination": "https://www.wealthflow.lk/:path*",
       "permanent": true
+    },
+    {
+      "source": "/index.html",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/app.html",
+      "destination": "/app",
+      "permanent": true
+    },
+    {
+      "source": "/landing.html",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/privacy.html",
+      "destination": "/privacy",
+      "permanent": true
+    },
+    {
+      "source": "/terms.html",
+      "destination": "/terms",
+      "permanent": true
     }
   ],
   "headers": [
@@ -43,6 +68,24 @@
     },
     {
       "source": "/",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/app",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/app.html",
       "headers": [
         {
           "key": "Cache-Control",
@@ -294,8 +337,20 @@
       "destination": "/tenant.html"
     },
     {
+      "source": "/app",
+      "destination": "/app.html"
+    },
+    {
+      "source": "/privacy",
+      "destination": "/privacy.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/terms.html"
+    },
+    {
       "source": "/(.*)",
-      "destination": "/index.html"
+      "destination": "/app.html"
     }
   ],
   "crons": [

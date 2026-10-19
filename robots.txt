@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /t/
+Disallow: /r/
+
+Sitemap: https://www.wealthflow.lk/sitemap.xml

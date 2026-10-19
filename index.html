@@ -5731,8 +5731,9 @@
                 <div id="authErrCause" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid rgba(239,68,68,.35);"></div>
                 <div id="authErrCode" style="margin-top:6px;font-size:11px;opacity:.7;word-break:break-word;"></div>
             </div>
-            <div style="margin-top:16px;font-size:11px;color:var(--text3);line-height:1.6;display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;"><i data-wfi="lock"></i> End-to-end encrypted ·
+            <div style="margin-top:16px;font-size:11px;color:var(--text3);line-height:1.6;display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;"><i data-wfi="lock"></i> Encrypted in transit ·
                 Your data stays yours · Powered by Google Firebase &amp; Gemini AI</div>
+            <div style="margin-top:8px;font-size:11px;color:var(--text3);line-height:1.6;text-align:center;"><a href="/?public=1" style="color:inherit;">Home</a> · <a href="/privacy" style="color:inherit;">Privacy Policy</a> · <a href="/terms" style="color:inherit;">Terms of Service</a></div>
         </div>
 
         <div class="auth-box" id="authLogin" style="display:none;">
@@ -8109,6 +8110,7 @@
 
                 // Sign out from Firebase Auth (this clears the Firebase ID token)
                 await firebase.auth().signOut();
+                try { localStorage.removeItem('wf_returning'); } catch (_) {}
 
                 // Best-effort revoke of the Google OAuth access token
                 try {
@@ -16360,7 +16362,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         '<div style="display:flex;align-items:center;gap:8px;"><span style="color:#d4af37;font-weight:700;">WealthFlow</span><span style="color:rgba(255,255,255,0.4);">' + (title || 'Statement') + viewCount + '</span></div>' +
                         '<div style="display:flex;gap:6px;">' +
                             '<button onclick="window.print()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;font-size:11px;font-weight:600;">@fileText@ Print</button>' +
-                            '<a href="/" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(212,175,55,0.3);background:rgba(212,175,55,0.1);color:#d4af37;text-decoration:none;font-size:11px;font-weight:600;">Open WealthFlow</a>' +
+                            '<a href="/app" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(212,175,55,0.3);background:rgba(212,175,55,0.1);color:#d4af37;text-decoration:none;font-size:11px;font-weight:600;">Open WealthFlow</a>' +
                         '</div>' +
                     '</div>';
                     document.body.innerHTML = toolbar + '<div style="padding-top:44px;">' + (html || '<p>Empty statement</p>') + '</div>';
@@ -16375,7 +16377,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             '<div style="font-size:48px;margin-bottom:16px;">' + icon + '</div>' +
                             '<h2 style="color:#d4af37;margin:0 0 12px;">' + title + '</h2>' +
                             '<p style="color:rgba(255,255,255,0.6);line-height:1.6;margin:0 0 20px;">' + msg + '</p>' +
-                            '<a href="/" style="display:inline-block;padding:10px 24px;background:linear-gradient(135deg,#d4af37,#b8962e);color:#0a0e1a;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">Open WealthFlow →</a>' +
+                            '<a href="/app" style="display:inline-block;padding:10px 24px;background:linear-gradient(135deg,#d4af37,#b8962e);color:#0a0e1a;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">Open WealthFlow →</a>' +
                         '</div>' +
                     '</div>';
                 };
@@ -16908,6 +16910,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
                         firebase.auth().onAuthStateChanged(async (user) => {
                             if (window.WFStatementCloud) window.WFStatementCloud.authChanged(user);
+                            // A signed-in browser goes straight past the public home page next time (landing.html reads this).
+                            try { if (user) localStorage.setItem('wf_returning', '1'); } catch (_) {}
                             // v7.5.7 — fixed Google-sign-in-not-logging-in bug.
                             //
                             // Previous behaviour: _authCallbackFired was a one-shot
