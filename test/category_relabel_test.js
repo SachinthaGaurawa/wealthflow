@@ -99,19 +99,29 @@ describe('relabelApply: which rows and what changes', () => {
                 expect(without(r, 'cat', 'catWas')).toEqual(without(list[i], 'cat', 'catWas'));
             });
             expect(relabelApply(out.records).changes).toEqual([]);
-            expect(relabelUndo(out.records).records.map((r) => without(r, 'catWas'))).toEqual(list.map((r) => without(r, 'catWas')));
+            const back = relabelUndo(out.records).records;
+            expect(back.map((r) => without(r, 'catWas', 'catUndone'))).toEqual(list.map((r) => without(r, 'catWas', 'catUndone')));
+            expect(relabelApply(back).changes).toEqual([]);
         }), { numRuns: 200 });
     });
 });
 
 describe('relabelUndo: the way back', () => {
-    it('puts every old word back exactly as it was, and removes the note', () => {
+    it('puts every old word back exactly as it was, removes the note, and marks the row so it is not renamed again', () => {
         const list = OLD.map((cat, i) => row({ id: `r${i}`, cat }));
         const renamed = relabelApply(list).records;
         const back = relabelUndo(renamed);
-        expect(back.records).toEqual(list);
+        expect(back.records).toEqual(list.map((r) => ({ ...r, catUndone: true })));
         expect(back.changes).toHaveLength(list.length);
         expect(back.records.every((r) => !('catWas' in r))).toBe(true);
+    });
+
+    it('an undone row stays undone: a device that never saw the undo flag only has the row to go by, and the row says so', () => {
+        const back = relabelUndo(relabelApply([row({ id: 'a' }), row({ id: 'b', cat: 'Health' })]).records).records;
+        expect(back.map((r) => r.cat)).toEqual(['Groceries', 'Health']);
+        const again = relabelApply(back);
+        expect(again.changes).toEqual([]);
+        expect(again.records).toBe(back);
     });
 
     it('leaves a row the owner has changed since (its category is no longer the one we set)', () => {
@@ -213,11 +223,25 @@ describe('the page: _migrateStatementCategoryNames and the undo, as index.html h
         const p = pageWith(JSON.parse(JSON.stringify(original)));
         p.run();
         expect(p.undo()).toBe(3);
-        expect(p.store.expenses).toEqual(original);
+        const undone = new Set(['a', 'b', 'e']);
+        const expected = original.map((r) => (undone.has(r.id) ? { ...r, catUndone: true } : r));
+        expect(p.store.expenses).toEqual(expected);
         expect(p.ls.get('wf2_catrelabel_off')).toBe('1');
         expect(p.run()).toBe(0);
-        expect(p.store.expenses).toEqual(original);
+        expect(p.store.expenses).toEqual(expected);
         expect(typeof p.ctx.window._wfUndoStatementCategoryRelabel).toBe('function');
+    });
+
+    it('a second device that syncs the undone rows (and has no switch of its own) does not rename them again', () => {
+        const first = pageWith(JSON.parse(JSON.stringify(books())));
+        first.run();
+        first.undo();
+        const second = pageWith(JSON.parse(JSON.stringify(first.store.expenses)));
+        expect(second.ls.has('wf2_catrelabel_off')).toBe(false);
+        expect(second.run()).toBe(0);
+        expect(second.calls.sets).toEqual([]);
+        expect(second.calls.notify).toEqual([]);
+        expect(second.store.expenses.map((r) => r.cat)).toEqual(books().map((r) => r.cat));
     });
 });
 

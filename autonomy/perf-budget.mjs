@@ -690,7 +690,10 @@ export const BUDGETS = {
     // 2026-10-10 (Settings: sub-switches written one at a time, the older switches also gate the bell; wealthflow-notifications.js, measured 2,511,092 + ~0.1% headroom): 2_565_000 -> 2_569_000 (measured 2,566,347 at the merge with the Cheque Tracker work + ~0.1% headroom).
     // 2026-10-19 (the owner's own money, round 2; measured 2,571,599 + ~0.1% headroom): 2_569_000 -> 2_575_000. wealthflow-own-money.js now also names a transfer from the owner's own name and a payment to the owner's own card
     // (both doors leave them to the other side's statement), and wealthflow-route.js reads the owner's name from the saved payment accounts; about a third is the comments recording why.
-    totalJsBytes: 2_575_000,
+    // 2026-10-19 (two merges that each fit alone, and not together; measured 2,575,771 + ~0.1% headroom): 2_575_000 -> 2_578_500. The older statement expenses' category rename (index.html, and relabelApply /
+    // relabelUndo in wealthflow-statement-router.js) and the own-money rule's card-payment line (wealthflow-own-money.js) were each measured against a main that did not yet hold the other; main at their merge
+    // measured 2,575,412, 412 over. The router grew a little more here: an undone rename now marks the record (`catUndone`) so another device does not rename it again. About a third is comments recording why.
+    totalJsBytes: 2_578_500,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

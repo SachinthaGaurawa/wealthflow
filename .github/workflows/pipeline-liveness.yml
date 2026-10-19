@@ -41,9 +41,12 @@ permissions:
   contents: read
   issues: write
 
+# Each push to main is verified on its own: two merges a minute apart used to cancel the first
+# run, which left a red "cancelled" mark on a good commit. The daily and manual runs still
+# replace one another.
 concurrency:
-  group: pipeline-liveness
-  cancel-in-progress: true
+  group: pipeline-liveness-${{ github.event_name == 'push' && github.sha || 'scheduled' }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   verify:
