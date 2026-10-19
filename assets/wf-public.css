@@ -1,0 +1,168 @@
+/* =============================================================================
+ * wf-public.css - the motion and scroll layer of the public pages
+ *                 (/, /privacy and /terms)
+ * -----------------------------------------------------------------------------
+ * The three pages keep their own look inline (navy field, gold accent, Geist).
+ * This file only ADDS to it; it changes no copy, no layout and no colour.
+ *
+ *   all pages   smooth scrolling, a reading-progress line, a header that settles
+ *               when the page moves, the back-to-top button
+ *   home        a staged entrance, a gauge that sweeps to its reading, sections
+ *               that come in as they reach the screen, a pointer light on cards,
+ *               a sheen on the gold buttons, the section you are in marked in
+ *               the menu
+ *   documents   the heading you jumped to underlines itself
+ *
+ * RULES THIS FILE KEEPS (so the next edit does too)
+ *   - Only transform and opacity move. The one exception is the gauge arc, a
+ *     single stroke drawn once.
+ *   - Nothing listens to the scroll event. Position comes from
+ *     IntersectionObserver (wf-public.js) and from CSS scroll timelines.
+ *   - Motion is wrapped in prefers-reduced-motion: no-preference, and the page
+ *     is complete without it (nothing stays hidden if the script never runs).
+ *   - Layers: header 50 (page), back-to-top 55, progress line 60, skip link 100.
+ * ===========================================================================*/
+
+:root { --wfp-ease: cubic-bezier(.16, 1, .3, 1); }
+
+/* The sticky header covers about 68 px; a link to #features or #privacy lands
+   below it instead of under it. (The documents already give each h2 a scroll-margin.) */
+html { scroll-behavior: smooth; }
+html.wfp-home { scroll-padding-top: 84px; }
+main:focus { outline: none; }
+
+/* ── Reading progress: a hairline that fills as the page is read ─────────── */
+@supports (animation-timeline: scroll()) {
+    body::before {
+        content: ''; position: fixed; inset: 0 0 auto 0; height: 2px; z-index: 60; pointer-events: none;
+        background: linear-gradient(90deg, var(--gold-600, #b8912a), var(--gold-300, #f1d98d));
+        transform: scaleX(0); transform-origin: 0 50%;
+        animation: wfpProgress linear both; animation-timeline: scroll(root block);
+    }
+    @keyframes wfpProgress { to { transform: scaleX(1); } }
+}
+
+/* ── Header: a soft shadow once the page has moved ───────────────────────── */
+header.top::before {
+    content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background: rgba(7, 18, 38, .9); opacity: 0; transition: opacity .3s;
+}
+header.top::after {
+    content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 28px; pointer-events: none;
+    background: linear-gradient(rgba(5, 13, 28, .5), transparent); opacity: 0; transition: opacity .3s;
+}
+header.top.is-stuck::before, header.top.is-stuck::after { opacity: 1; }
+
+/* ── Back to top ─────────────────────────────────────────────────────────── */
+.wfp-top {
+    position: fixed; z-index: 55; width: 48px; height: 48px; padding: 0; border-radius: 50%; cursor: pointer;
+    right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom));
+    display: grid; place-items: center; color: var(--gold-400, #e6c565);
+    border: 1px solid var(--line, rgba(212, 175, 55, .22));
+    background: linear-gradient(160deg, rgba(23, 50, 99, .92), rgba(11, 29, 61, .94));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 14px 32px -12px rgba(0, 0, 0, .7);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    opacity: 0; transform: translateY(14px) scale(.9); visibility: hidden;
+    transition: opacity .3s var(--wfp-ease), transform .3s var(--wfp-ease), visibility 0s .3s, border-color .2s;
+}
+.wfp-top.is-on { opacity: 1; transform: none; visibility: visible; transition-delay: 0s; }
+.wfp-top:hover { border-color: var(--gold-400, #e6c565); transform: translateY(-2px); }
+.wfp-top:active { transform: scale(.94); }
+.wfp-top svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
+.wfp-top circle { fill: none; stroke-width: 2; }
+.wfp-top .wfp-ring-bg { stroke: rgba(255, 255, 255, .1); }
+.wfp-top .wfp-ring { stroke: var(--gold-400, #e6c565); stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+@supports (animation-timeline: scroll()) {
+    .wfp-top .wfp-ring { animation: wfpRing linear both; animation-timeline: scroll(root block); }
+    @keyframes wfpRing { to { stroke-dashoffset: 0; } }
+}
+/* The arrow is two borders, not a drawn icon. */
+.wfp-chev { width: 11px; height: 11px; margin-top: 4px; border-top: 2px solid currentColor; border-left: 2px solid currentColor; transform: rotate(45deg); }
+
+/* ── Documents: the section you jumped to ────────────────────────────────── */
+html.wfp-doc h2 { position: relative; }
+html.wfp-doc h2::after {
+    content: ''; position: absolute; left: 0; bottom: -6px; width: 56px; height: 2px; border-radius: 2px;
+    background: linear-gradient(90deg, var(--gold-500, #d4af37), transparent);
+    transform: scaleX(0); transform-origin: 0 50%;
+}
+html.wfp-doc h2:target::after { transform: scaleX(1); }
+html.wfp-doc .toc h2::after { display: none; }
+
+/* ── Home: menu, buttons, cards ──────────────────────────────────────────── */
+html.wfp-home nav.main a.link { position: relative; padding: 4px 0; }
+html.wfp-home nav.main a.link::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: -2px; height: 1px; background: var(--gold-400, #e6c565);
+    transform: scaleX(0); transform-origin: 0 50%; transition: transform .35s var(--wfp-ease);
+}
+html.wfp-home nav.main a.link:hover::after, html.wfp-home nav.main a.link[aria-current]::after { transform: scaleX(1); }
+html.wfp-home nav.main a.link[aria-current] { color: var(--gold-300, #f1d98d); }
+
+html.wfp-home .btn { position: relative; overflow: hidden; }
+html.wfp-home .btn:active { transform: translateY(0) scale(.98); }
+html.wfp-home .btn-gold::after {
+    content: ''; position: absolute; top: 0; bottom: 0; left: -45%; width: 38%; pointer-events: none; opacity: 0;
+    background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .5), transparent);
+    transform: translateX(0) skewX(-18deg); transition: transform .8s var(--wfp-ease), opacity .3s;
+}
+html.wfp-home .btn-gold:hover::after { opacity: 1; transform: translateX(480%) skewX(-18deg); }
+
+/* A pointer light inside each card (position set by wf-public.js; mouse only). */
+html.wfp-home .card { position: relative; overflow: hidden; }
+html.wfp-home .card::before {
+    content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .35s;
+    background: radial-gradient(300px circle at var(--mx, 50%) var(--my, 0%), rgba(212, 175, 55, .13), transparent 62%);
+}
+html.wfp-home .card:hover::before { opacity: 1; }
+html.wfp-home .card .ic { transition: transform .4s var(--wfp-ease), background .3s; }
+html.wfp-home .card:hover .ic { transform: translateY(-2px) scale(1.06); background: rgba(212, 175, 55, .16); }
+
+/* ── Home: the motion itself ─────────────────────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+    @keyframes wfpUp { from { opacity: 0; transform: translate3d(0, 22px, 0); } }
+
+    /* The first screen arrives in reading order: label, headline, lead, buttons, note, then the gauge. */
+    html.wfp-home .hero-grid > div > * { animation: wfpUp .9s var(--wfp-ease) backwards; }
+    html.wfp-home .hero-grid > div > :nth-child(2) { animation-delay: .08s; }
+    html.wfp-home .hero-grid > div > :nth-child(3) { animation-delay: .16s; }
+    html.wfp-home .hero-grid > div > :nth-child(4) { animation-delay: .24s; }
+    html.wfp-home .hero-grid > div > :nth-child(5) { animation-delay: .32s; }
+    html.wfp-home .hero-grid > .panel { animation: wfpUp 1s var(--wfp-ease) .2s backwards; }
+
+    /* The gauge settles on its reading: the needle sweeps from Tight, the arc is drawn behind it. */
+    html.wfp-home .gauge line { transform-origin: 160px 165px; animation: wfpNeedle 1.9s cubic-bezier(.22, 1, .36, 1) .65s backwards; }
+    html.wfp-home .gauge path:last-of-type { animation: wfpArc 1.9s cubic-bezier(.22, 1, .36, 1) .65s backwards; }
+    @keyframes wfpNeedle { from { transform: rotate(-128deg); } }
+    @keyframes wfpArc { from { stroke-dashoffset: 408; } }
+
+    /* The ambient light of the field breathes, slowly, behind everything. */
+    html.wfp-home body::after {
+        content: ''; position: fixed; inset: -12%; z-index: -1; pointer-events: none;
+        background:
+            radial-gradient(40% 36% at 78% 14%, rgba(212, 175, 55, .09), transparent 70%),
+            radial-gradient(46% 40% at 12% 78%, rgba(23, 50, 99, .55), transparent 72%);
+        animation: wfpDrift 32s ease-in-out infinite alternate; will-change: transform;
+    }
+    @keyframes wfpDrift { to { transform: translate3d(-2.5%, 2%, 0) scale(1.06); } }
+
+    /* Sections come in as they reach the screen. Hidden only while the script is on
+       its way; the failsafe reveals them if it never arrives. */
+    html.wfp-home.wfp-js :is(.sec-head, .card, .steps li, .notice, .cta-band .panel):not(.in) {
+        opacity: 0; animation: wfpFail .5s ease 3s forwards;
+    }
+    @keyframes wfpFail { to { opacity: 1; } }
+    html.wfp-home :is(.sec-head, .card, .steps li, .notice, .cta-band .panel).in {
+        animation: wfpUp .8s var(--wfp-ease) calc(var(--i, 0) * 70ms) backwards;
+    }
+}
+
+/* ── Accessibility fallbacks ─────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    html, html.wfp-home { scroll-behavior: auto; }
+    .wfp-top, header.top::before, header.top::after { transition: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+    header.top { -webkit-backdrop-filter: none; backdrop-filter: none; background: #071226; }
+    .wfp-top { -webkit-backdrop-filter: none; backdrop-filter: none; background: #0b1d3d; }
+}
+@media print { .wfp-top, body::before, body::after { display: none !important; } }

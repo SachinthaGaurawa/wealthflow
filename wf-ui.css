@@ -140,19 +140,42 @@ p, .card-sub, .stat-meta, .fhint, .empty-sub { text-wrap: pretty; }
 .sp-status { font-family: var(--wf-font); font-size: 12px; color: var(--wf-text-3); letter-spacing: 0; }
 
 /* ═════════════════ 4. SIGN-IN ═══════════════════════════════════════════════ */
-#authScreen { background: var(--wf-bg); }
-.auth-box {
-    background: var(--wf-card); border: 1px solid var(--wf-line); border-radius: 24px;
-    padding: 36px 32px 32px; max-width: 408px; width: calc(100% - 32px); margin: 16px;
-    box-shadow: var(--wf-shadow-2);
-    animation: wfAuthIn .42s var(--wf-ease) both;
+/* The sign-in screen wears the public home page's look (landing.html): the same navy field,
+   the same gold light, the same glass card. It is pinned to that dark palette in every
+   theme, as the public page is, so the first thing a person sees after "Login / Register"
+   is the page they just left. Only colour and motion live here; the markup is unchanged. */
+#authScreen {
+    color-scheme: dark; color: var(--wf-text);
+    --wf-bg: #071226; --wf-surface: #0b1d3d; --wf-card: #0e2144; --wf-card-2: rgba(5, 13, 28, .55); --wf-card-3: rgba(212, 175, 55, .1);
+    --wf-line: rgba(212, 175, 55, .22); --wf-line-2: rgba(255, 255, 255, .16); --wf-line-3: #7385ab;
+    --wf-text: #e9edf6; --wf-text-2: #b4bfd4; --wf-text-3: #8e9bb4;
+    --wf-field: rgba(5, 13, 28, .6); --wf-accent-soft: rgba(228, 194, 107, .13);
+    --wf-accent: var(--wf-gold-400); --wf-accent-fill: var(--wf-gold-400); --wf-accent-ink: #17120a; --wf-accent-line: rgba(228, 194, 107, .34);
+    --wf-focus: 0 0 0 3px rgba(228, 194, 107, .38); --wf-pos: #3dd28d; --wf-neg: #ff6b78; --accent: #e4c26b;
+    --text: #e9edf6; --text2: #b4bfd4; --text3: #8e9bb4; --bg2: #0b1d3d; --card: #0e2144; --card2: rgba(5, 13, 28, .55);
+    --border: rgba(212, 175, 55, .22); --border2: rgba(255, 255, 255, .16);
+    background:
+        radial-gradient(1200px 600px at 85% -10%, rgba(212, 175, 55, .14), transparent 60%),
+        radial-gradient(900px 500px at -10% 10%, rgba(23, 50, 99, .7), transparent 60%),
+        linear-gradient(180deg, #071226, #050d1c);
 }
-@keyframes wfAuthIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.auth-box {
+    position: relative;
+    background: linear-gradient(160deg, rgba(23, 50, 99, .78), rgba(11, 29, 61, .88));
+    border: 1px solid var(--wf-line); border-radius: 22px;
+    padding: 36px 32px 32px; max-width: 408px; width: calc(100% - 32px); margin: 16px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .07);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    animation: wfAuthIn .6s var(--wf-ease) both;
+}
+@keyframes wfAuthIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+/* The slide icons carry one colour, the brand gold (they were four, set inline). */
+.auth-slide .as-ic { color: var(--wf-gold-400) !important; }
 .auth-logo {
     width: 68px; height: 68px; border-radius: 20px; margin: 0 auto 18px; padding: 0; font-size: 26px;
-    background: radial-gradient(120% 120% at 20% 10%, #1b2236 0%, #0c101b 70%);
-    border: 1px solid rgba(228, 194, 107, .28); color: var(--wf-accent);
-    box-shadow: 0 10px 28px rgba(0, 0, 0, .3);
+    background: radial-gradient(120% 120% at 20% 10%, #12294f 0%, #07142b 70%);
+    border: 1px solid rgba(228, 194, 107, .34); color: var(--wf-accent);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .06);
 }
 .auth-logo .wf-mark { width: 72%; height: 72%; }
 .auth-logo svg:not(.wf-mark) { width: 26px; height: 26px; }
@@ -160,7 +183,7 @@ p, .card-sub, .stat-meta, .fhint, .empty-sub { text-wrap: pretty; }
 .auth-sub { font-size: 14px; color: var(--wf-text-2); margin-bottom: 24px; line-height: 1.5; }
 .auth-slider { margin: 0 0 22px; }
 .auth-slide {
-    background: var(--wf-card-2); border: 1px solid var(--wf-line); border-radius: 16px; padding: 18px 16px;
+    background: var(--wf-card-2); border: 1px solid rgba(255, 255, 255, .08); border-radius: 16px; padding: 18px 16px;
 }
 .auth-slide .as-h { font-size: 15px; font-weight: 600; color: var(--wf-text); }
 .auth-slide .as-p { font-size: 13px; color: var(--wf-text-2); line-height: 1.55; }
@@ -196,45 +219,62 @@ p, .card-sub, .stat-meta, .fhint, .empty-sub { text-wrap: pretty; }
 .auth-btn:hover { background: var(--wf-gold-300); transform: none; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45); }
 .auth-btn:active { transform: scale(.985); }
 .auth-btn.ghost { background: var(--wf-card-2); color: var(--wf-text); border: 1px solid var(--wf-line); box-shadow: none; }
+/* "Continue with Google" is styled inline (Google's own white button); it only gains a lift and a press. */
+#authGoogle .auth-btn { transition: transform .25s var(--wf-ease), box-shadow .25s var(--wf-ease) !important; }
+#authGoogle .auth-btn:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(0, 0, 0, .35) !important; }
+#authGoogle .auth-btn:active { transform: scale(.985); }
 
-/* Desktop: a brand panel beside the form, instead of a lone card on a black field. */
+/* Desktop: a brand panel beside the form, instead of a lone card on a flat field. */
 .auth-brand { display: none; }
 @media (min-width: 981px) {
     #authScreen.show { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); align-items: stretch; justify-items: center; overflow: hidden; }
     #authScreen .auth-box { grid-column: 2; grid-row: 1; align-self: center; margin: 24px; }
     .auth-brand {
         grid-column: 1; grid-row: 1; display: flex; flex-direction: column; justify-content: space-between;
-        width: 100%; padding: 48px 56px; position: relative; overflow: hidden; color: #eef1f7;
-        background:
-            radial-gradient(70% 55% at 18% 8%, rgba(228, 194, 107, .20) 0%, transparent 60%),
-            radial-gradient(60% 50% at 95% 100%, rgba(61, 210, 141, .13) 0%, transparent 60%),
-            linear-gradient(160deg, #0f1522 0%, #0a0d13 100%);
-        border-right: 1px solid rgba(255, 255, 255, .06);
+        width: 100%; padding: 48px 56px; position: relative; color: #eef1f7;
+        border-right: 1px solid rgba(212, 175, 55, .14);
+        background: linear-gradient(90deg, rgba(5, 13, 28, .35), transparent);
     }
-    .auth-brand::after {
-        content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .5;
-        background-image: linear-gradient(rgba(255, 255, 255, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, .035) 1px, transparent 1px);
-        background-size: 56px 56px;
-        -webkit-mask-image: radial-gradient(70% 70% at 30% 20%, #000 0%, transparent 75%); mask-image: radial-gradient(70% 70% at 30% 20%, #000 0%, transparent 75%);
-    }
-    .auth-brand > * { position: relative; z-index: 1; }
 }
 .ab-lockup { display: flex; align-items: center; gap: 12px; }
 .ab-lockup .wf-tile { width: 44px; height: 44px; border-radius: 13px; }
 .ab-lockup .wf-wordmark { font-size: 20px; color: #fff; }
 .ab-head { max-width: 520px; }
 .ab-head h2 { font-size: clamp(34px, 3.6vw, 52px); font-weight: 650; letter-spacing: -.035em; line-height: 1.05; color: #fff; margin: 0 0 18px; }
-.ab-head h2 em { font-style: normal; background: linear-gradient(120deg, #efd58a, #d4a94a 55%, #6fd49b); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.ab-head p { font-size: 16px; line-height: 1.6; color: #aab3c5; max-width: 440px; margin: 0; }
+.ab-head h2 em { font-style: normal; background: linear-gradient(135deg, #f1d98d, #d4af37); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.ab-head p { font-size: 16px; line-height: 1.6; color: #b4bfd4; max-width: 440px; margin: 0; }
 .ab-points { display: grid; gap: 14px; margin: 34px 0 0; padding: 0; list-style: none; max-width: 460px; }
 .ab-points li { display: flex; gap: 14px; align-items: flex-start; }
-.ab-points .ab-ic { width: 38px; height: 38px; border-radius: 11px; flex-shrink: 0; display: grid; place-items: center; background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .08); color: var(--wf-gold-400); }
+.ab-points .ab-ic { width: 38px; height: 38px; border-radius: 11px; flex-shrink: 0; display: grid; place-items: center; background: rgba(212, 175, 55, .1); border: 1px solid rgba(212, 175, 55, .22); color: var(--wf-gold-400); }
 .ab-points .ab-ic svg { width: 19px; height: 19px; }
 .ab-points b { display: block; font-size: 14.5px; font-weight: 600; color: #fff; margin-bottom: 2px; }
-.ab-points span { font-size: 13.5px; color: #98a2b6; line-height: 1.5; }
-.ab-foot { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 12.5px; color: #7e8aa1; }
+.ab-points span { font-size: 13.5px; color: #aab5cb; line-height: 1.5; }
+.ab-foot { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 12.5px; color: #8e9bb4; }
 .ab-foot span { display: inline-flex; align-items: center; gap: 7px; }
-.ab-foot svg { width: 14px; height: 14px; color: var(--wf-pos); }
+.ab-foot svg { width: 14px; height: 14px; color: var(--wf-gold-400); }
+
+/* Sign-in motion: the light of the field drifts slowly, the brand panel arrives in reading order.
+   Transform and opacity only; nothing moves for people who ask for less motion. */
+@media (prefers-reduced-motion: no-preference) {
+    #authScreen.show::before {
+        content: ''; position: fixed; inset: -12%; z-index: -1; pointer-events: none; will-change: transform;
+        background:
+            radial-gradient(42% 38% at 72% 18%, rgba(212, 175, 55, .1), transparent 70%),
+            radial-gradient(46% 40% at 14% 80%, rgba(23, 50, 99, .6), transparent 72%);
+        animation: wfAuthDrift 30s ease-in-out infinite alternate;
+    }
+    @keyframes wfAuthDrift { to { transform: translate3d(-2.5%, 2%, 0) scale(1.06); } }
+    @keyframes wfAuthRise { from { opacity: 0; transform: translate3d(0, 16px, 0); } }
+    .auth-brand .ab-lockup, .auth-brand .ab-head h2, .auth-brand .ab-head > p, .auth-brand .ab-points li, .auth-brand .ab-foot { animation: wfAuthRise .8s var(--wf-ease) backwards; }
+    .auth-brand .ab-head h2 { animation-delay: .1s; }
+    .auth-brand .ab-head > p { animation-delay: .18s; }
+    .auth-brand .ab-points li:nth-child(1) { animation-delay: .26s; }
+    .auth-brand .ab-points li:nth-child(2) { animation-delay: .34s; }
+    .auth-brand .ab-points li:nth-child(3) { animation-delay: .42s; }
+    .auth-brand .ab-foot { animation-delay: .5s; }
+}
+@media (prefers-reduced-motion: reduce) { .auth-box { animation: none; } }
+@media (prefers-reduced-transparency: reduce) { .auth-box { -webkit-backdrop-filter: none; backdrop-filter: none; background: #0e2144; } }
 
 /* ═════════════════ 5. SHELL: SIDEBAR ════════════════════════════════════════ */
 .sidebar { background: var(--wf-surface); border-right: 1px solid var(--wf-line); width: var(--sw); }
