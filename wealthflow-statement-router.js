@@ -272,8 +272,10 @@ export const classifierName = (name) => named(CLASSIFIER_NAME, name);
 
 /* THE ROWS FILED BEFORE THAT TABLE EXISTED. Statement expenses filed before the ledger used the dropdown's names (before PR #351) are still stored under the classifier's word
  * ("Groceries"), a separate slice on the dashboard from the owner's own "Food & Groceries". relabelApply renames exactly those records and nothing else: only a record the
- * statement filed (`source: 'statement'`), only a category in EXPENSE_ENTRY_NAME, only once (a record that already carries `catWas` is left). The old word is kept on the record
+ * statement filed (`source: 'statement'`), only a category in EXPENSE_ENTRY_NAME, only once (a record that already carries `catWas`, or `catUndone`, is left). The old word is kept on the record
  * as `catWas`, so the change is reversible (relabelUndo) and visible; the amount, date, description, bank and every other field are not touched. It does not mutate its input.
+ * An undone record carries `catUndone: true`, which travels with it like any other field, so the owner's "put it back" holds on every device that syncs it (a flag kept only in one browser would let
+ * another device rename the same rows again).
  * Banks are not renamed: a bank label is the key a card's statements, locks and totals are filed under (see displayBank in wealthflow-institutions.js). */
 const record = (r) => !!r && typeof r === 'object';
 /** @returns {{records: object[], changes: {id: *, name: string, amount: *, from: string, to: string}[]}} the list with the renamed records replaced, and what was renamed */
@@ -281,7 +283,7 @@ export function relabelApply(records) {
   const list = Array.isArray(records) ? records : [];
   const changes = [];
   const out = list.map((r) => {
-    if (!record(r) || r.source !== 'statement' || typeof r.cat !== 'string' || r.catWas != null) return r;
+    if (!record(r) || r.source !== 'statement' || typeof r.cat !== 'string' || r.catWas != null || r.catUndone === true) return r;
     if (!Object.prototype.hasOwnProperty.call(EXPENSE_ENTRY_NAME, r.cat)) return r;
     const to = EXPENSE_ENTRY_NAME[r.cat];
     changes.push({ id: r.id, name: String(r.desc || r.name || ''), amount: r.amount, from: r.cat, to });
@@ -289,7 +291,7 @@ export function relabelApply(records) {
   });
   return { records: changes.length ? out : list, changes };
 }
-/** Put back the old word on a record that still carries the name relabelApply gave it. A record the owner has edited since (its category is no longer the one we set) is left as it is. */
+/** Put back the old word on a record that still carries the name relabelApply gave it, and mark it `catUndone` so no device renames it again. A record the owner has edited since (its category is no longer the one we set) is left as it is. */
 export function relabelUndo(records) {
   const list = Array.isArray(records) ? records : [];
   const restored = [];
@@ -297,7 +299,7 @@ export function relabelUndo(records) {
     if (!record(r) || typeof r.catWas !== 'string' || !Object.prototype.hasOwnProperty.call(EXPENSE_ENTRY_NAME, r.catWas) || r.cat !== EXPENSE_ENTRY_NAME[r.catWas]) return r;
     const { catWas, ...rest } = r;
     restored.push({ id: r.id, from: r.cat, to: catWas });
-    return { ...rest, cat: catWas };
+    return { ...rest, cat: catWas, catUndone: true };
   });
   return { records: restored.length ? out : list, changes: restored };
 }
