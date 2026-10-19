@@ -7,7 +7,7 @@
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
-import { bandFor, loanDues, subDues, ownerEvents, ownerAlertsOn, ONCE_BANDS, BILL_BANDS } from '../sms-owner.mjs';
+import { bankFiled, bandFor, loanDues, subDues, ownerEvents, ownerAlertsOn, ONCE_BANDS, BILL_BANDS } from '../sms-owner.mjs';
 import { deriveEvents, hasSmsRecords } from '../sms-events.mjs';
 import { buildMessage, KINDS } from '../sms-templates.mjs';
 import { createFirestore } from './helpers/fake-firestore.js';
@@ -112,6 +112,37 @@ describe('loans, cards and cheques', () => {
         expect(k).toContain(`O:cheque:q1:${iso(1)}:d1`);
         expect(k.some((x) => x.includes(':c2:') || x.includes(':q2:'))).toBe(false);
         expect(loanDues({ start: '2026-01-31', duration: 12 }, day('2026-02-25'))).toEqual([{ mk: '2026-02', dueISO: '2026-02-28' }]);
+    });
+});
+
+describe('card charges the bank already texted about', () => {
+    const charge = (id, extra = {}) => ({ id, desc: 'PIZZA HUT', amount: 1685.6, deadline: iso(3), paid: false, ...extra });
+    it('a charge a statement or a forwarded bank text filed is not repeated to the owner; one the owner typed in still is', () => {
+        const u = on({ cconetime: [
+            charge('s1', { source: 'statement', statementKey: 'k', feeMeta: { source: 'statement' } }),
+            charge('s2', { feeMeta: { source: 'statement' } }),
+            charge('a1', { auto: true, hash: 'h' }),
+            charge('m1', { desc: 'Sofa on credit', deadline: iso(7) }),
+        ] });
+        expect(keys(u)).toEqual([`O:card:m1:${iso(7)}:d7`]);
+        expect(bankFiled({ source: 'statement' })).toBe(true);
+        expect(bankFiled({ auto: true })).toBe(true);
+        expect(bankFiled({ id: 'x', desc: 'typed' })).toBe(false);
+        expect(bankFiled(null)).toBe(false);
+    });
+    it('a text already queued for such a charge is cancelled before it goes, because the sweep no longer owes it', async () => {
+        const sent = [];
+        const down = { configured: false, senderId: 'WealthFlow', async send() { return { ok: false }; } };
+        const up = { configured: true, senderId: 'WealthFlow', async send({ to, message }) { sent.push({ to, message }); return { ok: true, gatewayId: 'g', cost: 1, segments: 1 }; } };
+        const { db } = createFirestore();
+        const settings = { currency: 'LKR', owner_sms: { enabled: true, phone: '0771234567', at: 1 } };
+        const run = (u, client) => sweepUser({ db, uid: 'u1', user: u, client, now: NOW, env: {}, deps: { random: () => 0.5 } });
+        const first = await run({ settings, cconetime: [charge('c9')] }, down);       // owed and queued, but the gateway is not set up yet
+        expect(first.derived).toBe(1);
+        const second = await run({ settings, cconetime: [charge('c9', { source: 'statement' })] }, up);   // the same charge, now known to be a bank-filed one
+        expect(second.derived).toBe(0);
+        expect(second.cancelled).toBe(1);
+        expect(sent).toHaveLength(0);
     });
 });
 
