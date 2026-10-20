@@ -83,24 +83,28 @@ export async function accountState({ admin, uid }) {
     }
 }
 
-/** The accounts whose schedule is on: { uid, freq, weekStart }. Paged by document id, projected to the two fields the question needs. */
-async function readScheduled(db, admin) {
+/**
+ * The accounts whose schedule is on: { uid, freq, weekStart }. One plain equality query per frequency, paged by document id (the order an
+ * equality query already has, so the automatic single-field index answers it: no composite index to create and no deploy step to forget),
+ * projected to the two fields the question needs.
+ */
+async function readScheduled(db) {
     const out = [];
-    const byId = admin && admin.firestore && admin.firestore.FieldPath && typeof admin.firestore.FieldPath.documentId === 'function' ? admin.firestore.FieldPath.documentId() : null;
-    let after = null;
-    while (out.length < SCAN_MAX) {
-        let q = db.collection('users').where('settings.autoBackupFreq', 'in', FREQS);
-        if (typeof q.select === 'function') q = q.select('settings.autoBackupFreq', 'settings.weekStart');
-        if (byId) q = q.orderBy(byId);
-        q = q.limit(SCAN_PAGE);
-        if (after) q = q.startAfter(after);
-        const snap = await withDeadline(q.get(), 10000, 'users');
-        for (const d of snap.docs) {
-            const s = (d.data() || {}).settings || {};
-            if (FREQS.includes(s.autoBackupFreq)) out.push({ uid: d.id, freq: s.autoBackupFreq, weekStart: s.weekStart === 'sunday' ? 0 : 1 });
+    for (const freq of FREQS) {
+        let after = null;
+        while (out.length < SCAN_MAX) {
+            let q = db.collection('users').where('settings.autoBackupFreq', '==', freq);
+            if (typeof q.select === 'function') q = q.select('settings.autoBackupFreq', 'settings.weekStart');
+            q = q.limit(SCAN_PAGE);
+            if (after) q = q.startAfter(after);
+            const snap = await withDeadline(q.get(), 10000, 'users');
+            for (const d of snap.docs) {
+                const s = (d.data() || {}).settings || {};
+                out.push({ uid: d.id, freq, weekStart: s.weekStart === 'sunday' ? 0 : 1 });
+            }
+            if (snap.docs.length < SCAN_PAGE) break;
+            after = snap.docs[snap.docs.length - 1];
         }
-        if (snap.docs.length < SCAN_PAGE) break;
-        after = snap.docs[snap.docs.length - 1];
     }
     return out;
 }
@@ -189,7 +193,7 @@ export async function handleSweep(req, res, deps) {
     const now = deps.now();
 
     let scheduled;
-    try { scheduled = await readScheduled(db, admin); }
+    try { scheduled = await readScheduled(db); }
     catch (e) {
         console.error('[WF-CRON] backup-sweep could not read the schedules: ' + String((e && e.message) || e).slice(0, 160));
         return j(res, 500, { ok: false, error: 'could not read the schedules' });
@@ -201,7 +205,7 @@ export async function handleSweep(req, res, deps) {
         if (deps.clock() - startedAt > TOTAL_BUDGET_MS || backups >= MAX_BACKUPS) { leftOver = scheduled.length - i; break; }
         try {
             const r = await backupAccount({ db, admin, acct: scheduled[i], deps, now });
-            if (['backed-up', 'failed', 'empty'].includes(r.outcome)) backups += 1;
+            if (['backed-up', 'failed'].includes(r.outcome)) backups += 1;      // an empty account costs one read and one tiny write: it must not use up the cap that real copies are limited by
             results.push({ ...r, uid: r.uid.slice(0, 6) });
             if (r.outcome === 'failed') console.warn(`[WF-BACKUP] account ${r.uid.slice(0, 6)} backup failed: ${String(r.reason).slice(0, 140)}`);
         } catch (e) {

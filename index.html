@@ -532,7 +532,7 @@
     <!-- THE BACKUP RULES, IN ONE PLACE. When the schedule fires (23:55 daily · last day of the week · last day of the month), what counts as a real copy
          (a restore point Firestore acknowledged, a Google Drive file proven by its exact size), how a failure backs off, what a restore must prove before it
          replaces data, and what the Settings card may claim. The page uses it for Backup Now, the schedule, restore and factory reset; api/backup-sweep.js
-         runs the same module on the server for the nights the app is closed. Pure; ESM; window.WFBackup. Added v7.70 (module #N in autonomy/perf-budget.mjs). -->
+         runs the same module on the server for the nights the app is closed. Pure; ESM; window.WFBackup. Added v7.70 (module 90 in autonomy/perf-budget.mjs). -->
     <script type="module" src="wealthflow-backup.js"></script>
     <!-- WHAT A CHEQUE ROW ON A STATEMENT IS, AND WHICH TRACKED CHEQUE IT SETTLES. "CHEQUE DEPOSIT 285943" is a cheque, money in, number 285943; "CHQ RTN 285943" is that cheque coming back. The upload page and the
          email worker read cheque rows with this one rule, so a row is not one thing here and another by email. Pure; ESM; window.WFCheques. -->
@@ -6958,7 +6958,8 @@
             <p style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5;">This will wipe ALL
                 financial data from your devices and the cloud. <b style="color:var(--green);">Your Master PIN and
                     Settings will be kept safe.</b> A safety copy is saved in your account first and kept for 30 days, so a mistake can be undone from
-                Restore Vault. Enter your PIN to confirm.</p>
+                Restore Vault. Restore points you already have stay until they rotate out (up to 60 days) and can be deleted in Restore Vault.
+                Enter your PIN to confirm.</p>
             <div class="fg"><label class="fl">Master PIN *</label><input class="fi auth-numpad-only" id="fr_pin"
                     type="password" autocomplete="off" inputmode="numeric" maxlength="6" placeholder="••••••"
                     style="letter-spacing: 4px; font-family:var(--mono); text-align:center; font-size:24px;"></div>
@@ -7005,6 +7006,15 @@
                 file to restore.</p>
             <button class="btn btn-secondary" style="width:100%; justify-content:center;"
                 onclick="document.getElementById('importFile').click()">Browse Local JSON File</button>
+
+            <div
+                style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px; border-top:1px solid var(--border); padding-top:18px;">
+                Delete restore points</div>
+            <p style="font-size:12px;color:var(--text2);margin-bottom:8px;">Restore points stay in your account for up to 60 days (the newest few, one a day
+                for two weeks, the fullest recent copy, and safety copies for 30 days). Delete them all here if you do not want them. Copies in your own Google
+                Drive are yours to delete in Drive.</p>
+            <button class="btn btn-danger btn-sm" style="width:100%; justify-content:center;" id="restoreDeleteBtn"
+                onclick="deleteAllRestorePoints()">Delete all restore points</button>
 
         </div>
     </div>
@@ -15417,6 +15427,34 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         function openRestoreModal() { openModal('mdRestoreCloud'); return fetchRestoreList(); }
         window.openRestoreModal = openRestoreModal;
 
+        // The person's own "delete my backups": every restore point in the account (copies in their Google Drive are theirs to delete there). It also
+        // clears the stamps that said a backup existed, so the card does not keep claiming one — and keeps lastDriveBackup, because that file is still there.
+        function deleteAllRestorePoints() {
+            showConfirm('@alert@', 'Delete all restore points?',
+                'This removes every saved copy under "Restore points in your account". Your current data is not touched and copies in your Google Drive stay there. Until the next backup you will have no way back from a restore or a wipe; turn the Auto-Backup Schedule off to stop new ones.',
+                'btn-danger', 'Delete restore points', () => { _wfDeleteRestorePoints(); });
+        }
+        async function _wfDeleteRestorePoints() {
+            const B = _wfBackupModule();
+            if (!B || window._isDecoyMode === true || !window.currentUser || !userDocRef) { notify('Restore points cannot be deleted right now.', 'error'); return false; }
+            const uid = window.currentUser.uid;
+            const r = await B.deleteAllSnapshots({ db: userDocRef.firestore, uid });
+            if (r.deleted || r.ok) {
+                try {
+                    const s = DB.getObj('settings', {});
+                    B.BACKUP_STAMP_KEYS.filter((k) => k !== 'lastDriveBackup').forEach((k) => { delete s[k]; });
+                    DB.set('settings', s);
+                } catch (_) {}
+                _wfBackupState = { uid, rps: [], status: null, at: Date.now() };
+                try { _wfPaintBackupCard(); } catch (_) {}
+            }
+            if (r.ok) notify('@checkCircle@ Deleted ' + r.deleted + ' restore point' + (r.deleted === 1 ? '' : 's') + '.', 'success');
+            else notify('Could not delete every restore point (' + r.reason + '); ' + r.deleted + ' deleted. Try again.', 'error');
+            try { if ($('restoreSelect') && document.getElementById('mdRestoreCloud')?.classList.contains('open')) fetchRestoreList(); } catch (_) {}
+            return r.ok;
+        }
+        window.deleteAllRestorePoints = deleteAllRestorePoints;
+
         async function executeRestoreSelected() {
             const sel = $('restoreSelect'), rb = $('restoreBtn');
             const item = sel && _wfRestoreItems.find((i) => i.key === sel.value);
@@ -15475,7 +15513,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const safe = await _wfSaveSafetyCopy('pre-restore');
                 if (!safe.ok) throw new Error('a safety copy of your current data could not be saved (' + safe.reason + ')');
                 const skip = new Set(B.EXCLUDE_KEYS);
-                const keepSettings = ['lastBackup', 'lastAutoBackupAt', 'lastBackupMeta', 'lastBackupAttempt', 'lastDriveBackup', 'autoBackupFreq'];
+                const keepSettings = B.BACKUP_STAMP_KEYS.concat(['autoBackupFreq']);
                 Object.keys(restored).forEach((key) => {
                     if (skip.has(key)) return;
                     if (key === 'auth' && appData.auth && appData.auth.pin) return;

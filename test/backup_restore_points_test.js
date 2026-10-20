@@ -18,7 +18,7 @@ import path from 'node:path';
 import Backup, {
     nextTrigger, lastTrigger, retryDelayMs, backupDue, staleAfterMs,
     buildPayload, validateRestore, selectToKeep, saveSnapshot, loadSnapshot, listSnapshots, annotateSnapshot, writeStatus, readStatus, sha256Hex,
-    driveBackup, ensureDriveFolder, listDriveBackups, pruneDriveBackups, driveReasonText, restorePointReasonText, driveNameParts, downloadDriveBackup, describeBackup,
+    driveBackup, ensureDriveFolder, listDriveBackups, pruneDriveBackups, driveReasonText, restorePointReasonText, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, BACKUP_STAMP_KEYS,
     KEEP_NEWEST, KEEP_DAYS, MAX_SNAPSHOT_BYTES, FOLDER_MIME, DRIVE_FOLDER_NAME, RECORD_KEYS, SNAP_COL, DATA_COL, STATUS_COL,
 } from '../wealthflow-backup.js';
 import { makeDb, makeDrive } from './helpers/backup-fakes.js';
@@ -554,6 +554,51 @@ describe('describeBackup: the status line says what is true now', () => {
         const s = describeBackup({ freq: 'daily', lastGoodMs: now - 60000, drive: { ok: false, reason: 'token-expired' }, now });
         expect(s.level).toBe('warn');
         expect(s.lines[0].text).toMatch(/Reconnect Google Drive/);
+    });
+});
+
+describe('deleteAllSnapshots: the person\'s own "delete my backups"', () => {
+    const seed = async (db, n) => {
+        for (let i = 0; i < n; i++) await saveSnapshot({ db, uid: 'u', payload: payloadOf(data(2 + i)), trigger: i % 2 ? 'manual' : 'pre-wipe', now: 1760000000000 + i * 60000 });
+        await writeStatus({ db, uid: 'u', status: { atMs: 1, success: true } });
+    };
+    it('removes every restore point, its data and the status, and nothing else', async () => {
+        const db = makeDb();
+        await seed(db, 7);
+        db.store.set('users/u', { expenses: [{ id: 'live' }] });
+        db.store.set('users/other/backups/x', { atMs: 1 });
+        const held = [...db.store.keys()].filter((k) => k.startsWith('users/u/backups/')).length;
+        expect(held).toBeGreaterThan(3);                        // rotation may already have dropped one of the seven
+        const r = await deleteAllSnapshots({ db, uid: 'u' });
+        expect(r).toEqual({ ok: true, deleted: held });
+        expect([...db.store.keys()].filter((k) => k.startsWith('users/u/'))).toEqual([]);
+        expect(db.store.get('users/u')).toEqual({ expenses: [{ id: 'live' }] });
+        expect(db.store.has('users/other/backups/x')).toBe(true);
+    });
+    it('pages through more than one batch', async () => {
+        const db = makeDb();
+        for (let i = 0; i < 230; i++) {
+            db.store.set('users/u/backups/p' + i, { atMs: i, trigger: 'manual' });
+            db.store.set('users/u/backupData/p' + i, { data: '{}' });
+        }
+        expect(await deleteAllSnapshots({ db, uid: 'u' })).toEqual({ ok: true, deleted: 230 });
+        expect(db.store.size).toBe(0);
+    });
+    it('an empty account is a clean no-op', async () => {
+        expect(await deleteAllSnapshots({ db: makeDb(), uid: 'u' })).toEqual({ ok: true, deleted: 0 });
+    });
+    it('a failed delete reports the reason and deletes nothing (metadata and data go in one batch)', async () => {
+        const db = makeDb();
+        await seed(db, 3);
+        db.state.failCommit = true;
+        const r = await deleteAllSnapshots({ db, uid: 'u' });
+        expect(r).toMatchObject({ ok: false, deleted: 0, reason: 'permission-denied' });
+        expect([...db.store.keys()].filter((k) => k.includes('/backups/')).length).toBe(3);
+        expect([...db.store.keys()].filter((k) => k.includes('/backupData/')).length).toBe(3);
+    });
+    it('BACKUP_STAMP_KEYS is the list the page keeps through a restore', () => {
+        expect(BACKUP_STAMP_KEYS.sort()).toEqual(['lastAutoBackupAt', 'lastBackup', 'lastBackupAttempt', 'lastBackupMeta', 'lastDriveBackup']);
+        expect(Backup.BACKUP_STAMP_KEYS).toEqual(BACKUP_STAMP_KEYS);
     });
 });
 

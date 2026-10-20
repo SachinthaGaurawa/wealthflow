@@ -461,6 +461,15 @@ describe('one run stays inside its budget', () => {
         const again = await call(w.deps);
         expect(again.json).toMatchObject({ backedUp: 5, fresh: MAX_BACKUPS, leftOver: 0 });
     });
+    it('accounts with nothing in them do not use up the cap that real copies are limited by', async () => {
+        const users = {};
+        for (let i = 0; i < MAX_BACKUPS + 10; i++) users['a' + String(i).padStart(3, '0')] = { settings: { autoBackupFreq: 'daily' } };   // sorts first
+        users.z1 = userDoc(); users.z2 = userDoc(); users.z3 = userDoc();
+        const w = world({ users });
+        const r = await call(w.deps);
+        expect(r.json).toMatchObject({ backedUp: 3, empty: MAX_BACKUPS + 10, leftOver: 0 });
+        expect(rpCount(w.db, 'z1') + rpCount(w.db, 'z2') + rpCount(w.db, 'z3')).toBe(3);
+    });
     it('stops when the time budget is spent', async () => {
         const w = world({ users: { a: userDoc(), b: userDoc() } });
         let t = 0;
@@ -468,15 +477,16 @@ describe('one run stays inside its budget', () => {
         const r = await call(w.deps);
         expect(r.json.leftOver).toBeGreaterThan(0);
     });
-    it('pages through more accounts than one query returns', async () => {
+    it('pages through more accounts than one query returns, and across all three frequencies', async () => {
         const users = {};
-        for (let i = 0; i < SCAN_PAGE + 50; i++) users['x' + String(i).padStart(4, '0')] = { settings: { autoBackupFreq: 'off' } };
-        users.zlast = userDoc();           // sorts after the first page
-        users.zlast2 = userDoc({ freq: 'weekly' });
+        for (let i = 0; i < SCAN_PAGE + 50; i++) users['d' + String(i).padStart(4, '0')] = { settings: { autoBackupFreq: 'daily' } };   // no data: scanned, cheap
+        users.w1 = userDoc({ freq: 'weekly' });
+        users.m1 = userDoc({ freq: 'monthly' });
+        users.off = { settings: { autoBackupFreq: 'off' } };
         const w = world({ users });
         const r = await call(w.deps);
-        expect(r.json.accounts).toBe(2);
-        expect(rpCount(w.db, 'zlast')).toBe(1);
+        expect(r.json.accounts, 'the second page of daily accounts, the weekly and the monthly one were not all read').toBe(SCAN_PAGE + 50 + 2);
+        expect(r.json.accounts).toBeGreaterThan(SCAN_PAGE);
     });
     it('writes one summary line a run (counts only)', async () => {
         const w = world({ users: { a: userDoc(), b: userDoc({ freq: 'monthly' }) } });

@@ -304,6 +304,32 @@ export async function saveSnapshot({ db, uid, payload, trigger = 'manual', now =
     }
 }
 
+/**
+ * Delete every restore point of an account — the person's own "delete my backups" — and the status document that describes them. Pages through
+ * the list so an account with many safety copies is cleared in one go; a copy's metadata and its data go in the SAME batch, so a failure never
+ * leaves a listed point without data or data nobody can see. { ok, deleted } or { ok:false, reason, deleted }. Never throws.
+ */
+export async function deleteAllSnapshots({ db, uid }) {
+    let deleted = 0;
+    try {
+        const { meta, data, status } = refs(db, uid);
+        for (let round = 0; round < 25; round++) {
+            const list = await listSnapshots({ db, uid, limit: 200 });
+            if (!list.length) {
+                try { await withTimeout(status.doc('last').delete(), WRITE_TIMEOUT_MS, 'Clearing the backup status'); } catch (e) { /* the status holds no records */ }
+                return { ok: true, deleted };
+            }
+            const b = db.batch();
+            list.forEach((x) => { b.delete(meta.doc(x.id)); b.delete(data.doc(x.id)); });
+            await withTimeout(b.commit(), WRITE_TIMEOUT_MS, 'Deleting restore points');
+            deleted += list.length;
+        }
+        return { ok: false, reason: 'there are more restore points than one run removes; run it again', deleted };
+    } catch (e) {
+        return { ok: false, reason: (e && (e.code || e.message)) ? String(e.code || e.message) : 'the delete failed', deleted };
+    }
+}
+
 /** Attach information learned after the copy was saved (the server records what Drive said). Never throws. */
 export async function annotateSnapshot({ db, uid, id, patch }) {
     try { await withTimeout(refs(db, uid).meta.doc(id).set(patch, { merge: true }), WRITE_TIMEOUT_MS, 'Annotating the restore point'); return true; } catch (e) { return false; }
@@ -555,10 +581,10 @@ export function describeBackup({ freq, lastGoodMs, rp, drive, attempt, now = Dat
 }
 
 const API = {
-    SNAP_COL, DATA_COL, STATUS_COL, MAX_SNAPSHOT_BYTES, KEEP_NEWEST, KEEP_DAYS, DRIVE_FOLDER_NAME, DRIVE_KEEP, SERVER_TZ_OFFSET_MIN, RECORD_KEYS, EXCLUDE_KEYS,
+    SNAP_COL, DATA_COL, STATUS_COL, MAX_SNAPSHOT_BYTES, KEEP_NEWEST, KEEP_DAYS, DRIVE_FOLDER_NAME, DRIVE_KEEP, SERVER_TZ_OFFSET_MIN, RECORD_KEYS, EXCLUDE_KEYS, BACKUP_STAMP_KEYS,
     sha256Hex, nextTrigger, lastTrigger, retryDelayMs, backupDue, staleAfterMs, buildPayload, validateRestore, selectToKeep,
     listSnapshots, saveSnapshot, annotateSnapshot, writeStatus, readStatus, loadSnapshot, driveFailure, driveReasonText, restorePointReasonText, ensureDriveFolder, listDriveBackups,
-    pruneDriveBackups, driveBackup, driveNameParts, downloadDriveBackup, describeBackup,
+    pruneDriveBackups, driveBackup, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots,
 };
 
 if (typeof window !== 'undefined') window.WFBackup = API;

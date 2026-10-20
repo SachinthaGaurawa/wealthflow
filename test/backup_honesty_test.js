@@ -192,7 +192,7 @@ ${SRC_WEEKSTART}
 ${REGION_SCHEDULER}
 ${SRC_FACTORY_RESET}
 return {
-    backupNow, executeDriveBackup, _getLastBackupMs, _wfSaveSafetyCopy, _wfApplyRestore, executeRestoreSelected, fetchRestoreList, executeFactoryReset,
+    backupNow, executeDriveBackup, _getLastBackupMs, _wfSaveSafetyCopy, _wfApplyRestore, executeRestoreSelected, fetchRestoreList, executeFactoryReset, deleteAllRestorePoints, _wfDeleteRestorePoints,
     _checkAutoBackupDue, _wfBackupFailState, _wfRefreshBackupState, _wfDriveTokenFor, _wfBackupInfoHtml, _wfDriveBackupWithToasts,
     getAppData: () => appData, setRestoreItems: (x) => { _wfRestoreItems = x; }, getGapiToken: () => gapiToken, setGapiToken: (t) => { gapiToken = t; },
 };`;
@@ -756,6 +756,54 @@ describe('executeRestoreSelected: the copy is read and proven before anything is
         await withPoint(p);
         await Promise.all([p.executeRestoreSelected(), p.executeRestoreSelected()]);
         expect(p.confirms).toHaveLength(1);
+    });
+});
+
+describe('"Delete all restore points" is the person\'s own, and says what it did', () => {
+    it('asks first, deletes only the restore points, clears the stamps that claimed a backup, and keeps the Drive file and the live data', async () => {
+        const p = loadPage({ refresh: 'rt' });
+        await p.backupNow(true, 'auto');
+        await p._wfRefreshBackupState(true);
+        expect(p._wfBackupInfoHtml(p.appData.settings)).not.toMatch(/No backup yet/);
+        const live = structuredClone(p.appData.expenses);
+        p.deleteAllRestorePoints();
+        expect(p.confirms).toHaveLength(1);
+        expect(p.confirms[0][1]).toMatch(/Delete all restore points/);
+        expect(rps(p.db)).toHaveLength(1);                         // nothing deleted until the person confirms
+        p.confirms[0][5]();
+        await vi.waitFor(() => expect(rps(p.db)).toHaveLength(0));
+        expect(p.notes.map((n) => n.m).join(' ')).toMatch(/Deleted 1 restore point\./);
+        const s = p.appData.settings;
+        expect([s.lastBackup, s.lastAutoBackupAt, s.lastBackupMeta, s.lastBackupAttempt]).toEqual([undefined, undefined, undefined, undefined]);
+        expect(s.lastDriveBackup.verified).toBe(true);              // that file still exists in their Drive
+        expect([...p.drive.files.values()].some((f) => f.name.startsWith('WealthFlow_'))).toBe(true);
+        expect(p.appData.expenses).toEqual(live);
+        expect(status(p.db)).toBeUndefined();
+        expect(p._wfBackupInfoHtml(s)).not.toMatch(/Restore point/);
+    });
+    it('with no Drive file either, the card goes back to "No backup yet" instead of claiming one', async () => {
+        const p = loadPage();
+        await p.backupNow(true, 'auto');
+        await p._wfRefreshBackupState(true);
+        expect(await p._wfDeleteRestorePoints()).toBe(true);
+        expect(p._wfBackupInfoHtml(p.appData.settings)).toMatch(/No backup yet/);
+        expect(p._getLastBackupMs()).toBe(0);
+    });
+    it('reports a failure in words and leaves the stamps alone when nothing was deleted', async () => {
+        const p = loadPage();
+        await p.backupNow(true, 'auto');
+        p.db.state.failCommit = true;
+        expect(await p._wfDeleteRestorePoints()).toBe(false);
+        expect(rps(p.db)).toHaveLength(1);
+        expect(p.appData.settings.lastBackupMeta).toBeTruthy();
+        expect(p.notes.find((n) => n.kind === 'error').m).toMatch(/Could not delete every restore point \(permission-denied\); 0 deleted/);
+    });
+    it('is refused in decoy mode and when signed out', async () => {
+        for (const o of [{ decoy: true }, { signedIn: false }]) {
+            const p = loadPage(o);
+            expect(await p._wfDeleteRestorePoints()).toBe(false);
+            expect(p.db.state.writes).toEqual([]);
+        }
     });
 });
 
