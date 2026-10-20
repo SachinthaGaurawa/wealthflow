@@ -18,7 +18,7 @@ import path from 'node:path';
 import Backup, {
     nextTrigger, lastTrigger, retryDelayMs, backupDue, staleAfterMs,
     buildPayload, validateRestore, emptyCollections, selectToKeep, saveSnapshot, loadSnapshot, listSnapshots, annotateSnapshot, writeStatus, readStatus, sha256Hex,
-    driveBackup, ensureDriveFolder, listDriveBackups, pruneDriveBackups, driveReasonText, restorePointReasonText, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, BACKUP_STAMP_KEYS, EXCLUDE_KEYS,
+    driveBackup, ensureDriveFolder, listDriveBackups, pruneDriveBackups, driveReasonText, restorePointReasonText, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, makeProgress, BACKUP_STAMP_KEYS, EXCLUDE_KEYS,
     KEEP_NEWEST, KEEP_DAYS, MAX_SNAPSHOT_BYTES, FOLDER_MIME, DRIVE_FOLDER_NAME, RECORD_KEYS, SNAP_COL, DATA_COL, STATUS_COL,
 } from '../wealthflow-backup.js';
 import { makeDb, makeDrive } from './helpers/backup-fakes.js';
@@ -646,7 +646,8 @@ describe('deleteAllSnapshots: the person\'s own "delete my backups"', () => {
         expect(held).toBeGreaterThan(3);                        // rotation may already have dropped one of the seven
         const r = await deleteAllSnapshots({ db, uid: 'u' });
         expect(r).toEqual({ ok: true, deleted: held });
-        expect([...db.store.keys()].filter((k) => k.startsWith('users/u/'))).toEqual([]);
+        expect([...db.store.keys()].filter((k) => k.startsWith('users/u/'))).toEqual(['users/u/backupStatus/last']);   // only the marker below
+        expect(db.store.get('users/u/backupStatus/last')).toMatchObject({ success: true, cleared: true });
         expect(db.store.get('users/u')).toEqual({ expenses: [{ id: 'live' }] });
         expect(db.store.has('users/other/backups/x')).toBe(true);
     });
@@ -657,7 +658,7 @@ describe('deleteAllSnapshots: the person\'s own "delete my backups"', () => {
             db.store.set('users/u/backupData/p' + i, { data: '{}' });
         }
         expect(await deleteAllSnapshots({ db, uid: 'u' })).toEqual({ ok: true, deleted: 230 });
-        expect(db.store.size).toBe(0);
+        expect([...db.store.keys()]).toEqual(['users/u/backupStatus/last']);
     });
     it('an empty account is a clean no-op', async () => {
         expect(await deleteAllSnapshots({ db: makeDb(), uid: 'u' })).toEqual({ ok: true, deleted: 0 });
@@ -670,6 +671,37 @@ describe('deleteAllSnapshots: the person\'s own "delete my backups"', () => {
         expect(r).toMatchObject({ ok: false, deleted: 0, reason: 'permission-denied' });
         expect([...db.store.keys()].filter((k) => k.includes('/backups/')).length).toBe(3);
         expect([...db.store.keys()].filter((k) => k.includes('/backupData/')).length).toBe(3);
+    });
+    it('removes a restore point the newest-first list cannot see (no atMs) and data left behind without its metadata', async () => {
+        const db = makeDb();
+        await seed(db, 2);
+        db.store.set('users/u/backups/odd', { trigger: 'manual', records: 3 });            // an orderBy('atMs') query never returns this one
+        db.store.set('users/u/backupData/orphan', { data: '{"x":1}', atMs: 5 });            // its metadata is gone; the data still sits in the account
+        const r = await deleteAllSnapshots({ db, uid: 'u' });
+        expect(r.ok).toBe(true);
+        expect([...db.store.keys()].filter((k) => /\/backups?(Data)?\//.test(k))).toEqual([]);
+    });
+    it('leaves a marker that says WHEN they were cleared, so the schedule waits for its next time instead of refilling the list at once', async () => {
+        const db = makeDb();
+        await seed(db, 2);
+        const r = await deleteAllSnapshots({ db, uid: 'u', now: 1760500000000 });
+        expect(r.ok).toBe(true);
+        expect(await readStatus({ db, uid: 'u' })).toMatchObject({ cleared: true, clearedAtMs: 1760500000000, success: true });
+        expect(backupDue({ freq: 'daily', lastGoodMs: 1760500000000, now: 1760500000000 + 60000, tzOffsetMin: COLOMBO }).due).toBe(false);
+    });
+    it('reports each batch as it goes, with the running count of what is really gone', async () => {
+        const db = makeDb();
+        for (let i = 0; i < 230; i++) { db.store.set('users/u/backups/p' + i, { atMs: i }); db.store.set('users/u/backupData/p' + i, { data: '{}' }); }
+        const seen = [];
+        await deleteAllSnapshots({ db, uid: 'u', onProgress: (n) => seen.push(n) });
+        expect(seen).toEqual([200, 230]);
+    });
+    it('writes no marker when something could not be deleted', async () => {
+        const db = makeDb();
+        await seed(db, 2);
+        db.state.failCommit = true;
+        expect((await deleteAllSnapshots({ db, uid: 'u' })).ok).toBe(false);
+        expect((await readStatus({ db, uid: 'u' })).cleared).toBeUndefined();
     });
     it('BACKUP_STAMP_KEYS is the list the page keeps through a restore', () => {
         expect(BACKUP_STAMP_KEYS.sort()).toEqual(['lastAutoBackupAt', 'lastBackup', 'lastBackupAttempt', 'lastBackupMeta', 'lastDriveBackup']);
@@ -801,5 +833,107 @@ describe('the module and index.html agree', () => {
         expect(Backup.backupDue).toBe(backupDue);
         expect(Backup.saveSnapshot).toBe(saveSnapshot);
         expect(Backup.driveBackup).toBe(driveBackup);
+    });
+});
+
+
+/* ------------------------------------------------------------------ real progress */
+
+describe('makeProgress: the bar moves only when a step really ends', () => {
+    const plan = [['a', 'First'], ['b', 'Second'], ['c', 'Third'], ['d', 'Fourth']];
+    it('starts at 0 and counts a step only once it is done or skipped; a running step adds nothing', () => {
+        const seen = [];
+        const p = makeProgress(plan, (s) => seen.push([s.pct, s.current && s.current.id]));
+        expect(p.snapshot()).toMatchObject({ pct: 0, done: 0, total: 4, current: null, failed: null, finished: false });
+        p.begin('a');
+        expect(p.snapshot()).toMatchObject({ pct: 0, current: { id: 'a', label: 'First' } });
+        p.done('a');
+        expect(p.snapshot().pct).toBe(25);
+        p.skip('b', 'unchanged');
+        expect(p.snapshot().pct).toBe(50);
+        p.begin('c'); p.done('c'); p.begin('d'); p.done('d');
+        expect(p.snapshot()).toMatchObject({ pct: 100, finished: true });
+        expect(seen.map((x) => x[0])).toEqual([0, 25, 50, 50, 75, 75, 100]);   // every change is announced, none is invented
+    });
+    it('a failed step stops the bar where it is and names the step and the reason', () => {
+        const p = makeProgress(plan);
+        p.done('a'); p.begin('b'); p.fail('b', 'offline');
+        expect(p.snapshot()).toMatchObject({ pct: 25, finished: true, failed: { id: 'b', label: 'Second', note: 'offline' } });
+    });
+    it('finish() closes what is left: a running step fails with the reason, steps never reached stay uncounted', () => {
+        const p = makeProgress(plan);
+        p.done('a'); p.begin('b');
+        p.finish('the connection dropped');
+        const s = p.snapshot();
+        expect(s.steps.map((x) => x.state)).toEqual(['ok', 'bad', 'na', 'na']);
+        expect(s.pct, 'steps never reached were counted as done').toBe(25);
+        expect(s.failed.id).toBe('b');
+        expect(s.finished).toBe(true);
+    });
+    it('finish() with nothing running just skips what was not needed and reports a clean run', () => {
+        const p = makeProgress(plan);
+        p.done('a'); p.done('b');
+        p.finish();
+        expect(p.snapshot()).toMatchObject({ failed: null, finished: true, pct: 100 });
+    });
+    it('ignores a step that is not in the plan and a callback that throws', () => {
+        const p = makeProgress(plan, () => { throw new Error('paint failed'); });
+        expect(() => { p.begin('zzz'); p.done('a'); }).not.toThrow();
+        expect(p.snapshot().pct).toBe(25);
+    });
+});
+
+describe('the backup reports its real steps', () => {
+    const steps = () => { const seen = []; return { seen, fn: (id, st, note) => seen.push(id + ':' + st + (note ? ':' + note : '')) }; };
+    it('a new restore point: read the list, write, tidy up', async () => {
+        const db = makeDb(), st = steps();
+        await saveSnapshot({ db, uid: 'u', payload: payloadOf(data(3)), trigger: 'manual', now: 1760000000000, onStep: st.fn });
+        expect(st.seen).toEqual(['rp-read:run', 'rp-read:ok', 'rp-write:run', 'rp-write:ok', 'rp-trim:run', 'rp-trim:ok']);
+    });
+    it('the same data again is only confirmed, and says so', async () => {
+        const db = makeDb(), st = steps();
+        await saveSnapshot({ db, uid: 'u', payload: payloadOf(data(3)), trigger: 'manual', now: 1760000000000 });
+        await saveSnapshot({ db, uid: 'u', payload: payloadOf(data(3)), trigger: 'manual', now: 1760000060000, onStep: st.fn });
+        expect(st.seen).toEqual(['rp-read:run', 'rp-read:ok', 'rp-write:run', 'rp-write:ok:already up to date', 'rp-trim:skip']);
+    });
+    it('a write that fails ends at the write, and nothing after it is claimed', async () => {
+        const db = makeDb({ failCommit: true }), st = steps();
+        const r = await saveSnapshot({ db, uid: 'u', payload: payloadOf(data(3)), trigger: 'manual', now: 1760000000000, onStep: st.fn });
+        expect(r.ok).toBe(false);
+        expect(st.seen).toEqual(['rp-read:run', 'rp-read:ok', 'rp-write:run', 'rp-write:bad:permission-denied']);
+    });
+    it('a step callback that throws cannot break the backup', async () => {
+        const db = makeDb();
+        const r = await saveSnapshot({ db, uid: 'u', payload: payloadOf(data(3)), trigger: 'manual', now: 1760000000000, onStep: () => { throw new Error('paint'); } });
+        expect(r.ok).toBe(true);
+    });
+    it('a Drive copy: connect, folder, list, upload, verify, tidy up — in that order', async () => {
+        const d = makeDrive(), st = steps();
+        const text = buildPayload(data(4)).text;
+        const r = await driveBackup({ fetch: d.fetch, getToken: tokens('good'), text, uid: 'abcdef123', email: 'o@x.com', now: Date.parse('2026-10-19T18:25:00Z'), onStep: st.fn });
+        expect(r.ok).toBe(true);
+        expect(st.seen).toEqual(['dv-token:run', 'dv-token:ok', 'dv-folder:run', 'dv-folder:ok', 'dv-check:run', 'dv-check:ok', 'dv-upload:run', 'dv-upload:ok', 'dv-verify:run', 'dv-verify:ok', 'dv-trim:run', 'dv-trim:ok']);
+    });
+    it('an unchanged Drive copy is read back (verify) and nothing is uploaded', async () => {
+        const d = makeDrive(), text = buildPayload(data(4)).text, st = steps();
+        const base = { fetch: d.fetch, getToken: tokens('good'), text, uid: 'abcdef123', email: 'o@x.com' };
+        await driveBackup({ ...base, now: Date.parse('2026-10-19T18:25:00Z') });
+        await driveBackup({ ...base, now: Date.parse('2026-10-20T18:25:00Z'), onStep: st.fn });
+        expect(st.seen).toContain('dv-upload:skip:unchanged copy');
+        expect(st.seen).toContain('dv-verify:ok');
+        expect(st.seen.filter((x) => x.startsWith('dv-upload'))).toEqual(['dv-upload:skip:unchanged copy']);
+    });
+    it('no Google connection stops at the first Drive step', async () => {
+        const d = makeDrive(), st = steps();
+        const r = await driveBackup({ fetch: d.fetch, getToken: async () => null, text: 'x', uid: 'u', email: 'o@x.com', onStep: st.fn });
+        expect(r.reason).toBe('not-connected');
+        expect(st.seen).toEqual(['dv-token:run', 'dv-token:bad:not-connected']);
+    });
+    it('a failed upload ends at the upload', async () => {
+        const d = makeDrive({ quota: true }), st = steps();
+        const r = await driveBackup({ fetch: d.fetch, getToken: tokens('good'), text: buildPayload(data(2)).text, uid: 'u', email: 'o@x.com', onStep: st.fn });
+        expect(r.ok).toBe(false);
+        expect(st.seen.filter((x) => /bad/.test(x))).toHaveLength(1);
+        expect(st.seen.some((x) => x.startsWith('dv-verify:ok'))).toBe(false);
     });
 });

@@ -14235,13 +14235,16 @@ async function _wfDriveServerExchange(code, verifier, redirectUri) {
     } catch (_) { return { ok: false, code: 'network' }; }
 }
 async function _wfDriveServerRefresh(rt) {
+    // a call that never answers held _wfDurableRefreshInFlight, and with it every Drive backup and the restore list, until the page was reloaded
+    var c = new AbortController(), t = setTimeout(function () { c.abort(); }, 15000);
     try {
         var r = await fetch(_wfApiBase() + '/api/drive-auth', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'refresh', refresh_token: rt })
+            body: JSON.stringify({ action: 'refresh', refresh_token: rt }), signal: c.signal
         });
         return await r.json();
     } catch (_) { return { ok: false, code: 'network' }; }
+    finally { clearTimeout(t); }
 }
 
 // ---- the primary token source: durable, silent, cookie-free --------------
@@ -14522,6 +14525,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             //    escalates to an interactive consent popup, then to the browser
             //    bridge. This replaces the old silent-only call that failed
             //    asynchronously with no fallback and no message.
+            notify('@cloud@ Connecting to Google Drive…', 'info');
             _wfDriveRequestToken(false);
         }
 
@@ -14546,15 +14550,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         window._wfTotalRecordCount = _wfTotalRecordCount;
 
         // ═══ THE BACKUP, END TO END (v7.70) ═══════════════════════════════════
-        // wealthflow-backup.js holds the rules — the schedule, what a restore point is, the Drive upload and the proof that it landed, what the
-        // card may say — and test/backup_restore_points_test.js runs them against a fake Firestore and a fake Drive. This block is the page's
-        // half: where the data and the Drive token come from, and what gets written to settings. The six defects it replaces are listed in
-        // the header of the module.
+        // wealthflow-backup.js holds the rules (schedule, restore points, Drive upload and its proof, what the card says); this block is the page's half.
         function _wfBackupModule() { return window.WFBackup || null; }
 
-        // What the account says exists: the newest restore point and the last run's status. Read from Firestore, because another device or
-        // the server run (backup-sweep.js) may have written them while this tab was closed. Not a stored guess: a failed read keeps the last
-        // answer and says nothing new.
+        // What the account says exists (newest restore point, last status), read from Firestore: another device or the server run may have written them. A failed read keeps the last answer.
         let _wfBackupState = { uid: '', rps: [], status: null, at: 0 };
         let _wfBackupStateLoad = null, _wfBackupStateLoadAt = 0;
         function _wfRefreshBackupState(force, maxAgeMs) {
@@ -14576,10 +14575,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
 
         // ── SINGLE SOURCE OF TRUTH for "when was there last a REAL copy" ─────
-        // Only things that leave a copy somewhere count: a restore point (read from the account, so one the server made counts), a
-        // verified Google Drive file, and a v2 run stamp. settings.lastBackup, settings.lastAutoBackupAt and wf_last_auto_backup are
-        // deliberately NOT read any more: the old backupNow stamped all three on runs that wrote nothing anywhere, so an account that
-        // "backed up last night" could have no copy at all — and the scheduler, trusting them, would not try again until the next trigger.
+        // Only things that leave a copy somewhere count: a restore point (read from the account), a verified Drive file, a v2 run stamp. The old stamps (lastBackup, lastAutoBackupAt,
+        // wf_last_auto_backup) are NOT read: they were set by runs that wrote nothing, and the scheduler trusted them.
         function _getLastBackupMs() {
             try {
                 const s = DB.getObj('settings', {}) || {};
@@ -14608,10 +14605,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             try { return localStorage.getItem('wf_drive_ever_granted') === '1' || !!_wfGetDriveRefreshToken(); } catch (_) { return false; }
         }
 
-        // The access token for one Drive call. `force` is true only right after Drive answered 401: the token in hand is then known bad.
-        // The old backup uploaded with whatever string was in memory — an hour-old token at 23:55 — got a 401, threw it away and returned
-        // false, so a night's Drive copy almost never happened. Order now: a token that is still valid (with a minute to spare), one minted
-        // from the refresh token (no UI, no cookies), and last, Google's silent token only where this person has used Drive before.
+        // The access token for one Drive call. `force` only right after a 401. Order: a token valid for another minute, one minted from the refresh token,
+        // then Google's silent token where Drive was used before (the old backup used an hour-old token at 23:55 and swallowed the 401).
         async function _wfDriveTokenFor(force) {
             try {
                 if (force) { gapiToken = null; try { localStorage.removeItem('wf_drive_token'); } catch (_) {} }
@@ -14626,15 +14621,13 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             return null;
         }
 
-        // Put the data in the user's own Drive (WFBackup.driveBackup: private folder, exact-size proof, rotation that never trashes the new file).
-        // Returns { ok, atMs, reason, size, fileName, fileId, folderId, reused }. The folder id is remembered only from a v2 run: an older
-        // stamp points at the shared developer folder this replaces, and must never be reused as a destination.
+        // Put the data in the user's own Drive (WFBackup.driveBackup). The folder id is remembered only from a v2 run: an older stamp points at the shared folder this replaces.
         let _wfLastDriveOutcome = null;
-        async function _wfRunDriveBackup(payload, label) {
+        async function _wfRunDriveBackup(payload, label, onStep) {
             const B = _wfBackupModule(), u = window.currentUser || {};
             const s0 = DB.getObj('settings', {});
             const hint = (s0.lastDriveBackup && s0.lastDriveBackup.v === 2 && s0.lastDriveBackup.folderId) || '';
-            const r = await B.driveBackup({ fetch: _wfDriveFetch, getToken: _wfDriveTokenFor, text: payload.text, uid: u.uid, email: u.email, folderHint: hint, label: label });
+            const r = await B.driveBackup({ fetch: _wfDriveFetch, getToken: _wfDriveTokenFor, text: payload.text, uid: u.uid, email: u.email, folderHint: hint, label: label, onStep: onStep });
             const out = { ok: !!(r.ok && r.verified), atMs: Date.now(), reason: r.ok ? '' : (r.reason === 'not-connected' ? 'token-expired' : (r.reason || 'failed')), size: r.size || 0, fileName: r.fileName || '', fileId: r.fileId || '', folderId: r.folderId || '', reused: !!r.reused };
             if (out.ok) {
                 try {
@@ -14647,38 +14640,80 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             return out;
         }
 
+        // The progress panel: its bar is makeProgress(), so a step counts only when its awaited work has finished. Scheduled runs are silent; Backup Now during one joins it.
+        const _WF_BK_STEPS = { sync: 'Checking the account for newer data', 'rp-read': 'Reading your restore points', 'rp-write': 'Saving the restore point', 'rp-trim': 'Removing old restore points',
+            'dv-token': 'Connecting to Google Drive', 'dv-folder': 'Opening your backup folder', 'dv-check': 'Checking your Drive copies', 'dv-upload': 'Uploading to Google Drive', 'dv-verify': 'Checking the upload', 'dv-trim': 'Removing old Drive copies', record: 'Recording the result' };
+        let _wfBkHide = 0, _wfBkCur = null;
+        function _wfBkClose() { try { const el = document.getElementById('wfBkProg'); if (el) el.remove(); } catch (_) {} }
+        window._wfBkClose = _wfBkClose;
+        function _wfBkPaint(R, s) {
+            if (R.silent) return;
+            try {
+                let el = document.getElementById('wfBkProg');
+                if (!el) { el = document.createElement('div'); el.id = 'wfBkProg'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+                const mark = { ok: _ic('check'), skip: '–', na: '–', bad: _ic('x'), run: '…', wait: '·' };
+                el.className = 'wf-bkp' + (R.fin ? (R.ok ? ' ok' : ' bad') : '');
+                el.innerHTML = '<div class="wf-bkp-h"><b>' + R.title + '</b><button type="button" aria-label="Close" onclick="_wfBkClose()">×</button></div>'
+                    + '<div class="wf-bkp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + s.pct + '"><i style="width:' + s.pct + '%"></i></div>'
+                    + '<div class="wf-bkp-now">' + _wfEsc(R.fin ? R.msg : 'Step ' + Math.min(s.done + 1, s.total) + ' of ' + s.total + ' · ' + (s.current ? s.current.label : '…')) + '</div>'
+                    + '<ul>' + s.steps.map((x) => '<li class="' + x.state + '">' + mark[x.state] + ' ' + _wfEsc(x.label) + (x.note ? ' <small>' + _wfEsc(x.note) + '</small>' : '') + '</li>').join('') + '</ul>';
+            } catch (_) {}
+        }
+        function _wfBkOpen(title, ids, silent) {
+            const B = _wfBackupModule(), R = { title, silent: !!silent || !B, fin: false, ok: false, msg: '', P: { step() {}, begin() {}, done() {}, skip() {}, finish() {}, snapshot: () => ({}) } };
+            if (B) { R.P = B.makeProgress(ids.map((k) => [k, _WF_BK_STEPS[k]]), (s) => _wfBkPaint(R, s)); _wfBkPaint(R, R.P.snapshot()); }
+            return R;
+        }
+        function _wfBkEnd(R, ok, text) {
+            R.fin = true; R.ok = ok; R.msg = text;
+            R.P.finish(ok ? '' : text);
+            clearTimeout(_wfBkHide);
+            if (ok && !R.silent) _wfBkHide = setTimeout(_wfBkClose, 4500);
+        }
+        // Make this device current with the account first, so the copy is the newest the account has. The account gets 15 s; no answer is a skipped step, not a wait.
+        async function _wfBkSync(P) {
+            if (!navigator.onLine || typeof _wfReconcileWithCloud !== 'function') return P.skip('sync', 'offline');
+            P.begin('sync');
+            try { await Promise.race([_wfReconcileWithCloud('backup'), new Promise((_, no) => setTimeout(() => no(new Error('no answer')), 15000))]); P.done('sync'); }
+            catch (_) { P.skip('sync', 'no answer, this device\'s data is copied'); }
+        }
+
         // Manual / scheduled "Backup Now". One run at a time: the 30-second timer and a tap on the button share the run already in progress.
         let _wfBackupRun = null;
         function backupNow(silent, trigger) {
-            if (_wfBackupRun) return _wfBackupRun;
+            if (_wfBackupRun) {
+                if (!silent && _wfBkCur && _wfBkCur.silent && _wfBackupModule()) { _wfBkCur.silent = false; _wfBkPaint(_wfBkCur, _wfBkCur.P.snapshot()); }
+                return _wfBackupRun;
+            }
             _wfBackupRun = _wfBackupOnce(!!silent, trigger || (silent ? 'auto' : 'manual'))
                 .catch((e) => { console.error('[backupNow]', e); return false; })
-                .finally(() => { _wfBackupRun = null; });
+                .finally(() => { _wfBackupRun = null; _wfBkCur = null; });
             return _wfBackupRun;
         }
 
-        // A run succeeds when a copy EXISTS afterwards: a restore point Firestore acknowledged, or a Drive file proven by its size. It used to
-        // succeed whenever syncToCloud() returned — and that pushes the live data onto itself, which is a sync, not a backup.
+        // A run succeeds when a copy EXISTS afterwards: a restore point Firestore acknowledged, or a Drive file proven by its size (not when syncToCloud() returned).
         async function _wfBackupOnce(silent, trigger) {
             // The decoy vault is read-only by design: nothing it does may reach the account, the device's stamps or Drive — not even a "paused" status.
             if (window._isDecoyMode === true) { if (!silent) notify('Backups are paused while the decoy vault is open.', 'info'); return false; }
             const B = _wfBackupModule(), t0 = Date.now();
             let rp = null, drive = null, reason = '', payload = null;
+            const R = _wfBkOpen('Backing up your data', ['sync', 'rp-read', 'rp-write', 'rp-trim'].concat(_wfDriveWanted() ? ['dv-token', 'dv-folder', 'dv-check', 'dv-upload', 'dv-verify', 'dv-trim'] : [], ['record']), silent), P = R.P;
+            _wfBkCur = R;
             try {
-                if (!silent) { notify('@cloud@ Backing up…', 'info'); triggerHaptic('medium'); }
+                if (!silent) triggerHaptic('medium');
                 if (!B) reason = 'the backup module did not load';
                 else if (!window.currentUser || !userDocRef) reason = 'not signed in';
                 else {
-                    // Make this device current with the account first, so the copy is the newest the account has — not a stale local one.
-                    try { if (navigator.onLine && typeof _wfReconcileWithCloud === 'function') await _wfReconcileWithCloud('backup'); } catch (_) {}
+                    await _wfBkSync(P);
                     payload = B.buildPayload(appData);
-                    rp = await B.saveSnapshot({ db: userDocRef.firestore, uid: window.currentUser.uid, payload, trigger });
-                    if (payload.ok && payload.records && _wfDriveWanted()) drive = await _wfRunDriveBackup(payload, trigger);
+                    rp = await B.saveSnapshot({ db: userDocRef.firestore, uid: window.currentUser.uid, payload, trigger, onStep: P.step });
+                    if (payload.ok && payload.records && _wfDriveWanted()) drive = await _wfRunDriveBackup(payload, trigger, P.step);
                 }
                 const haveRp = !!(rp && rp.ok && !rp.skipped), haveDrive = !!(drive && drive.ok);
                 const ok = haveRp || haveDrive;
                 const empty = !!(rp && rp.ok && rp.skipped === 'empty') && !ok;
                 if (!ok && !empty && !reason) reason = (rp && !rp.ok && B.restorePointReasonText(rp.reason)) || (drive && !drive.ok && B.driveReasonText(drive.reason)) || 'nothing was written';
+                P.begin('record');
                 const nowIso = new Date().toISOString(), s = DB.getObj('settings', {});
                 let fails = 0;
                 if (ok) {
@@ -14698,33 +14733,37 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 DB.set('settings', s);
                 if (B && window.currentUser && userDocRef) {
                     const db = userDocRef.firestore, uid = window.currentUser.uid;
-                    B.writeStatus({ db, uid, status: { atMs: Date.now(), success: ok || empty, reason: ok ? '' : (empty ? 'nothing to back up yet' : reason), failCount: fails, trigger, by: 'client', rpId: haveRp ? rp.id : '', records: payload ? payload.records : 0, bytes: payload ? payload.bytes : 0, rp: rp ? { ok: !!rp.ok && !rp.skipped, reason: rp.ok ? '' : rp.reason } : null, drive: drive ? { ok: drive.ok, reason: drive.reason, atMs: drive.atMs, size: drive.size, fileName: drive.fileName, folderId: drive.folderId } : null } });
+                    await B.writeStatus({ db, uid, status: { atMs: Date.now(), success: ok || empty, reason: ok ? '' : (empty ? 'nothing to back up yet' : reason), failCount: fails, trigger, by: 'client', rpId: haveRp ? rp.id : '', records: payload ? payload.records : 0, bytes: payload ? payload.bytes : 0, rp: rp ? { ok: !!rp.ok && !rp.skipped, reason: rp.ok ? '' : rp.reason } : null, drive: drive ? { ok: drive.ok, reason: drive.reason, atMs: drive.atMs, size: drive.size, fileName: drive.fileName, folderId: drive.folderId } : null } });
                     if (haveRp && drive) B.annotateSnapshot({ db, uid, id: rp.id, patch: { drive: { ok: drive.ok, reason: drive.reason, atMs: drive.atMs, size: drive.size } } });
                 }
+                P.done('record');
+                const msg = ok ? 'Backup complete · ' + (haveRp ? (rp.reused ? 'Restore point up to date' : 'Restore point saved') : 'Restore point failed (' + B.restorePointReasonText(rp && rp.reason) + ')') + (drive ? (drive.ok ? ' · Google Drive verified' : ' · Google Drive: ' + B.driveReasonText(drive.reason)) : '')
+                    : empty ? 'There is nothing to back up yet.' : 'Backup failed: ' + reason;
+                _wfBkEnd(R, ok || empty, msg);
                 if (!silent) {
-                    if (ok) {
-                        notify('@checkCircle@ Backup complete · ' + (haveRp ? (rp.reused ? 'Restore point up to date' : 'Restore point saved') : 'Restore point failed (' + B.restorePointReasonText(rp && rp.reason) + ')') + (drive ? (drive.ok ? ' · Google Drive verified' : ' · Google Drive: ' + B.driveReasonText(drive.reason)) : ''), haveRp && (!drive || drive.ok) ? 'success' : 'warn');
-                        triggerHaptic('success');
-                    } else if (empty) notify('There is nothing to back up yet.', 'info');
-                    else notify('Backup failed: ' + reason, 'error');
+                    if (ok) { notify('@checkCircle@ ' + msg, haveRp && (!drive || drive.ok) ? 'success' : 'warn'); triggerHaptic('success'); }
+                    else notify(msg, empty ? 'info' : 'error');
                 }
                 _wfRefreshBackupState(true);
                 return ok;
             } catch (e) {
                 console.error('[backupNow]', e);
-                if (!silent) notify('Backup failed: ' + ((e && e.message) || 'unknown error'), 'error');
+                const msg = 'Backup failed: ' + ((e && e.message) || 'unknown error');
+                _wfBkEnd(R, false, msg);
+                if (!silent) notify(msg, 'error');
                 return false;
             }
         }
 
         // The Drive-only half, for "Backup to Drive" and for the moment a fresh sign-in lands. Returns true only for a verified file.
-        async function executeDriveBackup() {
+        async function executeDriveBackup(P) {
             const B = _wfBackupModule();
             if (!B || window._isDecoyMode === true || !window.currentUser) return false;
             const payload = B.buildPayload(appData);
             if (!payload.ok || !payload.records) { _wfLastDriveOutcome = { ok: false, reason: 'nothing-to-back-up' }; return false; }
-            const out = await _wfRunDriveBackup(payload, 'drive');
+            const out = await _wfRunDriveBackup(payload, 'drive', P && P.step);
             if (out.ok) {
+                if (P) P.begin('record');
                 try {
                     const s = DB.getObj('settings', {}), nowIso = new Date(out.atMs).toISOString();
                     s.lastBackup = nowIso; s.lastAutoBackupAt = nowIso;
@@ -14733,17 +14772,20 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     DB.set('settings', s);
                     _persistRaw('wf_last_auto_backup', out.atMs);
                 } catch (_) {}
+                if (P) P.done('record');
             }
             _wfPaintBackupCard();
             return out.ok;
         }
         async function _wfDriveBackupWithToasts() {
-            const B = _wfBackupModule();
-            notify('@cloud@ Backing up to Google Drive…', 'info');
+            const B = _wfBackupModule(), R = _wfBkOpen('Backing up to Google Drive', ['dv-token', 'dv-folder', 'dv-check', 'dv-upload', 'dv-verify', 'dv-trim', 'record']);
             triggerHaptic('medium');
-            const ok = await executeDriveBackup();
-            if (ok) { notify('@checkCircle@ Backup complete · Google Drive verified', 'success'); triggerHaptic('success'); }
-            else notify('Drive backup did not complete. ' + (B ? B.driveReasonText(_wfLastDriveOutcome && _wfLastDriveOutcome.reason) : ''), 'error');
+            let ok = false;
+            try { ok = await executeDriveBackup(R.P); } catch (_) {}
+            const msg = ok ? 'Backup complete · Google Drive verified' : 'Drive backup did not complete. ' + (B ? B.driveReasonText(_wfLastDriveOutcome && _wfLastDriveOutcome.reason) : '');
+            _wfBkEnd(R, ok, msg);
+            if (ok) { notify('@checkCircle@ ' + msg, 'success'); triggerHaptic('success'); }
+            else notify(msg, 'error');
         }
 
         // ── the Settings card: what is true now ──────────────────────────────
@@ -14786,9 +14828,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 + '<div style="font-size:11px;color:var(--text3);margin-top:4px;">' + bits.join(' · ') + '</div>'
                 + v.lines.map((l) => '<div style="font-size:11px;margin-top:4px;font-weight:' + (l.level === 'info' ? 400 : 700) + ';color:' + col(l.level) + ';">' + _wfEsc(l.text) + '</div>').join('');
         }
-        // "Next auto-backup: …" under the schedule select. Painted in place for the same reason the card is: renderSettings() would rebuild the
-        // whole panel and make the page jump (the "dancing" bug toggleSetting() is written to avoid) just because a run finished or the
-        // schedule was changed.
+        // "Next auto-backup: …" under the schedule select, painted in place like the card: renderSettings() would rebuild the whole panel and make the page jump.
         function _wfPaintScheduleLine() {
             const info = document.getElementById('wfBackupInfo');
             const section = info && info.closest ? info.closest('.settings-section') : null;
@@ -15354,22 +15394,14 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         window._wfDriveStandby = _wfDriveStandby;
 
         // ═══ RESTORE (v7.70) ══════════════════════════════════════════════════
-        // One list for every copy there is: the restore points in the account and the files in the user's own Google Drive. A restore
-        // REPLACES data, so it goes in this order and stops at the first step that fails, with nothing changed:
-        //   read the copy → prove it is intact → prove it is a WealthFlow backup → save a way back → only then replace.
-        // The old restore skipped three of those: it merged a file key by key without looking at it, offered no way back, and the local
-        // file path assigned the file straight over appData.
-        // Every wait on the way to a restore, a reset or a nightly copy has a deadline: a read or a call that stalls without failing would hold the
-        // whole operation (and, for the backup loop, every later run) for ever. A stalled one ends as a refusal or a failed run with a reason.
+        // One list for every copy: restore points in the account and files in the user's own Drive. A restore REPLACES data, so: read the copy, prove it intact, prove it a WealthFlow backup, save a way back, only then replace; the first failing step stops it with nothing changed.
+        // Every wait on the way to a restore, a reset or a nightly copy has a deadline: a stalled call would hold the operation, and every later backup run, for ever.
         function _wfServerGet() { return Promise.race([userDocRef.get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('pull-timeout')), 8000))]); }
         function _wfDriveFetch(u, i) { const c = new AbortController(); setTimeout(() => c.abort(), 20000); return window.fetch(u, Object.assign({}, i, { signal: c.signal })); }
-        let _wfRestoreItems = [];
+        let _wfRestoreItems = [], _wfRestoreSeq = 0, _wfDeleting = false;
         let _wfRestoring = false;
 
-        // What lives on the account document but never in appData (the sync skips it: _WF_SYNC_META_KEYS, or it is written with arrayUnion), so a bare
-        // set() of appData deletes it: the Drive link the nightly server copy uses, and the list of devices the owner signed out. A restore or a
-        // reset replaces the DATA; these belong to the ACCOUNT. Read from the server before anything changes, so "could not read" is a refusal and
-        // not a half-done replacement.
+        // What lives on the account document but never in appData (the Drive link the nightly copy uses, the signed-out devices list): a bare set() of appData deletes it. Read from the server first, so "could not read" is a refusal, not a half-done replacement.
         const _WF_ACCOUNT_KEEP_KEYS = ['driveRefresh', 'driveBridge', 'revokedSessions', 'lastRevokeAt'];
         async function _wfReadAccountKeep() {
             try {
@@ -15383,10 +15415,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
         }
 
-        // Bring what the account holds into this device, and SAY SO when that cannot be done. _wfReconcileWithCloud is best-effort and silent, which
-        // is right for a nightly copy; a restore or a wipe REPLACES the account document, so a record only the account has (another device pushed
-        // it a minute ago and this one has not heard yet) would be in neither the safety copy nor what is left. No answer from the server is a
-        // refusal, not "carry on with what this device knows".
+        // Bring what the account holds into this device, and SAY SO when that cannot be done: a record only the account has would be in neither the safety copy nor what is left. No answer from the server is a refusal.
         async function _wfPullAccountNow() {
             try {
                 const doc = await _wfServerGet();
@@ -15394,8 +15423,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     isSyncingFromCloud = true;
                     let applied; try { applied = _wfApplyCloudData(doc.data()); } finally { isSyncingFromCloud = false; }
                     try { _wfPaintCloudChange(applied); } catch (_) {}
-                    // Marked, not pushed: the document is about to be replaced, and a push queued here can be in flight when it is. If the
-                    // operation is refused, the failure path re-arms the sync and the reconcile loop would find the mark within a minute anyway.
+                    // Marked, not pushed: the document is about to be replaced and a queued push could be in flight. A refused operation re-arms the sync.
                     if (applied && applied.needPush) setDirty(true);
                 }
                 return { ok: true };
@@ -15404,9 +15432,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
         }
 
-        // A restore replaces the account document first and this device's rows second. A push queued or in flight at that moment merges this
-        // device's OLD rows over whatever the document holds (its retry finds the restore marker already acknowledged), which puts back the
-        // records the restore was meant to remove. So: nothing new may start, a waiting one is cancelled, and one in flight is waited for.
+        // A push queued or in flight during a restore would merge this device's OLD rows back over the restored document: nothing new may start, a waiting one is cancelled, one in flight is waited for.
         async function _wfHaltSync() {
             window._wfHoldSync = true;
             if (syncDebounceTimer) { clearTimeout(syncDebounceTimer); syncDebounceTimer = null; }
@@ -15442,85 +15468,100 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             return when + ' · ' + (it.records || 0) + ' records' + tag;
         }
 
-        // Fill the restore list. Restore points come from the account (no Google sign-in needed); Drive files are listed only when a
-        // token is in hand or can be minted without a pop-up — a person who never connected Drive is not sent through Google to see
-        // a list that has nothing of Drive's in it.
+        // Fill the restore list: restore points from the account (no Google sign-in needed); Drive files only when a token is in hand or can be minted without a pop-up.
         async function fetchRestoreList() {
             const sel = $('restoreSelect'), hint = $('restoreHint'), rb = $('restoreBtn'), cb = $('restoreConnectBtn');
             if (!sel) return;
-            const B = _wfBackupModule(), u = window.currentUser;
+            const B = _wfBackupModule(), u = window.currentUser, seq = ++_wfRestoreSeq;
             sel.textContent = '';
             const wait = document.createElement('option'); wait.value = ''; wait.textContent = 'Looking for copies…'; sel.appendChild(wait);
             if (rb) rb.disabled = true;
             if (hint) hint.textContent = '';
             const items = [], notes = [];
-            let driveListed = false;
+            let driveListed = false, asking = !!(B && u && window._isDecoyMode !== true);
+            // Painted twice: when the restore points are read, and when Drive has answered or its deadline passed. A later call owns the list; an earlier one stops painting.
+            const paint = () => {
+                if (seq !== _wfRestoreSeq) return;
+                items.sort((a, b) => b.atMs - a.atMs);
+                _wfRestoreItems = items;
+                sel.textContent = '';
+                const group = (label, kind) => {
+                    const list = items.filter((i) => i.kind === kind);
+                    if (!list.length) return;
+                    const g = document.createElement('optgroup'); g.label = label;
+                    list.forEach((i) => { const o = document.createElement('option'); o.value = i.key; o.textContent = _wfRestoreLabel(i); g.appendChild(o); });
+                    sel.appendChild(g);
+                };
+                group('Restore points in your account', 'rp');
+                group('Google Drive', 'drive');
+                if (!items.length) { const o = document.createElement('option'); o.value = ''; o.textContent = asking ? 'Looking for copies…' : 'No copies found'; sel.appendChild(o); }
+                if (rb) rb.disabled = !items.length;
+                if (hint) hint.textContent = notes.concat(asking ? ['Looking for Google Drive copies…'] : []).join(' ');
+                if (cb) cb.style.display = driveListed ? 'none' : '';
+            };
             if (B && u && userDocRef && window._isDecoyMode !== true) {
                 try {
                     (await B.listSnapshots({ db: userDocRef.firestore, uid: u.uid })).forEach((m) => items.push({ key: 'rp:' + m.id, kind: 'rp', atMs: m.atMs || 0, records: m.records || 0, trigger: m.trigger || '' }));
                 } catch (e) { notes.push('Restore points could not be read (' + ((e && (e.code || e.message)) || 'unknown error') + ').'); }
             }
-            if (B && u && window._isDecoyMode !== true) {
+            paint();
+            if (!asking) return;
+            const listDrive = async () => {
                 let token = _wfDriveWanted() ? await _wfDriveTokenFor(false) : null;
-                if (token) {
-                    const np = B.driveNameParts(u.uid, u.email), f = _wfDriveFetch;
-                    let r = await B.listDriveBackups({ fetch: f, token, safeEmail: np.safeEmail, uid6: np.uid6, includeLegacy: true });
-                    if (!r.ok && r.status === 401) { token = await _wfDriveTokenFor(true); if (token) r = await B.listDriveBackups({ fetch: f, token, safeEmail: np.safeEmail, uid6: np.uid6, includeLegacy: true }); }
-                    if (r.ok) {
-                        driveListed = true;
-                        const files = r.files.slice();
-                        // a just-uploaded file can take a few seconds to reach Drive's search index
-                        try {
-                            const last = DB.getObj('settings', {}).lastDriveBackup;
-                            if (last && last.verified && last.fileId && !files.some((x) => x.id === last.fileId)) files.unshift({ id: last.fileId, name: last.fileName || 'Latest backup', createdTime: last.at, size: last.size });
-                        } catch (_) {}
-                        files.forEach((x) => items.push({ key: 'drive:' + x.id, kind: 'drive', atMs: Date.parse(x.createdTime) || 0, size: Number(x.size) || 0, file: x }));
-                    } else notes.push(B.driveReasonText(r.code || r.reason));
-                } else notes.push(_wfDriveWanted() ? 'Google Drive could not be reached just now, so its copies are not listed.' : 'Google Drive is not connected, so its copies are not listed.');
-            }
-            items.sort((a, b) => b.atMs - a.atMs);
-            _wfRestoreItems = items;
-            sel.textContent = '';
-            const group = (label, kind) => {
-                const list = items.filter((i) => i.kind === kind);
-                if (!list.length) return;
-                const g = document.createElement('optgroup'); g.label = label;
-                list.forEach((i) => { const o = document.createElement('option'); o.value = i.key; o.textContent = _wfRestoreLabel(i); g.appendChild(o); });
-                sel.appendChild(g);
+                if (!token) return { note: _wfDriveWanted() ? 'Google Drive could not be reached just now, so its copies are not listed.' : 'Google Drive is not connected, so its copies are not listed.' };
+                const np = B.driveNameParts(u.uid, u.email), f = _wfDriveFetch;
+                let r = await B.listDriveBackups({ fetch: f, token, safeEmail: np.safeEmail, uid6: np.uid6, includeLegacy: true });
+                if (!r.ok && r.status === 401) { token = await _wfDriveTokenFor(true); if (token) r = await B.listDriveBackups({ fetch: f, token, safeEmail: np.safeEmail, uid6: np.uid6, includeLegacy: true }); }
+                if (!r.ok) return { note: B.driveReasonText(r.code || r.reason) };
+                const files = r.files.slice();
+                // a just-uploaded file can take a few seconds to reach Drive's search index
+                try {
+                    const last = DB.getObj('settings', {}).lastDriveBackup;
+                    if (last && last.verified && last.fileId && !files.some((x) => x.id === last.fileId)) files.unshift({ id: last.fileId, name: last.fileName || 'Latest backup', createdTime: last.at, size: last.size });
+                } catch (_) {}
+                return { files };
             };
-            group('Restore points in your account', 'rp');
-            group('Google Drive', 'drive');
-            if (!items.length) { const o = document.createElement('option'); o.value = ''; o.textContent = 'No copies found'; sel.appendChild(o); }
-            if (rb) rb.disabled = !items.length;
-            if (hint) hint.textContent = notes.join(' ');
-            if (cb) cb.style.display = driveListed ? 'none' : '';
+            let tm;
+            const res = await Promise.race([
+                listDrive().catch((e) => ({ note: 'Google Drive could not be listed (' + ((e && (e.code || e.message)) || 'error') + ').' })),
+                new Promise((r) => { tm = setTimeout(() => r(null), 30000); }),
+            ]);
+            clearTimeout(tm);
+            asking = false;
+            if (!res) notes.push('Google Drive did not answer in time, so its copies are not listed.');
+            else if (res.files) { driveListed = true; res.files.forEach((x) => items.push({ key: 'drive:' + x.id, kind: 'drive', atMs: Date.parse(x.createdTime) || 0, size: Number(x.size) || 0, file: x })); }
+            else notes.push(res.note);
+            paint();
         }
         window.fetchRestoreList = fetchRestoreList;
 
         function openRestoreModal() { openModal('mdRestoreCloud'); return fetchRestoreList(); }
         window.openRestoreModal = openRestoreModal;
 
-        // The person's own "delete my backups": every restore point in the account (copies in their Google Drive are theirs to delete there). It also
-        // clears the stamps that said a backup existed, so the card does not keep claiming one — and keeps lastDriveBackup, because that file is still there.
+        // The person's own "delete my backups": every restore point in the account (Drive copies are theirs to delete in Drive), and the stamps that claimed a backup; lastDriveBackup stays, that file is still there.
         function deleteAllRestorePoints() {
             showConfirm('@alert@', 'Delete all restore points?',
-                'This removes every saved copy under "Restore points in your account". Your current data is not touched and copies in your Google Drive stay there. Until the next backup you will have no way back from a restore or a wipe; turn the Auto-Backup Schedule off to stop new ones.',
+                'This removes every saved copy under "Restore points in your account". Your current data is not touched and copies in your Google Drive stay there. Until the next backup you will have no way back from a restore or a wipe. The schedule makes its next copy at its next scheduled time, not straight away; turn the Auto-Backup Schedule off to stop new ones.',
                 'btn-danger', 'Delete restore points', () => { _wfDeleteRestorePoints(); });
         }
         async function _wfDeleteRestorePoints() {
             const B = _wfBackupModule();
             if (!B || window._isDecoyMode === true || !window.currentUser || !userDocRef) { notify('Restore points cannot be deleted right now.', 'error'); return false; }
-            const uid = window.currentUser.uid;
-            const r = await B.deleteAllSnapshots({ db: userDocRef.firestore, uid });
+            if (_wfDeleting) return false;
+            _wfDeleting = true;
+            const uid = window.currentUser.uid, now = Date.now(), btn = $('restoreDeleteBtn'), label = btn ? btn.textContent : '';
+            if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+            let r;
+            try { r = await B.deleteAllSnapshots({ db: userDocRef.firestore, uid, now, onProgress: (n) => { if (btn) btn.textContent = 'Deleting… ' + n + ' removed'; } }); }
+            finally { _wfDeleting = false; if (btn) { btn.disabled = false; btn.textContent = label; } }
             if (r.deleted || r.ok) {
-                // DB.delKey, not `delete s[k]; DB.set('settings', s)`: the settings merge can add a key but never take one away, so a local-only
-                // delete comes straight back from the account on the next sync and the card claims a copy nobody holds. delKey removes it on the
-                // server too (queued for retry when offline).
+                // DB.delKey, not a local delete: the settings merge never removes a key, so it would come back from the account on the next sync.
                 try { B.BACKUP_STAMP_KEYS.filter((k) => k !== 'lastDriveBackup').forEach((k) => DB.delKey('settings', k, true)); } catch (_) {}
-                _wfBackupState = { uid, rps: [], status: null, at: Date.now() };
+                // the marker deleteAllSnapshots left on the account, so the schedule waits for its next time instead of refilling the list at once
+                _wfBackupState = { uid, rps: [], status: r.ok ? { atMs: now, success: true, cleared: true, clearedAtMs: now } : null, at: Date.now() };
                 try { _wfPaintBackupCard(); } catch (_) {}
             }
-            if (r.ok) notify('@checkCircle@ Deleted ' + r.deleted + ' restore point' + (r.deleted === 1 ? '' : 's') + '.', 'success');
+            if (r.ok) notify('@checkCircle@ Deleted ' + r.deleted + ' restore point' + (r.deleted === 1 ? '' : 's') + '.' + ((DB.getObj('settings', {}).autoBackupFreq || 'off') === 'off' ? '' : ' Auto-backup makes the next one at its next scheduled time.'), 'success');
             else notify('Could not delete every restore point (' + r.reason + '); ' + r.deleted + ' deleted. Try again.', 'error');
             try { if ($('restoreSelect') && document.getElementById('mdRestoreCloud')?.classList.contains('open')) fetchRestoreList(); } catch (_) {}
             return r.ok;
@@ -35614,7 +35655,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 // have made this period's copy.
                 await _wfRefreshBackupState(false, 15 * 60 * 1000);
                 const fail = _wfBackupFailState();
-                const verdict = B.backupDue({ freq, lastGoodMs: _getLastBackupMs(), failedAtMs: fail.at, failCount: fail.n, now: Date.now(), weekStart: _weekStartDay() });
+                const verdict = B.backupDue({ freq, lastGoodMs: Math.max(_getLastBackupMs(), Number((_wfBackupStateNow().status || {}).clearedAtMs) || 0), failedAtMs: fail.at, failCount: fail.n, now: Date.now(), weekStart: _weekStartDay() });
                 if (!verdict.due) return;
 
                 console.log('[AutoBackup] running (' + verdict.why + ', freq=' + freq + ')');

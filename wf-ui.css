@@ -1081,3 +1081,23 @@ select.fi, select.fs { text-overflow: ellipsis; }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
 }
+
+/* ═════════════════ 27. BACKUP PROGRESS ══════════════════════════════════════ */
+/* Backup Now / Backup to Drive: one panel, a bar that moves only when a step has really finished (index.html _wfBkPaint, wealthflow-backup.js makeProgress). */
+.wf-bkp { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); transform: translateX(-50%); width: min(calc(100vw - 32px), 380px); max-height: 60vh; overflow: auto; z-index: 10050;
+    background: var(--wf-card); color: var(--wf-text); border: 1px solid var(--wf-line-2); border-radius: var(--wf-r-md); box-shadow: var(--wf-shadow-1); padding: 12px 14px; font-family: var(--wf-font); font-size: 13px; }
+@media (max-width: 900px) { .wf-bkp { bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); } }
+.wf-bkp-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wf-bkp-h button { appearance: none; border: 0; background: none; color: var(--wf-text-3); font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px; }
+.wf-bkp-bar { height: 6px; border-radius: 99px; background: var(--wf-line); overflow: hidden; margin: 10px 0 8px; }
+.wf-bkp-bar > i { display: block; height: 100%; background: var(--wf-accent); transition: width var(--wf-dur-2) var(--wf-ease); }
+.wf-bkp.ok .wf-bkp-bar > i { background: var(--wf-pos); }
+.wf-bkp.bad .wf-bkp-bar > i { background: var(--wf-neg); }
+.wf-bkp-now { font-weight: 600; overflow-wrap: anywhere; }
+.wf-bkp.bad .wf-bkp-now { color: var(--wf-neg); }
+.wf-bkp ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 3px; font-size: 12px; color: var(--wf-text-3); }
+.wf-bkp li.run { color: var(--wf-text); font-weight: 600; }
+.wf-bkp li.ok { color: var(--wf-text-2); }
+.wf-bkp li.bad { color: var(--wf-neg); font-weight: 600; }
+.wf-bkp li small { color: var(--wf-text-3); font-weight: 400; }
+.wf-bkp li svg { width: 12px; height: 12px; vertical-align: -1px; }

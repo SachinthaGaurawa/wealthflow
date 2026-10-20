@@ -182,6 +182,15 @@ describe('a night the app was closed still gets a restore point', () => {
         expect(rpCount(w.db, 'u1')).toBe(1);
     });
 
+    it('an account whose person just emptied the restore list on purpose waits for the next trigger instead of refilling it', async () => {
+        const w = world({ users: { u1: userDoc() } });
+        await B.writeStatus({ db: w.db, uid: 'u1', status: { atMs: DAILY_TRIGGER + 2 * MIN, success: true, cleared: true, clearedAtMs: DAILY_TRIGGER + 2 * MIN } });
+        w.db.state.writes.length = 0;
+        const r = await call(w.deps);
+        expect(r.json).toMatchObject({ backedUp: 0, fresh: 1 });
+        expect(rpCount(w.db, 'u1')).toBe(0);
+    });
+
     it('treats a restore point the PAGE made after the trigger as the night\'s copy', async () => {
         const w = world({ users: { u1: userDoc() } });
         const p = B.buildPayload(w.db.store.get('users/u1'));

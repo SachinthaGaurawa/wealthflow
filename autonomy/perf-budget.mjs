@@ -342,7 +342,9 @@ export const BUDGETS = {
     // (the rule itself, relabelApply / relabelUndo, is in wealthflow-statement-router.js). About half of it is the comment recording why. No new script or request.
     // 2026-10-19 (Connect Gmail with Google, so the Mailbox card no longer depends on a hand-pasted token): 2_300_500 -> 2_308_500 (measured 2,306,205 + ~0.1% headroom). The button, the redirect to Google's consent
     // screen (_wfStartGmailConsent), the return handler (_wfCompleteGmailConsent) and the Mailbox card's new first block. About a third is comments. No new script or request at load.
-    htmlBytes: 2_308_500,
+    // 2026-10-20 (the backup buttons: a real progress panel, a restore list that cannot stay on "Looking for copies…", Delete all restore points that stays deleted; measured 2,310,072 + ~0.1% headroom): 2_308_500 -> 2_312_500.
+    // The panel (_wfBkPaint and the step plan), the restore list painted in two stages with a deadline for Drive, and the delete's own progress. The comments of the same backup block were shortened to pay for part of it. No new script or request.
+    htmlBytes: 2_312_500,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -699,7 +701,9 @@ export const BUDGETS = {
     // why) is the one rule for when the schedule fires, what a real copy is (a restore point the account acknowledged, a Drive file proven by its exact size), how a failure backs off, what a restore must
     // prove, and what the Settings card may say; the page, the nightly server run (backup-sweep.js, not counted: it is not a wealthflow-* module) and the tests all use it. index.html SHRANK by about
     // 8 KB at the same time (the old backupNow, the staged-snapshot code and the Drive uploader are gone), so htmlBytes above is unchanged and now has headroom.
-    totalJsBytes: 2_620_000,
+    // 2026-10-20 (the backup buttons: real progress; measured 2,624,521 + ~0.1% headroom): 2_620_000 -> 2_627_500. wealthflow-backup.js now reports each real step of a restore point and of a Drive copy to the page
+    // (onStep, makeProgress), deletes every restore point including the ones a newest-first list could not see, and leaves a marker so the schedule does not refill the list at once (backup-sweep.js reads it too, not counted).
+    totalJsBytes: 2_627_500,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

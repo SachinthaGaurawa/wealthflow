@@ -201,9 +201,9 @@ const DB = {
 const _ic = (n) => '[' + n + ']';
 const _wfEsc = (s) => String(s);
 const _wfGetDriveRefreshToken = () => env.refresh || '';
-const _wfEnsureDriveTokenDurable = async () => { env.mintCalls++; if (env.mint) { gapiToken = env.mint; return true; } return false; };
+const _wfEnsureDriveTokenDurable = async () => { env.mintCalls++; if (env.mintHangs) return new Promise(() => {}); if (env.mint) { gapiToken = env.mint; return true; } return false; };
 const _ensureDriveTokenSilent = async () => false;
-const _wfReconcileWithCloud = async () => { env.reconciles++; };
+const _wfReconcileWithCloud = async () => { env.reconciles++; if (env.reconcileHangs) return new Promise(() => {}); };
 // The merge itself is tested in cloud_merge_test.js; here it only has to add the records the account has and this device lacks.
 const _wfApplyCloudData = (d) => {
     env.applied.push(d);
@@ -282,7 +282,7 @@ function loadPage(over = {}) {
         },
     } : null;
     const win = { WFBackup: over.noModule ? null : B, currentUser: user, _isDecoyMode: !!over.decoy, fetch: drive.fetch };
-    const env = { appData, gapiToken: over.gapiToken || null, mint: over.mint === undefined ? 'good' : over.mint, mintCalls: 0, reconciles: 0, cloudDeletes: [], refresh: over.refresh || '', applied: [], debounced: 0, needPush: !!over.needPush };
+    const env = { appData, gapiToken: over.gapiToken || null, mint: over.mint === undefined ? 'good' : over.mint, mintCalls: 0, mintHangs: !!over.mintHangs, reconcileHangs: !!over.reconcileHangs, reconciles: 0, cloudDeletes: [], refresh: over.refresh || '', applied: [], debounced: 0, needPush: !!over.needPush };
     const elements = new Proxy({}, { get: (t, id) => t[id] || (t[id] = makeEl()) });
     const smart = [];
     const fake = {
@@ -299,7 +299,7 @@ function loadPage(over = {}) {
         showConfirm: (...a) => { confirms.push(a); },
         closeModal: () => {}, openModal: () => {},
         $: (id) => elements[id],
-        setTimeout: over.realTimers ? (fn, ms) => globalThis.setTimeout(fn, ms) : (fn, ms) => { if (ms === 8000 || ms === 20000) { pullTimers.push(fn); return 0; } timers.push(fn); return timers.length; }, // 8000 = the cloud-read deadline, kept apart from the reload timer
+        setTimeout: over.realTimers ? (fn, ms) => globalThis.setTimeout(fn, ms) : (fn, ms) => { if (ms === 8000 || ms === 20000 || ms === 15000 || ms === 30000) { pullTimers.push(fn); return 0; } timers.push(fn); return timers.length; }, // 8000/15000/20000/30000 = the read deadlines, kept apart from the reload timer
         setInterval: () => 1, clearInterval: () => {},
         setDirty: (s) => { calls.push('setDirty:' + s); },
         sendSmartNotification: (...a) => { smart.push(a); },
@@ -973,7 +973,7 @@ describe('"Delete all restore points" is the person\'s own, and says what it did
         expect(s.lastDriveBackup.verified).toBe(true);              // that file still exists in their Drive
         expect([...p.drive.files.values()].some((f) => f.name.startsWith('WealthFlow_'))).toBe(true);
         expect(p.appData.expenses).toEqual(live);
-        expect(status(p.db)).toBeUndefined();
+        expect(status(p.db)).toMatchObject({ cleared: true, success: true });          // no data in it: only the time they were cleared
         expect(p._wfBackupInfoHtml(s)).not.toMatch(/Restore point/);
     });
     it('removes the stamps from the ACCOUNT too: the settings merge can add a key but never take one away, so a local delete alone comes straight back', async () => {
@@ -1235,5 +1235,229 @@ describe('the retired paths stay retired', () => {
         expect(paths.filter((x) => x === '/api/backup-sweep')).toHaveLength(2);
         const router = fs.readFileSync(path.join(ROOT, 'api/router.js'), 'utf8');
         expect(router).toMatch(/'backup-sweep':\s*\(\)\s*=>\s*import\('\.\.\/backup-sweep\.js'\)/);
+    });
+});
+
+
+/* ------------------------------------------------------------------ the buttons, the list and the delete, as the owner used them (2026-10-20) */
+
+/** document with a body to put the progress panel on; every paint of the panel is kept so a test can see what the bar said when. */
+function makeProgressDom() {
+    const els = {};
+    const mk = () => { const e = { id: '', className: '', _h: '', paints: [], attrs: {}, remove() { delete els[e.id]; }, setAttribute(k, v) { e.attrs[k] = v; } }; Object.defineProperty(e, 'innerHTML', { get: () => e._h, set: (v) => { e._h = String(v); e.paints.push(e._h); } }); return e; };
+    const document = { getElementById: (id) => els[id] || null, createElement: () => mk(), body: { appendChild: (e) => { els[e.id] = e; return e; } } };
+    return { document, els, panel: () => els.wfBkProg || null };
+}
+const pctOf = (html) => { const m = /aria-valuenow="(\d+)"/.exec(html || ''); return m ? Number(m[1]) : null; };
+
+describe('"Delete all restore points" really clears them, and the schedule does not refill the list the same minute', () => {
+    const justAfter = local(2026, 10, 19, 23, 56);
+    it('with the schedule on, the next check after a delete makes NO new restore point; the schedule\'s next time does', async () => {
+        vi.useFakeTimers({ toFake: ['Date'], now: justAfter });
+        const p = loadPage();
+        await p._checkAutoBackupDue();
+        expect(rps(p.db)).toHaveLength(1);
+        expect(await p._wfDeleteRestorePoints()).toBe(true);
+        expect(rps(p.db)).toHaveLength(0);
+        await p._checkAutoBackupDue();
+        expect(rps(p.db), 'the list was refilled by the schedule moments after the person emptied it').toHaveLength(0);
+        vi.setSystemTime(local(2026, 10, 20, 23, 56));
+        await p._checkAutoBackupDue();
+        expect(rps(p.db)).toHaveLength(1);
+    });
+    it('the card still says "No backup yet": the marker holds the schedule, it does not claim a copy', async () => {
+        vi.useFakeTimers({ toFake: ['Date'], now: justAfter });
+        const p = loadPage();
+        await p._checkAutoBackupDue();
+        await p._wfDeleteRestorePoints();
+        await p._wfRefreshBackupState(true);
+        expect(p._getLastBackupMs()).toBe(0);
+        expect(p._wfBackupInfoHtml(p.appData.settings)).toMatch(/No backup yet/);
+    });
+    it('a pressed "Backup Now" after the delete still makes a copy at once', async () => {
+        vi.useFakeTimers({ toFake: ['Date'], now: justAfter });
+        const p = loadPage();
+        await p._checkAutoBackupDue();
+        await p._wfDeleteRestorePoints();
+        expect(await p.backupNow(false, 'manual')).toBe(true);
+        expect(rps(p.db)).toHaveLength(1);
+    });
+    it('shows the count as it goes on the button and puts the label back; a second press while it runs does nothing', async () => {
+        const p = loadPage();
+        for (let i = 0; i < 230; i++) { p.db.store.set('users/u1/backups/p' + i, { atMs: i + 1, trigger: 'manual' }); p.db.store.set('users/u1/backupData/p' + i, { data: '{}' }); }
+        p.elements.restoreDeleteBtn.textContent = 'Delete all restore points';
+        const labels = [];
+        const first = p._wfDeleteRestorePoints();
+        labels.push(p.elements.restoreDeleteBtn.textContent);
+        const second = await p._wfDeleteRestorePoints();
+        expect(second).toBe(false);
+        expect(await first).toBe(true);
+        expect(rps(p.db)).toHaveLength(0);
+        expect(labels[0]).toMatch(/Deleting/);
+        expect(p.elements.restoreDeleteBtn.textContent).toBe('Delete all restore points');
+        expect(p.elements.restoreDeleteBtn.disabled).toBe(false);
+        expect(p.notes.filter((n) => /Deleted 230/.test(n.m))).toHaveLength(1);
+    });
+    it('says in the confirmation that the schedule makes its next copy at its own time', () => {
+        const p = loadPage();
+        p.deleteAllRestorePoints();
+        expect(p.confirms[0][2]).toMatch(/next scheduled time/);
+    });
+});
+
+describe('the restore list is never left on "Looking for copies…"', () => {
+    const point = (p) => B.saveSnapshot({ db: p.db, uid: 'u1', payload: B.buildPayload(p.appData), trigger: 'auto', now: 1760000000000 });
+    const optionCount = (p) => p.elements.restoreSelect.children.flatMap((g) => g.children || [g]).filter((o) => o.value).length;
+    it('shows the restore points as soon as they are read while Google Drive is still being asked, and says so', async () => {
+        const p = loadPage({ refresh: 'rt', mintHangs: true });
+        await point(p);
+        const run = p.fetchRestoreList();
+        await vi.waitFor(() => expect(optionCount(p)).toBe(1));
+        expect(p.elements.restoreBtn.disabled, 'a copy is listed but cannot be picked').toBe(false);
+        expect(p.elements.restoreHint.textContent).toMatch(/Looking for Google Drive copies/);
+        p.pullTimers.forEach((f) => f());                      // the overall deadline for the Drive part
+        await run;
+        expect(optionCount(p)).toBe(1);
+        expect(p.elements.restoreHint.textContent).not.toMatch(/Looking for/);
+        expect(p.elements.restoreHint.textContent).toMatch(/did not answer/);
+    });
+    it('a Drive listing that never answers ends with a note once its deadline passes', async () => {
+        const p = loadPage({ refresh: 'rt' });
+        await point(p);
+        p.win.fetch = (u, i) => new Promise((_, rej) => { i.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))); });
+        const run = p.fetchRestoreList();
+        await vi.waitFor(() => expect(p.pullTimers.length).toBeGreaterThan(0));
+        p.pullTimers.forEach((f) => f());
+        await run;
+        expect(optionCount(p)).toBe(1);
+        expect(p.elements.restoreHint.textContent).not.toMatch(/Looking for/);
+    });
+    it('an error thrown while asking Drive ends the list too, with the restore points still there', async () => {
+        const p = loadPage({ refresh: 'rt' });
+        await point(p);
+        p.win.fetch = () => { throw new Error('blocked by the browser'); };
+        await p.fetchRestoreList();
+        expect(optionCount(p)).toBe(1);
+        expect(p.elements.restoreSelect.children[0].textContent).not.toBe('Looking for copies…');
+        expect(p.elements.restoreHint.textContent).toMatch(/Drive/);
+    });
+    it('when the restore points cannot be read either, it says so and stops waiting', async () => {
+        const p = loadPage({ dbOpts: { failGet: true } });
+        await p.fetchRestoreList();
+        expect(p.elements.restoreHint.textContent).toMatch(/Restore points could not be read/);
+        expect(p.elements.restoreSelect.children[0].textContent).toBe('No copies found');
+    });
+    it('a second open while the first is still asking is the one that fills the list', async () => {
+        const p = loadPage({ refresh: 'rt', mintHangs: true });
+        await point(p);
+        const a = p.fetchRestoreList();
+        const b = p.fetchRestoreList();
+        await vi.waitFor(() => expect(optionCount(p)).toBe(1));
+        p.pullTimers.forEach((f) => f());
+        await Promise.all([a, b]);
+        expect(optionCount(p)).toBe(1);               // not two copies of the same list, not an emptied one
+    });
+});
+
+describe('a stalled Google sign-in call cannot hold every backup and restore for ever', () => {
+    it('the refresh-token call to our server gives up after its deadline and says "network"', async () => {
+        const timers = [];
+        const fetchStub = (u, i) => new Promise((_, rej) => { i.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))); });
+        const fn = new Function('fetch', '_wfApiBase', 'setTimeout', 'clearTimeout', 'AbortController', fnSource('_wfDriveServerRefresh') + '; return _wfDriveServerRefresh;')(fetchStub, () => '', (f, ms) => { timers.push([f, ms]); return timers.length; }, () => {}, AbortController);
+        const run = fn('rt');
+        await Promise.resolve();
+        expect(timers.map((t) => t[1])).toEqual([15000]);
+        timers[0][0]();
+        expect(await run).toEqual({ ok: false, code: 'network' });
+    });
+    it('an answer in time is passed through and the timer is cleared', async () => {
+        const cleared = [];
+        const fetchStub = async () => ({ json: async () => ({ ok: true, access_token: 'T' }) });
+        const fn = new Function('fetch', '_wfApiBase', 'setTimeout', 'clearTimeout', 'AbortController', fnSource('_wfDriveServerRefresh') + '; return _wfDriveServerRefresh;')(fetchStub, () => '', () => 7, (t) => cleared.push(t), AbortController);
+        expect(await fn('rt')).toEqual({ ok: true, access_token: 'T' });
+        expect(cleared).toEqual([7]);
+    });
+});
+
+describe('the backup shows REAL progress: each step counts only when it has finished', () => {
+    it('Backup Now draws a panel whose bar cannot reach 100 until the copy is written, and ends at 100 with the result', async () => {
+        const dom = makeProgressDom();
+        const p = loadPage({ settingsDom: dom });
+        expect(await p.backupNow(false, 'manual')).toBe(true);
+        const paints = dom.panel().paints;
+        const pcts = paints.map(pctOf).filter((x) => x !== null);
+        expect(pcts[0]).toBe(0);
+        expect(pcts[pcts.length - 1]).toBe(100);
+        expect([...pcts].sort((a, b) => a - b)).toEqual(pcts);                  // never goes back
+        expect(new Set(pcts).size, 'the bar jumped from nothing to everything').toBeGreaterThan(3);
+        expect(paints.join(' ')).toMatch(/Saving the restore point/);
+        expect(paints[paints.length - 1]).toMatch(/Backup complete/);
+    });
+    it('while the restore point is still being written the panel says so and is below 100', async () => {
+        const dom = makeProgressDom();
+        const p = loadPage({ settingsDom: dom, dbOpts: { hangCommit: true } });
+        p.backupNow(false, 'manual');
+        await p.db.state.started;
+        const html = dom.panel().innerHTML;
+        expect(html).toMatch(/Saving the restore point/);
+        expect(pctOf(html)).toBeLessThan(100);
+        expect(html).not.toMatch(/Backup complete/);
+    });
+    it('a write that fails leaves the bar where it stopped, names the step and the reason, and keeps the panel open', async () => {
+        const dom = makeProgressDom();
+        const p = loadPage({ settingsDom: dom, dbOpts: { failCommit: true } });
+        expect(await p.backupNow(false, 'manual')).toBe(false);
+        const html = dom.panel().innerHTML;
+        expect(pctOf(html), 'only the steps that really ended count: the account check, the list read and recording the failure (3 of 5)').toBe(60);
+        expect(html).toMatch(/Backup failed/);
+        expect(html).toMatch(/Saving the restore point/);
+        expect(p.timers.length, 'the failure panel closed itself before it could be read').toBe(0);
+    });
+    it('with Google Drive connected the Drive steps are in the list and each one finishes before 100', async () => {
+        const dom = makeProgressDom();
+        const p = loadPage({ settingsDom: dom, refresh: 'rt' });
+        expect(await p.backupNow(false, 'manual')).toBe(true);
+        const all = dom.panel().paints.join(' ');
+        for (const label of ['Connecting to Google Drive', 'Uploading to Google Drive', 'Checking the upload']) expect(all, label).toContain(label);
+        expect(pctOf(dom.panel().innerHTML)).toBe(100);
+    });
+    it('without Drive connected there are no Drive steps to wait for', async () => {
+        const dom = makeProgressDom();
+        const p = loadPage({ settingsDom: dom });
+        await p.backupNow(false, 'manual');
+        expect(dom.panel().paints.join(' ')).not.toMatch(/Google Drive/);
+    });
+    it('"Backup to Drive" reports its own steps and ends at 100 only with a verified file', async () => {
+        const dom = makeProgressDom();
+        const p = loadPage({ settingsDom: dom, refresh: 'rt' });
+        await p._wfDriveBackupWithToasts();
+        expect(pctOf(dom.panel().innerHTML)).toBe(100);
+        expect(dom.panel().innerHTML).toMatch(/Google Drive verified/);
+        const bad = loadPage({ settingsDom: makeProgressDom(), refresh: 'rt', drive: makeDrive({ down: true }) });
+        await bad._wfDriveBackupWithToasts();
+        expect(bad.notes.at(-1).kind).toBe('error');
+    });
+    it('a silent (scheduled) run draws nothing', async () => {
+        const dom = makeProgressDom();
+        const p = loadPage({ settingsDom: dom });
+        await p.backupNow(true, 'auto');
+        expect(dom.panel()).toBe(null);
+    });
+    it('the account check before the copy has a deadline: no answer in time is skipped, not waited on for ever', async () => {
+        const dom = makeProgressDom();
+        const p = loadPage({ settingsDom: dom, reconcileHangs: true });
+        const run = p.backupNow(false, 'manual');
+        await vi.waitFor(() => expect(p.pullTimers.length).toBeGreaterThan(0));
+        p.pullTimers.forEach((f) => f());
+        expect(await run).toBe(true);
+        expect(rps(p.db)).toHaveLength(1);
+    });
+    it('a press while a run is in progress joins it, shows one panel, and starts no second run', async () => {
+        const dom = makeProgressDom();
+        const p = loadPage({ settingsDom: dom });
+        const [a, b] = [p.backupNow(false, 'manual'), p.backupNow(false, 'manual')];
+        expect(await a).toBe(true);
+        expect(await b).toBe(true);
+        expect(rps(p.db)).toHaveLength(1);
     });
 });

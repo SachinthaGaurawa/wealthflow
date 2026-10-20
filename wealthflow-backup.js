@@ -273,6 +273,41 @@ export function selectToKeep(metas, now = Date.now(), tzOffsetMin) {
     return { keep, drop: list.filter((m) => !keep.has(m.id)).map((m) => m.id) };
 }
 
+/** A callback that can never break the work it reports on (a repaint that throws must not stop a backup). */
+const stepper = (onStep) => (id, state, note) => { try { if (onStep) onStep(id, state, note); } catch (e) { /* reporting only */ } };
+
+/**
+ * The progress of one run, counted from work that has really finished: a step is 'wait', 'run', 'ok', 'skip', 'bad' or 'na' (never reached), and pct is the share
+ * of steps that ended ok or skipped. A running step adds nothing, a finished step never starts again, so the bar cannot move ahead of the work
+ * or go back. onChange gets a snapshot { steps, done, total, pct, current, failed, finished } on every change.
+ */
+export function makeProgress(plan, onChange) {
+    const steps = plan.map(([id, label]) => ({ id, label, state: 'wait', note: '' }));
+    const snapshot = () => {
+        const done = steps.filter((x) => x.state === 'ok' || x.state === 'skip').length;
+        const bad = steps.find((x) => x.state === 'bad');
+        return {
+            steps: steps.map((x) => Object.assign({}, x)), done, total: steps.length, pct: steps.length ? Math.round(100 * done / steps.length) : 0,
+            current: steps.find((x) => x.state === 'run') || null, failed: bad ? { id: bad.id, label: bad.label, note: bad.note } : null, finished: !!bad || done === steps.length,
+        };
+    };
+    const emit = () => stepper(onChange)(snapshot());
+    const set = (id, state, note) => {
+        const x = steps.find((y) => y.id === id);
+        if (!x || (state === 'run' && x.state !== 'wait' && x.state !== 'run')) return;
+        x.state = state; if (note) x.note = String(note);
+        emit();
+    };
+    // A run that fails leaves the steps it never reached uncounted ('na'), so the bar stops where the work did; a clean run did not need them ('skip').
+    const finish = (reason) => {
+        steps.forEach((x) => { if (x.state === 'run') { x.state = 'bad'; x.note = String(reason || 'did not finish'); } });
+        const left = steps.some((x) => x.state === 'bad') ? 'na' : 'skip';
+        steps.forEach((x) => { if (x.state === 'wait') x.state = left; });
+        emit();
+    };
+    return { begin: (id) => set(id, 'run'), done: (id, note) => set(id, 'ok', note), skip: (id, note) => set(id, 'skip', note), fail: (id, note) => set(id, 'bad', note), step: set, finish, snapshot };
+}
+
 const refs = (db, uid) => {
     const u = db.collection('users').doc(uid);
     return { meta: u.collection(SNAP_COL), data: u.collection(DATA_COL), status: u.collection(STATUS_COL) };
@@ -291,7 +326,9 @@ export async function listSnapshots({ db, uid, limit = LIST_LIMIT }) {
  * Identical to the newest copy (same SHA-256) ⇒ nothing new is written: that copy is confirmed instead, so pressing "Backup Now"
  * ten times cannot push the older copies out. A copy taken before a restore or a wipe is always written, because it is the way back.
  */
-export async function saveSnapshot({ db, uid, payload, trigger = 'manual', now = Date.now(), extra = {}, tzOffsetMin }) {
+export async function saveSnapshot({ db, uid, payload, trigger = 'manual', now = Date.now(), extra = {}, tzOffsetMin, onStep }) {
+    const step = stepper(onStep);
+    let at = '';
     try {
         if (!db || !uid) return { ok: false, reason: 'not signed in' };
         if (!payload || !payload.ok) return { ok: false, reason: (payload && payload.reason) || 'no data to back up' };
@@ -300,10 +337,13 @@ export async function saveSnapshot({ db, uid, payload, trigger = 'manual', now =
         const sha = await sha256Hex(payload.text);
         const { meta, data } = refs(db, uid);
         let existing = [];
-        try { existing = await listSnapshots({ db, uid }); } catch (e) { /* listing is for dedupe and rotation only; the write below is what matters */ }
+        step('rp-read', 'run');
+        try { existing = await listSnapshots({ db, uid }); step('rp-read', 'ok'); } catch (e) { step('rp-read', 'skip', 'not read'); /* listing is for dedupe and rotation only; the write below is what matters */ }
         const newest = existing[0];
+        at = 'rp-write'; step(at, 'run');
         if (!SAFETY_TRIGGERS.has(trigger) && newest && newest.sha === sha) {
             await withTimeout(meta.doc(newest.id).set({ confirmedAtMs: now }, { merge: true }), WRITE_TIMEOUT_MS, 'Confirming the restore point');
+            step(at, 'ok', 'already up to date'); step('rp-trim', 'skip');
             return { ok: true, id: newest.id, atMs: newest.atMs, bytes: newest.bytes, records: newest.records, reused: true, pruned: 0 };
         }
         const id = String(now).padStart(13, '0') + '-' + trigger + '-' + Math.random().toString(36).slice(2, 6);
@@ -312,6 +352,7 @@ export async function saveSnapshot({ db, uid, payload, trigger = 'manual', now =
         b.set(data.doc(id), { data: payload.text, atMs: now });
         b.set(meta.doc(id), m);       // the metadata goes in the SAME commit, so a listed restore point always has its data
         await withTimeout(b.commit(), WRITE_TIMEOUT_MS, 'Saving the restore point');
+        step(at, 'ok'); step('rp-trim', 'run');
         let pruned = 0;
         try {
             const { drop } = selectToKeep(existing.concat([Object.assign({ id }, m)]), now, tzOffsetMin);
@@ -321,34 +362,48 @@ export async function saveSnapshot({ db, uid, payload, trigger = 'manual', now =
                 await withTimeout(d.commit(), WRITE_TIMEOUT_MS, 'Rotating old restore points');
                 pruned += Math.min(200, drop.length - i);
             }
-        } catch (e) { /* rotation is housekeeping; the copy that was just saved stands */ }
+            step('rp-trim', 'ok');
+        } catch (e) { step('rp-trim', 'skip', 'not tidied'); /* rotation is housekeeping; the copy that was just saved stands */ }
         return { ok: true, id, atMs: now, bytes: payload.bytes, records: payload.records, pruned };
     } catch (e) {
-        return { ok: false, reason: (e && (e.code || e.message)) ? String(e.code || e.message) : 'the write failed' };
+        const reason = (e && (e.code || e.message)) ? String(e.code || e.message) : 'the write failed';
+        if (at) step(at, 'bad', reason);
+        return { ok: false, reason };
     }
 }
 
 /**
- * Delete every restore point of an account — the person's own "delete my backups" — and the status document that describes them. Pages through
- * the list so an account with many safety copies is cleared in one go; a copy's metadata and its data go in the SAME batch, so a failure never
- * leaves a listed point without data or data nobody can see. { ok, deleted } or { ok:false, reason, deleted }. Never throws.
+ * Delete every restore point of an account — the person's own "delete my backups". A copy's metadata and its data go in the SAME batch, so a
+ * failure never leaves a listed point without data; onProgress(n) reports the running count. Replaces the status document with a marker that
+ * says when this was done (see below). { ok, deleted } or { ok:false, reason, deleted }. Never throws.
  */
-export async function deleteAllSnapshots({ db, uid }) {
+export async function deleteAllSnapshots({ db, uid, now = Date.now(), onProgress }) {
     let deleted = 0;
+    const gone = () => { try { if (onProgress) onProgress(deleted); } catch (e) { /* reporting only */ } };
     try {
-        const { meta, data, status } = refs(db, uid);
+        const { meta, data } = refs(db, uid);
         for (let round = 0; round < 25; round++) {
-            const list = await listSnapshots({ db, uid, limit: 200 });
-            if (!list.length) {
-                try { await withTimeout(status.doc('last').delete(), WRITE_TIMEOUT_MS, 'Clearing the backup status'); } catch (e) { /* the status holds no records */ }
-                return { ok: true, deleted };
-            }
+            // Not listSnapshots(): that query orders by atMs, so a point without one is never returned and was never deleted.
+            const list = (await withTimeout(meta.limit(200).get(), WRITE_TIMEOUT_MS, 'Listing restore points')).docs;
+            if (!list.length) break;
             const b = db.batch();
             list.forEach((x) => { b.delete(meta.doc(x.id)); b.delete(data.doc(x.id)); });
             await withTimeout(b.commit(), WRITE_TIMEOUT_MS, 'Deleting restore points');
             deleted += list.length;
+            gone();
+            if (round === 24) return { ok: false, reason: 'there are more restore points than one run removes; run it again', deleted };
         }
-        return { ok: false, reason: 'there are more restore points than one run removes; run it again', deleted };
+        // data whose metadata is already gone is still the person's data, sitting in the account
+        for (let round = 0; round < 25; round++) {
+            const rest = (await withTimeout(data.limit(200).get(), WRITE_TIMEOUT_MS, 'Listing saved copies')).docs;
+            if (!rest.length) break;
+            const b = db.batch();
+            rest.forEach((x) => b.delete(data.doc(x.id)));
+            await withTimeout(b.commit(), WRITE_TIMEOUT_MS, 'Deleting saved copies');
+        }
+        // The marker replaces the old status: it holds no data, and tells the schedule (page and server run) these were cleared on purpose, so it waits for its next time.
+        await writeStatus({ db, uid, status: { atMs: now, success: true, cleared: true, clearedAtMs: now, trigger: 'delete', by: 'client', failCount: 0, reason: '' } });
+        return { ok: true, deleted };
     } catch (e) {
         return { ok: false, reason: (e && (e.code || e.message)) ? String(e.code || e.message) : 'the delete failed', deleted };
     }
@@ -519,42 +574,55 @@ export async function pruneDriveBackups({ fetch: f, token, files, keep = DRIVE_K
  * runs do not rotate real history out; a copy that no longer reads back as these bytes is not trusted and a new file is written.
  * Returns { ok, verified, fileId, fileName, size, folderId, reused?, trashed, reason?, status? }. Never throws.
  */
-export async function driveBackup({ fetch: f, getToken, text, uid, email, now = Date.now(), folderHint = '', keep = DRIVE_KEEP, label = '' }) {
+export async function driveBackup({ fetch: f, getToken, text, uid, email, now = Date.now(), folderHint = '', keep = DRIVE_KEEP, label = '', onStep }) {
+    const step = stepper(onStep);
     try {
         const { safeEmail, uid6 } = driveNameParts(uid, email);
         const bytes = utf8Bytes(text).length;
         const sha = await sha256Hex(text);
+        step('dv-token', 'run');
         let token = await getToken(false);
-        if (!token) return { ok: false, verified: false, reason: 'not-connected' };
+        if (!token) { step('dv-token', 'bad', 'not-connected'); return { ok: false, verified: false, reason: 'not-connected' }; }
+        step('dv-token', 'ok');
         for (let attempt = 0; attempt < 2; attempt++) {
+            step('dv-folder', 'run');
             const folder = await ensureDriveFolder({ fetch: f, token, hint: attempt === 0 ? folderHint : '' });
             let res;
-            if (!folder.ok) res = { ok: false, verified: false, status: folder.status, reason: folder.code };
-            else res = await uploadOnce({ f, token, folderId: folder.id, text, bytes, sha, safeEmail, uid6, now, keep, label });
+            if (!folder.ok) { step('dv-folder', 'bad', folder.code); res = { ok: false, verified: false, status: folder.status, reason: folder.code }; }
+            else { step('dv-folder', 'ok'); res = await uploadOnce({ f, token, folderId: folder.id, text, bytes, sha, safeEmail, uid6, now, keep, label, step }); }
             if (!res.ok && res.status === 401 && attempt === 0) {
                 token = await getToken(true);
-                if (!token) return { ok: false, verified: false, reason: 'token-expired', status: 401 };
+                if (!token) { step('dv-token', 'bad', 'token-expired'); return { ok: false, verified: false, reason: 'token-expired', status: 401 }; }
                 continue;
             }
             return res;
         }
         return { ok: false, verified: false, reason: 'token-expired', status: 401 };
     } catch (e) {
+        step('dv-token', 'bad', 'network');
         return { ok: false, verified: false, reason: 'network', message: (e && e.message) || '' };
     }
 }
 
-async function uploadOnce({ f, token, folderId, text, bytes, sha, safeEmail, uid6, now, keep, label }) {
+async function uploadOnce({ f, token, folderId, text, bytes, sha, safeEmail, uid6, now, keep, label, step = () => {} }) {
     const H = { Authorization: 'Bearer ' + token };
+    step('dv-check', 'run');
     const listed = await listDriveBackups({ fetch: f, token, safeEmail, uid6 });
-    if (!listed.ok && listed.status === 401) return { ok: false, verified: false, status: 401, reason: 'token-expired' };
+    if (!listed.ok && listed.status === 401) { step('dv-check', 'bad', 'token-expired'); return { ok: false, verified: false, status: 401, reason: 'token-expired' }; }
+    step('dv-check', 'ok');
     const files = listed.ok ? listed.files : [];
     const newest = files[0];
     if (newest && newest.appProperties && newest.appProperties.sha === sha && String(newest.size || '') === String(bytes)) {
         // The listing is only a label (the size can survive an edit): reuse the newest copy only if it reads back as exactly these bytes.
+        step('dv-verify', 'run');
         const back = await downloadDriveBackup({ fetch: f, token, file: newest });
-        if (back.ok && back.text === text) return { ok: true, verified: true, reused: true, fileId: newest.id, fileName: newest.name, size: bytes, folderId, trashed: await pruneDriveBackups({ fetch: f, token, files, keep, protect: newest.id }) };
-        if (!back.ok && back.status === 401) return { ok: false, verified: false, status: 401, reason: 'token-expired' };
+        if (back.ok && back.text === text) {
+            step('dv-upload', 'skip', 'unchanged copy'); step('dv-verify', 'ok'); step('dv-trim', 'run');
+            const trashed = await pruneDriveBackups({ fetch: f, token, files, keep, protect: newest.id });
+            step('dv-trim', 'ok');
+            return { ok: true, verified: true, reused: true, fileId: newest.id, fileName: newest.name, size: bytes, folderId, trashed };
+        }
+        if (!back.ok && back.status === 401) { step('dv-verify', 'bad', 'token-expired'); return { ok: false, verified: false, status: 401, reason: 'token-expired' }; }
     }
     const day = new Date(now).toISOString().slice(0, 10);
     const name = 'WealthFlow_' + safeEmail + '_' + uid6 + '_' + day + '_' + now + '.json';
@@ -562,14 +630,22 @@ async function uploadOnce({ f, token, folderId, text, bytes, sha, safeEmail, uid
     const form = new FormData();
     form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
     form.append('file', new Blob([text], { type: 'application/json' }));
+    step('dv-upload', 'run');
     const up = await dj(f, UPLOAD + '?uploadType=multipart&fields=id,name,size,parents,createdTime', { method: 'POST', headers: H, body: form });
-    if (!up.ok) { const e = driveFailure(up.status, up.json); return { ok: false, verified: false, status: e.status, reason: e.status === 401 ? 'token-expired' : e.code, message: e.message }; }
-    if (!up.json || !up.json.id) return { ok: false, verified: false, reason: 'no-file-id' };
+    if (!up.ok) { const e = driveFailure(up.status, up.json); step('dv-upload', 'bad', e.status === 401 ? 'token-expired' : e.code); return { ok: false, verified: false, status: e.status, reason: e.status === 401 ? 'token-expired' : e.code, message: e.message }; }
+    if (!up.json || !up.json.id) { step('dv-upload', 'bad', 'no-file-id'); return { ok: false, verified: false, reason: 'no-file-id' }; }
+    step('dv-upload', 'ok'); step('dv-verify', 'run');
     const v = await dj(f, DRIVE + '/files/' + enc(up.json.id) + '?fields=id,size,trashed', { headers: H });
     const verified = !!(v.ok && v.json && v.json.id === up.json.id && !v.json.trashed && String(v.json.size) === String(bytes));
-    if (!verified) return { ok: false, verified: false, fileId: up.json.id, fileName: name, size: Number(v.json && v.json.size) || 0, folderId, status: v.status === 401 ? 401 : undefined, reason: v.ok ? 'size-mismatch' : v.status === 401 ? 'token-expired' : driveFailure(v.status, v.json).code };
+    if (!verified) {
+        const reason = v.ok ? 'size-mismatch' : v.status === 401 ? 'token-expired' : driveFailure(v.status, v.json).code;
+        step('dv-verify', 'bad', reason);
+        return { ok: false, verified: false, fileId: up.json.id, fileName: name, size: Number(v.json && v.json.size) || 0, folderId, status: v.status === 401 ? 401 : undefined, reason };
+    }
+    step('dv-verify', 'ok'); step('dv-trim', 'run');
     const all = files.concat([{ id: up.json.id, name, createdTime: up.json.createdTime || new Date(now).toISOString() }]);
     const trashed = await pruneDriveBackups({ fetch: f, token, files: all, keep, protect: up.json.id });
+    step('dv-trim', 'ok');
     return { ok: true, verified: true, fileId: up.json.id, fileName: name, size: bytes, folderId, trashed, createdTime: up.json.createdTime };
 }
 
@@ -612,7 +688,7 @@ const API = {
     SNAP_COL, DATA_COL, STATUS_COL, MAX_SNAPSHOT_BYTES, KEEP_NEWEST, KEEP_DAYS, DRIVE_FOLDER_NAME, DRIVE_KEEP, SERVER_TZ_OFFSET_MIN, RECORD_KEYS, EXCLUDE_KEYS, BACKUP_STAMP_KEYS,
     sha256Hex, nextTrigger, lastTrigger, retryDelayMs, backupDue, staleAfterMs, buildPayload, validateRestore, emptyCollections, selectToKeep,
     listSnapshots, saveSnapshot, annotateSnapshot, writeStatus, readStatus, loadSnapshot, driveFailure, driveReasonText, restorePointReasonText, ensureDriveFolder, listDriveBackups,
-    pruneDriveBackups, driveBackup, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots,
+    pruneDriveBackups, driveBackup, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, makeProgress,
 };
 
 if (typeof window !== 'undefined') window.WFBackup = API;
