@@ -90,25 +90,32 @@ export async function accountState({ admin, uid }) {
  * equality query already has, so the automatic single-field index answers it: no composite index to create and no deploy step to forget),
  * projected to the two fields the question needs.
  */
-async function readScheduled(db) {
-    const out = [];
+async function readScheduled(db, max = SCAN_MAX) {
+    const out = [], capped = [];
+    // The cap is per schedule: a big daily list must not hide every weekly and monthly account behind it. When it is reached the run says so
+    // (a warning in the log and `scanCapped` in the answer) instead of quietly never looking past it.
     for (const freq of FREQS) {
-        let after = null;
-        while (out.length < SCAN_MAX) {
+        let after = null, scanned = 0;
+        for (;;) {
+            const room = max - scanned;
+            const asked = Math.min(SCAN_PAGE, room + 1);               // one more than fits, to know whether the cap cut anything off
             let q = db.collection('users').where('settings.autoBackupFreq', '==', freq);
             if (typeof q.select === 'function') q = q.select('settings.autoBackupFreq', 'settings.weekStart');
-            q = q.limit(SCAN_PAGE);
+            q = q.limit(asked);
             if (after) q = q.startAfter(after);
             const snap = await withDeadline(q.get(), 10000, 'users');
-            for (const d of snap.docs) {
+            const docs = snap.docs;
+            for (const d of docs.slice(0, room)) {
                 const s = (d.data() || {}).settings || {};
                 out.push({ uid: d.id, freq, weekStart: s.weekStart === 'sunday' ? 0 : 1 });
             }
-            if (snap.docs.length < SCAN_PAGE) break;
-            after = snap.docs[snap.docs.length - 1];
+            scanned += Math.min(docs.length, room);
+            if (docs.length > room) { capped.push(freq); break; }
+            if (docs.length < asked) break;
+            after = docs[docs.length - 1];
         }
     }
-    return out;
+    return { list: out, capped };
 }
 
 /** One account: decide, then copy. Returns a summary line (no data, no tokens). */
@@ -194,8 +201,8 @@ export async function handleSweep(req, res, deps) {
     const startedAt = deps.clock();
     const now = deps.now();
 
-    let scheduled;
-    try { scheduled = await readScheduled(db); }
+    let scheduled, capped = [];
+    try { ({ list: scheduled, capped } = await readScheduled(db, deps.scanMax || SCAN_MAX)); }
     catch (e) {
         console.error('[WF-CRON] backup-sweep could not read the schedules: ' + String((e && e.message) || e).slice(0, 160));
         return j(res, 500, { ok: false, error: 'could not read the schedules' });
@@ -220,8 +227,9 @@ export async function handleSweep(req, res, deps) {
         }
     }
     const n = (k) => results.filter((r) => r.outcome === k).length;
-    console.info(`[WF-CRON] backup-sweep accounts=${scheduled.length} fresh=${n('fresh')} backedUp=${n('backed-up')} failed=${n('failed') + n('error')} empty=${n('empty')} skipped=${n('skipped')} leftOver=${leftOver}`);
-    return j(res, 200, { ok: true, accounts: scheduled.length, backedUp: n('backed-up'), failed: n('failed') + n('error'), fresh: n('fresh'), skipped: n('skipped'), empty: n('empty'), leftOver, results });
+    if (capped.length) console.warn(`[WF-CRON] backup-sweep reached its scan cap (${deps.scanMax || SCAN_MAX} accounts per schedule) for: ${capped.join(', ')}. Accounts beyond it are not swept; the run needs a rotating cursor at this size.`);
+    console.info(`[WF-CRON] backup-sweep accounts=${scheduled.length} fresh=${n('fresh')} backedUp=${n('backed-up')} failed=${n('failed') + n('error')} empty=${n('empty')} skipped=${n('skipped')} leftOver=${leftOver}${capped.length ? ' scanCapped=' + capped.join('+') : ''}`);
+    return j(res, 200, { ok: true, accounts: scheduled.length, backedUp: n('backed-up'), failed: n('failed') + n('error'), fresh: n('fresh'), skipped: n('skipped'), empty: n('empty'), leftOver, scanCapped: capped, results });
 }
 
 export const defaultDeps = ({ fetchMs = 20000 } = {}) => ({

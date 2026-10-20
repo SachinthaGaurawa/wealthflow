@@ -555,3 +555,39 @@ describe('a stalled account or a stalled body cannot hold the run until the plat
         } finally { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
     });
 });
+
+
+describe('the scan cap is per schedule and is never silent', () => {
+    it('a full daily list does not hide the weekly and monthly accounts behind it, and the run says it stopped looking', async () => {
+        const users = {};
+        for (let i = 0; i < 5; i += 1) users['d' + i] = userDoc({ freq: 'daily' });
+        users.w0 = userDoc({ freq: 'weekly' });
+        users.m0 = userDoc({ freq: 'monthly' });
+        const w = world({ users });
+        w.deps.scanMax = 3;
+        const r = await call(w.deps);
+        expect(r.status).toBe(200);
+        expect(r.json.accounts, '3 daily (cap) + 1 weekly + 1 monthly').toBe(5);
+        expect(r.json.scanCapped).toEqual(['daily']);
+        expect(logs.join('\n')).toMatch(/warn \[WF-CRON\] backup-sweep reached its scan cap \(3 accounts per schedule\) for: daily/);
+        expect(logs.join('\n')).toMatch(/scanCapped=daily/);
+    });
+    it('exactly as many accounts as the cap is not "capped": nothing was cut off', async () => {
+        const users = {};
+        for (let i = 0; i < 3; i += 1) users['d' + i] = userDoc({ freq: 'daily' });
+        const w = world({ users });
+        w.deps.scanMax = 3;
+        const r = await call(w.deps);
+        expect(r.json.accounts).toBe(3);
+        expect(r.json.scanCapped).toEqual([]);
+        expect(logs.join('\n')).not.toMatch(/scan cap/);
+    });
+    it('pages past one page of results when the cap allows it', async () => {
+        const users = {};
+        for (let i = 0; i < SCAN_PAGE + 7; i += 1) users['u' + String(i).padStart(4, '0')] = userDoc({ freq: 'daily', n: 0 });
+        const w = world({ users });
+        const r = await call(w.deps);
+        expect(r.json.accounts).toBe(SCAN_PAGE + 7);
+        expect(r.json.scanCapped).toEqual([]);
+    });
+});
