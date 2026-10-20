@@ -18,7 +18,7 @@ import path from 'node:path';
 import Backup, {
     nextTrigger, lastTrigger, retryDelayMs, backupDue, staleAfterMs,
     buildPayload, validateRestore, selectToKeep, saveSnapshot, loadSnapshot, listSnapshots, annotateSnapshot, writeStatus, readStatus, sha256Hex,
-    driveBackup, ensureDriveFolder, listDriveBackups, pruneDriveBackups, driveReasonText, restorePointReasonText, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, BACKUP_STAMP_KEYS,
+    driveBackup, ensureDriveFolder, listDriveBackups, pruneDriveBackups, driveReasonText, restorePointReasonText, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, BACKUP_STAMP_KEYS, EXCLUDE_KEYS,
     KEEP_NEWEST, KEEP_DAYS, MAX_SNAPSHOT_BYTES, FOLDER_MIME, DRIVE_FOLDER_NAME, RECORD_KEYS, SNAP_COL, DATA_COL, STATUS_COL,
 } from '../wealthflow-backup.js';
 import { makeDb, makeDrive } from './helpers/backup-fakes.js';
@@ -140,6 +140,12 @@ describe('the payload', () => {
         expect(p.ok).toBe(true);
         expect(p.text).not.toMatch(/SECRET|driveRefresh|driveBridge|_lastModified|_writeTs|_writeDeviceId/);
         expect(JSON.parse(p.text).expenses).toHaveLength(2);
+    });
+    it('leaves the signed-out-devices list out: it is a security decision, and restoring an old copy must not take it back', () => {
+        const p = buildPayload(data(2, { revokedSessions: ['lost-phone'], lastRevokeAt: 99 }));
+        expect(p.text).not.toMatch(/revokedSessions|lost-phone|lastRevokeAt/);
+        expect(EXCLUDE_KEYS).toEqual(expect.arrayContaining(['revokedSessions', 'lastRevokeAt']));
+        expect(validateRestore({ expenses: [], revokedSessions: ['x'] }).ok).toBe(true);
     });
     it('leaves the factory-reset marker out: a restore stamps its own, an old one would wipe devices again', () => {
         const p = buildPayload(data(2, { _wipedAt: 123, _wipedAck: 123 }));

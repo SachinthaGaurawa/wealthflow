@@ -175,6 +175,7 @@ const DB = {
     get(k, d = []) { return appData[k] !== undefined ? appData[k] : d; },
     getObj(k, d = {}) { return appData[k] !== undefined ? appData[k] : d; },
     set(k, v) { appData[k] = v; },
+    delKey(field, key) { const o = appData[field]; if (o && typeof o === 'object') delete o[key]; env.cloudDeletes.push(field + '.' + key); },
 };
 const _ic = (n) => '[' + n + ']';
 const _wfEsc = (s) => String(s);
@@ -233,8 +234,15 @@ function loadPage(over = {}) {
     db.batch = () => { const b = origBatch(); const c = b.commit; b.commit = async () => { calls.push('batch.commit'); return c(); }; return b; };
     const appData = over.appData || baseData();
     const snapshotsAtSet = [];
+    if (over.cloudDoc) db.store.set('users/u1', structuredClone(over.cloudDoc));
     const userDocRef = user ? {
         firestore: db,
+        async get() {
+            calls.push('users.get');
+            if (over.userGetFails) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+            const d = db.store.get('users/u1');
+            return { exists: d !== undefined, data: () => (d === undefined ? undefined : structuredClone(d)) };
+        },
         async set(d) {
             calls.push('users.set');
             snapshotsAtSet.push([...db.store.entries()].filter(([k]) => /^users\/u1\/backups\//.test(k)).map(([, v]) => v.trigger));
@@ -243,7 +251,7 @@ function loadPage(over = {}) {
         },
     } : null;
     const win = { WFBackup: over.noModule ? null : B, currentUser: user, _isDecoyMode: !!over.decoy, fetch: drive.fetch };
-    const env = { appData, gapiToken: over.gapiToken || null, mint: over.mint === undefined ? 'good' : over.mint, mintCalls: 0, reconciles: 0, refresh: over.refresh || '' };
+    const env = { appData, gapiToken: over.gapiToken || null, mint: over.mint === undefined ? 'good' : over.mint, mintCalls: 0, reconciles: 0, cloudDeletes: [], refresh: over.refresh || '' };
     const elements = new Proxy({}, { get: (t, id) => t[id] || (t[id] = makeEl()) });
     const smart = [];
     const fake = {
@@ -685,14 +693,40 @@ describe('restore: a copy of what is here comes first, and nothing is replaced i
         }
     });
 
-    it('when saving the restored data to the account fails it says so, keeps it marked unsaved, and the old data stays a restore point', async () => {
+    it('the account keeps what is not data: the Drive link the server copies with, and the list of devices the owner signed out', async () => {
+        const cloudDoc = { driveRefresh: { token: 'MINE' }, driveBridge: { token: 'BR', expiry: 9 }, revokedSessions: ['A', 'B'], lastRevokeAt: 77, expenses: [] };
+        const p = loadPage({ cloudDoc, appData: { ...baseData(), revokedSessions: ['A'] } });
+        await p._wfApplyRestore({ ...restoredFile(), revokedSessions: ['A'], lastRevokeAt: 1 }, 'x');
+        const doc = p.db.store.get('users/u1');
+        expect(doc.driveRefresh, 'a restore deleted the Drive link, so the nightly server copy to Drive stops without a word').toEqual({ token: 'MINE' });
+        expect(doc.driveBridge).toEqual({ token: 'BR', expiry: 9 });
+        expect(doc.revokedSessions, 'a restore put a device the owner had signed out back on the list of allowed ones').toEqual(['A', 'B']);
+        expect(doc.lastRevokeAt).toBe(77);
+        expect(doc.expenses).toEqual([{ id: 'old1', amount: 1 }]);
+    });
+
+    it('changes nothing when the account document cannot be read first', async () => {
+        const p = loadPage({ userGetFails: true });
+        const before = structuredClone(p.appData);
+        await p._wfApplyRestore(restoredFile(), 'x');
+        expect(p.getAppData()).toEqual(before);
+        expect(p.calls).not.toContain('users.set');
+        expect(p.notes.find((n) => n.kind === 'error').m).toMatch(/account could not be read[\s\S]*Nothing was changed/);
+        expect(p.timers).toHaveLength(0);
+    });
+
+    it('when saving the restored data to the account fails, nothing is restored: not here, not half-way, and the retry cannot merge it back', async () => {
         const p = loadPage({ userSetFails: true });
         const before = structuredClone(p.appData);
         await p._wfApplyRestore(restoredFile(), 'x');
-        expect(p.calls).toContain('setDirty:true');
-        expect(p.calls).not.toContain('setDirty:false');
-        expect(p.timers, 'it reloaded the page and would have lost the unsaved restore').toHaveLength(0);
-        expect(p.notes.find((n) => n.kind === 'warn').m).toMatch(/previous data is saved as a restore point/);
+        expect(p.getAppData(), 'the data was replaced here although the account never took it; the sync would then merge the two into 500 + 3 records').toEqual(before);
+        expect(p.calls).not.toContain('setDirty:true');
+        expect(p.store.get('wf2_expenses')).toBeUndefined();
+        expect(p.store.get('wf2__wipedAck')).toBeUndefined();
+        expect(p.timers, 'it reloaded the page').toHaveLength(0);
+        const n = p.notes.find((x) => x.kind === 'error');
+        expect(n.m).toMatch(/Nothing was changed/);
+        expect(n.m).toMatch(/restore point/);
         const safety = rps(p.db).find((r) => r.trigger === 'pre-restore');
         expect((await loadSnapshot({ db: p.db, uid: 'u1', id: safety.id })).data.expenses).toEqual(before.expenses);
     });
@@ -783,6 +817,12 @@ describe('"Delete all restore points" is the person\'s own, and says what it did
         expect(status(p.db)).toBeUndefined();
         expect(p._wfBackupInfoHtml(s)).not.toMatch(/Restore point/);
     });
+    it('removes the stamps from the ACCOUNT too: the settings merge can add a key but never take one away, so a local delete alone comes straight back', async () => {
+        const p = loadPage();
+        await p.backupNow(true, 'auto');
+        expect(await p._wfDeleteRestorePoints()).toBe(true);
+        expect(p.env.cloudDeletes.sort()).toEqual(['settings.lastAutoBackupAt', 'settings.lastBackup', 'settings.lastBackupAttempt', 'settings.lastBackupMeta']);
+    });
     it('with no Drive file either, the card goes back to "No backup yet" instead of claiming one', async () => {
         const p = loadPage();
         await p.backupNow(true, 'auto');
@@ -832,6 +872,26 @@ describe('factory reset keeps a way back', () => {
         expect(p.calls).not.toContain('users.set');
         expect(p.calls).not.toContain('localStorage.clear');
         expect(p.elements.fr_success.style.display).not.toBe('block');
+    });
+    it('keeps the Drive link and the signed-out devices list on the account, as a restore does', async () => {
+        const cloudDoc = { driveRefresh: { token: 'MINE' }, driveBridge: { token: 'BR' }, revokedSessions: ['A', 'B'], lastRevokeAt: 77, expenses: [{ id: 'x' }] };
+        const p = loadPage({ cloudDoc });
+        await pinAndGo(p);
+        const doc = p.db.store.get('users/u1');
+        expect(doc.expenses).toEqual([]);
+        expect(doc.driveRefresh).toEqual({ token: 'MINE' });
+        expect(doc.driveBridge).toEqual({ token: 'BR' });
+        expect(doc.revokedSessions, 'a reset let a device the owner had signed out back in').toEqual(['A', 'B']);
+        expect(doc.lastRevokeAt).toBe(77);
+    });
+    it('does NOT erase anything when the account document cannot be read first', async () => {
+        const p = loadPage({ userGetFails: true });
+        const before = structuredClone(p.appData);
+        await pinAndGo(p);
+        expect(p.elements.fr_err.textContent).toMatch(/Nothing was erased/);
+        expect(p.getAppData().expenses).toEqual(before.expenses);
+        expect(p.calls).not.toContain('users.set');
+        expect(p.calls).not.toContain('localStorage.clear');
     });
     it('saves a "pre-wipe" copy first; after the wipe that copy still loads with everything in it', async () => {
         const p = loadPage();

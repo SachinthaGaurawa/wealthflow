@@ -910,15 +910,17 @@ describe('an announced document is adopted whole, content and all', () => {
         // One function does the replacing for all three sources, so the marker cannot be missing from one of them.
         const at = HTML.indexOf('async function _wfApplyRestore(restored, label) {');
         expect(at, 'the restore is gone — retarget this test').toBeGreaterThan(-1);
-        const body = HTML.slice(at, at + 5200);
-        const stamp = body.indexOf('appData._wipedAt = stamp');
+        const body = HTML.slice(at, at + 5600);
         const push = body.indexOf('userDocRef.set(');
-        expect(stamp, 'the restore no longer announces itself, so a second device merges its own '
-            + 'copy straight back and re-uploads it').toBeGreaterThan(-1);
-        expect(stamp, 'the marker is stamped after the push, which is too late')
-            .toBeLessThan(push);
-        expect(body, 'the restoring device does not ack its own marker, so it would adopt its '
-            + 'own announcement on the next snapshot').toMatch(/appData\._wipedAck = stamp/);
+        const ack = body.indexOf('appData._wipedAck = stamp');
+        const announce = body.indexOf('_wipedAt: stamp', push);
+        expect(push, 'the restore no longer writes the account document').toBeGreaterThan(-1);
+        expect(announce, 'the document the restore pushes does not carry the marker, so a second device '
+            + 'merges its own copy straight back and re-uploads it').toBeGreaterThan(push);
+        expect(announce, 'the marker is not part of the pushed document').toBeLessThan(push + 400);
+        expect(ack, 'the restoring device does not ack its own marker before the push, so it would adopt its '
+            + 'own announcement on the next snapshot').toBeGreaterThan(-1);
+        expect(ack, 'the ack comes after the push, which is too late for the snapshot echo').toBeLessThan(push);
         // and the three entry points all go through it
         expect(HTML).toMatch(/_wfConfirmRestore\(obj, v,/);
         expect(HTML).toMatch(/_wfConfirmRestore\(imported, v,/);

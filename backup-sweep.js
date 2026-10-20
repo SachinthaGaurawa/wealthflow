@@ -31,13 +31,15 @@
 
 import { getAdminDb, withDeadline } from './admin-db.mjs';
 import { cronAuthorized } from './cron-auth.mjs';
-import { fetchWithTimeout } from './fetch-timeout.mjs';
+import { fetchWithBodyDeadline } from './fetch-timeout.mjs';
 import { DEFAULT_CLIENT_ID } from './drive-auth.js';
 import B from './wealthflow-backup.js';
 
 /** Accounts backed up per run; the rest wait for the next one (the due check is what orders them: whoever is still due goes first next time). */
 export const MAX_BACKUPS = 20;
 export const TOTAL_BUDGET_MS = 45000;
+/** The function is killed at 60 s (vercel.json maxDuration). No account may be given more than what is left of this, so the run still answers. */
+export const RUN_CEILING_MS = 55000;
 export const SCAN_PAGE = 400;
 export const SCAN_MAX = 2000;
 export const FREQS = ['daily', 'weekly', 'monthly'];
@@ -204,7 +206,11 @@ export async function handleSweep(req, res, deps) {
     for (let i = 0; i < scheduled.length; i += 1) {
         if (deps.clock() - startedAt > TOTAL_BUDGET_MS || backups >= MAX_BACKUPS) { leftOver = scheduled.length - i; break; }
         try {
-            const r = await backupAccount({ db, admin, acct: scheduled[i], deps, now });
+            // Per-operation waits inside an account add up (reads, a batch, token, Drive upload and verify), and the budget above is only looked
+            // at between accounts: one account on a degraded Google or Firestore could otherwise run past the platform's kill and leave the
+            // whole run unanswered. It gets what is left; an account that does not finish is retried by the next run.
+            const left = Math.max(1000, RUN_CEILING_MS - (deps.clock() - startedAt));
+            const r = await withDeadline(backupAccount({ db, admin, acct: scheduled[i], deps, now }), left, 'backup');
             if (['backed-up', 'failed'].includes(r.outcome)) backups += 1;      // an empty account costs one read and one tiny write: it must not use up the cap that real copies are limited by
             results.push({ ...r, uid: r.uid.slice(0, 6) });
             if (r.outcome === 'failed') console.warn(`[WF-BACKUP] account ${r.uid.slice(0, 6)} backup failed: ${String(r.reason).slice(0, 140)}`);
@@ -218,11 +224,13 @@ export async function handleSweep(req, res, deps) {
     return j(res, 200, { ok: true, accounts: scheduled.length, backedUp: n('backed-up'), failed: n('failed') + n('error'), fresh: n('fresh'), skipped: n('skipped'), empty: n('empty'), leftOver, results });
 }
 
-export const defaultDeps = () => ({
+export const defaultDeps = ({ fetchMs = 20000 } = {}) => ({
     getAdminDb,
     accountState,
     env: process.env,
-    fetch: (url, init) => fetchWithTimeout(url, init, 20000),
+    // The deadline covers the body as well as the headers: every caller goes on to read `r.json()`, and a response that sends headers and
+    // then goes quiet would otherwise have no deadline at all (fetch-timeout.mjs, "A deadline that outlives the headers").
+    fetch: (url, init) => fetchWithBodyDeadline(url, init, fetchMs),
     now: () => Date.now(),
     clock: () => Date.now(),
 });

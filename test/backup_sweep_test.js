@@ -9,8 +9,9 @@
  * What is asserted is what ended up in the stores, and what was written to the log.
  * ===========================================================================*/
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import http from 'node:http';
 import {
-    handleSweep, backupAccount, mintDriveToken, accountState, MAX_BACKUPS, SCAN_PAGE,
+    handleSweep, backupAccount, mintDriveToken, accountState, defaultDeps, MAX_BACKUPS, SCAN_PAGE,
 } from '../backup-sweep.js';
 import { DEFAULT_CLIENT_ID } from '../drive-auth.js';
 import B, { listSnapshots, loadSnapshot, readStatus, backupDue, describeBackup, SERVER_TZ_OFFSET_MIN, DRIVE_FOLDER_NAME } from '../wealthflow-backup.js';
@@ -162,6 +163,13 @@ describe('a night the app was closed still gets a restore point', () => {
         const text = w.db.store.get('users/u1/backupData/' + rp.id).data;
         expect(text).not.toContain(REFRESH_OK);
         expect(text).not.toMatch(/driveRefresh|_writeDeviceId|_wipedAt/);
+    });
+
+    it('does not copy the list of signed-out devices: a restore of an old copy must not undo a revocation', async () => {
+        const w = world({ users: { u1: userDoc({ extra: { revokedSessions: ['lost-phone'], lastRevokeAt: 9 } }) } });
+        await call(w.deps);
+        const rp = (await listSnapshots({ db: w.db, uid: 'u1' }))[0];
+        expect(w.db.store.get('users/u1/backupData/' + rp.id).data).not.toMatch(/lost-phone|revokedSessions|lastRevokeAt/);
     });
 
     it('a night the page already covered is not done twice, and a second run in the same minute writes nothing', async () => {
@@ -513,5 +521,37 @@ describe('the page and the server run share one rule', () => {
         await call(w.deps);
         const next = await call({ ...w.deps, now: () => NOW + DAY });
         expect(next.json).toMatchObject({ backedUp: 1 });
+    });
+});
+
+
+/* ------------------------------------------------------------------ nothing can hold the run past the platform's limit */
+
+describe('a stalled account or a stalled body cannot hold the run until the platform kills it', () => {
+    it('gives each account only what is left of the run: a Firestore write that never answers ends as one failed account and a normal response', async () => {
+        const w = world({ users: { u1: userDoc(), u2: userDoc() }, dbOpts: { hangCommit: true } });
+        let ticks = 0;
+        w.deps.clock = () => (ticks++ < 2 ? 0 : 54900);          // under a second left of the 55 s ceiling by the time the first account starts (the floor is one second)
+        const t0 = Date.now();
+        const r = await call(w.deps);
+        expect(Date.now() - t0, 'the run waited for the stalled write instead of its own deadline').toBeLessThan(3000);
+        expect(r.status).toBe(200);
+        expect(r.json.failed).toBe(1);
+        expect(r.json.results[0].outcome).toBe('error');
+        expect(r.json.leftOver, 'the second account must be left for the next run, not started with no time left').toBe(1);
+        expect(logs.join('\n')).toMatch(/errored: backup did not answer within/);
+    });
+
+    it('the server\'s own network calls keep their deadline while the body is read (a response that sends headers and then goes quiet)', async () => {
+        const server = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.write('{"access_to'); /* and never ends */ });
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+        try {
+            const { port } = server.address();
+            const deps = defaultDeps({ fetchMs: 300 });
+            const t0 = Date.now();
+            const r = await deps.fetch(`http://127.0.0.1:${port}/`, {});
+            await expect(r.json()).rejects.toBeTruthy();
+            expect(Date.now() - t0).toBeLessThan(3000);
+        } finally { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
     });
 });

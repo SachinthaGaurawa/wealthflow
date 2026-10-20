@@ -77,9 +77,11 @@ export const RETRY_STEPS_MIN = [5, 15, 60, 180, 360];
 
 /** The collections a WealthFlow data set is made of (index.html _WF_RECORD_KEYS; test/backup_restore_points_test.js keeps the two in step). */
 export const RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps', 'pawns', 'debtors', 'people', 'payAccounts'];
-/** Not data: sync bookkeeping, the factory-reset marker (a restore stamps its own) and the Drive credentials that happen to live on the same document. A backup file must never carry a token. */
-const EXCLUDE = new Set(['_lastModified', '_lastModifiedBy', '_writeDeviceId', '_writeTs', '_wipedAt', '_wipedAck', 'driveBridge', 'driveRefresh']);
-/** The keys a backup never carries (and a restore never writes back): sync bookkeeping, the reset marker and the Drive credentials. */
+/** Not data: sync bookkeeping, the factory-reset marker (a restore stamps its own), the Drive credentials that happen to live on the same document
+ *  (a backup file must never carry a token), and the list of devices the owner signed out. That list is a security decision made AFTER any copy
+ *  was taken: restoring an old copy over it would let a lost phone back in. */
+const EXCLUDE = new Set(['_lastModified', '_lastModifiedBy', '_writeDeviceId', '_writeTs', '_wipedAt', '_wipedAck', 'driveBridge', 'driveRefresh', 'revokedSessions', 'lastRevokeAt']);
+/** The keys a backup never carries (and a restore never writes back): sync bookkeeping, the reset marker, the Drive credentials and the signed-out devices. */
 export const EXCLUDE_KEYS = Array.from(EXCLUDE);
 /** Settings that record the backups themselves. They change on every run, so left inside the copy every copy would differ from the last
  *  and "identical data" could never be seen. A restore keeps this device's own values for them anyway (index.html _wfApplyRestore). */

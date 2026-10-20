@@ -15356,6 +15356,23 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         let _wfRestoreItems = [];
         let _wfRestoring = false;
 
+        // What lives on the account document but never in appData (the sync skips it: _WF_SYNC_META_KEYS, or it is written with arrayUnion), so a bare
+        // set() of appData deletes it: the Drive link the nightly server copy uses, and the list of devices the owner signed out. A restore or a
+        // reset replaces the DATA; these belong to the ACCOUNT. Read from the server before anything changes, so "could not read" is a refusal and
+        // not a half-done replacement.
+        const _WF_ACCOUNT_KEEP_KEYS = ['driveRefresh', 'driveBridge', 'revokedSessions', 'lastRevokeAt'];
+        async function _wfReadAccountKeep() {
+            try {
+                const snap = await userDocRef.get({ source: 'server' });
+                const cur = (snap && snap.exists && snap.data()) || {};
+                const fields = {};
+                _WF_ACCOUNT_KEEP_KEYS.forEach((k) => { if (cur[k] !== undefined) fields[k] = cur[k]; });
+                return { ok: true, fields };
+            } catch (e) {
+                return { ok: false, reason: (e && (e.code || e.message)) || 'unknown error' };
+            }
+        }
+
         // A copy of what is here now, taken before anything is replaced or erased. A restore point in the account or — when that cannot be
         // written (a very large account, an outage) — a Google Drive file proven by its size. { ok, via } or { ok:false, reason }.
         async function _wfSaveSafetyCopy(trigger) {
@@ -15454,11 +15471,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const uid = window.currentUser.uid;
             const r = await B.deleteAllSnapshots({ db: userDocRef.firestore, uid });
             if (r.deleted || r.ok) {
-                try {
-                    const s = DB.getObj('settings', {});
-                    B.BACKUP_STAMP_KEYS.filter((k) => k !== 'lastDriveBackup').forEach((k) => { delete s[k]; });
-                    DB.set('settings', s);
-                } catch (_) {}
+                // DB.delKey, not `delete s[k]; DB.set('settings', s)`: the settings merge can add a key but never take one away, so a local-only
+                // delete comes straight back from the account on the next sync and the card claims a copy nobody holds. delKey removes it on the
+                // server too (queued for retry when offline).
+                try { B.BACKUP_STAMP_KEYS.filter((k) => k !== 'lastDriveBackup').forEach((k) => DB.delKey('settings', k, true)); } catch (_) {}
                 _wfBackupState = { uid, rps: [], status: null, at: Date.now() };
                 try { _wfPaintBackupCard(); } catch (_) {}
             }
@@ -15526,8 +15542,11 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 notify('@cloud@ Saving a safety copy of your current data…', 'info');
                 const safe = await _wfSaveSafetyCopy('pre-restore');
                 if (!safe.ok) throw new Error('a safety copy of your current data could not be saved (' + safe.reason + ')');
+                const keep = await _wfReadAccountKeep();
+                if (!keep.ok) throw new Error('your account could not be read (' + keep.reason + ')');
                 const skip = new Set(B.EXCLUDE_KEYS);
                 const keepSettings = B.BACKUP_STAMP_KEYS.concat(['autoBackupFreq']);
+                const replaced = {};
                 Object.keys(restored).forEach((key) => {
                     if (skip.has(key)) return;
                     if (key === 'auth' && appData.auth && appData.auth.pin) return;
@@ -15537,24 +15556,26 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         value = Object.assign({}, value);
                         keepSettings.forEach((k) => { if (cur[k] !== undefined) value[k] = cur[k]; else delete value[k]; });
                     }
-                    appData[key] = value;
-                    _persistLocal('wf2_' + key, value);
+                    replaced[key] = value;
                 });
+                // THE ACCOUNT FIRST, THIS DEVICE SECOND. Replaced here before the account took it, a failed save left a restore that was neither done
+                // nor undone: the retry is a merge, and a merge puts back every record the copy did not have (500 + 3 = 503).
                 const stamp = Date.now();
-                appData._wipedAt = stamp;
-                appData._wipedAck = stamp;          // this device is already in that state
-                _persistRaw('wf2__wipedAck', String(stamp));
-                setDirty(true);
+                const prevAck = appData._wipedAck;
+                appData._wipedAck = stamp;          // in memory first: the echo of our own write must find this device already in that state
                 try {
-                    await userDocRef.set(Object.assign({}, appData, {
+                    await userDocRef.set(Object.assign({}, appData, replaced, keep.fields, {
+                        _wipedAt: stamp, _wipedAck: stamp,
                         _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
                         _lastModifiedBy: currentUser ? currentUser.uid : 'restore'
                     }));
                 } catch (e) {
-                    // Replaced here, not yet saved to the account. The change stays marked unsaved, so the sync keeps trying; the old data is safe as a restore point.
-                    notify('Restored on this device, but saving it to your account failed (' + ((e && (e.code || e.message)) || 'unknown error') + '). Keep the app open; it will retry. Your previous data is saved as a restore point.', 'warn');
-                    return;
+                    if (prevAck === undefined) delete appData._wipedAck; else appData._wipedAck = prevAck;
+                    throw new Error('saving it to your account failed (' + ((e && (e.code || e.message)) || 'unknown error') + '); your current data is also saved as a restore point');
                 }
+                Object.keys(replaced).forEach((key) => { appData[key] = replaced[key]; _persistLocal('wf2_' + key, replaced[key]); });
+                appData._wipedAt = stamp;
+                _persistRaw('wf2__wipedAck', String(stamp));
                 setDirty(false);
                 notify('Data restored from ' + label + '. Restarting…', 'success');
                 setTimeout(() => location.reload(), 1500);
@@ -35705,6 +35726,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 return;
             }
 
+            // What belongs to the account and not to the data (the Drive link, the signed-out devices) is read first, so a reset that cannot read
+            // it stops here instead of deleting it with the rest.
+            const keep = await _wfReadAccountKeep();
+            if (!keep.ok) {
+                $('fr_err').textContent = 'Nothing was erased: your account could not be read (' + keep.reason + '). Check your connection and try again.';
+                return;
+            }
+
             // Lock the UI
             $('fr_pin').disabled = true;
             $('fr_action_btns').style.display = 'none';
@@ -35751,7 +35780,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
             try {
                 // Sync wiped data to Firebase
-                await userDocRef.set(Object.assign({}, appData, {
+                await userDocRef.set(Object.assign({}, appData, keep.fields, {
                     _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
                     _lastModifiedBy: currentUser ? currentUser.uid : 'reset'
                 }));
