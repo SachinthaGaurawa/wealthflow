@@ -160,6 +160,7 @@ const REGION_RESTORE = (() => {
 const REGION_SCHEDULER = between('// ==================== AUTO-BACKUP SCHEDULER (v7.70)', "caches.delete('wf-backup-cache')");
 const SRC_FACTORY_RESET = fnSource('executeFactoryReset');
 const SRC_WEEKSTART = fnSource('_weekStartDay');
+const SRC_NEXT_TIME = fnSource('getNextBackupTime');
 
 const ENV_NAMES = ['window', 'navigator', 'localStorage', 'document', 'notify', 'triggerHaptic', 'console', 'firebase', 'userDocRef', 'user', 'showConfirm',
     'closeModal', 'openModal', '$', 'setTimeout', 'setInterval', 'clearInterval', 'setDirty', 'sendSmartNotification', 'renderSettings', 'sha256', 'env'];
@@ -190,10 +191,11 @@ ${REGION_BACKUP}
 ${REGION_RESTORE}
 ${SRC_WEEKSTART}
 ${REGION_SCHEDULER}
+${SRC_NEXT_TIME}
 ${SRC_FACTORY_RESET}
 return {
     backupNow, executeDriveBackup, _getLastBackupMs, _wfSaveSafetyCopy, _wfApplyRestore, executeRestoreSelected, fetchRestoreList, executeFactoryReset, deleteAllRestorePoints, _wfDeleteRestorePoints,
-    _checkAutoBackupDue, _wfBackupFailState, _wfRefreshBackupState, _wfDriveTokenFor, _wfBackupInfoHtml, _wfDriveBackupWithToasts,
+    _checkAutoBackupDue, _wfBackupFailState, _wfRefreshBackupState, _wfDriveTokenFor, _wfBackupInfoHtml, _wfDriveBackupWithToasts, _wfPaintBackupCard,
     getAppData: () => appData, setRestoreItems: (x) => { _wfRestoreItems = x; }, getGapiToken: () => gapiToken, setGapiToken: (t) => { gapiToken = t; },
 };`;
 
@@ -248,7 +250,7 @@ function loadPage(over = {}) {
         window: win,
         navigator: { onLine: over.onLine !== false, serviceWorker: { ready: Promise.resolve({ sync: { register: async () => { calls.push('sync.register'); } } }) } },
         localStorage,
-        document: { getElementById: () => null, createElement: () => makeEl() },
+        document: over.settingsDom ? over.settingsDom.document : { getElementById: () => null, createElement: () => makeEl() },
         notify: (m, kind) => { notes.push({ m: String(m), kind }); },
         triggerHaptic: () => {},
         console: { log() {}, warn() {}, error() {}, info() {} },
@@ -262,7 +264,7 @@ function loadPage(over = {}) {
         setInterval: () => 1, clearInterval: () => {},
         setDirty: (s) => { calls.push('setDirty:' + s); },
         sendSmartNotification: (...a) => { smart.push(a); },
-        renderSettings: () => {},
+        renderSettings: () => { calls.push('renderSettings'); },
         sha256: async (s) => 'HASH(' + s + ')',
         env,
     };
@@ -851,6 +853,18 @@ describe('factory reset keeps a way back', () => {
 /** Local time, because the page's schedule is "23:55 on this device". */
 const local = (y, mo, d, h = 0, mi = 0, s = 0) => new Date(y, mo - 1, d, h, mi, s).getTime();
 
+/** The three nodes the card and the schedule line paint into, and a section that can hold the line. */
+function makeSettingsDom() {
+    const section = { line: null, querySelector: (sel) => (sel === '.backup-schedule' ? section.line : null), appendChild: (el) => { section.line = el; return el; } };
+    const info = { innerHTML: '', closest: (sel) => (sel === '.settings-section' ? section : null) };
+    const icon = { innerHTML: '' };
+    const document = {
+        getElementById: (id) => (id === 'wfBackupInfo' ? info : id === 'wfBackupIcon' ? icon : null),
+        createElement: () => ({ className: '', innerHTML: '', remove() { section.line = null; } }),
+    };
+    return { document, section, info, icon };
+}
+
 describe('the scheduler runs the rule, not a stamp', () => {
     const pin = (ms) => vi.useFakeTimers({ toFake: ['Date'], now: ms });
     const justAfter = local(2026, 10, 19, 23, 56);
@@ -862,6 +876,33 @@ describe('the scheduler runs the rule, not a stamp', () => {
             await p._checkAutoBackupDue();
             expect(p.db.state.writes).toEqual([]);
         }
+    });
+
+    it('a due run repaints the card and the "Next auto-backup" line in place, and never rebuilds the Settings panel', async () => {
+        pin(justAfter);
+        const dom = makeSettingsDom();
+        const p = loadPage({ settingsDom: dom });
+        await p._checkAutoBackupDue();
+        expect(rps(p.db)).toHaveLength(1);
+        expect(p.calls, 'renderSettings() rebuilds the whole panel under whoever is using it; the card repaints itself').not.toContain('renderSettings');
+        expect(dom.info.innerHTML).toMatch(/Last Backup/);
+        expect(dom.section.line.className).toBe('backup-schedule');
+        expect(dom.section.line.innerHTML).toMatch(/Next auto-backup: /);
+    });
+
+    it('changing the schedule paints the "Next auto-backup" line in place: shown when on, gone when off, nothing rebuilt', () => {
+        pin(justAfter);
+        const dom = makeSettingsDom();
+        const p = loadPage({ settingsDom: dom, appData: { ...baseData(), settings: { autoBackupFreq: 'off' } } });
+        p._wfPaintBackupCard();
+        expect(dom.section.line).toBe(null);
+        p.getAppData().settings.autoBackupFreq = 'weekly';
+        p._wfPaintBackupCard();
+        expect(dom.section.line.innerHTML).toMatch(/Next auto-backup: /);
+        p.getAppData().settings.autoBackupFreq = 'off';
+        p._wfPaintBackupCard();
+        expect(dom.section.line).toBe(null);
+        expect(p.calls).not.toContain('renderSettings');
     });
 
     it('makes the night\'s restore point when none exists, and tells the person once', async () => {

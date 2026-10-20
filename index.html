@@ -14780,10 +14780,24 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 + '<div style="font-size:11px;color:var(--text3);margin-top:4px;">' + bits.join(' · ') + '</div>'
                 + v.lines.map((l) => '<div style="font-size:11px;margin-top:4px;font-weight:' + (l.level === 'info' ? 400 : 700) + ';color:' + col(l.level) + ';">' + _wfEsc(l.text) + '</div>').join('');
         }
+        // "Next auto-backup: …" under the schedule select. Painted in place for the same reason the card is: renderSettings() would rebuild the
+        // whole panel and make the page jump (the "dancing" bug toggleSetting() is written to avoid) just because a run finished or the
+        // schedule was changed.
+        function _wfPaintScheduleLine() {
+            const info = document.getElementById('wfBackupInfo');
+            const section = info && info.closest ? info.closest('.settings-section') : null;
+            if (!section) return;
+            const freq = DB.getObj('settings', {}).autoBackupFreq || 'off';
+            let line = section.querySelector('.backup-schedule');
+            if (freq === 'off') { if (line) line.remove(); return; }
+            if (!line) { line = document.createElement('div'); line.className = 'backup-schedule'; section.appendChild(line); }
+            line.innerHTML = (window.WFIcon ? WFIcon('clock') : '') + ' Next auto-backup: ' + getNextBackupTime(freq);
+        }
         function _wfPaintBackupCard() {
             const info = document.getElementById('wfBackupInfo'), icon = document.getElementById('wfBackupIcon');
             if (info) info.innerHTML = _wfBackupInfoHtml(DB.getObj('settings', {}));
             if (icon) icon.innerHTML = _wfBackupIconHtml();
+            try { _wfPaintScheduleLine(); } catch (_) {}
         }
         // Called from the card's template: asks the account for what it holds, then repaints the card in place. Returns '' so it can sit in the template.
         function _wfKickBackupRefresh() { try { _wfRefreshBackupState(false, 30000); } catch (_) {} return ''; }
@@ -30190,7 +30204,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Backup Schedule</div><div class="setting-desc">Saves a restore point in your account at 23:55 (Daily · Weekly on the last day of your week · Monthly on the last day of the month) — also while the app is closed — and keeps the last 5 plus one per day for 14 days. If Google Drive is connected, the same copy goes to your Drive while the app is open. A missed run catches up when you reopen the app, and a failed one is shown here and retried.</div></div>
-                <select class="fi" style="width:140px;" onchange="toggleSetting('autoBackupFreq', this.value); scheduleAutoBackup();">
+                <select class="fi" style="width:140px;" onchange="toggleSetting('autoBackupFreq', this.value); scheduleAutoBackup(); _wfPaintBackupCard();">
                     <option value="off" ${(s.autoBackupFreq || 'off') === 'off' ? 'selected' : ''}>Off</option>
                     <option value="daily" ${(s.autoBackupFreq || 'off') === 'daily' ? 'selected' : ''}>Daily (23:55)</option>
                     <option value="weekly" ${(s.autoBackupFreq || 'off') === 'weekly' ? 'selected' : ''}>Weekly (${_weekStartDay() === 0 ? 'Sat' : 'Sun'})</option>
@@ -35539,9 +35553,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     console.log('[AutoBackup] failed (' + n + ' in a row) — ' + la.reason);
                     if (n === 1) notify('Auto-backup could not save a copy: ' + la.reason + '. It will try again.', 'warn');
                 }
-                if (document.getElementById('page-settings')?.classList.contains('active')) {
-                    try { renderSettings(); } catch (_) {}
-                }
+                // The card and the "Next auto-backup" line change in place; rebuilding the whole Settings panel here would also throw away
+                // whatever the person is in the middle of (an open select, the scroll position) for a run they never asked about.
+                try { _wfPaintBackupCard(); } catch (_) {}
             } catch (e) { console.warn('[AutoBackup] check failed:', e && e.message); }
         }
 
