@@ -250,7 +250,7 @@ function loadPage(over = {}) {
     const drive = over.drive || makeDrive({ valid: 'good' });
     const user = over.signedIn === false ? null : { uid: 'u1', email: 'owner@example.lk' };
     const calls = [];
-    const timers = [];
+    const timers = [], pullTimers = [];
     const notes = [];
     const confirms = [];
     const store = new Map(Object.entries(over.local || {}));
@@ -270,6 +270,7 @@ function loadPage(over = {}) {
         async get() {
             calls.push('users.get');
             if (over.userGetFails) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+            if (over.userGetHangs) return new Promise(() => {});
             const d = db.store.get('users/u1');
             return { exists: d !== undefined, data: () => (d === undefined ? undefined : structuredClone(d)) };
         },
@@ -298,7 +299,7 @@ function loadPage(over = {}) {
         showConfirm: (...a) => { confirms.push(a); },
         closeModal: () => {}, openModal: () => {},
         $: (id) => elements[id],
-        setTimeout: over.realTimers ? (fn, ms) => globalThis.setTimeout(fn, ms) : (fn) => { timers.push(fn); return timers.length; },
+        setTimeout: over.realTimers ? (fn, ms) => globalThis.setTimeout(fn, ms) : (fn, ms) => { if (ms === 8000) { pullTimers.push(fn); return 0; } timers.push(fn); return timers.length; }, // 8000 = the cloud-read deadline, kept apart from the reload timer
         setInterval: () => 1, clearInterval: () => {},
         setDirty: (s) => { calls.push('setDirty:' + s); },
         sendSmartNotification: (...a) => { smart.push(a); },
@@ -307,7 +308,7 @@ function loadPage(over = {}) {
         env,
     };
     const api = new Function(...ENV_NAMES, BODY)(...ENV_NAMES.map((n) => fake[n]));
-    return { ...api, db, drive, calls, notes, confirms, store, win, appData, env, elements, timers, smart, snapshotsAtSet, user };
+    return { ...api, db, drive, calls, notes, confirms, store, win, appData, env, elements, timers, pullTimers, smart, snapshotsAtSet, user };
 }
 
 const rps = (db) => [...db.store.entries()].filter(([k]) => /^users\/u1\/backups\//.test(k)).map(([k, v]) => ({ id: k.split('/').pop(), ...v })).sort((a, b) => a.atMs - b.atMs);
@@ -794,6 +795,19 @@ describe('restore: a copy of what is here comes first, and nothing is replaced i
         expect(p.getAppData()).toEqual(before);
         expect(p.db.state.writes, 'a safety copy of a possibly stale device was written').toEqual([]);
         expect(p.notes.find((n) => n.kind === 'error').m).toMatch(/safety copy of your current data could not be saved \(your account could not be read/);
+    });
+
+    it('a server read that never answers is a refusal after the same 8 s the reconcile allows, not a restore stuck for ever', async () => {
+        const p = loadPage({ userGetHangs: true });
+        const before = structuredClone(p.appData);
+        const run = p._wfApplyRestore(restoredFile(), 'x');
+        await new Promise((r) => globalThis.setTimeout(r, 20));
+        expect(p.pullTimers, 'the read has to be raced against a deadline').toHaveLength(1);
+        p.pullTimers[0]();
+        await run;
+        expect(p.getAppData()).toEqual(before);
+        expect(p.db.state.writes).toEqual([]);
+        expect(p.notes.find((n) => n.kind === 'error').m).toMatch(/your account could not be read \(pull-timeout\)/);
     });
 
     it('replaces the whole data set: a collection the copy does not have ends up empty, it is not left as it is today', async () => {

@@ -15385,7 +15385,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         // refusal, not "carry on with what this device knows".
         async function _wfPullAccountNow() {
             try {
-                const doc = await userDocRef.get({ source: 'server' });
+                const doc = await Promise.race([userDocRef.get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('pull-timeout')), 8000))]);
                 if (doc && doc.exists) {
                     isSyncingFromCloud = true;
                     let applied; try { applied = _wfApplyCloudData(doc.data()); } finally { isSyncingFromCloud = false; }
