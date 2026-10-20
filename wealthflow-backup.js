@@ -514,8 +514,9 @@ export async function pruneDriveBackups({ fetch: f, token, files, keep = DRIVE_K
  *
  * `getToken(force)` supplies the access token: false = whatever is valid, true = a freshly minted one (called once, after a 401).
  * Success means Drive reported the file back, not trashed, at EXACTLY the number of bytes sent — "exists and non-zero", which is
- * what this used to check, would have called a truncated upload verified. Identical to the newest Drive copy (same SHA-256, kept
- * in the file's appProperties) ⇒ nothing is uploaded and that file is confirmed, so repeated runs do not rotate real history out.
+ * what this used to check, would have called a truncated upload verified. Identical to the newest Drive copy (same SHA-256 and size
+ * in the listing, and the file read back is byte-for-byte the same) ⇒ nothing is uploaded and that file is confirmed, so repeated
+ * runs do not rotate real history out; a copy that no longer reads back as these bytes is not trusted and a new file is written.
  * Returns { ok, verified, fileId, fileName, size, folderId, reused?, trashed, reason?, status? }. Never throws.
  */
 export async function driveBackup({ fetch: f, getToken, text, uid, email, now = Date.now(), folderHint = '', keep = DRIVE_KEEP, label = '' }) {
@@ -550,7 +551,11 @@ async function uploadOnce({ f, token, folderId, text, bytes, sha, safeEmail, uid
     const files = listed.ok ? listed.files : [];
     const newest = files[0];
     if (newest && newest.appProperties && newest.appProperties.sha === sha && String(newest.size || '') === String(bytes)) {
-        return { ok: true, verified: true, reused: true, fileId: newest.id, fileName: newest.name, size: bytes, folderId, trashed: 0 };
+        // The listing only says what the file was when it was written (the SHA is a label, the size can survive an edit). The newest
+        // copy counts as this run's copy only if reading it back gives exactly these bytes; otherwise a fresh file is written below.
+        const back = await downloadDriveBackup({ fetch: f, token, file: newest });
+        if (back.ok && back.text === text) return { ok: true, verified: true, reused: true, fileId: newest.id, fileName: newest.name, size: bytes, folderId, trashed: 0 };
+        if (!back.ok && back.status === 401) return { ok: false, verified: false, status: 401, reason: 'token-expired' };
     }
     const day = new Date(now).toISOString().slice(0, 10);
     const name = 'WealthFlow_' + safeEmail + '_' + uid6 + '_' + day + '_' + now + '.json';

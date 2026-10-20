@@ -449,6 +449,30 @@ describe('driveBackup: the copy in the user\'s own Drive', () => {
         expect(r.reused).toBe(true);
         expect([...d.files.values()].filter((f) => f.mimeType === 'application/json')).toHaveLength(1);
     });
+    it('a file whose contents were changed after the upload is not confirmed as the copy, even at the same size', async () => {
+        const d = makeDrive();
+        const first = await run(d);
+        const damaged = d.files.get(first.fileId);
+        damaged.text = damaged.text.replace(/./, (c) => (c === 'x' ? 'y' : 'x')); // same byte count, same appProperties.sha
+        expect(Buffer.byteLength(damaged.text)).toBe(Buffer.byteLength(text));
+        const r = await run(d, { now: Date.parse('2026-10-20T18:25:00Z') });
+        expect(r).toMatchObject({ ok: true, verified: true });
+        expect(r.reused).toBeUndefined();
+        expect(r.fileId).not.toBe(first.fileId);
+        expect(d.files.get(r.fileId).text).toBe(text);
+        const again = await run(d, { now: Date.parse('2026-10-21T18:25:00Z') });
+        expect(again).toMatchObject({ ok: true, reused: true, fileId: r.fileId });
+    });
+    it('a copy that cannot be read back is not confirmed either; a new one is written', async () => {
+        const d = makeDrive();
+        const first = await run(d);
+        const realFetch = d.fetch;
+        d.fetch = async (url, init) => (/alt=media/.test(url) && url.includes('/files/' + first.fileId + '?') ?{ ok: false, status: 500, json: async () => ({}), text: async () => '' } : realFetch(url, init));
+        const r = await run(d, { now: Date.parse('2026-10-20T18:25:00Z') });
+        expect(r).toMatchObject({ ok: true, verified: true });
+        expect(r.reused).toBeUndefined();
+        expect(r.fileId).not.toBe(first.fileId);
+    });
     it('keeps the newest N, trashes the rest (never hard-deletes) and never trashes the file it just wrote', async () => {
         const d = makeDrive();
         let last;
