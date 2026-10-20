@@ -101,6 +101,13 @@ export function emptyCollections() {
 
 /** Counted nowhere: big, transient or not the user's records. */
 const NOT_RECORDS = new Set(['settings', 'auth', 'sessions', 'incomeReceived', 'aiHistory', 'aiChats', 'memory']);
+/** The Balance page keeps its data in one object, { total, flows: [] }, not in a list of its own, so a person who only uses that page would
+ *  count as "nothing to back up". Its flows count; with no flows, a total the person typed in counts as one. A damaged value counts for nothing. */
+function balanceRecords(b) {
+    if (!b || typeof b !== 'object' || Array.isArray(b)) return 0;
+    if (Array.isArray(b.flows) && b.flows.length) return b.flows.length;
+    return typeof b.total === 'number' && Number.isFinite(b.total) && b.total !== 0 ? 1 : 0;
+}
 
 /* ------------------------------------------------------------------ small helpers */
 
@@ -217,6 +224,7 @@ export function buildPayload(data) {
     } catch (e) { return { ok: false, reason: 'the data could not be serialised' }; }
     let records = 0;
     for (const k of Object.keys(o)) if (!NOT_RECORDS.has(k) && Array.isArray(o[k])) records += o[k].length;
+    records += balanceRecords(o.balance);
     return { ok: true, text, bytes: utf8Bytes(text).length, records };
 }
 
@@ -229,11 +237,13 @@ export function validateRestore(obj) {
     const keys = Object.keys(obj).filter((k) => !EXCLUDE.has(k));
     const known = RECORD_KEYS.filter((k) => Array.isArray(obj[k]));
     const hasSettings = obj.settings && typeof obj.settings === 'object' && !Array.isArray(obj.settings);
-    if (!keys.length || (!known.length && !hasSettings)) return { ok: false, reason: 'This file does not look like a WealthFlow backup (none of its collections are there).' };
+    const hasBalance = !!obj.balance && typeof obj.balance === 'object' && Array.isArray(obj.balance.flows);
+    if (!keys.length || (!known.length && !hasSettings && !hasBalance)) return { ok: false, reason: 'This file does not look like a WealthFlow backup (none of its collections are there).' };
     for (const k of RECORD_KEYS) if (obj[k] !== undefined && !Array.isArray(obj[k])) return { ok: false, reason: 'This backup is damaged: "' + k + '" should be a list.' };
     let records = 0;
     for (const k of known) if (!NOT_RECORDS.has(k)) records += obj[k].length;
-    return { ok: true, records, collections: known.length };
+    records += balanceRecords(obj.balance);
+    return { ok: true, records, collections: known.length + (hasBalance ? 1 : 0) };
 }
 
 /* ------------------------------------------------------------------ restore points (Firestore) */

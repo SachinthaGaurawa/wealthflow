@@ -156,6 +156,18 @@ describe('the payload', () => {
         expect(p.records).toBe(3);
         expect(p.bytes).toBe(new TextEncoder().encode(p.text).length);
     });
+    it('counts the Balance page\'s own data (its flows, or a typed-in total): a person who only uses that page still has something to protect', async () => {
+        expect(buildPayload({ balance: { total: 0, flows: [{ id: 'f1' }, { id: 'f2' }] }, settings: { a: 1 } }).records).toBe(2);
+        expect(buildPayload({ balance: { total: 1500, flows: [] }, settings: { a: 1 } }).records, 'a typed-in balance is data').toBe(1);
+        expect(buildPayload({ balance: { total: 0, flows: [] }, settings: { a: 1 } }).records, 'the blank a reset leaves is not').toBe(0);
+        expect(buildPayload({ balance: { total: 'oops', flows: 'no' }, expenses: [{}] }).records, 'a damaged balance is not counted, and does not break the count').toBe(1);
+        // end to end: it is saved, not skipped as "nothing to back up"
+        const db = makeDb();
+        const r = await saveSnapshot({ db, uid: 'u1', payload: buildPayload({ balance: { total: 0, flows: [{ id: 'f1' }] }, settings: {} }), trigger: 'auto', now: 1760000000000 });
+        expect(r.ok).toBe(true);
+        expect(r.skipped, 'a balance-only account got no copy').toBeUndefined();
+        expect(r.records).toBe(1);
+    });
     it('is canonical: the same data gives the same bytes whatever order it was built in (page vs. Firestore)', () => {
         const a = { expenses: [{ id: 'e1', amount: 1, note: 'x' }], income: [], settings: { b: 1, a: { z: 1, y: 2 } } };
         const b = { settings: { a: { y: 2, z: 1 }, b: 1 }, income: [], expenses: [{ note: 'x', amount: 1, id: 'e1' }] };
@@ -191,6 +203,11 @@ describe('what may be restored', () => {
         const v = validateRestore(JSON.parse(buildPayload(data(4)).text));
         expect(v.ok).toBe(true);
         expect(v.records).toBe(5);
+    });
+    it('accepts a copy that holds only the Balance page\'s data, and counts it', () => {
+        const v = validateRestore({ balance: { total: 0, flows: [{ id: 'f1' }, { id: 'f2' }] } });
+        expect(v.ok).toBe(true);
+        expect(v.records).toBe(2);
     });
     it.each([
         ['an empty object', {}],
