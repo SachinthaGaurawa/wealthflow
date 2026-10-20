@@ -15373,12 +15373,33 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
         }
 
+        // Bring what the account holds into this device, and SAY SO when that cannot be done. _wfReconcileWithCloud is best-effort and silent, which
+        // is right for a nightly copy; a restore or a wipe REPLACES the account document, so a record only the account has (another device pushed
+        // it a minute ago and this one has not heard yet) would be in neither the safety copy nor what is left. No answer from the server is a
+        // refusal, not "carry on with what this device knows".
+        async function _wfPullAccountNow() {
+            try {
+                const doc = await userDocRef.get({ source: 'server' });
+                if (doc && doc.exists) {
+                    isSyncingFromCloud = true;
+                    let applied; try { applied = _wfApplyCloudData(doc.data()); } finally { isSyncingFromCloud = false; }
+                    try { _wfPaintCloudChange(applied); } catch (_) {}
+                    if (applied && applied.needPush) { setDirty(true); debouncedSync(); }
+                }
+                return { ok: true };
+            } catch (e) {
+                return { ok: false, reason: 'your account could not be read (' + ((e && (e.code || e.message)) || 'unknown error') + ')' };
+            }
+        }
+
         // A copy of what is here now, taken before anything is replaced or erased. A restore point in the account or — when that cannot be
         // written (a very large account, an outage) — a Google Drive file proven by its size. { ok, via } or { ok:false, reason }.
         async function _wfSaveSafetyCopy(trigger) {
             const B = _wfBackupModule();
             if (!B) return { ok: false, reason: 'the backup module did not load' };
             if (!window.currentUser || !userDocRef) return { ok: false, reason: 'you are not signed in' };
+            const pulled = await _wfPullAccountNow();
+            if (!pulled.ok) return pulled;
             const cur = B.buildPayload(appData);
             if (!cur.ok) return { ok: false, reason: cur.reason };
             const sp = await B.saveSnapshot({ db: userDocRef.firestore, uid: window.currentUser.uid, payload: cur, trigger });

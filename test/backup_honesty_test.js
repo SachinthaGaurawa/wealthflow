@@ -183,6 +183,15 @@ const _wfGetDriveRefreshToken = () => env.refresh || '';
 const _wfEnsureDriveTokenDurable = async () => { env.mintCalls++; if (env.mint) { gapiToken = env.mint; return true; } return false; };
 const _ensureDriveTokenSilent = async () => false;
 const _wfReconcileWithCloud = async () => { env.reconciles++; };
+// The merge itself is tested in cloud_merge_test.js; here it only has to add the records the account has and this device lacks.
+const _wfApplyCloudData = (d) => {
+    env.applied.push(d);
+    let added = 0;
+    for (const k of ['expenses', 'income']) for (const r of (d[k] || [])) if (!(appData[k] || []).some((x) => x.id === r.id)) { (appData[k] = appData[k] || []).push(structuredClone(r)); added += 1; }
+    return { nonSessionChanged: added > 0, sessionsChanged: false, needPush: !!env.needPush };
+};
+const _wfPaintCloudChange = () => {};
+const debouncedSync = () => { env.debounced++; };
 const _unregisterAutoBackupSync = () => {};
 const _registerAutoBackupSync = () => {};
 const _registerPeriodicAutoBackupSync = () => {};
@@ -251,7 +260,7 @@ function loadPage(over = {}) {
         },
     } : null;
     const win = { WFBackup: over.noModule ? null : B, currentUser: user, _isDecoyMode: !!over.decoy, fetch: drive.fetch };
-    const env = { appData, gapiToken: over.gapiToken || null, mint: over.mint === undefined ? 'good' : over.mint, mintCalls: 0, reconciles: 0, cloudDeletes: [], refresh: over.refresh || '' };
+    const env = { appData, gapiToken: over.gapiToken || null, mint: over.mint === undefined ? 'good' : over.mint, mintCalls: 0, reconciles: 0, cloudDeletes: [], refresh: over.refresh || '', applied: [], debounced: 0, needPush: !!over.needPush };
     const elements = new Proxy({}, { get: (t, id) => t[id] || (t[id] = makeEl()) });
     const smart = [];
     const fake = {
@@ -705,6 +714,31 @@ describe('restore: a copy of what is here comes first, and nothing is replaced i
         expect(doc.expenses).toEqual([{ id: 'old1', amount: 1 }]);
     });
 
+    it('the safety copy holds what the account has, not only what this device has heard: a record another device pushed a minute ago is in it', async () => {
+        const cloudDoc = { expenses: [...baseData().expenses, { id: 'e4', amount: 400 }], income: baseData().income };
+        const p = loadPage({ cloudDoc });
+        await p._wfApplyRestore(restoredFile(), 'x');
+        expect(p.env.applied, 'the account was never read before the copy was taken').toHaveLength(1);
+        const safety = rps(p.db).find((r) => r.trigger === 'pre-restore');
+        const back = await loadSnapshot({ db: p.db, uid: 'u1', id: safety.id });
+        expect(back.data.expenses.map((e) => e.id), 'the restore replaced a record that was in no copy').toEqual(['e1', 'e2', 'e3', 'e4']);
+    });
+
+    it('what this device holds and the account lacks is pushed on, not left waiting for the next minute', async () => {
+        const p = loadPage({ cloudDoc: { expenses: [], income: [] }, needPush: true });
+        await p._wfApplyRestore(restoredFile(), 'x');
+        expect(p.env.debounced).toBeGreaterThan(0);
+    });
+
+    it('refuses before anything is written when the account cannot be read for the safety copy: no copy is taken from a stale device', async () => {
+        const p = loadPage({ userGetFails: true });
+        const before = structuredClone(p.appData);
+        await p._wfApplyRestore(restoredFile(), 'x');
+        expect(p.getAppData()).toEqual(before);
+        expect(p.db.state.writes, 'a safety copy of a possibly stale device was written').toEqual([]);
+        expect(p.notes.find((n) => n.kind === 'error').m).toMatch(/safety copy of your current data could not be saved \(your account could not be read/);
+    });
+
     it('replaces the whole data set: a collection the copy does not have ends up empty, it is not left as it is today', async () => {
         // A copy older than a feature (or a partial file) never had that collection. Written over today's document it kept today's cheques,
         // people and bill marks next to expenses from the past that they no longer match.
@@ -921,6 +955,14 @@ describe('factory reset keeps a way back', () => {
         expect(p.getAppData().expenses).toEqual(before.expenses);
         expect(p.calls).not.toContain('users.set');
         expect(p.calls).not.toContain('localStorage.clear');
+    });
+    it('the "pre-wipe" copy holds what the account has, not only what this device has heard: a record another device pushed a minute ago is in it', async () => {
+        const cloudDoc = { expenses: [...baseData().expenses, { id: 'e4', amount: 400 }], income: baseData().income };
+        const p = loadPage({ cloudDoc });
+        await pinAndGo(p);
+        const safety = rps(p.db).find((r) => r.trigger === 'pre-wipe');
+        const back = await loadSnapshot({ db: p.db, uid: 'u1', id: safety.id });
+        expect(back.data.expenses.map((e) => e.id), 'the wipe replaced a record that was in no copy').toEqual(['e1', 'e2', 'e3', 'e4']);
     });
     it('saves a "pre-wipe" copy first; after the wipe that copy still loads with everything in it', async () => {
         const p = loadPage();
