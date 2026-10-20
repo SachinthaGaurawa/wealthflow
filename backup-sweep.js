@@ -40,6 +40,9 @@ export const MAX_BACKUPS = 20;
 export const TOTAL_BUDGET_MS = 45000;
 /** The function is killed at 60 s (vercel.json maxDuration). No account may be given more than what is left of this, so the run still answers. */
 export const RUN_CEILING_MS = 55000;
+/** Reading the schedules is part of the run, not extra to it: pages that each answer inside their own 10 s still add up (three schedules, up to six
+ *  pages each), and that time is spent before any account is looked at. The whole scan gets this much; the accounts get what is left of the ceiling. */
+export const SCAN_BUDGET_MS = 20000;
 export const SCAN_PAGE = 400;
 export const SCAN_MAX = 2000;
 export const FREQS = ['daily', 'weekly', 'monthly'];
@@ -202,7 +205,7 @@ export async function handleSweep(req, res, deps) {
     const now = deps.now();
 
     let scheduled, capped = [];
-    try { ({ list: scheduled, capped } = await readScheduled(db, deps.scanMax || SCAN_MAX)); }
+    try { ({ list: scheduled, capped } = await withDeadline(readScheduled(db, deps.scanMax || SCAN_MAX), deps.scanBudgetMs || SCAN_BUDGET_MS, 'schedules')); }
     catch (e) {
         console.error('[WF-CRON] backup-sweep could not read the schedules: ' + String((e && e.message) || e).slice(0, 160));
         return j(res, 500, { ok: false, error: 'could not read the schedules' });

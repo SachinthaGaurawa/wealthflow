@@ -542,6 +542,22 @@ describe('a stalled account or a stalled body cannot hold the run until the plat
         expect(logs.join('\n')).toMatch(/errored: backup did not answer within/);
     });
 
+    it('reading the schedules is inside the same budget: pages that each answer in time but together outlast the platform end as one normal answer', async () => {
+        // Three schedules, each page well inside its own 10 s deadline (here 120 ms), add up to more than the run may spend before any account work.
+        const slowPage = () => new Promise((resolve) => setTimeout(() => resolve({ docs: [] }), 120));
+        const q = { select() { return q; }, limit() { return q; }, startAfter() { return q; }, get: slowPage };
+        const slowDb = { collection: () => ({ where: () => q }) };
+        const w = world({ users: {} });
+        w.deps.getAdminDb = async () => ({ db: slowDb, admin: w.admin });
+        w.deps.scanBudgetMs = 200;
+        const t0 = Date.now();
+        const r = await call(w.deps);
+        expect(Date.now() - t0, 'the run kept reading pages after its scan budget').toBeLessThan(330);
+        expect(r.status).toBe(500);
+        expect(r.json.error).toBe('could not read the schedules');
+        expect(logs.join('\n')).toMatch(/could not read the schedules: schedules did not answer within 200ms/);
+    });
+
     it('the server\'s own network calls keep their deadline while the body is read (a response that sends headers and then goes quiet)', async () => {
         const server = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.write('{"access_to'); /* and never ends */ });
         await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));

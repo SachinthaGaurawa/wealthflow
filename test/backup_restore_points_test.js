@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Backup, {
     nextTrigger, lastTrigger, retryDelayMs, backupDue, staleAfterMs,
-    buildPayload, validateRestore, selectToKeep, saveSnapshot, loadSnapshot, listSnapshots, annotateSnapshot, writeStatus, readStatus, sha256Hex,
+    buildPayload, validateRestore, emptyCollections, selectToKeep, saveSnapshot, loadSnapshot, listSnapshots, annotateSnapshot, writeStatus, readStatus, sha256Hex,
     driveBackup, ensureDriveFolder, listDriveBackups, pruneDriveBackups, driveReasonText, restorePointReasonText, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, BACKUP_STAMP_KEYS, EXCLUDE_KEYS,
     KEEP_NEWEST, KEEP_DAYS, MAX_SNAPSHOT_BYTES, FOLDER_MIME, DRIVE_FOLDER_NAME, RECORD_KEYS, SNAP_COL, DATA_COL, STATUS_COL,
 } from '../wealthflow-backup.js';
@@ -714,6 +714,19 @@ describe('the module and index.html agree', () => {
         expect(m, '_WF_RECORD_KEYS moved in index.html — retarget this test').toBeTruthy();
         const page = m[1].split(',').map((s) => s.trim().replace(/^'|'$/g, ''));
         expect(RECORD_KEYS).toEqual(page);
+    });
+    it('emptyCollections() is the set of empty collections the factory reset names (a restore fills in what a copy lacks with the same blanks)', () => {
+        const at = HTML.indexOf('async function executeFactoryReset');
+        const lit = HTML.slice(HTML.indexOf('appData = {', at), HTML.indexOf('settings: currentSettings', at));
+        expect(lit, 'the factory reset literal moved in index.html — retarget this test').toContain('auth: currentAuth');
+        const lists = [...lit.matchAll(/(\w+): \[\]/g)].map((m) => m[1]).filter((k) => k !== 'flows');      // flows lives inside balance
+        const maps = [...lit.matchAll(/(\w+): \{\}/g)].map((m) => m[1]).filter((k) => k !== '_tomb' && k !== '_kut');
+        const blank = emptyCollections();
+        expect(Object.keys(blank).filter((k) => Array.isArray(blank[k])).sort()).toEqual(lists.slice().sort());
+        expect(Object.keys(blank).filter((k) => blank[k] && !Array.isArray(blank[k]) && Object.keys(blank[k]).length === 0).sort()).toEqual(maps.sort());
+        expect(blank.balance).toEqual({ total: 0, flows: [] });
+        expect(emptyCollections(), 'a fresh object every time: a restore must not share one list between two keys or two restores').not.toBe(emptyCollections());
+        expect(blank.cheques).not.toBe(blank.people);
     });
     it('the default export and the named exports are the same functions', () => {
         expect(Backup.backupDue).toBe(backupDue);

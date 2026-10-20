@@ -87,6 +87,18 @@ export const EXCLUDE_KEYS = Array.from(EXCLUDE);
  *  and "identical data" could never be seen. A restore keeps this device's own values for them anyway (index.html _wfApplyRestore). */
 const BACKUP_STAMPS = new Set(['lastBackup', 'lastAutoBackupAt', 'lastBackupMeta', 'lastBackupAttempt', 'lastDriveBackup']);
 export const BACKUP_STAMP_KEYS = Array.from(BACKUP_STAMPS);
+/** What a data set holds for a collection that was never written: every list empty, every map empty, the balance at zero. This is the set the
+ *  factory reset names (index.html executeFactoryReset). A restore fills in any of these the copy does not carry, because replacing the
+ *  data means the collections the copy lacks end up empty, not left as they are today. Anything not named here (AI chats, tombstones,
+ *  settings, the PIN) is not "data the copy can be missing" and is left alone. */
+export function emptyCollections() {
+    const o = {};
+    for (const k of RECORD_KEYS) o[k] = [];
+    for (const k of ['subMerchantMap', 'incomeReceived', 'incomeDelayed', 'billPaid', 'billDelayed', 'cribAnalyses']) o[k] = {};
+    o.balance = { total: 0, flows: [] };
+    return o;
+}
+
 /** Counted nowhere: big, transient or not the user's records. */
 const NOT_RECORDS = new Set(['settings', 'auth', 'sessions', 'incomeReceived', 'aiHistory', 'aiChats', 'memory']);
 
@@ -584,7 +596,7 @@ export function describeBackup({ freq, lastGoodMs, rp, drive, attempt, now = Dat
 
 const API = {
     SNAP_COL, DATA_COL, STATUS_COL, MAX_SNAPSHOT_BYTES, KEEP_NEWEST, KEEP_DAYS, DRIVE_FOLDER_NAME, DRIVE_KEEP, SERVER_TZ_OFFSET_MIN, RECORD_KEYS, EXCLUDE_KEYS, BACKUP_STAMP_KEYS,
-    sha256Hex, nextTrigger, lastTrigger, retryDelayMs, backupDue, staleAfterMs, buildPayload, validateRestore, selectToKeep,
+    sha256Hex, nextTrigger, lastTrigger, retryDelayMs, backupDue, staleAfterMs, buildPayload, validateRestore, emptyCollections, selectToKeep,
     listSnapshots, saveSnapshot, annotateSnapshot, writeStatus, readStatus, loadSnapshot, driveFailure, driveReasonText, restorePointReasonText, ensureDriveFolder, listDriveBackups,
     pruneDriveBackups, driveBackup, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots,
 };

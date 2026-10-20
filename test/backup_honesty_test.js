@@ -705,6 +705,35 @@ describe('restore: a copy of what is here comes first, and nothing is replaced i
         expect(doc.expenses).toEqual([{ id: 'old1', amount: 1 }]);
     });
 
+    it('replaces the whole data set: a collection the copy does not have ends up empty, it is not left as it is today', async () => {
+        // A copy older than a feature (or a partial file) never had that collection. Written over today's document it kept today's cheques,
+        // people and bill marks next to expenses from the past that they no longer match.
+        const mine = {
+            ...baseData(),
+            cheques: [{ id: 'c1', amount: 9 }], people: [{ id: 'p1', name: 'Nimal' }], sweeps: [{ id: 'sw1' }],
+            billPaid: { '2026-10': { rent: true } }, subMerchantMap: { a: 'b' }, cribAnalyses: { x: 1 }, balance: { total: 5, flows: [1] },
+            aiChats: [{ id: 'chat1' }],
+        };
+        const p = loadPage({ appData: mine });
+        await p._wfApplyRestore(restoredFile(), 'an older copy');
+        const doc = p.db.store.get('users/u1');
+        for (const [where, a] of [['on this device', p.getAppData()], ['in the account', doc]]) {
+            expect(a.expenses, where).toEqual([{ id: 'old1', amount: 1 }]);
+            for (const k of ['cheques', 'people', 'sweeps', 'subscriptions', 'payAccounts', 'loans']) expect(a[k], `${k} ${where} kept today's records`).toEqual([]);
+            for (const k of ['billPaid', 'subMerchantMap', 'cribAnalyses', 'incomeReceived']) expect(a[k], `${k} ${where} kept today's entries`).toEqual({});
+            expect(a.balance, where).toEqual({ total: 0, flows: [] });
+        }
+        expect(p.getAppData().aiChats, 'a key the backup module does not name as data is left alone').toEqual([{ id: 'chat1' }]);
+        expect(p.store.has('wf2_cheques'), 'the emptied collection was not written to this device').toBe(true);
+    });
+
+    it('a copy that does carry a collection keeps it as it is', async () => {
+        const p = loadPage({ appData: { ...baseData(), cheques: [{ id: 'c1' }] } });
+        await p._wfApplyRestore({ ...restoredFile(), cheques: [{ id: 'old-c' }], balance: { total: 7, flows: [] } }, 'x');
+        expect(p.getAppData().cheques).toEqual([{ id: 'old-c' }]);
+        expect(p.getAppData().balance).toEqual({ total: 7, flows: [] });
+    });
+
     it('changes nothing when the account document cannot be read first', async () => {
         const p = loadPage({ userGetFails: true });
         const before = structuredClone(p.appData);

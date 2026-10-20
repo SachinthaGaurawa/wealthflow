@@ -15558,6 +15558,11 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     }
                     replaced[key] = value;
                 });
+                // Replacing means the collections the copy does not have end up empty. A copy older than a feature (or a partial file) lacks
+                // them, and the write below starts from today's document, so without this today's cheques, people and bill marks would stay next
+                // to expenses from the past that they no longer match.
+                const blank = B.emptyCollections();
+                Object.keys(blank).forEach((key) => { if (restored[key] === undefined) replaced[key] = blank[key]; });
                 // THE ACCOUNT FIRST, THIS DEVICE SECOND. Replaced here before the account took it, a failed save left a restore that was neither done
                 // nor undone: the retry is a merge, and a merge puts back every record the copy did not have (500 + 3 = 503).
                 const stamp = Date.now();
