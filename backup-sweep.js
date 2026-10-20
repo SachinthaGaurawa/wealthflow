@@ -221,7 +221,7 @@ export async function handleSweep(req, res, deps) {
             // whole run unanswered. It gets what is left; an account that does not finish is retried by the next run.
             const left = Math.max(1000, RUN_CEILING_MS - (deps.clock() - startedAt));
             const r = await withDeadline(backupAccount({ db, admin, acct: scheduled[i], deps, now }), left, 'backup');
-            if (['backed-up', 'failed'].includes(r.outcome)) backups += 1;      // an empty account costs one read and one tiny write: it must not use up the cap that real copies are limited by
+            if (r.outcome === 'backed-up') backups += 1;      // the cap is on real copies: an empty account (one read, one tiny write) and a failing one (it backs off and the time budget bounds it) must not starve the accounts behind them
             results.push({ ...r, uid: r.uid.slice(0, 6) });
             if (r.outcome === 'failed') console.warn(`[WF-BACKUP] account ${r.uid.slice(0, 6)} backup failed: ${String(r.reason).slice(0, 140)}`);
         } catch (e) {

@@ -478,6 +478,17 @@ describe('one run stays inside its budget', () => {
         expect(r.json).toMatchObject({ backedUp: 3, empty: MAX_BACKUPS + 10, leftOver: 0 });
         expect(rpCount(w.db, 'z1') + rpCount(w.db, 'z2') + rpCount(w.db, 'z3')).toBe(3);
     });
+    it('accounts that keep failing do not use up the cap either: the accounts behind them still get their copy', async () => {
+        const users = {};
+        const tooBig = () => userDoc({ extra: { expenses: [{ id: 'e0', amount: 1, note: 'x'.repeat(1100000) }] } });   // over the restore-point size, and no Drive
+        for (let i = 0; i < MAX_BACKUPS + 5; i++) users['a' + String(i).padStart(3, '0')] = tooBig();    // sorts first
+        users.z1 = userDoc(); users.z2 = userDoc(); users.z3 = userDoc();
+        const w = world({ users });
+        const r = await call(w.deps);
+        expect(r.json.failed).toBe(MAX_BACKUPS + 5);
+        expect(r.json).toMatchObject({ backedUp: 3, leftOver: 0 });
+        expect(rpCount(w.db, 'z1') + rpCount(w.db, 'z2') + rpCount(w.db, 'z3')).toBe(3);
+    });
     it('stops when the time budget is spent', async () => {
         const w = world({ users: { a: userDoc(), b: userDoc() } });
         let t = 0;
