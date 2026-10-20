@@ -26,7 +26,7 @@
  * second is what the owner experiences.
  * ===========================================================================*/
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -141,12 +141,19 @@ describe('one-time and cycle-aware bill reminders', () => {
     });
 
     it('gives a one-time payment a fortnight of notice and a bill that comes round monthly a week', () => {
+        // Pinned to mid-month. "Today + 12 days" is in NEXT month from the 20th on, so a monthly bill whose due day is that small number has
+        // already passed THIS month's due date and is — correctly — overdue for it; unpinned, this test was red on the 20th-31st of every month.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 5, 10, 12, 0, 0));
+        try { runFortnightAndWeek(); } finally { vi.useRealTimers(); }
+    });
+    function runFortnightAndWeek() {
         const once = { id: 'ONCE9', name: 'Lifetime licence', amount: 45000, cycle: 'once', dueDate: iso(12), createdAt: iso(-10) };
         const day = new Date(Date.now() + 12 * 86400000);
         const monthly = { id: 'M9', name: 'Gym', amount: 3000, cycle: 'monthly', dueDay: day.getDate(), createdAt: iso(-400) };
         expect(load({ subscriptions: [once] }).api.compute().map((n) => n.id)).toEqual([`sub:ONCE9:${iso(12)}:soon`]);
         expect(load({ subscriptions: [monthly] }).api.compute().filter((n) => /Gym/.test(n.title))).toEqual([]);
-    });
+    }
 
     it('a new stage is a new alert: the week-ahead, the day itself and every overdue week are each their own id, so a device is told again', () => {
         const idOf = (offset) => load({ subscriptions: [{ id: 'ST', name: 'Levy', amount: 1000, cycle: 'once', dueDate: iso(offset), createdAt: iso(-90) }] }).api.compute().map((n) => n.id.split(':').pop());

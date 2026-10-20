@@ -759,7 +759,7 @@
         const _dl = { fetched: 0, total: 0, failed: [] };
 
         const steps = [
-            { pct: 12, eta: 9, label: 'Encrypting and backing up your data…', run: async () => {
+            { pct: 12, eta: 9, label: 'Backing up your data…', run: async () => {
                 try { if (typeof window.backupNow === 'function') await window.backupNow(true, 'pre-update'); } catch (_) {}
                 // Local pre-update snapshot so self-heal can roll data back if the
                 // new version crash-loops. Stores the wf2_* keys only (the app's data).

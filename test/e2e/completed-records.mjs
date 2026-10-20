@@ -96,7 +96,9 @@ check(JSON.stringify(before) === JSON.stringify(after), `finished records must s
 await page.evaluate(() => deleteIncome('inv2'));
 await page.waitForTimeout(300);
 check(await page.evaluate(() => /Delete Income Source\?/.test(document.body.textContent)), 'an open investment still asks before deleting');
-await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /Delete/.test(x.textContent) && x.className.includes('btn-danger')); if (b) b.click(); });
+// The confirmation's own button: any other Delete-styled button in the page (Restore Vault's "Delete all restore points" is one, and sits earlier in the
+// document) is not the dialog this step is answering.
+await page.evaluate(() => { const b = document.getElementById('confBtn'); if (b && /Delete/.test(b.textContent) && b.className.includes('btn-danger')) b.click(); });
 await page.waitForTimeout(300);
 check((await count('income')) === before.income - 1, 'an open investment can still be deleted');
 

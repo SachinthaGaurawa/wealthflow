@@ -23,6 +23,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import WFBackup from '../wealthflow-backup.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
@@ -59,7 +60,8 @@ describe('Week Starts On decides the weekly backup day', () => {
     function loadSchedule(weekStart) {
         const DB = makeDB(weekStart ? { weekStart } : {});
         const src = blockAt('function _weekStartDay()') + '\n' + blockAt('function _nextScheduledBackupTime(freq, fromDate)') + '\nreturn _nextScheduledBackupTime;';
-        return new Function('DB', 'window', src)(DB, {});
+        // The schedule rules live in wealthflow-backup.js (the page and the server cron share them); the page function asks window.WFBackup.
+        return new Function('DB', 'window', src)(DB, { WFBackup });
     }
     // Wednesday 7 Oct 2026, 10:00
     const wed = new Date(2026, 9, 7, 10, 0, 0);

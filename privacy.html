@@ -83,7 +83,7 @@ footer a:hover{color:var(--gold-300);text-decoration:underline}
 
 <main id="main" class="wrap">
 <h1>WealthFlow Privacy Policy</h1>
-<p class="meta">Last updated: 19 October 2026 &middot; Applies to <a href="https://www.wealthflow.lk">www.wealthflow.lk</a>, the WealthFlow web app and its installed (PWA) versions</p>
+<p class="meta">Last updated: 20 October 2026 &middot; Applies to <a href="https://www.wealthflow.lk">www.wealthflow.lk</a>, the WealthFlow web app and its installed (PWA) versions</p>
 
 <div class="summary">
     <p><strong>In short.</strong> WealthFlow is a personal-finance app. To work, it stores the financial records you enter or import, and, only if you choose to connect them, reads bank-statement emails from your Gmail and keeps backup files in your Google Drive. We do not sell your data, we do not show advertising, and we do not use your data to build advertising profiles. Data from Google APIs is used only to provide the features you can see in the app (see <a href="#google">section 3</a>). You can disconnect Google, export or delete your data, and ask us to erase your account at any time (<a href="#rights">sections 10 to 12</a>).</p>
@@ -216,6 +216,8 @@ footer a:hover{color:var(--gold-300);text-decoration:underline}
     <li>Your financial records are kept for as long as your account exists, so that your history and DSCR figures stay available.</li>
     <li>Gmail connection details are kept until you disconnect Gmail or ask us to erase your account.</li>
     <li>Shared statement links expire automatically after 30 days.</li>
+    <li><strong>Restore points (backups kept in your account).</strong> If you switch the Auto-Backup Schedule on, WealthFlow saves a full copy of your records in your own account at 23:55 (or when you press &ldquo;Backup Now&rdquo;), and a scheduled server job saves the same copy overnight for accounts whose schedule is on, even when the app is closed. We keep the newest five, the newest of each of the last 14 days, the fullest copy of the last 60 days, and the safety copies taken just before a restore or a reset for 30 days; older ones are deleted automatically. You can delete all of them yourself in Settings (Restore Vault, &ldquo;Delete all restore points&rdquo;), and they are removed when your account is erased.</li>
+    <li><strong>Backups in your Google Drive.</strong> If you connect Drive, a backup file is saved in a &ldquo;WealthFlow Backups&rdquo; folder in <em>your own</em> Drive, and the newest six are kept; older ones are moved to your Drive trash. They belong to your Google account.</li>
     <li>Server logs kept by our hosting provider are retained for the periods that provider sets.</li>
     <li>After a deletion request we remove or anonymise your personal data within 30 days, except where we must keep specific records by law, or in backups that are overwritten on their normal cycle.</li>
 </ul>
@@ -233,7 +235,7 @@ footer a:hover{color:var(--gold-300);text-decoration:underline}
 
 <h2 id="delete">12. Deleting your data</h2>
 <ul>
-    <li><strong>In the app.</strong> You can delete individual records, and the &ldquo;Factory reset&rdquo; option in settings erases your financial records from the device and from your cloud copy. It keeps your sign-in so you can start again.</li>
+    <li><strong>In the app.</strong> You can delete individual records, and the &ldquo;Factory reset&rdquo; option in settings erases your financial records from the device and from your live cloud copy. It keeps your sign-in so you can start again. It first saves a safety copy in your account, kept for 30 days so a mistake can be undone; restore points you already have also stay until they rotate out (see <a href="#retention">section 9</a>) unless you delete them in Restore Vault.</li>
     <li><strong>Full account erasure.</strong> To have your account and the data we hold about you on our servers (including the Gmail connection, parsed-email inbox and SMS logs) deleted, email us from the address you signed up with. We will confirm and complete it within 30 days.</li>
     <li><strong>Backups in your own Drive.</strong> Backup files WealthFlow created in your Google Drive belong to your Google account; delete them from Drive when you no longer want them.</li>
 </ul>

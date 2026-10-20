@@ -14,10 +14,6 @@ const CACHE_NAME = 'wealthflow-v7.69.35';
 // and vercel.json's no-cache headers mean the next navigation revalidates anyway.
 const NET_TIMEOUT_MS = 8000;
 
-// The background-sync backup is not user-facing and may run on a waking device,
-// so it gets a longer budget than the shell.
-const SYNC_TIMEOUT_MS = 20000;
-
 // ============================================================================
 //  WHY THERE IS A fetch HANDLER HERE NOW
 //  --------------------------------------------------------------------------
@@ -463,57 +459,18 @@ self.addEventListener('periodicsync', (event) => {
     }
 });
 
+// A wake-up call, not a backup. Background Sync and Periodic Background Sync can fire when no tab is open, and a worker has no
+// sign-in and no copy of the data, so the only honest thing it can do is ask an open window to run the schedule check. The closed-app
+// case is covered by the server (api/backup-sweep.js, twice a day).
+//
+// What was here before: with no window open the worker POSTed a "staged" copy of the data (kept in Cache Storage as plaintext) to the
+// user's Firestore document with the public API key only. Firestore's rules refuse an unauthenticated write, and the copy it staged was
+// the live data itself — not a backup of anything — so even an accepted write would not have restored a single record.
 async function _runAutoBackupFromSW(triggerKind) {
     try {
         const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-        if (allClients && allClients.length) {
-            for (const c of allClients) c.postMessage({ type: 'WF_RUN_AUTO_BACKUP', triggerKind });
-            console.log('[SW] asked', allClients.length, 'client(s) to run a backup');
-            return;
-        }
-
-        const cache = await caches.open('wf-backup-cache');
-        const stored = await cache.match('/wf-pending-backup');
-        if (!stored) {
-            console.log('[SW] no pending backup snapshot found — nothing to do');
-            return;
-        }
-        const payload = await stored.json();
-        if (!payload || !payload.uid || !payload.snapshot || !payload.firestoreUrl) {
-            console.log('[SW] pending snapshot incomplete — skipping');
-            return;
-        }
-
-        // This one already supplies an init, and it is not a navigate request, so
-        // a real AbortSignal is safe here — unlike the app-shell fetch above.
-        const syncCtl = new AbortController();
-        const syncTimer = setTimeout(() => syncCtl.abort(), SYNC_TIMEOUT_MS);
-        let r;
-        try {
-            r = await fetch(payload.firestoreUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload.body),
-                signal: syncCtl.signal
-            });
-        } finally {
-            clearTimeout(syncTimer);
-        }
-        if (r.ok) {
-            console.log('[SW] cloud-only backup succeeded (' + triggerKind + ')');
-            try {
-                await self.registration.showNotification('Auto-Backup Complete', {
-                    body: 'Your WealthFlow data was backed up automatically while the app was closed.',
-                    icon: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
-                    badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
-                    tag: 'wf-auto-backup',
-                    silent: false,
-                    data: { url: '/?source=auto-backup' }
-                });
-            } catch (_) {}
-        } else {
-            console.warn('[SW] Firestore push failed', r.status);
-        }
+        for (const c of allClients) c.postMessage({ type: 'WF_RUN_AUTO_BACKUP', triggerKind });
+        console.log('[SW] asked', allClients.length, 'client(s) to run the backup check');
     } catch (e) {
         console.warn('[SW] _runAutoBackupFromSW error:', e && e.message);
     }

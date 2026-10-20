@@ -179,10 +179,12 @@ describe('2. CACHE_NAME must name a cache that exists', () => {
         expect(sw).toMatch(/request\.method\s*!==\s*['"]GET['"]/);
     });
 
-    it('purges old WealthFlow code caches but preserves the backup cache', () => {
+    it('purges old WealthFlow code caches, and no longer keeps (or reads) a staged copy of the data', () => {
         expect(sw).toMatch(/keys\.filter\(k\s*=>\s*k\.indexOf\(['"]wealthflow-['"]\)\s*===\s*0\s*&&\s*k\s*!==\s*CACHE_NAME\)/);
-        const activate = sw.slice(sw.indexOf("self.addEventListener('activate'"), sw.indexOf("self.addEventListener('push'"));
-        expect(activate).not.toContain("caches.delete('wf-backup-cache')");
+        // The retired background-sync fallback staged a plaintext copy of the user's data in Cache Storage; the page deletes it once,
+        // and nothing in the worker may open it again.
+        expect(sw).not.toContain('wf-backup-cache');
+        expect(sw).not.toContain('wf-pending-backup');
     });
 });
 

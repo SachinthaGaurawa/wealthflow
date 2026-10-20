@@ -695,7 +695,11 @@ export const BUDGETS = {
     // 2026-10-19 (two merges that each fit alone, and not together; measured 2,575,771 + ~0.1% headroom): 2_575_000 -> 2_578_500. The older statement expenses' category rename (index.html, and relabelApply /
     // relabelUndo in wealthflow-statement-router.js) and the own-money rule's card-payment line (wealthflow-own-money.js) were each measured against a main that did not yet hold the other; main at their merge
     // measured 2,575,412, 412 over. The router grew a little more here: an undone rename now marks the record (`catUndone`) so another device does not rename it again. About a third is comments recording why.
-    totalJsBytes: 2_578_500,
+    // 2026-10-20 (the Auto-Backup Schedule, which did not back anything up; measured 2,617,413 + ~0.1% headroom): 2_578_500 -> 2_620_000. wealthflow-backup.js (40 KB, about 40% of it the comments recording
+    // why) is the one rule for when the schedule fires, what a real copy is (a restore point the account acknowledged, a Drive file proven by its exact size), how a failure backs off, what a restore must
+    // prove, and what the Settings card may say; the page, the nightly server run (backup-sweep.js, not counted: it is not a wealthflow-* module) and the tests all use it. index.html SHRANK by about
+    // 8 KB at the same time (the old backupNow, the staged-snapshot code and the Drive uploader are gone), so htmlBytes above is unchanged and now has headroom.
+    totalJsBytes: 2_620_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
@@ -794,7 +798,8 @@ export const BUDGETS = {
     // counts every deployable module, so the identity authority stays visible.
     // 2026-10-10: 87 -> 88 for wealthflow-shell.js (tab bar, More sheet, command palette; see totalJsBytes).
     // 2026-10-10: 88 -> 89 for wealthflow-cheques.js (what a cheque row on a statement is and which tracked cheque it settles; see totalJsBytes).
-    moduleCount: 89,   // measured 89
+    // 2026-10-20: 89 -> 90 for wealthflow-backup.js (when the schedule fires and what a backup is; shared by the page and the nightly server run; see totalJsBytes).
+    moduleCount: 90,   // measured 90
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -865,7 +870,8 @@ export const BUDGETS = {
     // 2026-10-05: 79 -> 80 for wealthflow-people-ui.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-10: 80 -> 81 for wealthflow-shell.js — a plain deferred script, so renderBlockingScripts below is unchanged at 2.
     // 2026-10-10: 81 -> 82 for wealthflow-cheques.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
-    scriptTags: 82,              // measured 82; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
+    // 2026-10-20: 82 -> 83 for wealthflow-backup.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
+    scriptTags: 83,              // measured 83; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
