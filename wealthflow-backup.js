@@ -554,7 +554,7 @@ async function uploadOnce({ f, token, folderId, text, bytes, sha, safeEmail, uid
         // The listing only says what the file was when it was written (the SHA is a label, the size can survive an edit). The newest
         // copy counts as this run's copy only if reading it back gives exactly these bytes; otherwise a fresh file is written below.
         const back = await downloadDriveBackup({ fetch: f, token, file: newest });
-        if (back.ok && back.text === text) return { ok: true, verified: true, reused: true, fileId: newest.id, fileName: newest.name, size: bytes, folderId, trashed: 0 };
+        if (back.ok && back.text === text) return { ok: true, verified: true, reused: true, fileId: newest.id, fileName: newest.name, size: bytes, folderId, trashed: await pruneDriveBackups({ fetch: f, token, files, keep, protect: newest.id }) }; // confirming must not skip the trim
         if (!back.ok && back.status === 401) return { ok: false, verified: false, status: 401, reason: 'token-expired' };
     }
     const day = new Date(now).toISOString().slice(0, 10);

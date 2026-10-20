@@ -473,6 +473,20 @@ describe('driveBackup: the copy in the user\'s own Drive', () => {
         expect(r.reused).toBeUndefined();
         expect(r.fileId).not.toBe(first.fileId);
     });
+    it('an unchanged copy is confirmed AND the leftovers a failed earlier trim left behind are still trimmed', async () => {
+        const d = makeDrive();
+        let text6;
+        for (let i = 0; i < 4; i++) { // earlier runs whose trim never happened (keep is huge here)
+            text6 = buildPayload(data(3 + i)).text;
+            await driveBackup({ fetch: d.fetch, getToken: tokens('good'), text: text6, uid: 'abcdef123', email: 'o@x.com', now: Date.parse('2026-10-1' + i + 'T18:25:00Z'), keep: 99 });
+        }
+        const live = () => [...d.files.values()].filter((f) => f.mimeType === 'application/json' && !f.trashed);
+        expect(live()).toHaveLength(4);
+        const r = await driveBackup({ fetch: d.fetch, getToken: tokens('good'), text: text6, uid: 'abcdef123', email: 'o@x.com', now: Date.parse('2026-10-20T18:25:00Z'), keep: 2 });
+        expect(r).toMatchObject({ ok: true, verified: true, reused: true, trashed: 2 });
+        expect(live()).toHaveLength(2);
+        expect(live().some((f) => f.id === r.fileId)).toBe(true);
+    });
     it('keeps the newest N, trashes the rest (never hard-deletes) and never trashes the file it just wrote', async () => {
         const d = makeDrive();
         let last;
