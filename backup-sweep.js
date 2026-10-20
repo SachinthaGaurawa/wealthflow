@@ -132,6 +132,7 @@ export async function backupAccount({ db, admin, acct, deps, now }) {
     const rp0 = rps[0] || null;
     let lastGoodMs = rp0 ? Math.max(Number(rp0.confirmedAtMs) || 0, Number(rp0.atMs) || 0) : 0;
     if (status && status.drive && status.drive.ok && Number(status.drive.atMs) > lastGoodMs) lastGoodMs = Number(status.drive.atMs);
+    if (status && Number(status.clearedAtMs) > lastGoodMs) lastGoodMs = Number(status.clearedAtMs);     // the person emptied the list on purpose: wait for the next trigger
     const failed = status && status.success === false;
     const verdict = B.backupDue({
         freq: acct.freq, lastGoodMs, failedAtMs: failed ? Number(status.atMs) || 0 : 0, failCount: failed ? Number(status.failCount) || 1 : 0,
