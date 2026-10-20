@@ -565,6 +565,28 @@ export async function pruneDriveBackups({ fetch: f, token, files, keep = DRIVE_K
 }
 
 /**
+ * The person's own "delete my backups", Drive half: move every backup file this module lists for them to the Drive trash (Drive keeps it
+ * 30 days, so it can be undone there). A re-list after each round catches files beyond one page. { ok, trashed, failed } or
+ * { ok:false, reason, status?, trashed } when the list cannot be read. Never throws.
+ */
+export async function trashAllDriveBackups({ fetch: f, token, safeEmail, uid6, includeLegacy = true }) {
+    let trashed = 0, failed = 0;
+    try {
+        for (let round = 0; round < 10; round++) {
+            const listed = await listDriveBackups({ fetch: f, token, safeEmail, uid6, includeLegacy });
+            if (!listed.ok) return { ok: false, reason: listed.code || listed.reason || 'failed', status: listed.status, trashed };
+            if (!listed.files.length) break;
+            const n = await pruneDriveBackups({ fetch: f, token, files: listed.files, keep: 0 });
+            trashed += n;
+            if (n < listed.files.length) { failed = listed.files.length - n; break; }
+        }
+        return { ok: failed === 0, trashed, failed, reason: failed ? 'some files could not be moved to the trash' : '' };
+    } catch (e) {
+        return { ok: false, reason: 'network', trashed };
+    }
+}
+
+/**
  * Put the data in the user's own Google Drive and prove it landed.
  *
  * `getToken(force)` supplies the access token: false = whatever is valid, true = a freshly minted one (called once, after a 401).
@@ -688,7 +710,7 @@ const API = {
     SNAP_COL, DATA_COL, STATUS_COL, MAX_SNAPSHOT_BYTES, KEEP_NEWEST, KEEP_DAYS, DRIVE_FOLDER_NAME, DRIVE_KEEP, SERVER_TZ_OFFSET_MIN, RECORD_KEYS, EXCLUDE_KEYS, BACKUP_STAMP_KEYS,
     sha256Hex, nextTrigger, lastTrigger, retryDelayMs, backupDue, staleAfterMs, buildPayload, validateRestore, emptyCollections, selectToKeep,
     listSnapshots, saveSnapshot, annotateSnapshot, writeStatus, readStatus, loadSnapshot, driveFailure, driveReasonText, restorePointReasonText, ensureDriveFolder, listDriveBackups,
-    pruneDriveBackups, driveBackup, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, makeProgress,
+    pruneDriveBackups, trashAllDriveBackups, driveBackup, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, makeProgress,
 };
 
 if (typeof window !== 'undefined') window.WFBackup = API;

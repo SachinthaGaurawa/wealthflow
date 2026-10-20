@@ -18,7 +18,7 @@ import path from 'node:path';
 import Backup, {
     nextTrigger, lastTrigger, retryDelayMs, backupDue, staleAfterMs,
     buildPayload, validateRestore, emptyCollections, selectToKeep, saveSnapshot, loadSnapshot, listSnapshots, annotateSnapshot, writeStatus, readStatus, sha256Hex,
-    driveBackup, ensureDriveFolder, listDriveBackups, pruneDriveBackups, driveReasonText, restorePointReasonText, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, makeProgress, BACKUP_STAMP_KEYS, EXCLUDE_KEYS,
+    driveBackup, ensureDriveFolder, listDriveBackups, pruneDriveBackups, driveReasonText, restorePointReasonText, driveNameParts, downloadDriveBackup, describeBackup, deleteAllSnapshots, trashAllDriveBackups, makeProgress, BACKUP_STAMP_KEYS, EXCLUDE_KEYS,
     KEEP_NEWEST, KEEP_DAYS, MAX_SNAPSHOT_BYTES, FOLDER_MIME, DRIVE_FOLDER_NAME, RECORD_KEYS, SNAP_COL, DATA_COL, STATUS_COL,
 } from '../wealthflow-backup.js';
 import { makeDb, makeDrive } from './helpers/backup-fakes.js';
@@ -629,6 +629,36 @@ describe('describeBackup: the status line says what is true now', () => {
         const s = describeBackup({ freq: 'daily', lastGoodMs: now - 60000, drive: { ok: false, reason: 'token-expired' }, now });
         expect(s.level).toBe('warn');
         expect(s.lines[0].text).toMatch(/Reconnect Google Drive/);
+    });
+});
+
+describe('trashAllDriveBackups: the Drive half of "delete my backups"', () => {
+    const up = async (d, n) => { for (let i = 0; i < n; i++) await driveBackup({ fetch: d.fetch, getToken: async () => 'good', text: JSON.stringify({ n: i, pad: 'x'.repeat(i + 1) }), uid: 'uid123456', email: 'a@b.c', now: 1760000000000 + i * 1000, keep: 99 }); };
+    const np = driveNameParts('uid123456', 'a@b.c');
+    it('moves every backup file to the trash (never deletes), and leaves the folder and other people\'s files', async () => {
+        const d = makeDrive();
+        await up(d, 5);
+        d.files.set('theirs', { id: 'theirs', name: 'WealthFlow_x_other1_1.json', mimeType: 'application/json', parents: ['x'], appProperties: {}, text: '{}', size: 2, trashed: false, createdTime: '2026-01-01T00:00:00Z' });
+        const r = await trashAllDriveBackups({ fetch: d.fetch, token: 'good', ...np });
+        expect(r).toMatchObject({ ok: true, trashed: 5, failed: 0 });
+        const mine = [...d.files.values()].filter((f) => f.mimeType === 'application/json' && f.id !== 'theirs');
+        expect(mine.every((f) => f.trashed === true)).toBe(true);
+        expect(d.files.get('theirs').trashed).toBe(false);
+        expect([...d.files.values()].some((f) => f.mimeType !== 'application/json' && f.trashed)).toBe(false);
+        expect(d.calls.some((c) => c.method === 'DELETE')).toBe(false);
+    });
+    it('nothing to trash is a success', async () => {
+        const d = makeDrive();
+        expect(await trashAllDriveBackups({ fetch: d.fetch, token: 'good', ...np })).toMatchObject({ ok: true, trashed: 0 });
+    });
+    it('an expired token is reported with its status, so the page can retry once', async () => {
+        const d = makeDrive();
+        const r = await trashAllDriveBackups({ fetch: d.fetch, token: 'stale', ...np });
+        expect(r).toMatchObject({ ok: false, status: 401, trashed: 0 });
+    });
+    it('a network failure is reported, never thrown', async () => {
+        const d = makeDrive({ down: true });
+        expect(await trashAllDriveBackups({ fetch: d.fetch, token: 'good', ...np })).toMatchObject({ ok: false });
     });
 });
 

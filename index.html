@@ -15538,11 +15538,22 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         function openRestoreModal() { openModal('mdRestoreCloud'); return fetchRestoreList(); }
         window.openRestoreModal = openRestoreModal;
 
-        // The person's own "delete my backups": every restore point in the account (Drive copies are theirs to delete in Drive), and the stamps that claimed a backup; lastDriveBackup stays, that file is still there.
+        // The person's own "delete my backups": every restore point in the account and every backup file in their Drive (moved to the Drive trash, which keeps it 30 days), and the stamps that claimed a backup.
         function deleteAllRestorePoints() {
             showConfirm('@alert@', 'Delete all restore points?',
-                'This removes every saved copy under "Restore points in your account". Your current data is not touched and copies in your Google Drive stay there. Until the next backup you will have no way back from a restore or a wipe. The schedule makes its next copy at its next scheduled time, not straight away; turn the Auto-Backup Schedule off to stop new ones.',
+                'This removes every saved copy: the restore points in your account and the backup files in your Google Drive (they go to the Drive trash, where Drive keeps them for 30 days). Your current data is not touched. Until the next backup you will have no way back from a restore or a wipe. The schedule makes its next copy at its next scheduled time, not straight away; turn the Auto-Backup Schedule off to stop new ones.',
                 'btn-danger', 'Delete restore points', () => { _wfDeleteRestorePoints(); });
+        }
+        // Drive half of Delete all: a token without a pop-up (one retry after a 401), then every backup file of this account to the Drive trash.
+        async function _wfTrashDriveCopies(B) {
+            const u = window.currentUser, np = B.driveNameParts(u.uid, u.email);
+            try {
+                let token = await _wfDriveTokenFor(false);
+                if (!token) return { ok: false, reason: 'Google Drive could not be reached just now', trashed: 0 };
+                let r = await B.trashAllDriveBackups({ fetch: _wfDriveFetch, token, safeEmail: np.safeEmail, uid6: np.uid6 });
+                if (!r.ok && r.status === 401) { token = await _wfDriveTokenFor(true); if (token) r = await B.trashAllDriveBackups({ fetch: _wfDriveFetch, token, safeEmail: np.safeEmail, uid6: np.uid6 }); }
+                return r.ok ? r : { ok: false, reason: B.driveReasonText(r.reason) || r.reason, trashed: r.trashed || 0 };
+            } catch (e) { return { ok: false, reason: 'Google Drive did not answer', trashed: 0 }; }
         }
         async function _wfDeleteRestorePoints() {
             const B = _wfBackupModule();
@@ -15551,20 +15562,28 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             _wfDeleting = true;
             const uid = window.currentUser.uid, now = Date.now(), btn = $('restoreDeleteBtn'), label = btn ? btn.textContent : '';
             if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
-            let r;
-            try { r = await B.deleteAllSnapshots({ db: userDocRef.firestore, uid, now, onProgress: (n) => { if (btn) btn.textContent = 'Deleting… ' + n + ' removed'; } }); }
+            let r, dv = null;
+            try {
+                r = await B.deleteAllSnapshots({ db: userDocRef.firestore, uid, now, onProgress: (n) => { if (btn) btn.textContent = 'Deleting… ' + n + ' removed'; } });
+                if (_wfDriveWanted()) {
+                    if (btn) btn.textContent = 'Removing Google Drive copies…';
+                    dv = await _wfTrashDriveCopies(B);
+                }
+            }
             finally { _wfDeleting = false; if (btn) { btn.disabled = false; btn.textContent = label; } }
             if (r.deleted || r.ok) {
-                // DB.delKey, not a local delete: the settings merge never removes a key, so it would come back from the account on the next sync.
-                try { B.BACKUP_STAMP_KEYS.filter((k) => k !== 'lastDriveBackup').forEach((k) => DB.delKey('settings', k, true)); } catch (_) {}
+                // DB.delKey, not a local delete: the settings merge never removes a key, so it would come back from the account on the next sync. lastDriveBackup goes only when Drive's files are gone, or the list would show a file that no longer exists.
+                try { B.BACKUP_STAMP_KEYS.filter((k) => k !== 'lastDriveBackup' || (dv && dv.ok)).forEach((k) => DB.delKey('settings', k, true)); } catch (_) {}
                 // the marker deleteAllSnapshots left on the account, so the schedule waits for its next time instead of refilling the list at once
                 _wfBackupState = { uid, rps: [], status: r.ok ? { atMs: now, success: true, cleared: true, clearedAtMs: now } : null, at: Date.now() };
                 try { _wfPaintBackupCard(); } catch (_) {}
             }
-            if (r.ok) notify('@checkCircle@ Deleted ' + r.deleted + ' restore point' + (r.deleted === 1 ? '' : 's') + '.' + ((DB.getObj('settings', {}).autoBackupFreq || 'off') === 'off' ? '' : ' Auto-backup makes the next one at its next scheduled time.'), 'success');
-            else notify('Could not delete every restore point (' + r.reason + '); ' + r.deleted + ' deleted. Try again.', 'error');
+            const dvNote = !dv ? '' : dv.ok ? (dv.trashed ? ' ' + dv.trashed + ' Google Drive cop' + (dv.trashed === 1 ? 'y' : 'ies') + ' moved to the Drive trash.' : '')
+                : ' Google Drive copies were NOT removed (' + dv.reason + ').';
+            if (r.ok) notify((dv && !dv.ok ? '@alert@ ' : '@checkCircle@ ') + 'Deleted ' + r.deleted + ' restore point' + (r.deleted === 1 ? '' : 's') + '.' + dvNote + ((DB.getObj('settings', {}).autoBackupFreq || 'off') === 'off' ? '' : ' Auto-backup makes the next one at its next scheduled time.'), dv && !dv.ok ? 'error' : 'success');
+            else notify('Could not delete every restore point (' + r.reason + '); ' + r.deleted + ' deleted. Try again.' + dvNote, 'error');
             try { if ($('restoreSelect') && document.getElementById('mdRestoreCloud')?.classList.contains('open')) fetchRestoreList(); } catch (_) {}
-            return r.ok;
+            return r.ok && !(dv && !dv.ok);
         }
         window.deleteAllRestorePoints = deleteAllRestorePoints;
 
