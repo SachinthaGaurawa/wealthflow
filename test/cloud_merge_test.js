@@ -906,18 +906,23 @@ describe('an announced document is adopted whole, content and all', () => {
         expect(res.needPush).toBe(true);
     });
 
-    it('the Drive restore stamps the marker before it pushes', () => {
-        const at = HTML.indexOf('const restoredData = await res.json();');
-        expect(at, 'the Drive restore is gone — retarget this test').toBeGreaterThan(-1);
-        const body = HTML.slice(at, at + 2600);
-        const stamp = body.indexOf('appData._wipedAt = _restoreStamp');
+    it('every restore (restore point, Google Drive, local file) stamps the marker before it pushes', () => {
+        // One function does the replacing for all three sources, so the marker cannot be missing from one of them.
+        const at = HTML.indexOf('async function _wfApplyRestore(restored, label) {');
+        expect(at, 'the restore is gone — retarget this test').toBeGreaterThan(-1);
+        const body = HTML.slice(at, at + 5200);
+        const stamp = body.indexOf('appData._wipedAt = stamp');
         const push = body.indexOf('userDocRef.set(');
         expect(stamp, 'the restore no longer announces itself, so a second device merges its own '
             + 'copy straight back and re-uploads it').toBeGreaterThan(-1);
         expect(stamp, 'the marker is stamped after the push, which is too late')
             .toBeLessThan(push);
         expect(body, 'the restoring device does not ack its own marker, so it would adopt its '
-            + 'own announcement on the next snapshot').toMatch(/_wipedAck = _restoreStamp/);
+            + 'own announcement on the next snapshot').toMatch(/appData\._wipedAck = stamp/);
+        // and the three entry points all go through it
+        expect(HTML).toMatch(/_wfConfirmRestore\(obj, v,/);
+        expect(HTML).toMatch(/_wfConfirmRestore\(imported, v,/);
+        expect(HTML).toMatch(/\{ _wfApplyRestore\(obj, label\); \}/);
     });
 });
 

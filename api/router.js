@@ -60,6 +60,10 @@ const HANDLERS = {
     'ai-vision': () => import('../ai-vision.js'),
     'approve-release': () => import('../approve-release.js'),
     'autonomous-brain': () => import('../autonomous-brain.js'),
+    // The Auto-Backup Schedule for the nights the app is closed: the same "is a real copy older than the last trigger?" rule the page asks,
+    // run for every account whose schedule is on (restore point in the account, plus the user's own Drive where it is connected). Cron only,
+    // guarded by CRON_SECRET: there is no user in front of a scheduled run.
+    'backup-sweep': () => import('../backup-sweep.js'),
     // Reports whether the autonomous update system can actually fix anything, so
     // the app can stop showing "All systems operational" while the pipeline is dead.
     'autonomy-status': () => import('../autonomy-status.js'),

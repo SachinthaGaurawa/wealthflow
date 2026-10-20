@@ -377,6 +377,14 @@
     {
       "path": "/api/sms-sweep",
       "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/backup-sweep",
+      "schedule": "30 18 * * *"
+    },
+    {
+      "path": "/api/backup-sweep",
+      "schedule": "30 6 * * *"
     }
   ]
 }

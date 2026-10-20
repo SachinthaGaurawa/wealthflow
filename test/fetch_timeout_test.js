@@ -370,9 +370,11 @@ describe('client-side calls are bounded too', () => {
         }
     });
 
-    it('sw.js bounds the shell without an AbortSignal, and the sync call with one', () => {
+    it('sw.js bounds the shell without an AbortSignal, and makes no other network call', () => {
         const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
         expect(sw).toMatch(/Promise\.race\(\[\s*fetch\(event\.request\)/);
-        expect(sw, 'the background-sync call is unbounded').toMatch(/signal: syncCtl\.signal/);
+        // The background-sync handler used to POST to Firestore (unauthenticated, so refused). It only wakes a window now; a second
+        // fetch here would be an unbounded call in a worker nobody can watch.
+        expect(sw, 'the background-sync handler calls the network again').not.toMatch(/firestoreUrl|syncCtl|SYNC_TIMEOUT_MS/);
     });
 });
