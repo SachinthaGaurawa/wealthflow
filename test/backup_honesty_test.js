@@ -270,7 +270,7 @@ function loadPage(over = {}) {
         async get() {
             calls.push('users.get');
             if (over.userGetFails) throw Object.assign(new Error('offline'), { code: 'unavailable' });
-            if (over.userGetHangs) return new Promise(() => {});
+            if (over.userGetHangs || (over.userGetHangsAfter != null && calls.filter((c) => c === 'users.get').length > over.userGetHangsAfter)) return new Promise(() => {});
             const d = db.store.get('users/u1');
             return { exists: d !== undefined, data: () => (d === undefined ? undefined : structuredClone(d)) };
         },
@@ -299,7 +299,7 @@ function loadPage(over = {}) {
         showConfirm: (...a) => { confirms.push(a); },
         closeModal: () => {}, openModal: () => {},
         $: (id) => elements[id],
-        setTimeout: over.realTimers ? (fn, ms) => globalThis.setTimeout(fn, ms) : (fn, ms) => { if (ms === 8000) { pullTimers.push(fn); return 0; } timers.push(fn); return timers.length; }, // 8000 = the cloud-read deadline, kept apart from the reload timer
+        setTimeout: over.realTimers ? (fn, ms) => globalThis.setTimeout(fn, ms) : (fn, ms) => { if (ms === 8000 || ms === 20000) { pullTimers.push(fn); return 0; } timers.push(fn); return timers.length; }, // 8000 = the cloud-read deadline, kept apart from the reload timer
         setInterval: () => 1, clearInterval: () => {},
         setDirty: (s) => { calls.push('setDirty:' + s); },
         sendSmartNotification: (...a) => { smart.push(a); },
@@ -541,6 +541,19 @@ describe('Google Drive, from the page', () => {
         const file = [...p.drive.files.values()].find((f) => f.name.startsWith('WealthFlow_'));
         expect(file.text).not.toMatch(/SECRET-/);
         expect(p.db.store.get('users/u1/backupData/' + rps(p.db)[0].id).data).not.toMatch(/SECRET-/);
+    });
+
+    it('a Drive call that never answers is aborted after 20 s, so the run ends as a failure instead of holding every later run', async () => {
+        const seen = [];
+        const stalled = makeDrive({ valid: 'good' });
+        stalled.fetch = (url, init) => new Promise((_, rej) => { seen.push(init && init.signal); if (init && init.signal) init.signal.addEventListener('abort', () => rej(new Error('aborted'))); });
+        const p = loadPage({ refresh: 'rt', drive: stalled });
+        const run = p.executeDriveBackup();
+        await new Promise((r) => globalThis.setTimeout(r, 20));
+        expect(seen.length, 'the call carried no abort signal').toBeGreaterThan(0);
+        expect(p.pullTimers).toHaveLength(1);
+        p.pullTimers[0]();
+        expect(await run).toBe(false);
     });
 
     it('executeDriveBackup ("Backup to Drive") is true only for a verified file', async () => {
@@ -808,6 +821,18 @@ describe('restore: a copy of what is here comes first, and nothing is replaced i
         expect(p.getAppData()).toEqual(before);
         expect(p.db.state.writes).toEqual([]);
         expect(p.notes.find((n) => n.kind === 'error').m).toMatch(/your account could not be read \(pull-timeout\)/);
+    });
+
+    it('the read that preserves the account\'s Drive link and sign-outs has the same deadline: no restore waits on it for ever', async () => {
+        const p = loadPage({ userGetHangsAfter: 1 });
+        const before = structuredClone(p.appData);
+        const run = p._wfApplyRestore(restoredFile(), 'x');
+        await new Promise((r) => globalThis.setTimeout(r, 20));
+        expect(p.pullTimers, 'the second read was not raced against a deadline').toHaveLength(2); // the first read's, which answered, and this one's
+        p.pullTimers[1]();
+        await run;
+        expect(p.getAppData()).toEqual(before);
+        expect(p.notes.find((n) => n.kind === 'error')).toBeTruthy();
     });
 
     it('replaces the whole data set: a collection the copy does not have ends up empty, it is not left as it is today', async () => {

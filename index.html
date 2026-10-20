@@ -14634,7 +14634,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const B = _wfBackupModule(), u = window.currentUser || {};
             const s0 = DB.getObj('settings', {});
             const hint = (s0.lastDriveBackup && s0.lastDriveBackup.v === 2 && s0.lastDriveBackup.folderId) || '';
-            const r = await B.driveBackup({ fetch: window.fetch.bind(window), getToken: _wfDriveTokenFor, text: payload.text, uid: u.uid, email: u.email, folderHint: hint, label: label });
+            const r = await B.driveBackup({ fetch: _wfDriveFetch, getToken: _wfDriveTokenFor, text: payload.text, uid: u.uid, email: u.email, folderHint: hint, label: label });
             const out = { ok: !!(r.ok && r.verified), atMs: Date.now(), reason: r.ok ? '' : (r.reason === 'not-connected' ? 'token-expired' : (r.reason || 'failed')), size: r.size || 0, fileName: r.fileName || '', fileId: r.fileId || '', folderId: r.folderId || '', reused: !!r.reused };
             if (out.ok) {
                 try {
@@ -15359,6 +15359,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         //   read the copy → prove it is intact → prove it is a WealthFlow backup → save a way back → only then replace.
         // The old restore skipped three of those: it merged a file key by key without looking at it, offered no way back, and the local
         // file path assigned the file straight over appData.
+        // Every wait on the way to a restore, a reset or a nightly copy has a deadline: a read or a call that stalls without failing would hold the
+        // whole operation (and, for the backup loop, every later run) for ever. A stalled one ends as a refusal or a failed run with a reason.
+        function _wfServerGet() { return Promise.race([userDocRef.get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('pull-timeout')), 8000))]); }
+        function _wfDriveFetch(u, i) { const c = new AbortController(); setTimeout(() => c.abort(), 20000); return window.fetch(u, Object.assign({}, i, { signal: c.signal })); }
         let _wfRestoreItems = [];
         let _wfRestoring = false;
 
@@ -15369,7 +15373,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         const _WF_ACCOUNT_KEEP_KEYS = ['driveRefresh', 'driveBridge', 'revokedSessions', 'lastRevokeAt'];
         async function _wfReadAccountKeep() {
             try {
-                const snap = await userDocRef.get({ source: 'server' });
+                const snap = await _wfServerGet();
                 const cur = (snap && snap.exists && snap.data()) || {};
                 const fields = {};
                 _WF_ACCOUNT_KEEP_KEYS.forEach((k) => { if (cur[k] !== undefined) fields[k] = cur[k]; });
@@ -15385,7 +15389,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         // refusal, not "carry on with what this device knows".
         async function _wfPullAccountNow() {
             try {
-                const doc = await Promise.race([userDocRef.get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('pull-timeout')), 8000))]);
+                const doc = await _wfServerGet();
                 if (doc && doc.exists) {
                     isSyncingFromCloud = true;
                     let applied; try { applied = _wfApplyCloudData(doc.data()); } finally { isSyncingFromCloud = false; }
@@ -15459,7 +15463,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             if (B && u && window._isDecoyMode !== true) {
                 let token = _wfDriveWanted() ? await _wfDriveTokenFor(false) : null;
                 if (token) {
-                    const np = B.driveNameParts(u.uid, u.email), f = window.fetch.bind(window);
+                    const np = B.driveNameParts(u.uid, u.email), f = _wfDriveFetch;
                     let r = await B.listDriveBackups({ fetch: f, token, safeEmail: np.safeEmail, uid6: np.uid6, includeLegacy: true });
                     if (!r.ok && r.status === 401) { token = await _wfDriveTokenFor(true); if (token) r = await B.listDriveBackups({ fetch: f, token, safeEmail: np.safeEmail, uid6: np.uid6, includeLegacy: true }); }
                     if (r.ok) {
@@ -15542,7 +15546,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 } else {
                     let token = await _wfDriveTokenFor(false);
                     if (!token) throw new Error(B.driveReasonText('token-expired'));
-                    const f = window.fetch.bind(window);
+                    const f = _wfDriveFetch;
                     let r = await B.downloadDriveBackup({ fetch: f, token, file: item.file });
                     if (!r.ok && r.reason === 'token-expired') { token = await _wfDriveTokenFor(true); if (token) r = await B.downloadDriveBackup({ fetch: f, token, file: item.file }); }
                     if (!r.ok) throw new Error(B.driveReasonText(r.reason));
