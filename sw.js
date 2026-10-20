@@ -83,6 +83,63 @@ function _shellCacheKey(request, url) {
     return request;
 }
 
+/** The pages a person navigates to. The rest of the app shell is script, style and manifest. */
+function _isDocumentUrl(url) {
+    const p = url.pathname;
+    return p === '/' || p === '/index.html' || p === '/app' || p === '/app.html';
+}
+
+/* A NAVIGATION IS NEVER HANDED SOMETHING THAT IS NOT A PAGE
+ * --------------------------------------------------------------------------
+ * A browser given a navigation response it cannot show as a page saves it as a
+ * file named after the last segment of the address: for /app, an (empty) file
+ * called "app". An empty 304 (the answer to a revalidation nobody asked for), an
+ * empty 204/205, or a 200 whose Content-Type is missing or not HTML all end that
+ * way. Signing out reloads the address the browser is already on, which is the
+ * navigation that revalidates, so it is the one most likely to meet such an
+ * answer. fetch(event.request) hands it straight to the page, so this worker
+ * checks it first. Redirects are left alone: the browser follows them itself. */
+function _isUnusableDocument(res) {
+    if (!res || res.type === 'opaqueredirect') return false;
+    const status = Number(res.status);
+    if (status === 304 || status === 204 || status === 205) return true;
+    if (res.ok && res.headers && typeof res.headers.get === 'function') {
+        const type = String(res.headers.get('Content-Type') || '').toLowerCase();
+        if (!/^(text\/html|application\/xhtml\+xml)\b/.test(type)) return true;
+    }
+    return false;
+}
+
+/* Replaces an unusable navigation answer with a page, best source first:
+ *   1. the document again, as a plain request with the HTTP cache bypassed (a
+ *      plain Request carries no validators, so there is no 304 to get back);
+ *   2. the last good copy of THIS version;
+ *   3. the same bytes with the HTML type they were always meant to have, only for
+ *      a 200 that arrived with a body and the wrong label.
+ * If none applies the original answer is returned, as before. */
+async function _recoverDocument(request, url, bad) {
+    try {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), NET_TIMEOUT_MS);
+        let again;
+        try { again = await fetch(url.href, { cache: 'reload', signal: ctl.signal }); } finally { clearTimeout(timer); }
+        if (again && again.ok && !_isUnusableDocument(again)) return { res: again, fromCache: false };
+    } catch (_) { /* fall through to the stored copy */ }
+    try {
+        const cache = await caches.open(CACHE_NAME);
+        const hit = await cache.match(_shellCacheKey(request, url));
+        if (hit) return { res: hit, fromCache: true };
+    } catch (_) { /* fall through */ }
+    if (bad && bad.ok && Number(bad.status) === 200 && bad.body) {
+        try {
+            const headers = new Headers(bad.headers);
+            headers.set('Content-Type', 'text/html; charset=utf-8');
+            return { res: new Response(bad.body, { status: 200, statusText: 'OK', headers }), fromCache: false };
+        } catch (_) { /* hand back the original */ }
+    }
+    return { res: bad, fromCache: false };
+}
+
 self.addEventListener('fetch', (event) => {
     let url;
     try { url = new URL(event.request.url); } catch (_) { return; }
@@ -121,12 +178,19 @@ self.addEventListener('fetch', (event) => {
             // block as a network error and serves the last good copy, which is a
             // correct page for this version rather than a white screen.
             let netTimer;
-            const fresh = await Promise.race([
+            let fresh = await Promise.race([
                 fetch(event.request),
                 new Promise((_resolve, reject) => {
                     netTimer = setTimeout(() => reject(new Error('network timeout')), NET_TIMEOUT_MS);
                 }),
             ]).finally(() => clearTimeout(netTimer));
+            // Before the body is cloned for the cache: a page, or nothing that
+            // reaches the browser as a file (see _isUnusableDocument).
+            if (_isDocumentUrl(url) && _isUnusableDocument(fresh)) {
+                const recovered = await _recoverDocument(event.request, url, fresh);
+                fresh = recovered.res;
+                if (recovered.fromCache) { settleCacheWrite(); return fresh; }
+            }
             if (fresh && fresh.ok) {
                 // The response reaches the renderer immediately. CacheStorage
                 // I/O continues as lifecycle work instead of holding a 1.6 MB
