@@ -9751,6 +9751,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
          * INSIDE the transaction, merged into this device's data by the one convergent applier, and only then written;
          * if anything changed the document in between, Firestore re-runs it. Whatever any device or the server wrote
          * before this commit is in what this commits, so nothing can be overwritten by a stale copy. */
+        // Two flags on window (like _isDecoyMode): window._wfHoldSync = a restore is replacing the account document, so no push may start until
+        // the page reloads (or the restore fails); window._wfSyncRun = the push in flight, so a restore can wait for it to finish.
         function syncToCloud() {
             _lastCloudPushError = '';
             // Same contract, the other direction. The payload below is
@@ -9759,6 +9761,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             // else appData is carrying at the time.
             if (window._isDecoyMode === true) { console.log('[DECOY] cloud push blocked'); return Promise.resolve(false); }
             if (!userDocRef) return Promise.resolve(false);
+            if (window._wfHoldSync === true) return Promise.resolve(false);
             if (!navigator.onLine) { setSyncStatus('offline'); return Promise.resolve(false); }
             // Nothing to push: the cloud already holds what is on this device.
             // setDirty(false) is only ever reached after a write is acknowledged,
@@ -9787,7 +9790,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     }), { merge: true });
                 });
             } catch (err) { _push = Promise.reject(err); }
-            return _push.then(() => {
+            const run = _push.then(() => {
                 if (_dirtyGen === gen) setDirty(false); else setTimeout(debouncedSync, 50);   // changed while in flight: still dirty
                 lastSyncTime = Date.now();
                 _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
@@ -9804,6 +9807,9 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 _lastCloudPushError = (err && (err.code || err.message)) || 'unknown';
                 return false;
             });
+            window._wfSyncRun = run;
+            run.then(() => { if (window._wfSyncRun === run) window._wfSyncRun = null; });
+            return run;
         }
 
         /* THE DOCUMENT IS RE-READ FROM THE SERVER, NOT TRUSTED TO ARRIVE.
@@ -15384,12 +15390,23 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     isSyncingFromCloud = true;
                     let applied; try { applied = _wfApplyCloudData(doc.data()); } finally { isSyncingFromCloud = false; }
                     try { _wfPaintCloudChange(applied); } catch (_) {}
-                    if (applied && applied.needPush) { setDirty(true); debouncedSync(); }
+                    // Marked, not pushed: the document is about to be replaced, and a push queued here can be in flight when it is. If the
+                    // operation is refused, the failure path re-arms the sync and the reconcile loop would find the mark within a minute anyway.
+                    if (applied && applied.needPush) setDirty(true);
                 }
                 return { ok: true };
             } catch (e) {
                 return { ok: false, reason: 'your account could not be read (' + ((e && (e.code || e.message)) || 'unknown error') + ')' };
             }
+        }
+
+        // A restore replaces the account document first and this device's rows second. A push queued or in flight at that moment merges this
+        // device's OLD rows over whatever the document holds (its retry finds the restore marker already acknowledged), which puts back the
+        // records the restore was meant to remove. So: nothing new may start, a waiting one is cancelled, and one in flight is waited for.
+        async function _wfHaltSync() {
+            window._wfHoldSync = true;
+            if (syncDebounceTimer) { clearTimeout(syncDebounceTimer); syncDebounceTimer = null; }
+            try { if (window._wfSyncRun) await window._wfSyncRun; } catch (_) { /* a failed push is no reason to stop the restore */ }
         }
 
         // A copy of what is here now, taken before anything is replaced or erased. A restore point in the account or — when that cannot be
@@ -15555,6 +15572,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         // restore ends with 503 and re-uploads the 500 it was meant to lose. With the marker, every device adopts the document once.
         async function _wfApplyRestore(restored, label) {
             const B = _wfBackupModule();
+            let accountReplaced = false;
             try {
                 if (window._isDecoyMode === true) throw new Error('restore is not available in this mode');
                 if (!B || !window.currentUser || !userDocRef) throw new Error('you are not signed in');
@@ -15565,6 +15583,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 if (!safe.ok) throw new Error('a safety copy of your current data could not be saved (' + safe.reason + ')');
                 const keep = await _wfReadAccountKeep();
                 if (!keep.ok) throw new Error('your account could not be read (' + keep.reason + ')');
+                await _wfHaltSync();
                 const skip = new Set(B.EXCLUDE_KEYS);
                 const keepSettings = B.BACKUP_STAMP_KEYS.concat(['autoBackupFreq']);
                 const replaced = {};
@@ -15599,6 +15618,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (prevAck === undefined) delete appData._wipedAck; else appData._wipedAck = prevAck;
                     throw new Error('saving it to your account failed (' + ((e && (e.code || e.message)) || 'unknown error') + '); your current data is also saved as a restore point');
                 }
+                accountReplaced = true;
                 Object.keys(replaced).forEach((key) => { appData[key] = replaced[key]; _persistLocal('wf2_' + key, replaced[key]); });
                 appData._wipedAt = stamp;
                 _persistRaw('wf2__wipedAck', String(stamp));
@@ -15607,6 +15627,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 setTimeout(() => location.reload(), 1500);
             } catch (e) {
                 console.error('Restore error:', e);
+                if (!accountReplaced) {        // nothing was replaced: the page syncs as usual again, and picks up what the halt cancelled
+                    window._wfHoldSync = false;
+                    try { debouncedSync(); } catch (_) {}
+                }
                 notify('Restore failed: ' + ((e && e.message) || 'unknown error') + '. Nothing was changed.', 'error');
             }
         }

@@ -118,7 +118,7 @@ function loadSync(over = {}) {
         debouncedSync: () => {},
         _wfPaintCloudChange: () => {},
     };
-    const body = fnSource('_persistLocal') + '\n' + fnSource('_persistRaw') + '\n' + fnSource('syncToCloud') + '\nreturn { syncToCloud: syncToCloud };';
+    const body = fnSource('_persistLocal') + '\n' + fnSource('_persistRaw') + '\n' + fnSource('syncToCloud') + '\nreturn { syncToCloud: syncToCloud, setHold: (v) => { window._wfHoldSync = v; }, getRun: () => window._wfSyncRun };';
     return new Function(...SYNC_DEPS, 'let _lastCloudPushError = ""; let _wfLocalWriteBlocked = false; let _dirtyGen = 0; let isSyncingFromCloud = false;\n' + body)(...SYNC_DEPS.map((d) => env[d]));
 }
 
@@ -143,6 +143,26 @@ describe('syncToCloud reports what it actually did', () => {
     });
     it('never rejects, so the fire-and-forget callers are unharmed', async () => {
         await expect(loadSync({ userDocRef: docWith(() => Promise.reject(new Error('x'))) }).syncToCloud()).resolves.toBe(false);
+    });
+    it('does not start while a restore holds it, and writes nothing', async () => {
+        let wrote = false;
+        const { syncToCloud, setHold } = loadSync({ userDocRef: docWith(() => { wrote = true; return Promise.resolve(); }) });
+        setHold(true);
+        expect(await syncToCloud()).toBe(false);
+        expect(wrote, 'a push went out while a restore held the sync').toBe(false);
+        setHold(false);
+        expect(await syncToCloud()).toBe(true);
+        expect(wrote).toBe(true);
+    });
+    it('keeps the push in flight where a restore can wait for it, and lets go of it once it has finished', async () => {
+        let release; const gate = new Promise((r) => { release = r; });
+        const { syncToCloud, getRun } = loadSync({ userDocRef: docWith(() => gate) });
+        const run = syncToCloud();
+        expect(getRun()).toBe(run);
+        release();
+        expect(await run).toBe(true);
+        await Promise.resolve();
+        expect(getRun()).toBe(null);
     });
 });
 
@@ -170,6 +190,7 @@ let appData = env.appData;
 let gapiToken = env.gapiToken || null;
 let _wfLocalWriteBlocked = false;
 let isSyncingFromCloud = false;
+let syncDebounceTimer = null;
 const currentUser = user;
 const DB = {
     get(k, d = []) { return appData[k] !== undefined ? appData[k] : d; },
@@ -206,7 +227,7 @@ ${SRC_FACTORY_RESET}
 return {
     backupNow, executeDriveBackup, _getLastBackupMs, _wfSaveSafetyCopy, _wfApplyRestore, executeRestoreSelected, fetchRestoreList, executeFactoryReset, deleteAllRestorePoints, _wfDeleteRestorePoints,
     _checkAutoBackupDue, _wfBackupFailState, _wfRefreshBackupState, _wfDriveTokenFor, _wfBackupInfoHtml, _wfDriveBackupWithToasts, _wfPaintBackupCard,
-    getAppData: () => appData, setRestoreItems: (x) => { _wfRestoreItems = x; }, getGapiToken: () => gapiToken, setGapiToken: (t) => { gapiToken = t; },
+    getAppData: () => appData, getHold: () => window._wfHoldSync === true, setSyncRun: (p) => { window._wfSyncRun = p; }, setDebounceTimer: (t) => { syncDebounceTimer = t; }, getDebounceTimer: () => syncDebounceTimer, setRestoreItems: (x) => { _wfRestoreItems = x; }, getGapiToken: () => gapiToken, setGapiToken: (t) => { gapiToken = t; },
 };`;
 
 /** A DOM element as far as the restore list and the factory-reset form use one. */
@@ -724,9 +745,45 @@ describe('restore: a copy of what is here comes first, and nothing is replaced i
         expect(back.data.expenses.map((e) => e.id), 'the restore replaced a record that was in no copy').toEqual(['e1', 'e2', 'e3', 'e4']);
     });
 
-    it('what this device holds and the account lacks is pushed on, not left waiting for the next minute', async () => {
+    it('a difference found while taking the safety copy is marked, not pushed ahead of the restore', async () => {
         const p = loadPage({ cloudDoc: { expenses: [], income: [] }, needPush: true });
         await p._wfApplyRestore(restoredFile(), 'x');
+        expect(p.calls.indexOf('setDirty:true')).toBeGreaterThan(-1);
+        expect(p.calls.indexOf('setDirty:true')).toBeLessThan(p.calls.indexOf('users.set'));
+        expect(p.env.debounced, 'a push was queued between the safety copy and the replacement').toBe(0);
+    });
+
+    const settle = async () => { for (let i = 0; i < 40; i++) await new Promise((r) => setImmediate(r)); };
+
+    it('a push in flight when the restore starts is waited for before the account is replaced', async () => {
+        const p = loadPage();
+        let release; const inFlight = new Promise((r) => { release = r; });
+        p.setSyncRun(inFlight);
+        const done = p._wfApplyRestore(restoredFile(), 'x');
+        await settle();
+        expect(p.calls, 'the account was replaced while a push was still running').not.toContain('users.set');
+        expect(p.getHold()).toBe(true);
+        release(true);
+        await done;
+        expect(p.calls).toContain('users.set');
+    });
+
+    it('a push that was only waiting for its timer is cancelled, and no new one can start until the page reloads', async () => {
+        const p = loadPage();
+        let fired = false;
+        p.setDebounceTimer(globalThis.setTimeout(() => { fired = true; }, 15));
+        await p._wfApplyRestore(restoredFile(), 'x');
+        await new Promise((r) => globalThis.setTimeout(r, 40));
+        expect(fired, 'a queued push still fired during the restore').toBe(false);
+        expect(p.getDebounceTimer()).toBe(null);
+        expect(p.getHold(), 'a restore that replaced the account must keep pushes off until the reload').toBe(true);
+    });
+
+    it('a restore that fails before the account is replaced lets the page sync again and re-arms the push it cancelled', async () => {
+        const p = loadPage({ userSetFails: true });
+        await p._wfApplyRestore(restoredFile(), 'x');
+        expect(p.notes.find((n) => n.kind === 'error')).toBeTruthy();
+        expect(p.getHold()).toBe(false);
         expect(p.env.debounced).toBeGreaterThan(0);
     });
 
