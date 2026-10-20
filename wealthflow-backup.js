@@ -551,10 +551,9 @@ async function uploadOnce({ f, token, folderId, text, bytes, sha, safeEmail, uid
     const files = listed.ok ? listed.files : [];
     const newest = files[0];
     if (newest && newest.appProperties && newest.appProperties.sha === sha && String(newest.size || '') === String(bytes)) {
-        // The listing only says what the file was when it was written (the SHA is a label, the size can survive an edit). The newest
-        // copy counts as this run's copy only if reading it back gives exactly these bytes; otherwise a fresh file is written below.
+        // The listing is only a label (the size can survive an edit): reuse the newest copy only if it reads back as exactly these bytes.
         const back = await downloadDriveBackup({ fetch: f, token, file: newest });
-        if (back.ok && back.text === text) return { ok: true, verified: true, reused: true, fileId: newest.id, fileName: newest.name, size: bytes, folderId, trashed: await pruneDriveBackups({ fetch: f, token, files, keep, protect: newest.id }) }; // confirming must not skip the trim
+        if (back.ok && back.text === text) return { ok: true, verified: true, reused: true, fileId: newest.id, fileName: newest.name, size: bytes, folderId, trashed: await pruneDriveBackups({ fetch: f, token, files, keep, protect: newest.id }) };
         if (!back.ok && back.status === 401) return { ok: false, verified: false, status: 401, reason: 'token-expired' };
     }
     const day = new Date(now).toISOString().slice(0, 10);
@@ -568,7 +567,7 @@ async function uploadOnce({ f, token, folderId, text, bytes, sha, safeEmail, uid
     if (!up.json || !up.json.id) return { ok: false, verified: false, reason: 'no-file-id' };
     const v = await dj(f, DRIVE + '/files/' + enc(up.json.id) + '?fields=id,size,trashed', { headers: H });
     const verified = !!(v.ok && v.json && v.json.id === up.json.id && !v.json.trashed && String(v.json.size) === String(bytes));
-    if (!verified) return { ok: false, verified: false, fileId: up.json.id, fileName: name, size: Number(v.json && v.json.size) || 0, folderId, reason: v.ok ? 'size-mismatch' : (driveFailure(v.status, v.json).code) };
+    if (!verified) return { ok: false, verified: false, fileId: up.json.id, fileName: name, size: Number(v.json && v.json.size) || 0, folderId, status: v.status === 401 ? 401 : undefined, reason: v.ok ? 'size-mismatch' : v.status === 401 ? 'token-expired' : driveFailure(v.status, v.json).code };
     const all = files.concat([{ id: up.json.id, name, createdTime: up.json.createdTime || new Date(now).toISOString() }]);
     const trashed = await pruneDriveBackups({ fetch: f, token, files: all, keep, protect: up.json.id });
     return { ok: true, verified: true, fileId: up.json.id, fileName: name, size: bytes, folderId, trashed, createdTime: up.json.createdTime };

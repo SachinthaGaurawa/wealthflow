@@ -473,6 +473,20 @@ describe('driveBackup: the copy in the user\'s own Drive', () => {
         expect(r.reused).toBeUndefined();
         expect(r.fileId).not.toBe(first.fileId);
     });
+    it('a token that expires between the upload and its verification is refreshed once and the run still ends verified', async () => {
+        const d = makeDrive();
+        let expired = false;
+        const f = async (url, init) => {
+            if (!expired && /\/files\/file\d+\?fields=id,size,trashed/.test(url)) { expired = true; return { ok: false, status: 401, json: async () => ({ error: { code: 401, errors: [{ reason: 'authError' }] } }), text: async () => '' }; }
+            return d.fetch(url, init);
+        };
+        const t = tokens('good');
+        const r = await driveBackup({ fetch: f, getToken: t, text, uid: 'abcdef123', email: 'o@x.com', now: Date.parse('2026-10-19T18:25:00Z') });
+        expect(expired).toBe(true);
+        expect(r).toMatchObject({ ok: true, verified: true });
+        expect(t.calls).toEqual([false, true]);
+        expect([...d.files.values()].filter((x) => x.mimeType === 'application/json' && !x.trashed)).toHaveLength(1);
+    });
     it('an unchanged copy is confirmed AND the leftovers a failed earlier trim left behind are still trimmed', async () => {
         const d = makeDrive();
         let text6;
