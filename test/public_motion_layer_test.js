@@ -344,6 +344,30 @@ describe('wf-public.js', () => {
     });
 });
 
+describe('the loading screen is the first frame of the sign-in screen', () => {
+    const splash = UI.slice(UI.indexOf('/* ═════════════════ 3. SPLASH'), UI.indexOf('/* ═════════════════ 4. SIGN-IN'));
+
+    it('uses the same navy field as the sign-in and landing, in every theme', () => {
+        expect(splash).toContain('linear-gradient(180deg, #071226, #050d1c)');
+        expect(splash).toContain('radial-gradient(1200px 600px at 85% -10%, rgba(212, 175, 55, .14), transparent 60%)');
+        expect(splash).toContain('color-scheme: dark');
+    });
+
+    it('moves only through transform and opacity (the bar width is the loader itself), and stands still for reduced motion', () => {
+        for (const m of splash.matchAll(/@keyframes\s+(\w+)\s*\{([^]*?)\}\s*\}?/g)) {
+            expect(m[2], m[1]).not.toMatch(/\b(top|left|width|height|margin|padding|background)\s*:/);
+        }
+        expect(splash).toContain('@media (prefers-reduced-motion: no-preference)');
+        expect(splash).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.sp-logo, \.sp-logo::after \{ animation: none; \} \}/);
+        expect(splash).not.toContain('—');
+    });
+
+    it('tells people when loading is slow, without any script, and announces status changes to screen readers', () => {
+        expect(splash).toMatch(/#splash::after \{\s*content: 'Taking longer than usual\./);
+        expect(APP).toContain('id="spStatus" role="status" aria-live="polite"');
+    });
+});
+
 describe('the /app sign-in screen wears the home page look', () => {
     const block = UI.slice(UI.indexOf('/* ═════════════════ 4. SIGN-IN'), UI.indexOf('/* ═════════════════ 5. SHELL'));
 
