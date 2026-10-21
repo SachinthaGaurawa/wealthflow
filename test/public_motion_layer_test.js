@@ -67,7 +67,7 @@ describe('wf-public.css', () => {
     const propsOf = (body) => new Set([...body.matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1]));
 
     it('has the keyframes it needs', () => {
-        expect(keyframes.map((k) => k.name).sort()).toEqual(['wfpArc', 'wfpDrift', 'wfpFail', 'wfpNeedle', 'wfpProgress', 'wfpRing', 'wfpUp']);
+        expect(keyframes.map((k) => k.name).sort()).toEqual(['wfpArc', 'wfpDrift', 'wfpFail', 'wfpNeedle', 'wfpProgress', 'wfpRing', 'wfpRise', 'wfpUp']);
     });
 
     it('animates only transform and opacity, plus the one stroke it draws (the gauge arc and the progress ring)', () => {
@@ -81,7 +81,7 @@ describe('wf-public.css', () => {
         const block = CSS.slice(CSS.indexOf('@media (prefers-reduced-motion: no-preference)'));
         const end = block.indexOf('/* ── Accessibility fallbacks');
         const motion = block.slice(0, end);
-        for (const name of ['wfpUp', 'wfpNeedle', 'wfpArc', 'wfpDrift', 'wfpFail']) expect(motion, name).toContain(`animation`) && expect(motion).toContain(name);
+        for (const name of ['wfpUp', 'wfpRise', 'wfpNeedle', 'wfpArc', 'wfpDrift', 'wfpFail']) expect(motion, name).toContain(`animation`) && expect(motion).toContain(name);
         // the infinite ambient drift must not exist outside the gated block
         const outside = CSS.replace(motion, '');
         expect(outside).not.toMatch(/infinite/);
@@ -293,15 +293,36 @@ describe('wf-public.js', () => {
         expect(env.observers).toHaveLength(0);
     });
 
-    it('home: staggers a group of cards, reveals each as it arrives and stops watching it', () => {
+    it('home: reveals each block just before it arrives, in reading order, and stops watching it', () => {
         const env = makeEnv();
-        expect(env.cards.map((c) => c.style.props['--i'])).toEqual([0, 1, 2]);
         const reveal = env.observers[2];
         expect(reveal.watching).toHaveLength(3);
-        reveal.cb([{ isIntersecting: false, target: env.cards[0] }, { isIntersecting: true, target: env.cards[1] }]);
+        const rect = (top, left) => ({ top, left, bottom: top + 200 });
+        reveal.cb([
+            { isIntersecting: true, target: env.cards[2], boundingClientRect: rect(600, 800) },
+            { isIntersecting: false, target: env.cards[0], boundingClientRect: rect(900, 0) },
+            { isIntersecting: true, target: env.cards[1], boundingClientRect: rect(600, 400) },
+        ]);
         expect(env.cards[0].classList.contains('in')).toBe(false);
+        expect(env.cards[1].style.props['--i']).toBe(0);
+        expect(env.cards[2].style.props['--i']).toBe(1);
         expect(env.cards[1].classList.contains('in')).toBe(true);
         expect(reveal.watching).not.toContain(env.cards[1]);
+    });
+
+    it('home: a block already scrolled past just appears, with no animation', () => {
+        const env = makeEnv();
+        const reveal = env.observers[2];
+        reveal.cb([{ isIntersecting: false, target: env.cards[0], boundingClientRect: { top: -900, left: 0, bottom: -300 } }]);
+        expect(env.cards[0].classList.contains('in')).toBe(true);
+        expect(env.cards[0].classList.contains('in-now')).toBe(true);
+        expect(CSS).toMatch(/\.in\.in-now \{ animation: none; \}/);
+    });
+
+    it('home: the rise is soft (12px, about a second, 90ms apart) and starts before the block is on screen', () => {
+        expect(CSS).toMatch(/@keyframes wfpRise \{ from \{ opacity: 0; transform: translate3d\(0, 12px, 0\); \} \}/);
+        expect(CSS).toMatch(/animation: wfpRise 1s cubic-bezier\(\.22, \.61, \.36, 1\) calc\(var\(--i, 0\) \* 90ms\) backwards;/);
+        expect(JS).toMatch(/rootMargin: '0px 0px 8% 0px', threshold: 0/);
     });
 
     it('home: marks the section being read in the menu', () => {
@@ -470,5 +491,23 @@ describe('reach (wf-ui.css section 29)', () => {
         expect(sec).toMatch(/@media \(pointer: coarse\) \{[\s\S]*\.toggle::before \{[^}]*inset: -8px -6px;/);
         expect(sec).not.toMatch(/(?:min-)?(?:height|width)\s*:/);
         expect(sec).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    });
+});
+
+describe('wf-public.js: a reload starts at the top', () => {
+    it('only a reload is sent to the top; Back and Forward keep their place', () => {
+        expect(JS).toMatch(/nav\.type === 'reload'/);
+        expect(JS).toMatch(/if \(!reload\) return;/);
+        expect(JS).toMatch(/h\.scrollRestoration = 'manual'/);
+        expect(JS).toMatch(/win\.scrollTo\(0, 0\)/);
+    });
+
+    it('drops a #section from the address on reload and hands restoration back when the page is left', () => {
+        expect(JS).toMatch(/h\.replaceState\(null, '', win\.location\.pathname \+ win\.location\.search\)/);
+        expect(JS).toMatch(/'pagehide'[\s\S]*h\.scrollRestoration = 'auto'/);
+    });
+
+    it('never throws on a browser without the Navigation Timing API', () => {
+        expect(JS).toMatch(/\} catch \(_\) \{ \/\* the page simply opens where the browser puts it \*\/ \}/);
     });
 });
