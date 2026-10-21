@@ -427,9 +427,9 @@ describe('the /app sign-in screen wears the home page look', () => {
 
 describe('calm and comfort (wf-ui.css section 28)', () => {
     const from = UI.indexOf('28. CALM AND COMFORT');
-    const sec = UI.slice(from);
+    const sec = UI.slice(from, UI.indexOf('29. REACH'));
 
-    it('is the last section and has no script', () => {
+    it('has no script', () => {
         expect(from).toBeGreaterThan(0);
         expect(sec).not.toMatch(/<script/);
     });
@@ -453,6 +453,22 @@ describe('calm and comfort (wf-ui.css section 28)', () => {
 
     it('gives people who ask for more contrast a firmer hairline using existing tokens only', () => {
         expect(sec).toMatch(/@media \(prefers-contrast: more\)/);
+        expect(sec).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    });
+});
+
+describe('reach (wf-ui.css section 29)', () => {
+    const from = UI.indexOf('29. REACH');
+    const sec = UI.slice(from);
+
+    it('is the last section and has no script', () => {
+        expect(from).toBeGreaterThan(UI.indexOf('28. CALM AND COMFORT'));
+        expect(sec).not.toMatch(/<script/);
+    });
+
+    it('grows only the tap area, only for fingers, and never the drawn size', () => {
+        expect(sec).toMatch(/@media \(pointer: coarse\) \{[\s\S]*\.toggle::before \{[^}]*inset: -8px -6px;/);
+        expect(sec).not.toMatch(/(?:min-)?(?:height|width)\s*:/);
         expect(sec).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     });
 });
