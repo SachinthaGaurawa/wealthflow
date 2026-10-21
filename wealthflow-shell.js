@@ -122,13 +122,13 @@
             if (!m) { if (/signOutGoogle/.test(on)) signOut = el; return; }
             try { if (window.getComputedStyle(el).display === 'none') return; } catch (_) { /* keep it */ }
             var clone = el.cloneNode(true);
-            Array.prototype.forEach.call(clone.querySelectorAll('.nav-icon, .nb'), function (n) { n.remove(); });
+            Array.prototype.forEach.call(clone.querySelectorAll('.nav-icon, .nb, .wf-new'), function (n) { n.remove(); });
             var ic = el.querySelector('.nav-icon');
             var nb = el.querySelector('.nb');
             var badge = '';
             try { if (nb && window.getComputedStyle(nb).display !== 'none') badge = nb.textContent.replace(/\s+/g, ' ').trim(); } catch (_) { /* no badge */ }
             out.push({
-                id: m[1], group: group, el: el, badge: badge,
+                id: m[1], group: group, el: el, badge: badge, isNew: !!el.querySelector('.wf-new'),
                 label: clone.textContent.replace(/\s+/g, ' ').trim(),
                 icon: ic ? ic.innerHTML : ''
             });
@@ -358,7 +358,7 @@
             groups.map(function (g) {
                 return '<div class="wf-grp">' + esc(g.name) + '</div><div class="wf-grid">' + g.items.map(function (p) {
                     return '<button type="button" class="wf-item" data-page="' + esc(p.id) + '"' + (p.id === cur ? ' aria-current="page"' : '') + '>' +
-                        '<span class="wf-ic">' + p.icon + '</span>' + esc(p.label) + (p.badge ? '<i class="wf-badge">' + esc(p.badge) + '</i>' : '') + '</button>';
+                        '<span class="wf-ic">' + p.icon + '</span>' + esc(p.label) + (p.badge ? '<i class="wf-badge">' + esc(p.badge) + '</i>' : (p.isNew ? '<i class="wf-badge wf-badge-new">NEW</i>' : '')) + '</button>';
                 }).join('') + '</div>';
             }).join('') +
             (idx.signOut ? '<button type="button" class="wf-signout" data-q="signout">' + icon('logOut') + 'Sign out</button>' : '') +
