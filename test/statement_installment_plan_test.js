@@ -79,6 +79,15 @@ describe('end to end: a card statement with an installment line', () => {
     });
 });
 
+describe('end to end: the owner named the plan their own way', () => {
+    it('a plan called "Fridge" is still paid by the bank\'s "ABANS TV INSTALMENT" line for the same money on the same card bank', async () => {
+        const { user } = await file({ ccinstall: [plan({ product: 'Fridge' })] });
+        expect(user.ccinstall).toHaveLength(1);
+        expect(user.ccinstall[0].payments).toEqual([expect.objectContaining({ month: '2026-09', paid: true, amount: 5000, source: 'statement' })]);
+        expect(monthly(user).ccTotal).toBe(5000);
+    });
+});
+
 describe('records filed in the old shape are repaired once', () => {
     const old = (extra = {}) => ({ id: 'R1', desc: 'ABANS TV INSTALMENT 08/12', total: 5000, monthly: 5000, months: 1, remaining: 1, paid: 0, startDate: '2026-09-12', amount: 5000, source: 'statement', statementKey: 'wf-mail/x/items/i0', statementRow: 0, ...extra });
     it('with no plan to match it gets the plan shape and counts', () => {
