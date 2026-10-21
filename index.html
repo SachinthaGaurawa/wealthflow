@@ -694,6 +694,8 @@
     <script src="wealthflow-batches.js" defer></script>
     <!-- The frame around every screen: phone tab bar, "More" sheet, Ctrl/Cmd+K palette. -->
     <script src="wealthflow-shell.js" defer></script>
+    <!-- The NEW tag on a screen or an option that is new: puts itself on, comes off after 7 days. -->
+    <script type="module" src="wealthflow-new-badge.js"></script>
 
     
 
@@ -17663,8 +17665,6 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 setTimeout(() => {
                     try {
                         requestAINotificationPermission();
-                        const nbAI = $('nb-ai');
-                        if (nbAI) { nbAI.style.display = ''; nbAI.textContent = 'NEW'; }
                     } catch (e) { console.error('[LAUNCH] AI notification error:', e); }
                 }, 3000);
             } catch (launchErr) {

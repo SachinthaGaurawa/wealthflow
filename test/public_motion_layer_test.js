@@ -480,10 +480,11 @@ describe('calm and comfort (wf-ui.css section 28)', () => {
 
 describe('reach (wf-ui.css section 29)', () => {
     const from = UI.indexOf('29. REACH');
-    const sec = UI.slice(from);
+    const sec = UI.slice(from, UI.indexOf('30. NEW TAG'));
 
-    it('is the last section and has no script', () => {
+    it('follows section 28, is followed only by section 30 (the NEW tag), and has no script', () => {
         expect(from).toBeGreaterThan(UI.indexOf('28. CALM AND COMFORT'));
+        expect(UI.indexOf('30. NEW TAG')).toBeGreaterThan(from);
         expect(sec).not.toMatch(/<script/);
     });
 

@@ -32,6 +32,15 @@ Then use `var(--wf-*)` instead of hex codes:
 
 Sinhala is not in Geist; the stack falls through to Noto Sans Sinhala.
 
+## The NEW tag (`wealthflow-new-badge.js`)
+
+A screen or an option that is new wears a small gold NEW pill for exactly 7 days, then it goes away by itself. Nothing is written by hand to turn it on or off.
+
+- **A new screen** (a new entry in the sidebar, i.e. a `showPage('x', this)` id that is not in the script's `BASELINE`) is picked up automatically: the first time a device sees it, it is stamped and tagged for 7 days. Do not add it to `BASELINE`.
+- **A new option, button or card** (Settings or anywhere else): put `data-wf-new="YYYY-MM-DD"` (the day it ships, UTC) on the element. The script appends the pill and removes it 7 days after that date, on every device alike.
+- The pill never counts as "needs attention" (the red dot on More) and never changes the element's own text; the phone More sheet shows it on the tile.
+- Run `npx vitest run test/new_badge_test.js` and `node test/e2e/new-badge.mjs`.
+
 ## Rules the tests enforce
 
 - Text contrast is at least 4.5:1 on every surface, in both themes; form edges 3:1.

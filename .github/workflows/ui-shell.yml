@@ -7,6 +7,8 @@ on:
       - wf-tokens.css
       - wf-ui.css
       - wealthflow-shell.js
+      - wealthflow-new-badge.js
+      - test/e2e/new-badge.mjs
       - wealthflow-insights.js
       - wealthflow-statement-cloud.js
       - assets/fonts/**
@@ -54,6 +56,10 @@ jobs:
         run: node test/e2e/ui-dashboard.mjs
         env:
           WF_DASH_ARTIFACTS: shell-artifacts
+      - name: Verify the NEW tag puts itself on, shows in the More sheet, and comes off after 7 days
+        run: node test/e2e/new-badge.mjs
+        env:
+          WF_NEWBADGE_ARTIFACTS: shell-artifacts
       - name: Verify the finance pages (figures, Monthly Plan, loan card, phone stat rows)
         run: node test/e2e/ui-finance.mjs
         env:

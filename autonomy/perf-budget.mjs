@@ -703,7 +703,9 @@ export const BUDGETS = {
     // 8 KB at the same time (the old backupNow, the staged-snapshot code and the Drive uploader are gone), so htmlBytes above is unchanged and now has headroom.
     // 2026-10-20 (the backup buttons: real progress; measured 2,624,521 + ~0.1% headroom): 2_620_000 -> 2_627_500. wealthflow-backup.js now reports each real step of a restore point and of a Drive copy to the page
     // (onStep, makeProgress), deletes every restore point including the ones a newest-first list could not see, and leaves a marker so the schedule does not refill the list at once (backup-sweep.js reads it too, not counted).
-    totalJsBytes: 2_627_500,
+    // 2026-10-21 (the NEW tag, which put itself on by hand and never came off; measured 2,633,592 + ~0.1% headroom): 2_627_500 -> 2_636_500. wealthflow-new-badge.js (about 6 KB, a third of it the comments recording why)
+    // is the one rule for when a NEW tag shows (a screen that is not in its BASELINE, or an element dated with data-wf-new) and for when it ends (7 days). index.html and wealthflow-shell.js (the More sheet shows the tag) change by a few bytes.
+    totalJsBytes: 2_636_500,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
@@ -803,7 +805,8 @@ export const BUDGETS = {
     // 2026-10-10: 87 -> 88 for wealthflow-shell.js (tab bar, More sheet, command palette; see totalJsBytes).
     // 2026-10-10: 88 -> 89 for wealthflow-cheques.js (what a cheque row on a statement is and which tracked cheque it settles; see totalJsBytes).
     // 2026-10-20: 89 -> 90 for wealthflow-backup.js (when the schedule fires and what a backup is; shared by the page and the nightly server run; see totalJsBytes).
-    moduleCount: 90,   // measured 90
+    // 2026-10-21: 90 -> 91 for wealthflow-new-badge.js (the NEW tag that puts itself on a new screen or option and takes itself off after 7 days; see totalJsBytes).
+    moduleCount: 91,   // measured 91
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -875,7 +878,8 @@ export const BUDGETS = {
     // 2026-10-10: 80 -> 81 for wealthflow-shell.js — a plain deferred script, so renderBlockingScripts below is unchanged at 2.
     // 2026-10-10: 81 -> 82 for wealthflow-cheques.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-20: 82 -> 83 for wealthflow-backup.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
-    scriptTags: 83,              // measured 83; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
+    // 2026-10-21: 83 -> 84 for wealthflow-new-badge.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
+    scriptTags: 84,              // measured 84; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
