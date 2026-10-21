@@ -549,9 +549,8 @@ describe('Google Drive, from the page', () => {
         stalled.fetch = (url, init) => new Promise((_, rej) => { seen.push(init && init.signal); if (init && init.signal) init.signal.addEventListener('abort', () => rej(new Error('aborted'))); });
         const p = loadPage({ refresh: 'rt', drive: stalled });
         const run = p.executeDriveBackup();
-        await new Promise((r) => globalThis.setTimeout(r, 20));
+        await vi.waitFor(() => expect(p.pullTimers).toHaveLength(1));
         expect(seen.length, 'the call carried no abort signal').toBeGreaterThan(0);
-        expect(p.pullTimers).toHaveLength(1);
         p.pullTimers[0]();
         expect(await run).toBe(false);
     });
@@ -774,9 +773,9 @@ describe('restore: a copy of what is here comes first, and nothing is replaced i
         let release; const inFlight = new Promise((r) => { release = r; });
         p.setSyncRun(inFlight);
         const done = p._wfApplyRestore(restoredFile(), 'x');
+        await vi.waitFor(() => expect(p.getHold()).toBe(true));
         await settle();
         expect(p.calls, 'the account was replaced while a push was still running').not.toContain('users.set');
-        expect(p.getHold()).toBe(true);
         release(true);
         await done;
         expect(p.calls).toContain('users.set');
@@ -785,9 +784,9 @@ describe('restore: a copy of what is here comes first, and nothing is replaced i
     it('a push that was only waiting for its timer is cancelled, and no new one can start until the page reloads', async () => {
         const p = loadPage();
         let fired = false;
-        p.setDebounceTimer(globalThis.setTimeout(() => { fired = true; }, 15));
+        p.setDebounceTimer(globalThis.setTimeout(() => { fired = true; }, 400));    // long enough that a loaded machine finishes the restore first
         await p._wfApplyRestore(restoredFile(), 'x');
-        await new Promise((r) => globalThis.setTimeout(r, 40));
+        await new Promise((r) => globalThis.setTimeout(r, 450));
         expect(fired, 'a queued push still fired during the restore').toBe(false);
         expect(p.getDebounceTimer()).toBe(null);
         expect(p.getHold(), 'a restore that replaced the account must keep pushes off until the reload').toBe(true);
@@ -814,8 +813,7 @@ describe('restore: a copy of what is here comes first, and nothing is replaced i
         const p = loadPage({ userGetHangs: true });
         const before = structuredClone(p.appData);
         const run = p._wfApplyRestore(restoredFile(), 'x');
-        await new Promise((r) => globalThis.setTimeout(r, 20));
-        expect(p.pullTimers, 'the read has to be raced against a deadline').toHaveLength(1);
+        await vi.waitFor(() => expect(p.pullTimers, 'the read has to be raced against a deadline').toHaveLength(1));
         p.pullTimers[0]();
         await run;
         expect(p.getAppData()).toEqual(before);
@@ -827,8 +825,7 @@ describe('restore: a copy of what is here comes first, and nothing is replaced i
         const p = loadPage({ userGetHangsAfter: 1 });
         const before = structuredClone(p.appData);
         const run = p._wfApplyRestore(restoredFile(), 'x');
-        await new Promise((r) => globalThis.setTimeout(r, 20));
-        expect(p.pullTimers, 'the second read was not raced against a deadline').toHaveLength(2); // the first read's, which answered, and this one's
+        await vi.waitFor(() => expect(p.pullTimers, 'the second read was not raced against a deadline').toHaveLength(2)); // the first read's, which answered, and this one's
         p.pullTimers[1]();
         await run;
         expect(p.getAppData()).toEqual(before);
