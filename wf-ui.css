@@ -1187,3 +1187,19 @@ select.fi, select.fs { text-overflow: ellipsis; }
 @media (prefers-reduced-motion: reduce) {
     .ai-persona-card:active, .scan-mode-card:active, .wfx-a:active { transform: none; }
 }
+
+/* ==========================================================================
+   29. REACH (touch comfort, nothing moves)
+   The page sweep (22 pages, 5 widths, 2 themes) found a few controls whose tap area is 26-28px tall on a
+   phone: "Confirm Received", "Past months", the attention-tile action, and every on/off switch. A small
+   target makes people tap twice and doubt the app. The drawn size stays exactly as it is; only the area
+   that answers a tap grows (an invisible 8px skin), and only for fingers. Long search placeholders end in
+   an ellipsis instead of being cut mid-word.
+   ========================================================================== */
+@media (pointer: coarse) {
+    .income-received-btn, .income-past-btn, .wfx-a, .toggle { position: relative; }
+    .income-received-btn::before, .income-past-btn::before, .wfx-a::before, .toggle::before {
+        content: ''; position: absolute; inset: -8px -6px;
+    }
+}
+input.fi, input[type="search"], input[type="text"] { text-overflow: ellipsis; }
