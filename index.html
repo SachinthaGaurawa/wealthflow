@@ -22552,8 +22552,10 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         function cciProgress(item) {
             const s = new Date(item.date + 'T00:00:00'), n = new Date();
-            if (n < s) return { paid: 0, total: item.duration, pct: 0 };
-            const paid = Math.min(Math.floor((n - s) / 2628000000), item.duration);
+            if (n < s) { const early = Array.isArray(item.payments) ? Math.min(item.payments.filter(p => p && p.paid).length, item.duration) : 0; return { paid: early, total: item.duration, pct: Math.round(early / item.duration * 100) }; }
+            // the months the plan counts as paid: the calendar's, or more when payments say so (a statement or the owner marked a month paid)
+            const marked = Array.isArray(item.payments) ? item.payments.filter(p => p && p.paid).length : 0;
+            const paid = Math.min(Math.max(Math.floor((n - s) / 2628000000), marked), item.duration);
             return { paid, total: item.duration, pct: Math.round(paid / item.duration * 100) };
         }
         function renderCCI() {
@@ -22580,9 +22582,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             tbody.innerHTML = _cap.rows.map(item => {
                 const prog = cciProgress(item);
                 const end = new Date(item.date + 'T00:00:00'); end.setMonth(end.getMonth() + item.duration);
-                const isActive = end > new Date() && !item.completed;
+                const finished = item.completed || end <= new Date();   // a plan whose last month has passed is done: nothing is owed, nobody has to mark it
                 const skipCount = item.skipped?.length || 0;
-                return (item === _cap.firstDone ? _cap.a.row + _wfDoneRow(_cap.doneCount, 'instalments', 11) : '') + `<tr class="${item.completed ? 'done-row' : ''}">
+                return (item === _cap.firstDone ? _cap.a.row + _wfDoneRow(_cap.doneCount, 'instalments', 11) : '') + `<tr class="${finished ? 'done-row' : ''}">
             <td><div style="font-weight:600;">${_wfEsc(item.product)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
             <td>${_wfEsc(item.buyer || 'Self')}</td>
             <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
@@ -22590,10 +22592,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-mono">${item.rate > 0 ? item.rate + '%' : '0% Free'}</td>
             <td class="td-r">${fmt(item.monthly)}</td>
             <td class="td-mono">${item.duration}M${skipCount > 0 ? `<br><span style="font-size:10px;color:var(--accent);">${skipCount} skipped</span>` : ''}</td>
-            <td class="td-m">${item.date}</td>
+            <td class="td-m td-date">${item.date}</td>
             <td style="min-width:110px;"><div class="pb" style="margin-bottom:3px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${Math.min(100, prog.pct)}%"></div></div><div style="font-size:10px;color:var(--text3);">${prog.paid}/${prog.total} (${prog.pct}%)</div></td>
-            <td>${item.completed ? '<span class="badge bg-gr">Done</span>' : isActive ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-r">Overdue</span>'}</td>
-            <td><div class="act-btns">${!item.completed ? `<button class="ib c" onclick="markCCIDone('${_wfJsAttr(item.id)}')" title="Mark Complete"><i data-wfi="check"></i></button>` : ''}
+            <td>${finished ? '<span class="badge bg-gr">Done</span>' : '<span class="badge bg-g">Active</span>'}</td>
+            <td><div class="act-btns">${!finished ? `<button class="ib c" onclick="markCCIDone('${_wfJsAttr(item.id)}')" title="Mark Complete"><i data-wfi="check"></i></button>` : ''}
                 <button aria-label="Edit this instalment plan" class="ib e" onclick="editCCI('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
                 <button aria-label="Delete this instalment plan" class="ib d" onclick="deleteCCI('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
@@ -23057,8 +23059,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
             <td>${typeBadge}</td>
             <td class="td-a">${amountCell}</td>
-            <td class="td-m">${item.date}</td>
-            <td class="td-m">${item.deadline}</td>
+            <td class="td-m td-date">${item.date}</td>
+            <td class="td-m td-date">${item.deadline}</td>
             <td><span class="cd ${cdCls}">${cdTxt}</span></td>
             <td>${item.autoPaid ? '<span class="badge bg-g" title="Auto-matched to a card payment (oldest charge first)">@checkCircle@ Auto-paid</span>' : item.paid ? '<span class="badge bg-g">Paid</span>' : dl < 0 ? '<span class="badge bg-r">Overdue</span>' : '<span class="badge bg-a">Pending</span>'}${(() => { const d = !item.paid && _ccWalk.byId[item.id]; return d && d.state === 'blocked' ? `<div class="td-m" style="font-size:10px;margin-top:2px;">needs ${fmt(d.needs)} more</div>` : d && d.state === 'waiting' ? '<div class="td-m" style="font-size:10px;margin-top:2px;">after the older charge</div>' : ''; })()}</td>
             <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${_wfJsAttr(item.id)}')" title="Mark paid"><i data-wfi="check"></i></button>` : ''}
@@ -23175,8 +23177,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td style="font-weight:600;">${_wfEsc(item.party)}</td>
             <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
             <td class="td-a">${fmt(item.amount)}</td>
-            <td class="td-m">${item.issue}</td>
-            <td class="td-m">${item.release}</td>
+            <td class="td-m td-date">${item.issue}</td>
+            <td class="td-m td-date">${item.release}</td>
             <td><span class="cd ${cdCls}">${cdTxt}</span></td>
             <td>${statusMap[item.status] || ''}</td>
             <td class="td-m">${_wfEsc(item.notes || '')}</td>
