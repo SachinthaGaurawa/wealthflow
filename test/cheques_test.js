@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { textPdf } from './helpers/embedded-statements.js';
 import { createFirestore } from './helpers/fake-firestore.js';
 import { readStatement } from '../statement-reader.mjs';
-import { runStatementSync, deterministicDecision, unfileStatement, healChequeTwins } from '../statement-sync.js';
+import { runStatementSync, deterministicDecision, unfileStatement, healChequeTwins, healStatementCheques } from '../statement-sync.js';
 import { settleStatement } from '../statement-ledger.mjs';
 import { incomeIn } from '../wealthflow-reactive.js';
 import { loadParser } from './statement-fixtures.mjs';
@@ -258,6 +258,16 @@ describe('every door reads the same rows the same way', () => {
     it.each(NOT_CHEQUES)('page and worker: %s is not a cheque', (description) => {
         expect(route(description, 'debit', 5000).tab).not.toBe('cheque');
         expect(worker(description, 'debit', 5000).cheque).toBeUndefined();
+    });
+
+    it('a statement page that holds only withdrawals and names a cheque is a bank account, never a card', () => {
+        const page1 = [{ description: 'CHEQUE PAID 000123', amount: 25000, direction: 'debit' }, { description: 'ATM WITHDRAWAL', amount: 5000, direction: 'debit' }];
+        expect(page.WFRoute.inferAccountType(page1)).toBe('bank_account');
+        expect(page.WFRoute.inferAccountType([{ description: 'CLEARING 000123', amount: 25000, direction: 'debit' }])).toBe('bank_account');
+        expect(page.WFRoute.inferAccountType([{ description: 'CHEQUE DEPOSIT 285943', amount: 50000, direction: 'credit' }])).toBe('bank_account');
+        // the same page without a cheque is still read as a card, as before
+        expect(page.WFRoute.inferAccountType([{ description: 'KEELLS SUPER', amount: 2500, direction: 'debit' }, { description: 'ATM WITHDRAWAL', amount: 5000, direction: 'debit' }])).toBe('credit_card');
+        expect(page.WFRoute.inferAccountType([{ description: 'CHEQUERS RESTAURANT', amount: 2500, direction: 'debit' }])).toBe('credit_card');
     });
 
     it('a credit-card statement is never read as cheques', () => {
@@ -1519,5 +1529,165 @@ describe('the page', () => {
     });
     it('the module is also exposed on window for the page', () => {
         expect(Object.keys(Cheques).sort()).toEqual(['incomeCounted', 'matchTracked', 'normNo', 'partyFrom', 'readCheque', 'sameBank', 'sameNo', 'settleCheque', 'stampTwin', 'typedTwin', 'unsettleCheque']);
+    });
+});
+
+/* ---- rows that do not say "cheque" in so many words ------------------------------------------------------------------------------------------------------------------------------------- */
+/* Found on 2026-10-21 by reading statements the way the owner's banks print them: a statement with the cheque's number in its own column gives the description column just "CLEARING" or
+ * "INWARD CLEARING", and the parser took that number for a bank reference and deleted it — a cheque row with nothing left in it that says cheque. */
+describe('the clearing house is the cheque clearing house', () => {
+    it.each([
+        ['CLEARING 000123', 'debit', OUT, '000123'],
+        ['INWARD CLEARING 456789', 'debit', OUT, '456789'],
+        ['OUTWARD CLEARING 456789', 'credit', IN, '456789'],
+        ['INWARD CLG 456789 SAMPATH', 'debit', OUT, '456789'],
+        ['CLG NO 456789', 'credit', IN, '456789'],
+        ['CLEARING NO:456789 PAID', 'debit', OUT, '456789'],
+        ['456789 INWARD CLEARING', 'debit', OUT, '456789'],
+    ])('%s (%s) is a cheque %s numbered %s', (description, direction, type, no) => {
+        expect(readCheque({ description, direction, amount: 25000 })).toMatchObject({ isCheque: true, type, no, event: 'clear' });
+    });
+    it('a clearing word alone, a charge, or an electronic payment is not a cheque', () => {
+        for (const description of ['CLEARING', 'INWARD CLEARING', 'CLEARING CHARGES 150.00', 'CEFT CLEARING 456789', 'RTGS OUTWARD CLEARING 456789', 'SLIPS CLG 456789', 'CLEARING HOUSE FEE 456789'])
+            expect(readCheque({ description, direction: 'debit', amount: 25000 }).isCheque, description).toBe(false);
+    });
+    it('a return through the clearing house is read as a return', () => {
+        expect(readCheque({ description: 'CLEARING RTN 456789', direction: 'debit', amount: 25000 })).toMatchObject({ isCheque: true, type: IN, event: 'return', no: '456789' });
+    });
+});
+describe('a cheque word run into its neighbour, or written in Sinhala', () => {
+    it.each([
+        ['CHQPAID 220334', 'debit', OUT, '220334'],
+        ['CHQDEP 543210', 'credit', IN, '543210'],
+        ['CHEQUEDEPOSIT 543210', 'credit', IN, '543210'],
+        ['CHQRTN 543210', 'debit', IN, '543210'],
+        ['චෙක්පත 654321', 'debit', OUT, '654321'],
+        ['චෙක්පතක් තැන්පතු 654321', 'credit', IN, '654321'],
+    ])('%s', (description, direction, type, no) => {
+        expect(readCheque({ description, direction, amount: 25000 })).toMatchObject({ isCheque: true, type, no });
+    });
+    it('a word that merely begins with the letters is no cheque', () => {
+        for (const description of ['CHQUEUE 220334', 'CHEQUERED FLAG CAFE', 'CHQNOTE 220334'])
+            expect(readCheque({ description, direction: 'debit', amount: 25000 }).isCheque, description).toBe(false);
+    });
+});
+describe('the statement parser keeps the number beside the clearing word', () => {
+    const statement = (lines) => ['COMMERCIAL BANK OF CEYLON PLC', 'Statement Period: 01/03/2026 - 31/03/2026', 'Account Number: 8001234567', 'Date Description Cheque No Debit Credit Balance', '01/03/2026 Opening Balance 500,000.00', ...lines].join('\n');
+    it.each([
+        ['12/03/2026 CLEARING 000123 25,000.00 475,000.00', '000123', 'debit'],
+        ['12/03/2026 INWARD CLEARING 456789 12,000.00 463,000.00', '456789', 'debit'],
+        ['12/03/2026 OUTWARD CLG 777888 44,000.00 519,000.00', '777888', 'credit'],
+    ])('%s', (line, no, direction) => {
+        const parsed = parser.parseStatement(statement([line]));
+        const rows = parsed.rows || parsed.transactions || [];
+        expect(rows.length).toBe(1);
+        expect(readCheque({ description: rows[0].narration || rows[0].description, direction: rows[0].direction, amount: rows[0].amount })).toMatchObject({ isCheque: true, no, direction });
+    });
+    it('an electronic payment keeps losing its reference, as before', () => {
+        const parsed = parser.parseStatement(statement(['12/03/2026 CEFT CLEARING 8801234567 25,000.00 475,000.00']));
+        const rows = parsed.rows || parsed.transactions || [];
+        expect(String(rows[0].narration || rows[0].description)).not.toContain('8801234567');
+    });
+});
+describe('the email worker files a statement that prints the cheque number in its own column', () => {
+    it('"CLEARING 000123" and "OUTWARD CLEARING 456789" reach the Cheque Tracker, each counted once', async () => {
+        const { user, item } = await file({}, [line('06', 'CLEARING 000123', '25,000.00', '', '475,000.00'), line('07', 'OUTWARD CLEARING 456789', '', '60,000.00', '535,000.00')].join('\n'));
+        expect(item.status).toBe('filed');
+        expect(user.cheques.map((c) => [c.no, c.type, c.status, c.amount])).toEqual([['000123', OUT, 'cleared', 25000], ['456789', IN, 'cleared', 60000]]);
+        expect(user.expenses).toHaveLength(0);                       // the issued cheque carries its own payment
+        expect(user.incomeRecv).toHaveLength(1);                     // the deposit is income, once
+        expect(monthly(user).totalExp).toBe(25000);
+    });
+});
+
+/* ---- statements filed before the Tracker could read them ------------------------------------------------------------------------------------------------------------------------------- */
+describe('cheques that earlier statements filed as plain expenses and income reach the Cheque tab', () => {
+    const KEY = 'wf-mail/owner_example_com/items/old0';
+    const filedExpense = (extra = {}) => ({ id: 'E1', desc: 'CHQ PAID 000123', cat: 'Bank Charges', amount: 25000, date: '2026-03-06', month: '2026-03', recurring: false, recurringType: '0', completed: true, source: 'statement', statementKey: KEY, statementRow: 3, bank: 'HNB', direction: 'debit', createdAt: '2026-10-02T04:00:00.000Z', ...extra });
+    const filedIncome = (extra = {}) => ({ id: 'I1', name: 'CHEQUE DEPOSIT 285943', type: 'Other', amount: 50000, date: '2026-03-12', month: '2026-03', received: true, source: 'statement', statementKey: KEY, statementRow: 5, bank: 'HNB', direction: 'credit', createdAt: '2026-10-02T04:00:00.000Z', ...extra });
+    const run = async (user, opts = {}) => { const w = world(user); const result = await healStatementCheques({ db: w.db, uid: 'u', log: () => {}, ...opts }); return { w, result, user: w.data.get('users/u') }; };
+
+    it('an issued cheque the bank paid: the tracker gets it, tied to the expense, and the month still counts the payment once', async () => {
+        const { user, result } = await run({ expenses: [filedExpense()] });
+        expect(result).toMatchObject({ created: 1, cleared: 0, bounced: 0 });
+        expect(user.cheques).toHaveLength(1);
+        expect(user.cheques[0]).toMatchObject({ type: OUT, no: '000123', status: 'cleared', clearedDate: '2026-03-06', amount: 25000, source: 'statement', statementKey: KEY, statementRow: 3, createdKey: KEY, countedBy: 'E1', backfilledFrom: 'E1', bank: 'HNB' });
+        expect(user.expenses).toHaveLength(1);                           // the expense stays: it is the books' record of the money
+        expect(user.expenses[0].chequeBackfill).toMatchObject({ id: user.cheques[0].id });
+        expect(monthly({ ...user, cheques: [] }).totalExp).toBe(25000);
+        expect(monthly(user).totalExp).toBe(25000);                      // with the cheque added: still once
+    });
+    it('a deposit: the cheque is tracked as received and cleared, and the income stays income', async () => {
+        const { user } = await run({ incomeRecv: [filedIncome()] });
+        expect(user.cheques).toHaveLength(1);
+        expect(user.cheques[0]).toMatchObject({ type: IN, no: '285943', status: 'cleared', clearedDate: '2026-03-12', amount: 50000 });
+        expect(user.cheques[0].countedBy).toBeUndefined();
+        expect(user.incomeRecv).toHaveLength(1);
+    });
+    it('a deposit the bank sent back: the cheque is tracked as bounced; the expense that took the money back stays', async () => {
+        const { user } = await run({ expenses: [filedExpense({ desc: 'CHQ RTN 285943', amount: 50000, cat: 'Banking' })] });
+        expect(user.cheques).toHaveLength(1);
+        expect(user.cheques[0]).toMatchObject({ type: IN, no: '285943', status: 'bounced', bouncedDate: '2026-03-06', amount: 50000 });
+        expect(user.expenses).toHaveLength(1);
+    });
+    it('a cheque the owner already tracks is cleared by the old row, not added a second time', async () => {
+        const mine = { id: 'P1', no: '000123', party: 'Dialog', bank: 'HNB', type: OUT, amount: 25000, issue: '2026-03-01', release: '2026-03-05', status: 'pending', notes: '' };
+        const { user } = await run({ expenses: [filedExpense()], cheques: [mine] });
+        expect(user.cheques).toHaveLength(1);
+        expect(user.cheques[0]).toMatchObject({ id: 'P1', status: 'cleared', clearedDate: '2026-03-06', countedBy: 'E1' });
+        expect(monthly(user).totalExp).toBe(25000);
+    });
+    it('reading it again changes nothing, and a cheque the owner deletes is not made again', async () => {
+        const first = await run({ expenses: [filedExpense()] });
+        expect((await healStatementCheques({ db: first.w.db, uid: 'u', log: () => {} })).created).toBe(0);
+        expect(first.w.data.get('users/u').cheques).toHaveLength(1);
+        first.w.data.set('users/u', { ...first.w.data.get('users/u'), cheques: [] });          // the owner deletes it
+        expect((await healStatementCheques({ db: first.w.db, uid: 'u', log: () => {} })).created).toBe(0);
+        expect(first.w.data.get('users/u').cheques).toHaveLength(0);
+    });
+    it('what the owner typed, a fee, a shop with the letters, and an issued cheque the bank returned are left alone', async () => {
+        const { user, result } = await run({ expenses: [
+            filedExpense({ id: 'T1', source: 'manual', statementKey: undefined, desc: 'Cheque to landlord 000555' }),
+            filedExpense({ id: 'F1', desc: 'CHEQUE BOOK ISSUE FEE', amount: 150, statementRow: 4 }),
+            filedExpense({ id: 'S1', desc: 'CHEQUERS RESTAURANT COLOMBO', amount: 4200, statementRow: 6 })],
+        incomeRecv: [filedIncome({ id: 'R1', name: 'CHQ RTN 000123 CREDIT', amount: 25000, statementRow: 7 })] });
+        expect(result).toMatchObject({ created: 0, cleared: 0, bounced: 0 });
+        expect(user.cheques).toHaveLength(0);
+    });
+    it('a row the statement already put in the tracker (the same statement, the same row) is not made a second time', async () => {
+        const stamped = { id: 'C9', no: '000123', party: 'Cheque on statement', bank: 'HNB', type: OUT, amount: 25000, issue: '2026-03-06', release: '2026-03-06', status: 'cleared', clearedDate: '2026-03-06', source: 'statement', statementKey: KEY, statementRow: 3, createdKey: KEY };
+        const { user, result } = await run({ expenses: [filedExpense()], cheques: [stamped] });
+        expect(result.created).toBe(0);
+        expect(user.cheques).toHaveLength(1);
+    });
+    it('two identical number-less rows on one day are two cheques; many are done in steps', async () => {
+        const rows = Array.from({ length: 5 }, (_, i) => filedExpense({ id: 'E' + i, desc: 'CHEQUE PAID', statementRow: 10 + i, amount: 1000 + i }));
+        const first = await run({ expenses: rows }, { limit: 3 });
+        expect(first.result).toMatchObject({ created: 3, more: true });
+        const second = await healStatementCheques({ db: first.w.db, uid: 'u', log: () => {} });
+        expect(second).toMatchObject({ created: 2 });
+        expect(first.w.data.get('users/u').cheques).toHaveLength(5);
+    });
+    it('a row filed after the Tracker could read plain "cheque" words was settled then: it is not read again', async () => {
+        const { user, result } = await run({ expenses: [filedExpense({ createdAt: '2026-10-18T04:00:00.000Z' })] });
+        expect(result.created).toBe(0);
+        expect(user.cheques).toHaveLength(0);
+    });
+    it('a row filed after that, in words the first reader could not read, is picked up', async () => {
+        const { user, result } = await run({ expenses: [filedExpense({ createdAt: '2026-10-18T04:00:00.000Z', desc: 'CLEARING 000123' })], incomeRecv: [filedIncome({ createdAt: '2026-10-18T04:00:00.000Z', name: 'OUTWARD CLEARING 456789', statementRow: 6 })] });
+        expect(result.created).toBe(2);
+        expect(user.cheques.map((c) => [c.no, c.type, c.status, c.countedBy || ''])).toEqual([['000123', OUT, 'cleared', 'E1'], ['456789', IN, 'cleared', '']]);
+    });
+    it('a deposit and its return, read in the order the bank printed them, end bounced whichever list is read first', async () => {
+        const { user } = await run({
+            incomeRecv: [filedIncome({ date: '2026-03-12', statementRow: 5 })],
+            expenses: [filedExpense({ id: 'E7', desc: 'CHQ RTN 285943', amount: 50000, date: '2026-03-20', statementRow: 9, cat: 'Banking' })],
+        });
+        expect(user.cheques).toHaveLength(1);
+        expect(user.cheques[0]).toMatchObject({ no: '285943', type: IN, status: 'bounced', bouncedDate: '2026-03-20', clearedDate: '2026-03-12' });
+    });
+    it('unfiling the statement takes the cheque away with it', async () => {
+        const { user } = await run({ expenses: [filedExpense()] });
+        expect(unsettleCheque(user.cheques[0], KEY, Date.now())).toMatchObject({ change: 'drop' });
     });
 });

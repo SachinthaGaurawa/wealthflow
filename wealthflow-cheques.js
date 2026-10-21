@@ -31,6 +31,10 @@ import { institutionFor, displayBank } from './wealthflow-institutions.js';
 /* ---- words ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- */
 const STRONG = new Set(['cheque', 'cheques', 'chque', 'chques', 'cheq', 'cheqs', 'chq', 'chqs', 'pdc']);
 const WEAK = new Set(['check', 'chk', 'cq']);                  // "Check In Hotel": a weak marker is a cheque only with a number beside it
+/* "CLEARING 000123", "INWARD CLG 456789": the cheque clearing house (CITS) clears nothing but cheques, so a bank that prints the clearing word and the cheque's number — the word "cheque" itself sits in the
+ * description column on some statements and not on others — has written a cheque row. Like the weak markers it counts only with a number beside it, and never beside an electronic-payment word. */
+const CLEARING = new Set(['clearing', 'clg']);
+const ELECTRONIC = new Set(['ceft', 'ceftrtgs', 'rtgs', 'slips', 'swift', 'atm', 'pos', 'card', 'visa', 'master', 'mastercard', 'amex', 'ib', 'online', 'lankapay', 'payapp']);
 const NO_WORDS = new Set(['no', 'number', 'num', 'nr', 'nbr', '#']);
 const CONNECT = new Set(['dep', 'deposit', 'deposited', 'dpst', 'depo', 'payment', 'pmt', 'pay', 'paid', 'clg', 'clearing', 'clear', 'credit', 'credited', 'debit', 'debited', 'collection',
     'lodgement', 'lodgment', 'lodged', 'realised', 'realized', 'realisation', 'realization', 'honoured', 'honored', 'presented', 'returned', 'return', 'rtn', 'retn', 'rtnd', 'dishonoured',
@@ -70,8 +74,11 @@ export function sameNo(a, b) {
 /** The narration folded for reading: amounts and dates removed (their digits are never a cheque number), lower case, one space between tokens, markers split from the digits glued to them. */
 function fold(description) {
     let text = String(description == null ? '' : description).replace(/[   ]/g, ' ').replace(AMOUNT_RE, ' ').replace(DATE_RE, ' ').toLowerCase();
+    text = text.replace(/චෙක්(?:පත(?:ක්)?)?/g, ' cheque ');                                   // the Sinhala word for a cheque
     text = text.replace(/#/g, ' # ').replace(/[^a-z0-9#]+/g, ' ');
-    text = text.replace(/\b(cheques?|chques?|cheqs?|chqs?|chk|check|cq|pdc)(no|number|num|nr)?(?=\d)/g, (all, marker, label) => marker + ' ' + (label ? label + ' ' : ''));
+    text = text.replace(/\b(cheques?|chques?|cheqs?|chqs?|chk|check|cq|pdc|clearing|clg)(no|number|num|nr)?(?=\d)/g, (all, marker, label) => marker + ' ' + (label ? label + ' ' : ''));
+    // a cheque word run into the word beside it ("CHQPAID 000123", "CHEQUEDEPOSIT 000123")
+    text = text.replace(/\b(cheques?|chques?|cheqs?|chqs?)(?=(?:paid|pay|payment|dep|deposit|dpst|rtn|return|returned|clg|clearing|issued|no|number|realised|realized)\b)/g, '$1 ');
     return text.replace(/\s+/g, ' ').trim();
 }
 
@@ -91,7 +98,7 @@ function numberIn(tokens, amount) {
     tokens.forEach((token, i) => {
         if (!/^\d{3,12}$/.test(token)) return;
         const prev = tokens[i - 1] || '', before = tokens[i - 2] || '', third = tokens[i - 3] || '';
-        const marker = (word) => STRONG.has(word) || WEAK.has(word);
+        const marker = (word) => STRONG.has(word) || WEAK.has(word) || CLEARING.has(word);
         let label = 0, labelled = false;
         if (OTHER_LABEL.has(prev) || (NO_WORDS.has(prev) && OTHER_LABEL.has(before))) return;
         if (marker(prev)) { label = 10; labelled = true; }
@@ -140,8 +147,16 @@ export function readCheque(row) {
     if (!tokens.length || TITLE_BEFORE.test(text)) return none();
     const strong = tokens.some((token) => STRONG.has(token));
     const { no, others, tied } = numberIn(tokens, row.amount);
-    const weakNumbered = tokens.some((token, i) => WEAK.has(token) && (/^\d{3,12}$/.test(tokens[i + 1] || '') || (NO_WORDS.has(tokens[i + 1] || '') && /^\d{3,12}$/.test(tokens[i + 2] || ''))));
-    if (!strong && !weakNumbered) return none();
+    const numberAfter = (i) => /^\d{3,12}$/.test(tokens[i + 1] || '') || (NO_WORDS.has(tokens[i + 1] || '') && /^\d{3,12}$/.test(tokens[i + 2] || ''));
+    const weakNumbered = tokens.some((token, i) => WEAK.has(token) && numberAfter(i));
+    // the clearing word with the number beside it (before it, when the bank prints the number column first), and no electronic-payment word anywhere on the line
+    const numberNear = (i) => {
+        for (let k = i + 1; k < tokens.length && k <= i + 3; k++) { if (/^\d{3,12}$/.test(tokens[k])) return true; if (!CONNECT.has(tokens[k]) && !NO_WORDS.has(tokens[k])) break; }
+        for (let k = i - 1; k >= 0 && k >= i - 3; k--) { if (/^\d{5,12}$/.test(tokens[k])) return true; if (!CONNECT.has(tokens[k])) break; }
+        return false;
+    };
+    const clearingNumbered = !tokens.some((token) => ELECTRONIC.has(token)) && tokens.some((token, i) => CLEARING.has(token) && numberNear(i));
+    if (!strong && !weakNumbered && !clearingNumbered) return none();
     // a bank charge about a cheque, never the cheque itself
     if (BOOK_RE.test(text) || STOP_RE.test(text) || STAMP_RE.test(text) || FEE_RE.test(text)) {
         return none({ fee: true, no, reason: 'a bank charge about a cheque — not a cheque movement' });

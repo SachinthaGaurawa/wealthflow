@@ -431,9 +431,11 @@
     function inferAccountType(transactions) {
         var txns = transactions || [];
         if (!txns.length) return null;
-        var credits = 0, debits = 0;
-        txns.forEach(function (t) { (dirOf(t) === 'credit' ? credits++ : debits++); });
+        var credits = 0, debits = 0, cheques = 0;
+        txns.forEach(function (t) { (dirOf(t) === 'credit' ? credits++ : debits++); if (chequeInfo(t).isCheque) cheques++; });
         if (credits > 0 && debits > 0) return 'bank_account';
+        // a card statement has no cheque lines: a page of a bank statement that holds only withdrawals (or only deposits) and names a cheque is a bank account, not a card — read as a card its cheques were filed as card purchases
+        if (cheques > 0) return 'bank_account';
         if (credits === 0 && debits > 0) return 'credit_card';
         return null; // all credits — ambiguous
     }
