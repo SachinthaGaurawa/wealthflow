@@ -188,10 +188,13 @@
     // narration names a cheque, the token that IS the cheque's number (digits only, or glued to the
     // word: CHQ285943) is kept; any other reference token is still taken out.
     var CHEQUE_WORD_RE = /\b(?:cheques?|chq|chque|cheq|chk|check|cq|pdc)\b|\b(?:cheque|chq|chk|cq|pdc)\d/i;
+    // "CLEARING 000123" / "INWARD CLG 456789" is a cheque row too (the clearing house clears cheques): the number beside the clearing word is the cheque's, unless the line is an electronic payment.
+    var CLEARING_RE = /\b(?:clearing|clg)\b/i, ELECTRONIC_RE = /\b(?:ceft|rtgs|slips|swift|atm|pos|card|visa|mastercard|amex|lankapay)\b/i;
+    function namesCheque(n) { return CHEQUE_WORD_RE.test(n) || (CLEARING_RE.test(n) && !ELECTRONIC_RE.test(n)); }
     var CHEQUE_TOKEN_RE = /^(?:\d+|(?:cheques?|chq|chque|cheq|chk|check|cq|pdc)\d+)$/i;
     function cleanNarration(n) {
         n = String(n || '').trim();
-        var cheque = CHEQUE_WORD_RE.test(n);
+        var cheque = namesCheque(n);
         n = n.replace(/^([A-Za-z]{1,4}\d{5,}[A-Za-z]?)\s+/, function (all, tok) { return cheque && CHEQUE_TOKEN_RE.test(tok) ? all : ''; });
         n = n.replace(/\s+([A-Za-z]{0,4}\d{5,}[A-Za-z]?)\s*$/, function (all, tok) { return cheque && CHEQUE_TOKEN_RE.test(tok) ? all : ''; });
         n = n.replace(/\b(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)\s*$/i, '');

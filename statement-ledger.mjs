@@ -3,7 +3,7 @@ import { isPhantomRow } from './statement-emptiness.mjs';
 import { applyCardSettlement } from './cc-fifo.mjs';
 import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
-import { isCreditCardRow, expenseEntryName } from './wealthflow-statement-router.js';
+import { isCreditCardRow, expenseEntryName, installmentInfo } from './wealthflow-statement-router.js';
 import { canonicalBank } from './wealthflow-institutions.js';
 import { ownMoney } from './wealthflow-own-money.js';
 import { bankKeyOf } from './statement-coverage.mjs';
@@ -118,7 +118,7 @@ function settleChequeRow({ row, user, index, id, sourcePath, bank, now }) {
 /* THE PAYMENT IS ALREADY IN THE BOOKS UNDER ANOTHER NAME (statement-links.mjs). A row that the owner typed in by hand, tracks as a subscription, wrote as
  * an issued cheque, or that is the bank settling a card whose purchases are already counted, is not filed as a second expense or income. Evidence only;
  * no counterpart found means the row is filed exactly as before. */
-function findCounterpart({ row, module, user, cards, cardRegistry }) {
+function findCounterpart({ row, module, user, cards, cardRegistry, bank }) {
     /* WHERE A HAND-MADE ENTRY FOR THIS ROW CAN BE: a card statement's purchase may have been typed as an ordinary expense (the Monthly Expenses tab) — it is the same purchase, and the
      * entry stands for it; a bank row and a receipt are looked for in their own list. The nearest entry wins across lists, and two that fit equally are never guessed between. */
     const lists = module === 'expenses' ? [['expenses', user.expenses]] : module === 'incomeRecv' ? [['incomeRecv', user.incomeRecv]] : module === 'cconetime' ? [['cconetime', user.cconetime], ['expenses', user.expenses]] : [];
@@ -132,7 +132,7 @@ function findCounterpart({ row, module, user, cards, cardRegistry }) {
         if (cardSettlementDebit(row, { cardRegistry, cards })) return { kind: 'card-settlement' };
     }
     // a card charge for a plan the owner already has is that plan's month, whether or not the narration says installment
-    if (module === 'ccinstall' || module === 'cconetime') { const plan = matchInstallmentPlan(row, user.ccinstall); if (plan) return { kind: 'plan', plan }; }
+    if (module === 'ccinstall' || module === 'cconetime') { const plan = matchInstallmentPlan(row, user.ccinstall, { installment: module === 'ccinstall', bank }); if (plan) return { kind: 'plan', plan }; }
     if (module === 'expenses' || module === 'cconetime') { const sub = matchSubscriptionForDebit(row, user.subscriptions); if (sub) return { kind: 'subscription', sub }; }
     return null;
 }
@@ -170,8 +170,13 @@ function makeRecord(row, decision, context, id, now) {
     /* A card installment charge is a one-month plan, in the plan shape the totals and the Installments tab read (product, bank, duration, date): in the worker's own
      * shape (description, startDate) it was invisible to both, and a real card charge was missing from the month. Its `date` is the month's first day: the totals
      * count a plan from the month after a mid-month date, which would put this charge a month late. */
-    if (module === 'ccinstall') return { ...base, desc, product: desc.slice(0, 60), bank: canonicalBank(context.bank || ''), buyer: 'Self', rate: 0, duration: 1, date: `${row.date.slice(0, 7)}-01`, completed: false, skipped: [], notes: `Card installment charge of ${row.date}`,
-        total: row.amount, monthly: row.amount, months: 1, remaining: 1, paid: 0, startDate: row.date, category: decision.category };
+    if (module === 'ccinstall') {
+        // "INSTALLMENT 03/12 ABANS" is the 3rd of 12 of the Abans plan: the plan is named after the merchant, and the note says which month this charge is
+        const plan = installmentInfo(desc);
+        const ofText = plan.no && plan.of ? ` (${plan.no} of ${plan.of})` : '';
+        return { ...base, desc, product: (plan.name || desc).slice(0, 60), bank: canonicalBank(context.bank || ''), buyer: 'Self', rate: 0, duration: 1, date: `${row.date.slice(0, 7)}-01`, completed: false, skipped: [], notes: `Card installment charge of ${row.date}${ofText}`,
+            total: row.amount, monthly: row.amount, months: 1, remaining: 1, paid: 0, startDate: row.date, category: decision.category, ...(plan.no && plan.of ? { installmentNo: plan.no, installmentOf: plan.of } : {}) };
+    }
     return { ...base, desc, type: row.type || 'purchase', category: decision.category, serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
 }
 
@@ -341,7 +346,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                     }
                 }
             }
-            const counterpart = reason ? null : findCounterpart({ row, module, user, cards, cardRegistry });
+            const counterpart = reason ? null : findCounterpart({ row, module, user, cards, cardRegistry, bank: canonicalBank(bank || source.bank || '') });
             let subscriptionOfCard = null;
             if (counterpart && counterpart.kind === 'twin') {
                 markTwin(counterpart.twin, row.date.slice(0, 7), sourceRef.path, index, now, row); changes[counterpart.store || module] = user[counterpart.store || module];

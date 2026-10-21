@@ -2,10 +2,9 @@ import { sameBank } from './wealthflow-institutions.js';
 
 // ── detection vocab (Sri Lanka–aware) ──────────────────────────────────────
 const RE = {
-  installment: /\b(instal+ment|easy\s*payment|flexi[\s-]*pay|e[\s-]?z\s*cash|emi|monthly\s*plan|0%\s*plan|\d{1,2}\s*(?:\/|of)\s*\d{1,2})\b/i,
   subscription:/\b(netflix|spotify|youtube|prime|disney|hbo|icloud|google\s*(one|storage)|microsoft|office\s*365|adobe|dialog|mobitel|hutch|airtel|slt|peo\s*tv|chatgpt|openai|notion|canva|dropbox)\b/i,
   ccPayment:  /\b(payment\s*[-–]?\s*thank\s*you|payment\s*received|thank\s*you\s*for\s*your\s*payment|online\s*payment|card\s*payment|settlement)\b/i,
-  fee:        /\b(annual\s*fee|late\s*(payment\s*)?fee|over\s*limit|finance\s*charge|interest|service\s*charge|joining\s*fee|stamp\s*duty|vat)\b/i,
+  fee:        /\b(annual\s*fee|late\s*(payment\s*)?fee|over\s*limit|finance\s*charge|interest|service\s*charge|joining\s*fee|stamp\s*duty|vat|processing\s*(fee|charge)s?|(instal+ment|plan|conversion)\s*(fee|charge)s?)\b/i,
   cashAdvance:/\b(cash\s*advance|atm|withdrawal|cash\s*w\/?d)\b/i,
   fuel:       /\b(ceypetco|cargills\s*petroleum|lanka\s*ioc|\bioc\b|filling\s*station|fuel|petrol|diesel)\b/i,
   refund:     /\b(refund|reversal|reimburs|chargeback|cashback)\b/i,
@@ -91,6 +90,26 @@ export const CLASSIFY_CATEGORIES = [
 // ── helpers ─────────────────────────────────────────────────────────────────
 function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 
+/* A CARD INSTALLMENT LINE: "INSTALLMENT 03/12 ABANS", "EPP 05/12 SINGER", "EASY PAY 6 MONTHS", "ZERO INTEREST PLAN 04/12", "Instalment Pymt 3 of 12". Read from the raw words (norm() turns "03/12" into "03 12", which no
+ * pattern could tell from a date). A "n/m" alone is not evidence — "KEELLS 05/12" is a day — it only says WHICH instalment once the words have said it is one. A fee ABOUT a plan ("INSTALMENT FEE",
+ * "PROCESSING FEE INSTALMENT PLAN") is a card fee, not a plan payment. */
+const PLAN_WORDS = /\b(?:instal+ments?|instl?mts?|easy\s*pay(?:ment)?s?|flexi[\s-]*pay|ez[\s-]*(?:cash|pay)|e[\s-]?z\s*cash|emi|epp|ipp|smart\s*pay|split\s*pay|monthly\s*plan|0\s*%\s*(?:plan|instal\w*|interest)|zero\s*(?:%\s*)?interest|interest[\s-]*free)\b/i;
+const PLAN_FEE = /\b(?:fees?|charges?|chgs?|commission|stamp|vat|nbt|penalty|late)\b/i;
+const PLAN_ORDINAL = /(?:^|[^\d/.])(\d{1,2})\s*(?:\/|of)\s*(\d{1,2})(?![\d/.]|\s*%)/i;
+const PLAN_WORDS_CLEAN = new RegExp(PLAN_WORDS.source.replace(/^\\b/, '').replace(/\\b$/, ''), 'ig');
+export function installmentInfo(raw) {
+  const text = String(raw || '');
+  const none = { isInstallment: false, no: 0, of: 0, name: '' };
+  if (!PLAN_WORDS.test(text) || PLAN_FEE.test(text)) return none;
+  const m = PLAN_ORDINAL.exec(text);
+  const no = m ? Number(m[1]) : 0, of = m ? Number(m[2]) : 0;
+  const ordinal = m && no >= 1 && of >= 2 && no <= of ? { no, of } : { no: 0, of: 0 };
+  // the merchant: what is left once the plan words, the "n/m", the plan length and the punctuation are taken out
+  const name = text.replace(/\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/g, ' ').replace(PLAN_WORDS_CLEAN, ' ').replace(/(?:^|[^\d/.])\d{1,2}\s*(?:\/|of)\s*\d{1,2}(?![\d/.])/gi, ' ').replace(/\b\d{1,2}\s*(?:months?|mths?|mnths?)\b/gi, ' ').replace(/\b(?:plan|pymt|payment|for|no|number|interest|rate|at|%)\b/gi, ' ')
+    .replace(/[^A-Za-z0-9&' .-]+/g, ' ').replace(/\s+/g, ' ').replace(/^[\s.-]+|[\s.-]+$/g, '').trim();
+  return { isInstallment: true, ...ordinal, name: name.length >= 3 ? name.slice(0, 60) : '' };
+}
+
 function toNumber(a) {
   if (typeof a === 'number') return a;
   const n = parseFloat(String(a || '').replace(/[^0-9.\-]/g, ''));
@@ -175,7 +194,7 @@ export function routeRow(row, ctx = {}) {
     if (targetHit)      { module = 'goal_alloc'; tabLabel = `Savings Target: ${targetHit.name}`; confidence = 0.6 + 0.35 * targetHit.score; allocation = targetHit; }
     else if (loanHit)   { module = 'loans'; tabLabel = 'Loan Repayment'; confidence = 0.6 + 0.35 * loanHit.score; allocation = loanHit; }
     else if (onCard) {
-      if (RE.installment.test(desc))      { module = 'ccinstall'; tabLabel = 'CC Installments'; confidence = 0.85; }
+      if (installmentInfo(rawDesc).isInstallment) { module = 'ccinstall'; tabLabel = 'CC Installments'; confidence = 0.85; }
       else if (RE.subscription.test(desc)){ module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'subscription'; confidence = 0.9; category = 'Subscriptions'; }
       else if (RE.cashAdvance.test(desc)) { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'cash_advance'; confidence = 0.85; }
       else if (RE.fuel.test(desc))        { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'fuel'; confidence = 0.85; }

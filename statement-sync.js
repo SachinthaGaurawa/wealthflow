@@ -27,7 +27,7 @@ import { VIA, identityOf, lookup, releaseStatement, registryDuplicatePatch } fro
 import { runSteps } from './statement-budget.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
-import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
+import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow, installmentInfo } from './wealthflow-statement-router.js';
 import { PROPOSAL, REVIEW, decisionProblem, agreedRows, approvedRows, reviewPrompt, proposalPrompt, inVocabulary } from './statement-board.mjs';
 import { healLoanLinks } from './loan-link.mjs';
 import { manualTwin, markTwin } from './statement-links.mjs';
@@ -43,6 +43,7 @@ import { buildHistory } from './statement-history.mjs';
 import { ownTails, ownerWords, ownTransferEvidence, pairedTransfers, recordTwins, tailsIn } from './statement-transfers.mjs';
 import { ownMoney, holderName } from './wealthflow-own-money.js';
 import { readCheque, unsettleCheque } from './wealthflow-cheques.js';
+import { planChequeBackfill } from './statement-cheque-backfill.mjs';
 import { isolateMerchant } from './statement-merchant-name.mjs';
 import { totalsAgree } from './statement-totals.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
@@ -329,7 +330,9 @@ export function deterministicDecision(row, allocations = {}) {
             ? { module: 'expenses', category: 'Bank Charges', allocationId: '', verified: true, deterministic: true, cheque: true }
             : { module: 'incomeRecv', category: 'Other', allocationId: '', verified: true, deterministic: true, cheque: true };
     }
-    if (transferEvidence({ description })) {
+    /* A card's "Balance Transfer Plan Instalment 4/12" is a plan payment on the card, not money moving between accounts: it is read as the installment it is, before the word "transfer" can take it out of the books. */
+    const cardInstallment = row?.direction === 'debit' && isCreditCardRow(row || {}, allocations) && installmentInfo(description).isInstallment;
+    if (!cardInstallment && transferEvidence({ description })) {
         /* A TRANSFER IS LEFT OUT OF THE BOOKS ONLY WHEN IT IS THE OWNER'S OWN MONEY MOVING BETWEEN THE OWNER'S OWN ACCOUNTS (statement-transfers.mjs): the account number of one of their own cards, their own words
          * ("my DFCC"), or the other leg on the same statement. "Outward Ceft Transfer Car", "Inward Ceft Transfer Dip Refund" are money paid to and received from other people — spending and income. They were all
          * left out, and a statement that is half of those showed the owner a month with half of it missing. Where the direction is not proven, the row is not filed (the rows below ask for it as any row). */
@@ -877,6 +880,26 @@ export async function healChequeTwins({ db, uid, now = Date.now(), log = console
         return { merged: chosen.length, more: pairs.length > chosen.length && chosen.length >= limit };
     });
     if (result.merged) log(JSON.stringify({ evt: 'cheque-twin-heal', merged: result.merged, ...(result.more ? { more: true } : {}) }));
+    return result;
+}
+
+/* THE CHEQUES THAT STATEMENTS FILED BEFORE THE TRACKER COULD READ THEM (statement-cheque-backfill.mjs). A statement filed as an expense or an income row that says "cheque" never reached the Cheque tab; the row is in the books once,
+ * so the cheque is settled from that record with the same reader and decision every door uses, tied to the expense that already counts an issued cheque's money. Only records a statement filed; a record is looked at once;
+ * nothing is deleted. Counts only are logged. */
+export async function healStatementCheques({ db, uid, now = Date.now(), log = console.info, limit = 60 }) {
+    const userRef = db.collection('users').doc(uid);
+    const peek = structuredClone((await userRef.get()).data() || {});
+    if (!Object.keys(planChequeBackfill(peek, { now, limit: 1 }).changed).length) return { created: 0, cleared: 0, bounced: 0, more: false };
+    const result = await db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), user = structuredClone(snap.data() || {});
+        const plan = planChequeBackfill(user, { now, limit });
+        if (!Object.keys(plan.changed).length) return { created: 0, cleared: 0, bounced: 0, more: false };
+        const patch = { _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now };
+        for (const key of Object.keys(plan.changed)) patch[key] = user[key];
+        tx.set(userRef, patch, { merge: true });
+        return { created: plan.created, cleared: plan.cleared, bounced: plan.bounced, more: plan.more };
+    });
+    if (result.created || result.cleared || result.bounced) log(JSON.stringify({ evt: 'statement-cheque-backfill', created: result.created, cleared: result.cleared, bounced: result.bounced, ...(result.more ? { more: true } : {}) }));
     return result;
 }
 
@@ -2617,7 +2640,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         // each on its own: one that fails (a document in a shape it did not expect) must not stop the others from ever running
         const pass = await runSteps({ from: mail.loanHealNext, until: tailUntil, steps: [
             { name: 'loan-installments', run: () => healLoanInstallments({ db, uid }) }, { name: 'hand-made-twins', run: () => healHandMadeTwins({ db, uid }) },
-            { name: 'cheque-twins', run: () => healChequeTwins({ db, uid }) }, { name: 'statement-copies', run: () => healStatementCopies({ db, mailRef, uid }) }, { name: 'own-transfers', run: () => healOwnTransfers({ db, uid }) },
+            { name: 'statement-cheques', run: () => healStatementCheques({ db, uid }) }, { name: 'cheque-twins', run: () => healChequeTwins({ db, uid }) }, { name: 'statement-copies', run: () => healStatementCopies({ db, mailRef, uid }) }, { name: 'own-transfers', run: () => healOwnTransfers({ db, uid }) },
             { name: 'card-settlement', run: () => healCardSettlement({ db, uid }) }, { name: 'card-installments', run: () => repairCardInstallments({ db, uid }) }] });
         tail.heal = { ran: pass.ran.length, failed: pass.failed, ms: pass.ms, ...(pass.done ? {} : { skipped: pass.skipped }) };
         try { await mailRef.set(pass.done ? { lastLoanHealMs: Date.now(), loanHealNext: 0 } : { loanHealNext: pass.next }, { merge: true }); } catch (_) { /* the next run tries again */ }

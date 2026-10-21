@@ -9,6 +9,7 @@
  * Pure: no storage, no clock, no network.
  * ===========================================================================*/
 
+import { sameBank } from './wealthflow-institutions.js';
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const arr = (v) => (Array.isArray(v) ? v : []);
 const low = (v) => String(v == null ? '' : v).toLowerCase();
@@ -157,18 +158,21 @@ export function planCountedIn(plan, ym) {
     return Number.isFinite(start) && Number.isFinite(end) && start <= first && end > first;
 }
 /** The one plan whose product is named in the narration, whose monthly amount is this charge (to 2%), and which the totals count this month. */
-export function matchInstallmentPlan(row, plans) {
+export function matchInstallmentPlan(row, plans, options = {}) {
     const amount = num(row && row.amount), text = words(row && (row.description || row.narration)), ym = ymOf(row && row.date);
     if (!(amount > 0) || !text || !ym) return null;
-    const hits = [];
+    const hits = [], byMoney = [];
     for (const plan of arr(plans)) {
         if (!plan || !plan.id || !planCountedIn(plan, ym) || !(num(plan.monthly) > 0)) continue;
         if (Math.abs(amount - num(plan.monthly)) > num(plan.monthly) * 0.02) continue;
         if (arr(plan.payments).some((p) => p && p.month === ym && p.paid && p.source === 'statement')) continue;     // that month already has its charge: this one is another
         const product = tokens(plan.product);
         if (product.length && product.some((t) => text.includes(t))) hits.push(plan);
+        // the owner named the plan their own way ("Fridge"), the bank wrote the shop ("ABANS PLC"): a line the bank itself calls an installment, for this plan's money, on this plan's card bank
+        else if (options.installment && (!options.bank || !plan.bank || sameBank(plan.bank, options.bank))) byMoney.push(plan);
     }
-    return hits.length === 1 ? hits[0] : null;
+    if (hits.length) return hits.length === 1 ? hits[0] : null;
+    return byMoney.length === 1 ? byMoney[0] : null;
 }
 /** The plan's payment for the month, from the statement: the plan counts it (its monthly amount), the statement row does not become a second record. */
 export function applyPlanPayment(plan, row, sourcePath, index, now) {
