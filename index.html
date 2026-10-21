@@ -6430,12 +6430,12 @@
                                 <div
                                     style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">
                                     @wallet@ Gross Monthly Income (LKR)</div>
-                                <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+                                <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; align-items:center;">
                                     <button class="btn btn-secondary btn-sm" style="white-space:nowrap;"
                                         onclick="loadSystemIncomeAvg()">@refresh@ System 1-Yr Avg</button>
                                     <input class="fi money-input" id="dscrSysIncome" placeholder="Auto-calculated"
                                         readonly
-                                        style="background:var(--card3); flex:1; font-family:var(--mono); font-weight:700; color:var(--green);"
+                                        style="background:var(--card3); flex:1 1 130px; min-width:130px; font-family:var(--mono); font-weight:700; color:var(--green);"
                                         data-val="0">
                                     <button class="btn btn-ghost btn-sm"
                                         style="color:var(--red);border-color:rgba(239,68,68,.3);padding:6px 10px;"
@@ -6452,12 +6452,12 @@
                                 <div
                                     style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">
                                     @chartLine@ Monthly Operating Expenses (LKR) <span style="text-transform:none;letter-spacing:0;font-weight:500;color:var(--text3);">· living costs only — loan and card instalments are in the box below</span></div>
-                                <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+                                <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; align-items:center;">
                                     <button class="btn btn-secondary btn-sm" style="white-space:nowrap;"
                                         onclick="loadSystemOpexAvg()">@refresh@ System 1-Yr Avg</button>
                                     <input class="fi money-input" id="dscrSysOpex" placeholder="Auto-calculated"
                                         readonly
-                                        style="background:var(--card3); flex:1; font-family:var(--mono); font-weight:700; color:var(--red);"
+                                        style="background:var(--card3); flex:1 1 130px; min-width:130px; font-family:var(--mono); font-weight:700; color:var(--red);"
                                         data-val="0">
                                     <button class="btn btn-ghost btn-sm"
                                         style="color:var(--red);border-color:rgba(239,68,68,.3);padding:6px 10px;"
@@ -13475,6 +13475,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         async function sendSmartNotification(title, body, icon) {
             try {
                 if (!('Notification' in window) || Notification.permission !== 'granted') return;
+                // the OS panel cannot draw an @icon@ token: it showed "@wallet@ Salary Day!" as typed
+                const _plain = (v) => String(v == null ? '' : v).replace(/@[A-Za-z][A-Za-z0-9]*@/g, '').replace(/[ \t]{2,}/g, ' ').trim();
+                title = _plain(title); body = _plain(body);
                 const opts = {
                     body,
                     icon: icon || 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
@@ -33518,7 +33521,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                             borderWidth: 2
                         },
                         {
-                            label: '@info@ Avalanche',
+                            label: 'Avalanche',
                             data: dataAv,
                             borderColor: '#10b981',
                             backgroundColor: 'rgba(16,185,129,0.1)',
@@ -33528,7 +33531,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                             borderWidth: 3
                         },
                         {
-                            label: '@info@ Snowball',
+                            label: 'Snowball',
                             data: dataSn,
                             borderColor: '#3b82f6',
                             backgroundColor: 'transparent',
