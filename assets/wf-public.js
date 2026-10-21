@@ -10,6 +10,26 @@
     'use strict';
     var d = document, root = d.documentElement, win = window;
     var hasIO = 'IntersectionObserver' in win;
+    /* Reloading starts the page again from the top. Browsers put a reloaded page back where it was, which
+       on a long page feels like the reload did nothing; a link to a section (#features) would also bring
+       the reader straight back to it. Only a reload is treated this way: Back and Forward keep their place. */
+    (function startAtTop() {
+        try {
+            var nav = win.performance && win.performance.getEntriesByType && win.performance.getEntriesByType('navigation')[0];
+            var reload = nav ? nav.type === 'reload' : !!(win.performance && win.performance.navigation && win.performance.navigation.type === 1);
+            if (!reload) return;
+            var h = win.history;
+            if ('scrollRestoration' in h) h.scrollRestoration = 'manual';
+            if (win.location.hash) h.replaceState(null, '', win.location.pathname + win.location.search);
+            root.style.scrollBehavior = 'auto';
+            win.scrollTo(0, 0);
+            /* The browser puts the old position back some time after load, so the page stays "manual" until
+               it is left (then Back and Forward get their normal behaviour again). */
+            win.addEventListener('load', function () { win.scrollTo(0, 0); root.style.scrollBehavior = ''; }, { once: true });
+            win.addEventListener('pagehide', function () { if ('scrollRestoration' in h) h.scrollRestoration = 'auto'; }, { once: true });
+        } catch (_) { /* the page simply opens where the browser puts it */ }
+    })();
+
     function reduced() { try { return !!(win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (_) { return false; } }
 
     /* A 1 px marker at a fixed distance from the top of the page. */
@@ -100,20 +120,24 @@
 
     /* Home: sections come in as they reach the screen, one after another within a group. */
     var targets = d.querySelectorAll('.sec-head, .card, .steps li, .notice, .cta-band .panel');
-    var count = new Map();
-    Array.prototype.forEach.call(targets, function (el) {
-        var n = count.get(el.parentNode) || 0;
-        count.set(el.parentNode, n + 1);
-        el.style.setProperty('--i', Math.min(n, 5));
-    });
     if (hasIO && !reduced()) {
+        /* Reveal a little before a block reaches the screen (so the rise is under way, not starting, when it
+           is seen), and give blocks that arrive together a gentle one-after-another order: top to bottom,
+           left to right, at most four steps. Blocks already scrolled past just appear. */
         var io = new IntersectionObserver(function (list) {
-            list.forEach(function (e) {
-                if (!e.isIntersecting) return;
-                e.target.classList.add('in');
-                io.unobserve(e.target);
+            var batch = list.filter(function (e) { return e.isIntersecting || e.boundingClientRect.bottom < 0; });
+            batch.sort(function (a, b) {
+                var ra = Math.round(a.boundingClientRect.top / 40), rb = Math.round(b.boundingClientRect.top / 40);
+                return ra - rb || a.boundingClientRect.left - b.boundingClientRect.left;
             });
-        }, { rootMargin: '0px 0px -8% 0px', threshold: 0.12 });
+            batch.forEach(function (e, i) {
+                var el = e.target;
+                if (e.boundingClientRect.bottom < 0) el.classList.add('in-now');
+                el.style.setProperty('--i', Math.min(i, 4));
+                el.classList.add('in');
+                io.unobserve(el);
+            });
+        }, { rootMargin: '0px 0px 8% 0px', threshold: 0 });
         Array.prototype.forEach.call(targets, function (el) { io.observe(el); });
     } else {
         Array.prototype.forEach.call(targets, function (el) { el.classList.add('in'); });

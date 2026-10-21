@@ -153,9 +153,15 @@ html.wfp-home .card:hover .ic { transform: translateY(-2px) scale(1.06); backgro
         opacity: 0; animation: wfpFail .5s ease 3s forwards;
     }
     @keyframes wfpFail { to { opacity: 1; } }
+    /* A short, soft rise (12px, mostly a fade) that has already begun before the block is on screen,
+       so it never looks like something popping in under the reader's eyes. Blocks that arrive together
+       follow each other 90ms apart (--i is set per batch by the script, at most 4). */
+    @keyframes wfpRise { from { opacity: 0; transform: translate3d(0, 12px, 0); } }
     html.wfp-home :is(.sec-head, .card, .steps li, .notice, .cta-band .panel).in {
-        animation: wfpUp .8s var(--wfp-ease) calc(var(--i, 0) * 70ms) backwards;
+        animation: wfpRise 1s cubic-bezier(.22, .61, .36, 1) calc(var(--i, 0) * 90ms) backwards;
     }
+    /* Anything the reader already scrolled past is simply there. */
+    html.wfp-home :is(.sec-head, .card, .steps li, .notice, .cta-band .panel).in.in-now { animation: none; }
 }
 
 /* ── Accessibility fallbacks ─────────────────────────────────────────────── */
