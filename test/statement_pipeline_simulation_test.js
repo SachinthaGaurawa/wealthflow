@@ -39,7 +39,7 @@ function database(initial) {
         return result;
     } };
 }
-function simulation({ disagree = false, unavailable = false, items = 1, noVault = false, unencrypted = false, subscriptions = [] } = {}) {
+function simulation({ disagree = false, unavailable = false, items = 1, noVault = false, unencrypted = false, subscriptions = [], vault = null } = {}) {
     const owner = { uid: 'u', email: 'owner@example.com' }, sender = 'statements@nationstrust.com';
     const senders = [{ id: sender, kind: 'address', status: 'approved' }];
     const messageFor = id => ({ id, internalDate: '1789000000000', snippet: 'Your monthly card statement', payload: {
@@ -83,7 +83,7 @@ function simulation({ disagree = false, unavailable = false, items = 1, noVault 
             ? { index: row.index, module: 'ccPayments', category: 'Card Payment', allocationId: '' }
             : { index: row.index, module: 'cconetime', category: 'Groceries', allocationId: '' })) } : { approved: true } };
     });
-    const open = vi.fn(async () => [{ bank: 'NTB', password: '01/02/1990', kind: 'birthday', format: 'DDMMYYYY' }]);
+    const open = vi.fn(async () => (vault || [{ bank: 'NTB', password: '01/02/1990', kind: 'birthday', format: 'DDMMYYYY' }]).map(entry => ({ ...entry })));
     const sourcePath = sourcePaths[0];
     return { sourcePath, sourcePaths, db, board, args: { db, owner, action: 'drain', f, open, board, env: { CRON_SECRET: 's'.repeat(24) } } };
 }
@@ -261,5 +261,42 @@ describe('in-process draining replaces the external task queue', () => {
         expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, status: 'retry_pending', processed: 0 });
         expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', filed: false, lastRetryReason: 'autonomous-mailbox-disabled-during-processing' });
         expect(setup.db.docs.get('users/u').cconetime).toEqual([]);
+    });
+});
+
+/* The owner's worry (2026-10-21): the autonomous reader might only try the password saved under the statement's own bank name, so a locked statement
+ * whose bank is spelled differently — or whose password was saved under another bank — would be left locked. These run the real server path. */
+describe('a locked emailed statement is opened by ANY saved password, whatever bank it was saved under', () => {
+    const right = { bank: 'Commercial Bank', password: '01/02/1990', kind: 'birthday', format: 'DDMMYYYY' };
+    const wrong = n => ({ bank: n % 2 ? 'HNB' : 'NTB', password: 'not-it-' + n, kind: 'other', format: '' });
+    const retryNow = setup => { for (const path of setup.sourcePaths) setup.db.docs.set(path, { ...setup.db.docs.get(path), retryAt: 0 }); };
+
+    it('opens it with a password saved under a different bank, when the statement\'s own bank has a stale one', async () => {
+        const setup = simulation({ vault: [{ bank: 'NTB', password: 'stale-old-password', kind: 'other', format: '' }, right] });
+        expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 1, status: 'filed', filed: 2 });
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ filed: true });
+    });
+    it('opens it when the only password saved has no bank name at all', async () => {
+        const setup = simulation({ vault: [{ ...right, bank: '' }] });
+        expect(await runStatementSync(setup.args)).toMatchObject({ status: 'filed', filed: 2 });
+    });
+    it('opens it when the bank is written another way in the vault than on the statement', async () => {
+        const setup = simulation({ vault: [{ ...right, bank: 'Nations Trust Bank PLC (card)' }] });
+        expect(await runStatementSync(setup.args)).toMatchObject({ status: 'filed', filed: 2 });
+    });
+    it('keeps going through the rest of a long list: the right password is the 20th, and it is found in the next passes, never given up on', async () => {
+        const setup = simulation({ vault: [...Array.from({ length: 19 }, (_, i) => wrong(i)), right] });
+        let result;
+        for (let pass = 0; pass < 6 && setup.db.docs.get(setup.sourcePath).filed !== true; pass++) { result = await runStatementSync(setup.args); retryNow(setup); }
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ filed: true });
+        expect(setup.db.docs.get(setup.sourcePath).reviewReason).toBeUndefined();
+        expect(result).toBeTruthy();
+    });
+    it('the failure, when no saved password fits, says how many were tried and never shows one', async () => {
+        const setup = simulation({ vault: [wrong(1), wrong(2), wrong(3)] });
+        await runStatementSync(setup.args);
+        const source = setup.db.docs.get(setup.sourcePath);
+        expect(source).toMatchObject({ status: 'needs_review', reviewReason: 'PASSWORD_FAILED', filed: false });
+        expect(JSON.stringify([...setup.db.docs.entries()])).not.toMatch(/not-it-|01\/02\/1990|01021990/);
     });
 });
