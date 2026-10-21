@@ -40,25 +40,34 @@ const THEME_ICON = { light: 'sun', dark: 'moon' };
 /** The last stretch of a session, when its clock starts to count seconds. */
 export const SOON_SEC = 120;
 
+/** The loading screen stays out of sight for this long (a session check usually answers in a blink) and, once seen, stays at least this long (a loader that flashes is worse than none). */
+export const SPLASH_AFTER_MS = 300;
+export const SPLASH_MIN_MS = 450;
+/** After this long on the loading screen the page says it knows it is slow. */
+export const SPLASH_SLOW_MS = 5000;
+/** After this many details the link did not recognise, the helper under the field stops being a hint and says what to check, and warns that a few more will pause the link. */
+export const STILL_AFTER = 3;
+
 export const ENDPOINT = '/api/tenant-portal';
 export const FETCH_TIMEOUT_MS = 20000;
 export const TOKEN_PATH_RE = /^\/t\/([A-Za-z0-9_-]{16})\/?$/;
 
 export const COPY = Object.freeze({
-    BAD_NIC: 'Enter your NIC as 9 digits followed by V or X, or as 12 digits. If you have no Sri Lankan NIC, enter your passport or ID number.',
-    BAD_CODE: 'Enter the 6-digit code from the text message.',
-    OFFLINE: 'Could not reach the server. Check your connection and try again.',
-    FAILED: 'Something went wrong. Please try again.',
-    PDF_FAILED: 'Could not prepare the PDF. Please try again.',
-    INVALID_LINK: 'This link is not valid. Please use the link in your text message.',
-    SESSION_ENDED: 'Your session has ended. Please sign in again.',
+    BAD_NIC: 'Please enter a valid NIC (9 digits followed by V or X, or 12 digits), or your passport / ID number.',
+    BAD_CODE: 'Please enter the 6-digit verification code from your text message.',
+    OFFLINE: 'We could not connect to the server. Please check your internet connection and try again.',
+    FAILED: 'Something went wrong. Please try again in a moment.',
+    PDF_FAILED: 'We could not prepare your PDF. Please try again.',
+    INVALID_LINK: 'This link is not valid. Please use the link from your text message.',
+    STILL_NO_MATCH: 'Still not matching? Please use the same NIC or passport / ID number you gave the person who sent you this link. Several more incorrect attempts will pause this link for a while.',
+    SESSION_ENDED: 'Your session has ended. Please verify your identity again to continue.',
     SIGNED_OUT: 'You have been signed out.',
-    EXPIRED: 'That code has expired. Request a new one.',
+    EXPIRED: 'This code has expired. Please request a new one.',
     COPIED: 'Copied to the clipboard.',
-    COPY_FAILED: 'Could not copy. Please select the text and copy it yourself.',
-    FILE_READY: 'Your file is ready. Check your downloads.',
-    UPDATED: 'Updated just now.',
-    SHARE_SAVED: 'Sharing is not available here, so the file was saved instead.',
+    COPY_FAILED: 'Copying was not possible. Please select the text and copy it manually.',
+    FILE_READY: 'Your file is ready. Please check your downloads.',
+    UPDATED: 'Statement refreshed.',
+    SHARE_SAVED: 'Sharing is not available on this device, so the file was saved instead.',
 });
 
 /** A table longer than this shows its latest rows first and the rest behind one button (all of it prints). */
@@ -68,7 +77,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const MONTHS_SI = ['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'];
 const MONTHS_SI_SHORT = ['ජන', 'පෙබ', 'මාර්', 'අප්‍රේ', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝ', 'සැප්', 'ඔක්', 'නොවැ', 'දෙසැ'];
 const FREQ = { monthly: 'Monthly', quarterly: 'Every 3 months', annual: 'Yearly' };
-const LOAN_EVENT = { lent: 'Loan paid out', further: 'Further advance', repayment: 'Repayment' };
+const LOAN_EVENT = { lent: 'Loan disbursed', further: 'Additional advance', repayment: 'Repayment' };
 const english = makeT('en');
 
 export const tokenFromPath = (pathname) => { const m = TOKEN_PATH_RE.exec(String(pathname || '')); return m ? m[1] : ''; };
@@ -107,11 +116,24 @@ export function fmtLeft(sec, t = english) {
 }
 export const fmtClock = (sec) => { const s = Math.max(0, Math.floor(Number(sec) || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
+/** How much longer the loading screen must stay up, given how long the page has been loading: nothing if it was never seen, the rest of its minimum if it was. */
+export function splashWait(elapsedMs) {
+    const e = Number(elapsedMs);
+    if (!(e > SPLASH_AFTER_MS)) return 0;
+    return Math.max(0, SPLASH_AFTER_MS + SPLASH_MIN_MS - e);
+}
+
+/** "+94*****4567" (all but the last four digits hidden by the server) as "+94 ••• 4567"; anything else is not shown at all. */
+export function phoneLabel(masked) {
+    const m = /^(\+\d{1,3})\*+(\d{4})$/.exec(String(masked || ''));
+    return m ? `${m[1]} ••• ${m[2]}` : '';
+}
+
 /** What to tell the person when the server said no. The server's own sentence wins; a wait is added in minutes. */
 export function describeFailure(status, body, t = english) {
     const said = body && typeof body.error === 'string' && body.error.length < 300 ? body.error : '';
     const wait = Number(body && body.retryAfterSec) > 0 ? Number(body.retryAfterSec) : 0;
-    let text = t(said || (status === 429 ? 'Too many attempts. Please wait a while and try again.' : status === 503 ? 'This service is temporarily unavailable. Please try again later.' : COPY.FAILED));
+    let text = t(said || (status === 429 ? 'Too many attempts. For your security, please wait before trying again.' : status === 503 ? 'This service is temporarily unavailable. Please try again later.' : COPY.FAILED));
     if (status === 429 && wait) text += ' ' + (wait >= 90 ? t('Try again in about {n} minutes.', { n: Math.ceil(wait / 60) }) : t('Try again in {n} seconds.', { n: wait }));
     return text;
 }
@@ -247,17 +269,17 @@ function investmentCard(doc, g, st, t, actions) {
         h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Investment') }), refChip(doc, g.ref, t, actions), lenderChip(doc, g, st, t)),
         h(doc, 'dl', { class: 'tp-facts' },
             fact(doc, t('Capital'), fmtMoney(g.capital, cur), 'tp-amt'),
-            fact(doc, t('Rate'), t('{n}% a year', { n: g.ratePct })),
-            fact(doc, t('Interest paid'), t(FREQ[g.frequency] || FREQ.monthly)),
-            fact(doc, t('Interest each time'), fmtMoney(g.interestPerPeriod, cur), 'tp-amt'),
-            fact(doc, t('Started'), fmtDay(g.start, t.lang)),
-            g.end ? fact(doc, t('Ends'), fmtDay(g.end, t.lang)) : null,
-            next ? h(doc, 'div', {}, h(doc, 'dt', { text: t('Next interest due') }), h(doc, 'dd', {}, `${fmtDay(next.date, t.lang)} (`, h(doc, 'span', { class: 'tp-amt', text: fmtMoney(next.amount, cur) }), ')')) : null,
+            fact(doc, t('Interest rate'), t('{n}% per year', { n: g.ratePct })),
+            fact(doc, t('Interest frequency'), t(FREQ[g.frequency] || FREQ.monthly)),
+            fact(doc, t('Interest per payment'), fmtMoney(g.interestPerPeriod, cur), 'tp-amt'),
+            fact(doc, t('Start date'), fmtDay(g.start, t.lang)),
+            g.end ? fact(doc, t('End date'), fmtDay(g.end, t.lang)) : null,
+            next ? h(doc, 'div', {}, h(doc, 'dt', { text: t('Next interest payment') }), h(doc, 'dd', {}, `${fmtDay(next.date, t.lang)} (`, h(doc, 'span', { class: 'tp-amt', text: fmtMoney(next.amount, cur) }), ')')) : null,
             fact(doc, t('Interest received'), fmtMoney(g.totalReceived, cur), 'tp-amt')),
         (() => { const pct = termProgress(g, st.asOf); return pct === null ? null : bar(doc, t('Term: {n}% complete', { n: pct }), pct); })(),
         Array.isArray(g.payments) && g.payments.length
-            ? table(doc, t('Payments received, in {cur}', { cur }), [[t('For')], [t('Received on')], [t('Amount'), true]], g.payments.map((p) => [[fmtMonth(p.month, t.lang)], [fmtDay(p.date, t.lang)], [fmtNum(p.amount), true]]), t)
-            : h(doc, 'p', { class: 'tp-note', text: t('No payments recorded yet.') }));
+            ? table(doc, t('Payments received, in {cur}', { cur }), [[t('Month')], [t('Received on')], [t('Amount'), true]], g.payments.map((p) => [[fmtMonth(p.month, t.lang)], [fmtDay(p.date, t.lang)], [fmtNum(p.amount), true]]), t)
+            : h(doc, 'p', { class: 'tp-note', text: t('No payments have been recorded yet.') }));
 }
 
 
@@ -298,54 +320,54 @@ const readAmount = (text) => { const n = Number(String(text || '').replace(/[,\s
 function planWidget(doc, g, st, t, actions) {
     if (!payoffPlan(g, st.asOf)) return null;
     const id = `tp-plan-${String(g.ref || '').replace(/[^A-Za-z0-9]/g, '')}`;
-    const every = h(doc, 'select', { id: `${id}-every`, 'aria-label': t('How often') }, [h(doc, 'option', { value: 'weekly', text: t('Every week') }), h(doc, 'option', { value: 'fortnightly', text: t('Every 2 weeks') }), h(doc, 'option', { value: 'monthly', text: t('Every month'), selected: true })]);
-    const amount = h(doc, 'input', { id: `${id}-amount`, type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': t('Amount each time'), placeholder: t('Amount each time') });
+    const every = h(doc, 'select', { id: `${id}-every`, 'aria-label': t('Payment frequency') }, [h(doc, 'option', { value: 'weekly', text: t('Weekly') }), h(doc, 'option', { value: 'fortnightly', text: t('Fortnightly') }), h(doc, 'option', { value: 'monthly', text: t('Monthly'), selected: true })]);
+    const amount = h(doc, 'input', { id: `${id}-amount`, type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': t('Amount per payment'), placeholder: t('Amount per payment') });
     const chips = h(doc, 'div', { class: 'tp-plan-chips' });
     const out = h(doc, 'div', { class: 'tp-plan-out', 'aria-live': 'polite' });
     const current = () => payoffPlan(g, st.asOf, { every: every.value || 'monthly', amount: readAmount(amount.value) });
     function paint() {
         const plan = current();
         if (!plan) return;
-        chips.replaceChildren(...(plan.byDue ? [h(doc, 'button', { type: 'button', class: 'tp-chip tp-chip-btn tp-amt', onclick: () => { amount.value = String(plan.byDue.amount); paint(); }, text: t('Clear by the due date: {amount} each time', { amount: fmtMoney(plan.byDue.amount, plan.currency) }) })] : []));
-        if (plan.tooMany) { out.replaceChildren(h(doc, 'p', { class: 'tp-note', text: t('That would take too many payments. Try a larger amount.') })); return; }
-        if (!(plan.count > 0)) { out.replaceChildren(h(doc, 'p', { class: 'tp-note', text: t('Enter an amount to see when you would finish.') })); return; }
+        chips.replaceChildren(...(plan.byDue ? [h(doc, 'button', { type: 'button', class: 'tp-chip tp-chip-btn tp-amt', onclick: () => { amount.value = String(plan.byDue.amount); paint(); }, text: t('Settle by the due date: {amount} per payment', { amount: fmtMoney(plan.byDue.amount, plan.currency) }) })] : []));
+        if (plan.tooMany) { out.replaceChildren(h(doc, 'p', { class: 'tp-note', text: t('That amount would need too many payments. Please try a larger amount.') })); return; }
+        if (!(plan.count > 0)) { out.replaceChildren(h(doc, 'p', { class: 'tp-note', text: t('Enter an amount to see when the loan would be fully repaid.') })); return; }
         out.replaceChildren(
             h(doc, 'dl', { class: 'tp-facts' },
-                fact(doc, t('Payments'), String(plan.count)),
+                fact(doc, t('Number of payments'), String(plan.count)),
                 fact(doc, t('First payment'), fmtDay(plan.first, t.lang)),
-                fact(doc, t('Finished by'), fmtDay(plan.finish, t.lang)),
+                fact(doc, t('Fully repaid by'), fmtDay(plan.finish, t.lang)),
                 plan.count > 1 && plan.last !== plan.amount ? fact(doc, t('Last payment'), fmtMoney(plan.last, plan.currency), 'tp-amt') : null),
-            plan.onTime === null ? null : h(doc, 'p', { class: plan.onTime ? 'tp-plan-ok' : 'tp-plan-late', text: plan.onTime ? t('This finishes by the due date.') : t('This finishes after the due date. Pay a little more each time to be on time.') }),
-            actions && typeof actions.planCalendar === 'function' ? h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-small-btn', onclick: () => actions.planCalendar(plan) }, icon(doc, 'calendar'), h(doc, 'span', { text: t('Add this plan to my calendar') })) : null);
+            plan.onTime === null ? null : h(doc, 'p', { class: plan.onTime ? 'tp-plan-ok' : 'tp-plan-late', text: plan.onTime ? t('This plan completes by the due date.') : t('This plan completes after the due date. Increase the amount per payment to finish on time.') }),
+            actions && typeof actions.planCalendar === 'function' ? h(doc, 'button', { type: 'button', class: 'tp-btn tp-ghost tp-small-btn', onclick: () => actions.planCalendar(plan) }, icon(doc, 'calendar'), h(doc, 'span', { text: t('Add plan to calendar') })) : null);
     }
     every.addEventListener('change', paint);
     amount.addEventListener('input', paint);
     paint();
     return h(doc, 'details', { class: 'tp-plan' },
-        h(doc, 'summary', {}, icon(doc, 'clock'), h(doc, 'span', { text: t('Plan your repayments') })),
-        h(doc, 'label', { for: `${id}-every`, text: t('How often') }), every,
-        h(doc, 'label', { for: `${id}-amount`, text: t('Amount each time') }), amount,
+        h(doc, 'summary', {}, icon(doc, 'clock'), h(doc, 'span', { text: t('Repayment planner') })),
+        h(doc, 'label', { for: `${id}-every`, text: t('Payment frequency') }), every,
+        h(doc, 'label', { for: `${id}-amount`, text: t('Amount per payment') }), amount,
         chips, out);
 }
 
 function loanCard(doc, g, st, t, actions) {
     const cur = g.currency;
-    const status = g.status === 'settled' ? [t('Settled'), 'tp-chip tp-ok'] : g.status === 'closed' ? [t('Closed'), 'tp-chip'] : [t('Open'), 'tp-chip tp-open'];
+    const status = g.status === 'settled' ? [t('Settled'), 'tp-chip tp-ok'] : g.status === 'closed' ? [t('Closed'), 'tp-chip'] : [t('Active'), 'tp-chip tp-open'];
     const late = Number(g.overdueDays) > 0 ? Math.floor(Number(g.overdueDays)) : 0;
     const due = g.due ? `${fmtDay(g.due, t.lang)}${late ? ` (${late === 1 ? t('1 day ago') : t('{n} days ago', { n: late })})` : ''}` : '';
     return h(doc, 'section', { class: 'tp-card', 'aria-label': `${t('Loan')} ${g.ref}` },
         h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Loan') }), refChip(doc, g.ref, t, actions), lenderChip(doc, g, st, t), h(doc, 'span', { class: status[1], text: status[0] })),
         h(doc, 'dl', { class: 'tp-facts' },
-            fact(doc, t('Paid out'), fmtMoney(g.lent, cur), 'tp-amt'),
-            fact(doc, t('Repaid'), fmtMoney(g.repaid, cur), 'tp-amt'),
-            fact(doc, t('Outstanding'), fmtMoney(g.outstanding, cur), 'tp-amt'),
-            due ? fact(doc, t('Expected back by'), due, late ? 'tp-late' : null) : null),
+            fact(doc, t('Loan amount'), fmtMoney(g.lent, cur), 'tp-amt'),
+            fact(doc, t('Amount repaid'), fmtMoney(g.repaid, cur), 'tp-amt'),
+            fact(doc, t('Outstanding balance'), fmtMoney(g.outstanding, cur), 'tp-amt'),
+            due ? fact(doc, t('Repayment due by'), due, late ? 'tp-late' : null) : null),
         (() => { const pct = loanProgress(g); return pct === null ? null : bar(doc, t('{n}% repaid', { n: pct }), pct); })(),
         trailChart(doc, g, t),
         planWidget(doc, g, st, t, actions),
         Array.isArray(g.events) && g.events.length
-            ? table(doc, t('Movements, in {cur}', { cur }), [[t('Date')], [t('Amount'), true], [t('Balance'), true]], g.events.map((e) => [[fmtDay(e.date, t.lang), false, t(LOAN_EVENT[e.kind] || '-')], [fmtNum(e.amount), true], [fmtNum(e.balance), true]]), t)
-            : h(doc, 'p', { class: 'tp-note', text: t('Nothing recorded yet.') }));
+            ? table(doc, t('Transactions, in {cur}', { cur }), [[t('Date')], [t('Amount'), true], [t('Balance'), true]], g.events.map((e) => [[fmtDay(e.date, t.lang), false, t(LOAN_EVENT[e.kind] || '-')], [fmtNum(e.amount), true], [fmtNum(e.balance), true]]), t)
+            : h(doc, 'p', { class: 'tp-note', text: t('No transactions have been recorded yet.') }));
 }
 
 /**
@@ -396,6 +418,20 @@ export function brandEl(doc) {
     return h(doc, 'h1', { class: 'tp-brand' }, logos.get(doc), h(doc, 'span', { text: 'WealthFlow' }));
 }
 
+/**
+ * The loading screen: the mark, the name, a thin bar that runs and one line saying what is happening. The same markup is written into
+ * tenant.html, so the first thing a person sees is not an empty page while this file is still downloading; this builds it again only when the
+ * page needs it and it is not there. Nothing in it is a promise the page does not keep: the bar is indeterminate on purpose (a made-up
+ * percentage would be a lie), and the line under it is the page's actual state.
+ */
+export function splashEl(doc) {
+    return h(doc, 'div', { class: 'tp-splash', id: 'tp-splash', role: 'status' },
+        h(doc, 'div', { class: 'tp-splash-mark', 'aria-hidden': 'true' }, h(doc, 'img', { class: 'tp-splash-logo', src: '/tenant-logo.png', alt: '', width: '72', height: '72' })),
+        h(doc, 'h1', { class: 'tp-splash-name', text: 'WealthFlow' }),
+        h(doc, 'div', { class: 'tp-splash-bar', 'aria-hidden': 'true' }, h(doc, 'span')),
+        h(doc, 'p', { class: 'tp-splash-status' }));
+}
+
 /** One bank account, with a copy button on the number (the thing that gets typed wrongly) and one for the lot. */
 function accountCard(doc, a, t, actions) {
     const x = a && typeof a === 'object' ? a : {};
@@ -425,7 +461,7 @@ function paymentCard(doc, st, t, actions) {
     const many = Number(st.lenderCount) > 1;
     return h(doc, 'section', { class: 'tp-card tp-pay', id: 'tp-pay', tabindex: '-1', 'aria-label': t('How to pay') },
         h(doc, 'h3', { text: t('How to pay') }),
-        h(doc, 'p', { class: 'tp-note', text: t('Pay by bank transfer to the account below and put the reference of the record in the transfer. If the account details here look different from what your lender told you, check with your lender before sending money.') }),
+        h(doc, 'p', { class: 'tp-note', text: t('Please pay by bank transfer to the account below and quote the reference of the record in the transfer. If these account details differ from what your lender told you, confirm with your lender before sending any money.') }),
         lenders.map((l) => {
             const refs = groups.filter((g) => g && g.lender === l.n && g.ref).map((g) => g.ref);
             return h(doc, 'div', { class: 'tp-lender' },
@@ -444,12 +480,12 @@ function upcomingCard(doc, st, t, actions) {
     if (!items.length) return null;
     const hasPay = Array.isArray(st.lenders) && st.lenders.some((l) => l && Array.isArray(l.accounts) && l.accounts.length);
     const tile = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return h(doc, 'span', { class: 'tp-tile', 'aria-hidden': 'true' }, h(doc, 'span', { class: 'tp-tile-mon', text: m && MONTHS[Number(m[2]) - 1] ? (t.lang === 'si' ? MONTHS_SI_SHORT[Number(m[2]) - 1] : MONTHS[Number(m[2]) - 1]) : '' }), h(doc, 'span', { class: 'tp-tile-day', text: m ? String(Number(m[3])) : '' })); };
-    return h(doc, 'section', { class: 'tp-card tp-next', id: 'tp-next', tabindex: '-1', 'aria-label': t('Coming up') },
-        h(doc, 'h3', { text: t('Coming up') }),
+    return h(doc, 'section', { class: 'tp-card tp-next', id: 'tp-next', tabindex: '-1', 'aria-label': t('Upcoming') },
+        h(doc, 'h3', { text: t('Upcoming') }),
         h(doc, 'ul', { class: 'tp-list' }, items.map((it) => h(doc, 'li', { class: `tp-item tp-${it.tone}` },
             tile(it.date),
             h(doc, 'div', { class: 'tp-item-main' },
-                h(doc, 'span', { class: 'tp-item-title', text: it.kind === 'loan' ? t('Pay your loan') : t('Interest expected') }),
+                h(doc, 'span', { class: 'tp-item-title', text: it.kind === 'loan' ? t('Loan repayment due') : t('Interest payment due') }),
                 h(doc, 'span', { class: 'tp-item-sub', text: `${fmtDay(it.date, t.lang)} · ${it.ref}` })),
             h(doc, 'div', { class: 'tp-item-side' },
                 h(doc, 'span', { class: 'tp-item-amount tp-amt', text: fmtMoney(it.amount, it.currency) }),
@@ -473,10 +509,10 @@ export function statementColumns(doc, statement, t = english, actions = null) {
     const sections = [];
     const hero = heroCard(doc, st.holder, groups, totals, t, actions);
     if (hero) { left.push(hero); sections.push(['tp-hero', t('Overview'), 'home']); }
-    if (!groups.length) left.push(h(doc, 'section', { class: 'tp-card' }, h(doc, 'p', { text: t('There is nothing to show yet. When your lender records something for you, it will appear here.') })));
+    if (!groups.length) left.push(h(doc, 'section', { class: 'tp-card' }, h(doc, 'p', { text: t('There is nothing to display yet. Records added by your lender will appear here.') })));
     // what is coming up, then where to pay, then the records: the order a person who has just seen their balance wants them in
     const next = upcomingCard(doc, st, t, actions);
-    if (next) { left.push(next); sections.push(['tp-next', t('Coming up'), 'calendar']); }
+    if (next) { left.push(next); sections.push(['tp-next', t('Upcoming'), 'calendar']); }
     const pay = paymentCard(doc, st, t, actions);
     if (pay) { right.push(pay); sections.push(['tp-pay', t('How to pay'), 'bank']); }
     groups.forEach((g, i) => {
@@ -498,7 +534,8 @@ export function statementView(doc, statement, t = english, actions = null) {
 
 /**
  * @param {{doc:Document, root:Element, token:string, fetchImpl:Function, now?:()=>number, setTick?:Function, clearTick?:Function,
- *          lang?:'en'|'si', copyText?:(text:string)=>Promise<boolean>, saveFile?:(blob:Blob, name:string)=>void, print?:()=>void, later?:Function}} env
+ *          lang?:'en'|'si', copyText?:(text:string)=>Promise<boolean>, saveFile?:(blob:Blob, name:string)=>void, print?:()=>void, later?:Function,
+ *          sinceStart?:()=>number}} env
  */
 export function createPage(env) {
     const { doc, root, token, fetchImpl } = env;
@@ -506,6 +543,8 @@ export function createPage(env) {
     const setTick = env.setTick || ((fn, ms) => setInterval(fn, ms));
     const clearTick = env.clearTick || ((id) => clearInterval(id));
     const later = env.later || ((fn, ms) => setTimeout(fn, ms));
+    /** Milliseconds since the page began to load (the browser's own clock); without one the loading screen is never held back or kept up. */
+    const sinceStart = typeof env.sinceStart === 'function' ? env.sinceStart : () => 0;
     const copyText = env.copyText || (async () => false);
     const saveFile = env.saveFile || (() => {});
     const printPage = env.print || (() => {});
@@ -513,7 +552,7 @@ export function createPage(env) {
     const calm = () => { const w = doc.defaultView; return !!(w && typeof w.matchMedia === 'function' && w.matchMedia('(prefers-reduced-motion: reduce)').matches); };
     const jumpTo = env.jumpTo || ((id) => { const el = doc.getElementById ? doc.getElementById(id) : null; if (el) { if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: calm() ? 'auto' : 'smooth', block: 'start' }); if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } });
     const watchSections = typeof env.watchSections === 'function' ? env.watchSections : null;       // (ids, onActive) => stop: which section is on screen, for the section bar
-    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', theme: THEMES.includes(env.theme) ? env.theme : 'light', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', codeMessage: '', tick: null, hide: false, unwatch: null, els: {} };
+    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', theme: THEMES.includes(env.theme) ? env.theme : 'light', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', codeMessage: '', nicError: '', misses: 0, phone: '', slow: false, tick: null, hide: false, unwatch: null, els: {} };
     let t = makeT(st.lang);
 
     /** One door to the server. With `file`, a PDF answer comes back as a blob (never parsed as JSON); everything else is JSON. */
@@ -549,7 +588,7 @@ export function createPage(env) {
     /** The first keystroke after a refusal takes the red mark and the message away: a field being corrected is not told off again. */
     const forgive = (ev) => {
         const el = ev && ev.target;
-        if (el && typeof el.getAttribute === 'function' && el.getAttribute('aria-invalid')) { el.removeAttribute('aria-invalid'); showError(''); }
+        if (el && typeof el.getAttribute === 'function' && el.getAttribute('aria-invalid')) { el.removeAttribute('aria-invalid'); st.nicError = ''; showError(''); }
     };
     let infoSeq = 0;
     const showInfo = (text) => {
@@ -591,7 +630,11 @@ export function createPage(env) {
         t = makeT(st.lang);
         applyLang();
         // the same screen again, in the other language: what the person typed stays, messages (already in the old language) are cleared
-        if (st.screen === 'nic') screenNic({ value: typed });
+        if (st.screen === 'nic') {
+            // a refusal of the details stays on screen, said in the new language (the server's sentence is looked up like any other)
+            screenNic({ value: typed, error: st.nicError });
+            if (st.nicError && st.els.input) st.els.input.setAttribute('aria-invalid', 'true');
+        }
         else if (st.screen === 'code') screenCode({ message: st.codeMessage, value: typed });
         else if (st.screen === 'statement') screenStatement(st.statement, st.sessionEndsAt);
         else if (st.screen === 'invalid') screenInvalid();
@@ -622,7 +665,7 @@ export function createPage(env) {
     const steps = (n) => h(doc, 'div', { class: 'tp-steps', 'aria-hidden': 'true' }, h(doc, 'span', { class: 'tp-on' }), h(doc, 'span', { class: n > 1 ? 'tp-on' : null }));
 
     /** Three short promises under the sign-in form, each true of this page: a text-message code, a closing session, nothing kept. */
-    const trust = () => h(doc, 'ul', { class: 'tp-trust' }, [['message', t('Code sent by text message')], ['clock', t('Closes by itself after 20 minutes')], ['shield', t('Nothing is saved on your device')]].map(([ico, words]) => h(doc, 'li', {}, icon(doc, ico), h(doc, 'span', { text: words }))));
+    const trust = () => h(doc, 'ul', { class: 'tp-trust' }, [['message', t('Verification code sent by text message')], ['clock', t('Session ends automatically after 20 minutes')], ['shield', t('Nothing is stored on your device')]].map(([ico, words]) => h(doc, 'li', {}, icon(doc, ico), h(doc, 'span', { text: words }))));
 
     function errorBox() { st.els.err = h(doc, 'p', { class: 'tp-error', role: 'alert', id: 'tp-err' }); return st.els.err; }
 
@@ -637,19 +680,21 @@ export function createPage(env) {
         st.els = {};
         const input = h(doc, 'input', { id: 'tp-nic', name: 'nic', type: 'text', inputmode: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '24', required: true, 'aria-describedby': 'tp-help tp-err', placeholder: '198534000937  /  N1234567', oninput: forgive });
         if (value) input.value = value;
-        const button = h(doc, 'button', { class: 'tp-btn', type: 'submit', id: 'tp-send', text: t('Send me a code') });
+        const button = h(doc, 'button', { class: 'tp-btn', type: 'submit', id: 'tp-send', text: t('Verify and continue') });
         st.els.input = input; st.els.button = button;
+        const help = h(doc, 'p', { class: st.misses >= STILL_AFTER ? 'tp-help tp-help-warn' : 'tp-help', id: 'tp-help', text: st.misses >= STILL_AFTER ? t(COPY.STILL_NO_MATCH) : t('If you do not have a Sri Lankan NIC, enter your passport or ID number.') });
+        st.els.help = help;
         const form = h(doc, 'form', { novalidate: true, onsubmit: onRequest },
-            h(doc, 'label', { for: 'tp-nic', text: t('Your NIC or passport / ID number') }), input, h(doc, 'p', { class: 'tp-help', id: 'tp-help', text: t('No Sri Lankan NIC? Enter your passport or ID number.') }), errorBox(), button);
+            h(doc, 'label', { for: 'tp-nic', text: t('NIC or passport / ID number') }), input, help, errorBox(), button);
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
         st.els.info = infoBox;
         mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card tp-auth' },
             h(doc, 'span', { class: 'tp-badge', 'aria-hidden': 'true' }, icon(doc, 'shield')),
             steps(1),
-            h(doc, 'h2', { tabindex: '-1', text: t('View your statement') }),
-            h(doc, 'p', { class: 'tp-lead', text: t('We will text a 6-digit code to the mobile number your lender has on file for you.') }),
+            h(doc, 'h2', { tabindex: '-1', text: t('Verify your identity') }),
+            h(doc, 'p', { class: 'tp-lead', text: t('We will send a 6-digit verification code by text message to the mobile number your lender holds for you.') }),
             infoBox, form, trust(),
-            h(doc, 'p', { class: 'tp-small', text: t('Your statement is shown only after you enter the code. Nobody else can see it from this link.') }))], '#tp-nic');
+            h(doc, 'p', { class: 'tp-small', text: t('Your statement is displayed only after the verification code is entered. The link alone does not give access to any information.') }))], '#tp-nic');
         showInfo(info ? t(info) : '');
         showError(error ? t(error) : '');
     }
@@ -659,28 +704,29 @@ export function createPage(env) {
         st.els = {};
         st.verified = false;
         st.codeMessage = message;
-        const input = h(doc, 'input', { id: 'tp-code', name: 'code', class: 'tp-code', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', maxlength: '6', required: true, 'aria-describedby': 'tp-err', 'aria-label': t('6-digit code'), oninput: forgive });
+        const input = h(doc, 'input', { id: 'tp-code', name: 'code', class: 'tp-code', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', maxlength: '6', required: true, 'aria-describedby': 'tp-err', 'aria-label': t('6-digit verification code'), oninput: forgive });
         if (value) input.value = value;
-        const verify = h(doc, 'button', { class: 'tp-btn', type: 'submit', id: 'tp-verify', text: t('View my statement') });
+        const verify = h(doc, 'button', { class: 'tp-btn', type: 'submit', id: 'tp-verify', text: t('Verify code') });
         const resend = h(doc, 'button', { class: 'tp-btn tp-ghost tp-quiet', type: 'button', id: 'tp-resend', disabled: true, onclick: onResend });
-        const back = h(doc, 'button', { class: 'tp-btn tp-ghost tp-quiet', type: 'button', id: 'tp-back', text: t('Use different details'), onclick: () => { st.nic = ''; screenNic(); } });
+        const back = h(doc, 'button', { class: 'tp-btn tp-ghost tp-quiet', type: 'button', id: 'tp-back', text: t('Change details'), onclick: () => { st.nic = ''; st.phone = ''; screenNic(); } });
         const expiry = h(doc, 'p', { class: 'tp-small', id: 'tp-expiry' });
         st.els.input = input; st.els.button = verify; st.els.resend = resend; st.els.expiry = expiry;
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
         st.els.info = infoBox;
-        mount('Enter your code', [h(doc, 'section', { class: 'tp-card tp-auth' },
+        const sentTo = st.phone ? t('We have sent a 6-digit verification code to {phone}. It expires in 3 minutes.', { phone: st.phone }) : (message ? t(message) : '');
+        mount('Enter verification code', [h(doc, 'section', { class: 'tp-card tp-auth' },
             h(doc, 'span', { class: 'tp-badge', 'aria-hidden': 'true' }, icon(doc, 'message')),
             steps(2),
-            h(doc, 'h2', { tabindex: '-1', text: t('Enter your code') }),
+            h(doc, 'h2', { tabindex: '-1', text: t('Enter verification code') }),
             infoBox,
-            h(doc, 'form', { novalidate: true, onsubmit: onVerify }, h(doc, 'label', { for: 'tp-code', text: t('Code from the text message') }), input, errorBox(), verify),
+            h(doc, 'form', { novalidate: true, onsubmit: onVerify }, h(doc, 'label', { for: 'tp-code', text: t('Verification code') }), input, errorBox(), verify),
             expiry, h(doc, 'div', { class: 'tp-quiet-row' }, resend, back),
-            h(doc, 'p', { class: 'tp-small', text: t('No text after a minute? Your lender may have no mobile number for you, or messaging may be unavailable. Try again later or contact your lender.') }))], '#tp-code');
-        showInfo(message ? t(message) : '');
+            h(doc, 'p', { class: 'tp-small', text: st.phone ? t('No message after a minute? Check that the number above is still yours. If it is not, ask your lender to update it. Otherwise, resend the code.') : t('No message after a minute? Resend the code. If it still does not arrive, please contact your lender.') }))], '#tp-code');
+        showInfo(sentTo);
         const paint = () => {
             const left = Math.ceil((st.resendAt - now()) / 1000);
             resend.disabled = left > 0 || st.busy;
-            setText(resend, left > 0 ? t('Send a new code ({n}s)', { n: left }) : t('Send a new code'));
+            setText(resend, left > 0 ? t('Resend code in {n}s', { n: left }) : t('Resend code'));
             const alive = Math.ceil((st.codeExpiresAt - now()) / 1000);
             setText(expiry, alive > 0 ? t('This code expires in {t}.', { t: fmtClock(alive) }) : t(COPY.EXPIRED));
         };
@@ -731,13 +777,13 @@ export function createPage(env) {
         showError(res.status === 0 ? t(COPY.OFFLINE) : res.status === 200 ? t(COPY.PDF_FAILED) : describeFailure(res.status, res.body, t));
     }
 
-    const onDownload = () => pdfJob(st.els.pdf, t('Download PDF'), async (blob, name) => { saveFile(blob, name); return t('Your PDF is ready. Check your downloads.'); });
+    const onDownload = () => pdfJob(st.els.pdf, t('Download PDF'), async (blob, name) => { saveFile(blob, name); return t('Your PDF is ready. Please check your downloads.'); });
 
     /** The phone's own share sheet (WhatsApp, e-mail, Drive...) with the PDF attached; where there is none, the file is saved instead. */
     const onShare = () => pdfJob(st.els.share, t('Share PDF'), async (blob, name) => {
         const how = shareFile ? await shareFile(blob, name) : 'unsupported';
         if (how === 'unsupported') { saveFile(blob, name); return t(COPY.SHARE_SAVED); }
-        return how === 'shared' ? t('Shared.') : '';
+        return how === 'shared' ? t('PDF shared.') : '';
     });
 
     /** Every movement and payment as a spreadsheet file, made here from the statement on the page. */
@@ -817,7 +863,7 @@ export function createPage(env) {
                 h(doc, 'p', { class: 'tp-note', text: t('As at {when}', { when: fmtAsOf(statement && statement.asOf, t) }) }),
                 clock),
             h(doc, 'div', { class: 'tp-dash' }, h(doc, 'div', { class: 'tp-col tp-col-a' }, left), h(doc, 'div', { class: 'tp-col tp-col-b' }, right)),
-            h(doc, 'p', { class: 'tp-foot', text: t('Figures are as recorded by your lender. If something looks wrong, please contact your lender.') }),
+            h(doc, 'p', { class: 'tp-foot', text: t('Figures are as recorded by your lender. If anything appears incorrect, please contact your lender.') }),
             h(doc, 'div', { class: 'tp-toasts' }, st.els.err, st.els.info),
             tabs,
         ], null, { bar: [out], wide: true });
@@ -831,7 +877,7 @@ export function createPage(env) {
         const paint = () => {
             const left = Math.ceil((st.sessionEndsAt - now()) / 1000);
             if (left <= 0) { wipe(); screenNic({ error: COPY.SESSION_ENDED }); return; }
-            setText(clock, t('For your privacy this closes in {t}.', { t: fmtLeft(left, t) }));
+            setText(clock, t('For your security, this session ends in {t}.', { t: fmtLeft(left, t) }));
             if (clock.classList) clock.classList.toggle('tp-soon', left <= SOON_SEC);
         };
         paint();
@@ -846,17 +892,35 @@ export function createPage(env) {
         const raw = st.els.input.value;
         if (!identityCandidates(raw).length) { st.els.input.setAttribute('aria-invalid', 'true'); showError(t(COPY.BAD_NIC)); return; }
         st.els.input.removeAttribute('aria-invalid');
+        st.nicError = '';
         showError('');
-        busy(true, t('Sending...'));
+        busy(true, t('Verifying details...'));
         const res = await api('request', { token, nic: raw });
         if (res.status === 200 && res.body && res.body.ok) {
             st.nic = raw;
+            st.misses = 0;
+            st.nicError = '';
+            st.phone = phoneLabel(res.body.phone);
             st.resendAt = now() + (Number(res.body.resendAfterSec) || 60) * 1000;
             st.codeExpiresAt = now() + (Number(res.body.expiresInSec) || 180) * 1000;
             screenCode({ message: res.body.message || '' });
             return;
         }
-        busy(false, t('Send me a code'));
+        busy(false, t('Verify and continue'));
+        if (res.status === 401) {
+            // these are not the details the link was made for: said plainly, and no code goes out. The field keeps what was typed, selected, so the retype is one move
+            st.misses += 1;
+            st.nicError = res.body && typeof res.body.error === 'string' && res.body.error.length < 300 ? res.body.error : '';
+            const field = st.els.input;
+            field.removeAttribute('aria-invalid');
+            void field.offsetWidth;                         // lets the small "no" nudge play again on a second miss
+            field.setAttribute('aria-invalid', 'true');
+            showError(describeFailure(res.status, res.body, t));
+            if (st.misses === STILL_AFTER && st.els.help) { setText(st.els.help, t(COPY.STILL_NO_MATCH)); st.els.help.className = 'tp-help tp-help-warn'; }
+            field.focus();
+            if (typeof field.select === 'function') field.select();
+            return;
+        }
         showError(res.status === 0 ? t(COPY.OFFLINE) : describeFailure(res.status, res.body, t));
     }
 
@@ -870,7 +934,7 @@ export function createPage(env) {
             st.resendAt = now() + (Number(res.body.resendAfterSec) || 60) * 1000;
             st.codeExpiresAt = now() + (Number(res.body.expiresInSec) || 180) * 1000;
             showError('');
-            showInfo(t('A new code is on its way if the details match. The old one no longer works.'));
+            showInfo(t('A new verification code has been sent. The previous code is no longer valid.'));
             return;
         }
         showError(res.status === 0 ? t(COPY.OFFLINE) : describeFailure(res.status, res.body, t));
@@ -883,7 +947,7 @@ export function createPage(env) {
         if (!/^\d{6}$/.test(code)) { st.els.input.setAttribute('aria-invalid', 'true'); showError(t(COPY.BAD_CODE)); return; }
         st.els.input.removeAttribute('aria-invalid');
         showError('');
-        busy(true, t('Checking...'));
+        busy(true, t('Verifying code...'));
         // a code is spent the moment it is accepted: if only the statement failed to arrive, the button asks for the statement again, not for a new code
         const res = st.verified ? { status: 200, body: { ok: true } } : await api('verify', { token, nic: st.nic, code });
         if (res.status === 200 && res.body && res.body.ok) {
@@ -892,11 +956,11 @@ export function createPage(env) {
             if (res.body.statement) { screenStatement(res.body.statement, res.body.expiresAt); return; }
             const got = await api('statement', { token });
             if (got.status === 200 && got.body && got.body.ok) { screenStatement(got.body.statement, got.body.expiresAt); return; }
-            busy(false, t('View my statement'));
+            busy(false, t('Verify code'));
             showError(got.status === 0 ? t(COPY.OFFLINE) : describeFailure(got.status, got.body, t));
             return;
         }
-        busy(false, t('View my statement'));
+        busy(false, t('Verify code'));
         st.els.input.value = '';
         // a refused code (not a dropped connection, not a lock-out) marks the field so the person sees which one to retype
         if (res.status >= 400 && res.status < 500 && res.status !== 429) st.els.input.setAttribute('aria-invalid', 'true');
@@ -919,6 +983,9 @@ export function createPage(env) {
         st.pdfBlob = null;
         st.pdfName = '';
         st.codeMessage = '';
+        st.misses = 0;
+        st.nicError = '';
+        st.phone = '';
         st.hide = false;
         if (st.unwatch) { st.unwatch(); st.unwatch = null; }
         if (root.classList) root.classList.remove('tp-hide');
@@ -926,20 +993,42 @@ export function createPage(env) {
         st.els = {};
     }
 
+    /**
+     * The loading screen is the splash that tenant.html already drew (adopted, so its animation does not start over), or a new one if the
+     * page is somehow without it. The line under it says what is happening, and after a few seconds that it knows it is slow.
+     */
     function screenLoading() {
         st.screen = 'loading';
         st.els = {};
-        mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card tp-auth tp-loading' }, h(doc, 'h2', { tabindex: '-1', text: t('One moment') }), h(doc, 'p', { class: 'tp-note', role: 'status', text: t('Checking for a session on this device...') }), h(doc, 'div', { class: 'tp-skel', 'aria-hidden': 'true' }, h(doc, 'span'), h(doc, 'span'), h(doc, 'span')))]);
+        stopTick();
+        st.busy = false;
+        if (st.unwatch) { st.unwatch(); st.unwatch = null; }
+        let box = typeof root.querySelector === 'function' ? root.querySelector('.tp-splash') : null;
+        if (!box) { box = splashEl(doc); root.replaceChildren(box); }
+        // the static page's "reload this page" line is for a script that never ran; this one is running
+        const stuck = typeof box.querySelector === 'function' ? box.querySelector('.tp-splash-stuck') : null;
+        if (stuck) stuck.remove();
+        const say = () => {
+            const line = typeof box.querySelector === 'function' ? box.querySelector('.tp-splash-status') : null;
+            if (line) line.textContent = st.slow ? t('This is taking longer than usual. Thank you for your patience.') : t('Preparing your secure page');
+        };
+        say();
+        if (!st.slow) later(() => { if (st.screen === 'loading') { st.slow = true; say(); } }, Math.max(0, SPLASH_SLOW_MS - sinceStart()));
+        if (typeof doc.title === 'string') doc.title = t('Your WealthFlow statement');
     }
 
     /** Opens on the NIC form, unless this device already has a live session for this link (a reload within 20 minutes costs no new text). */
     async function start() {
         applyLang();
         applyTheme();
+        st.slow = false;
         if (!token) return screenInvalid();
         screenLoading();
         const got = await api('statement', { token });
         if (st.screen !== 'loading') return;                       // the person got ahead of it
+        // a loader that flashes is worse than none: once the loading screen has been seen it stays a moment longer, then the next screen takes its place
+        const hold = splashWait(sinceStart());
+        if (hold > 0) { await new Promise((resolve) => later(resolve, hold)); if (st.screen !== 'loading') return; }
         if (got.status === 200 && got.body && got.body.ok) return screenStatement(got.body.statement, got.body.expiresAt);
         return screenNic();
     }
@@ -958,6 +1047,8 @@ function browserEnv(win) {
     const doc = win.document;
     return {
         lang: detectLang(win.navigator),
+        // the browser's own stopwatch, which starts when the person asked for the page
+        sinceStart() { return win.performance && typeof win.performance.now === 'function' ? win.performance.now() : 0; },
         async copyText(text) {
             try {
                 if (win.navigator.clipboard && typeof win.navigator.clipboard.writeText === 'function') { await win.navigator.clipboard.writeText(text); return true; }

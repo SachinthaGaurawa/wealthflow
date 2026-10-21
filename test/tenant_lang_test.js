@@ -52,7 +52,7 @@ describe('looking words up', () => {
         const en = makeT('en');
         expect(en('Sign out')).toBe('Sign out');
         expect(en('This code expires in {t}.', { t: '2:41' })).toBe('This code expires in 2:41.');
-        expect(en('Send a new code ({n}s)', { n: 12 })).toBe('Send a new code (12s)');
+        expect(en('Resend code in {n}s', { n: 12 })).toBe('Resend code in 12s');
         expect(en('A sentence nobody wrote')).toBe('A sentence nobody wrote');
     });
 
@@ -61,7 +61,7 @@ describe('looking words up', () => {
         expect(si('Sign out')).toBe(SI['Sign out']);
         expect(si('Download PDF')).toBe('PDF බාගන්න');
         expect(si('This code expires in {t}.', { t: '2:41' })).toBe('මෙම කේතය 2:41 කින් කල් ඉකුත් වේ.');
-        expect(si('{n}% a year', { n: 24 })).toBe('වසරකට 24%');
+        expect(si('{n}% per year', { n: 24 })).toBe('වසරකට 24%');
         expect(si('A sentence nobody wrote')).toBe('A sentence nobody wrote');
         expect(si('constructor')).toBe('constructor');                              // a lookup is never a property of Object
         expect(si('__proto__')).toBe('__proto__');
@@ -93,19 +93,19 @@ describe('nothing is left untranslated', () => {
         for (const [key, text] of Object.entries(COPY)) expect(SI[text], `COPY.${key}`).toBeTruthy();
         for (const [key, text] of Object.entries(MSG)) expect(SI[text], `MSG.${key}`).toBeTruthy();
         expect(SI['This service is temporarily unavailable. Please try again later.']).toBeTruthy();
-        expect(SI['Too many attempts. Please wait a while and try again.']).toBeTruthy();
+        expect(SI['Too many attempts. For your security, please wait before trying again.']).toBeTruthy();
     });
 
     it('so do the table values the page looks up (how often interest is paid, what a loan movement is)', () => {
-        for (const v of ['Monthly', 'Every 3 months', 'Yearly', 'Loan paid out', 'Further advance', 'Repayment', 'Light', 'Dark']) {
+        for (const v of ['Monthly', 'Every 3 months', 'Yearly', 'Loan disbursed', 'Additional advance', 'Repayment', 'Light', 'Dark']) {
             expect(PAGE).toContain(`'${v}'`);
             expect(SI[v], v).toBeTruthy();
         }
     });
 
     it('has no entry that nothing uses (a reworded sentence leaves its old translation behind, silently)', () => {
-        const used = new Set([...literals(), ...pdfLiterals(), ...Object.values(COPY), ...Object.values(MSG), 'This service is temporarily unavailable. Please try again later.', 'Too many attempts. Please wait a while and try again.',
-            'Monthly', 'Every 3 months', 'Yearly', 'Loan paid out', 'Further advance', 'Repayment', 'Light', 'Dark']);
+        const used = new Set([...literals(), ...pdfLiterals(), ...Object.values(COPY), ...Object.values(MSG), 'This service is temporarily unavailable. Please try again later.', 'Too many attempts. For your security, please wait before trying again.',
+            'Monthly', 'Every 3 months', 'Yearly', 'Loan disbursed', 'Additional advance', 'Repayment', 'Light', 'Dark']);
         const stale = Object.keys(SI).filter((k) => !used.has(k));
         expect(stale).toEqual([]);
     });

@@ -62,7 +62,9 @@ const TOKEN = await ensureTenantToken({ db, uid: 'owner1', canonicalNic: CANON, 
 
 const sent = [];
 const gateway = { configured: true, senderId: 'WealthFlow', async send({ to, message }) { sent.push({ to, message }); return { ok: true, gatewayId: 'g', cost: 1, segments: 1 }; } };
-const deps = { client: () => gateway, getAdminDb: async () => ({ db }), env: ENV, now: () => Date.now(), randomInt: crypto.randomInt, randomBytes: crypto.randomBytes, pad: null };
+// the server's clock can be moved forward, so that a later screen gets a fresh hour of the per-address and per-link limits (the earlier sessions are not needed by then)
+let skew = 0;
+const deps = { client: () => gateway, getAdminDb: async () => ({ db }), env: ENV, now: () => Date.now() + skew, randomInt: crypto.randomInt, randomBytes: crypto.randomBytes, pad: null };
 
 const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -307,6 +309,60 @@ console.log('the dark theme was checked on a phone, a tablet and a laptop');
     if (shotsDir) await page.screenshot({ path: path.join(shotsDir, 'print-a4.png'), fullPage: true });
     await ctx.close();
 }
+
+/* the sign-in answers: the loading screen, a refused NIC (with the warning that follows a few), and the code screen that names the phone ---- */
+// Each screen gets its own hour on the server's clock (the limits are per address and per link), and this runs last: moving the clock ends the earlier session.
+async function signInStates(device, width, height, touch, dark) {
+    skew += 3 * 3600e3;
+    const ctx = await browser.newContext({ viewport: { width, height }, hasTouch: touch, isMobile: touch && width < 1000, deviceScaleFactor: touch ? 2 : 1 });
+    const page = await ctx.newPage();
+    const label = `${device} ${width}x${height}${dark ? ', dark' : ''}`;
+    const tag = `${String(width).padStart(4, '0')}x${height}-${slug(device)}${dark ? '-dark' : ''}`;
+    page.on('pageerror', (e) => problems.push(`${label}: pageerror ${e.message}`));
+    // the loading screen, held on screen by a slow first answer
+    let calls = 0;
+    let release;
+    const held = new Promise((r) => { release = r; });
+    await page.route('**/api/tenant-portal', async (route) => { calls += 1; if (calls === 1) await held; await route.continue(); });
+    await page.goto(`${base}/t/${TOKEN}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('.tp-splash')).opacity) === 1 && document.querySelector('.tp-splash-status').textContent.length > 0);
+    if (dark) await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+    await page.waitForTimeout(dark ? 400 : 0);
+    await inspect(page, `${label}, loading screen`, touch);
+    await shot(page, `${tag}-0-loading`);
+    release();
+    await page.waitForSelector('#tp-nic');
+    if (dark) await page.click('#tp-theme');
+    // three wrong NICs: the refusal, then the hint that turns into a warning
+    for (const nic of ['198534000999', '198534000998', 'N7654321']) {
+        await page.fill('#tp-nic', nic);
+        await page.click('#tp-send');
+        await page.waitForFunction(() => /could not verify these details/i.test(document.getElementById('tp-err').textContent));
+        if (nic === '198534000999') {
+            await inspect(page, `${label}, details refused`, touch);
+            await shot(page, `${tag}-1b-refused`);
+        }
+    }
+    await page.waitForFunction(() => /Still not matching/.test(document.getElementById('tp-help').textContent));
+    await inspect(page, `${label}, details refused three times`, touch);
+    await shot(page, `${tag}-1c-refused-warning`);
+    // the right NIC: the code screen names the phone
+    await page.fill('#tp-nic', NIC);
+    await page.click('#tp-send');
+    await page.waitForSelector('#tp-code');
+    const info = await page.textContent('#tp-info');
+    if (!/\+94 ••• 4567/.test(info) || /771234567/.test(info)) problems.push(`${label}: the code screen should name only the last four digits (${info})`);
+    await inspect(page, `${label}, code screen`, touch);
+    await shot(page, `${tag}-1d-code`);
+    const code2 = /^(\d{6}) is your WealthFlow/.exec(sent.at(-1).message)[1];
+    await page.fill('#tp-code', code2);
+    await page.click('#tp-verify');
+    await page.waitForSelector('#tp-out');     // and the lock counters are clear again for the next screen
+    await ctx.close();
+}
+for (const d of [['feature phone', 240, 320, true], ['iPhone SE (1st gen)', 320, 568, true], ['iPhone 14', 390, 844, true], ['phone, landscape', 667, 375, true], ['iPad mini', 744, 1133, true], ['laptop', 1366, 768, false], ['desktop', 1920, 1080, false]]) await signInStates(...d, false);
+for (const d of [['dark phone', 390, 844, true], ['dark laptop', 1366, 768, false]]) await signInStates(...d, true);
+console.log('the loading screen, a refused NIC (and its warning) and the code screen were checked on seven screens and two dark ones');
 
 await browser.close();
 server.close();

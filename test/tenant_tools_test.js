@@ -86,15 +86,15 @@ describe('the calendar reminder', () => {
         expect(file.endsWith('END:VEVENT\r\nEND:VCALENDAR\r\n')).toBe(true);
         expect(file).not.toMatch(/[^\r]\n/);
         for (const want of ['DTSTART;VALUE=DATE:20261001', 'DTEND;VALUE=DATE:20261002', 'DTSTAMP:20261005T050000Z', 'TRIGGER:-P1D', 'UID:20261001-DEB-AAAAAA@wealthflow']) expect(file).toContain(want);
-        expect(file).toContain('SUMMARY:Pay LKR 30000.00 to your lender (DEB-AAAAAA)');
-        expect(unfolded(file)).toContain('Quote the reference DEB-AAAAAA when you pay.');
+        expect(file).toContain('SUMMARY:Payment of LKR 30000.00 due to your lender (DEB-AAAAAA)');
+        expect(unfolded(file)).toContain('Please quote reference DEB-AAAAAA when you pay.');
     });
 
     it('words an interest reminder as money expected, escapes what iCalendar escapes, and folds long lines', () => {
         const f = calendarFile(interest, { t, fmtMoney: money, asOf: '2026-10-05T05:00:00.000Z' });
-        expect(unfolded(f)).toContain('SUMMARY:Interest of LKR 10000.00 expected (INV-BBBBBB)');
+        expect(unfolded(f)).toContain('SUMMARY:Interest payment of LKR 10000.00 due (INV-BBBBBB)');
         const odd = calendarFile({ ...loan, ref: 'A;B,C\nD' }, { t, fmtMoney: money, asOf: '2026-10-05T05:00:00.000Z' });
-        expect(unfolded(odd)).toContain('SUMMARY:Pay LKR 30000.00 to your lender (A\\;B\\,C\\nD)');
+        expect(unfolded(odd)).toContain('SUMMARY:Payment of LKR 30000.00 due to your lender (A\\;B\\,C\\nD)');
         for (const line of calendarFile(loan, { t: makeT('si'), fmtMoney: money, asOf: '2026-10-05T05:00:00.000Z' }).split('\r\n')) expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75);
         expect(calendarFile({ ...loan, date: 'x' }, { t, fmtMoney: money })).toBe('');
         expect(calendarFile(null, { t, fmtMoney: money })).toBe('');
@@ -106,7 +106,7 @@ describe('the spreadsheet', () => {
         const lines = csvFile(st()).replace(/^﻿/, '').trim().split('\r\n');
         expect(lines[0]).toBe('"Reference","Type","Date","Description","Amount","Balance","Currency"');
         expect(lines.slice(1)).toEqual([
-            '"DEB-AAAAAA","Loan","2026-09-01","Loan paid out","50000.00","50000.00","LKR"',
+            '"DEB-AAAAAA","Loan","2026-09-01","Loan disbursed","50000.00","50000.00","LKR"',
             '"DEB-AAAAAA","Loan","2026-09-20","Repayment","20000.00","30000.00","LKR"',
             '"INV-BBBBBB","Investment","2026-08-26","Interest received for 2026-08","10000.00","","LKR"',
         ]);
@@ -187,7 +187,7 @@ describe('a repayment plan', () => {
         expect(ics).toContain('BEGIN:VCALENDAR');
         expect(ics).toContain('DTSTART;VALUE=DATE:20261019');
         expect(ics).toContain('RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=4');
-        expect(ics).toContain('SUMMARY:Pay LKR 7500.00 to your lender (DEB-AAAAAA)');
+        expect(ics).toContain('SUMMARY:Payment of LKR 7500.00 due to your lender (DEB-AAAAAA)');
         expect(ics).toContain('TRIGGER:-P1D');
         expect(ics.split('\r\n').every((l) => new TextEncoder().encode(l).length <= 75)).toBe(true);
         expect(planFile(payoffPlan(loan(), ASOF, { every: 'monthly', amount: 10000 }), env)).toContain('RRULE:FREQ=MONTHLY;INTERVAL=1;COUNT=3');

@@ -78,32 +78,60 @@ describe('asking for a code', () => {
         expect(gw.sent.map((m) => m.to)).toEqual(['+94771234567']);
     });
 
-    it('gives the same answer for every well-formed request, whatever is behind it', async () => {
-        const real = await ready();
-        const expected = await ask(real.db, gateway(), real.token);
-
-        const cases = {};
-        const a = await ready(); cases.unknownToken = await ask(a.db, gateway(), 'zzzzzzzzzzzzzzzz');
-        const b = await ready(); cases.wrongNic = await ask(b.db, gateway(), b.token, { nic: '198534000999' });
-        const c = await ready(); cases.gatewayDown = await ask(c.db, gateway(() => ({ ok: false, kind: KIND.CREDIT, message: 'no units', retryable: true })), c.token);
-        const d = await ready({ user: lenderDoc({ income: [], debtors: [] }) }); cases.noRecipient = await ask(d.db, gateway(), d.token);
-        const e = await ready({ user: lenderDoc({ income: [{ ...lenderDoc().income[0], sms_notifications_enabled: false }], debtors: [] }) }); cases.switchedOff = await ask(e.db, gateway(), e.token);
-        const f = await ready(); f.fs.data.set(`wf-tenants/${f.token}`, { ...f.fs.data.get(`wf-tenants/${f.token}`), active: false }); cases.inactive = await ask(f.db, gateway(), f.token);
-        const g = await ready(); await ask(g.db, gateway(), g.token); cases.cooldown = await ask(g.db, gateway(), g.token, { now: T0 + 5000 });
-
-        expect(expected.status).toBe(200);
-        for (const [name, out] of Object.entries(cases)) expect({ name, status: out.status, body: out.body }).toEqual({ name, status: expected.status, body: expected.body });
+    it('a wrong NIC, an unknown link and a dead link are ONE refusal, so the answer never says which it was', async () => {
+        const expected = { status: 401, body: { ok: false, error: MSG.NO_MATCH } };
+        const gw = gateway();
+        const a = await ready(); const unknownToken = await ask(a.db, gw, 'zzzzzzzzzzzzzzzz');
+        const b = await ready(); const wrongNic = await ask(b.db, gw, b.token, { nic: '198534000999' });
+        const f = await ready(); f.fs.data.set(`wf-tenants/${f.token}`, { ...f.fs.data.get(`wf-tenants/${f.token}`), active: false }); const dead = await ask(f.db, gw, f.token);
+        const g = await ready(); g.fs.data.set(`wf-tenants/${g.token}`, { ...g.fs.data.get(`wf-tenants/${g.token}`), active: false }); const deadWrongNic = await ask(g.db, gw, g.token, { nic: '198534000999' });
+        for (const [name, out] of Object.entries({ unknownToken, wrongNic, dead, deadWrongNic })) expect({ name, status: out.status, body: out.body }).toEqual({ name, ...expected });
+        expect(gw.calls).toBe(0);                                  // a refused request costs the owner no text
+        expect(JSON.stringify(unknownToken.body)).not.toMatch(/phone|\*|4567/);   // and carries nothing about a number
     });
 
-    it('a lender the owner has switched off sends no code, and the stranger is told the same as ever; one never registered still does', async () => {
+    it('a wrong NIC counts toward the same lockout as a wrong code: five of them lock the link', async () => {
+        const { fs, db, token } = await ready();
+        const gw = gateway();
+        for (let i = 0; i < LOCK.fails - 1; i += 1) expect((await ask(db, gw, token, { nic: '198534000999', now: T0 + i })).status).toBe(401);
+        const fifth = await ask(db, gw, token, { nic: '198534000999', now: T0 + 10 });
+        expect(fifth.status).toBe(401);                            // the fifth is still answered as a mismatch ...
+        expect(fs.data.get(`wf-tenants/${token}`).lockedUntil).toBe(T0 + 10 + LOCK.baseMs);
+        const locked = await ask(db, gw, token, { now: T0 + 20 }); // ... and then even the right NIC is held back
+        expect(locked.status).toBe(429);
+        expect(locked.body.error).toBe(MSG.SLOW_DOWN);
+        expect(gw.calls).toBe(0);
+    });
+
+    it('once the NIC matches, the answer is the same whether the text goes out, the gateway is down or a second request is held back', async () => {
+        const real = await ready();
+        const expected = await ask(real.db, gateway(), real.token);
+        expect(expected.status).toBe(200);
+        expect(expected.body.message).toBe(MSG.ACCEPTED);
+        expect(expected.body.phone).toBe('+94*****4567');            // the last four digits only: where to look
+
+        const c = await ready(); const gatewayDown = await ask(c.db, gateway(() => ({ ok: false, kind: KIND.CREDIT, message: 'no units', retryable: true })), c.token);
+        const g = await ready(); await ask(g.db, gateway(), g.token); const cooldown = await ask(g.db, gateway(), g.token, { now: T0 + 5000 });
+        for (const [name, out] of Object.entries({ gatewayDown, cooldown })) expect({ name, status: out.status, body: out.body }).toEqual({ name, status: expected.status, body: expected.body });
+    });
+
+    it('a right NIC with no way to send a text is told so plainly, not left waiting', async () => {
+        const gw = gateway();
+        const expected = { status: 409, body: { ok: false, error: MSG.NOT_AVAILABLE } };
+        const d = await ready({ user: lenderDoc({ income: [], debtors: [] }) }); const noRecipient = await ask(d.db, gw, d.token);
+        const e = await ready({ user: lenderDoc({ income: [{ ...lenderDoc().income[0], sms_notifications_enabled: false }], debtors: [] }) }); const switchedOff = await ask(e.db, gw, e.token);
+        for (const [name, out] of Object.entries({ noRecipient, switchedOff })) expect({ name, status: out.status, body: out.body }).toEqual({ name, ...expected });
+        expect(gw.calls).toBe(0);
+    });
+
+    it('a lender the owner has switched off sends no code and says so; one never registered still does', async () => {
         const off = await ready();
         off.fs.data.set(`wf-sms/${UID}`, { active: false, deactivatedReason: 'the sign-in account is disabled' });
         const gw = gateway();
         const out = await ask(off.db, gw, off.token);
-        const normal = await ask((await ready()).db, gateway(), (await ready()).token);
         expect(gw.calls).toBe(0);
         expect(off.fs.data.has(`wf-tenants/${off.token}/otp/current`)).toBe(false);              // no slot taken, no daily count used
-        expect({ status: out.status, body: out.body }).toEqual({ status: normal.status, body: normal.body });
+        expect({ status: out.status, body: out.body }).toEqual({ status: 409, body: { ok: false, error: MSG.NOT_AVAILABLE } });
 
         const on = await ready();
         on.fs.data.set(`wf-sms/${UID}`, { active: true });
@@ -138,13 +166,12 @@ describe('asking for a code', () => {
         expect(gw.calls).toBe(0);
     });
 
-    it('a string that could be a passport or ID number gets the same uniform answer as a wrong NIC, never a different one', async () => {
+    it('a string that could be a passport or ID number is refused like any other wrong NIC, never differently', async () => {
         const { db, token } = await ready();
         const gw = gateway();
         for (const nic of ['85340093', '8534009377V', 'N1234567', 'ID:N1234567']) {
-            const out = await ask(db, gw, token, { nic });
-            expect(out.status, nic).toBe(200);
-            expect(out.body.message).toBe(MSG.ACCEPTED);
+            const out = await ask(db, gw, token, { nic, now: T0 + 1 });
+            expect({ nic, status: out.status, body: out.body }).toEqual({ nic, status: 401, body: { ok: false, error: MSG.NO_MATCH } });
         }
         expect(gw.calls).toBe(0);                                  // none of them is this link's identity, so no text goes out
     });
@@ -218,11 +245,11 @@ describe('asking for a code', () => {
         const { db, token } = await ready();
         const gw = gateway();
         const ghost = 'zzzzzzzzzzzzzzzz';                              // an unknown link: asking costs nothing but the address's allowance
-        for (let i = 0; i < LIMITS.requestsPerIpHour; i += 1) expect((await ask(db, gw, ghost, { now: T0 + i })).status).toBe(200);
+        for (let i = 0; i < LIMITS.requestsPerIpHour; i += 1) expect((await ask(db, gw, ghost, { now: T0 + i })).status).toBe(401);
         const blocked = await ask(db, gw, ghost, { now: T0 + 100 });
         expect(blocked.status).toBe(429);
         expect(blocked.body.retryAfterSec).toBeGreaterThan(0);
-        expect((await ask(db, gw, ghost, { ip: 'someone-else', now: T0 + 100 })).status).toBe(200);
+        expect((await ask(db, gw, ghost, { ip: 'someone-else', now: T0 + 100 })).status).toBe(401);
         expect((await ask(db, gw, token, { now: T0 + 3600e3 + 1 })).status).toBe(200);     // the window moves on
     });
 

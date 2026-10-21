@@ -195,6 +195,8 @@ p { margin: 0 0 12px; }
 .tp-auth h2, .tp-lead, .tp-info { text-wrap: balance; }
 .tp-lead { max-width: 36ch; margin: 0 auto 4px; color: var(--mute); }
 .tp-help { margin: 8px 0 0; color: var(--mute); font-size: 13px; line-height: 1.45; text-align: left; }
+/* after a few details the link did not recognise: no longer a hint but a plain warning, in the page's amber */
+.tp-help-warn { color: var(--amber); font-weight: 600; }
 .tp-auth form, .tp-auth label, .tp-auth .tp-error, .tp-auth .tp-info { text-align: left; }
 .tp-badge {
     display: inline-flex; align-items: center; justify-content: center;
@@ -294,11 +296,29 @@ select:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .tp-info { margin: 14px 0 0; padding: 11px 14px; border-radius: 12px; color: var(--primary); background: var(--primary-weak); border: 1px solid var(--primary-line); font-size: 14px; }
 .tp-info[hidden] { display: none; }
 
-/* a loading placeholder that breathes */
-.tp-skel { display: grid; gap: 10px; margin-top: 18px; }
-.tp-skel span { display: block; height: 14px; border-radius: 8px; background: var(--surface-2); }
-.tp-skel span:nth-child(1) { width: 70%; }
-.tp-skel span:nth-child(3) { width: 45%; }
+/* ── the loading screen: the mark, the name, a thin bar that runs, one honest line ──────────────────────────────────────────
+   tenant.html draws it before any script has arrived and tenant-page.js adopts the same element, so nothing restarts. It is invisible for the
+   first 0.3 s (a quick load never shows it) and, once seen, the script keeps it up a moment so it does not flash. */
+.tp-splash {
+    --splash-glow: rgba(11, 79, 179, 0.22);
+    min-height: 100vh; min-height: 100svh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px max(24px, env(safe-area-inset-right)) calc(72px + env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+    text-align: center;
+    animation: tp-late 0.3s linear 0.3s both;
+}
+:root[data-theme="dark"] .tp-splash { --splash-glow: rgba(106, 164, 255, 0.2); }
+.tp-splash-mark { position: relative; width: 72px; height: 72px; }
+.tp-splash-mark::before { content: ""; position: absolute; inset: -24px; border-radius: 50%; background: radial-gradient(closest-side, var(--splash-glow), transparent); }
+.tp-splash-logo { position: relative; display: block; width: 72px; height: 72px; border-radius: 20px; box-shadow: 0 12px 30px rgba(11, 36, 87, 0.28); }
+.tp-splash-name { margin: 26px 0 0; font-size: 22px; line-height: 1.1; font-weight: 750; letter-spacing: -0.02em; color: var(--ink); }
+.tp-splash-bar { position: relative; width: 120px; height: 3px; margin: 22px 0 0; border-radius: 3px; background: var(--line); overflow: hidden; }
+.tp-splash-bar span { position: absolute; top: 0; bottom: 0; left: 0; width: 42%; border-radius: 3px; background: linear-gradient(90deg, var(--hero-b), #3d8bff); }
+/* room for two lines, so the sentence changing to the slow one does not move anything */
+.tp-splash-status { margin: 16px 0 0; min-height: 3em; max-width: 30ch; font-size: 14px; line-height: 1.5; color: var(--mute); text-wrap: balance; }
+/* for a script that never runs (a very old browser): after 12 s the static page asks for a reload; the script removes this line the moment it starts */
+.tp-splash-stuck { margin: 0; max-width: 34ch; font-size: 13px; line-height: 1.5; color: var(--mute); animation: tp-late 0.4s linear 12s both; }
+@media (scripting: none) { .tp-splash { display: none; } }
 
 /* ── signed in: the header of the statement ───────────────────────────────── */
 .tp-head { margin: 4px 0 14px; min-width: 0; }
@@ -339,8 +359,6 @@ select:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 }
 .tp-eye:hover { background: rgba(255, 255, 255, 0.24); }
 .tp-eye:focus-visible { outline-color: #fff; }
-/* the session check usually answers in a blink: the card shows only if it takes longer, so there is no flash of "One moment" */
-.tp-card.tp-loading { animation: tp-late 0.25s linear 0.35s both; }
 @keyframes tp-late { from { opacity: 0; } to { opacity: 1; } }
 .tp-hero-one .tp-cur { display: none; }          /* one currency: the figures already say it */
 .tp-hero-cur { margin-top: 18px; padding-top: 16px; border-top: 1px solid rgba(255, 255, 255, 0.2); }
@@ -587,7 +605,9 @@ td.tp-num, th.tp-num { text-align: right; }
     .tp-col-b > :nth-child(2) { animation-delay: 0.16s; }
     .tp-col-b > :nth-child(3) { animation-delay: 0.2s; }
     .tp-toasts > * { animation: tp-pop 0.22s ease-out both; }
-    .tp-skel span { animation: tp-pulse 1.4s ease-in-out infinite; }
+    .tp-splash-mark::before { animation: tp-breathe 2.6s ease-in-out infinite; }
+    .tp-splash-logo { animation: tp-settle 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) 0.3s both; }
+    .tp-splash-bar span { animation: tp-run 1.4s cubic-bezier(0.45, 0, 0.25, 1) infinite; }
     /* the second step fills in rather than switching on; a refused field gives one small nudge (a "no" without blame); a busy button runs a thin bar */
     .tp-steps span.tp-on:last-child { transform-origin: left; animation: tp-fill 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
     input[aria-invalid="true"] { animation: tp-nudge 0.32s ease-in-out both; }
@@ -597,16 +617,20 @@ td.tp-num, th.tp-num { text-align: right; }
     @keyframes tp-run { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
     @keyframes tp-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
     @keyframes tp-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
-    @keyframes tp-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+    @keyframes tp-breathe { 0%, 100% { transform: scale(0.92); opacity: 0.6; } 50% { transform: scale(1.08); opacity: 1; } }
+    @keyframes tp-settle { from { transform: scale(0.94); } to { transform: none; } }
 }
 @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; }
+    /* nothing runs: the bar is a calm full line, not a progress that seems stuck halfway */
+    .tp-splash-bar span { width: 100%; opacity: 0.4; }
 }
 
 /* ── print: a plain statement on white, nothing that only works on a screen ─ */
 @media print {
     body { background: #fff; color: #000; }
     .tp-top { position: static; background: #fff; border: 0; padding-top: 0; }
+    .tp-splash { display: none; }
     .tp-top-actions, .tp-tabs, .tp-toasts, .tp-actions, .tp-steps, .tp-eye, .tp-session { display: none; }
     .tp-btn, .tp-lang, .tp-out, .tp-act, .tp-copy { display: none; }
     .tp-brand { color: #000; }
@@ -638,6 +662,8 @@ td.tp-num, th.tp-num { text-align: right; }
     .tp-card, .tp-stat, .tp-acct, .tp-acct-note, .tp-scroll, .tp-chip, .tp-when, .tp-actions, .tp-tile, .tp-tabs { border: 1px solid CanvasText; }
     .tp-btn, .tp-act, .tp-eye { border: 1px solid ButtonText; }
     .tp-steps span.tp-on { background: Highlight; }
+    .tp-splash-bar { border: 1px solid CanvasText; }
+    .tp-splash-bar span { background: Highlight; }
     .tp-tab[aria-current="true"] { outline: 2px solid Highlight; }
 }
 

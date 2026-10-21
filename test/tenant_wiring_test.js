@@ -87,6 +87,20 @@ describe('the page', () => {
         expect(HTML).toMatch(/<meta name="viewport" content="width=device-width, initial-scale=1/);
     });
 
+    it('draws its loading screen before any script arrives, and the script builds the same one', () => {
+        const classesOf = (html) => [...html.matchAll(/class="([^"]+)"/g)].map((m) => m[1]);
+        const drawn = classesOf(HTML.slice(HTML.indexOf('<div class="tp-splash"'), HTML.indexOf('<noscript>')));
+        for (const c of ['tp-splash', 'tp-splash-mark', 'tp-splash-logo', 'tp-splash-name', 'tp-splash-bar', 'tp-splash-status', 'tp-splash-stuck']) {
+            expect(drawn, c).toContain(c);
+            expect(CSS, c).toContain(`.${c}`);
+        }
+        for (const c of ['tp-splash', 'tp-splash-mark', 'tp-splash-logo', 'tp-splash-name', 'tp-splash-bar', 'tp-splash-status']) expect(PAGE, c).toContain(`'${c}'`);
+        expect(HTML).toContain('<noscript>');
+        expect(CSS).toMatch(/@media \(scripting: none\)\s*\{\s*\.tp-splash \{ display: none; \}/);        // without script it would run for ever
+        expect(CSS).toMatch(/\.tp-splash \{[^}]*animation: tp-late 0\.3s linear 0\.3s both/);               // hidden for the first 0.3 s
+        expect(HTML).toContain('lang="si"');                                                           // the static "reload" line is in both languages
+    });
+
     it('builds its markup with createElement and textContent only, and keeps nothing', () => {
         const src = code(PAGE);
         for (const banned of [/\.innerHTML\b/, /\.outerHTML\b/, /insertAdjacentHTML/, /document\.write/, /\beval\s*\(/, /new\s+Function\b/, /\bsetTimeout\s*\(\s*['"`]/, /localStorage/, /sessionStorage/, /indexedDB/, /document\.cookie/, /location\.(search|hash|href)\s*=/, /history\./, /postMessage/, /\.srcdoc/, /setAttribute\(\s*['"]style['"]/, /\.style\./, /createElement\(\s*['"]script['"]/]) {

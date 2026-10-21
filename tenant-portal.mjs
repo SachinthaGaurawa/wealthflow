@@ -11,12 +11,15 @@
  * that only the holder of the recorded phone can read. Each is checked on the server,
  * and none of them is enough alone.
  *
- * WHAT A STRANGER LEARNS. Nothing. Every request for a code gets the same answer
- * whether the link is real, the NIC matches, a phone exists or the gateway is down,
- * in the same words, with the same "wait 60 seconds", and not faster when it is
- * going to do nothing. A wrong NIC and a wrong code are the same refusal. The only
- * differences a caller can see — "too many tries" and "wait" — depend on how often
- * they asked, never on what they typed.
+ * WHAT A STRANGER LEARNS. One thing, and only to the holder of a real link: whether the NIC they typed is the one that link was made for.
+ * A person who mistypes their NIC must be told so, not left waiting for a text that was never sent; that is why the request step refuses
+ * a wrong NIC out loud ("these details could not be verified") instead of pretending a code is on its way.
+ * What is NOT given away: an unknown link, a dead link and a wrong NIC are the SAME refusal (same status, same words, same time, never faster
+ * than a request that sends), so the answer says nothing about which of them it was. A wrong NIC counts toward the lockout below exactly like
+ * a wrong code (5 lock the link for 15 minutes, then 30, 60 ... up to a day), so the NIC cannot be guessed at, and the NIC is not the
+ * secret anyway: the code that follows still goes only to the lender's recorded phone. Once the NIC matches, the caller is told the last
+ * four digits of that phone (so they know where to look) and, if no text can go out (no number on file, the lender stopped the portal),
+ * that plainly. The other differences a caller can see — "too many tries" and "wait" — depend on how often they asked.
  *
  * THE CODE.
  *   - crypto.randomInt(0, 1_000_000), left-padded: uniform and unpredictable.
@@ -82,16 +85,18 @@ export const LIMITS = Object.freeze({
 export const LOCK = Object.freeze({ fails: 5, windowMs: 15 * 60e3, baseMs: 15 * 60e3, maxMs: DAY });
 
 export const MSG = Object.freeze({
-    ACCEPTED: 'If those details match our records, a 6-digit code is on its way to the mobile number we hold. It expires in 3 minutes.',
-    BAD_LINK: 'This link is not valid. Please use the link in your text message.',
-    BAD_NIC: 'Enter your NIC as 9 digits followed by V or X, or as 12 digits. If you have no Sri Lankan NIC, enter your passport or ID number.',
-    BAD_CODE: 'Enter the 6-digit code from the text message.',
-    DENIED: 'The details or the code are not valid, or the code has expired. Request a new code and try again.',
-    SLOW_DOWN: 'Too many attempts. Please wait a while and try again.',
-    CODES_CAPPED: 'Too many codes have been requested. Please try again later.',
-    UNAVAILABLE: 'Codes are temporarily unavailable. Please try again later.',
-    NO_SESSION: 'Your session has ended. Please sign in again.',
-    FAILED: 'Something went wrong. Please try again.',
+    ACCEPTED: 'A 6-digit verification code has been sent to the mobile number we hold for you. It expires in 3 minutes.',
+    NO_MATCH: 'We could not verify these details. Please check your NIC or passport / ID number, or contact the person who sent you this link.',
+    NOT_AVAILABLE: 'We cannot send a code for this link right now. Please contact the person who sent it to you.',
+    BAD_LINK: 'This link is not valid. Please use the link from your text message.',
+    BAD_NIC: 'Please enter a valid NIC (9 digits followed by V or X, or 12 digits), or your passport / ID number.',
+    BAD_CODE: 'Please enter the 6-digit verification code from your text message.',
+    DENIED: 'We could not verify that code. It may be incorrect or expired. Please check it, or request a new one.',
+    SLOW_DOWN: 'Too many attempts. For your security, please wait before trying again.',
+    CODES_CAPPED: 'The limit for verification codes has been reached. Please try again later.',
+    UNAVAILABLE: 'Verification codes are temporarily unavailable. Please try again later.',
+    NO_SESSION: 'Your session has ended. Please verify your identity again to continue.',
+    FAILED: 'Something went wrong. Please try again in a moment.',
 });
 
 const s = (v) => String(v == null ? '' : v);
@@ -139,7 +144,12 @@ export const sessionCookie = (token, sid, maxAgeSec = SESSION_TTL_MS / 1000) =>
 export const clearCookie = () => `${COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/api/tenant-portal; Max-Age=0`;
 
 const result = (status, body, extra = {}) => ({ status, body, ...extra });
-const accepted = () => result(200, { ok: true, message: MSG.ACCEPTED, resendAfterSec: RESEND_GAP_MS / 1000, expiresInSec: OTP_TTL_MS / 1000 });
+/** The code is on its way: `to` is the recipient, whose masked number (last four digits only) tells the person where to look. */
+const accepted = (to) => result(200, { ok: true, message: MSG.ACCEPTED, phone: to && to.masked ? to.masked : '', resendAfterSec: RESEND_GAP_MS / 1000, expiresInSec: OTP_TTL_MS / 1000 });
+/** An unknown link, a dead link and a wrong NIC are this one answer, so it never says which. */
+const noMatch = () => result(401, { ok: false, error: MSG.NO_MATCH });
+/** The NIC is right but no text can go out (no number on file, the lender stopped the portal): said plainly, because the person has proved who they are. */
+const notAvailable = () => result(409, { ok: false, error: MSG.NOT_AVAILABLE });
 const tooMany = (retryAfterMs, error = MSG.SLOW_DOWN) => result(429, { ok: false, error, retryAfterSec: secs(retryAfterMs) });
 const denied = () => result(401, { ok: false, error: MSG.DENIED });
 
@@ -244,9 +254,9 @@ export async function requestCode({ db, client, token, nic, ip, secret, now, ran
     if (!gate.ok) return tooMany(gate.retryAfterMs);
     const tenant = snap.exists ? (snap.data() || {}) : null;
     const matched = matchIdentity(candidates, tenant && typeof tenant.nicHash === 'string' ? tenant.nicHash : DUMMY, secret);
-    if (!tenant || tenant.active === false || !tenant.uid) { await pad(MIN_ANSWER_MS); return accepted(); }
+    if (!tenant || tenant.active === false || !tenant.uid) { await pad(MIN_ANSWER_MS); return noMatch(); }
     if (num(tenant.lockedUntil) > now) return tooMany(num(tenant.lockedUntil) - now);
-    if (!matched) { await noteFailure(db, tenantRef, now); await pad(MIN_ANSWER_MS); return accepted(); }
+    if (!matched) { await noteFailure(db, tenantRef, now); await pad(MIN_ANSWER_MS); return noMatch(); }
 
     // A lender the owner has since stopped (access removed, sign-in disabled or deleted: the daily sweep records that as `active: false`) must not
     // go on spending the owner's units through this door either. Only an explicit false stops it; no registration document is just "not registered yet".
@@ -254,10 +264,10 @@ export async function requestCode({ db, client, token, nic, ip, secret, now, ran
         withDeadline(db.collection(SMS_ROOT).doc(s(tenant.uid)).get(), 8000, 'wf-sms'),
         withDeadline(db.collection('users').doc(s(tenant.uid)).get(), 8000, 'users'),
     ]);
-    if (lenderRoot.exists && (lenderRoot.data() || {}).active === false) { await pad(MIN_ANSWER_MS); return accepted(); }
+    if (lenderRoot.exists && (lenderRoot.data() || {}).active === false) { await pad(MIN_ANSWER_MS); return notAvailable(); }
 
     const to = pickRecipient(userSnap.exists ? userSnap.data() : {}, matched, secret);
-    if (!to) { console.warn('[WF-PORTAL] no recipient for a valid link'); await pad(MIN_ANSWER_MS); return accepted(); }
+    if (!to) { console.warn('[WF-PORTAL] no recipient for a valid link'); await pad(MIN_ANSWER_MS); return notAvailable(); }
 
     // The slot is taken BEFORE the gateway is called: two requests in parallel get one text, and a gateway that is slow cannot be used to get more.
     const otpRef = tenantRef.collection('otp').doc('current');
@@ -284,7 +294,7 @@ export async function requestCode({ db, client, token, nic, ip, secret, now, ran
         tx.set(dayRef, { count: total + 1, day: utcDay(now), expiresAt: nextUtcDay(now) });
         return { gate: 'ok', code };
     });
-    if (slot.gate === 'cooldown') { await pad(MIN_ANSWER_MS); return accepted(); }
+    if (slot.gate === 'cooldown') { await pad(MIN_ANSWER_MS); return accepted(to); }
     if (slot.gate === 'cap') return tooMany(slot.retryAfterMs, MSG.CODES_CAPPED);
     if (slot.gate === 'global') { console.warn('[WF-PORTAL] daily code cap reached'); return result(503, { ok: false, error: MSG.UNAVAILABLE }); }
 
@@ -314,7 +324,7 @@ export async function requestCode({ db, client, token, nic, ip, secret, now, ran
     if (defer) defer(deliver().catch((e) => console.warn('[WF-PORTAL] delivery failed:', s(e && e.message).slice(0, 120))));
     else await deliver();
     await pad(MIN_ANSWER_MS);
-    return accepted();
+    return accepted(to);
 }
 
 /* ── checking the code ────────────────────────────────────────────────────── */

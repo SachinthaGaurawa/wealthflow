@@ -6,7 +6,7 @@
  * caller is hostile. The rules are in tenant-portal.mjs; this file is the HTTP skin.
  *
  *   POST /api/tenant-portal   Content-Type: application/json
- *     { action: 'request',   token, nic }          -> the same answer for every input that is well formed
+ *     { action: 'request',   token, nic }          -> 200 + the masked phone when the NIC is the link's (a code is sent); 401 for a wrong NIC, an unknown link or a dead link (one answer for all three); 409 when the NIC is right but no text can go out
  *     { action: 'verify',    token, nic, code }    -> 200 + Set-Cookie on success, else one refusal
  *     { action: 'statement', token }               -> the statement, for the cookie's session (which must be this link's)
  *     { action: 'pdf', token, lang? }              -> the same statement as a PDF file (application/pdf, an attachment), same session rule; lang 'si' = Sinhala, anything else English
