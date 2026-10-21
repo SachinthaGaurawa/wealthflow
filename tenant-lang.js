@@ -30,8 +30,9 @@ export const SI = Object.freeze({
     /* the first screen */
     'View your statement': 'ඔබේ ගිණුම් ප්‍රකාශය බලන්න',
     'Your NIC or passport / ID number': 'ඔබේ ජාතික හැඳුනුම්පත් අංකය, හෝ ගමන් බලපත්‍ර / හැඳුනුම්පත් අංකය',
-    'Enter your NIC, or your passport / ID number if you have no Sri Lankan NIC. We will text a 6-digit code to the mobile number your lender has on file for you.':
-        'ඔබේ ජාතික හැඳුනුම්පත් අංකය ඇතුළත් කරන්න (ශ්‍රී ලාංකික හැඳුනුම්පතක් නොමැති නම් ගමන් බලපත්‍ර / හැඳුනුම්පත් අංකය). ඔබේ ණය දෙන්නා සතුව ඇති ඔබේ ජංගම දුරකථන අංකයට ඉලක්කම් 6ක කේතයක් කෙටි පණිවිඩයෙන් එවනු ඇත.',
+    'We will text a 6-digit code to the mobile number your lender has on file for you.':
+        'ඔබේ ණය දෙන්නා සතුව ඇති ඔබේ ජංගම දුරකථන අංකයට ඉලක්කම් 6ක කේතයක් කෙටි පණිවිඩයෙන් එවනු ඇත.',
+    'No Sri Lankan NIC? Enter your passport or ID number.': 'ශ්‍රී ලාංකික හැඳුනුම්පතක් නොමැතිද? ඔබේ ගමන් බලපත්‍ර හෝ හැඳුනුම්පත් අංකය ඇතුළත් කරන්න.',
     'Send me a code': 'කේතයක් එවන්න',
     'Sending...': 'එවමින්...',
     'Your statement is shown only after you enter the code. Nobody else can see it from this link.':
@@ -58,6 +59,7 @@ export const SI = Object.freeze({
     'As at {when}': '{when} වන විට',
     'Sri Lanka time': 'ශ්‍රී ලංකා වේලාව',
     'For your privacy this closes in {t}.': 'ඔබේ පෞද්ගලිකත්වය සඳහා මෙය {t} කින් වැසේ.',
+    '{n} min': 'මිනිත්තු {n}',
     'Download PDF': 'PDF බාගන්න',
     'Preparing...': 'සූදානම් කරමින්...',
     'Print': 'මුද්‍රණය කරන්න',
@@ -247,7 +249,6 @@ export const SI = Object.freeze({
     /* the colour theme button */
     'Light': 'ආලෝක',
     'Dark': 'අඳුරු',
-    'Auto': 'ස්වයං',
     'Colour theme': 'වර්ණ තේමාව',
     'Code sent by text message': 'කේතය කෙටි පණිවිඩයෙන් එවයි',
     'Closes by itself after 20 minutes': 'මිනිත්තු 20කට පසු ස්වයංක්‍රීයව වැසේ',

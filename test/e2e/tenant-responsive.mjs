@@ -138,7 +138,7 @@ function audit(touch) {
         }
         // text that is cut off rather than wrapped
         const cs = getComputedStyle(el);
-        if (!scroller && el.children.length === 0 && el.textContent.trim() && (cs.overflow === 'hidden' || cs.textOverflow === 'ellipsis') && el.scrollWidth > el.clientWidth + 1) out.push(`${name(el)} cuts its text off`);
+        if (!scroller && cs.clipPath === 'none' && el.children.length === 0 && el.textContent.trim() && (cs.overflow === 'hidden' || cs.textOverflow === 'ellipsis') && el.scrollWidth > el.clientWidth + 1) out.push(`${name(el)} cuts its text off`);
         // the size of text
         if (el.children.length === 0 && el.textContent.trim() && parseFloat(cs.fontSize) < 12) out.push(`${name(el)} text is ${cs.fontSize}, under 12px`);
     }
@@ -155,6 +155,50 @@ function audit(touch) {
         const ox = getComputedStyle(el).overflowX;
         if (el.scrollWidth > el.clientWidth + 1 && !/auto|scroll/.test(ox)) out.push(`${name(el)} hides a column it cannot scroll to`);
     }
+    // the name in the header is one line (it may hide on the tiniest screens, but it never breaks mid-word: "WealthFl / ow")
+    for (const el of document.querySelectorAll('.tp-brand span')) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 4 && r.height > parseFloat(getComputedStyle(el).fontSize) * 1.6) out.push(`the wordmark wraps onto two lines (${Math.round(r.width)}x${Math.round(r.height)})`);
+    }
+    // legibility, judged from the colours the browser actually paints: text 4.5:1 (3:1 when large), the outline of a field 3:1, a placeholder 4.5:1
+    const rgba = (c) => { const m = /^rgba?\(([^)]+)\)$/.exec(c || ''); if (!m) return null; const p = m[1].split(/[ ,\/]+/).filter(Boolean).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; };
+    const over = (top, under) => ({ r: top.r * top.a + under.r * (1 - top.a), g: top.g * top.a + under.g * (1 - top.a), b: top.b * top.a + under.b * (1 - top.a), a: 1 });
+    const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+    const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+    // the colour behind an element: its own and its ancestors' backgrounds laid over each other; null where a gradient makes that unknowable
+    const behind = (el) => {
+        const stack = [];
+        for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+            const cs = getComputedStyle(n);
+            if (/gradient\(/.test(cs.backgroundImage)) return null;
+            const c = rgba(cs.backgroundColor);
+            if (c && c.a > 0) { stack.push(c); if (c.a >= 1) break; }
+        }
+        let base = { r: 255, g: 255, b: 255, a: 1 };
+        for (const c of stack.reverse()) base = over(c, base);
+        return base;
+    };
+    for (const el of document.querySelectorAll('body *')) {
+        if (!visible(el) || el.closest('button:disabled') || (el.disabled === true)) continue;
+        const cs = getComputedStyle(el);
+        const bg = behind(el);
+        if (!bg) continue;
+        if (el.children.length === 0 && el.textContent.trim() && !(el instanceof SVGElement)) {
+            const fg = rgba(cs.color);
+            if (!fg) continue;
+            const text = over(fg, bg);
+            const big = parseFloat(cs.fontSize) >= 24 || (parseFloat(cs.fontSize) >= 18.66 && Number(cs.fontWeight) >= 700);
+            const need = big ? 3 : 4.5;
+            const got = ratio(text, bg);
+            if (got < need) out.push(`${name(el)} "${el.textContent.trim().slice(0, 24)}" reads at ${got.toFixed(2)}:1 (needs ${need}:1)`);
+        }
+        if (/^(input|select)$/i.test(el.tagName)) {
+            const edge = rgba(cs.borderTopColor);
+            const parentBg = el.parentElement ? behind(el.parentElement) : null;
+            if (edge && parentBg && parseFloat(cs.borderTopWidth) > 0) { const got = ratio(over(edge, parentBg), parentBg); if (got < 3) out.push(`${name(el)} has an outline at ${got.toFixed(2)}:1 (a field needs 3:1)`); }
+            if (el.placeholder) { const ph = rgba(getComputedStyle(el, '::placeholder').color); const own = rgba(cs.backgroundColor); if (ph && own) { const got = ratio(over(ph, own), own); if (got < 4.5) out.push(`${name(el)} placeholder reads at ${got.toFixed(2)}:1 (needs 4.5:1)`); } }
+        }
+    }
     // the column stays readable on a wide screen
     const wrap = document.querySelector('.tp-wrap');
     if (wrap) { const wr = wrap.getBoundingClientRect(); if (wr.width > 1300) out.push(`the page stretches to ${Math.round(wr.width)}px`); const gap = Math.abs((wr.left) - (vw - wr.right)); if (wr.width < vw - 2 && gap > 2) out.push(`the column is not centred (${Math.round(wr.left)} left, ${Math.round(vw - wr.right)} right)`); }
@@ -162,6 +206,8 @@ function audit(touch) {
 }
 
 async function inspect(page, label, touch) {
+    // let every finishing transition and entrance animation end first: a colour caught half-way between two themes is not what a person sees
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState === 'finished' || a.playState === 'idle' || !a.effect || a.effect.getTiming().iterations === Infinity), null, { timeout: 5000 });
     const found = await page.evaluate(audit, touch);
     for (const f of found) problems.push(`${label}: ${f}`);
 }
@@ -219,7 +265,7 @@ for (const [device, width, height, touch] of DEVICES) {
 }
 console.log(`${n} screens checked, each on the sign-in forms and on a full statement in English and Sinhala`);
 
-/* the dark theme follows the phone: the same checks on three sizes, and the page really is dark ---- */
+/* the dark theme, chosen with the button: the same checks on three sizes, and the page really is dark ---- */
 for (const [device, width, height, touch] of [['dark phone', 390, 844, true], ['dark tablet', 744, 1133, true], ['dark laptop', 1366, 768, false]]) {
     const ctx = await browser.newContext({ viewport: { width, height }, hasTouch: touch, isMobile: touch, colorScheme: 'dark', deviceScaleFactor: touch ? 2 : 1 });
     await ctx.addCookies(cookies);
@@ -230,9 +276,8 @@ for (const [device, width, height, touch] of [['dark phone', 390, 844, true], ['
     await page.waitForSelector('#tp-out');
     const paper = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     const [r0, g0, b0] = (await paper()).match(/\d+/g).map(Number);
-    if (r0 + g0 + b0 < 600) problems.push(`${device}: the page opens dark on a dark device without being asked (the default is light)`);
-    await page.click('#tp-theme');
-    await page.click('#tp-theme');   // light -> dark -> auto: the phone decides, and this one is dark
+    if (r0 + g0 + b0 < 600) problems.push(`${device}: the page opens dark on a dark device without being asked (the default is light, and there is no automatic mode)`);
+    await page.click('#tp-theme');   // light -> dark: the person's choice (there is no automatic mode)
     const bg = await paper();
     const [r, g, b] = bg.match(/\d+/g).map(Number);
     if (r + g + b > 150) problems.push(`${device}: the page is not dark (${bg})`);

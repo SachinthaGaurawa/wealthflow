@@ -106,7 +106,8 @@ assert.match(first.headers()['content-security-policy'], /script-src 'self'/);
 assert.equal(first.headers()['cache-control'], 'no-store, max-age=0');
 await page.waitForSelector('#tp-nic');
 console.log('1. link opens         -> NIC form, policy', JSON.stringify(first.headers()['content-security-policy'].slice(0, 40)) + '...');
-assert.match(await text(), /Enter your NIC/);
+assert.match(await text(), /We will text a 6-digit code to the mobile number your lender has on file/);
+assert.match(await text(), /No Sri Lankan NIC\? Enter your passport or ID number/);
 assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'tp-nic', 'the field is focused');
 assert.equal(await page.title(), 'Your WealthFlow statement');
 await noOverflow('NIC form');
@@ -120,6 +121,13 @@ assert.match(await page.textContent('#tp-err'), /9 digits followed by V or X, or
 assert.match(await page.textContent('#tp-err'), /passport or ID number/, 'and says what to type if there is no Sri Lankan NIC');
 assert.equal(await page.getAttribute('#tp-nic', 'aria-invalid'), 'true');
 assert.equal(sent.length, before);
+// the first keystroke of a correction takes the red mark and the message away: a field being fixed is not told off again
+await page.type('#tp-nic', '5');
+assert.equal(await page.getAttribute('#tp-nic', 'aria-invalid'), null, 'typing clears the red mark');
+assert.equal(await page.textContent('#tp-err'), '', 'and the message under it');
+await page.fill('#tp-nic', '1234');
+await page.click('#tp-send');
+assert.equal(await page.getAttribute('#tp-nic', 'aria-invalid'), 'true');
 console.log('2. bad NIC            -> refused in the page, nothing sent');
 assert.match(await text(), /passport \/ ID number/, 'the form says a passport or ID number will do');
 
@@ -159,6 +167,13 @@ await page.fill('#tp-code', wrong);
 await page.click('#tp-verify');
 await page.waitForFunction(() => /not valid/.test(document.getElementById('tp-err').textContent));
 assert.equal(await page.inputValue('#tp-code'), '', 'a refused code is cleared');
+assert.equal(await page.getAttribute('#tp-code', 'aria-invalid'), 'true', 'and the field is marked so the person sees which one to retype');
+await page.type('#tp-code', '1');
+assert.equal(await page.getAttribute('#tp-code', 'aria-invalid'), null, 'the mark goes at the first new digit');
+await page.fill('#tp-code', '');
+await page.fill('#tp-code', wrong);
+await page.click('#tp-verify');
+await page.waitForFunction(() => /not valid/.test(document.getElementById('tp-err').textContent) && document.getElementById('tp-code').value === '');
 console.log('4. wrong code         -> refused:', JSON.stringify(await page.textContent('#tp-err')));
 
 /* 6. the right code opens the statement ---------------------------------------- */
@@ -173,7 +188,7 @@ assert.ok(await page.locator('img.tp-logo').first().evaluate((i) => i.complete &
 for (const leak of ['PRIVATE', '198534000937', '0771234567', '077 123', 'inv1', 'deb1', '777']) assert.ok(!body.includes(leak), `statement must not show ${leak}`);
 assert.match(body, /INV-[0-9A-F]{6}/);
 assert.match(body, /DEB-[0-9A-F]{6}/);
-assert.match(body, /closes in \d+:\d\d/);
+assert.match(body, /closes in \d+ min/, "a fresh session says how many whole minutes remain, not a ticking clock");
 const loanCard = await page.locator('section[aria-label^="Loan"]').innerText();
 assert.ok(!/interest|rate/i.test(loanCard), 'the loan card carries no interest');
 assert.equal(await page.evaluate(() => (document.getElementById('tp-nic') || {}).value), undefined, 'the NIC field is gone from the page');
@@ -295,7 +310,7 @@ console.log('5f. balance card      -> holder, hide amounts (kept over a refresh)
 }
 await shot('3d-statement-extras');
 
-// light by default, one tap each to dark, auto (the device decides) and back to light; the choice is not stored either
+// light by default, one tap to dark and one back to light (there is no "follow the device" mode); the choice is not stored either
 const paper = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 const luma = (rgb) => { const m = rgb.match(/\d+/g).map(Number); return (m[0] * 299 + m[1] * 587 + m[2] * 114) / 1000; };
 assert.equal(await page.getAttribute('html', 'data-theme'), 'light', 'the portal opens in the light theme');
@@ -307,17 +322,21 @@ assert.equal(await page.textContent('#tp-theme'), 'Dark');
 assert.ok(luma(await paper()) < 80, 'dark means a dark paper');
 await noOverflow('statement in the dark theme');
 await shot('3b-statement-dark');
+assert.equal(await page.getAttribute('meta[name="theme-color"]', 'content'), '#0b1220', "the phone's status bar follows the page's dark theme");
+// a phone that prefers dark does not decide: the portal stays in the theme the person picked
+await page.emulateMedia({ colorScheme: 'dark' });
+assert.ok(luma(await paper()) < 80, 'dark stays dark');
+await page.click('#tp-theme');
+assert.equal(await page.getAttribute('html', 'data-theme'), 'light');
+assert.ok(luma(await paper()) > 200, 'light stays light on a phone that prefers dark: there is no automatic mode');
+assert.equal(await page.getAttribute('meta[name="theme-color"]', 'content'), '#ffffff');
 await page.emulateMedia({ colorScheme: 'light' });
 await page.click('#tp-theme');
-assert.equal(await page.getAttribute('html', 'data-theme'), 'auto');
-assert.ok(luma(await paper()) > 200, 'auto follows a light device');
-await page.emulateMedia({ colorScheme: 'dark' });
-assert.ok(luma(await paper()) < 80, 'auto follows a dark device');
-await page.emulateMedia({ colorScheme: 'light' });
+assert.equal(await page.getAttribute('html', 'data-theme'), 'dark', 'only two looks: a third tap is dark again');
 await page.click('#tp-theme');
 assert.equal(await page.getAttribute('html', 'data-theme'), 'light');
 assert.equal(await page.evaluate(() => JSON.stringify([Object.keys(localStorage), Object.keys(sessionStorage)])), '[[],[]]', 'the theme is not stored');
-console.log('5h. colour theme      -> light by default, dark, auto (follows the device), nothing stored');
+console.log('5h. colour theme      -> light by default, only light and dark (no automatic mode), nothing stored');
 
 // their own language, one tap, nothing remembered
 assert.equal(await page.textContent('#tp-lang'), 'සිංහල');
