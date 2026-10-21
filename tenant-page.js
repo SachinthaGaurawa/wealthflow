@@ -35,7 +35,10 @@ import { identityCandidates } from './wealthflow-nic.js';
 import { makeT, detectLang, LANG_BUTTON, noteText } from './tenant-lang.js';
 import { upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvFile, payoffPlan, planFile, balanceTrail } from './tenant-tools.js';
 
-const THEMES = ['light', 'dark', 'auto'];
+const THEMES = ['light', 'dark'];
+const THEME_ICON = { light: 'sun', dark: 'moon' };
+/** The last stretch of a session, when its clock starts to count seconds. */
+export const SOON_SEC = 120;
 
 export const ENDPOINT = '/api/tenant-portal';
 export const FETCH_TIMEOUT_MS = 20000;
@@ -96,6 +99,11 @@ export function fmtAsOf(iso, t = english) {
     const pad = (n) => String(n).padStart(2, '0');
     const day = t.lang === 'si' ? `${d.getUTCFullYear()} ${MONTHS_SI[d.getUTCMonth()]} ${d.getUTCDate()}` : `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
     return `${day}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} (${t('Sri Lanka time')})`;
+}
+/** How long the session has left, said calmly: whole minutes while there is plenty of time, minutes and seconds only for the last two. */
+export function fmtLeft(sec, t = english) {
+    const s = Math.max(0, Math.ceil(Number(sec) || 0));
+    return s > SOON_SEC ? t('{n} min', { n: Math.ceil(s / 60) }) : fmtClock(s);
 }
 export const fmtClock = (sec) => { const s = Math.max(0, Math.floor(Number(sec) || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
@@ -162,6 +170,8 @@ const ICONS = {
     message: ['M4 5h16v11H9l-5 4z'],
     clock: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M12 7v5l3 2'],
     chevron: ['m6 9 6 6 6-6'],
+    sun: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M12 2v2', 'M12 20v2', 'M4.9 4.9l1.4 1.4', 'M17.7 17.7l1.4 1.4', 'M2 12h2', 'M20 12h2', 'M4.9 19.1l1.4-1.4', 'M17.7 6.3l1.4-1.4'],
+    moon: ['M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'],
 };
 // the SVG namespace is a name that tells the browser what kind of element to make, not an address anything is fetched from
 const SVG_NS = ['http:', '', 'www.w3.org', '2000', 'svg'].join('/');
@@ -366,7 +376,7 @@ function heroCard(doc, holder, groups, totals, t, actions) {
         if (hasInv) rows.push([t('Invested'), tot.invested], [t('Interest received'), tot.interestReceived]);
         if (hasLoan) rows.push([t('Loan outstanding'), tot.loanOutstanding]);
         const [main, ...rest] = rows;
-        return h(doc, 'div', { class: 'tp-hero-cur' },
+        return h(doc, 'div', { class: totals.length > 1 ? 'tp-hero-cur' : 'tp-hero-cur tp-hero-one' },
             h(doc, 'div', { class: 'tp-cur', text: tot.currency }),
             main ? h(doc, 'div', { class: 'tp-hero-main' }, h(doc, 'span', { class: 'tp-label', text: main[0] }), money(doc, main[1], tot.currency, 'tp-figure')) : null,
             rest.length ? h(doc, 'div', { class: 'tp-stats' }, rest.map(([label, v]) => h(doc, 'div', { class: 'tp-stat' }, h(doc, 'span', { class: 'tp-label', text: label }), money(doc, v, tot.currency, 'tp-figure')))) : null);
@@ -536,6 +546,11 @@ export function createPage(env) {
     const stopTick = () => { if (st.tick !== null) { clearTick(st.tick); st.tick = null; } };
     const setText = (el, text) => { if (el) el.textContent = text; };
     const showError = (text) => setText(st.els.err, text || '');
+    /** The first keystroke after a refusal takes the red mark and the message away: a field being corrected is not told off again. */
+    const forgive = (ev) => {
+        const el = ev && ev.target;
+        if (el && typeof el.getAttribute === 'function' && el.getAttribute('aria-invalid')) { el.removeAttribute('aria-invalid'); showError(''); }
+    };
     let infoSeq = 0;
     const showInfo = (text) => {
         if (!st.els.info) return;
@@ -547,15 +562,27 @@ export function createPage(env) {
     };
     const applyLang = () => { if (doc.documentElement && typeof doc.documentElement.setAttribute === 'function') doc.documentElement.setAttribute('lang', st.lang); };
 
-    /** Light is the page's own look; Dark and Auto (follow the device) are set on the root element, which the stylesheet reads. Kept in memory only: the page promises nothing is saved on the device. */
-    const applyTheme = () => { if (doc.documentElement && typeof doc.documentElement.setAttribute === 'function') doc.documentElement.setAttribute('data-theme', st.theme); };
-    const themeLabel = () => t(st.theme === 'dark' ? 'Dark' : st.theme === 'auto' ? 'Auto' : 'Light');
+    /** Light is the page's own look and Dark is set on the root element, which the stylesheet reads; there is no third "follow the device" mode, so the page looks the same on every phone. Kept in memory only: the page promises nothing is saved on the device. */
+    const applyTheme = () => {
+        if (doc.documentElement && typeof doc.documentElement.setAttribute === 'function') doc.documentElement.setAttribute('data-theme', st.theme);
+        // the browser's own bar (the phone's status area) follows the page's choice, not the phone's
+        const bar = typeof doc.querySelector === 'function' ? doc.querySelector('meta[name="theme-color"]') : null;
+        if (bar && typeof bar.setAttribute === 'function') bar.setAttribute('content', st.theme === 'dark' ? '#0b1220' : '#ffffff');
+    };
+    const themeLabel = () => t(st.theme === 'dark' ? 'Dark' : 'Light');
+    /** The theme button shows a drawing of the choice (sun, moon) with its word; a phone's narrow header keeps only the drawing, so the label also names the choice for a screen reader. */
+    function paintTheme(btn) {
+        if (!btn) return;
+        const word = h(doc, 'span', { class: 'tp-lbl', text: themeLabel() });
+        btn.replaceChildren(icon(doc, THEME_ICON[st.theme] || 'sun'), word);
+        btn.__lbl = word;
+        btn.setAttribute('aria-label', `${t('Colour theme')}: ${themeLabel()}`);
+    }
 
     function cycleTheme() {
         st.theme = THEMES[(THEMES.indexOf(st.theme) + 1) % THEMES.length];
         applyTheme();
-        const btn = root.querySelector('#tp-theme');
-        if (btn) btn.textContent = themeLabel();
+        paintTheme(root.querySelector('#tp-theme'));
     }
 
     function toggleLang() {
@@ -580,10 +607,11 @@ export function createPage(env) {
         st.busy = false;
         if (st.unwatch) { st.unwatch(); st.unwatch = null; }
         const brand = brandEl(doc);
-        const theme = h(doc, 'button', { class: 'tp-lang tp-theme', type: 'button', id: 'tp-theme', 'aria-label': t('Colour theme'), text: themeLabel(), onclick: cycleTheme });
+        const theme = h(doc, 'button', { class: 'tp-lang tp-theme', type: 'button', id: 'tp-theme', onclick: cycleTheme });
+        paintTheme(theme);
         const lang = h(doc, 'button', { class: 'tp-lang', type: 'button', id: 'tp-lang', lang: st.lang === 'si' ? 'en' : 'si', text: LANG_BUTTON[st.lang], onclick: toggleLang });
         root.replaceChildren(
-            h(doc, 'header', { class: 'tp-top' }, h(doc, 'div', { class: 'tp-top-in' }, brand, h(doc, 'div', { class: 'tp-top-actions' }, theme, lang, ...bar))),
+            h(doc, 'header', { class: 'tp-top' }, h(doc, 'div', { class: bar.length ? 'tp-top-in tp-top-3' : 'tp-top-in' }, brand, h(doc, 'div', { class: 'tp-top-actions' }, theme, lang, ...bar))),
             h(doc, 'div', { class: wide ? 'tp-wrap tp-wide' : 'tp-wrap' }, ...nodes));
         const target = focus ? root.querySelector(focus) : root.querySelector('h2');
         if (target && typeof target.focus === 'function') target.focus();
@@ -607,19 +635,19 @@ export function createPage(env) {
     function screenNic({ info = '', error = '', value = '' } = {}) {
         st.screen = 'nic';
         st.els = {};
-        const input = h(doc, 'input', { id: 'tp-nic', name: 'nic', type: 'text', inputmode: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '24', required: true, 'aria-describedby': 'tp-err', placeholder: '198534000937  /  N1234567' });
+        const input = h(doc, 'input', { id: 'tp-nic', name: 'nic', type: 'text', inputmode: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '24', required: true, 'aria-describedby': 'tp-help tp-err', placeholder: '198534000937  /  N1234567', oninput: forgive });
         if (value) input.value = value;
         const button = h(doc, 'button', { class: 'tp-btn', type: 'submit', id: 'tp-send', text: t('Send me a code') });
         st.els.input = input; st.els.button = button;
         const form = h(doc, 'form', { novalidate: true, onsubmit: onRequest },
-            h(doc, 'label', { for: 'tp-nic', text: t('Your NIC or passport / ID number') }), input, errorBox(), button);
+            h(doc, 'label', { for: 'tp-nic', text: t('Your NIC or passport / ID number') }), input, h(doc, 'p', { class: 'tp-help', id: 'tp-help', text: t('No Sri Lankan NIC? Enter your passport or ID number.') }), errorBox(), button);
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
         st.els.info = infoBox;
         mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card tp-auth' },
             h(doc, 'span', { class: 'tp-badge', 'aria-hidden': 'true' }, icon(doc, 'shield')),
             steps(1),
             h(doc, 'h2', { tabindex: '-1', text: t('View your statement') }),
-            h(doc, 'p', { text: t('Enter your NIC, or your passport / ID number if you have no Sri Lankan NIC. We will text a 6-digit code to the mobile number your lender has on file for you.') }),
+            h(doc, 'p', { class: 'tp-lead', text: t('We will text a 6-digit code to the mobile number your lender has on file for you.') }),
             infoBox, form, trust(),
             h(doc, 'p', { class: 'tp-small', text: t('Your statement is shown only after you enter the code. Nobody else can see it from this link.') }))], '#tp-nic');
         showInfo(info ? t(info) : '');
@@ -631,11 +659,11 @@ export function createPage(env) {
         st.els = {};
         st.verified = false;
         st.codeMessage = message;
-        const input = h(doc, 'input', { id: 'tp-code', name: 'code', class: 'tp-code', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', maxlength: '6', required: true, 'aria-describedby': 'tp-err', 'aria-label': t('6-digit code') });
+        const input = h(doc, 'input', { id: 'tp-code', name: 'code', class: 'tp-code', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', maxlength: '6', required: true, 'aria-describedby': 'tp-err', 'aria-label': t('6-digit code'), oninput: forgive });
         if (value) input.value = value;
         const verify = h(doc, 'button', { class: 'tp-btn', type: 'submit', id: 'tp-verify', text: t('View my statement') });
-        const resend = h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-resend', disabled: true, onclick: onResend });
-        const back = h(doc, 'button', { class: 'tp-btn tp-ghost', type: 'button', id: 'tp-back', text: t('Use different details'), onclick: () => { st.nic = ''; screenNic(); } });
+        const resend = h(doc, 'button', { class: 'tp-btn tp-ghost tp-quiet', type: 'button', id: 'tp-resend', disabled: true, onclick: onResend });
+        const back = h(doc, 'button', { class: 'tp-btn tp-ghost tp-quiet', type: 'button', id: 'tp-back', text: t('Use different details'), onclick: () => { st.nic = ''; screenNic(); } });
         const expiry = h(doc, 'p', { class: 'tp-small', id: 'tp-expiry' });
         st.els.input = input; st.els.button = verify; st.els.resend = resend; st.els.expiry = expiry;
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
@@ -646,7 +674,7 @@ export function createPage(env) {
             h(doc, 'h2', { tabindex: '-1', text: t('Enter your code') }),
             infoBox,
             h(doc, 'form', { novalidate: true, onsubmit: onVerify }, h(doc, 'label', { for: 'tp-code', text: t('Code from the text message') }), input, errorBox(), verify),
-            expiry, resend, back,
+            expiry, h(doc, 'div', { class: 'tp-quiet-row' }, resend, back),
             h(doc, 'p', { class: 'tp-small', text: t('No text after a minute? Your lender may have no mobile number for you, or messaging may be unavailable. Try again later or contact your lender.') }))], '#tp-code');
         showInfo(message ? t(message) : '');
         const paint = () => {
@@ -803,13 +831,14 @@ export function createPage(env) {
         const paint = () => {
             const left = Math.ceil((st.sessionEndsAt - now()) / 1000);
             if (left <= 0) { wipe(); screenNic({ error: COPY.SESSION_ENDED }); return; }
-            setText(clock, t('For your privacy this closes in {t}.', { t: fmtClock(left) }));
+            setText(clock, t('For your privacy this closes in {t}.', { t: fmtLeft(left, t) }));
+            if (clock.classList) clock.classList.toggle('tp-soon', left <= SOON_SEC);
         };
         paint();
         if (st.screen === 'statement') st.tick = setTick(paint, 1000);
     }
 
-    const busy = (on, label) => { st.busy = on; if (st.els.button) { st.els.button.disabled = on; if (label) st.els.button.textContent = label; } };
+    const busy = (on, label) => { st.busy = on; if (st.els.button) { st.els.button.disabled = on; st.els.button.setAttribute('aria-busy', on ? 'true' : 'false'); if (label) st.els.button.textContent = label; } };
 
     async function onRequest(ev) {
         if (ev) ev.preventDefault();
@@ -869,6 +898,8 @@ export function createPage(env) {
         }
         busy(false, t('View my statement'));
         st.els.input.value = '';
+        // a refused code (not a dropped connection, not a lock-out) marks the field so the person sees which one to retype
+        if (res.status >= 400 && res.status < 500 && res.status !== 429) st.els.input.setAttribute('aria-invalid', 'true');
         st.els.input.focus();
         showError(res.status === 0 ? t(COPY.OFFLINE) : describeFailure(res.status, res.body, t));
     }
@@ -898,7 +929,7 @@ export function createPage(env) {
     function screenLoading() {
         st.screen = 'loading';
         st.els = {};
-        mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card tp-auth' }, h(doc, 'h2', { tabindex: '-1', text: t('One moment') }), h(doc, 'p', { class: 'tp-note', role: 'status', text: t('Checking for a session on this device...') }), h(doc, 'div', { class: 'tp-skel', 'aria-hidden': 'true' }, h(doc, 'span'), h(doc, 'span'), h(doc, 'span')))]);
+        mount('Your WealthFlow statement', [h(doc, 'section', { class: 'tp-card tp-auth tp-loading' }, h(doc, 'h2', { tabindex: '-1', text: t('One moment') }), h(doc, 'p', { class: 'tp-note', role: 'status', text: t('Checking for a session on this device...') }), h(doc, 'div', { class: 'tp-skel', 'aria-hidden': 'true' }, h(doc, 'span'), h(doc, 'span'), h(doc, 'span')))]);
     }
 
     /** Opens on the NIC form, unless this device already has a live session for this link (a reload within 20 minutes costs no new text). */

@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 globalThis.__WF_TENANT_NO_BOOT = true;
-const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY } = await import('../tenant-page.js');
+const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY } = await import('../tenant-page.js');
 const { makeT } = await import('../tenant-lang.js');
 
 class El {
@@ -45,6 +45,18 @@ describe('formatting', () => {
         expect(fmtAsOf('nope')).toBe('');
         expect(fmtClock(185)).toBe('3:05');
         expect(fmtClock(-4)).toBe('0:00');
+    });
+
+    it('says the time left calmly: whole minutes until the last two minutes, then the clock', () => {
+        expect(SOON_SEC).toBe(120);
+        expect(fmtLeft(1200)).toBe('20 min');
+        expect(fmtLeft(1141)).toBe('20 min');                                          // a fresh session does not tick: 19:01 is still "20 min"
+        expect(fmtLeft(121)).toBe('3 min');
+        expect(fmtLeft(120)).toBe('2:00');                                             // the last two minutes show seconds
+        expect(fmtLeft(59)).toBe('0:59');
+        expect(fmtLeft(-4)).toBe('0:00');
+        expect(fmtLeft('nope')).toBe('0:00');
+        expect(fmtLeft(300, makeT('si'))).toBe('මිනිත්තු 5');                       // in Sinhala too
     });
 
     it('finds the link in the address, and only a link', () => {
