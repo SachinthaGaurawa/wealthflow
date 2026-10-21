@@ -1154,3 +1154,36 @@ select.fi, select.fs { text-overflow: ellipsis; }
 .wf-bkp li.bad { color: var(--wf-neg); font-weight: 600; }
 .wf-bkp li small { color: var(--wf-text-3); font-weight: 400; }
 .wf-bkp li svg { width: 12px; height: 12px; vertical-align: -1px; }
+
+/* ═════════════════ 28. CALM AND COMFORT ═════════════════════════════════════
+   Presentation only: no script, no copy, no data, no new hex. Two ideas and two preferences.
+   1. Bad news should be clear, not loud. A tinted frame round every warning makes the whole page read as
+      an alarm. The tone now lives on the left edge, the icon and the amount; the frame itself is the same
+      quiet hairline as every other card. Nothing is hidden or reworded.
+   2. Things that can be picked answer a press the same way, at once (a soft 1.5% dip), and only for the
+      press: nothing is added on hover, so a touch screen never keeps a "lifted" card after a tap.
+   3. People who ask for more contrast get a firmer hairline and darker secondary text.
+   4. In forced-colors (Windows high contrast) box-shadow is dropped by the browser, so the focus ring
+      (a box-shadow in §1) would vanish; there it becomes a real outline. */
+
+/* 1. Warnings: tone on the edge, icon and amount, not on a coloured frame. */
+.wfx { border-color: var(--wf-line) !important; transition: border-color var(--wf-dur-2) var(--wf-ease); }
+.wfx-t { text-wrap: balance; }
+.wfx-b { max-width: 70ch; text-wrap: pretty; }
+
+/* 2. One press feel. */
+:root { caret-color: var(--wf-accent); }
+.ai-persona-card:active, .scan-mode-card:active, .wfx-a:active { transform: scale(.985); }
+
+/* 3 and 4. Preferences the person has already told the system. */
+@media (prefers-contrast: more) {
+    .card, .loan-card, .inc-card, .chq-card, .tgt-card, .sub-card, .tbl-wrap, .wfx { border-color: var(--wf-line-3) !important; }
+    .wfx-b, .card-sub, .stat-meta, .fhint { color: var(--wf-text-2); }
+}
+@media (forced-colors: active) {
+    :focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+    .wfx::before { forced-color-adjust: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ai-persona-card:active, .scan-mode-card:active, .wfx-a:active { transform: none; }
+}
