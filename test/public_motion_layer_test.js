@@ -424,3 +424,35 @@ describe('the /app sign-in screen wears the home page look', () => {
         expect(UI).not.toMatch(/<script/);
     });
 });
+
+describe('calm and comfort (wf-ui.css section 28)', () => {
+    const from = UI.indexOf('28. CALM AND COMFORT');
+    const sec = UI.slice(from);
+
+    it('is the last section and has no script', () => {
+        expect(from).toBeGreaterThan(0);
+        expect(sec).not.toMatch(/<script/);
+    });
+
+    it('moves the warning tone from the frame to the edge, without hiding or rewording anything', () => {
+        expect(sec).toMatch(/\.wfx \{ border-color: var\(--wf-line\) !important;/);
+        expect(sec).not.toMatch(/\.wfx[^{]*\{[^}]*display\s*:\s*none/);
+        expect(sec).not.toMatch(/content\s*:/);
+    });
+
+    it('only presses (no hover movement) and respects reduced motion', () => {
+        expect(sec).toMatch(/\.ai-persona-card:active, \.scan-mode-card:active, \.wfx-a:active \{ transform: scale\(\.985\); \}/);
+        expect(sec).not.toMatch(/:hover/);
+        expect(sec).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.ai-persona-card:active[^}]*transform: none;/);
+    });
+
+    it('keeps a visible focus ring in forced-colors mode (box-shadow is dropped there)', () => {
+        expect(UI).toMatch(/:focus-visible \{\s*outline: none;\s*box-shadow: var\(--wf-focus\);/);
+        expect(sec).toMatch(/@media \(forced-colors: active\) \{\s*:focus-visible \{ outline: 2px solid Highlight;/);
+    });
+
+    it('gives people who ask for more contrast a firmer hairline using existing tokens only', () => {
+        expect(sec).toMatch(/@media \(prefers-contrast: more\)/);
+        expect(sec).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    });
+});
