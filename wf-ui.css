@@ -541,6 +541,7 @@ tbody tr:hover, [data-theme="light"] tbody tr:hover { background: var(--wf-hover
 tbody td { padding: 13px 14px; }
 .td-mono, .td-g, .td-r, .td-a { font-family: var(--wf-font); font-size: 13.5px; font-weight: 550; }
 .td-m { font-size: 13px; color: var(--wf-text-2); }
+.td-date { white-space: nowrap; }   /* a date in a table never breaks at its hyphen (2026-10-\n11) */
 .td-a { color: var(--wf-text); }
 .done-row { opacity: .5; }
 

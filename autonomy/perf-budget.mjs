@@ -344,7 +344,8 @@ export const BUDGETS = {
     // screen (_wfStartGmailConsent), the return handler (_wfCompleteGmailConsent) and the Mailbox card's new first block. About a third is comments. No new script or request at load.
     // 2026-10-20 (the backup buttons: a real progress panel, a restore list that cannot stay on "Looking for copies…", Delete all restore points that stays deleted; measured 2,310,072 + ~0.1% headroom): 2_308_500 -> 2_312_500.
     // The panel (_wfBkPaint and the step plan), the restore list painted in two stages with a deadline for Drive, and the delete's own progress. The comments of the same backup block were shortened to pay for part of it. No new script or request.
-    htmlBytes: 2_312_500,
+    // 2026-10-21 (the Installments tab counts paid months and reads a finished plan as Done, OS notifications and the debt chart no longer print @icon@ tokens, the DSCR rows wrap on a phone; measured 2,312,824 + ~0.1% headroom): 2_312_500 -> 2_314_000.
+    htmlBytes: 2_314_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

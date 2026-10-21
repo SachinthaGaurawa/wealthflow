@@ -88,6 +88,23 @@ describe('end to end: the owner named the plan their own way', () => {
     });
 });
 
+describe('the Installments tab progress and status', () => {
+    const progress = (item, today) => { const ctx = vm.createContext({ Date: class extends Date { constructor(...a) { super(...(a.length ? a : [today])); } } }); vm.runInContext(src('cciProgress'), ctx); return ctx.cciProgress(item); };
+    it('counts the months the plan marks paid even when the calendar has not reached them', () => {
+        expect(progress({ date: '2026-09-01', duration: 12, payments: [{ month: '2026-09', paid: true }] }, '2026-09-20T00:00:00')).toMatchObject({ paid: 1, total: 12, pct: 8 });
+        expect(progress({ date: '2026-10-01', duration: 12, payments: [{ month: '2026-10', paid: true }] }, '2026-09-20T00:00:00')).toMatchObject({ paid: 1 });
+    });
+    it('keeps the calendar when no month is marked, and never goes past the duration', () => {
+        expect(progress({ date: '2026-07-05', duration: 12 }, '2026-10-21T00:00:00')).toMatchObject({ paid: 3, pct: 25 });
+        expect(progress({ date: '2026-09-01', duration: 1, payments: [{ paid: true }, { paid: true }] }, '2026-10-21T00:00:00')).toMatchObject({ paid: 1, total: 1, pct: 100 });
+    });
+    it('a plan whose last month has passed reads Done and offers no Mark Complete button', () => {
+        expect(html).toMatch(/const finished = item\.completed \|\| end <= new Date\(\)/);
+        expect(html).toMatch(/\$\{finished \? '<span class="badge bg-gr">Done<\/span>' : '<span class="badge bg-g">Active<\/span>'\}/);
+        expect(html).toMatch(/\$\{!finished \? `<button class="ib c" onclick="markCCIDone/);
+    });
+});
+
 describe('records filed in the old shape are repaired once', () => {
     const old = (extra = {}) => ({ id: 'R1', desc: 'ABANS TV INSTALMENT 08/12', total: 5000, monthly: 5000, months: 1, remaining: 1, paid: 0, startDate: '2026-09-12', amount: 5000, source: 'statement', statementKey: 'wf-mail/x/items/i0', statementRow: 0, ...extra });
     it('with no plan to match it gets the plan shape and counts', () => {
