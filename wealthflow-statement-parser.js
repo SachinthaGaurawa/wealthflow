@@ -187,7 +187,21 @@
     // then had a cheque with no number to match against the owner's own record of it. When the
     // narration names a cheque, the token that IS the cheque's number (digits only, or glued to the
     // word: CHQ285943) is kept; any other reference token is still taken out.
-    var CHEQUE_WORD_RE = /\b(?:cheques?|chq|chque|cheq|chk|check|cq|pdc)\b|\b(?:cheque|chq|chk|cq|pdc)\d/i;
+    var CHEQUE_WORD_RE = /\b(?:cheques?|chq|chque|cheq|chk|check|cq|pdc)\b|\b(?:cheque|chq|chk|cq|pdc)\d|චෙක්/i;
+    // The cheque's number printed OUTSIDE the narration: on a line of its own under/over the row (a wrapped cell: "Cheque No 285943", "No 285943", a bare "285943") or after the last money column.
+    // It joins the narration as "Cheque No NNN" only when the label says so, or when the row it sits beside already names a cheque and carries no number of its own.
+    var CHEQUE_LABEL = '(?:cheques?|chq|chque|cheq|chk|check|instrument|instr)\\s*\\.?\\s*(?:no|number|num|nr|#)?\\s*\\.?\\s*[:#.\\-]?\\s*';
+    var CHEQUE_LINE_RE = new RegExp('^' + CHEQUE_LABEL + '(\\d{3,12})(?:\\s|$)', 'i');
+    var BARE_NO_LINE_RE = /^(?:no|number|#)\s*\.?\s*[:#.\-]?\s*(\d{5,9})(?:\s.*)?$|^(\d{5,9})$/i;
+    var CHEQUE_TAIL_RE = new RegExp('^\\s*(?:(' + CHEQUE_LABEL + '))?(\\d{3,12})\\s*$', 'i');
+    function chequeTail(narration, tail) {
+        var m = CHEQUE_TAIL_RE.exec(tail || '');
+        if (!m) return '';
+        if (!m[1] && (!namesCheque(narration) || /\d{5,}/.test(narration))) return '';
+        return new RegExp('\\b' + m[2] + '\\b').test(narration) ? '' : ' Cheque No ' + m[2];
+    }
+    // a row that names a cheque (or the clearing house) but prints no number of its own
+    function wantsChequeNo(c) { var n = cleanNarration(c.rest.slice(0, c.block[0].start)); return namesCheque(n) && !/\d{5,}/.test(n); }
     // "CLEARING 000123" / "INWARD CLG 456789" is a cheque row too (the clearing house clears cheques): the number beside the clearing word is the cheque's, unless the line is an electronic payment.
     var CLEARING_RE = /\b(?:clearing|clg)\b/i, ELECTRONIC_RE = /\b(?:ceft|rtgs|slips|swift|atm|pos|card|visa|mastercard|amex|lankapay)\b/i;
     function namesCheque(n) { return CHEQUE_WORD_RE.test(n) || (CLEARING_RE.test(n) && !ELECTRONIC_RE.test(n)); }
@@ -336,6 +350,7 @@
         var order = detectDateOrder(src);
         var lines = src.split(/\r?\n/);
         var cands = [];
+        var lastTx = null, owed = '';
         var invalidDates = 0, balanceMismatches = 0;
 
         // pass 1 — tokenise candidate rows
@@ -371,7 +386,16 @@
             }
 
             var d = dateAt(line);
-            if (!d) continue;
+            if (!d) {
+                // a cell that wrapped: the cheque's number on a line of its own. Under a row that names a cheque but prints no number it is that row's; a labelled one over its row is the next row's.
+                var labelled = CHEQUE_LINE_RE.exec(line), bare = labelled ? null : BARE_NO_LINE_RE.exec(line);
+                var held = labelled ? labelled[1] : bare ? (bare[1] || bare[2]) : '';
+                if (held) {
+                    if (lastTx && lastTx.wants && cands[cands.length - 1] === lastTx) { lastTx.extra = ' Cheque No ' + held; lastTx.wants = false; }
+                    else if (labelled) owed = held;
+                }
+                continue;
+            }
             if (NOISE_RE.test(line)) continue;
 
             // Drop the post date and an immediately following value/effective date.
@@ -384,14 +408,18 @@
             var normalizedDate = normDate(d.text, order);
             if (!normalizedDate) { invalidDates++; continue; }
 
-            cands.push({
+            var txn = {
                 line: line,
                 date: normalizedDate,
                 rest: rest,
                 block: trailingBlock(tokens, rest),
                 opening: isOpening,
                 closing: isClosing
-            });
+            };
+            txn.wants = wantsChequeNo(txn);
+            if (owed) { if (!/\d{5,}/.test(txn.rest.slice(0, txn.block[0].start))) { txn.extra = ' Cheque No ' + owed; txn.wants = false; } owed = ''; }
+            cands.push(txn);
+            lastTx = txn;
         }
 
         var layout = detectLayout(cands, lines);
@@ -442,7 +470,9 @@
             for (var b = 0; b < amountToks.length; b++) if (amountToks[b].v === amount) { amtTok = amountToks[b]; break; }
 
             // narration = everything before the trailing money block
-            var narration = cleanNarration(c.rest.slice(0, block[0].start));
+            var narr0 = c.rest.slice(0, block[0].start);
+            var extra = c.extra || chequeTail(narr0, c.rest.slice(block[block.length - 1].end));
+            var narration = cleanNarration(extra ? narr0 + extra : narr0);
 
             // ── direction, strongest evidence first ──────────────────────────
             var direction = '', source = '', balanceVerified = false, delta = null;

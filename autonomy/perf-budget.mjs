@@ -709,7 +709,8 @@ export const BUDGETS = {
     // 2026-10-21 (cheques the Tracker could not read, and card installments named in more ways; measured 2,638,198 + ~0.05% headroom): 2_636_500 -> 2_639_500. wealthflow-cheques.js (clearing-house wording, glued and Sinhala
     // cheque words), wealthflow-statement-parser.js / wealthflow-route.js (a cheque word keeps its number; a page with cheques is a bank page), wealthflow-statement-router.js (one reader for the plan words and the month of the
     // plan), statement-sync.js (the cheque backfill step in the idle pass). The backfill itself (statement-cheque-backfill.mjs) is server-only and is not counted.
-    totalJsBytes: 2_639_500,
+    // 2026-10-21 (cheque numbers on wrapped lines, after the balance and in a column of their own; measured 2,640,833 + ~0.05% headroom): 2_639_500 -> 2_642_200. wealthflow-statement-parser.js reads the number a bank prints on the line below the row or after the balance, and wealthflow-cheques.js folds run-together type words (CHQDEP285943).
+    totalJsBytes: 2_642_200,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
