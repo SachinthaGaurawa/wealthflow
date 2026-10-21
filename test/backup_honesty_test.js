@@ -226,7 +226,7 @@ ${SRC_NEXT_TIME}
 ${SRC_FACTORY_RESET}
 return {
     backupNow, executeDriveBackup, _getLastBackupMs, _wfSaveSafetyCopy, _wfApplyRestore, executeRestoreSelected, fetchRestoreList, executeFactoryReset, deleteAllRestorePoints, _wfDeleteRestorePoints,
-    _checkAutoBackupDue, _wfBackupFailState, _wfRefreshBackupState, _wfDriveTokenFor, _wfBackupInfoHtml, _wfDriveBackupWithToasts, _wfPaintBackupCard,
+    _checkAutoBackupDue, _wfBackupFailState, _wfRefreshBackupState, _wfDriveTokenFor, _wfRunDriveBackup, _wfBackupInfoHtml, _wfDriveBackupWithToasts, _wfPaintBackupCard,
     getAppData: () => appData, getHold: () => window._wfHoldSync === true, setSyncRun: (p) => { window._wfSyncRun = p; }, setDebounceTimer: (t) => { syncDebounceTimer = t; }, getDebounceTimer: () => syncDebounceTimer, setRestoreItems: (x) => { _wfRestoreItems = x; }, getGapiToken: () => gapiToken, setGapiToken: (t) => { gapiToken = t; },
 };`;
 
@@ -955,7 +955,7 @@ describe('executeRestoreSelected: the copy is read and proven before anything is
 });
 
 describe('"Delete all restore points" is the person\'s own, and says what it did', () => {
-    it('asks first, deletes only the restore points, clears the stamps that claimed a backup, and keeps the Drive file and the live data', async () => {
+    it('asks first, deletes the restore points and trashes the Drive file, clears the stamps that claimed a backup, and keeps the live data', async () => {
         const p = loadPage({ refresh: 'rt' });
         await p.backupNow(true, 'auto');
         await p._wfRefreshBackupState(true);
@@ -965,13 +965,17 @@ describe('"Delete all restore points" is the person\'s own, and says what it did
         expect(p.confirms).toHaveLength(1);
         expect(p.confirms[0][1]).toMatch(/Delete all restore points/);
         expect(rps(p.db)).toHaveLength(1);                         // nothing deleted until the person confirms
+        expect(p.confirms[0][2]).toMatch(/Google Drive/);
         p.confirms[0][5]();
         await vi.waitFor(() => expect(rps(p.db)).toHaveLength(0));
-        expect(p.notes.map((n) => n.m).join(' ')).toMatch(/Deleted 1 restore point\./);
+        await vi.waitFor(() => expect(p.notes.map((n) => n.m).join(' ')).toMatch(/Deleted 1 restore point\./));
         const s = p.appData.settings;
         expect([s.lastBackup, s.lastAutoBackupAt, s.lastBackupMeta, s.lastBackupAttempt]).toEqual([undefined, undefined, undefined, undefined]);
-        expect(s.lastDriveBackup.verified).toBe(true);              // that file still exists in their Drive
-        expect([...p.drive.files.values()].some((f) => f.name.startsWith('WealthFlow_'))).toBe(true);
+        expect(s.lastDriveBackup, 'a stamp for a file that is gone would make the restore list show it').toBeUndefined();
+        expect([...p.drive.files.values()].filter((f) => f.name.startsWith('WealthFlow_') && !f.trashed)).toEqual([]);
+        expect([...p.drive.files.values()].some((f) => f.name.startsWith('WealthFlow_') && f.trashed === true), 'moved to the trash, never hard-deleted').toBe(true);
+        expect(p.drive.calls.some((c) => c.method === 'DELETE')).toBe(false);
+        expect(p.notes.map((n) => n.m).join(' ')).toMatch(/moved to the Drive trash/);
         expect(p.appData.expenses).toEqual(live);
         expect(status(p.db)).toMatchObject({ cleared: true, success: true });          // no data in it: only the time they were cleared
         expect(p._wfBackupInfoHtml(s)).not.toMatch(/Restore point/);
@@ -1302,6 +1306,47 @@ describe('"Delete all restore points" really clears them, and the schedule does 
         const p = loadPage();
         p.deleteAllRestorePoints();
         expect(p.confirms[0][2]).toMatch(/next scheduled time/);
+    });
+});
+
+describe('"Delete all restore points" also empties Google Drive', () => {
+    const driveFiles = (p, trashed) => [...p.drive.files.values()].filter((f) => f.name.startsWith('WealthFlow_') && !!f.trashed === trashed);
+    it('trashes every backup file, old and new, so the restore list shows nothing afterwards', async () => {
+        const p = loadPage({ refresh: 'rt' });
+        await p.backupNow(true, 'auto');
+        await p._wfRunDriveBackup(B.buildPayload(p.appData), 'drive');
+        expect(driveFiles(p, false).length).toBeGreaterThan(0);
+        expect(await p._wfDeleteRestorePoints()).toBe(true);
+        expect(driveFiles(p, false)).toEqual([]);
+        await p.fetchRestoreList();
+        expect(p.elements.restoreSelect.children.flatMap((g) => g.children || [g]).filter((o) => o.value)).toEqual([]);
+    });
+    it('does not touch a Drive file that is not this account\'s', async () => {
+        const p = loadPage({ refresh: 'rt' });
+        await p._wfRunDriveBackup(B.buildPayload(p.appData), 'drive');
+        p.drive.files.set('theirs', { id: 'theirs', name: 'WealthFlow_someone_else_zzzzzz_2026.json', mimeType: 'application/json', parents: ['x'], appProperties: {}, text: '{}', size: 2, trashed: false, createdTime: '2026-01-01T00:00:00Z' });
+        await p._wfDeleteRestorePoints();
+        expect(p.drive.files.get('theirs').trashed).toBe(false);
+    });
+    it('with Drive never connected, only the account is touched and Drive is not called', async () => {
+        const p = loadPage();
+        await p.backupNow(true, 'auto');
+        expect(await p._wfDeleteRestorePoints()).toBe(true);
+        expect(p.drive.calls).toEqual([]);
+    });
+    it('when Drive cannot be reached, the restore points are still deleted, the Drive stamp stays, and the person is told the Drive copies are still there', async () => {
+        const p = loadPage({ refresh: 'rt' });
+        await p.backupNow(true, 'auto');
+        await p._wfRunDriveBackup(B.buildPayload(p.appData), 'drive');
+        p.drive.down = true;
+        expect(await p._wfDeleteRestorePoints()).toBe(false);
+        expect(rps(p.db)).toHaveLength(0);
+        expect(p.appData.settings.lastDriveBackup.verified).toBe(true);
+        const n = p.notes.find((x) => /Deleted \d+ restore point/.test(x.m));
+        expect(n.kind).toBe('error');
+        expect(n.m).toMatch(/Google Drive copies were NOT removed/);
+        p.drive.down = false;
+        expect(driveFiles(p, false).length).toBeGreaterThan(0);
     });
 });
 
