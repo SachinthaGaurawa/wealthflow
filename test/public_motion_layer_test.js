@@ -109,8 +109,10 @@ describe('wf-public.css', () => {
     });
 });
 
+const STOP_EVENTS = ['wheel', 'touchstart', 'keydown', 'mousedown'];
+
 /* A DOM just big enough for wf-public.js. */
-function makeEnv({ reduce = false, withIO = true, home = true } = {}) {
+function makeEnv({ reduce = false, withIO = true, home = true, scrollY = 0 } = {}) {
     const listeners = [];
     const observers = [];
     const scrolls = [];
@@ -161,18 +163,25 @@ function makeEnv({ reduce = false, withIO = true, home = true } = {}) {
         observe(t) { this.watching.push(t); }
         unobserve(t) { this.watching = this.watching.filter((x) => x !== t); }
     }
+    // frames are queued and run by env.tick(now), so a glide can be played frame by frame
+    const queue = [];
+    let nextId = 1;
     const window = {
         matchMedia: () => ({ matches: reduce }),
-        scrollTo: (...a) => scrolls.push(a),
+        pageYOffset: scrollY,
+        scrollTo: (...a) => { scrolls.push(a); const y = typeof a[0] === 'object' ? a[0].top : a[1]; window.pageYOffset = y; },
         addEventListener: (type, fn) => listeners.push({ target: 'window', type, fn }),
-        requestAnimationFrame: (fn) => { fn(); return 1; },
+        removeEventListener: (type, fn) => { const i = listeners.findIndex((l) => l.target === 'window' && l.type === type && l.fn === fn); if (i >= 0) listeners.splice(i, 1); },
+        requestAnimationFrame: (fn) => { const id = nextId++; queue.push({ id, fn }); return id; },
+        cancelAnimationFrame: (id) => { const i = queue.findIndex((q) => q.id === id); if (i >= 0) queue.splice(i, 1); },
     };
+    const tick = (now) => { const run = queue.splice(0); run.forEach((q) => q.fn(now)); return run.length; };
     if (withIO) window.IntersectionObserver = IO;
     const ctx = { window, document, Map, Array, Object, Math, String };
     ctx.IntersectionObserver = withIO ? IO : undefined;
     // `'IntersectionObserver' in window` must reflect support
     vm.runInNewContext(JS, ctx);
-    return { document, window, listeners, observers, scrolls, header, body, cards, link, features, main, root, fab: body.children.find((c) => c.className.includes('wfp-top')), markers: body.children.filter((c) => c.tag === 'div') };
+    return { document, window, listeners, observers, scrolls, tick, queue, header, body, cards, link, features, main, root, fab: body.children.find((c) => c.className.includes('wfp-top')), markers: body.children.filter((c) => c.tag === 'div') };
 }
 
 describe('wf-public.js', () => {
@@ -210,15 +219,72 @@ describe('wf-public.js', () => {
         expect(env.header.classList.contains('is-stuck')).toBe(false);
     });
 
-    it('scrolls to the top smoothly, or instantly when the reader asked for less motion, and moves focus to the content', () => {
-        const smooth = makeEnv();
-        smooth.fab.handlers.click();
-        expect(smooth.scrolls).toEqual([[{ top: 0, behavior: 'smooth' }]]);
-        expect(smooth.main.focused).toBe(true);
-        expect(smooth.main.attrs.tabindex).toBe('-1');
-        const calm = makeEnv({ reduce: true });
+    it('glides to the top with one gentle ease, never faster than the middle of a sine curve, and moves focus to the content', () => {
+        const env = makeEnv({ scrollY: 4000 });
+        env.fab.handlers.click();
+        expect(env.main.focused).toBe(true);
+        expect(env.main.attrs.tabindex).toBe('-1');
+        expect(env.root.classList.contains('wfp-glide')).toBe(true);
+        // 4000 px: 900 + 4000 * .2 = 1700 ms
+        const ys = [];
+        for (let t = 0; t <= 1700; t += 50) { env.tick(1000 + t); ys.push(env.window.pageYOffset); }
+        expect(ys[0]).toBe(4000);
+        expect(ys[ys.length - 1]).toBe(0);
+        expect(env.root.classList.contains('wfp-glide')).toBe(false);
+        // never moves backwards, and the busiest frame is at most about 1.6x the average speed (sine ease)
+        const steps = ys.slice(1).map((y, i) => ys[i] - y);
+        expect(steps.every((d) => d >= 0)).toBe(true);
+        const average = 4000 / (1700 / 50);
+        expect(Math.max(...steps)).toBeLessThanOrEqual(average * 1.6);
+        // slow at the start and at the end
+        expect(steps[0]).toBeLessThan(average * 0.35);
+        expect(steps[steps.length - 1]).toBeLessThan(average * 0.35);
+        // every step is an instant jump (the CSS smooth-scroll must not be layered on top)
+        expect(env.scrolls.every(([o]) => o.behavior === 'instant')).toBe(true);
+    });
+
+    it('lengthens the glide gently with the distance, up to a ceiling', () => {
+        const frames = (y) => { const e = makeEnv({ scrollY: y }); e.fab.handlers.click(); let n = 0; for (let t = 0; t <= 5000 && e.root.classList.contains('wfp-glide'); t += 10, n++) e.tick(1000 + t); return n * 10; };
+        const short = frames(600), mid = frames(3000), long = frames(30000);
+        expect(short).toBeGreaterThanOrEqual(900);
+        expect(mid).toBeGreaterThan(short);
+        expect(long).toBeLessThanOrEqual(2210);
+    });
+
+    it('hands the page back the moment the reader scrolls, touches, types or presses', () => {
+        for (const type of ['wheel', 'touchstart', 'keydown', 'mousedown']) {
+            const env = makeEnv({ scrollY: 4000 });
+            env.fab.handlers.click();
+            env.tick(1000); env.tick(1300);
+            const at = env.window.pageYOffset;
+            env.listeners.find((l) => l.type === type).fn();
+            expect(env.root.classList.contains('wfp-glide')).toBe(false);
+            expect(env.queue).toHaveLength(0);
+            env.tick(2500);
+            expect(env.window.pageYOffset).toBe(at);
+            expect(env.listeners.filter((l) => STOP_EVENTS.includes(l.type))).toHaveLength(0);
+        }
+    });
+
+    it('a second press restarts from where the page is, and a page already at the top does nothing', () => {
+        const env = makeEnv({ scrollY: 4000 });
+        env.fab.handlers.click(); env.tick(1000); env.tick(1500);
+        const mid = env.window.pageYOffset;
+        env.fab.handlers.click();
+        expect(env.queue).toHaveLength(1);
+        env.tick(2000);
+        expect(env.window.pageYOffset).toBe(mid);
+        const top = makeEnv({ scrollY: 0 });
+        top.fab.handlers.click();
+        expect(top.scrolls).toEqual([]);
+        expect(top.queue).toHaveLength(0);
+    });
+
+    it('jumps instantly when the reader asked for less motion', () => {
+        const calm = makeEnv({ reduce: true, scrollY: 4000 });
         calm.fab.handlers.click();
-        expect(calm.scrolls).toEqual([[{ top: 0, behavior: 'auto' }]]);
+        expect(calm.scrolls).toEqual([[{ top: 0, behavior: 'instant' }]]);
+        expect(calm.queue).toHaveLength(0);
     });
 
     it('shows the button at once where IntersectionObserver is missing', () => {
@@ -270,6 +336,9 @@ describe('wf-public.js', () => {
         move.fn({ pointerType: 'touch', target: { closest: () => card }, clientX: 50, clientY: 60 });
         expect(card.style.props['--mx']).toBeUndefined();
         move.fn({ pointerType: 'mouse', target: { closest: () => card }, clientX: 50, clientY: 60 });
+        move.fn({ pointerType: 'mouse', target: { closest: () => card }, clientX: 50, clientY: 60 });
+        expect(env.queue).toHaveLength(1);
+        env.tick(0);
         expect(card.style.props['--mx']).toBe('40px');
         expect(card.style.props['--my']).toBe('40px');
     });
@@ -296,6 +365,17 @@ describe('the /app sign-in screen wears the home page look', () => {
         expect(block).toContain('.ab-head h2 em { font-style: normal; background: linear-gradient(135deg, #f1d98d, #d4af37);');
         expect(block).toMatch(/\.ab-foot svg \{[^}]*color: var\(--wf-gold-400\)/);
         expect(block).not.toMatch(/6fd49b/);
+    });
+
+    it('keeps the brand panel a shade darker than the form side, in the same navy, without hiding the aurora', () => {
+        const panel = block.slice(block.indexOf('.auth-brand {\n'), block.indexOf('.ab-lockup {'));
+        const m = panel.match(/background: linear-gradient\(90deg, rgba\((\d+), (\d+), (\d+), ([.\d]+)\), rgba\((\d+), (\d+), (\d+), ([.\d]+)\)\)/);
+        expect(m).not.toBeNull();
+        const [a1, a2] = [Number(m[4]), Number(m[8])];
+        expect(a1).toBeGreaterThan(0.35);   // darker than the earlier .35 veil
+        expect(Math.min(a1, a2)).toBeLessThan(0.7); // never a solid block: the light behind it still shows
+        for (const c of [m[1], m[2], m[3], m[5], m[6], m[7]]) expect(Number(c)).toBeLessThan(40); // the same navy family, no grey or black
+        expect(panel).toContain('border-right: 1px solid rgba(212, 175, 55, .14)');
     });
 
     it('moves only through transform and opacity, and stands still for reduced motion', () => {

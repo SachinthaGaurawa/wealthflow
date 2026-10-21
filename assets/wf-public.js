@@ -52,8 +52,43 @@
     chev.setAttribute('aria-hidden', 'true');
     fab.appendChild(ring);
     fab.appendChild(chev);
+    /* The browser's own smooth scroll speeds up as the page gets longer. The glide to the top is drawn
+       here instead: one gentle ease in and out whose length grows slowly with the distance, so the
+       first and last moments are slow and the middle never becomes a rush. Any wheel, touch, key or
+       mouse press hands the page straight back to the reader. */
+    var gliding = false, glideFrame = 0, STOP = ['wheel', 'touchstart', 'keydown', 'mousedown'];
+    function jump(y) {
+        try { win.scrollTo({ top: y, behavior: 'instant' }); } catch (_) { win.scrollTo(0, y); }
+    }
+    function stopGlide() {
+        if (!gliding) return;
+        gliding = false;
+        if (glideFrame) win.cancelAnimationFrame(glideFrame);
+        glideFrame = 0;
+        root.classList.remove('wfp-glide');
+        STOP.forEach(function (t) { win.removeEventListener(t, stopGlide); });
+    }
+    function toTop() {
+        var from = win.pageYOffset || root.scrollTop || 0;
+        stopGlide();
+        if (from <= 0) return;
+        if (reduced() || !win.requestAnimationFrame) { jump(0); return; }
+        var dur = Math.min(2200, 900 + from * 0.2), t0 = 0;
+        gliding = true;
+        root.classList.add('wfp-glide');
+        STOP.forEach(function (t) { win.addEventListener(t, stopGlide, { passive: true }); });
+        function step(now) {
+            glideFrame = 0;
+            if (!gliding) return;
+            if (!t0) t0 = now;
+            var p = Math.min(1, (now - t0) / dur);
+            jump(from * (1 - (0.5 - 0.5 * Math.cos(Math.PI * p))));
+            if (p < 1) glideFrame = win.requestAnimationFrame(step); else stopGlide();
+        }
+        glideFrame = win.requestAnimationFrame(step);
+    }
     fab.addEventListener('click', function () {
-        try { win.scrollTo({ top: 0, behavior: reduced() ? 'auto' : 'smooth' }); } catch (_) { win.scrollTo(0, 0); }
+        toTop();
         var main = d.getElementById('main');
         if (main) { main.setAttribute('tabindex', '-1'); try { main.focus({ preventScroll: true }); } catch (_) { /* focus is a courtesy */ } }
     });

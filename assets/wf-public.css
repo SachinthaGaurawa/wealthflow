@@ -29,6 +29,8 @@
    below it instead of under it. (The documents already give each h2 a scroll-margin.) */
 html { scroll-behavior: smooth; }
 html.wfp-home { scroll-padding-top: 84px; }
+/* While the back-to-top glide is drawing itself, the browser must not smooth each step again. */
+html.wfp-glide, html.wfp-home.wfp-glide { scroll-behavior: auto; }
 main:focus { outline: none; }
 
 /* ── Reading progress: a hairline that fills as the page is read ─────────── */
