@@ -45,23 +45,77 @@ function inputBytes(value) {
     return Buffer.from(value);
 }
 
-/** Convert PDF.js items from object order to visual row/column order. */
-export function pdfLinesFromItems(items, tolerance = 2) {
+/* THE CHEQUE NUMBER COLUMN OF A PDF STATEMENT. A bank that prints "Cheque No" as a column of its own leaves the number in the middle of the flattened line, and the row's description often does not name a
+ * cheque at all ("LOCAL DEPOSIT", the payer's name, "INSTRUMENT"): read as text, that number is a reference and the cheque is lost. The positions of the words are known here, so the column is found from its
+ * HEADER (a line with a date, a balance or debit/credit, and a cheque / instrument label) and every digits-only cell under it is the cheque's number: it is rewritten as "Cheque No NNN" and moved in front of the
+ * first money column, where the statement parser (and the Cheque Tracker behind it) read it like any narration. A column headed "Cheque / Ref No" also holds plain references, so there the number is taken only on a row
+ * that already names a cheque. */
+const CHEQUE_HEADER = /^(?:cheques?|chq|chque|cheq|chk|check|instrument|instr)\.?(?:\s*(?:no|number|num|nr|#)\.?)?(?:\s*\/?\s*(?:ref(?:erence)?\.?(?:\s*no\.?)?))?$/i;
+const HEADER_TAIL = /^(?:no\.?|number|num|nr|#|\/|\/?ref(?:erence)?\.?|\/?ref\.?\s*no\.?)$/i;
+const CHEQUE_CELL = /^[\s#:.\-]*(\d{3,12})\s*$/;
+const MONEY_CELL = /^-?\(?\d[\d,]*\.\d{1,2}\)?(?:\s*(?:CR|DR))?$/i;
+const CHEQUE_WORDS = /\b(?:cheques?|chq|chque|cheq|chk|check|cq|pdc|clearing|clg)\b/i;
+function chequeHeader(cells) {
+    const texts = cells.map(cell => cell.text.trim());
+    const joined = texts.join(' ').toLowerCase();
+    if (texts.filter(Boolean).length < 3 || !/\bdate\b/.test(joined) || !/balance|debit|credit|withdraw|deposit|amount/.test(joined)) return null;
+    for (let i = 0; i < cells.length; i++) {
+        if (!/^(?:cheques?|chq|chque|cheq|chk|check|instrument|instr)\b/i.test(texts[i])) continue;
+        let last = i, label = texts[i];
+        while (last + 1 < cells.length && HEADER_TAIL.test(texts[last + 1]) && cells[last + 1].x - (cells[last].x + cells[last].w) < 40) { last++; label += ' ' + texts[last]; }
+        if (!CHEQUE_HEADER.test(label.replace(/\s+/g, ' ').trim())) continue;
+        return { columns: cells.filter(cell => cell.text.trim()).map(cell => ({ x0: cell.x, x1: cell.x + cell.w, cheque: false })), at: [cells[i].x, cells[last].x + cells[last].w], mixed: /ref/i.test(label) };
+    }
+    return null;
+}
+function tagChequeColumn(cells, state) {
+    const head = chequeHeader(cells);
+    if (head) {
+        state.columns = head.columns.map(col => ({ ...col, cheque: col.x0 === head.at[0] }));
+        const c = state.columns.find(col => col.cheque);
+        if (c) c.x1 = Math.max(c.x1, head.at[1]);
+        state.mixed = head.mixed;
+        return cells.map(cell => cell.text.trim()).filter(Boolean);
+    }
+    if (!state.columns) return cells.map(cell => cell.text.trim()).filter(Boolean);
+    const whole = cells.map(cell => cell.text.trim());
+    const named = CHEQUE_WORDS.test(whole.join(' '));
+    const out = cells.map(cell => ({ text: cell.text.trim(), x: cell.x }));
+    let moved = null;
+    cells.forEach((cell, i) => {
+        const m = CHEQUE_CELL.exec(cell.text);
+        if (!m || /^0+$/.test(m[1]) || (state.mixed && !named)) return;   // an all-zero cell is the bank's "no cheque" filler
+        let best = null, over = 0;
+        for (const col of state.columns) { const ov = Math.min(cell.x + cell.w, col.x1) - Math.max(cell.x, col.x0); if (ov > over) { over = ov; best = col; } }
+        if (!best) {
+            const mid = cell.x + cell.w / 2;
+            let gap = 30;
+            for (const col of state.columns) { const d = Math.abs((col.x0 + col.x1) / 2 - mid); if (d < gap) { gap = d; best = col; } }
+        }
+        if (best && best.cheque) { out[i].text = `Cheque No ${m[1]}`; if (!moved) moved = i; }
+    });
+    if (moved !== null) {
+        const money = out.findIndex(cell => MONEY_CELL.test(cell.text));
+        if (money >= 0 && money < moved) { const [cell] = out.splice(moved, 1); out.splice(money, 0, cell); }
+    }
+    return out.map(cell => cell.text).filter(Boolean);
+}
+/** Convert PDF.js items from object order to visual row/column order. `carry` (an object kept across the pages of one document) lets a page that does not repeat the header use the column of the page before. */
+export function pdfLinesFromItems(items, tolerance = 2, carry = null) {
     const rows = [];
     const loose = [];
+    const state = carry && typeof carry === 'object' ? carry : {};
     for (const [index, item] of (Array.isArray(items) ? items : []).entries()) {
         if (!item || typeof item.str !== 'string' || !item.str.trim()) continue;
         const x = Number(item.transform?.[4]), y = Number(item.transform?.[5]);
         if (!Number.isFinite(x) || !Number.isFinite(y)) { loose.push({ index, text: item.str }); continue; }
         let row = rows.find(candidate => Math.abs(candidate.y - y) <= tolerance);
         if (!row) { row = { y, first: index, cells: [] }; rows.push(row); }
-        row.cells.push({ x, index, text: item.str });
+        row.cells.push({ x, w: Number.isFinite(Number(item.width)) ? Number(item.width) : 0, index, text: item.str });
     }
     const visual = rows
         .sort((a, b) => b.y - a.y || a.first - b.first)
-        .map(row => row.cells
-            .sort((a, b) => a.x - b.x || a.index - b.index)
-            .map(cell => cell.text.trim()).filter(Boolean).join(' '))
+        .map(row => tagChequeColumn(row.cells.sort((a, b) => a.x - b.x || a.index - b.index), state).join(' '))
         .filter(Boolean);
     // Preserve unpositioned evidence in source order.
     visual.push(...loose.sort((a, b) => a.index - b.index).map(item => item.text.trim()).filter(Boolean));
@@ -312,7 +366,9 @@ async function htmlText(html) {
                     marker: index(/^(?:drcr|crdr|direction|type)$/) >= 0 ? index(/^(?:drcr|crdr|direction|type)$/) : inferMarker(rowIndex + 1),
                     reference: index(/^(?:reference|referenceno|ref|refno|transactionreference)$/),
                     /* a column of its own for the cheque number (HNB, Sampath, DFCC print one): it is the cheque's number, kept in the narration where the Cheque Tracker reads it */
-                    cheque: index(/^(?:cheque|chq|chk|check|cheq)s?(?:no|number|num|nr|ref|refno)?(?:ref|refno)?$/),
+                    cheque: index(/^(?:cheque|chq|chque|chk|check|cheq|instrument|instr|inst)s?(?:no|number|num|nr|id)?$/),
+                    /* "Chq/Ref No" holds plain references too, so its number counts only on a row that names a cheque */
+                    chequeMixed: index(/^(?:cheque|chq|chque|chk|check|cheq|instrument|instr)s?(?:no|number|num|nr)?(?:ref|reference)(?:no|number|num|nr)?$/),
                     balance: index(/^(?:balance|runningbalance)$/) };
                 continue;
             }
@@ -383,9 +439,10 @@ async function htmlText(html) {
             if (direction === 'DR') sumDebit += value; else sumCredit += value;
             let narration = cells[c.description].replace(/\b(?:DR|CR)\b/gi, '').trim();
             /* the cheque number printed in its own column joins the narration unless the narration already says it ("0" and "-" in an empty cell are not numbers) */
-            const chequeCell = c.cheque >= 0 ? String(cells[c.cheque] || '').trim() : '';
-            const chequeDigits = (/^[\s#:.\-]*(\d{3,12})[\s]*$/.exec(chequeCell) || [])[1];
-            if (chequeDigits && !narration.replace(/\D+/g, ' ').split(' ').includes(chequeDigits)) narration = `${narration} Cheque No ${chequeDigits}`.trim();
+            const mixedCell = c.cheque < 0 && c.chequeMixed >= 0 && CHEQUE_WORDS.test(`${narration} ${cells[c.chequeMixed] || ''}`);
+            const chequeCell = c.cheque >= 0 ? String(cells[c.cheque] || '').trim() : mixedCell ? String(cells[c.chequeMixed] || '').trim() : '';
+            const chequeDigits = (/^(?:(?:cheques?|chq|chque|chk|check|cheq)\s*\.?\s*(?:no|number)?\s*)?[\s#:.\-]*(\d{3,12})[\s]*$/i.exec(chequeCell) || [])[1];
+            if (chequeDigits && !/^0+$/.test(chequeDigits) && !narration.replace(/\D+/g, ' ').split(' ').includes(chequeDigits)) narration = `${narration} Cheque No ${chequeDigits}`.trim();
             const ref = c.reference >= 0 && cells[c.reference] ? ` REF:${cells[c.reference]}` : '';
             lines.push(`${withYear(dateCell, periodEnd)} ${narration}${ref} ${value.toFixed(2)} ${direction}`);
         }
@@ -519,6 +576,7 @@ export async function readPdfStatement(bytes, passwords = []) {
             const doc = await task.promise;
             if (doc.numPages > STATEMENT_LIMITS.pages) fail('STATEMENT_PAGE_LIMIT');
             const lines = [];
+            const columns = {};
             let textLength = 0;
             for (let n = 1; n <= doc.numPages; n++) {
                 const page = await doc.getPage(n);
@@ -529,7 +587,7 @@ export async function readPdfStatement(bytes, passwords = []) {
                         textLength += item.str.length + 1;
                         if (textLength > STATEMENT_LIMITS.bytes) fail('STATEMENT_TEXT_LIMIT');
                     }
-                    lines.push(...pdfLinesFromItems(content.items));
+                    lines.push(...pdfLinesFromItems(content.items, 2, columns));
                 } finally { page.cleanup(); }
             }
             return await parse(lines.join('\n'));

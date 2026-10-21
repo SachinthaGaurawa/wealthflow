@@ -79,6 +79,7 @@ function fold(description) {
     text = text.replace(/\b(cheques?|chques?|cheqs?|chqs?|chk|check|cq|pdc|clearing|clg)(no|number|num|nr)?(?=\d)/g, (all, marker, label) => marker + ' ' + (label ? label + ' ' : ''));
     // a cheque word run into the word beside it ("CHQPAID 000123", "CHEQUEDEPOSIT 000123")
     text = text.replace(/\b(cheques?|chques?|cheqs?|chqs?)(?=(?:paid|pay|payment|dep|deposit|dpst|rtn|return|returned|clg|clearing|issued|no|number|realised|realized)\b)/g, '$1 ');
+    text = text.replace(/\b(cheques?|chques?|cheqs?|chqs?)(dep|deposit|dpst|paid|pay|payment|rtn|return|returned|clg|clearing|issued|realised|realized)(?=\d)/g, '$1 $2 ');   // "CHQDEP285943"
     return text.replace(/\s+/g, ' ').trim();
 }
 
