@@ -134,7 +134,7 @@ describe('the file', () => {
         expect(all).toContain('LKR 500,000.00');
         expect(all).toMatch(/INV-[0-9A-F]{6}/);
         expect(all).toMatch(/DEB-[0-9A-F]{6}/);
-        expect(all).toContain('Next interest due');
+        expect(all).toContain('Next interest payment');
         expect(all).toContain('HOW TO PAY');
         expect(all).toContain('8001234567');
         expect(all).toContain('Commercial Bank');
@@ -170,7 +170,7 @@ describe('the file', () => {
         for (const p of withRows) expect(p).toContain('DATE TRANSACTION AMOUNT (LKR) BALANCE (LKR)');
         // all 81 movements are in the file, none twice
         expect((pages.join(' ').match(/Repayment/g) || []).length).toBe(80);
-        expect(pages.join(' ')).toContain('Loan paid out');
+        expect(pages.join(' ')).toContain('Loan disbursed');
     });
 
     it('keeps the "How to pay" heading together with its first account, however the page falls', async () => {
@@ -219,7 +219,7 @@ describe('the file', () => {
 
     it('says so when there is nothing to show, and when the statement was cut', async () => {
         const empty = await read(statementPdf(stFor({}), { generatedAt: T0 }));
-        expect(empty.pages.join(' ')).toContain('There is nothing to show yet');
+        expect(empty.pages.join(' ')).toContain('There is nothing to display yet');
         const cut = await read(statementPdf({ ...stFor(lenderDoc()), truncated: true }, { generatedAt: T0 }));
         expect(cut.pages.join(' ')).toContain('only the first part is shown');
     });
@@ -258,7 +258,7 @@ describe('the loan statement look', () => {
     it('has the loan statement\'s parts (details beside status, navy-headed movements with a total, a legend and a notice) and no signature or date line', async () => {
         const { pages } = await read(statementPdf(stFor(lenderDoc({ payAccounts: [acct()] })), { generatedAt: T0 }));
         const all = pages.join(' ');
-        for (const want of ['Account Statement', 'LOAN DETAILS', 'ACCOUNT STATUS', 'ACCOUNT MOVEMENTS', 'TOTAL REPAID (1)', 'INTEREST RECEIVED (1)', 'TOTAL RECEIVED (1)', 'Legend:', 'not a substitute for your lender']) expect(all, want).toContain(want);
+        for (const want of ['Account Statement', 'LOAN DETAILS', 'ACCOUNT STATUS', 'ACCOUNT TRANSACTIONS', 'TOTAL REPAID (1)', 'INTEREST RECEIVED (1)', 'TOTAL RECEIVED (1)', 'Legend:', 'not a substitute for your lender']) expect(all, want).toContain(want);
         expect(all).not.toMatch(/signature/i);
         expect(all).not.toMatch(/Account Holder/i);
         expect(all).not.toMatch(/\bDate:?\s*$/m);

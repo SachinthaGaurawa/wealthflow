@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 globalThis.__WF_TENANT_NO_BOOT = true;
-const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY } = await import('../tenant-page.js');
+const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY, splashWait, splashEl, phoneLabel, SPLASH_AFTER_MS, SPLASH_MIN_MS, SPLASH_SLOW_MS, STILL_AFTER } = await import('../tenant-page.js');
 const { makeT } = await import('../tenant-lang.js');
 
 class El {
@@ -77,6 +77,43 @@ describe('formatting', () => {
     });
 });
 
+describe('the loading screen and the sign-in answers', () => {
+    it('is never shown to a page that loaded in a blink, and never flashes once it has been seen', () => {
+        expect([SPLASH_AFTER_MS, SPLASH_MIN_MS, SPLASH_SLOW_MS]).toEqual([300, 450, 5000]);
+        for (const quick of [0, 120, 300]) expect(splashWait(quick), String(quick)).toBe(0);           // it was still invisible: nothing to hold
+        expect(splashWait(301)).toBe(449);                                                              // seen for a moment: it stays for its minimum
+        expect(splashWait(500)).toBe(250);
+        expect(splashWait(750)).toBe(0);                                                                // seen long enough
+        expect(splashWait(4000)).toBe(0);
+        for (const odd of [undefined, null, NaN, 'x', -5, {}]) expect(splashWait(odd), String(odd)).toBe(0);
+    });
+
+    it('builds the same markup tenant.html draws before the script arrives', () => {
+        const root = splashEl(doc);
+        const classes = [];
+        root.walk((n) => classes.push(n.attrs.class || ''));
+        expect(classes).toEqual(['tp-splash', 'tp-splash-mark', 'tp-splash-logo', 'tp-splash-name', 'tp-splash-bar', '', 'tp-splash-status']);
+        expect(root.attrs.role).toBe('status');
+        expect(root.attrs.id).toBe('tp-splash');
+        expect(root.textContent).toBe('WealthFlow');                                                    // the status line is filled in by the page, in the person's language
+    });
+
+    it('shows only the last four digits of the phone the code went to, drawn as the page draws it, and nothing else', () => {
+        expect(phoneLabel('+94*****4567')).toBe('+94 ••• 4567');
+        expect(phoneLabel('+1***1234')).toBe('+1 ••• 1234');
+        for (const bad of ['', '***', null, undefined, 5, '0771234567', '+94771234567', '+94 77 4567', '<b>+94*****4567</b>', '+94*****45678']) expect(phoneLabel(bad), String(bad)).toBe('');
+    });
+
+    it('turns a wrong-details answer into one plain sentence in either language, and warns after a few misses', () => {
+        expect(STILL_AFTER).toBe(3);
+        const body = { ok: false, error: 'We could not verify these details. Please check your NIC or passport / ID number, or contact the person who sent you this link.' };
+        expect(describeFailure(401, body)).toBe(body.error);
+        expect(describeFailure(401, body, makeT('si'))).toMatch(/^ඔබේ විස්තර තහවුරු කළ නොහැකි විය/);
+        expect(makeT('si')(COPY.STILL_NO_MATCH)).toMatch(/තවමත් නොගැළපේද/);
+        expect(describeFailure(409, { ok: false, error: 'We cannot send a code for this link right now. Please contact the person who sent it to you.' }, makeT('si'))).toMatch(/දැන් කේතයක් යැවිය නොහැක/);
+    });
+});
+
 describe('the repayment plan on a loan card', () => {
     const asOf = '2026-10-05T05:00:00.000Z';
     const loanGroup = (over = {}) => ({ kind: 'loan', ref: 'DEB-96E5C2', currency: 'LKR', lent: 50000, repaid: 20000, outstanding: 30000, status: 'open', due: '2026-12-31', events: [], ...over });
@@ -88,7 +125,7 @@ describe('the repayment plan on a loan card', () => {
         expect(plan && plan.tag).toBe('details');
         expect(nodes.some((n) => n.tag === 'select')).toBe(true);
         expect(nodes.some((n) => n.tag === 'input' && n.attrs.inputmode === 'decimal')).toBe(true);
-        expect(nodes.find((n) => /tp-chip-btn/.test(n.attrs.class || '')).textContent).toBe('Clear by the due date: LKR 15,000.00 each time');
+        expect(nodes.find((n) => /tp-chip-btn/.test(n.attrs.class || '')).textContent).toBe('Settle by the due date: LKR 15,000.00 per payment');
     });
 
     it('offers nothing on a loan that is settled or has nothing owed', () => {
@@ -111,7 +148,7 @@ describe('the statement view', () => {
     it('shows the figures, the reference codes and the running balance', () => {
         const nodes = statementView(doc, statement);
         const text = textOf(nodes);
-        for (const want of ['LKR 500,000.00', 'LKR 10,000.00', 'INV-9990B2', 'DEB-96E5C2', '24% a year', 'Monthly', '5 Jan 2026', 'Aug 2026', '4 Oct 2026', 'LKR 30,000.00', 'Loan paid out', 'Repayment', '20 Sep 2026', 'Open']) expect(text, want).toContain(want);
+        for (const want of ['LKR 500,000.00', 'LKR 10,000.00', 'INV-9990B2', 'DEB-96E5C2', '24% per year', 'Monthly', '5 Jan 2026', 'Aug 2026', '4 Oct 2026', 'LKR 30,000.00', 'Loan disbursed', 'Repayment', '20 Sep 2026', 'Active']) expect(text, want).toContain(want);
         const loan = nodes.find((n) => n.attrs['aria-label'] === 'Loan DEB-96E5C2');
         expect(loan.textContent).toContain('DEB-96E5C2');
         expect(loan.textContent).not.toMatch(/interest|rate/i);                      // the loan card has no interest on it
@@ -132,7 +169,7 @@ describe('the statement view', () => {
     });
 
     it('says so when there is nothing yet, and survives anything the server could send', () => {
-        expect(textOf(statementView(doc, { groups: [], totals: [] }))).toMatch(/nothing to show yet/);
+        expect(textOf(statementView(doc, { groups: [], totals: [] }))).toMatch(/nothing to display yet/);
         for (const odd of [null, undefined, {}, [], 'x', { groups: 'x', totals: 5 }, { groups: [{ kind: 'loan', events: [] }], totals: [{ currency: 'LKR' }] }]) {
             expect(() => statementView(doc, odd), JSON.stringify(odd)).not.toThrow();
         }
@@ -176,14 +213,14 @@ describe('what a person needs next: when, and where to pay', () => {
 
     it('says when the next interest is due and when a loan is expected back, and how late it is', () => {
         const text = textOf(statementView(doc, base));
-        expect(text).toContain('Next interest due5 Nov 2026 (LKR 10,000.00)');
-        expect(text).toContain('Expected back by1 Oct 2026 (4 days ago)');
+        expect(text).toContain('Next interest payment5 Nov 2026 (LKR 10,000.00)');
+        expect(text).toContain('Repayment due by1 Oct 2026 (4 days ago)');
         const one = structuredClone(base); one.groups[1].overdueDays = 1;
-        expect(textOf(statementView(doc, one))).toContain('Expected back by1 Oct 2026 (1 day ago)');
+        expect(textOf(statementView(doc, one))).toContain('Repayment due by1 Oct 2026 (1 day ago)');
         const onTime = structuredClone(base); onTime.groups[1].overdueDays = 0;
-        expect(textOf(statementView(doc, onTime))).toMatch(/Expected back by1 Oct 2026(?! \()/);        // on time: the date, and no "days ago"
+        expect(textOf(statementView(doc, onTime))).toMatch(/Repayment due by1 Oct 2026(?! \()/);        // on time: the date, and no "days ago"
         const none = structuredClone(base); none.groups[0].nextInterest = null; none.groups[1].due = '';
-        expect(textOf(statementView(doc, none))).not.toMatch(/Next interest due|Expected back by/);
+        expect(textOf(statementView(doc, none))).not.toMatch(/Next interest payment|Repayment due by/);
     });
 
     it('shows the lender\'s bank account before the records, with the account number the biggest thing in it', () => {
@@ -230,7 +267,7 @@ describe('what a person needs next: when, and where to pay', () => {
 
     it('reads in Sinhala when asked, with the figures and codes untouched and the dates in Sinhala', () => {
         const text = textOf(statementView(doc, base, makeT('si'), { copy: () => {} }));
-        for (const want of ['ගෙවන ආකාරය', 'ඊළඟ පොලිය ලැබිය යුත්තේ', 'ආපසු ගෙවිය යුත්තේ', 'දින 4කට පෙර', 'සියලු විස්තර පිටපත් කරන්න', 'ආයෝජනය', 'ණය']) expect(text, want).toContain(want);
+        for (const want of ['ගෙවන ආකාරය', 'ඊළඟ පොලී ගෙවීම', 'ආපසු ගෙවිය යුතු දිනය', 'දින 4කට පෙර', 'සියලු විස්තර පිටපත් කරන්න', 'ආයෝජනය', 'ණය']) expect(text, want).toContain(want);
         expect(text).toContain('2026 නොවැම්බර් 5');
         expect(text).not.toContain('5 Nov 2026');
         for (const same of ['LKR 500,000.00', 'INV-9990B2', 'DEB-96E5C2', '8001234567', 'Commercial Bank']) expect(text, same).toContain(same);
@@ -238,9 +275,9 @@ describe('what a person needs next: when, and where to pay', () => {
 
     it('turns a refusal into the person\'s language, and the wait with it', () => {
         const si = makeT('si');
-        expect(describeFailure(429, { error: 'Too many attempts. Please wait a while and try again.', retryAfterSec: 45 }, si)).toBe('උත්සාහ කිරීම් ඕනෑවට වඩා වැඩියි. කරුණාකර මද වේලාවක් රැඳී සිට නැවත උත්සාහ කරන්න. තත්පර 45කින් නැවත උත්සාහ කරන්න.');
+        expect(describeFailure(429, { error: 'Too many attempts. For your security, please wait before trying again.', retryAfterSec: 45 }, si)).toBe('උත්සාහ කිරීම් ඕනෑවට වඩා වැඩියි. ඔබේ ආරක්ෂාව සඳහා කරුණාකර මද වේලාවක් රැඳී සිට නැවත උත්සාහ කරන්න. තත්පර 45කින් නැවත උත්සාහ කරන්න.');
         expect(describeFailure(429, { error: 'Too many attempts.', retryAfterSec: 900 }, si)).toBe('Too many attempts. මිනිත්තු 15කින් පමණ නැවත උත්සාහ කරන්න.');   // a sentence the table does not know stays as the server said it
-        expect(describeFailure(500, null, si)).toBe('යම් දෝෂයක් සිදු විය. කරුණාකර නැවත උත්සාහ කරන්න.');
+        expect(describeFailure(500, null, si)).toBe('යම් දෝෂයක් සිදු විය. කරුණාකර මොහොතකින් නැවත උත්සාහ කරන්න.');
     });
 
     it('writes "as at" with the zone in the person\'s language', () => {
@@ -275,12 +312,12 @@ describe('what a person can do with the statement', () => {
 
     it('lists what is coming up, soonest first, with the days left and how late', () => {
         const text = textOf(statementView(doc, base));
-        expect(text).toContain('Coming up');
-        expect(text).toContain('Pay your loan1 Oct 2026 · DEB-96E5C2LKR 30,000.004 days overdue');
-        expect(text).toContain('Interest expected12 Oct 2026 · INV-9990B2LKR 10,000.00In 7 days');
+        expect(text).toContain('Upcoming');
+        expect(text).toContain('Loan repayment due1 Oct 2026 · DEB-96E5C2LKR 30,000.004 days overdue');
+        expect(text).toContain('Interest payment due12 Oct 2026 · INV-9990B2LKR 10,000.00In 7 days');
         expect(text.indexOf('4 days overdue')).toBeLessThan(text.indexOf('In 7 days'));
         const none = structuredClone(base); none.groups[0].nextInterest = null; none.groups[1].due = '';
-        expect(textOf(statementView(doc, none))).not.toContain('Coming up');
+        expect(textOf(statementView(doc, none))).not.toContain('Upcoming');
     });
 
     it('has an add-to-calendar button for each date and a jump to where to pay only when the page can do them', () => {

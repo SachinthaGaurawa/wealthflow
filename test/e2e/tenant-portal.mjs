@@ -99,6 +99,51 @@ const text = () => page.evaluate(() => document.body.innerText.replace(/\s+/g, '
 const noOverflow = (label) => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1).then((ok) => assert.ok(ok, `${label}: the page scrolls sideways`));
 const lastCode = () => { const m = /^(\d{6}) is your WealthFlow/.exec(sent.at(-1).message); return m && m[1]; };
 
+/* 0. the loading screen: drawn by the page itself before any script, adopted (not rebuilt) by the script, honest about being slow ----------- */
+{
+    const snap = async (p, name) => { if (process.env.WF_TENANT_SHOTS) { fs.mkdirSync(process.env.WF_TENANT_SHOTS, { recursive: true }); await p.screenshot({ path: path.join(process.env.WF_TENANT_SHOTS, `${name}.png`), fullPage: true }); } };
+    const probe = async (ctxOptions, holdMs, work) => {
+        const ctx = await browser.newContext({ viewport: { width: 390, height: 800 }, ...ctxOptions });
+        const p = await ctx.newPage();
+        const errors = [];
+        p.on('pageerror', (e) => errors.push(e.message));
+        await p.addInitScript(() => {
+            window.__splashRemoved = 0;
+            new MutationObserver((records) => { for (const r of records) for (const n of r.removedNodes) if (n.classList && n.classList.contains('tp-splash')) window.__splashRemoved += 1; }).observe(document, { childList: true, subtree: true });
+        });
+        let calls = 0;
+        await p.route('**/api/tenant-portal', async (route) => { calls += 1; if (calls === 1) await new Promise((r) => setTimeout(r, holdMs)); await route.continue(); });
+        await p.goto(`${base}/t/${TOKEN}`, { waitUntil: 'domcontentloaded' });
+        await work(p);
+        assert.deepEqual(errors, []);
+        await ctx.close();
+    };
+    // English: the sentence, the same element the page drew, then the page's own apology once it is slow, then the form
+    await probe({}, 6200, async (p) => {
+        await p.waitForFunction(() => { const l = document.querySelector('.tp-splash-status'); return l && l.textContent === 'Preparing your secure page'; });
+        await p.waitForFunction(() => Number(getComputedStyle(document.querySelector('.tp-splash')).opacity) === 1);       // the 0.3 s hold-back and the fade are over
+        const seen = await p.evaluate(() => { const el = document.querySelector('.tp-splash'); const box = el.getBoundingClientRect(); return { opacity: Number(getComputedStyle(el).opacity), role: el.getAttribute('role'), logo: document.querySelector('.tp-splash-logo').complete, name: document.querySelector('.tp-splash-name').textContent, tall: box.height >= innerHeight - 2, removed: window.__splashRemoved, stuck: !!document.querySelector('.tp-splash-stuck') }; });
+        assert.equal(seen.opacity, 1, 'the loading screen is visible once the hold-back is over');
+        assert.deepEqual([seen.role, seen.logo, seen.name, seen.tall, seen.stuck], ['status', true, 'WealthFlow', true, false], 'the mark, the name, the whole screen, and no "reload" line once the script runs');
+        assert.equal(seen.removed, 0, 'the script adopted the splash the HTML drew instead of building another');
+        await snap(p, '0-loading');
+        await p.waitForFunction(() => document.querySelector('.tp-splash-status').textContent === 'This is taking longer than usual. Thank you for your patience.', null, { timeout: 8000 });
+        await snap(p, '0b-loading-slow');
+        await p.waitForSelector('#tp-nic', { timeout: 10000 });
+        assert.equal(await p.evaluate(() => window.__splashRemoved), 1, 'and the form took its place');
+    });
+    // Sinhala for a browser that asks for it; and a person who asked for less motion gets a calm bar
+    await probe({ locale: 'si-LK', reducedMotion: 'reduce' }, 1500, async (p) => {
+        await p.waitForFunction(() => document.querySelector('.tp-splash-status').textContent === 'ඔබේ ආරක්ෂිත පිටුව සූදානම් කරමින්');
+        await p.waitForFunction(() => Number(getComputedStyle(document.querySelector('.tp-splash')).opacity) === 1);
+        await snap(p, '0c-loading-si');
+        const calm = await p.evaluate(() => { const bar = getComputedStyle(document.querySelector('.tp-splash-bar span')); const glow = getComputedStyle(document.querySelector('.tp-splash-mark'), '::before'); return { barAnimation: bar.animationName, barWidth: bar.width, glowAnimation: glow.animationName, logoAnimation: getComputedStyle(document.querySelector('.tp-splash-logo')).animationName }; });
+        assert.deepEqual([calm.barAnimation, calm.glowAnimation, calm.logoAnimation], ['none', 'none', 'none'], 'nothing moves for a person who asked for less motion');
+        await p.waitForSelector('#tp-nic', { timeout: 10000 });
+    });
+    console.log('0. loading screen     -> drawn before the script, adopted by it, says it is slow after 5 s, Sinhala on request, still when motion is reduced');
+}
+
 /* 1. the link opens on the NIC form ------------------------------------------- */
 const first = await page.goto(`${base}/t/${TOKEN}`);
 assert.equal(first.status(), 200);
@@ -106,8 +151,11 @@ assert.match(first.headers()['content-security-policy'], /script-src 'self'/);
 assert.equal(first.headers()['cache-control'], 'no-store, max-age=0');
 await page.waitForSelector('#tp-nic');
 console.log('1. link opens         -> NIC form, policy', JSON.stringify(first.headers()['content-security-policy'].slice(0, 40)) + '...');
-assert.match(await text(), /We will text a 6-digit code to the mobile number your lender has on file/);
-assert.match(await text(), /No Sri Lankan NIC\? Enter your passport or ID number/);
+assert.match(await text(), /Verify your identity/);
+assert.match(await text(), /We will send a 6-digit verification code by text message to the mobile number your lender holds for you/);
+assert.match(await text(), /If you do not have a Sri Lankan NIC, enter your passport or ID number/);
+assert.equal((await page.textContent('#tp-send')).trim(), 'Verify and continue', 'the button says what it does, not what the page wants');
+assert.doesNotMatch(await text(), /Send me a code|View my statement/, 'the old wording is gone');
 assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'tp-nic', 'the field is focused');
 assert.equal(await page.title(), 'Your WealthFlow statement');
 await noOverflow('NIC form');
@@ -117,8 +165,8 @@ await shot('1-nic');
 const before = sent.length;
 await page.fill('#tp-nic', '1234');
 await page.click('#tp-send');
-assert.match(await page.textContent('#tp-err'), /9 digits followed by V or X, or as 12 digits/);
-assert.match(await page.textContent('#tp-err'), /passport or ID number/, 'and says what to type if there is no Sri Lankan NIC');
+assert.match(await page.textContent('#tp-err'), /9 digits followed by V or X, or 12 digits/);
+assert.match(await page.textContent('#tp-err'), /passport \/ ID number/, 'and says what to type if there is no Sri Lankan NIC');
 assert.equal(await page.getAttribute('#tp-nic', 'aria-invalid'), 'true');
 assert.equal(sent.length, before);
 // the first keystroke of a correction takes the red mark and the message away: a field being fixed is not told off again
@@ -131,41 +179,65 @@ assert.equal(await page.getAttribute('#tp-nic', 'aria-invalid'), 'true');
 console.log('2. bad NIC            -> refused in the page, nothing sent');
 assert.match(await text(), /passport \/ ID number/, 'the form says a passport or ID number will do');
 
-/* 3. a wrong (but well-formed) NIC looks exactly like a right one ------------- */
+/* 3. a wrong (but well-formed) NIC is refused where it was typed: no code, no code screen --------------- */
 await page.fill('#tp-nic', '198534000999');
 await page.click('#tp-send');
-await page.waitForSelector('#tp-code');
-const wrongNicWords = await page.textContent('#tp-info');
+await page.waitForFunction(() => /could not verify these details/i.test(document.querySelector('#tp-err').textContent));
 assert.equal(sent.length, before, 'no text for a NIC that is not on the link');
-await page.click('#tp-back');
-await page.waitForSelector('#tp-nic');
+assert.equal(await page.locator('#tp-code').count(), 0, 'and no code screen to wait on');
+assert.equal(await page.getAttribute('#tp-nic', 'aria-invalid'), 'true', 'the field is marked');
+assert.equal(await page.inputValue('#tp-nic'), '198534000999', 'what was typed is kept, not wiped');
+assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'tp-nic', 'and focus is back on it');
+assert.equal(await page.evaluate(() => { const i = document.querySelector('#tp-nic'); return i.selectionStart === 0 && i.selectionEnd === i.value.length; }), true, 'with the whole value selected, so the retype is one move');
+assert.equal((await page.textContent('#tp-send')).trim(), 'Verify and continue', 'the button is ready again');
+assert.equal(await page.isDisabled('#tp-send'), false);
+const wrongNicWords = await page.textContent('#tp-err');
+assert.match(wrongNicWords, /Please check your NIC or passport \/ ID number, or contact the person who sent you this link/);
+assert.doesNotMatch(await text(), /code is on its way|has been sent/i, 'nothing here says a code went out');
+await shot('1b-wrong-nic');
+// switching language does not make the refusal disappear: it is said again in the other language, on the same marked field
+await page.click('#tp-lang');
+await page.waitForFunction(() => /ඔබේ විස්තර තහවුරු කළ නොහැකි විය/.test(document.getElementById('tp-err').textContent));
+assert.equal(await page.getAttribute('#tp-nic', 'aria-invalid'), 'true');
+assert.equal(await page.inputValue('#tp-nic'), '198534000999');
+await shot('1b-wrong-nic-si');
+await page.click('#tp-lang');
+await page.waitForFunction(() => /could not verify these details/i.test(document.getElementById('tp-err').textContent));
+// the first keystroke of the correction clears the mark and the message, like any other refusal
+await page.type('#tp-nic', '0');
+assert.equal(await page.getAttribute('#tp-nic', 'aria-invalid'), null);
+assert.equal(await page.textContent('#tp-err'), '');
+assert.doesNotMatch(await page.textContent('#tp-help'), /Still not matching/, 'one miss is still just a typo');
 
-/* 4. the right NIC: one text, the same words ---------------------------------- */
+/* 4. the right NIC: one text, and the page says which phone to look at ------------------------------- */
 await page.fill('#tp-nic', ' 8534-00937 v ');
 await page.click('#tp-send');
 await page.waitForSelector('#tp-code');
 assert.equal(sent.length, before + 1);
 assert.equal(sent.at(-1).to, '+94771234567');
 const rightNicWords = await page.textContent('#tp-info');
-assert.equal(rightNicWords, wrongNicWords, 'the page says the same thing whether or not the NIC matched');
-assert.match(await page.textContent('#tp-resend'), /Send a new code \(\d+s\)/);
+assert.match(rightNicWords, /We have sent a 6-digit verification code to \+94 ••• 4567\. It expires in 3 minutes\./, 'the page names the last four digits of the phone');
+assert.doesNotMatch(rightNicWords, /771234567/, 'and never more than the last four');
+assert.doesNotMatch(await text(), /View my statement|Send a new code/);
+assert.equal((await page.textContent('#tp-verify')).trim(), 'Verify code');
+assert.match(await page.textContent('#tp-resend'), /Resend code in \d+s/);
 assert.equal(await page.isDisabled('#tp-resend'), true);
 assert.match(await page.textContent('#tp-expiry'), /expires in [23]:\d\d/);
 assert.equal(await page.getAttribute('#tp-code', 'autocomplete'), 'one-time-code');
 assert.equal(await page.getAttribute('#tp-code', 'inputmode'), 'numeric');
 await noOverflow('code form');
 await shot('2-code');
-console.log('3. NIC -> code        -> one text to the recorded number, identical page for a wrong NIC');
+console.log('3. NIC -> code        -> a wrong NIC is refused in place (no text, no code screen, field kept and selected); the right one names the phone');
 
 /* 5. a wrong code is refused and clears the field ----------------------------- */
 const right = lastCode();
 const wrong = right === '000000' ? '111111' : '000000';
 await page.fill('#tp-code', '12');
 await page.click('#tp-verify');
-assert.match(await page.textContent('#tp-err'), /6-digit code/);
+assert.match(await page.textContent('#tp-err'), /6-digit verification code/);
 await page.fill('#tp-code', wrong);
 await page.click('#tp-verify');
-await page.waitForFunction(() => /not valid/.test(document.getElementById('tp-err').textContent));
+await page.waitForFunction(() => /could not verify that code/.test(document.getElementById('tp-err').textContent));
 assert.equal(await page.inputValue('#tp-code'), '', 'a refused code is cleared');
 assert.equal(await page.getAttribute('#tp-code', 'aria-invalid'), 'true', 'and the field is marked so the person sees which one to retype');
 await page.type('#tp-code', '1');
@@ -173,7 +245,7 @@ assert.equal(await page.getAttribute('#tp-code', 'aria-invalid'), null, 'the mar
 await page.fill('#tp-code', '');
 await page.fill('#tp-code', wrong);
 await page.click('#tp-verify');
-await page.waitForFunction(() => /not valid/.test(document.getElementById('tp-err').textContent) && document.getElementById('tp-code').value === '');
+await page.waitForFunction(() => /could not verify that code/.test(document.getElementById('tp-err').textContent) && document.getElementById('tp-code').value === '');
 console.log('4. wrong code         -> refused:', JSON.stringify(await page.textContent('#tp-err')));
 
 /* 6. the right code opens the statement ---------------------------------------- */
@@ -182,13 +254,13 @@ await page.click('#tp-verify');
 await page.waitForSelector('#tp-out');
 const body = await text();
 console.log('5. right code         -> statement', JSON.stringify(body.slice(0, 160)) + '...');
-for (const want of ['Your statement', 'Investment', 'Loan', 'LKR 500,000.00', 'LKR 10,000.00', 'LKR 30,000.00', 'LKR 50,000.00', 'LKR 20,000.00', '24% a year', 'Monthly', 'Loan paid out', 'Repayment', '1 Sep 2026', '20 Sep 2026']) assert.ok(body.includes(want), `statement shows ${want}`);
+for (const want of ['Your statement', 'Investment', 'Loan', 'LKR 500,000.00', 'LKR 10,000.00', 'LKR 30,000.00', 'LKR 50,000.00', 'LKR 20,000.00', '24% per year', 'Monthly', 'Loan disbursed', 'Repayment', '1 Sep 2026', '20 Sep 2026']) assert.ok(body.includes(want), `statement shows ${want}`);
 assert.ok(body.includes('853400937V') && body.includes('NIC / ID'), 'the holder card shows the person\'s own NIC');
 assert.ok(await page.locator('img.tp-logo').first().evaluate((i) => i.complete && i.naturalWidth === 144), 'the WealthFlow mark loads');
 for (const leak of ['PRIVATE', '198534000937', '0771234567', '077 123', 'inv1', 'deb1', '777']) assert.ok(!body.includes(leak), `statement must not show ${leak}`);
 assert.match(body, /INV-[0-9A-F]{6}/);
 assert.match(body, /DEB-[0-9A-F]{6}/);
-assert.match(body, /closes in \d+ min/, "a fresh session says how many whole minutes remain, not a ticking clock");
+assert.match(body, /session ends in \d+ min/, "a fresh session says how many whole minutes remain, not a ticking clock");
 const loanCard = await page.locator('section[aria-label^="Loan"]').innerText();
 assert.ok(!/interest|rate/i.test(loanCard), 'the loan card carries no interest');
 assert.equal(await page.evaluate(() => (document.getElementById('tp-nic') || {}).value), undefined, 'the NIC field is gone from the page');
@@ -203,8 +275,8 @@ await shot('4-statement-320');
 await page.setViewportSize({ width: 390, height: 800 });
 
 /* 6b. what a person needs next: when, where to pay, a PDF, copy, print, their own language ------ */
-assert.ok(/next interest due/i.test(body), 'the investment says when interest is next due');      // labels are upper-cased by the page's style, and innerText reports that
-assert.match(body, /expected back by\s*\S+ \S+ \d{4} \(4 days ago\)/i, 'the loan says when it was expected back, and how late it is');
+assert.ok(/next interest payment/i.test(body), 'the investment says when interest is next due');      // labels are upper-cased by the page's style, and innerText reports that
+assert.match(body, /repayment due by\s*\S+ \S+ \d{4} \(4 days ago\)/i, 'the loan says when it was expected back, and how late it is');
 for (const want of ['How to pay', 'Commercial Bank', 'N. Perera', '8001234567', 'Colombo 03', 'CCEYLKLX', 'PLEASE WRITE YOUR NIC IN THE PAYMENT REFERENCES']) assert.ok(body.includes(want), `the lender's account shows ${want}`);
 assert.ok(!body.includes('Closed Bank') && !body.includes('1111222233'), 'a switched-off account is not shown');
 assert.ok(!/showTo|acc1|_ut/.test(body), 'no setting or id of the account reaches the page');
@@ -250,24 +322,24 @@ await page.emulateMedia({ media: 'screen' });
 
 // what is coming up, a reminder for the phone's calendar, a spreadsheet, a refresh inside the same session, and a jump to where to pay
 const next = await page.locator('.tp-next').innerText();
-assert.match(next, /Coming up/i);
-assert.match(next, /Pay your loan/);
+assert.match(next, /Upcoming/i);
+assert.match(next, /Loan repayment due/);
 assert.match(next, /days? overdue/, 'the late loan says how late it is');
-assert.match(next, /Interest expected/);
+assert.match(next, /Interest payment due/);
 const [ics] = await Promise.all([page.waitForEvent('download'), page.locator('.tp-next .tp-small-btn').first().click()]);
 assert.match(ics.suggestedFilename(), /^WealthFlow-DEB-[0-9A-F]{6}-\d{4}-\d{2}-\d{2}\.ics$/);
 const icsText = fs.readFileSync(await ics.path(), 'utf8');
-assert.ok(icsText.startsWith('BEGIN:VCALENDAR\r\n') && icsText.includes('TRIGGER:-P1D') && icsText.replace(/\r\n /g, '').includes('SUMMARY:Pay LKR 30\\,000.00 to your lender'), 'a calendar file with the amount and an alert');
+assert.ok(icsText.startsWith('BEGIN:VCALENDAR\r\n') && icsText.includes('TRIGGER:-P1D') && icsText.replace(/\r\n /g, '').includes('SUMMARY:Payment of LKR 30\\,000.00 due to your lender'), 'a calendar file with the amount and an alert');
 assert.ok(!/PRIVATE|853400937|0771234567/.test(icsText), 'the calendar file carries nothing private');
 const [csv] = await Promise.all([page.waitForEvent('download'), page.click('#tp-csv')]);
 assert.match(csv.suggestedFilename(), /^WealthFlow-statement-\d{4}-\d{2}-\d{2}\.csv$/);
 const csvText = fs.readFileSync(await csv.path(), 'utf8');
-assert.ok(csvText.includes('"Reference","Type","Date","Description","Amount","Balance","Currency"') && csvText.includes('"Repayment"') && csvText.includes('"Loan paid out"'));
+assert.ok(csvText.includes('"Reference","Type","Date","Description","Amount","Balance","Currency"') && csvText.includes('"Repayment"') && csvText.includes('"Loan disbursed"'));
 assert.ok(!/PRIVATE|853400937|0771234567/.test(csvText), 'the spreadsheet carries nothing private');
 await page.click('.tp-jump');
 assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'tp-pay', 'the jump lands on where to pay');
 await page.click('#tp-refresh');
-await page.waitForFunction(() => /Updated just now/.test((document.getElementById('tp-info') || {}).textContent || ''));
+await page.waitForFunction(() => /Statement refreshed/.test((document.getElementById('tp-info') || {}).textContent || ''));
 assert.ok((await text()).includes('LKR 30,000.00'), 'the same statement is back after a refresh, with no new code');
 assert.ok(await page.locator('.tp-progress progress').count() >= 1, 'the loan shows its progress');
 console.log('5e. extras            -> coming up, calendar file, spreadsheet, jump to pay, refresh without a new code');
@@ -279,7 +351,7 @@ await page.click('#tp-eye');
 assert.equal(await page.getAttribute('#tp-eye', 'aria-pressed'), 'true');
 assert.match(await page.evaluate(() => getComputedStyle(document.querySelector('.tp-hero .tp-money')).filter), /blur/, 'the amounts are blurred');
 await page.click('#tp-refresh');
-await page.waitForFunction(() => /Updated just now/.test((document.getElementById('tp-info') || {}).textContent || ''));
+await page.waitForFunction(() => /Statement refreshed/.test((document.getElementById('tp-info') || {}).textContent || ''));
 assert.equal(await page.getAttribute('#tp-eye', 'aria-pressed'), 'true', 'a refresh keeps the amounts hidden');
 await page.click('#tp-eye');
 await page.waitForFunction(() => getComputedStyle(document.querySelector('.tp-hero .tp-money')).filter === 'none', null, { timeout: 3000 });      // 'and showing them again unblurs' (it fades, so it takes a moment)
@@ -297,7 +369,7 @@ console.log('5f. balance card      -> holder, hide amounts (kept over a refresh)
     await page.selectOption('.tp-plan select', 'weekly');
     await page.fill('.tp-plan input', '10000');
     assert.match(await planOut(), /Payments\s*3|3\s*Payments/i, 'three weekly payments of 10,000 clear 30,000');
-    assert.match(await planOut(), /Finished by/i, 'and it says when it ends');
+    assert.match(await planOut(), /Fully repaid by/i, 'and it says when it ends');
     await page.fill('.tp-plan input', '0.01');
     assert.match(await planOut(), /too many payments/, 'a tiny amount is refused in words');
     await page.fill('.tp-plan input', '10000');
@@ -400,6 +472,24 @@ await page.goto(`${base}/t/${other}`);
 await page.waitForSelector('#tp-nic');
 assert.ok(!(await text()).includes('LKR 500,000.00'), "another link's page does not show this link's statement");
 console.log('8. another link       -> asks for its own NIC and code');
+// wrong NICs on that link: the third turns the hint into a plain warning, and five lock the link exactly like five wrong codes would
+for (const nic of ['198534000999', '198534000998', 'N7654321']) {
+    await page.fill('#tp-nic', nic);
+    await page.click('#tp-send');
+    await page.waitForFunction(() => /could not verify these details/i.test(document.querySelector('#tp-err').textContent));
+}
+assert.match(await page.textContent('#tp-help'), /Still not matching\? Please use the same NIC or passport \/ ID number you gave the person who sent you this link\. Several more incorrect attempts will pause this link for a while\./, 'the third miss says what a few more will do');
+assert.equal(await page.getAttribute('#tp-help', 'class'), 'tp-help tp-help-warn');
+await shot('1c-wrong-nic-warning');
+for (const nic of ['198534000997', '198534000996', '198534000995']) {
+    await page.fill('#tp-nic', nic);
+    await page.click('#tp-send');
+    await page.waitForFunction(() => /could not verify these details|Too many attempts/i.test(document.querySelector('#tp-err').textContent) && !document.querySelector('#tp-send').disabled);
+}
+assert.match(await page.textContent('#tp-err'), /Too many attempts/, 'the sixth try is turned away: a wrong NIC counts like a wrong code');
+assert.match(await page.textContent('#tp-err'), /15 minutes/);
+assert.equal(await page.locator('#tp-code').count(), 0);
+console.log('8b. wrong NICs         -> a warning on the third, the link paused after five');
 
 /* 10. signing out ends it, here and on the server ------------------------------ */
 await page.goto(`${base}/t/${TOKEN}`);

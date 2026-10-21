@@ -136,7 +136,7 @@ describe('the whole journey', () => {
         const boom = deps({ ctx }); boom.d.getAdminDb = async () => { throw new Error(`explode with ${NIC} and 246810`); };
         const e = await call(boom.d, { body: { action: 'request', token, nic: NIC } });
         expect(e.status).toBe(500);
-        expect(e.json).toEqual({ ok: false, error: 'Something went wrong. Please try again.' });        // the error text never reaches the caller
+        expect(e.json).toEqual({ ok: false, error: 'Something went wrong. Please try again in a moment.' });        // the error text never reaches the caller
         void gw;
         const text = logs.join('\n');
         expect(text).not.toContain('246810');

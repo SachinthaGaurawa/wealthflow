@@ -346,7 +346,7 @@ withEngine('the English file and the fallbacks', () => {
         const empty = stFor({ settings: { currency: 'LKR' }, debtors: [], income: [] });
         const file = await renderStatementPdf(empty, { generatedAt: T0, lang: 'si', loader });
         checkStructure(file);
-        expect(meaning(file)).toContain(SI['There is nothing to show yet. When your lender records something for you, it will appear here.']);
+        expect(meaning(file)).toContain(SI['There is nothing to display yet. Records added by your lender will appear here.']);
     });
 });
 

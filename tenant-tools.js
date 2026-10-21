@@ -124,8 +124,8 @@ export function calendarFile(item, { t, fmtMoney, asOf }) {
     const d = dayNo(item && item.date);
     if (!Number.isFinite(d)) return '';
     const amount = fmtMoney(item.amount, item.currency);
-    const title = item.kind === 'loan' ? t('Pay {amount} to your lender ({ref})', { amount, ref: item.ref }) : t('Interest of {amount} expected ({ref})', { amount, ref: item.ref });
-    const note = t('Reminder from your WealthFlow statement. Quote the reference {ref} when you pay.', { ref: item.ref });
+    const title = item.kind === 'loan' ? t('Payment of {amount} due to your lender ({ref})', { amount, ref: item.ref }) : t('Interest payment of {amount} due ({ref})', { amount, ref: item.ref });
+    const note = t('Reminder from your WealthFlow statement. Please quote reference {ref} when you pay.', { ref: item.ref });
     const stampMs = Date.parse(String(asOf || ''));
     const stamp = new Date(Number.isFinite(stampMs) ? stampMs : 0).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
     const lines = [
@@ -204,8 +204,8 @@ export function planFile(plan, { t, fmtMoney, asOf }) {
     if (!plan || !(plan.count > 0) || !(plan.amount > 0) || !Number.isFinite(dayNo(plan.first))) return '';
     const first = dayNo(plan.first);
     const rule = plan.every === 'monthly' ? 'FREQ=MONTHLY;INTERVAL=1' : `FREQ=WEEKLY;INTERVAL=${plan.every === 'fortnightly' ? 2 : 1}`;
-    const title = t('Pay {amount} to your lender ({ref})', { amount: fmtMoney(plan.amount, plan.currency), ref: plan.ref });
-    const note = t('Reminder from your WealthFlow statement. Quote the reference {ref} when you pay.', { ref: plan.ref });
+    const title = t('Payment of {amount} due to your lender ({ref})', { amount: fmtMoney(plan.amount, plan.currency), ref: plan.ref });
+    const note = t('Reminder from your WealthFlow statement. Please quote reference {ref} when you pay.', { ref: plan.ref });
     const stampMs = Date.parse(String(asOf || ''));
     const stamp = new Date(Number.isFinite(stampMs) ? stampMs : 0).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
     const lines = [
@@ -239,7 +239,7 @@ export function csvCell(value) {
     return `"${s.replace(/"/g, '""')}"`;
 }
 
-const KIND_WORD = { lent: 'Loan paid out', further: 'Further advance', repayment: 'Repayment' };
+const KIND_WORD = { lent: 'Loan disbursed', further: 'Additional advance', repayment: 'Repayment' };
 const fixed = (v) => num(v).toFixed(2);
 
 /**

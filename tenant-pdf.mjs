@@ -273,7 +273,7 @@ const dayOf = (iso, t) => { const ms = Date.parse(iso); return Number.isFinite(m
 const month = (ym, t) => { const m = /^(\d{4})-(\d{2})$/.exec(String(ym || '')); return m ? (t && t.lang === 'si' ? dayIn(`${m[1]}-${m[2]}-01`, t).replace(/ \d+$/, '') : fmtDay(`${m[1]}-${m[2]}-01`).slice(3)) : '-'; };
 const day = (iso, t) => dayIn(iso, t) || '-';
 const FREQ = { monthly: 'Monthly', quarterly: 'Every 3 months', annual: 'Yearly' };
-const STATUS = { settled: 'Settled', closed: 'Closed', open: 'Open' };
+const STATUS = { settled: 'Settled', closed: 'Closed', open: 'Active' };
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 /** The statement's own number: the same for the same moment, so two downloads of one statement agree. */
 const statementNo = (asOf) => `WF-${(Date.parse(asOf) || 0).toString(36).toUpperCase().slice(-6).padStart(6, '0')}`;
@@ -300,7 +300,7 @@ function header(c, st) {
     c.hline(PAGE.margin, right, top + 76, COLOR.accent, 0.6);
     c.y = top + 76 + 14;
     holder(c, st);
-    const intro = t('Every investment and loan your lender records for you is listed here under a reference code. Quote the code when you contact your lender or make a payment.');
+    const intro = t('Every investment and loan recorded for you by your lender is listed here under a reference code. Please quote the code when you contact your lender or make a payment.');
     for (const line of c.wrap(intro, false, 9.5, CONTENT_W)) { c.text(PAGE.margin, c.y, line, { size: 9.5, color: COLOR.mute }); c.y += c.lh(13); }
     c.y += 6;
 }
@@ -476,28 +476,28 @@ function investment(c, g, many) {
     detailsAndStatus(c, t('Investment details'), [
         [t('Reference'), g.ref],
         [t('Capital'), fmtMoney(g.capital, cur)],
-        [t('Rate'), t('{n}% a year', { n: num(g.ratePct) })],
-        [t('Interest paid'), t(FREQ[g.frequency] || FREQ.monthly)],
-        [t('Interest each time'), fmtMoney(g.interestPerPeriod, cur)],
-        [t('Started'), day(g.start, t)],
-        g.end ? [t('Ends'), day(g.end, t)] : null,
+        [t('Interest rate'), t('{n}% per year', { n: num(g.ratePct) })],
+        [t('Interest frequency'), t(FREQ[g.frequency] || FREQ.monthly)],
+        [t('Interest per payment'), fmtMoney(g.interestPerPeriod, cur)],
+        [t('Start date'), day(g.start, t)],
+        g.end ? [t('End date'), day(g.end, t)] : null,
     ].filter(Boolean), t('Account status'), [
         [t('Interest received so far'), fmtMoney(g.totalReceived, cur), COLOR.paid],
         [t('Payments received'), String(pays.length)],
-        g.nextInterest ? [t('Next interest due'), day(g.nextInterest.date, t)] : null,
+        g.nextInterest ? [t('Next interest payment'), day(g.nextInterest.date, t)] : null,
         g.nextInterest ? [t('Next interest amount'), fmtMoney(g.nextInterest.amount, cur)] : null,
     ].filter(Boolean));
     if (pays.length) {
         table(c, t('Interest received ({n})', { n: pays.length }), COLOR.paid,
-            [{ label: '#', w: 1 }, { label: t('For'), w: 3 }, { label: t('Received on'), w: 3 }, { label: t('Amount ({cur})', { cur }), w: 3, right: true }],
+            [{ label: '#', w: 1 }, { label: t('Month'), w: 3 }, { label: t('Received on'), w: 3 }, { label: t('Amount ({cur})', { cur }), w: 3, right: true }],
             pays.map((p, i) => [String(i + 1), month(p.month, t), day(p.date, t), { t: fmtMoney(p.amount, cur).slice(4), bold: true }]),
             [t('Total received ({n})', { n: pays.length }).toUpperCase(), '', '', fmtMoney(g.totalReceived, cur).slice(4)].map((x, i) => (i === 0 ? { t: x, bold: true } : x)));
         // the label of the total spans the first columns: only the first cell carries text
-    } else note(c, t('No payments recorded yet.'));
+    } else note(c, t('No payments have been recorded yet.'));
 }
 
-const LOAN_EVENT = { lent: 'Loan paid out', further: 'Further advance', repayment: 'Repayment' };
-const TAG = { lent: 'Paid out', further: 'Advance', repayment: 'Repaid' };
+const LOAN_EVENT = { lent: 'Loan disbursed', further: 'Additional advance', repayment: 'Repayment' };
+const TAG = { lent: 'Disbursed', further: 'Advance', repayment: 'Repaid' };
 const TAG_COLOR = { lent: COLOR.accent, further: COLOR.accent, repayment: COLOR.paid };
 
 function loan(c, g, many) {
@@ -509,25 +509,25 @@ function loan(c, g, many) {
     const events = Array.isArray(g.events) ? g.events : [];
     detailsAndStatus(c, t('Loan details'), [
         [t('Reference'), g.ref],
-        [t('Paid out'), fmtMoney(g.lent, cur)],
-        g.due ? [t('Expected back by'), day(g.due, t)] : null,
+        [t('Loan amount'), fmtMoney(g.lent, cur)],
+        g.due ? [t('Repayment due by'), day(g.due, t)] : null,
     ].filter(Boolean), t('Account status'), [
         [t('Repaid so far'), fmtMoney(g.repaid, cur), COLOR.paid],
-        [t('Outstanding'), fmtMoney(g.outstanding, cur), open ? COLOR.owed : COLOR.paid],
-        [t('Status'), t(STATUS[g.status] || 'Open'), open ? (late > 0 ? COLOR.owed : COLOR.accent) : COLOR.paid],
-        late > 0 ? [t('Overdue'), daysWord(t, late), COLOR.owed] : null,
+        [t('Outstanding balance'), fmtMoney(g.outstanding, cur), open ? COLOR.owed : COLOR.paid],
+        [t('Status'), t(STATUS[g.status] || 'Active'), open ? (late > 0 ? COLOR.owed : COLOR.accent) : COLOR.paid],
+        late > 0 ? [t('Overdue by'), daysWord(t, late), COLOR.owed] : null,
     ].filter(Boolean));
     if (events.length) {
         const repayments = events.filter((e) => e.kind === 'repayment');
         const repaidSum = repayments.reduce((a, e) => a + num(e.amount), 0);
-        table(c, t('Account movements ({n})', { n: events.length }), COLOR.accent,
+        table(c, t('Account transactions ({n})', { n: events.length }), COLOR.accent,
             [{ label: '#', w: 1 }, { label: t('Date'), w: 3 }, { label: t('Transaction'), w: 4 }, { label: t('Amount ({cur})', { cur }), w: 3, right: true }, { label: t('Balance ({cur})', { cur }), w: 3, right: true }, { label: t('Type'), w: 3, center: true }],
             events.map((e, i) => {
                 const tag = TAG[e.kind];
                 return [String(i + 1), day(e.date, t), LOAN_EVENT[e.kind] ? t(LOAN_EVENT[e.kind]) : '-', { t: fmtMoney(e.amount, cur).slice(4), bold: true }, { t: fmtMoney(e.balance, cur).slice(4), bold: true, fill: num(e.balance) > 0 ? COLOR.balance : null }, { t: tag ? t(tag).toUpperCase() : '-', color: TAG_COLOR[e.kind] || COLOR.mute, bold: true }];
             }),
             [{ t: t('Total repaid ({n})', { n: repayments.length }).toUpperCase(), bold: true }, '', '', fmtMoney(repaidSum, cur).slice(4), fmtMoney(g.outstanding, cur).slice(4), '']);
-    } else note(c, t('Nothing recorded yet.'));
+    } else note(c, t('No transactions have been recorded yet.'));
 }
 
 /**
@@ -582,7 +582,7 @@ function payment(c, st) {
     // the heading never sits alone at the foot of a page: it travels with its first account
     c.ensure(26 + 34 + 24 + accountLayout(c, lenders[0].accounts[0]).h + 8);
     sectionTitle(c, t('How to pay'));
-    const lead = t('Pay by bank transfer to the account below and put the reference of the record in the transfer. If the account details here look different from what your lender told you, check with your lender before sending money.');
+    const lead = t('Please pay by bank transfer to the account below and quote the reference of the record in the transfer. If these account details differ from what your lender told you, confirm with your lender before sending any money.');
     for (const line of c.wrap(lead, false, 9.5, CONTENT_W)) { c.ensure(14); c.text(PAGE.margin, c.y + 10, line, { size: 9.5, color: COLOR.mute }); c.y += c.lh(13); }
     c.y += 8;
     for (const l of lenders) {
@@ -602,7 +602,7 @@ function closing(c, st) {
     const t = c.t;
     const kinds = new Set((st.groups || []).map((g) => g.kind));
     const parts = [];
-    if (kinds.has('loan')) parts.push([t('Paid out').toUpperCase(), COLOR.accent, t('money lent')], [t('Repaid').toUpperCase(), COLOR.paid, t('money paid back')]);
+    if (kinds.has('loan')) parts.push([t('Disbursed').toUpperCase(), COLOR.accent, t('amount lent')], [t('Repaid').toUpperCase(), COLOR.paid, t('amount repaid')]);
     if (!parts.length) return;
     c.ensure(70);
     c.y += 4;
@@ -660,7 +660,7 @@ export function statementPdf(statement, { generatedAt, lang = 'en', shaper = nul
     const t = c.t;
     header(c, st);
     if (!groups.length) {
-        note(c, t('There is nothing to show yet. When your lender records something for you, it will appear here.'));
+        note(c, t('There is nothing to display yet. Records added by your lender will appear here.'));
     } else {
         summary(c, st);
         const inv = groups.filter((g) => g.kind === 'investment');
@@ -671,7 +671,7 @@ export function statementPdf(statement, { generatedAt, lang = 'en', shaper = nul
         closing(c, st);
     }
     if (st.truncated) note(c, t('This statement is long, so only the first part is shown.'));
-    notice(c, t('Figures are as recorded by your lender from the payments they have confirmed. This statement is for your own records and is not a substitute for your lender\'s own account. If something looks wrong, please contact your lender.'));
+    notice(c, t('Figures are as recorded by your lender from the payments they have confirmed. This statement is for your own records and is not a substitute for your lender\'s own account. If anything appears incorrect, please contact your lender.'));
 
     // footers, now that the page count is known
     const total = c.pages.length;
