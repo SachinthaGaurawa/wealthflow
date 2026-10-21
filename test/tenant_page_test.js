@@ -353,6 +353,20 @@ describe('what a person can do with the statement', () => {
         short.groups[1].events = long.groups[1].events.slice(0, 8);
         expect(find(statementView(doc, short), (e) => e.tag === 'button')).toHaveLength(0);
     });
+
+    it('scrolls sideways inside a named region a keyboard can reach, so a table wider than the screen can be read with the arrow keys', () => {
+        const withRows = structuredClone(base);
+        withRows.groups[1].events = Array.from({ length: 3 }, (_, i) => ({ date: `2026-09-0${i + 1}`, kind: 'repayment', amount: 100, balance: 300 - i * 100 }));
+        const frames = find(statementView(doc, withRows), (e) => e.attrs.class === 'tp-scroll');
+        expect(frames.length).toBeGreaterThan(0);
+        for (const f of frames) {
+            expect(f.attrs.role).toBe('region');
+            expect(f.attrs.tabindex).toBe('0');
+            const caption = find([f], (e) => e.tag === 'caption')[0];
+            expect(f.attrs['aria-label']).toBe(caption.textContent);              // the region says what it holds in the table's own words
+            expect(f.attrs['aria-label'].length).toBeGreaterThan(0);
+        }
+    });
 });
 
 describe('the logo, the holder and the note', () => {

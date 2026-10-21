@@ -227,12 +227,13 @@ export function initials(name) {
 /**
  * Cells are [text, alignRight, secondLine]: a second line under the first keeps a table of four things to three columns on a phone.
  * A table of more than TABLE_LIMIT rows shows the latest ones and puts the earlier ones behind "Show all"; the rows are
- * only hidden, never left out, so print and copy still get them all.
+ * only hidden, never left out, so print and copy still get them all. The frame scrolls sideways when the table is wider than the screen
+ * (a phone, a large text size, Sinhala), so it is a named region a keyboard can focus and arrow along.
  */
 function table(doc, caption, heads, rows, t = english) {
     const hide = rows.length > TABLE_LIMIT ? rows.length - TABLE_LIMIT : 0;
     const body = h(doc, 'tbody', {}, rows.map((r, i) => h(doc, 'tr', { hidden: i < hide, class: i < hide ? 'tp-early' : null }, r.map(([text, num, sub]) => h(doc, 'td', { class: num ? 'tp-num tp-amt' : null }, text, sub ? h(doc, 'span', { class: 'tp-sub', text: sub }) : null)))));
-    const scroll = h(doc, 'div', { class: 'tp-scroll' }, h(doc, 'table', {},
+    const scroll = h(doc, 'div', { class: 'tp-scroll', role: 'region', tabindex: '0', 'aria-label': caption }, h(doc, 'table', {},
         h(doc, 'caption', { text: caption }),
         h(doc, 'thead', {}, h(doc, 'tr', {}, heads.map(([label, num]) => h(doc, 'th', { scope: 'col', class: num ? 'tp-num' : null, text: label })))),
         body));
@@ -535,7 +536,7 @@ export function statementView(doc, statement, t = english, actions = null) {
 /**
  * @param {{doc:Document, root:Element, token:string, fetchImpl:Function, now?:()=>number, setTick?:Function, clearTick?:Function,
  *          lang?:'en'|'si', copyText?:(text:string)=>Promise<boolean>, saveFile?:(blob:Blob, name:string)=>void, print?:()=>void, later?:Function,
- *          sinceStart?:()=>number}} env
+ *          sinceStart?:()=>number, listenForCode?:(signal:AbortSignal)=>Promise<string|null>}} env
  */
 export function createPage(env) {
     const { doc, root, token, fetchImpl } = env;
@@ -549,10 +550,11 @@ export function createPage(env) {
     const saveFile = env.saveFile || (() => {});
     const printPage = env.print || (() => {});
     const shareFile = typeof env.shareFile === 'function' ? env.shareFile : null;       // 'shared' | 'cancelled' | 'unsupported'
+    const listenForCode = typeof env.listenForCode === 'function' ? env.listenForCode : null;       // the phone's own offer of the texted code (WebOTP); null where the browser has none
     const calm = () => { const w = doc.defaultView; return !!(w && typeof w.matchMedia === 'function' && w.matchMedia('(prefers-reduced-motion: reduce)').matches); };
     const jumpTo = env.jumpTo || ((id) => { const el = doc.getElementById ? doc.getElementById(id) : null; if (el) { if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: calm() ? 'auto' : 'smooth', block: 'start' }); if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } });
     const watchSections = typeof env.watchSections === 'function' ? env.watchSections : null;       // (ids, onActive) => stop: which section is on screen, for the section bar
-    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', theme: THEMES.includes(env.theme) ? env.theme : 'light', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', codeMessage: '', nicError: '', misses: 0, phone: '', slow: false, tick: null, hide: false, unwatch: null, els: {} };
+    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', theme: THEMES.includes(env.theme) ? env.theme : 'light', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', listen: null, codeMessage: '', nicError: '', misses: 0, phone: '', slow: false, tick: null, hide: false, unwatch: null, els: {} };
     let t = makeT(st.lang);
 
     /** One door to the server. With `file`, a PDF answer comes back as a blob (never parsed as JSON); everything else is JSON. */
@@ -647,6 +649,7 @@ export function createPage(env) {
 
     function mount(title, nodes, focus, { bar = [], wide = false } = {}) {
         stopTick();
+        stopListening();
         st.busy = false;
         if (st.unwatch) { st.unwatch(); st.unwatch = null; }
         const brand = brandEl(doc);
@@ -699,12 +702,37 @@ export function createPage(env) {
         showError(error ? t(error) : '');
     }
 
+    /** Stops waiting for the phone to hand over the code: the person typed it, asked for a new one, or left this screen. */
+    function stopListening() {
+        if (st.listen) { st.listen.abort(); st.listen = null; }
+    }
+
+    /**
+     * Where the browser can read the text for this page (Chrome on Android, from a text whose last line names this host), it asks the person
+     * once, in its own sheet; the code then fills the field and is checked as if it had been typed. Anywhere else, or if they decline, nothing
+     * changes: the field is a one-time-code field, so iPhone and others still offer the code on the keyboard, and typing always works.
+     */
+    async function listenForSms() {
+        stopListening();
+        if (!listenForCode || typeof AbortController !== 'function') return;
+        const ctl = new AbortController();
+        st.listen = ctl;
+        let code = null;
+        try { code = await listenForCode(ctl.signal); } catch (_) { code = null; }
+        if (st.listen !== ctl) return;                                         // a newer wait, a submit or another screen took over
+        st.listen = null;
+        if (st.screen !== 'code' || st.busy || !st.els.input || !/^\d{6}$/.test(String(code || ''))) return;
+        st.els.input.value = String(code);
+        const form = st.els.input.form;
+        if (form && typeof form.requestSubmit === 'function') form.requestSubmit(); else onVerify();
+    }
+
     function screenCode({ message = '', value = '' } = {}) {
         st.screen = 'code';
         st.els = {};
         st.verified = false;
         st.codeMessage = message;
-        const input = h(doc, 'input', { id: 'tp-code', name: 'code', class: 'tp-code', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', maxlength: '6', required: true, 'aria-describedby': 'tp-err', 'aria-label': t('6-digit verification code'), oninput: forgive });
+        const input = h(doc, 'input', { id: 'tp-code', name: 'code', class: 'tp-code', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', maxlength: '6', required: true, 'aria-describedby': 'tp-info tp-err', 'aria-label': t('6-digit verification code'), oninput: forgive });
         if (value) input.value = value;
         const verify = h(doc, 'button', { class: 'tp-btn', type: 'submit', id: 'tp-verify', text: t('Verify code') });
         const resend = h(doc, 'button', { class: 'tp-btn tp-ghost tp-quiet', type: 'button', id: 'tp-resend', disabled: true, onclick: onResend });
@@ -732,6 +760,7 @@ export function createPage(env) {
         };
         paint();
         st.tick = setTick(paint, 1000);
+        listenForSms();
     }
 
     /** A copy button was pressed: the text goes to the clipboard, and the person is told it worked (or that it did not). */
@@ -935,6 +964,7 @@ export function createPage(env) {
             st.codeExpiresAt = now() + (Number(res.body.expiresInSec) || 180) * 1000;
             showError('');
             showInfo(t('A new verification code has been sent. The previous code is no longer valid.'));
+            listenForSms();
             return;
         }
         showError(res.status === 0 ? t(COPY.OFFLINE) : describeFailure(res.status, res.body, t));
@@ -947,6 +977,7 @@ export function createPage(env) {
         if (!/^\d{6}$/.test(code)) { st.els.input.setAttribute('aria-invalid', 'true'); showError(t(COPY.BAD_CODE)); return; }
         st.els.input.removeAttribute('aria-invalid');
         showError('');
+        stopListening();
         busy(true, t('Verifying code...'));
         // a code is spent the moment it is accepted: if only the statement failed to arrive, the button asks for the statement again, not for a new code
         const res = st.verified ? { status: 200, body: { ok: true } } : await api('verify', { token, nic: st.nic, code });
@@ -977,6 +1008,7 @@ export function createPage(env) {
     /** Forget everything that was on the page. */
     function wipe() {
         stopTick();
+        stopListening();
         st.nic = '';
         st.verified = false;
         st.statement = null;
@@ -1094,6 +1126,15 @@ function browserEnv(win) {
             win.addEventListener('scroll', pick, { passive: true });
             return () => { io.disconnect(); win.removeEventListener('scroll', pick); };
         },
+        // the text-message code, offered by the phone itself where the browser can read it (WebOTP); declining or leaving is not an error
+        listenForCode: win.navigator && win.navigator.credentials && typeof win.navigator.credentials.get === 'function' && 'OTPCredential' in win
+            ? async (signal) => {
+                try {
+                    const got = await win.navigator.credentials.get({ otp: { transport: ['sms'] }, signal });
+                    return got && typeof got.code === 'string' ? got.code : null;
+                } catch (_) { return null; }
+            }
+            : null,
         // the share sheet, offered only where the browser can share a file (most phones); the person cancelling it is not an error
         shareFile: win.navigator && typeof win.navigator.share === 'function' && typeof win.navigator.canShare === 'function' && typeof win.File === 'function'
             ? async (blob, name) => {
