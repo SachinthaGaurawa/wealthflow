@@ -1175,10 +1175,26 @@ function browserEnv(win) {
     };
 }
 
+/**
+ * While the page is out of sight (the app switcher, another tab, a locked phone) nothing on it is drawn. A phone keeps a picture of the last
+ * screen an app showed, for the app switcher, and that picture should not hold a balance or a name. Best effort: the browser decides when it
+ * takes that picture, and this has not been tried on a real phone. Returns the function that stops watching.
+ */
+export function watchAway(win) {
+    const doc = win && win.document;
+    const el = doc && doc.documentElement;
+    if (!el || !el.classList || typeof doc.addEventListener !== 'function') return () => {};
+    const sync = () => el.classList.toggle('tp-away', doc.visibilityState === 'hidden');
+    doc.addEventListener('visibilitychange', sync);
+    sync();
+    return () => doc.removeEventListener('visibilitychange', sync);
+}
+
 export function boot(win) {
     const doc = win.document;
     const root = doc.getElementById('tp-root');
     if (!root) return null;
+    watchAway(win);
     const page = createPage({ doc, root, token: tokenFromPath(win.location.pathname), fetchImpl: (...a) => win.fetch(...a), ...browserEnv(win) });
     win.addEventListener('pagehide', () => page.wipe());
     win.addEventListener('pageshow', (e) => { if (e && e.persisted) page.reset(''); });

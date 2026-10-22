@@ -62,10 +62,26 @@ describe('the route', () => {
             expect(csp['frame-ancestors']).toBe("'none'");
             expect(csp['base-uri']).toBe("'none'");
             expect(csp['form-action']).toBe("'none'");
-            expect(h['Content-Security-Policy']).not.toMatch(/unsafe-|\*|https?:|data:.*script/);
+            expect(h['Content-Security-Policy']).not.toMatch(/unsafe-|\*|https?:/);
+            for (const [name, value] of Object.entries(csp)) if (name !== 'img-src') expect(value, `${name} lets data: in`).not.toMatch(/data:/);      // only the picture list may
+            for (const closed of ['object-src', 'manifest-src', 'worker-src', 'media-src', 'frame-src']) expect(csp[closed], closed).toBe("'none'");
+            expect(csp['require-trusted-types-for']).toBe("'script'");                      // a string handed to a script sink is refused by the browser
+            expect(csp['trusted-types']).toBe("'none'");                                    // and no policy can be created to let one through
             expect(h['Cache-Control']).toBe('no-store, max-age=0');
             expect(h['X-Robots-Tag']).toMatch(/noindex/);
+            expect(h['X-Frame-Options']).toBe('DENY');
+            expect(h['Referrer-Policy']).toBe('no-referrer');
+            expect(h['Cross-Origin-Opener-Policy']).toBe('same-origin');
+            expect(h['Cross-Origin-Resource-Policy']).toBe('same-origin');
+            expect(h['X-Permitted-Cross-Domain-Policies']).toBe('none');
+            for (const feature of ['camera', 'microphone', 'geolocation', 'payment', 'usb', 'display-capture', 'publickey-credentials-get']) expect(h['Permissions-Policy'], feature).toMatch(new RegExp(`(^|, )${feature}=\\(\\)(,|$)`));
+            expect(h['Permissions-Policy']).not.toMatch(/otp-credentials/);                // the phone's offer to fill the text-message code stays on
         }
+    });
+
+    it('is a private route in the API router: no CORS headers, no answer to a pre-flight, no internal error text', () => {
+        expect(ROUTER).toMatch(/PRIVATE_ROUTES = new Set\(\[[^\]]*'tenant-portal'/);
+        expect(ROUTER).toMatch(/if \(!isPrivate\) setCors\(res\)/);
     });
 
     it('seals the rate-limit counters too, written out and not left to the default', () => {

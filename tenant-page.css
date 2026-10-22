@@ -737,3 +737,6 @@ td.tp-num, th.tp-num { text-align: right; }
 .tp-plan-late { color: var(--red); font-weight: 650; margin: 8px 0 0; }
 .tp-plan .tp-small-btn { width: auto; min-height: 44px; margin-top: 12px; font-size: 15px; padding: 8px 14px; }
 @media print { .tp-plan { display: none; } }
+
+/* Out of sight (the app switcher, another tab, a locked phone): nothing is drawn, so the picture a phone keeps of the page holds no balance or name. */
+html.tp-away body > * { visibility: hidden; }

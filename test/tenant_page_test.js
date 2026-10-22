@@ -7,8 +7,9 @@
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 globalThis.__WF_TENANT_NO_BOOT = true;
-const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY, splashWait, splashEl, splashStage, phoneLabel, SPLASH_AFTER_MS, SPLASH_MIN_MS, SPLASH_SLOW_MS, STILL_AFTER } = await import('../tenant-page.js');
+const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY, splashWait, splashEl, splashStage, phoneLabel, watchAway, SPLASH_AFTER_MS, SPLASH_MIN_MS, SPLASH_SLOW_MS, STILL_AFTER } = await import('../tenant-page.js');
 const { makeT } = await import('../tenant-lang.js');
 
 class El {
@@ -472,5 +473,47 @@ describe('the balance card and the section bar', () => {
         const amounts = classes(statementView(doc, st, makeT('en')), 'tp-amt');
         expect(amounts.length).toBeGreaterThan(8);
         expect(classes(statementView(doc, st, makeT('en')), 'tp-item-amount')[0].attrs.class).toContain('tp-amt');
+    });
+});
+
+describe('the page while it is out of sight', () => {
+    // a document that only knows what watchAway asks of it
+    const fakeWin = (state = 'visible') => {
+        const classes = new Set();
+        const listeners = {};
+        const doc = {
+            visibilityState: state,
+            documentElement: { classList: { toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); return on; }, contains: (c) => classes.has(c) } },
+            addEventListener: (t, f) => { listeners[t] = f; },
+            removeEventListener: (t, f) => { if (listeners[t] === f) delete listeners[t]; },
+        };
+        return { win: { document: doc }, doc, classes, listeners, set: (v) => { doc.visibilityState = v; listeners.visibilitychange && listeners.visibilitychange(); } };
+    };
+
+    it('is marked away the moment it is hidden and clear the moment it is back', () => {
+        const w = fakeWin();
+        const stop = watchAway(w.win);
+        expect(w.classes.has('tp-away')).toBe(false);
+        w.set('hidden');
+        expect(w.classes.has('tp-away')).toBe(true);
+        w.set('visible');
+        expect(w.classes.has('tp-away')).toBe(false);
+        stop();
+        expect(w.listeners.visibilitychange).toBeUndefined();                       // and stops watching when told to
+    });
+
+    it('is already away if it is opened while hidden', () => {
+        const w = fakeWin('hidden');
+        watchAway(w.win);
+        expect(w.classes.has('tp-away')).toBe(true);
+    });
+
+    it('does nothing, and does not throw, where there is no document to watch', () => {
+        for (const win of [null, undefined, {}, { document: {} }, { document: { documentElement: {} } }]) expect(() => watchAway(win)()).not.toThrow();
+    });
+
+    it('is drawn as nothing by the stylesheet, for every child of the body', () => {
+        const css = readFileSync(new URL('../tenant-page.css', import.meta.url), 'utf8');
+        expect(css).toMatch(/html\.tp-away body > \* \{ visibility: hidden; \}/);
     });
 });

@@ -8,7 +8,7 @@
  * ===========================================================================*/
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { handlePortal, sameSite, readBody } from '../tenant-portal.js';
+import { handlePortal, sameSite, readBody, guardNote } from '../tenant-portal.js';
 import { portalSecret } from '../tenant-links.mjs';
 import { LIMITS } from '../tenant-portal.mjs';
 import zlib from 'node:zlib';
@@ -37,14 +37,15 @@ function deps(over = {}) {
     };
 }
 
-function call(d, { method = 'POST', headers = {}, body, cookie } = {}) {
+function call(d, { method = 'POST', headers = {}, body, cookie, pre = {} } = {}) {
     const req = {
         method, url: '/api/tenant-portal',
         headers: { 'content-type': 'application/json', host: 'wealthflow-personal.vercel.app', origin: 'https://wealthflow-personal.vercel.app', 'sec-fetch-site': 'same-origin', 'x-real-ip': '1.2.3.4', ...(cookie ? { cookie } : {}), ...headers },
         body,
     };
     const out = { headers: {}, statusCode: 0, text: '' };
-    const res = { setHeader: (k, v) => { out.headers[String(k).toLowerCase()] = v; }, end: (t) => { out.text = t; }, set statusCode(v) { out.statusCode = v; }, get statusCode() { return out.statusCode; } };
+    for (const [k, v] of Object.entries(pre)) out.headers[k.toLowerCase()] = v;                // what an earlier layer (the API router) had already put on the response
+    const res = { setHeader: (k, v) => { out.headers[String(k).toLowerCase()] = v; }, removeHeader: (k) => { delete out.headers[String(k).toLowerCase()]; }, end: (t) => { out.text = t; }, set statusCode(v) { out.statusCode = v; }, get statusCode() { return out.statusCode; } };
     // a PDF comes back as a Buffer, everything else as JSON text
     return handlePortal(req, res, d).then(() => ({ status: out.statusCode, headers: out.headers, json: out.text && !Buffer.isBuffer(out.text) ? JSON.parse(out.text) : null, file: Buffer.isBuffer(out.text) ? out.text : null, raw: out.text }));
 }
@@ -388,5 +389,129 @@ describe('speed: nobody waits for what does not change the answer', () => {
         await Promise.all(later);                                // must not throw
         const mirrored = [...ctx.fs.data.entries()].filter(([k]) => k.includes('/smsLog/otp-')).map(([, v]) => v);
         expect(mirrored.map((m) => m.status)).toEqual(['failed']);
+    });
+});
+
+describe('hardening: what a hostile caller can and cannot get from the door', () => {
+    const base = async () => { const ctx = {}; Object.assign(ctx, makeDb()); const token = await seed(ctx); return { ctx, token, ...deps({ ctx }) }; };
+
+    it('sends no CORS header whatever an earlier layer put on the response, and takes the router\'s own off', async () => {
+        const { d, token } = await base();
+        const pre = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '86400' };
+        for (const out of [await call(d, { pre, body: { action: 'request', token, nic: NIC } }), await call(d, { pre, method: 'GET' }), await call(d, { pre, body: 'nope' }), await call(d, { pre, headers: { origin: 'https://evil.example' }, body: { action: 'statement', token } })]) {
+            expect(Object.keys(out.headers).filter((h) => h.startsWith('access-control-'))).toEqual([]);
+        }
+    });
+
+    it('says on every answer that it cannot be framed, read by another site, kept, or run as a page', async () => {
+        const { d, token } = await base();
+        for (const out of [await call(d, { body: { action: 'request', token, nic: NIC } }), await call(d, { method: 'GET' }), await call(d, { body: { action: 'statement', token } }), await call(d, { headers: { 'sec-fetch-site': 'cross-site' }, body: {} })]) {
+            expect(out.headers['x-frame-options']).toBe('DENY');
+            expect(out.headers['cross-origin-resource-policy']).toBe('same-origin');
+            expect(out.headers['content-security-policy']).toBe("default-src 'none'; frame-ancestors 'none'; sandbox");
+            expect(out.headers['cache-control']).toBe('no-store, max-age=0');
+        }
+    });
+
+    it('puts the same on the PDF, which is a download and never a page', async () => {
+        const ctx = {}; Object.assign(ctx, makeDb());
+        const token = await seed(ctx);
+        const { d, gw } = deps({ ctx });
+        await call(d, { body: { action: 'request', token, nic: NIC } });
+        const v = await call(d, { body: { action: 'verify', token, nic: NIC, code: codeIn(gw.sent[0].message) } });
+        const cookie = String(v.headers['set-cookie']).split(';')[0];
+        const pdf = await call({ ...d, renderPdf: async () => Buffer.from('%PDF-1.4 test') }, { body: { action: 'pdf', token }, cookie });
+        expect(pdf.status).toBe(200);
+        expect(pdf.headers['content-type']).toBe('application/pdf');
+        expect(pdf.headers['content-disposition']).toMatch(/^attachment;/);
+        expect(pdf.headers['x-frame-options']).toBe('DENY');
+        expect(pdf.headers['cross-origin-resource-policy']).toBe('same-origin');
+        expect(pdf.headers['content-security-policy']).toContain('sandbox');
+    });
+
+    it('a flood of refusals leaves one line a minute, a count, and nothing about the caller', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const t = Date.parse('2030-01-01T00:00:00Z');
+        for (let i = 0; i < 500; i += 1) guardNote('test flood', t + i * 10);               // 500 refusals inside 5 s
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toBe('[WF-PORTAL-GUARD] refused: test flood (1 since the last note)');
+        guardNote('test flood', t + 61e3);                                                  // a minute on: one more line, saying how many were held back
+        expect(warn).toHaveBeenCalledTimes(2);
+        expect(warn.mock.calls[1][0]).toBe('[WF-PORTAL-GUARD] refused: test flood (500 since the last note)');
+        guardNote('another kind', t + 61e3);                                                // each kind has its own minute
+        expect(warn).toHaveBeenCalledTimes(3);
+    });
+
+    it('survives garbage: 700 random requests, never a crash, never a stack, never a pollution, always the safe headers', async () => {
+        let seedN = 20261022;                                                               // fixed, so a failure is the same failure next time
+        const rnd = () => { seedN = (seedN + 0x6D2B79F5) | 0; let t = Math.imul(seedN ^ (seedN >>> 15), 1 | seedN); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+        const pick = (list) => list[Math.floor(rnd() * list.length)];
+        const text = () => pick(['', ' ', 'a', '0', '000000', '123456', NIC, NIC.toLowerCase(), '198534000937', 'N1234567', '<script>alert(1)</script>', '\u0000', '\u202e', '\u{1F600}', 'ᱚ'.repeat(40), "' OR 1=1 --", '../../etc/passwd', '${7*7}', '{{7*7}}', 'x'.repeat(2500), '__proto__', 'constructor', 'null', 'undefined', 'NaN', '-1', '1e309', '9'.repeat(400)]);
+        const value = (depth = 0) => {
+            const k = Math.floor(rnd() * (depth > 2 ? 6 : 9));
+            if (k === 0) return text();
+            if (k === 1) return Math.floor((rnd() - 0.5) * 1e12);
+            if (k === 2) return rnd() < 0.5;
+            if (k === 3) return null;
+            if (k === 4) return pick([1e308, -1e308, 0, -0, 0.1]);
+            if (k === 5) return text();
+            if (k === 6) return Array.from({ length: Math.floor(rnd() * 5) }, () => value(depth + 1));
+            const o = {};
+            for (let i = 0, n = Math.floor(rnd() * 6); i < n; i += 1) o[pick(['action', 'token', 'nic', 'code', 'lang', 'x', '__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty'])] = value(depth + 1);
+            return o;
+        };
+        const ctx = {}; Object.assign(ctx, makeDb());
+        const token = await seed(ctx);
+        const { d } = deps({ ctx });
+        const before = Object.getOwnPropertyNames(Object.prototype).sort().join();
+        const seen = new Set();
+        for (let i = 0; i < 700; i += 1) {
+            const body = rnd() < 0.55
+                ? { action: pick(['request', 'verify', 'statement', 'pdf', 'logout', 'REQUEST', '', 'x', 7, null]), token: rnd() < 0.5 ? token : text(), nic: rnd() < 0.5 ? NIC : value(), code: pick(['246810', '000000', text(), value()]), lang: pick(['si', 'en', value()]) }
+                : value();
+            const out = await call(d, {
+                method: pick(['POST', 'POST', 'POST', 'POST', 'POST', 'GET', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH', 'TRACE', 'post', '', undefined]),
+                headers: {
+                    'x-real-ip': `10.${i % 250}.${Math.floor(i / 250)}.9`,                    // a fresh address each time, so the per-address limits do not hide the code behind them
+                    'content-type': pick(['application/json', 'application/json', 'application/json; charset=utf-8', 'APPLICATION/JSON', 'text/plain', '', 'application/json;;;', 'multipart/form-data']),
+                    origin: pick(['https://wealthflow-personal.vercel.app', 'https://wealthflow-personal.vercel.app', 'https://evil.example', 'null', '', 'https://wealthflow-personal.vercel.app:443']),
+                    'sec-fetch-site': pick(['same-origin', 'same-origin', 'cross-site', 'same-site', 'none', '']),
+                },
+                cookie: pick([undefined, undefined, '', 'wf_tp=', 'wf_tp=' + 'a'.repeat(5000), 'wf_tp=x.y', `wf_tp=${token}.${'b'.repeat(32)}`, 'a=b; wf_tp=;;;', '\u0000']),
+                body: rnd() < 0.8 ? body : JSON.stringify(body),
+            });
+            seen.add(out.status);
+            expect(out.status, `request ${i}`).not.toBe(500);
+            expect([200, 400, 401, 403, 405, 429, 503], `request ${i}`).toContain(out.status);
+            const wire = String(out.raw && !out.file ? out.raw : '');
+            expect(wire, `request ${i}`).not.toMatch(/node_modules|\bat [\w.<>]+ \(|\.m?js:\d+|Error:|firebase|firestore|TENANT_PORTAL|TEXTLK|stack/i);
+            if (out.json) expect(typeof out.json.ok, `request ${i}`).toBe('boolean');
+            expect(out.headers['x-frame-options'], `request ${i}`).toBe('DENY');
+            expect(out.headers['cache-control'], `request ${i}`).toBe('no-store, max-age=0');
+            expect(Object.keys(out.headers).filter((h) => h.startsWith('access-control-')), `request ${i}`).toEqual([]);
+        }
+        expect(Object.getOwnPropertyNames(Object.prototype).sort().join()).toBe(before);   // nothing the bodies carried reached the prototype
+        expect({}.polluted).toBeUndefined();
+        expect([...seen].length, 'the run reached several kinds of answer, not one').toBeGreaterThanOrEqual(4);
+    }, 60000);
+
+    it('forty guesses fired at one link at the same moment: no more than five are weighed, the rest meet the lock', async () => {
+        const ctx = {}; Object.assign(ctx, makeDb());
+        const token = await seed(ctx);
+        // Firestore runs transactions that touch the same document one after the other; this fake does not, so it is made to
+        const real = ctx.db.runTransaction.bind(ctx.db);
+        let queue = Promise.resolve();
+        ctx.db.runTransaction = (work) => { const run = queue.then(() => real(work)); queue = run.catch(() => {}); return run; };
+        const { d, gw } = deps({ ctx });
+        await call(d, { body: { action: 'request', token, nic: NIC } });
+        const right = codeIn(gw.sent[0].message);
+        const guesses = await Promise.all(Array.from({ length: 40 }, (_, i) => call(d, { headers: { 'x-real-ip': `172.16.0.${i + 1}` }, body: { action: 'verify', token, nic: NIC, code: String(100000 + i) } })));
+        const weighed = guesses.filter((g) => g.status === 401).length;
+        expect(weighed).toBeLessThanOrEqual(5);
+        expect(guesses.filter((g) => g.status === 429).length).toBe(40 - weighed);
+        expect(guesses.every((g) => !g.headers['set-cookie'])).toBe(true);
+        const late = await call(d, { headers: { 'x-real-ip': '172.16.1.1' }, body: { action: 'verify', token, nic: NIC, code: right } });
+        expect(late.status).toBe(429);                                                      // even the right code is no use once the link is locked
+        expect(late.headers['set-cookie']).toBeUndefined();
     });
 });

@@ -171,6 +171,42 @@ assert.equal(await page.title(), 'Your WealthFlow statement');
 await noOverflow('NIC form');
 await shot('1-nic');
 
+/* 1a. the page is served with its hardening headers, Trusted Types is enforced in it, and it draws nothing while it is out of sight --------- */
+{
+    const h = first.headers();
+    assert.equal(h['x-frame-options'], 'DENY');
+    assert.equal(h['referrer-policy'], 'no-referrer');
+    assert.equal(h['cross-origin-opener-policy'], 'same-origin');
+    assert.equal(h['cross-origin-resource-policy'], 'same-origin');
+    for (const f of ['camera', 'microphone', 'geolocation', 'payment', 'usb']) assert.match(h['permissions-policy'], new RegExp(`(^|, )${f}=\\(\\)(,|$)`), `${f} is switched off for this page`);
+    assert.match(h['content-security-policy'], /object-src 'none'.*require-trusted-types-for 'script'; trusted-types 'none'/);
+    // enforced for real, in a page of its own (so the refusal it reports is not counted as a problem of the page under test)
+    const probeCtx = await browser.newContext();
+    const probe = await probeCtx.newPage();
+    await probe.goto(`${base}/t/${TOKEN}`);
+    await probe.waitForSelector('#tp-nic');
+    const refused = await probe.evaluate(() => {
+        const out = {};
+        for (const [name, run] of [['innerHTML', () => { document.createElement('div').innerHTML = '<b>x</b>'; }], ['script src', () => { document.createElement('script').src = 'https://evil.example/x.js'; }]]) {
+            try { run(); out[name] = 'allowed'; } catch (e) { out[name] = e.name; }
+        }
+        out.policies = window.trustedTypes ? (() => { try { window.trustedTypes.createPolicy('x', { createHTML: (v) => v }); return 'created'; } catch (e) { return e.name; } })() : 'unsupported';
+        return out;
+    });
+    assert.deepEqual(refused, { innerHTML: 'TypeError', 'script src': 'TypeError', policies: 'TypeError' }, 'a string cannot reach a script sink, and no policy can be made to let one through');
+    await probeCtx.close();
+    // out of sight: nothing is drawn (so the phone's app-switcher picture holds nothing); back in sight: everything is
+    const visibility = () => page.evaluate(() => getComputedStyle(document.querySelector('#tp-root')).visibility);
+    const setSight = (state) => page.evaluate((v) => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v }); document.dispatchEvent(new Event('visibilitychange')); }, state);
+    assert.equal(await visibility(), 'visible');
+    await setSight('hidden');
+    assert.equal(await visibility(), 'hidden', 'nothing is drawn while the page is out of sight');
+    await setSight('visible');
+    assert.equal(await visibility(), 'visible', 'and it all comes back the moment the person does');
+    assert.equal(await page.inputValue('#tp-nic'), '', 'with nothing lost');
+    console.log('1a. hardening         -> frame/referrer/opener/resource/permissions headers, Trusted Types enforced (innerHTML, script src, policies refused), page blank while out of sight');
+}
+
 /* 2. a malformed NIC never reaches the server --------------------------------- */
 const before = sent.length;
 await page.fill('#tp-nic', '1234');
