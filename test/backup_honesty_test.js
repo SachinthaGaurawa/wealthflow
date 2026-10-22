@@ -1113,7 +1113,7 @@ describe('the scheduler runs the rule, not a stamp', () => {
         await p._checkAutoBackupDue();
         expect(rps(p.db)).toHaveLength(1);
         expect(p.calls, 'renderSettings() rebuilds the whole panel under whoever is using it; the card repaints itself').not.toContain('renderSettings');
-        expect(dom.info.innerHTML).toMatch(/Last Backup/);
+        expect(dom.info.innerHTML).toMatch(/Last backup/);
         expect(dom.section.line.className).toBe('backup-schedule');
         expect(dom.section.line.innerHTML).toMatch(/Next auto-backup: /);
     });

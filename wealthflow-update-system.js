@@ -499,7 +499,7 @@
         card.innerHTML =
             '<div class="settings-title" style="color:' + (avail ? '#10b981' : '#818cf8') + ';">Software Update</div>' +
             '<div class="setting-row">' +
-                '<div class="setting-info"><div class="setting-label">Current version</div><div class="setting-desc">WealthFlow Elite v' + _esc(installed) + (avail ? '' : ' · up to date') + '</div></div>' +
+                '<div class="setting-info"><div class="setting-label">Current version</div><div class="setting-desc">WealthFlow v' + _esc(installed) + (avail ? '' : ' · up to date') + '</div></div>' +
                 (avail
                     ? '<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">' + _typeBadge(_updateType(latest)) + '<span class="badge" style="background:rgba(16,185,129,0.15);color:#10b981;padding:6px 12px;border-radius:999px;font-weight:800;">v' + _esc(latest) + '</span></span>'
                     : '<span class="badge" style="background:var(--bg2);color:var(--text3);padding:6px 12px;border-radius:999px;">Latest</span>') +
@@ -519,11 +519,11 @@
                 '<button class="btn btn-secondary btn-sm" id="wfCheckBtn" onclick="wfUpdate.check()">Check now</button>' +
             '</div>' +
             '<div class="setting-row">' +
-                '<div class="setting-info"><div class="setting-label">System self-check</div><div class="setting-desc">Run a full diagnostic across the app\'s engines and report any issues.</div></div>' +
+                '<div class="setting-info"><div class="setting-label">System self-check</div><div class="setting-desc">Run a full check of the app and report any issues.</div></div>' +
                 '<button class="btn btn-secondary btn-sm" onclick="wfUpdate.diagnostics()">Run</button>' +
             '</div>' +
             '<div class="setting-row" style="border-top:1px solid var(--border);margin-top:8px;padding-top:12px;">' +
-                '<div class="setting-info"><div class="setting-label">Auto-install security updates</div><div class="setting-desc">Like Android: when ON, urgent security updates install automatically (still backup-first + rollback). Other updates always ask first.</div></div>' +
+                '<div class="setting-info"><div class="setting-label">Auto-install security updates</div><div class="setting-desc">When on, urgent security updates install automatically. A backup is taken first and the update is rolled back if it fails. Other updates always ask first.</div></div>' +
                 '<div class="toggle' + (_autoSecurityOn() ? ' on' : '') + '" id="wfAutoSec" role="switch" tabindex="0" aria-label="Auto-install security updates" aria-checked="' + (_autoSecurityOn() ? 'true' : 'false') + '" onclick="wfUpdate.setAutoSecurity(!this.classList.contains(\'on\'))"></div>' +
             '</div>' +
             '<div class="setting-row">' +
@@ -554,7 +554,7 @@
         try {
             const sv = document.getElementById('wfSbVer');
             if (sv) {
-                const label = 'WealthFlow v' + (_installedVersion() || CURRENT_VERSION) + ' · Infinity Engine';
+                const label = 'WealthFlow v' + (_installedVersion() || CURRENT_VERSION);
                 if (sv.textContent !== label) sv.textContent = label;
             }
         } catch (_) {}
@@ -683,10 +683,10 @@
     function _generateEula(version) {
         const today = window.WFWhen.today();
         return (
-'WEALTHFLOW ELITE — SOFTWARE UPDATE & END-USER LICENSE AGREEMENT\n' +
+'WEALTHFLOW — SOFTWARE UPDATE & END-USER LICENSE AGREEMENT\n' +
 'Version ' + version + ' · Effective ' + today + '\n' +
 '\n' +
-'1. ACCEPTANCE. By tapping "I Agree" you consent to install WealthFlow Elite ' +
+'1. ACCEPTANCE. By tapping "I Agree" you consent to install WealthFlow ' +
 'v' + version + ' on this device and to the terms below.\n' +
 '\n' +
 '2. WHAT THIS UPDATE DOES. It replaces the application files cached on this ' +
@@ -716,7 +716,7 @@
 'remains active and your data is restored from the pre-update backup.\n' +
 '\n' +
 'By continuing, you acknowledge you have read and agree to this Agreement for ' +
-'WealthFlow Elite v' + version + '.\n'
+'WealthFlow v' + version + '.\n'
         );
     }
 
@@ -846,8 +846,8 @@
             try { localStorage.removeItem(LS_PENDING); } catch (_) {}
             try {
                 if (typeof window.notify === 'function') {
-                    window.notify('Update could not be downloaded — you are still on ' + CURRENT_VERSION
-                        + '. Nothing was changed. Try again when you have a connection.', 'error');
+                    window.notify('The update could not be downloaded. You are still on ' + CURRENT_VERSION
+                        + ' and nothing was changed. Try again when you have a connection.', 'error');
                 }
             } catch (_) {}
             return { ok: false, reason: 'no-files-downloaded', fetched: 0, total: _dl.total };
@@ -889,11 +889,11 @@
         notes.sections.forEach(s => s.items.forEach(it => items.push({ t: s.title, v: it, sec: !!s.security })));
         const list = items.slice(0, 8).map(o =>
             '<div style="display:flex;gap:9px;margin-bottom:8px;font-size:13px;line-height:1.5;color:var(--text,#e6e7eb);">' +
-            '<span style="color:' + (o.sec ? '#f59e0b' : '#10b981') + ';font-weight:800;min-width:54px;">' + _esc(o.t) + '</span>' +
+            '<span style="color:' + (o.sec ? '#f59e0b' : '#10b981') + ';font-weight:800;flex:none;">' + _esc(o.t) + '</span>' +
             '<span>' + _esc(o.v) + '</span></div>').join('');
         ov.innerHTML = _sheet(
             'Welcome to v' + _esc(installed),
-            notes.headline ? _esc(notes.headline) : 'Your app has been updated',
+            notes.headline ? _esc(notes.headline) : 'WealthFlow has been updated',
             list,
             '<button class="btn btn-primary" style="width:100%;" onclick="wfUpdate._closePost()">Return to Dashboard</button>'
         );
@@ -1700,8 +1700,8 @@
             // into a device that believed it was current and stopped asking.
             try {
                 if (typeof window.notify === 'function') {
-                    window.notify('The update to ' + _settled.target + ' did not complete — you are still on '
-                        + _settled.running + '. It will be offered again.', 'warn');
+                    window.notify('The update to ' + _settled.target + ' did not complete. You are still on '
+                        + _settled.running + ', and it will be offered again.', 'warn');
                 }
             } catch (_) {}
         }

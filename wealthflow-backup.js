@@ -688,7 +688,7 @@ export function describeBackup({ freq, lastGoodMs, rp, drive, attempt, now = Dat
     const scheduled = freq === 'daily' || freq === 'weekly' || freq === 'monthly';
     if (!lastGoodMs) {
         worse('bad');
-        lines.push({ level: 'bad', text: 'No backup exists yet. Tap Backup Now to make the first one.' });
+        lines.push({ level: 'bad', text: 'No backup exists yet. Tap Back up now to make the first one.' });
     } else if (scheduled && now - lastGoodMs > staleAfterMs(freq)) {
         worse('bad');
         lines.push({ level: 'bad', text: 'The newest backup is older than the ' + freq + ' schedule allows. It will be retried; if this stays, see the line below.' });
