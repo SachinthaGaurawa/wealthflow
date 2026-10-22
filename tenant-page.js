@@ -427,26 +427,17 @@ export function brandEl(doc) {
 }
 
 /**
- * The loading screen, in WealthFlow's own loading look on white: the app tile with a gold ring round it, the name, "Infinity Engine", a gold bar
- * and one line saying what is happening. The same markup is written into tenant.html, so the first thing a person sees is not an empty page
- * while this file is still downloading; this builds it again only when the page needs it and it is not there. Nothing in it is a promise the
- * page does not keep: the bar is not a made-up percentage but stands at three real moments (the page drawn, this script running, the answer
- * in; see splashStage), and the line under it is the page's actual state.
+ * The loading screen: the mark, the name, a thin bar that runs and one line saying what is happening. The same markup is written into
+ * tenant.html, so the first thing a person sees is not an empty page while this file is still downloading; this builds it again only when the
+ * page needs it and it is not there. Nothing in it is a promise the page does not keep: the bar is indeterminate on purpose (a made-up
+ * percentage would be a lie), and the line under it is the page's actual state.
  */
 export function splashEl(doc) {
     return h(doc, 'div', { class: 'tp-splash', id: 'tp-splash', role: 'status' },
-        h(doc, 'div', { class: 'tp-splash-mark', 'aria-hidden': 'true' }, h(doc, 'img', { class: 'tp-splash-logo', src: '/assets/wf-mark.svg', alt: '', width: '112', height: '112' })),
+        h(doc, 'div', { class: 'tp-splash-mark', 'aria-hidden': 'true' }, h(doc, 'img', { class: 'tp-splash-logo', src: '/tenant-logo.png', alt: '', width: '72', height: '72' })),
         h(doc, 'h1', { class: 'tp-splash-name', text: 'WealthFlow' }),
-        h(doc, 'p', { class: 'tp-splash-sub', 'aria-hidden': 'true', text: 'Infinity Engine' }),
         h(doc, 'div', { class: 'tp-splash-bar', 'aria-hidden': 'true' }, h(doc, 'span')),
         h(doc, 'p', { class: 'tp-splash-status' }));
-}
-
-/** Moves the loading screen's bar to a real milestone: 1 the page is drawn (how it starts), 2 this script is running, 3 the answer is in. */
-export function splashStage(box, stage) {
-    if (!box || !box.classList) return;
-    box.classList.toggle('tp-p2', stage === 2);
-    box.classList.toggle('tp-p3', stage >= 3);
 }
 
 /** One bank account, with a copy button on the number (the thing that gets typed wrongly) and one for the lot. */
@@ -1064,7 +1055,6 @@ export function createPage(env) {
         // the static page's "reload this page" line is for a script that never ran; this one is running
         const stuck = typeof box.querySelector === 'function' ? box.querySelector('.tp-splash-stuck') : null;
         if (stuck) stuck.remove();
-        splashStage(box, 2);
         const say = () => {
             const line = typeof box.querySelector === 'function' ? box.querySelector('.tp-splash-status') : null;
             if (line) line.textContent = st.slow ? t('This is taking longer than usual. Thank you for your patience.') : t('Preparing your secure page');
@@ -1083,7 +1073,6 @@ export function createPage(env) {
         screenLoading();
         const got = await api('statement', { token });
         if (st.screen !== 'loading') return;                       // the person got ahead of it
-        splashStage(typeof root.querySelector === 'function' ? root.querySelector('.tp-splash') : null, 3);
         // a loader that flashes is worse than none: once the loading screen has been seen it stays a moment longer, then the next screen takes its place
         const hold = splashWait(sinceStart());
         if (hold > 0) { await new Promise((resolve) => later(resolve, hold)); if (st.screen !== 'loading') return; }
