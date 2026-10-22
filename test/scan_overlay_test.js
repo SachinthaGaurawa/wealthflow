@@ -209,13 +209,13 @@ describe('the scanner pipeline', () => {
          * a migration that replaced twelve distinct marks with twelve identical
          * ones. Naming them is the only thing that does. */
         for (const [text, icon] of [
-            ['Optimizing Image…', 'camera'],
-            ['AI Vision Analyzing…', 'bot'],
-            ['Deep Scanning Receipt…', 'scan'],
-            ['Processing Results…', 'chartLine'],
-            ['Quick AI Retry…', 'sparkles'],
-            ['Cloud OCR API…', 'cloud'],
-            ['Tesseract OCR Engine…', 'fileText'],
+            ['Preparing the image…', 'camera'],
+            ['Analysing with AI…', 'bot'],
+            ['Scanning the receipt…', 'scan'],
+            ['Processing the results…', 'chartLine'],
+            ['Retrying with AI…', 'sparkles'],
+            ['Reading with cloud OCR…', 'cloud'],
+            ['Reading on this device…', 'fileText'],
             ['Writing notes…', 'edit'],
         ]) {
             const hit = calls.find((c) => c.includes(text));

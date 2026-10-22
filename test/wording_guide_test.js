@@ -40,6 +40,10 @@ const BANNED = [
     [/Please fill required fields|Fill required fields/, 'a form error names the missing fields: "Add the loan name, bank and amount."'],
     [/TARGET ACHIEVED|Congratulations!|Amazing!/, 'celebration shouting; say what happened, calmly'],
     [/MONTHLY INSTALLMENT/, 'no capitals for emphasis; spell it "instalment"'],
+    [/Debt Demolisher/, 'the screen is the Debt Payoff Planner'],
+    [/Triple-Engine/, 'brand fluff and a provider list that goes out of date'],
+    [/AI Vision —|TF\.js Image Enhancement|Tesseract OCR Engine/, 'say what the scan does, not which library does it'],
+    [/best-friend advisor|or just chat/, 'the advisor greets calmly and says what it does'],
 ];
 
 const SOURCES = APP_FILES.map((file) => [file, visibleSource(file)]);

@@ -75,12 +75,12 @@ describe('the Debt Demolisher screen', () => {
         for (const [text, icon] of [
             ['Interactive Payoff Simulator', 'settings'],
             ['Your Accelerated Payoff Plan', 'target'],
-            ['Your Personalized Payoff Plan', 'target'],
+            ['Your Payoff Plan', 'target'],
             ['Accelerated Payoff', 'trendUp'],
             ['Active Debt Account', 'bank'],
             ['AI Debt Strategist', 'bot'],
             ['Generate Deep AI Strategy', 'sparkles'],
-            ['How to Use Debt Demolisher', 'info'],
+            ['How to use the Debt Payoff Planner', 'info'],
             ['Recommendation:', 'thumbsUp'],
             ['TARGET', 'target'],
         ]) {
@@ -97,7 +97,7 @@ describe('the Debt Demolisher screen', () => {
     });
 
     it('keeps the debt-free empty state, with an icon rather than a glyph', () => {
-        const line = BODY.split('\n').find((l) => l.includes("'Debt Free!'"));
+        const line = BODY.split('\n').find((l) => l.includes("'Debt free'"));
         expect(line, 'the empty state is gone').toBeTruthy();
         expect(line, 'emptyState takes its icon as an argument, so _ic() is called, not interpolated')
             .toContain("emptyState(_ic('trophy')");
