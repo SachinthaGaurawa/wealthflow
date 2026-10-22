@@ -141,8 +141,8 @@ describe('the Paid-from choice', () => {
 
 describe('the prompt says what each choice does', () => {
     it('offers the two choices in plain words, with a hint that says how the payment is counted', () => {
-        expect(html).toMatch(/<label class="fl">How did you pay this installment\?<\/label>/);
-        expect(html).toContain('Choose one so this installment is counted only once.');
+        expect(html).toMatch(/<label class="fl">How did you pay this instalment\?<\/label>/);
+        expect(html).toContain('Choose one so this instalment is counted only once.');
         expect(html).toContain('data-via="bank">My bank account</button>');
         expect(html).toContain('data-via="other">Cash / somewhere else</button>');
         expect(html).toContain('Not on your bank statements, so this loan counts it here — once.');

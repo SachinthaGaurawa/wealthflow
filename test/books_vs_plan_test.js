@@ -217,7 +217,7 @@ describe('the dashboard reads the books from one place', () => {
     it('renderDash takes its months, totals, unpaid note and breakdown from _wfYearBooks, and names the unpaid installments under Year Expenses', () => {
         const dashFn = html.slice(html.indexOf('function renderDash()'), html.indexOf('function renderUpcoming()'));
         expect(dashFn).toContain('_wfYearBooks(year)');
-        expect(dashFn).toMatch(/yrLoanUnpaid > 0[\s\S]{0,160}of loan installments due, not marked paid/);
+        expect(dashFn).toMatch(/yrLoanUnpaid > 0[\s\S]{0,160}of loan instalments due, not marked paid/);
         expect(dashFn).not.toContain('_allExp.filter(e => (e.month || (e.date');   // the breakdown no longer reads the expenses list alone
     });
 });

@@ -112,7 +112,7 @@ const sheet = await page.evaluate(() => ({
     vh: innerHeight,
     small: [...document.querySelectorAll('.wf-item, .wf-quick button, .wf-signout')].filter((e) => e.getBoundingClientRect().height < 44).length,
 }));
-check(sheet.items.some((t) => /CC Installments/.test(t)) && sheet.items.some((t) => /Settings/.test(t)), `More should list the other screens, got ${JSON.stringify(sheet.items)}`);
+check(sheet.items.some((t) => /CC Instalments/.test(t)) && sheet.items.some((t) => /Settings/.test(t)), `More should list the other screens, got ${JSON.stringify(sheet.items)}`);
 check(sheet.groups.includes('Finance') && sheet.groups.includes('Tools'), 'More should keep the sidebar\'s groups');
 check(!sheet.items.some((t) => /^(Loans|Bank Loans)$/.test(t)), 'screens already in the tab bar are not repeated in More');
 check(sheet.h <= sheet.vh * 0.9, 'the sheet must leave the top of the screen visible');
@@ -123,7 +123,7 @@ await page.waitForTimeout(350);
 check(!(await page.evaluate(() => document.getElementById('wfSheetOv').classList.contains('open'))), 'Escape should close the sheet');
 await page.locator('.wf-tab[data-more]').click();
 await page.waitForSelector('#wfSheetOv.open');
-await page.locator('.wf-item', { hasText: 'CC Installments' }).click();
+await page.locator('.wf-item', { hasText: 'CC Instalments' }).click();
 await page.waitForTimeout(450);
 check((await activePage()) === 'page-ccinstall', 'choosing an item in More should open that screen');
 check((await page.locator('.wf-tab[data-more]').getAttribute('aria-current')) === 'page', 'More should be current while on a screen that lives in it');

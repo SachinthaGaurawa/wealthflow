@@ -37,6 +37,9 @@ const BANNED = [
     [/Restore Data Protocol|Restore Vault/, 'say what it does: "Restore data"'],
     [/Dynamic Soundscapes|luxury (UI|vibration|PDF)/i, 'marketing language, not a description'],
     [/Keep pushing|Feel that buzz|paste it to me/i, 'casual or developer-facing copy in a user message'],
+    [/Please fill required fields|Fill required fields/, 'a form error names the missing fields: "Add the loan name, bank and amount."'],
+    [/TARGET ACHIEVED|Congratulations!|Amazing!/, 'celebration shouting; say what happened, calmly'],
+    [/MONTHLY INSTALLMENT/, 'no capitals for emphasis; spell it "instalment"'],
 ];
 
 const SOURCES = APP_FILES.map((file) => [file, visibleSource(file)]);

@@ -20,8 +20,10 @@ public pages. This is the standard the wording audit applied and the rules
 
 ## Form
 
-- Sentence case for headings, buttons, labels and toasts ("Add cheque", not
-  "Add Cheque"). Proper names keep their capitals (Google Drive, Statement Sync).
+- Messages (toasts, confirmations, errors, empty states, descriptions) and Settings
+  rows use sentence case. Page names, modal titles, form labels and buttons keep the
+  app's established Title Case ("Add Cheque", "Save Loan"), so a form reads the same
+  from top to bottom. Proper names keep their capitals (Google Drive, Statement Sync).
 - A toast is a full sentence and ends with a full stop. It names the thing:
   "Loan deleted.", not "Deleted".
 - Use the uncontracted form ("could not", "is not", "cannot") in app messages. It
