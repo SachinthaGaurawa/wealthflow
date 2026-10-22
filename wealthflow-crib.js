@@ -894,8 +894,8 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
 
     function _reanalyse(id) {
         var host = document.getElementById('cribContent');
-        _notify('\uD83E\uDDE0 Re-analysing in ' + _langName() + '\u2026', 'info');
-        reanalyse(id).then(function () { _renderCribUI(id); }).catch(function (e) { _notify('Re-analyse failed: ' + ((e && e.message) || 'error'), 'error'); });
+        _notify('Re-analysing in ' + _langName() + '\u2026', 'info');
+        reanalyse(id).then(function () { _renderCribUI(id); }).catch(function (e) { _notify('The re-analysis did not finish: ' + ((e && e.message) || 'unknown error') + '.', 'error'); });
     }
 
     function _export(id) {

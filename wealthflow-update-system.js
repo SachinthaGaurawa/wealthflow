@@ -923,7 +923,7 @@
             _notify('Update available — v' + _latestVersion() + ' is ready to install.', 'success');
             openUpdateSection();
         } else {
-            _notify('You\'re on the latest version (v' + (_installedVersion() || CURRENT_VERSION) + ').', 'info');
+            _notify('You are on the latest version (v' + (_installedVersion() || CURRENT_VERSION) + ').', 'info');
         }
     }
 
@@ -1848,7 +1848,7 @@
         // make sure the device is on an OLDER version than the simulated one
         try { localStorage.setItem(LS_INSTALLED, CURRENT_VERSION); } catch (_) {}
         _refreshDashboardPill(); _renderSettingsCard();
-        _notify('Test update ' + v + ' is now available — check the Dashboard or Settings.', 'success');
+        _notify('A test update (' + v + ') is now available. Check the Dashboard or Settings.', 'success');
         openUpdateSection();
     }
 

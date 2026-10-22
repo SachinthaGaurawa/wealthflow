@@ -64,13 +64,13 @@ describe('vercel.json serves the swapped layout', () => {
 });
 
 describe('the public pages', () => {
-    it('the home page names the app, links the policy and terms, and offers Login / Register at /app', () => {
+    it('the home page names the app, links the policy and terms, and offers Sign in at /app', () => {
         expect(LANDING).toContain(LANDING_MARKER);
         expect(LANDING).toMatch(/<title>[^<]*WealthFlow[^<]*<\/title>/);
         expect(LANDING).toContain('href="/privacy"');
         expect(LANDING).toContain('href="/terms"');
-        expect(LANDING).toMatch(/<a[^>]+href="\/app"[^>]*>\s*Login \/ Register/);
-        for (const feature of ['Autonomous email sync', 'Parallel AI Matrix', 'DSCR calculator']) expect(LANDING).toContain(feature);
+        expect(LANDING).toMatch(/<a[^>]+href="\/app"[^>]*>\s*Sign in/);
+        for (const feature of ['Autonomous email sync', 'Cross-checked by several AIs', 'DSCR calculator']) expect(LANDING).toContain(feature);
         expect(LANDING).toContain('https://www.wealthflow.lk/');
     });
 

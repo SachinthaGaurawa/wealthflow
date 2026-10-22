@@ -827,7 +827,7 @@ export function boot(win) {
         function runImport() {
             const picks = (st.imp ? st.imp.rows : []).filter((x) => x.on && x.numbers.length).map((r) => { const n = r.numbers[r.pick] || r.numbers[0]; return { name: r.name || n.pretty, phone: n.e164, country: n.iso }; });
             const { added, duplicates, failed } = People.addPeople(store(), picks, {});
-            toast('Added ' + plural(added, 'person', 'people') + (duplicates ? ' (' + duplicates + ' already in your list)' : '') + (failed ? ', ' + failed + ' could not be added' : ''), added ? 'success' : 'info');
+            toast('Added ' + plural(added, 'person', 'people') + (duplicates ? ' (' + duplicates + ' already in your list)' : '') + (failed ? ', ' + failed + ' could not be added' : '') + '.', added ? 'success' : 'info');
             st.view = 'list'; st.imp = null; render();
         }
 
@@ -861,13 +861,13 @@ export function boot(win) {
             const stamp = new Date().toISOString();
             if (st.id) {
                 const prev = list.find((a) => a.id === st.id);
-                if (!prev) { toast('That account is no longer there', 'error'); st.view = 'list'; render(); return; }
+                if (!prev) { toast('That account is no longer there.', 'error'); st.view = 'list'; render(); return; }
                 sx.set(Pay.PAY_KEY, list.map((a) => (a.id === st.id ? { ...a, ...clean.fields, noteSi: clean.fields.noteSi || '', updatedAt: stamp } : a)));
             } else {
-                if (list.length >= Pay.LIMITS.accounts) { toast('You can keep up to ' + Pay.LIMITS.accounts + ' accounts', 'error'); return; }
+                if (list.length >= Pay.LIMITS.accounts) { toast('You can keep up to ' + Pay.LIMITS.accounts + ' accounts.', 'error'); return; }
                 sx.set(Pay.PAY_KEY, [...list, { ...clean.fields, id: People.defaultId(), createdAt: stamp, updatedAt: stamp }]);
             }
-            toast('Bank account saved', 'success');
+            toast('Bank account saved.', 'success');
             st.view = 'list'; st.id = ''; st.draft = null; st.errors = {}; st.askDelete = false;
             render();
         }
@@ -891,7 +891,7 @@ export function boot(win) {
                 case 'import': {
                     const onCards = (cards, source) => startImport(cards, source || 'your contacts');
                     if (People.contactPickerSupported(win)) {
-                        People.pickContacts(win, { multiple: true }).then((picked) => { if (picked.length) onCards(picked, 'your contacts'); else toast('No contacts were chosen', 'info'); })
+                        People.pickContacts(win, { multiple: true }).then((picked) => { if (picked.length) onCards(picked, 'your contacts'); else toast('No contacts were chosen.', 'info'); })
                             .catch((err) => { toast((err && err.userMessage) || 'Could not open your contacts. Choose a file or paste them instead.', 'info'); openContactSource({ multiple: true, onCards }); });
                     } else openContactSource({ multiple: true, onCards });
                     break;
@@ -904,7 +904,7 @@ export function boot(win) {
                 case 'acc-cancel': st.view = 'list'; st.id = ''; st.draft = null; st.errors = {}; st.askDelete = false; render(); break;
                 case 'acc-save': saveAccount(); break;
                 case 'acc-del': st.draft = { bank: read('_pa_bank'), holder: read('_pa_holder'), number: read('_pa_number'), branch: read('_pa_branch'), swift: read('_pa_swift'), note: read('_pa_note'), noteSi: read('_pa_noteSi'), showTo: read('_pa_show'), active: !!(body.querySelector('#_pa_active') || {}).checked }; st.askDelete = true; render(); break;
-                case 'acc-delgo': { const sx = store(); sx.set(Pay.PAY_KEY, Pay.listAccounts(sx.get(Pay.PAY_KEY)).filter((x) => x.id !== id)); toast('Bank account deleted', 'success'); st.view = 'list'; st.id = ''; st.draft = null; st.askDelete = false; render(); break; }
+                case 'acc-delgo': { const sx = store(); sx.set(Pay.PAY_KEY, Pay.listAccounts(sx.get(Pay.PAY_KEY)).filter((x) => x.id !== id)); toast('Bank account deleted.', 'success'); st.view = 'list'; st.id = ''; st.draft = null; st.askDelete = false; render(); break; }
                 default: break;
             }
         });
@@ -1011,7 +1011,7 @@ export function boot(win) {
         else if (res.updated) {
             const n = res.siblings.loans + res.siblings.investments;
             toast(res.person.name + '’s saved details updated' + (n ? ' and carried to ' + plural(n, 'other loan or investment', 'other loans and investments') : ''), 'success');
-        } else if (res.matched) toast('Linked to ' + res.person.name + ' in your people list', 'success');
+        } else if (res.matched) toast('Linked to ' + res.person.name + ' in your people list.', 'success');
     }
 
     /* ── one set of listeners for every form on the page ── */

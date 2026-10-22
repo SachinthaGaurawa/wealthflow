@@ -1,8 +1,8 @@
 {
   "id": "/?source=pwa",
-  "name": "WealthFlow Elite — Personal Finance Engine",
+  "name": "WealthFlow: Personal Finance",
   "short_name": "WealthFlow",
-  "description": "Elite Sri Lankan personal finance system with manual bank-SMS classifier, 250+ merchant intelligence DB, AI advisor, smart notifications, and 3D cash flow visualization.",
+  "description": "A personal finance app for Sri Lanka. Track income, loans, credit cards and expenses, sort bank SMS messages and statements, and get reminders and advice from an AI advisor.",
   "start_url": "/app?source=pwa",
   "scope": "/",
   "display": "standalone",

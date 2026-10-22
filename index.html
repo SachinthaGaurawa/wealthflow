@@ -6832,17 +6832,17 @@
     <div class="mo" id="mdExport">
         <div class="md md-sm" style="border: 1px solid var(--accent); box-shadow: 0 0 40px rgba(212,175,55,0.1);">
             <div class="md-hdr">
-                <div class="md-title" style="color:var(--accent);">@sparkles@ Export Elite Report</div><button class="md-x" aria-label="Close"
+                <div class="md-title" style="color:var(--accent);">@sparkles@ Export Report</div><button class="md-x" aria-label="Close"
                     onclick="closeModal('mdExport')"><i data-wfi="x"></i></button>
             </div>
-            <p style="font-size:13px;color:var(--text2);margin-bottom:16px;">Generate a highly professional, bank-grade
-                statement for your business or personal records.</p>
+            <p style="font-size:13px;color:var(--text2);margin-bottom:16px;">Create a statement of your income, loans and expenses for
+                one month, or save a full copy of your data.</p>
 
             <div class="fg"><label class="fl">Export Format</label>
                 <select class="fs" id="expFormat" onchange="toggleExportOptions()">
-                    <option value="pdf">Elite Private PDF Statement (Premium)</option>
-                    <option value="csv">Excel / CSV Report (Analytics)</option>
-                    <option value="json">Raw Data JSON (Local Backup)</option>
+                    <option value="pdf">PDF Statement</option>
+                    <option value="csv">Spreadsheet (CSV)</option>
+                    <option value="json">Data Backup File</option>
                 </select>
             </div>
 
@@ -11865,7 +11865,7 @@ Be conversational and precise.`;
                     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
                     const itemList = result.items && result.items.length ? ` · ${result.items.slice(0, 4).join(', ')}` : '';
                     _hideScanOverlay();
-                    notify(`Scanned in ${elapsed}s · ${result.vendor || 'Receipt'} — LKR ${fmtN(result.amount || 0)}${itemList}`, 'success');
+                    notify(`Scanned in ${elapsed}s: ${result.vendor || 'Receipt'}, LKR ${fmtN(result.amount || 0)}${itemList}.`, 'success');
                 } else {
                     throw new Error('AI could not extract valid amount');
                 }
@@ -11941,7 +11941,7 @@ Be conversational and precise.`;
                                     const ocrStr = 'OCR: ' + ocrText.substring(0, 100).replace(/\n/g, ' ');
                                     notes.value = _replaceScanNote(notes.value, ocrStr);
                                 }
-                                notify(`Scanned in ${elapsed}s via Tesseract OCR · ${ocrResult.vendor || 'Receipt'}`, 'success');
+                                notify(`Scanned on this device in ${elapsed}s: ${ocrResult.vendor || 'Receipt'}.`, 'success');
                                 e.target.value = '';
                                 return;
                             } else {
@@ -14069,6 +14069,24 @@ function _wfEsc(s) {
 }
 window._wfEsc = _wfEsc;
 
+/* The server writes some of its answers for a log ("sender list unreadable").
+ * This turns those into a sentence a person can act on, and passes through any
+ * answer that already is one. `fallback` is used when the server said nothing. */
+function _wfServerWhy(raw, fallback) {
+    var t = String(raw == null ? '' : raw).trim();
+    if (!t) return fallback;
+    if (/^[A-Z][^]*[.?]$/.test(t)) return t;
+    if (/no mailbox is connected/i.test(t)) return 'No mailbox is connected yet. Connect Gmail first.';
+    if (/did not answer|in time|timed out|timeout/i.test(t)) return 'Google did not answer in time. Please try again in a moment.';
+    if (/no such sender/i.test(t)) return 'That sender is no longer in the list.';
+    if (/could not disconnect/i.test(t)) return 'Gmail could not be disconnected. Please try again.';
+    if (/could not save|store failed|persist/i.test(t)) return 'The change could not be saved. Please try again.';
+    if (/unreadable|could not (?:be )?(?:read|reached?)|could not be completed/i.test(t)) return 'WealthFlow could not reach the server just now. Please try again in a moment.';
+    if (t.length >= 60) return t.charAt(0).toUpperCase() + t.slice(1) + (/[.?]$/.test(t) ? '' : '.');
+    return fallback;
+}
+window._wfServerWhy = _wfServerWhy;
+
 /**
  * One cell of a CSV file. NOT _wfEsc — that is an HTML escaper.
  *
@@ -15643,7 +15661,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 if (!B || !window.currentUser || !userDocRef) throw new Error('you are not signed in');
                 const v = B.validateRestore(restored);
                 if (!v.ok) throw new Error(v.reason);
-                notify('@cloud@ Saving a safety copy of your current data…', 'info');
+                notify('Saving a safety copy of your current data…', 'info');
                 const safe = await _wfSaveSafetyCopy('pre-restore');
                 if (!safe.ok) throw new Error('a safety copy of your current data could not be saved (' + safe.reason + ')');
                 const keep = await _wfReadAccountKeep();
@@ -16706,7 +16724,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
                 const publicKey = {
                     challenge: challenge,
-                    rp: { name: "WealthFlow Infinity", id: window.location.hostname },
+                    rp: { name: "WealthFlow", id: window.location.hostname },
                     user: { id: userId, name: userEmail, displayName: userName },
                     pubKeyCredParams: [
                         { type: "public-key", alg: -7 },   // ES256 (Apple, Android)
@@ -17125,8 +17143,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                             setTimeout(() => {
                                                 try { debouncedSync(); } catch (_) {}
                                                 if (typeof notify === 'function') {
-                                                    notify('@shield@ Restored ' + _localOnlyCount + ' offline change' +
-                                                        (_localOnlyCount > 1 ? 's' : '') + ' — syncing to cloud', 'info');
+                                                    notify('Restored ' + _localOnlyCount + ' offline change' +
+                                                        (_localOnlyCount > 1 ? 's' : '') + '. Syncing to the cloud.', 'info');
                                                 }
                                             }, 1500);
                                         }
@@ -18889,7 +18907,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const fieldLabel = field === 'date' ? 'Date' : field === 'amount' ? 'Amount' : field === 'name' ? 'Name' : field === 'rate' ? 'Rate' : field;
                 const dirLabel = sortState[key].dir === -1 ? 'newest / largest first' : 'oldest / smallest first';
                 triggerHaptic('toggle');
-                notify(`Sorted by ${fieldLabel} — ${dirLabel}`, 'info');
+                notify(`Sorted by ${fieldLabel}, ${dirLabel}.`, 'info');
             } catch (_) {}
             renderPage(key === 'cci' ? 'ccinstall' : key === 'ccot' ? 'cconetime' : key);
         }
@@ -18962,7 +18980,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             if (dayEl) {
                 dayEl.value = startEl.value;          // mirror the Start Date exactly
                 triggerHaptic('toggle');
-                notify('Payment Start Date set to ' + startEl.value, 'success');
+                notify('Payment start date set to ' + startEl.value + '.', 'success');
                 if (typeof calcIncomeM === 'function') { try { calcIncomeM(); } catch (e) {} }
             }
         }
@@ -19895,7 +19913,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             try {
                 const _lim = Number(DB.getObj('settings', {}).loanAlertPct) || 15;
                 if (rate > _lim) {
-                    notify(`${name} is at ${rate}% — above your ${_lim}% alert threshold`, 'warning');
+                    notify(`${name} is at ${rate}%, above your ${_lim}% alert threshold.`, 'warning');
                 }
             } catch (_) { /* a preference must never block a save */ }
 
@@ -20282,7 +20300,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 _wfSetLoanVia(l, monthKey, 'other', 0);   // not paid: no bank debit is this instalment any more
                 DB.set('loans', arr);
                 renderLoans();
-                notify(`Payment for ${monthKey} reverted`, 'info');
+                notify(`Payment for ${monthKey} has been reverted.`, 'info');
                 return;
             }
             // Not paid yet → ask for amount (allow over/underpayment)
@@ -21410,8 +21428,8 @@ table.amort tbody tr { page-break-inside: avoid; }
 </div>
 
 <div class="disclaimer">
-    <b>Important.</b> This statement is generated locally by WealthFlow Elite from your recorded payment history. Figures are calculated using the
-    ${isReducing ? 'reducing-balance (floating) method — interest accrues monthly on the outstanding principal' : 'equal-monthly-installment (EMI) method — fixed payment for the whole term'}.
+    <b>Important.</b> WealthFlow generated this statement on your device from your recorded payment history. Figures are calculated using the
+    ${isReducing ? 'reducing-balance (floating) method — interest accrues monthly on the outstanding principal' : 'equal-monthly-instalment (EMI) method — fixed payment for the whole term'}.
     Projected values for upcoming months assume payments continue on the original schedule. This document is for personal record-keeping and
     is not a substitute for the official statement issued by your lender. For disputes or formal records, please refer to ${esc(l.bank)}.
 </div>
@@ -21422,7 +21440,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 </div>
 
 <div class="footer">
-    Generated by WealthFlow Elite · ${issuedAt} · Statement ${stmtId}
+    Generated by WealthFlow · ${issuedAt} · Statement ${stmtId}
 </div>
 </body>
 </html>`;
@@ -21581,8 +21599,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 pdf.setProperties({
                     title: 'WealthFlow Loan Statement — ' + (loanName || 'Loan'),
                     subject: 'Personal Loan Account Statement',
-                    author: 'WealthFlow Elite',
-                    creator: 'WealthFlow Elite',
+                    author: 'WealthFlow',
+                    creator: 'WealthFlow',
                     keywords: 'loan, statement, wealthflow'
                 });
                 return pdf.output('blob');
@@ -21709,10 +21727,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.innerHTML = `
                 <div class="md md-sm" style="max-width:440px;text-align:center;">
                     <div class="md-hdr" style="justify-content:center;border-bottom:0;padding-bottom:0;">
-                        <div class="md-title" id="_ash_title">@trendUp@ Generating Smart Link</div>
+                        <div class="md-title" id="_ash_title">@trendUp@ Creating Your Link</div>
                     </div>
                     <div style="padding:24px 20px 12px;">
-                        <div id="_ash_msg" style="font-size:14px;font-weight:600;color:var(--text1);margin-bottom:12px;">Compiling statement…</div>
+                        <div id="_ash_msg" style="font-size:14px;font-weight:600;color:var(--text1);margin-bottom:12px;">Preparing your statement…</div>
                         <div style="width:100%;height:10px;background:var(--bg2);border-radius:5px;overflow:hidden;margin-bottom:8px;box-shadow:inset 0 1px 3px rgba(0,0,0,0.3);">
                             <div id="_ash_bar" style="height:100%;width:5%;background:linear-gradient(90deg, var(--accent), #2ecc71);border-radius:5px;transition:width 0.4s ease-out;"></div>
                         </div>
@@ -21741,11 +21759,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.querySelector('#_ash_cancel').onclick = () => { cancelled = true; closeOverlay(); };
 
             try {
-                setProgress(15, 'Compiling statement data…');
+                setProgress(15, 'Preparing your statement…');
                 const statementHTML = _buildLoanStatementHTML(l);
                 if (cancelled) return;
 
-                setProgress(40, 'Uploading to secure cloud…');
+                setProgress(40, 'Uploading the statement securely…');
                 const result = await _uploadStatementForSharing(statementHTML, l.name);
                 if (cancelled) return;
 
@@ -21765,10 +21783,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     throw new Error('SHARE_ALL_FAILED');
                 }
 
-                setProgress(90, 'Finalising…');
+                setProgress(90, 'Finishing…');
                 await new Promise(r => setTimeout(r, 100));
 
-                setProgress(100, 'Ready!');
+                setProgress(100, 'Your link is ready.');
                 await new Promise(r => setTimeout(r, 150));
                 closeOverlay();
 
@@ -21787,9 +21805,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 console.error('[Share] Error:', e);
                 const msg = (e && e.message) || 'Unknown error';
                 if (msg === 'SHARE_ALL_FAILED' || /all_hosts_failed/.test(msg)) {
-                    notify('@alert@ Could not create the share link right now (network busy). Sharing the summary as text instead — or tap @link@ Share again in a moment.', 'warning');
+                    notify('The share link could not be created right now because the network is busy. The summary is being shared as text instead. You can tap Share again in a moment.', 'warning');
                 } else {
-                    notify('@alert@ Could not generate link: ' + msg + '. Sharing summary as text instead.', 'warning');
+                    notify('The share link could not be created (' + msg + '). The summary is being shared as text instead.', 'warning');
                 }
                 setTimeout(() => _localShareStatement(l, _generateSummaryText(l)), 400);
             }
@@ -21890,15 +21908,17 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             const urlLen = url.length;
             const isShort = urlLen < 80;
-            const urlBadge = isShort
-                ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(46,204,113,0.15);color:#2ecc71;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">' + _ic('check') + ' SHORT URL (' + urlLen + ' chars)</span>'
-                : '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(212,175,55,0.15);color:#d4af37;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">' + _ic('link') + ' ' + urlLen + ' chars</span>';
+            const urlBadge = result.service === 'Local Only' ? '' : isShort
+                ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(46,204,113,0.15);color:#2ecc71;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">' + _ic('check') + ' Short link (' + urlLen + ' characters)</span>'
+                : '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(212,175,55,0.15);color:#d4af37;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">' + _ic('link') + ' ' + urlLen + ' characters</span>';
 
             const expiryDate = new Date(Date.now() + (result.days || (isElite ? 3650 : 30)) * 86400000);
-            const expiryStr = (result.days || 0) > 1000 ? 'Permanent' : expiryDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+            const neverExpires = (result.days || 0) > 1000;
+            const localOnly = result.service === 'Local Only';
+            const expiryStr = neverExpires ? 'Never' : expiryDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
-            const shareText = encodeURIComponent((isElite ? 'WealthFlow Elite Report: ' : 'Loan statement for ' + titleName + ': ') + url);
-            const shareTitle = encodeURIComponent((isElite ? 'WealthFlow Elite Report' : 'WealthFlow Statement — ' + titleName));
+            const shareText = encodeURIComponent((isElite ? 'WealthFlow statement: ' : 'Loan statement for ' + titleName + ': ') + url);
+            const shareTitle = encodeURIComponent((isElite ? 'WealthFlow Statement' : 'WealthFlow Statement — ' + titleName));
 
             overlay.innerHTML = `
                 <style>
@@ -21926,12 +21946,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </style>
                 <div class="md md-sm" style="max-width:580px;">
                     <div class="md-hdr">
-                        <div class="md-title">${_ic('checkCircle')} Shareable Link Ready</div>
+                        <div class="md-title">${_ic('checkCircle')} ${localOnly ? 'Statement Ready' : 'Shareable Link Ready'}</div>
                         <button class="md-x" aria-label="Close" id="_surl_close"><i data-wfi="x"></i></button>
                     </div>
                     <div style="padding:8px 0;font-size:13px;color:var(--text2);line-height:1.55;">
-                        Anyone with this link can view the ${isElite ? 'Elite Report' : 'statement for <b>' + titleName.replace(/</g, '&lt;') + '</b>'}.
-                        <span style="color:var(--green);">Valid until ${expiryStr}.</span>
+                        ${localOnly ? 'The shareable link could not be created, so this statement is available as a download only.' : 'Anyone with this link can view the ' + (isElite ? 'statement' : 'statement for <b>' + titleName.replace(/</g, '&lt;') + '</b>') + '.'}
+                        ${localOnly ? '' : '<span style="color:var(--green);">' + (neverExpires ? 'This link does not expire.' : 'Valid until ' + expiryStr + '.') + '</span>'}
                         ${urlBadge}
                     </div>
 
@@ -21959,7 +21979,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <!-- Download PDF -->
                         <div style="margin-top:14px;">
                             <button class="btn btn-ghost btn-sm btn-3d" id="_surl_pdf" style="width:100%;padding:11px;background:var(--bg2);font-size:12px;">
-                                ${isElite ? _ic('download') + ' Download to Local Device' : _ic('fileText') + ' Download Statement as PDF'}
+                                ${isElite ? _ic('download') + ' Download to This Device' : _ic('fileText') + ' Download Statement as PDF'}
                             </button>
                         </div>
                     </div>
@@ -21989,10 +22009,11 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                     <!-- Privacy & Info Footer -->
                     <div style="margin-top:16px;padding:12px;background:rgba(46,204,113,0.08);border-radius:10px;font-size:11.5px;color:var(--green);line-height:1.6;border-left:3px solid var(--green);">
-                        <b>${_ic('lock')} Privacy Guaranteed:</b> This link contains <b>zero</b> personal information.<br>
-                        No names, emails, phone numbers, or user IDs are embedded in the URL or shared data.
-                        <div style="margin-top:6px;font-size:10px;color:var(--text3);display:flex;gap:12px;flex-wrap:wrap;">
-                            <span>${_ic('ruler')} URL: ${urlLen} chars</span>
+                        ${localOnly
+                            ? '<b>' + _ic('lock') + ' Nothing has been shared.</b> The statement stays on this device until you download it.'
+                            : '<b>' + _ic('lock') + ' Keep this link private.</b> Anyone who has it can open the statement, including the figures in it.<br>The link itself does not contain your name, email address, phone number or user ID.'}
+                        <div style="margin-top:6px;font-size:10px;color:var(--text3);display:${localOnly ? 'none' : 'flex'};gap:12px;flex-wrap:wrap;">
+                            <span>${_ic('ruler')} Link length: ${urlLen} characters</span>
                             <span>${_ic('clock')} Expires: ${expiryStr}</span>
                             <span>${_ic('shield')} Stored: ${isElite ? (result.service || 'Cloud') : 'Firestore'}</span>
                         </div>
@@ -22189,7 +22210,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                                     btnCan.style.opacity = '1';
                                     btnDel.innerHTML = _ic('trash') + ' Delete';
                                     if (typeof window.notify === 'function') {
-                                        notify('Could not delete the shared copy — the link may still work. Kept in your history so you can retry. (' + why + ')', 'error');
+                                        notify('The shared copy could not be deleted, so the link may still work. It stays in your history so you can try again (' + why + ').', 'error');
                                     }
                                     return;   // history entry deliberately retained
                                 }
@@ -22290,11 +22311,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                         
                         pdfBtn.innerHTML = _ic('checkCircle') + ' Downloaded!';
                         pdfBtn.style.color = 'var(--green)';
-                        setTimeout(() => { pdfBtn.innerHTML = isElite ? _ic('download') + ' Download to Local Device' : _ic('fileText') + ' Download Statement as PDF'; pdfBtn.disabled = false; pdfBtn.style.color = ''; }, 2000);
+                        setTimeout(() => { pdfBtn.innerHTML = isElite ? _ic('download') + ' Download to This Device' : _ic('fileText') + ' Download Statement as PDF'; pdfBtn.disabled = false; pdfBtn.style.color = ''; }, 2000);
                     } catch (err) {
                         console.error('[PDF Download]', err);
                         pdfBtn.innerHTML = _ic('x') + ' Failed — try Print instead';
-                        setTimeout(() => { pdfBtn.innerHTML = isElite ? _ic('download') + ' Download to Local Device' : _ic('fileText') + ' Download Statement as PDF'; pdfBtn.disabled = false; }, 2000);
+                        setTimeout(() => { pdfBtn.innerHTML = isElite ? _ic('download') + ' Download to This Device' : _ic('fileText') + ' Download Statement as PDF'; pdfBtn.disabled = false; }, 2000);
                     }
                 };
             }
@@ -24702,7 +24723,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         }
                         _savePawn(r.pawn);
                         try { triggerHaptic('success'); } catch (_) {}
-                        notify('Extended to ' + r.totalMonths + ' months at ' + r.rate + '%', 'success');
+                        notify('Extended to ' + r.totalMonths + ' months at ' + r.rate + '%.', 'success');
                         close();
                     };
                 },
@@ -24844,7 +24865,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     if (!r.ok) { notify('That ticket is already redeemed.', 'info'); return; }
                     if (!_savePawn(r.pawn)) return;
                     try { triggerHaptic('success'); } catch (_) {}
-                    notify('Redeemed for ' + fmtS(r.paid), 'success');
+                    notify('Redeemed for ' + fmtS(r.paid) + '.', 'success');
                 },
             );
         }
@@ -25906,7 +25927,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             try {
                                 const r = await _gmailLink('POST', { action: 'delete', keys: [it.key] }, '?items=1');
                                 if (!r || !r.body || r.body.ok !== true) {
-                                    notify((r && r.body && r.body.error) || 'Could not remove it.', 'error');
+                                    notify(_wfServerWhy(r && r.body && r.body.error, 'The statement could not be removed. Please try again.'), 'error');
                                 } else {
                                     notify('Removed.', 'success');
                                 }
@@ -26292,7 +26313,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             };
 
             if (resumed) {
-                notify(`Resuming your mailbox scan at ${_scan.cursor.windows[_scan.cursor.index].label}`, 'info');
+                notify(`Resuming your mailbox scan at ${_scan.cursor.windows[_scan.cursor.index].label}.`, 'info');
             }
 
             /* Bounded by a hard ceiling on calls. A cursor bug that never
@@ -26364,7 +26385,7 @@ table.amort tbody tr { page-break-inside: avoid; }
              * them through assemble → unlock → parse → route → file, with the
              * ledger hashes as the dedup set. One pipeline, not two. */
             try { triggerHaptic('success'); } catch (_) {}
-            notify(`Found ${_scan.found} statement${_scan.found === 1 ? '' : 's'} — filing them now`, 'success');
+            notify(`Found ${_scan.found} statement${_scan.found === 1 ? '' : 's'}. Filing them now.`, 'success');
             await runMailSync();
 
             if (!done) notify('The scan paused part-way. It resumes from where it stopped.', 'info');
@@ -26515,7 +26536,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     banks: _ownedBanks(),
                 });
                 if (!r || r.status !== 200 || !r.body || r.body.ok !== true) {
-                    _discover.error = (r && r.body && r.body.error) || 'the search could not be completed';
+                    _discover.error = _wfServerWhy(r && r.body && r.body.error, 'The mailbox search could not be completed. Please try again.');
                     break;
                 }
                 cursor = window.WFBackfill.advance(cursor, r.body);
@@ -26543,8 +26564,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (_discover.error) notify(_discover.error, 'error');
             else if (_discover.truncated) {
                 notify('Searched as far as this run goes'
-                    + (_senders.pending.length ? ' — ' + _senders.pending.length + ' sender'
-                        + (_senders.pending.length === 1 ? '' : 's') + ' so far' : '')
+                    + (_senders.pending.length ? ', with ' + _senders.pending.length + ' sender'
+                        + (_senders.pending.length === 1 ? '' : 's') + ' found so far' : '')
                     + '. Press Find my banks again to carry on from ' + (cursor.windows[cursor.index] || {}).label + '.',
                     'warn');
             } else if (_senders.pending.length) {
@@ -26574,7 +26595,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         /** Fold a response into the local view. One shape, one place. */
         function _sendersApply(r) {
             if (!r || !r.body || r.body.ok !== true) {
-                _senders.error = (r && r.body && r.body.error) || 'the sender list could not be reached';
+                _senders.error = _wfServerWhy(r && r.body && r.body.error, 'The sender list could not be reached. Please try again.');
                 return false;
             }
             const approvals = Array.isArray(r.body.approved) ? r.body.approved : [];
@@ -27755,7 +27776,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * one statement shorter — which is also the proof that the
                      * marking worked, since a statement that was marked does
                      * not come back. */
-                    if (more > 0) notify(`${more} more bank${more === 1 ? '' : 's'} to check`, 'info');
+                    if (more > 0) notify(`${more} more bank${more === 1 ? '' : 's'} to check.`, 'info');
                     _mailSyncState.stage = 'idle';
                     runMailSync();
                 },
@@ -28202,7 +28223,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             let res = null;
             try { res = await _gmailLink('POST', { code, redirect_uri: window._wfPublicUrl('/'), code_verifier: saved.v || undefined }); } catch (_) { res = null; }
             if (!res || !res.body || res.body.ok !== true) {
-                notify((res && res.body && res.body.error) || 'Could not connect Gmail. Please try again.', 'error');
+                notify(_wfServerWhy(res && res.body && res.body.error, 'Gmail could not be connected. Please try again.'), 'error');
                 return;
             }
             try { triggerHaptic('success'); } catch (_) {}
@@ -30630,7 +30651,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 // update instantly regardless of the tab the undo was triggered from.
                 try { const _ap = document.querySelector('.page.active'); if (_ap && _ap.id) renderPage(_ap.id.replace('page-', '')); } catch (_) {}
                 const r = res.removed || {};
-                notify('Import undone — removed ' + ((r.cconetime || 0) + (r.expenses || 0) + (r.incomeRecv || 0) + (r.subscription || 0)) + ' payment(s)', 'success');
+                notify('Import undone. Removed ' + ((r.cconetime || 0) + (r.expenses || 0) + (r.incomeRecv || 0) + (r.subscription || 0)) + ' payment(s).', 'success');
                 try { setDirty(true); } catch (_) {}
                 // v7.48.0 — flush the undone state to the cloud IMMEDIATELY (not only via
                 // the debounced sync) so the deletion reaches Firestore before any stale
@@ -31612,9 +31633,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                     try { triggerHaptic('success'); } catch (_) {}
                     try { renderLoans(); renderDash(); renderIncRecv(); } catch (_) {}
                     try {
-                        notify('@info@ ' + r.applied + ' answer' + (r.applied === 1 ? '' : 's')
+                        notify(r.applied + ' answer' + (r.applied === 1 ? '' : 's')
                             + ' you gave on your lock screen ' + (r.applied === 1 ? 'has' : 'have')
-                            + ' been filed', 'success');
+                            + ' been filed.', 'success');
                     } catch (_) {}
                 }
                 console.log('[Outbox]', why, JSON.stringify(r));
@@ -32210,7 +32231,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 a.download = `WealthFlow_MasterVault_${today()}.json`;
                 a.click();
                 URL.revokeObjectURL(url);
-                notify('Raw JSON Vault secured and downloaded!', 'success');
+                notify('Your data backup file has been downloaded.', 'success');
                 closeModal('mdExport');
             } else if (format === 'csv') {
                 exportCSVReport();
@@ -32226,7 +32247,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const month = parseInt($('expPdfMonth').value);
             const md = getMonthlyData(year, month);
 
-            let csv = `WEALTHFLOW ANALYTICS REPORT,${MONTHS[month].toUpperCase()} ${year}\n\n`;
+            let csv = `WEALTHFLOW MONTHLY REPORT,${MONTHS[month].toUpperCase()} ${year}\n\n`;
 
             csv += "TYPE,CATEGORY/BANK,DESCRIPTION,AMOUNT (LKR)\n";
             /* _csvCell, not _wfEsc. See its definition: an HTML escaper wrote
@@ -32237,7 +32258,7 @@ table.amort tbody tr { page-break-inside: avoid; }
              * carry the raw binary float — 17705.357142857145 where the screen
              * said 17,705.36 — into a file people open in Excel. */
             md.loanItems.forEach(l => { csv += row('LOAN', l.bank, l.name, _csvMoney(l.amount)); });
-            md.ccItems2.forEach(c => { csv += row('CC INSTALLMENT', c.bank, c.name, _csvMoney(c.amount)); });
+            md.ccItems2.forEach(c => { csv += row('CC INSTALMENT', c.bank, c.name, _csvMoney(c.amount)); });
             md.expItems.forEach(e => { csv += row('EXPENSE', e.cat, e.name, _csvMoney(e.amount)); });
 
             /* Through row() as well. These three lines were built by template
@@ -32260,13 +32281,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             a.download = `WealthFlow_Analytics_${MONTHS_S[month]}_${year}.csv`;
             a.click();
             URL.revokeObjectURL(url);
-            notify('Analytics CSV Report generated.', 'success');
+            notify('The spreadsheet report has been downloaded.', 'success');
         }
 
         // ----------------- ELITE REPORT HTML ENGINE -----------------
         function _buildEliteReportHTML(md, year, month) {
             const issuedAt = new Date().toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' });
-            const stmtId = 'WF-ELITE-' + year + '-' + String(month+1).padStart(2, '0') + '-' + Date.now().toString(36).toUpperCase().slice(-6);
+            const stmtId = 'WF-STMT-' + year + '-' + String(month+1).padStart(2, '0') + '-' + Date.now().toString(36).toUpperCase().slice(-6);
             const periodStr = MONTHS[month].toUpperCase() + ' ' + year;
             
             const esc = (s) => String(s == null ? '' : s)
@@ -32297,16 +32318,16 @@ table.amort tbody tr { page-break-inside: avoid; }
             const fmtPay = (n) => 'LKR ' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
             const summaryRows = [
-                ['Report Type', 'Elite Financial Vault Summary'],
+                ['Report Type', 'Monthly Financial Summary'],
                 ['Statement Period', periodStr],
-                ['Generated By', 'WealthFlow Intelligence Engine'],
+                ['Generated By', 'WealthFlow'],
                 ['Base Currency', 'LKR (Sri Lankan Rupee)'],
             ];
 
             const statusRows = [
-                ['Total Inflow (Yields)', '<b style="color:' + colorGreen + ';">' + fmtPay(md.income) + '</b>'],
-                ['Total Outflow (Opex+Debt)', '<b style="color:' + colorRed + ';">' + fmtPay(md.totalExp) + '</b>'],
-                ['Net Monthly Position', '<b style="color:' + (md.balance >= 0 ? colorGreen : colorRed) + ';">' + fmtPay(md.balance) + '</b>'],
+                ['Total Income', '<b style="color:' + colorGreen + ';">' + fmtPay(md.income) + '</b>'],
+                ['Total Expenses', '<b style="color:' + colorRed + ';">' + fmtPay(md.totalExp) + '</b>'],
+                ['Net Balance', '<b style="color:' + (md.balance >= 0 ? colorGreen : colorRed) + ';">' + fmtPay(md.balance) + '</b>'],
             ];
 
             const summaryHTML = summaryRows.map(([k, v]) =>
@@ -32379,7 +32400,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Elite Statement — ${periodStr}</title>
+<title>WealthFlow Statement — ${periodStr}</title>
 <style>
 @page { size: A4 portrait; margin: 14mm 12mm; }
 * { box-sizing: border-box; }
@@ -32414,8 +32435,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             <h1 style="margin:0;">WEALTHFLOW</h1>
         </div>
         <div class="sub">
-            <b>Elite Financial Vault Statement</b><br>
-            Private Wealth Management
+            <b>Monthly Financial Statement</b><br>
+            Personal Finance Record
         </div>
     </div>
     <div class="stmt-meta">
@@ -32439,35 +32460,35 @@ table.amort tbody tr { page-break-inside: avoid; }
 <!-- Quick visual summary -->
 <div style="margin-top:24px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
     <div style="padding:14px 16px;border:1px solid ${colorBorder};border-left:4px solid ${colorGreen};border-radius:6px;background:#f4faf6;">
-        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">↓ Total Inflow</div>
+        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">Total Income</div>
         <div style="font-size:18px;font-weight:700;color:${colorGreen};margin-top:4px;font-variant-numeric:tabular-nums;">${fmtPay(md.income)}</div>
     </div>
     <div style="padding:14px 16px;border:1px solid ${colorBorder};border-left:4px solid ${colorRed};border-radius:6px;background:#fff5f5;">
-        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">↑ Total Outflow</div>
+        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">Total Expenses</div>
         <div style="font-size:18px;font-weight:700;color:${colorRed};margin-top:4px;font-variant-numeric:tabular-nums;">${fmtPay(md.totalExp)}</div>
     </div>
     <div style="padding:14px 16px;border:1px solid ${colorBorder};border-left:4px solid ${md.balance >= 0 ? colorGreen : colorRed};border-radius:6px;background:${colorBalanceFill};">
-        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">◎ Net Position</div>
+        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">Net Balance</div>
         <div style="font-size:18px;font-weight:700;color:${md.balance >= 0 ? colorGreen : colorRed};margin-top:4px;font-variant-numeric:tabular-nums;">${fmtPay(md.balance)}</div>
     </div>
 </div>
 
-${buildTable('Section I — Asset Yields & Income', activeIncome.length, [
-    { label: '#' }, { label: 'Yield Source' }, { label: 'Managing Institution' }, { label: 'Realized Return', r: true }
-], incomeHTML, 'No yields realized for this fiscal period.')}
+${buildTable('Section I — Income', activeIncome.length, [
+    { label: '#' }, { label: 'Income Source' }, { label: 'Company' }, { label: 'Monthly Amount', r: true }
+], incomeHTML, 'No income is recorded for this month.')}
 
-${buildTable('Section II — Debt Servicing (Loans)', md.loanItems.length, [
-    { label: '#' }, { label: 'Facility / Product' }, { label: 'Banking Institution' }, { label: 'Monthly Payment', r: true }
-], loanHTML, 'No active debt obligations recorded.')}
+${buildTable('Section II — Loans', md.loanItems.length, [
+    { label: '#' }, { label: 'Loan' }, { label: 'Bank' }, { label: 'Monthly Payment', r: true }
+], loanHTML, 'No loans are recorded for this month.')}
 
-${buildTable('Section III — Operations & Card Instalments', combinedExp.length, [
+${buildTable('Section III — Expenses and Card Instalments', combinedExp.length, [
     { label: '#' }, { label: 'Description' }, { label: 'Category / Issuer' }, { label: 'Expense', r: true }
-], expHTML, 'No operating expenses registered.')}
+], expHTML, 'No expenses are recorded for this month.')}
 
 <div class="disclaimer">
-    <b>Important.</b> This document is a consolidated financial statement generated by WealthFlow Elite based on user-provided data. 
-    It serves as a comprehensive overview of cash flows, debt obligations, and operational expenses for the specified period. 
-    This statement is strictly private and confidential, intended solely for the account holder's personal financial tracking and wealth management.
+    <b>Important.</b> WealthFlow generated this statement from the data you recorded. It summarises your income, loan payments and
+    expenses for the month shown. It is for your own record-keeping and is not an official statement from any bank or lender.
+    Please keep it private.
 </div>
 
 <div class="signature">
@@ -32476,7 +32497,7 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
 </div>
 
 <div class="footer">
-    STRICTLY PRIVATE & CONFIDENTIAL · GENERATED BY WEALTHFLOW ELITE ENGINE · ${stmtId}
+    Private and confidential · Generated by WealthFlow · ${stmtId}
 </div>
 </body>
 </html>`;
@@ -32491,10 +32512,10 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
             overlay.innerHTML = `
                 <div class="md md-sm" style="max-width:440px;text-align:center;">
                     <div class="md-hdr" style="justify-content:center;border-bottom:0;padding-bottom:0;">
-                        <div class="md-title" id="_ash_title">@trendUp@ Generating Smart Link</div>
+                        <div class="md-title" id="_ash_title">@trendUp@ Creating Your Link</div>
                     </div>
                     <div style="padding:24px 20px 12px;">
-                        <div id="_ash_msg" style="font-size:14px;font-weight:600;color:var(--text1);margin-bottom:12px;">Compiling secure report…</div>
+                        <div id="_ash_msg" style="font-size:14px;font-weight:600;color:var(--text1);margin-bottom:12px;">Preparing your statement…</div>
                         <div style="width:100%;height:10px;background:var(--bg2);border-radius:5px;overflow:hidden;margin-bottom:8px;box-shadow:inset 0 1px 3px rgba(0,0,0,0.3);">
                             <div id="_ash_bar" style="height:100%;width:5%;background:linear-gradient(90deg, var(--accent), #2ecc71);border-radius:5px;transition:width 0.4s ease-out;"></div>
                         </div>
@@ -32526,7 +32547,7 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
             await new Promise(r => setTimeout(r, 50)); 
             if (cancelled) return;
 
-            setProgress(15, 'Rendering high-res PDF...');
+            setProgress(15, 'Building the PDF…');
             await new Promise(r => setTimeout(r, 50));
 
             const year = parseInt($('expPdfYear').value);
@@ -32536,9 +32557,9 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
             const html = _buildEliteReportHTML(md, year, month);
             
             if (cancelled) return;
-            setProgress(35, 'Encoding document...');
+            setProgress(35, 'Preparing the file…');
             
-            const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
+            const eliteName = 'Monthly Statement — ' + MONTHS[month] + ' ' + year;
             const pdfBlob = await _statementHtmlToPdfBlob(html, eliteName);
 
             // Upload via server-side statement-store and show share dialog.
@@ -32548,11 +32569,11 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
             // returns a /r/… URL that the server rewrites to the PDF viewer
             // with Content-Type: application/pdf — iOS, Android, WhatsApp,
             // Gmail all render it natively.
-            notify('Generating Elite Report shareable link…', 'info');
+            notify('Creating a shareable link for your statement…', 'info');
             (async () => {
                 try {
                     if (cancelled) return;
-                    setProgress(40, 'Encoding PDF…');
+                    setProgress(40, 'Preparing the PDF…');
 
                     const reader = new FileReader();
                     const base64 = await new Promise((resolve, reject) => {
@@ -32563,7 +32584,7 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
 
                     if (cancelled) return;
                     const proxyBase = window.WF_PUBLIC_ORIGIN;
-                    const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
+                    const eliteName = 'Monthly Statement — ' + MONTHS[month] + ' ' + year;
 
                     // ONE path, on WealthFlow's own servers. POST the PDF to
                     // /api/statement-store, which stores it in Firestore — inline
@@ -32588,7 +32609,7 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
                     // chunking, so the timeout is generous.
                     let result = null;
 
-                    setProgress(60, 'Storing on WealthFlow servers…');
+                    setProgress(60, 'Saving the PDF securely…');
                     const ctrlA = new AbortController();
                     const tmA = setTimeout(() => ctrlA.abort(), 45000);
                     try {
@@ -32610,9 +32631,9 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
                                 };
                             }
                         } else {
-                            console.warn('[Elite Report] statement-store HTTP', resp.status);
+                            console.warn('[Statement share] statement-store HTTP', resp.status);
                         }
-                    } catch (eA) { console.warn('[Elite Report] statement-store failed:', eA && eA.message); }
+                    } catch (eA) { console.warn('[Statement share] statement-store failed:', eA && eA.message); }
                     finally { clearTimeout(tmA); }
 
                     if (cancelled) return;
@@ -32629,12 +32650,12 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
                         if (result.url !== _before) console.log('[WF] Canonicalised Elite URL:', _before, '→', result.url);
                     }
 
-                    setProgress(90, 'Finalising…');
+                    setProgress(90, 'Finishing…');
                     await new Promise(r => setTimeout(r, 100));
 
                     const downloadURL = result.url;
 
-                    setProgress(100, 'Ready!');
+                    setProgress(100, 'Your link is ready.');
                     await new Promise(r => setTimeout(r, 150));
                     closeOverlay();
 
@@ -32646,10 +32667,10 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
                     });
 
                 } catch (err) {
-                    console.error('[Elite Report Share]', err);
-                    notify('Could not generate cloud link. Ready for local download.', 'warning');
+                    console.error('[Statement share]', err);
+                    notify('The shareable link could not be created. You can still download the statement to this device.', 'warning');
                     _showShareableUrlDialog({
-                        title: 'Elite Report — ' + MONTHS[month] + ' ' + year,
+                        title: 'Monthly Statement — ' + MONTHS[month] + ' ' + year,
                         url: 'File stored locally',
                         pdfBlob: pdfBlob,
                         result: { days: 0, service: 'Local Only' }
@@ -35501,7 +35522,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             let valLabel = val;
             if (typeof val === 'boolean') valLabel = val ? 'ON' : 'OFF';
             else if (typeof val === 'string') valLabel = val.charAt(0).toUpperCase() + val.slice(1);
-            notify(`${label}: ${valLabel}`, 'success');
+            notify(`${label}: ${valLabel}.`, 'success');
             // For mode change, also surface engine count so the user can
             // VERIFY the setting actually took effect on the next scan.
             if (key === 'scanMode') {
@@ -37021,10 +37042,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (chqCleared) parts.push(chqCleared + ' tracked cheque' + (chqCleared > 1 ? 's' : '') + ' marked cleared');
                 if (chqBounced) parts.push(chqBounced + ' cheque' + (chqBounced > 1 ? 's' : '') + ' marked bounced');
                 if (sub) parts.push(sub + ' Subscription' + (sub > 1 ? 's' : '') + (subCreated ? (' · ' + subCreated + ' new') : ''));
-                const tail = (skipped ? (' · skipped ' + skipped) : '') + (dup ? (' · ' + dup + ' duplicate' + (dup > 1 ? 's' : '') + ' ignored') : '');
+                const tail = (skipped ? (' · skipped ' + skipped) : '') + (dup ? (' · ' + dup + ' duplicate' + (dup > 1 ? 's' : '') + ' ignored') : '') + '.';
                 if (parts.length) { notify('Filed ' + parts.join(' · ') + tail, 'success'); triggerHaptic('success'); }
-                else { notify('Nothing added' + (dup ? (' · ' + dup + ' duplicate(s) ignored') : '') + (skipped ? (' · ' + skipped + ' skipped') : ''), 'warn'); }
-                if (chqReview.length) { try { notify('Cheque check: ' + chqReview.slice(0, 3).map(x => String(x).replace(/[<>&]/g, '')).join(' · ') + (chqReview.length > 3 ? ' · +' + (chqReview.length - 3) + ' more' : ''), 'warn'); } catch (_) {} }
+                else { notify('Nothing was added' + (dup ? (' · ' + dup + ' duplicate(s) ignored') : '') + (skipped ? (' · ' + skipped + ' skipped') : '') + '.', 'warn'); }
+                if (chqReview.length) { try { notify('Cheque check: ' + chqReview.slice(0, 3).map(x => String(x).replace(/[<>&]/g, '')).join(' · ') + (chqReview.length > 3 ? ' · +' + (chqReview.length - 3) + ' more' : '') + '.', 'warn'); } catch (_) {} }
                 /* A bank the owner set by hand is remembered for this card / account number, so its next statement is named without anyone being asked. */
                 if (parts.length && parsed._wfBank && parsed._wfBank.manual && parsed._wfBank.ok && window.WFBankMemory && typeof window.WFBankMemory.teach === 'function') { try { window.WFBankMemory.teach(parsed._wfBank); } catch (_) {} }
 

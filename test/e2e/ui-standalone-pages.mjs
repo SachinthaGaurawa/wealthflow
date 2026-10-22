@@ -55,7 +55,7 @@ for (const theme of ['dark', 'light']) {
         await page.click('#goBtn');
         await page.waitForSelector('#result.ok', { timeout: 4000 }).catch(() => {});
         const res = await page.evaluate(() => document.getElementById('result').innerText);
-        check(/Logged as/.test(res) && /4,250/.test(res), `${tag}: capture result did not render ("${res.slice(0, 60)}")`);
+        check(/Saved as/.test(res) && /4,250/.test(res), `${tag}: capture result did not render ("${res.slice(0, 60)}")`);
         await page.waitForTimeout(300);
         const injected = await page.evaluate(() => ({ ran: !!window.__xss, img: !!document.querySelector('#result img') }));
         check(!injected.ran && !injected.img, `${tag}: text echoed from the shared SMS was parsed as markup`);

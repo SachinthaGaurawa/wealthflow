@@ -276,7 +276,7 @@ describe('what a person needs next: when, and where to pay', () => {
 
     it('turns a refusal into the person\'s language, and the wait with it', () => {
         const si = makeT('si');
-        expect(describeFailure(429, { error: 'Too many attempts. For your security, please wait before trying again.', retryAfterSec: 45 }, si)).toBe('උත්සාහ කිරීම් ඕනෑවට වඩා වැඩියි. ඔබේ ආරක්ෂාව සඳහා කරුණාකර මද වේලාවක් රැඳී සිට නැවත උත්සාහ කරන්න. තත්පර 45කින් නැවත උත්සාහ කරන්න.');
+        expect(describeFailure(429, { error: 'Too many attempts. For your security, please wait before trying again.', retryAfterSec: 45 }, si)).toBe('උත්සාහ ඉතා වැඩි ගණනක් සිදු වී ඇත. ඔබේ ආරක්ෂාව සඳහා කරුණාකර මද වේලාවක් රැඳී සිට නැවත උත්සාහ කරන්න. තත්පර 45කින් නැවත උත්සාහ කරන්න.');
         expect(describeFailure(429, { error: 'Too many attempts.', retryAfterSec: 900 }, si)).toBe('Too many attempts. මිනිත්තු 15කින් පමණ නැවත උත්සාහ කරන්න.');   // a sentence the table does not know stays as the server said it
         expect(describeFailure(500, null, si)).toBe('යම් දෝෂයක් සිදු විය. කරුණාකර මොහොතකින් නැවත උත්සාහ කරන්න.');
     });

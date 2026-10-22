@@ -29,20 +29,19 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const NOTIF_SRC = fs.readFileSync(path.join(ROOT, 'wealthflow-notifications.js'), 'utf8');
 
+/* The function that starts at `marker`, up to the closing brace on its own line at the
+ * same indentation. Counting braces and quotes by hand drifted out of step inside the
+ * template-heavy renderSettings and only ended by luck, so any edit to a string
+ * anywhere after it could make this test throw. */
 function blockAt(marker) {
     const start = HTML.indexOf(marker);
     expect(start, `"${marker}" is gone from index.html — retarget this test`).toBeGreaterThan(-1);
-    let j = HTML.indexOf('{', start), depth = 0, q = null;
-    for (; j < HTML.length; j++) {
-        const c = HTML[j];
-        if (q) { if (c === '\\') { j++; continue; } if (c === q) q = null; continue; }
-        if (c === '"' || c === "'" || c === '`') { q = c; continue; }
-        if (c === '/' && HTML[j + 1] === '/') { j = HTML.indexOf('\n', j); continue; }
-        if (c === '/' && HTML[j + 1] === '*') { j = HTML.indexOf('*/', j) + 1; continue; }
-        if (c === '{') depth++;
-        else if (c === '}') { depth--; if (depth === 0) return HTML.slice(start, j + 1); }
-    }
-    throw new Error('unbalanced block at ' + marker);
+    const lineStart = HTML.lastIndexOf('\n', start) + 1;
+    const indent = HTML.slice(lineStart, start).match(/^[ \t]*/)[0];
+    const closer = '\n' + indent + '}';
+    const end = HTML.indexOf(closer, start);
+    if (end < 0) throw new Error('no closing brace at the same indentation for ' + marker);
+    return HTML.slice(start, end + closer.length);
 }
 
 /** A settings store that behaves like DB: getObj returns the stored object, set replaces it. */
