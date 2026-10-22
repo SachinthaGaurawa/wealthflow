@@ -51,6 +51,18 @@ function call(d, { method = 'POST', headers = {}, body, cookie } = {}) {
 
 afterEach(() => vi.restoreAllMocks());
 
+describe('the text names the site it came from', () => {
+    it('binds the code to the configured public host, and to nothing else', async () => {
+        const ctx = {}; Object.assign(ctx, makeDb());
+        const token = await seed(ctx);
+        const { d, gw } = deps({ ctx, env: { ...ENV, WEALTHFLOW_PUBLIC_ORIGIN: 'https://portal.example.lk' } });
+        await call(d, { body: { action: 'request', token, nic: NIC } });
+        expect(gw.sent).toHaveLength(1);
+        expect(gw.sent[0].message.split('\n').at(-1)).toBe('@portal.example.lk #246810');
+        expect(gw.sent[0].message).not.toMatch(/https?:/);
+    });
+});
+
 describe('the whole journey', () => {
     it('request, read the text, verify, read the statement, sign out', async () => {
         const ctx = {}; Object.assign(ctx, makeDb());
@@ -63,6 +75,7 @@ describe('the whole journey', () => {
         expect(gw.sent).toHaveLength(1);
         const code = codeIn(gw.sent[0].message);
         expect(code).toBe('246810');
+        expect(gw.sent[0].message.split('\n').at(-1)).toBe('@www.wealthflow.lk #246810');          // the line a phone reads to offer the code only to the real site
 
         advance(20000);
         const wrong = await call(d, { body: { action: 'verify', token, nic: NIC, code: '000000' } });

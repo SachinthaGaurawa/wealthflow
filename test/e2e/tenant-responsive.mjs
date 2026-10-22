@@ -214,6 +214,91 @@ async function inspect(page, label, touch) {
     for (const f of found) problems.push(`${label}: ${f}`);
 }
 
+/**
+ * Every piece of text against what is really painted behind it (WCAG 1.4.3: 4.5:1, or 3:1 for large text). A tool that reads the stylesheet cannot say
+ * what a translucent tile over a gradient looks like, so this one looks: it lists the text and where it sits, paints the page with the text made
+ * invisible, and measures the colour under every piece, in the worst of up to 400 places along it.
+ */
+let decoder = null;
+async function contrast(page, label) {
+    // The page is made as tall as its content, so the whole of it is one picture, and the text is listed in THAT layout: a taller window can move
+    // things a few pixels, and a measurement taken from the old positions would be reading the colour of the wrong place.
+    const view = page.viewportSize();
+    let picture;
+    let items;
+    try {
+        let tall = 0;
+        for (let i = 0; i < 4; i += 1) {
+            const now = await page.evaluate(() => Math.ceil(document.documentElement.scrollHeight));
+            if (now === tall) break;
+            tall = now;
+            await page.setViewportSize({ width: view.width, height: Math.max(view.height, tall) });
+            await page.waitForTimeout(150);
+        }
+        items = await page.evaluate(() => {
+            const out = [];
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            const seen = new Set();
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                if (!node.textContent.trim()) continue;
+                const el = node.parentElement;
+                if (!el || seen.has(el)) continue;
+                const cs = getComputedStyle(el);
+                if (cs.visibility === 'hidden' || cs.display === 'none' || el.closest('[hidden], [aria-hidden="true"]')) continue;
+                let opacity = 1;
+                for (let e = el; e; e = e.parentElement) opacity *= Number(getComputedStyle(e).opacity);
+                const range = document.createRange();
+                range.selectNodeContents(node);
+                const box = [...range.getClientRects()].find((q) => q.width > 1 && q.height > 1);
+                if (!box) continue;
+                seen.add(el);
+                out.push({ text: node.textContent.trim().slice(0, 36), where: el.tagName.toLowerCase() + (typeof el.className === 'string' && el.className ? '.' + el.className.split(' ').join('.') : ''), color: cs.color, size: parseFloat(cs.fontSize), weight: Number(cs.fontWeight) || 400, opacity, x: box.left + scrollX, y: box.top + scrollY, w: box.width, h: box.height, width: document.documentElement.scrollWidth });
+            }
+            return out;
+        });
+        await page.evaluate(() => { const sheet = new CSSStyleSheet(); sheet.replaceSync('*,*::before,*::after{color:transparent !important;-webkit-text-fill-color:transparent !important;text-shadow:none !important;caret-color:transparent !important}'); window.__bare = sheet; document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]; });
+        picture = await page.screenshot({ fullPage: false });
+        await page.evaluate(() => { document.adoptedStyleSheets = document.adoptedStyleSheets.filter((x) => x !== window.__bare); });
+    } finally {
+        await page.setViewportSize(view);
+    }
+    if (!decoder) { decoder = await (await browser.newContext()).newPage(); await decoder.goto('about:blank'); }
+    const weak = await decoder.evaluate(async ({ b64, items: list }) => {
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + b64;
+        await img.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width; canvas.height = img.height;
+        const g = canvas.getContext('2d', { willReadFrequently: true });
+        g.drawImage(img, 0, 0);
+        const lin = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+        const lum = (r, gr, b) => 0.2126 * lin(r) + 0.7152 * lin(gr) + 0.0722 * lin(b);
+        const bad = [];
+        for (const it of list) {
+            const k = img.width / it.width;                                           // the picture is taken at the device's pixel ratio
+            const [cr, cg, cb, ca] = it.color.match(/[\d.]+/g).map(Number);
+            const a = (ca === undefined ? 1 : ca) * it.opacity;
+            const x0 = Math.max(0, Math.floor(it.x * k)), y0 = Math.max(0, Math.floor(it.y * k));
+            const w = Math.min(Math.ceil(it.w * k), img.width - x0), h = Math.min(Math.ceil(it.h * k), img.height - y0);
+            if (w < 1 || h < 1) continue;
+            const data = g.getImageData(x0, y0, w, h).data;
+            const step = Math.max(1, Math.floor(Math.sqrt((w * h) / 400)));
+            let worst = 99, under = '';
+            for (let yy = 0; yy < h; yy += step) for (let xx = 0; xx < w; xx += step) {
+                const i = (yy * w + xx) * 4;
+                const l1 = lum(cr * a + data[i] * (1 - a), cg * a + data[i + 1] * (1 - a), cb * a + data[i + 2] * (1 - a)), l2 = lum(data[i], data[i + 1], data[i + 2]);
+                const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+                if (ratio < worst) { worst = ratio; under = `${data[i]},${data[i + 1]},${data[i + 2]}`; }
+            }
+            const large = it.size >= 24 || (it.size >= 18.66 && it.weight >= 700);
+            if (worst < (large ? 3 : 4.5)) bad.push(`"${it.text}" in ${it.where} at ${Math.round(it.x)},${Math.round(it.y)} is ${worst.toFixed(2)}:1 (needs ${large ? 3 : 4.5}:1; text ${it.color} x${a.toFixed(2)} on ${under})`);
+        }
+        return bad;
+    }, { b64: picture.toString('base64'), items });
+    for (const w of weak) problems.push(`${label}: text is hard to read, ${w}`);
+    return items.length;
+}
+
 const shot = async (page, name) => { if (!shotsDir) return; await page.waitForTimeout(700); await page.screenshot({ path: path.join(shotsDir, `${name}.png`), fullPage: true }); };
 
 /* sign in once; the cookie is the session, so every later screen only has to reload ---- */
@@ -232,6 +317,7 @@ const cookies = await first.cookies();
 await first.close();
 
 let n = 0;
+let contrasted = 0;                      // pieces of text whose contrast was measured against the painted page
 for (const [device, width, height, touch] of DEVICES) {
     const ctx = await browser.newContext({ viewport: { width, height }, hasTouch: touch, isMobile: touch && width < 1000, deviceScaleFactor: touch ? 2 : 1 });
     await ctx.addCookies(cookies);
@@ -257,10 +343,12 @@ for (const [device, width, height, touch] of DEVICES) {
     await page.goto(`${base}/t/${TOKEN}`);
     await page.waitForSelector('#tp-out');
     await inspect(page, `${device} ${width}x${height}, statement`, touch);
+    if (width === 390) contrasted += await contrast(page, `${device}, statement`);
     await shot(page, `${tag}-2-statement`);
     await page.click('#tp-lang');
     await page.waitForFunction(() => document.getElementById('tp-lang').textContent !== 'සිංහල');
     await inspect(page, `${device} ${width}x${height}, statement in Sinhala`, touch);
+    if (width === 390) contrasted += await contrast(page, `${device}, statement in Sinhala`);
     await shot(page, `${tag}-3-statement-si`);
     await ctx.close();
     n += 1;
@@ -284,6 +372,7 @@ for (const [device, width, height, touch] of [['dark phone', 390, 844, true], ['
     const [r, g, b] = bg.match(/\d+/g).map(Number);
     if (r + g + b > 150) problems.push(`${device}: the page is not dark (${bg})`);
     await inspect(page, `${device} ${width}x${height}, statement`, touch);
+    if (width === 390) contrasted += await contrast(page, `${device}, statement`);
     await shot(page, `${tag}-2-statement`);
     await ctx.close();
     const bare = await browser.newContext({ viewport: { width, height }, hasTouch: touch, isMobile: touch, colorScheme: 'dark' });
@@ -345,6 +434,7 @@ async function signInStates(device, width, height, touch, dark) {
     }
     await page.waitForFunction(() => /Still not matching/.test(document.getElementById('tp-help').textContent));
     await inspect(page, `${label}, details refused three times`, touch);
+    if (width === 390) contrasted += await contrast(page, `${label}, details refused three times`);
     await shot(page, `${tag}-1c-refused-warning`);
     // the right NIC: the code screen names the phone
     await page.fill('#tp-nic', NIC);
@@ -353,6 +443,7 @@ async function signInStates(device, width, height, touch, dark) {
     const info = await page.textContent('#tp-info');
     if (!/\+94 ••• 4567/.test(info) || /771234567/.test(info)) problems.push(`${label}: the code screen should name only the last four digits (${info})`);
     await inspect(page, `${label}, code screen`, touch);
+    if (width === 390) contrasted += await contrast(page, `${label}, code screen`);
     await shot(page, `${tag}-1d-code`);
     const code2 = /^(\d{6}) is your WealthFlow/.exec(sent.at(-1).message)[1];
     await page.fill('#tp-code', code2);
@@ -363,6 +454,8 @@ async function signInStates(device, width, height, touch, dark) {
 for (const d of [['feature phone', 240, 320, true], ['iPhone SE (1st gen)', 320, 568, true], ['iPhone 14', 390, 844, true], ['phone, landscape', 667, 375, true], ['iPad mini', 744, 1133, true], ['laptop', 1366, 768, false], ['desktop', 1920, 1080, false]]) await signInStates(...d, false);
 for (const d of [['dark phone', 390, 844, true], ['dark laptop', 1366, 768, false]]) await signInStates(...d, true);
 console.log('the loading screen, a refused NIC (and its warning) and the code screen were checked on seven screens and two dark ones');
+console.log(`${contrasted} pieces of text were measured against the page behind them (4.5:1, or 3:1 for large text)`);
+assert.ok(contrasted > 100, 'the contrast check looked at a real amount of text');
 
 await browser.close();
 server.close();

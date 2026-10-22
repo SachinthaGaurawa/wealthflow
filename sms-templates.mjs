@@ -23,8 +23,11 @@
 
 import { createHash } from 'node:crypto';
 import { analyzeSms } from './textlk.mjs';
+import { OFFICIAL_ORIGIN } from './wealthflow-public-identity.mjs';
 
 const s = (v) => String(v == null ? '' : v);
+/** The host the portal is served from, as the origin-bound line of a code text names it. */
+const OFFICIAL_HOST = new URL(OFFICIAL_ORIGIN).host;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** The kinds of notice, by layer. A = the Investments tab. B = money lent to people (Liquidity & Credit Hub). */
@@ -171,10 +174,18 @@ export function buildMessage(kind, ctx = {}) {
     return compact && analyzeSms(compact).segments < analyzeSms(full).segments ? compact : full;
 }
 
-/** The portal's one-time code. Says what it is for, how long it lives and never to share it. */
-export function otpMessage(code, minutes = 3) {
+/**
+ * The portal's one-time code. Says what it is for, how long it lives and never to share it.
+ *
+ * The last line is the web's origin-bound format, "@host #code" (the host only: no scheme, port or path; one space; nothing after it). A
+ * phone that sees it offers the code on the keyboard of the page that really is that host, and only there, so a look-alike site cannot
+ * collect it; Chrome on Android can fill it in with one tap. It is one line break and 28 characters, so the text stays one part.
+ */
+export function otpMessage(code, minutes = 3, host = OFFICIAL_HOST) {
     const c = s(code).replace(/\D/g, '');
-    return asciiOnly(`${c} is your WealthFlow verification code. It expires in ${minutes} minutes. Do not share it with anyone.`);
+    const text = asciiOnly(`${c} is your WealthFlow verification code. It expires in ${minutes} minutes. Do not share it with anyone.`);
+    const h = s(host).trim().toLowerCase();
+    return /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(h) && c ? `${text}\n@${h} #${c}` : text;
 }
 
 export default { KINDS, currencyOf, fmtMoney, fmtDay, fmtMonth, refCode, buildMessage, otpMessage, asciiOnly };

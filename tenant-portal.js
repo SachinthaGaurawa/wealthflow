@@ -31,6 +31,7 @@ import { getAdminDb } from './admin-db.mjs';
 import { TextLkClient } from './textlk.mjs';
 import { platformWaitUntil } from './statement-chain.mjs';
 import { portalSecret } from './tenant-links.mjs';
+import { publicOrigin } from './wealthflow-public-identity.mjs';
 import { renderStatementPdf, pdfFileName } from './tenant-pdf.mjs';
 import {
     MSG, LIMITS, requestCode, verifyCode, readSession, loadStatement, endSession, hit, ipKey, clearCookie,
@@ -112,7 +113,7 @@ export async function handlePortal(req, res, deps) {
         const action = String(body.action || '');
 
         if (action === 'request') {
-            const out = await requestCode({ db, client: deps.client(), token: String(body.token || ''), nic: String(body.nic || ''), ip, secret, now, random: deps.randomInt, pad: deps.pad || undefined, defer: deps.waitUntil ? deps.waitUntil() : null });
+            const out = await requestCode({ db, client: deps.client(), token: String(body.token || ''), nic: String(body.nic || ''), ip, secret, now, random: deps.randomInt, pad: deps.pad || undefined, defer: deps.waitUntil ? deps.waitUntil() : null, host: new URL(publicOrigin(deps.env)).host });
             return send(res, out);
         }
         if (action === 'verify') {

@@ -56,7 +56,8 @@ const TOKEN = await ensureTenantToken({ db, uid: 'owner1', canonicalNic: CANON, 
 
 const sent = [];
 const gateway = { configured: true, senderId: 'WealthFlow', async send({ to, message }) { sent.push({ to, message }); return { ok: true, gatewayId: 'g', cost: 1, segments: 1 }; } };
-const deps = { client: () => gateway, getAdminDb: async () => ({ db }), env: ENV, now: () => Date.now(), randomInt: crypto.randomInt, randomBytes: crypto.randomBytes, pad: null };
+let skew = 0;             // the server's clock can be moved forward (the 60 s gap between two texts for one link), after the sections that need real time
+const deps = { client: () => gateway, getAdminDb: async () => ({ db }), env: ENV, now: () => Date.now() + skew, randomInt: crypto.randomInt, randomBytes: crypto.randomBytes, pad: null };
 
 /* ── the site: static files, the rewrite, the policy header, and the endpoint ─ */
 const server = http.createServer((req, res) => {
@@ -533,6 +534,109 @@ const locked = await page.textContent('#tp-err');
 assert.match(locked, /Too many attempts/);
 assert.match(locked, /15 minutes/);
 console.log('10. five wrong codes  ->', JSON.stringify(locked));
+
+/* 11b. the phone's own offer of the texted code (WebOTP): fills the field and checks it; stops waiting when the person types, asks again or leaves --------- */
+{
+    const two = [['199012345678', '077 765 4321'], ['198812345671', '077 765 4322']];
+    const tokens = [];
+    for (const [i, [nic, phone]] of two.entries()) {
+        assert.equal(normalizeNic(nic).ok, true);
+        fsx.data.get('users/owner1').debtors.push({ id: `deb-otp${i}`, name: 'nick', phone, nic, sms_notifications_enabled: true, sms_enabled_at: NOW - 30 * 86400e3, events: [{ id: 'f1', kind: 'lent', amount: 1000, date: '2026-09-01', confirmed: true }] });
+        tokens.push(await ensureTenantToken({ db, uid: 'owner1', canonicalNic: normalizeNic(nic).canonical, secret: portalSecret(ENV), now: NOW - 1000 }));
+    }
+    const lastLine = () => sent.at(-1).message.split('\n').at(-1);
+    const newestCode = () => /^(\d{6})/.exec(sent.at(-1).message)[1];
+    const open = async (token) => {
+        const ctx = await browser.newContext({ viewport: { width: 390, height: 800 }, hasTouch: true, isMobile: true });
+        // a browser that offers the code: the page's request stays open until the "SMS" arrives (release) or the page withdraws it (abort)
+        await ctx.addInitScript(() => {
+            window.__otp = { calls: 0, aborted: 0, transport: '', release: null };
+            window.OTPCredential = function OTPCredential() {};
+            Object.defineProperty(navigator, 'credentials', { configurable: true, value: { get: (opts) => new Promise((resolve, reject) => {
+                if (!opts || !opts.otp) return reject(new TypeError('not a code request'));
+                window.__otp.calls += 1;
+                window.__otp.transport = opts.otp.transport.join(',');
+                const withdraw = () => { window.__otp.aborted += 1; reject(new DOMException('aborted', 'AbortError')); };
+                if (opts.signal) { if (opts.signal.aborted) return withdraw(); opts.signal.addEventListener('abort', withdraw, { once: true }); }
+                window.__otp.release = (code) => resolve({ code });
+            }) } });
+        });
+        const p = await ctx.newPage();
+        const errs = [];
+        p.on('pageerror', (e) => errs.push(e.message));
+        await p.clock.install();                                            // from the start, so the page's own clock is the one that can be moved on (the 60 s before "Resend" opens)
+        await p.goto(`${base}/t/${token}`);
+        await p.waitForSelector('#tp-nic');
+        return { ctx, p, errs };
+    };
+    const otp = (p) => p.evaluate(() => ({ calls: window.__otp.calls, aborted: window.__otp.aborted, transport: window.__otp.transport }));
+    const askFor = async (p, nic) => { await p.fill('#tp-nic', nic); await p.click('#tp-send'); await p.waitForSelector('#tp-code'); };
+
+    // (a) the code arrives, the person taps Allow in the phone's own sheet, and they are in, without typing a digit
+    {
+        const { ctx, p, errs } = await open(tokens[0]);
+        await askFor(p, two[0][0]);
+        assert.deepEqual(await otp(p), { calls: 1, aborted: 0, transport: 'sms' }, 'the page asked the phone for a text-message code, once');
+        assert.equal(lastLine(), `@www.wealthflow.lk #${newestCode()}`, 'the text ends with the origin-bound line');
+        assert.equal(await p.getAttribute('#tp-code', 'aria-describedby'), 'tp-info tp-err', 'the field is described by what was sent and by any refusal');
+        await p.evaluate((c) => window.__otp.release(c), newestCode());
+        await p.waitForSelector('#tp-out', { timeout: 8000 });
+        assert.deepEqual(errs, []);
+        await ctx.close();
+    }
+    // (b) typing the code by hand withdraws the offer; leaving the screen withdraws it; asking for a new text withdraws the old wait and starts one
+    {
+        const { ctx, p, errs } = await open(tokens[1]);
+        await askFor(p, two[1][0]);
+        assert.deepEqual(await otp(p), { calls: 1, aborted: 0, transport: 'sms' });
+        await p.fill('#tp-code', '000000');
+        await p.click('#tp-verify');
+        await p.waitForFunction(() => document.getElementById('tp-err').textContent.length > 0 && !document.getElementById('tp-verify').disabled);
+        assert.deepEqual(await otp(p), { calls: 1, aborted: 1, transport: 'sms' }, 'submitting by hand withdrew the wait, and the wrong code did not start another');
+        assert.equal(await p.getAttribute('#tp-code', 'aria-invalid'), 'true');
+        await p.click('#tp-back');
+        await p.waitForSelector('#tp-nic');
+        assert.equal((await otp(p)).aborted, 1);
+        skew += 61000;                                                      // the server's 60 s gap between two texts for one link
+        await askFor(p, two[1][0]);
+        assert.deepEqual(await otp(p), { calls: 2, aborted: 1, transport: 'sms' }, 'a new code screen is a new wait');
+        await p.click('#tp-lang');                                          // redrawing the screen replaces the wait, it does not stack another
+        await p.waitForSelector('#tp-code');
+        assert.deepEqual(await otp(p), { calls: 3, aborted: 2, transport: 'sms' });
+        await p.click('#tp-lang');                                          // and back to English
+        await p.waitForFunction(() => document.documentElement.lang === 'en');
+        assert.deepEqual(await otp(p), { calls: 4, aborted: 3, transport: 'sms' });
+        await p.click('#tp-back');
+        await p.waitForSelector('#tp-nic');
+        assert.deepEqual(await otp(p), { calls: 4, aborted: 4, transport: 'sms' }, 'leaving the code screen withdrew the wait');
+        skew += 61000;
+        await askFor(p, two[1][0]);
+        await p.clock.fastForward(61000);
+        skew += 61000;
+        await p.waitForFunction(() => !document.getElementById('tp-resend').disabled, null, { timeout: 5000 });
+        const before = await otp(p);
+        await p.click('#tp-resend');
+        await p.waitForFunction(() => /new verification code has been sent/i.test(document.getElementById('tp-info').textContent));
+        const after = await otp(p);
+        assert.equal(after.aborted, before.aborted + 1, 'asking for a new text withdrew the wait for the old one');
+        assert.equal(after.calls, before.calls + 1, 'and began a wait for the new one');
+        await p.evaluate((c) => window.__otp.release(c), newestCode());
+        await p.waitForSelector('#tp-out', { timeout: 8000 });
+        assert.deepEqual(errs, []);
+        await ctx.close();
+    }
+    // (c) a browser with no such offer behaves exactly as before: the field is there, typing works
+    {
+        const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
+        const p = await ctx.newPage();
+        await p.addInitScript(() => { try { delete window.OTPCredential; } catch (_) { window.OTPCredential = undefined; } });
+        await p.goto(`${base}/t/${TOKEN}`);
+        await p.waitForSelector('#tp-nic');
+        assert.equal(await p.getAttribute('#tp-send', 'type'), 'submit');
+        await ctx.close();
+    }
+    console.log('11b. WebOTP           -> the phone fills the code when it can; typing, resending and leaving withdraw the wait; no error anywhere');
+}
 
 /* 12. layouts: nothing scrolls sideways on a small phone or a desktop ---------- */
 const verdicts = [];

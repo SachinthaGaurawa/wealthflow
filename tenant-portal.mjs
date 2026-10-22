@@ -242,7 +242,7 @@ async function mirrorOtp(db, uid, { ok, masked, kind, message, at }) {
  *          random?:Function, pad?:(ms:number)=>Promise<void>, defer?:(work:Promise<unknown>)=>void}} p
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function requestCode({ db, client, token, nic, ip, secret, now, random = crypto.randomInt, pad = async () => {}, defer = null }) {
+export async function requestCode({ db, client, token, nic, ip, secret, now, random = crypto.randomInt, pad = async () => {}, defer = null, host = '' }) {
     if (!TOKEN_RE.test(s(token))) return result(400, { ok: false, error: MSG.BAD_LINK });
     // what was typed can be a Sri Lankan NIC, a passport / ID number, or (a 12-digit string) either: each reading is compared with the link's
     const candidates = identityCandidates(nic);
@@ -302,7 +302,7 @@ export async function requestCode({ db, client, token, nic, ip, secret, now, ran
     // invocation alive after the response (`defer`) the text is sent then, and the person is not held for the gateway's own round trip.
     const deliver = async () => {
         let sent;
-        try { sent = await client.send({ to: to.e164, message: otpMessage(slot.code, OTP_TTL_MS / 60000) }); }
+        try { sent = await client.send({ to: to.e164, message: otpMessage(slot.code, OTP_TTL_MS / 60000, host || undefined) }); }
         catch (_) { sent = { ok: false, kind: KIND.UNKNOWN, possiblySent: true, message: 'the gateway call threw' }; }
 
         if (sent && sent.ok) {

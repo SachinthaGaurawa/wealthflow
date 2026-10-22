@@ -108,13 +108,38 @@ describe('every notice, word for word', () => {
 });
 
 describe('the one-time code message', () => {
+    const SENTENCE = 'is your WealthFlow verification code. It expires in 3 minutes. Do not share it with anyone.';
     it('says what it is, how long it lasts and never to share it', () => {
         const t = otpMessage('048213', 3);
-        expect(t).toBe('048213 is your WealthFlow verification code. It expires in 3 minutes. Do not share it with anyone.');
+        expect(t.split('\n')[0]).toBe(`048213 ${SENTENCE}`);
         expect(analyzeSms(t).segments).toBe(1);
+        expect(analyzeSms(t).encoding).toBe('GSM-7');
     });
-    it('keeps only the digits of the code', () => {
-        expect(otpMessage('12 34-56')).toContain('123456 is your');
+    it('ends with the origin-bound line a phone reads to offer the code only to the real site', () => {
+        const t = otpMessage('048213', 3);
+        expect(t).toBe(`048213 ${SENTENCE}\n@www.wealthflow.lk #048213`);
+        const last = t.split('\n').at(-1);
+        expect(last).toMatch(/^@[a-z0-9.-]+ #\d{6}$/);                         // the host only, one space, the code, and nothing after it
+        expect(last).not.toMatch(/https?:|\/|:\d/);                           // no scheme, path or port
+        expect(t.endsWith(last)).toBe(true);
+    });
+    it('names whatever host the portal is served from, and leaves the line out for anything that is not a bare host', () => {
+        expect(otpMessage('111222', 3, 'portal.example.lk').split('\n').at(-1)).toBe('@portal.example.lk #111222');
+        expect(otpMessage('111222', 3, 'WWW.WealthFlow.LK').split('\n').at(-1)).toBe('@www.wealthflow.lk #111222');
+        for (const bad of ['https://www.wealthflow.lk', 'www.wealthflow.lk:8443', 'a b.lk', 'x.lk/t/abc', '', '-x.lk']) {
+            const t = otpMessage('111222', 3, bad);
+            expect(t.includes('\n'), bad).toBe(false);
+            expect(t.endsWith('anyone.'), bad).toBe(true);
+        }
+        expect(otpMessage('', 3).includes('@')).toBe(false);                    // no digits, nothing to bind
+    });
+    it('keeps only the digits of the code, in both places', () => {
+        const t = otpMessage('12 34-56');
+        expect(t).toContain('123456 is your');
+        expect(t.endsWith('#123456')).toBe(true);
+    });
+    it('stays one part even with the longest wording it could be given', () => {
+        expect(analyzeSms(otpMessage('999999', 10, 'a-very-long-subdomain.portal.wealthflow-example.lk')).segments).toBe(1);
     });
 });
 
