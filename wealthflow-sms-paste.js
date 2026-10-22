@@ -526,7 +526,7 @@
             const ok = _state.rows.filter(r => r.status === 'staged').length;
             const dup = _state.rows.filter(r => r.status === 'dup').length;
             const err = _state.rows.filter(r => r.status === 'err').length;
-            _notify('Analysed ' + results.length + ' message' + (results.length === 1 ? '' : 's') + ' · ' + ok + ' ready' + (dup ? ' · ' + dup + ' duplicate' : '') + (err ? ' · ' + err + ' unparseable' : ''), 'success');
+            _notify('Analysed ' + results.length + ' message' + (results.length === 1 ? '' : 's') + ': ' + ok + ' ready' + (dup ? ', ' + dup + ' duplicate' : '') + (err ? ', ' + err + ' could not be read' : '') + '.', 'success');
 
             // Switch to the preview tab
             _switchTab('preview');
@@ -647,7 +647,7 @@
             const SAMPLE = "Your A/C No: ********1234 is debited with LKR1,250.00 on 15 JUN 2026 ref: KEELLS SUPER-COLOMBO 03. Your bal is LKR85,400.00. If unauthorized call 0112000000";
             if (ta) { ta.value = SAMPLE; ta.focus(); }
             _sampleText = SAMPLE;   // remember it so we can refuse to file the untouched sample
-            _notify('This is a demo SMS so you can see how it works. It won\'t be saved. Type or paste your own to file for real.', 'info');
+            _notify('This is a demo SMS so you can see how it works. It will not be saved. Type or paste your own to file for real.', 'info');
             return;
         }
         if (!rid) return;
@@ -794,7 +794,7 @@
     // the user can tap Auto-file / Review exactly as with pasted text.
     async function _handleImages(files) {
         const arr = Array.from(files || []).filter(f => f && /^image\//.test(f.type || ''));
-        if (!arr.length) { _notify('Those didn\'t look like images.', 'warn'); return; }
+        if (!arr.length) { _notify('Those files do not look like images.', 'warn'); return; }
         if (!window.wfVisionSms || typeof window.wfVisionSms.readImages !== 'function') {
             _notify('Image reader still loading — try again in a moment.', 'info');
             return;
@@ -842,13 +842,13 @@
 
                 if (!clean || clean.replace(/\s/g, '').length < 8) {
                     if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '@alert@'; sp.style.background = 'rgba(239,68,68,0.5)'; } }
-                    _notify('Couldn\'t read text from one screenshot. Try a clearer image.', 'warn');
+                    _notify('The text in one screenshot could not be read. Try a clearer image.', 'warn');
                 } else {
                     // record the block + append a tagged segment to the textarea
                     _imgBlocks[blockId] = clean;
                     _appendImageBlock(blockId, clean);
                     const n = (typeof window.wfSplitSmsBatch === 'function') ? window.wfSplitSmsBatch(clean).length : 1;
-                    _notify('@fileText@ Read screenshot → found ' + n + ' transaction' + (n === 1 ? '' : 's') + '.', 'success');
+                    _notify('Read the screenshot and found ' + n + ' transaction' + (n === 1 ? '' : 's') + '.', 'success');
                 }
             } catch (e) {
                 if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '@alert@'; sp.style.background = 'rgba(239,68,68,0.5)'; } }

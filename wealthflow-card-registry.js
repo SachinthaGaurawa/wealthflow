@@ -341,7 +341,7 @@
         } catch (e) { _notify('Could not save the card.', 'error'); return; }
         const host = document.getElementById('wfCardRegForm'); if (host) { host.style.display = 'none'; host.innerHTML = ''; }
         render();
-        _notify('Saved — WealthFlow will now route •••' + last4 + ' correctly and track its balance.', 'success');
+        _notify('Saved. WealthFlow will now route •••' + last4 + ' correctly and track its balance.', 'success');
         try { if (window.wfIntelPanel && window.wfIntelPanel.refresh) window.wfIntelPanel.refresh(); } catch (_) {}
     }
 

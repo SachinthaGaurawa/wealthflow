@@ -188,10 +188,10 @@ export const SI = Object.freeze({
     'Due today': 'අද නියමිතයි',
     'Due tomorrow': 'හෙට නියමිතයි',
     'In {n} days': 'දින {n}කින්',
-    '1 day overdue': 'දවසක් ප්‍රමාදයි',
+    '1 day overdue': 'දිනක් ප්‍රමාදයි',
     '{n} days overdue': 'දින {n}ක් ප්‍රමාදයි',
     'Add to calendar': 'දින දර්ශනයට එක් කරන්න',
-    'Balance over time': 'ශේෂය කාලයත් සමඟ',
+    'Balance over time': 'කාලයත් සමඟ ශේෂය',
     'Balance went from {from} to {to}': 'ශේෂය {from} සිට {to} දක්වා වෙනස් විය',
     'Repayment planner': 'ආපසු ගෙවීම් සැලසුම',
     'Payment frequency': 'ගෙවීමේ වාර ගණන',
@@ -219,7 +219,7 @@ export const SI = Object.freeze({
     'PDF shared.': 'PDF බෙදාගන්නා ලදි.',
     'Your file is ready. Please check your downloads.': 'ඔබේ ගොනුව සූදානම්. කරුණාකර ඔබේ බාගැනීම් පරීක්ෂා කරන්න.',
     'Statement refreshed.': 'ප්‍රකාශය යාවත්කාලීන කරන ලදි.',
-    'Sharing is not available on this device, so the file was saved instead.': 'මෙම උපාංගයේ බෙදාගැනීම නොමැති බැවින් ගොනුව සුරැකිණි.',
+    'Sharing is not available on this device, so the file was saved instead.': 'මෙම උපාංගයේ බෙදාගැනීම නොමැති බැවින් ගොනුව සුරකින ලදි.',
     'Payment of {amount} due to your lender ({ref})': 'ඔබේ ණය දෙන්නාට ගෙවිය යුතු {amount} ({ref})',
     'Interest payment of {amount} due ({ref})': '{amount} ක පොලී ගෙවීමක් නියමිතයි ({ref})',
     'Reminder from your WealthFlow statement. Please quote reference {ref} when you pay.': 'ඔබේ WealthFlow ප්‍රකාශයෙන් සිහිකැඳවීමකි. ගෙවන විට කරුණාකර යොමු අංකය {ref} සඳහන් කරන්න.',
@@ -229,7 +229,7 @@ export const SI = Object.freeze({
     'Link not valid': 'සබැඳිය වලංගු නැත',
     'This link is not valid': 'මෙම සබැඳිය වලංගු නැත',
     'Preparing your secure page': 'ඔබේ ආරක්ෂිත පිටුව සූදානම් කරමින්',
-    'This is taking longer than usual. Thank you for your patience.': 'සාමාන්‍යයට වඩා වැඩි කාලයක් ගත වෙමින් පවතී. ඔබගේ ඉවසීමට ස්තූතියි.',
+    'This is taking longer than usual. Thank you for your patience.': 'සාමාන්‍යයට වඩා වැඩි කාලයක් ගත වෙමින් පවතී. ඔබේ ඉවසීමට ස්තූතියි.',
 
     /* what goes wrong (the page's own sentences, then the server's) */
     'Please enter a valid NIC (9 digits followed by V or X, or 12 digits), or your passport / ID number.':
@@ -245,7 +245,7 @@ export const SI = Object.freeze({
         'ඉලක්කම් 6ක තහවුරු කිරීමේ කේතයක් අප සතුව ඇති ඔබේ ජංගම දුරකථන අංකයට යවා ඇත. එය මිනිත්තු 3කින් කල් ඉකුත් වේ.',
     'We could not verify that code. It may be incorrect or expired. Please check it, or request a new one.':
         'එම කේතය තහවුරු කළ නොහැකි විය. එය වැරදි හෝ කල් ඉකුත් වී තිබිය හැක. කරුණාකර එය පරීක්ෂා කරන්න, නැතහොත් නව කේතයක් ඉල්ලන්න.',
-    'Too many attempts. For your security, please wait before trying again.': 'උත්සාහ කිරීම් ඕනෑවට වඩා වැඩියි. ඔබේ ආරක්ෂාව සඳහා කරුණාකර මද වේලාවක් රැඳී සිට නැවත උත්සාහ කරන්න.',
+    'Too many attempts. For your security, please wait before trying again.': 'උත්සාහ ඉතා වැඩි ගණනක් සිදු වී ඇත. ඔබේ ආරක්ෂාව සඳහා කරුණාකර මද වේලාවක් රැඳී සිට නැවත උත්සාහ කරන්න.',
     'We cannot send another code just now. Please try again later.': 'මේ මොහොතේ තවත් කේතයක් යැවිය නොහැක. කරුණාකර පසුව නැවත උත්සාහ කරන්න.',
     'Verification codes are temporarily unavailable. Please try again later.': 'තහවුරු කිරීමේ කේත තාවකාලිකව නොමැත. කරුණාකර පසුව නැවත උත්සාහ කරන්න.',
     'This service is temporarily unavailable. Please try again later.': 'මෙම සේවාව තාවකාලිකව නොමැත. කරුණාකර පසුව නැවත උත්සාහ කරන්න.',

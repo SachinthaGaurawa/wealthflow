@@ -347,11 +347,11 @@
 
             if (match.type === 'goal') {
                 if (!allocateToGoal(match.id, amount, date, 'Auto-allocated · matched "' + match.name + '"')) return null;
-                _notify('Auto-funded goal "' + match.name + '" with ' + _money(amount), 'success');
+                _notify('Auto-funded goal "' + match.name + '" with ' + _money(amount) + '.', 'success');
                 return { ok: true, module: 'goal', label: match.name };
             }
             if (!allocateToLoan(match.id, amount, date, 'Auto-detected loan payment · "' + match.name + '"')) return null;
-            _notify('Auto-recorded loan payment for "' + match.name + '" · ' + _money(amount), 'success');
+            _notify('Auto-recorded loan payment for "' + match.name + '": ' + _money(amount) + '.', 'success');
             return { ok: true, module: 'loan', label: match.name };
         } catch (e) {
             console.warn('[' + V + '] semantic allocate error:', e && e.message);
@@ -445,12 +445,12 @@
                     nic: o.querySelector('#_vNic').value,
                     dob: o.querySelector('#_vDob').value
                 });
-                _notify('Vault saved, encrypted, and synced to your account', 'success');
+                _notify('Vault saved, encrypted and synced to your account.', 'success');
                 o.remove();
-            } catch (e) { _notify('Save failed: ' + (e && e.message), 'error'); }
+            } catch (e) { _notify('The vault could not be saved: ' + ((e && e.message) || 'unknown error') + '.', 'error'); }
         };
         if (o.querySelector('#_vClear')) o.querySelector('#_vClear').onclick = function () {
-            vaultClear(); _notify('Vault cleared', 'info'); o.remove();
+            vaultClear(); _notify('Vault cleared.', 'info'); o.remove();
         };
     }
 

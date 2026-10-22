@@ -145,7 +145,7 @@ describe('the export is actually wired to it', () => {
          * drops the cents. Both describe how the SCREEN looks. An export that
          * silently wrote "••••••", or dropped the cents because of a toggle,
          * would be a worse bug than the one being fixed. */
-        const fn = html.slice(at, html.indexOf('notify(\'Analytics CSV Report', at));
+        const fn = html.slice(at, html.indexOf('notify(\'The spreadsheet report has been downloaded', at));
         for (const banned of ['_wfDisplayPrefs', 'fmtN(', 'fmt(', 'fmtS(']) {
             expect(fn, `the export reads ${banned}`).not.toContain(banned);
         }

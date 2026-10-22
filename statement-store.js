@@ -308,7 +308,7 @@ export default async function handler(req, res) {
         }
 
         const id = randomId(8);
-        const cleanName = String(name || (isPdf ? 'Elite Report' : 'Statement')).replace(/[<>]/g, '').slice(0, 80);
+        const cleanName = String(name || (isPdf ? 'Monthly Statement' : 'Statement')).replace(/[<>]/g, '').slice(0, 80);
         const now = Date.now();
         const expiresMs = now + EXPIRY_DAYS * 24 * 60 * 60 * 1000;
 

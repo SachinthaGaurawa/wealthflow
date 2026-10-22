@@ -435,7 +435,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
             return { ok: true, settled: plan.settled.length, partial: plan.partial };
         } catch (e) {
             console.error('[FIFO] error:', e);
-            if (typeof window.notify === 'function') notify('FIFO reconcile failed: ' + e.message, 'error');
+            if (typeof window.notify === 'function') notify('Card payment matching did not finish: ' + e.message + '.', 'error');
             return { ok: false, error: e.message };
         }
     }
@@ -467,7 +467,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
                 return await applyBrainResult(data);
             }
             if (typeof window.notify === 'function') {
-                notify(data.reason || data.error || 'Could not classify SMS', 'warn');
+                notify(data.reason || (window._wfServerWhy ? window._wfServerWhy(data.error, 'The SMS could not be sorted.') : 'The SMS could not be sorted.'), 'warn');
             }
             return data;
         } catch (e) {

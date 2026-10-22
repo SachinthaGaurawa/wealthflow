@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="color-scheme" content="dark light">
-<title>WealthFlow — Quick Capture</title>
+<title>WealthFlow: Add a Bank SMS</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="assets/wf-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="wf-tokens.css">
@@ -75,13 +75,13 @@
 <body>
 <div class="card">
   <img class="brand" src="assets/wf-mark.svg" alt="WealthFlow">
-  <h1>@devices@ Quick Capture</h1>
+  <h1>@devices@ Add a Bank SMS</h1>
   <div class="hint" style="margin-bottom:14px;">
-    Text shared from your SMS app or pasted below will be auto-classified by AutoPilot
-    and routed to the right WealthFlow module.
+    A message shared from your SMS app, or pasted below, is sorted by WealthFlow
+    and saved to the right page.
   </div>
-  <textarea id="txt" class="input" placeholder="SMS text appears here automatically when shared from iMessage / Messages app…"></textarea>
-  <button class="btn" id="goBtn">@bot@ Classify &amp; Save</button>
+  <textarea id="txt" class="input" placeholder="A bank SMS shared from your Messages app appears here. You can also paste one."></textarea>
+  <button class="btn" id="goBtn">@bot@ Sort and Save</button>
   <button class="btn btn-secondary" id="openBtn">@info@ Open WealthFlow</button>
   <div class="result" id="result"></div>
 </div>
@@ -131,11 +131,11 @@
     const res = document.getElementById('result');
     if (!txt) {
       res.className = 'result err';
-      res.textContent = 'Paste an SMS or share one from your Messages app first.';
+      res.textContent = 'Paste a bank SMS, or share one from your Messages app, first.';
       return;
     }
     res.className = 'result';
-    res.textContent = '@bot@ Brain processing…';
+    res.textContent = '@bot@ Reading the message…';
     res.style.display = 'block';
 
     try {
@@ -169,17 +169,17 @@
           income: '@wallet@ Income',
           expenses: '@coins@ Expense',
           subscriptions: '@refresh@ Subscription',
-          cconetime: '@card@ CC One-Time',
-          cc_payment: '@checkCircle@ CC Payment (FIFO)'
+          cconetime: '@card@ CC One-Time Payment',
+          cc_payment: '@checkCircle@ Card Payment'
         };
         res.className = 'result ok';
         res.innerHTML = `
-          <div style="font-weight:700;color:var(--wf-pos);margin-bottom:6px;">@checkCircle@ Logged as ${esc(labels[m] || m)}</div>
+          <div style="font-weight:700;color:var(--wf-pos);margin-bottom:6px;">@checkCircle@ Saved as ${esc(labels[m] || m)}</div>
           <div style="font-family:var(--wf-font-mono);">
             ${esc(f.desc || f.source || f.name || '')}<br>
             <b>${esc((data.parsed && data.parsed.currency) || 'LKR')} ${esc((Number(f.amount) || 0).toLocaleString())}</b>
           </div>
-          <div style="margin-top:8px;font-size:11px;opacity:.7;">Auto-saved to WealthFlow. Open the app to view.</div>`;
+          <div style="margin-top:8px;font-size:11px;opacity:.7;">Saved to WealthFlow. Open the app to see it.</div>`;
         // Queue the result for the main app to pick up via localStorage
         try {
           const inbox = JSON.parse(localStorage.getItem('wf_share_inbox') || '[]');
@@ -188,14 +188,14 @@
         } catch (_) {}
       } else if (data.ok && data.classified === false) {
         res.className = 'result err';
-        res.textContent = '@alert@ ' + (data.reason || "Doesn't look like a bank SMS. Try again with a bank/credit-card message.");
+        res.textContent = '@alert@ ' + (data.reason || 'This does not look like a bank SMS. Try again with a message from your bank or credit card.');
       } else {
         res.className = 'result err';
-        res.textContent = '@alert@ ' + (data.error || data.reason || 'Could not classify.');
+        res.textContent = '@alert@ ' + (data.error || data.reason || 'The message could not be read.');
       }
     } catch (e) {
       res.className = 'result err';
-      res.textContent = '@alert@ Network error: ' + e.message;
+      res.textContent = '@alert@ The message could not be sent (' + e.message + '). Check your connection and try again.';
     }
   }
 

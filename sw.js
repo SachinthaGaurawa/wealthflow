@@ -254,7 +254,7 @@ self.addEventListener('push', (event) => {
     console.log('[SW] Push notification received');
 
     let data = {
-        title: 'WealthFlow Infinity',
+        title: 'WealthFlow',
         body: 'You have a new financial update.',
         icon: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
         badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
