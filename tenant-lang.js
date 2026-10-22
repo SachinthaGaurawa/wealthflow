@@ -56,8 +56,8 @@ export const SI = Object.freeze({
     'A new verification code has been sent. The previous code is no longer valid.': 'නව තහවුරු කිරීමේ කේතයක් යවා ඇත. පෙර කේතය තවදුරටත් වලංගු නොවේ.',
 
     /* sign-in answers (the details were wrong, the code went out) */
-    'We have sent a 6-digit verification code to {phone}. It expires in 3 minutes.':
-        'ඉලක්කම් 6ක තහවුරු කිරීමේ කේතයක් {phone} වෙත යවා ඇත. එය මිනිත්තු 3කින් කල් ඉකුත් වේ.',
+    'We sent a 6-digit code by text message to': 'ඉලක්කම් 6ක කේතයක් කෙටි පණිවිඩයෙන් යවා ඇත්තේ',
+    'your mobile number ending in {digits}': 'අවසන් ඉලක්කම් {digits} වන ඔබේ ජංගම දුරකථන අංකයටයි',
     'We could not verify these details. Please check your NIC or passport / ID number, or contact the person who sent you this link.':
         'ඔබේ විස්තර තහවුරු කළ නොහැකි විය. කරුණාකර ඔබේ ජාතික හැඳුනුම්පත් හෝ ගමන් බලපත්‍ර / හැඳුනුම්පත් අංකය පරීක්ෂා කරන්න, නැතහොත් මෙම සබැඳිය එවූ පුද්ගලයා අමතන්න.',
     'We cannot send a code for this link right now. Please contact the person who sent it to you.':

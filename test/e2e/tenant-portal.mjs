@@ -28,7 +28,7 @@ import { normalizeNic } from '../../wealthflow-nic.js';
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 const PAGE_HEADERS = Object.fromEntries(VERCEL.headers.find((h) => h.source === '/t/(.*)').headers.map((h) => [h.key, h.value]));
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.woff2': 'font/woff2' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
 
 const ENV = { TENANT_PORTAL_SECRET: 'e2e-secret-'.repeat(4) };
 const NIC = '853400937V';
@@ -77,7 +77,7 @@ const server = http.createServer((req, res) => {
     const f = path.resolve(ROOT, '.' + file);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end('not found'); }
     // the page's own files, its words, the shared NIC module and nothing else
-    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|tenant-inter\.woff2|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
+    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|assets\/wf-mark\.svg|tenant-inter\.woff2|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', ...headers });
     res.end(fs.readFileSync(f));
 });
@@ -110,7 +110,10 @@ const lastCode = () => { const m = /^(\d{6}) is your WealthFlow/.exec(sent.at(-1
         p.on('pageerror', (e) => errors.push(e.message));
         await p.addInitScript(() => {
             window.__splashRemoved = 0;
+            window.__stages = [];
             new MutationObserver((records) => { for (const r of records) for (const n of r.removedNodes) if (n.classList && n.classList.contains('tp-splash')) window.__splashRemoved += 1; }).observe(document, { childList: true, subtree: true });
+            // every state the loading bar was put in, read the moment it changed (the bar moves at three real moments: drawn, script running, answer in)
+            new MutationObserver((records) => { for (const r of records) if (r.target.classList && r.target.classList.contains('tp-splash')) window.__stages.push(r.target.className); }).observe(document, { attributes: true, attributeFilter: ['class'], subtree: true });
         });
         let calls = 0;
         await p.route('**/api/tenant-portal', async (route) => { calls += 1; if (calls === 1) await new Promise((r) => setTimeout(r, holdMs)); await route.continue(); });
@@ -123,23 +126,29 @@ const lastCode = () => { const m = /^(\d{6}) is your WealthFlow/.exec(sent.at(-1
     await probe({}, 6200, async (p) => {
         await p.waitForFunction(() => { const l = document.querySelector('.tp-splash-status'); return l && l.textContent === 'Preparing your secure page'; });
         await p.waitForFunction(() => Number(getComputedStyle(document.querySelector('.tp-splash')).opacity) === 1);       // the 0.3 s hold-back and the fade are over
-        const seen = await p.evaluate(() => { const el = document.querySelector('.tp-splash'); const box = el.getBoundingClientRect(); return { opacity: Number(getComputedStyle(el).opacity), role: el.getAttribute('role'), logo: document.querySelector('.tp-splash-logo').complete, name: document.querySelector('.tp-splash-name').textContent, tall: box.height >= innerHeight - 2, removed: window.__splashRemoved, stuck: !!document.querySelector('.tp-splash-stuck') }; });
+        const seen = await p.evaluate(() => { const el = document.querySelector('.tp-splash'); const box = el.getBoundingClientRect(); const cs = getComputedStyle(el); const logo = document.querySelector('.tp-splash-logo'); return { opacity: Number(cs.opacity), role: el.getAttribute('role'), logo: logo.complete && logo.naturalWidth > 0, name: document.querySelector('.tp-splash-name').textContent, sub: document.querySelector('.tp-splash-sub').textContent, tall: box.height >= innerHeight - 2, wide: box.width >= innerWidth - 2, paper: cs.backgroundColor, position: cs.position, size: Math.round(logo.getBoundingClientRect().width), removed: window.__splashRemoved, stuck: !!document.querySelector('.tp-splash-stuck') }; });
         assert.equal(seen.opacity, 1, 'the loading screen is visible once the hold-back is over');
-        assert.deepEqual([seen.role, seen.logo, seen.name, seen.tall, seen.stuck], ['status', true, 'WealthFlow', true, false], 'the mark, the name, the whole screen, and no "reload" line once the script runs');
+        assert.deepEqual([seen.role, seen.logo, seen.name, seen.sub, seen.tall, seen.wide, seen.stuck], ['status', true, 'WealthFlow', 'Infinity Engine', true, true, false], 'the mark, the name, the tagline, the whole screen, and no "reload" line once the script runs');
+        assert.deepEqual([seen.paper, seen.position], ['rgb(255, 255, 255)', 'fixed'], 'it is white, and it covers the page');
+        assert.ok(seen.size >= 72 && seen.size <= 112, `the mark is drawn at ${seen.size}px`);
+        // the bar stands where the page really is: the script is running (62 %), not done (100 %)
+        await p.waitForFunction(() => { const m = new DOMMatrix(getComputedStyle(document.querySelector('.tp-splash-bar span')).transform); return Math.abs(m.a - 0.62) < 0.02; }, null, { timeout: 4000 });
+        assert.ok((await p.evaluate(() => window.__stages)).includes('tp-splash tp-p2'), 'the script moved the bar on when it started');
         assert.equal(seen.removed, 0, 'the script adopted the splash the HTML drew instead of building another');
         await snap(p, '0-loading');
         await p.waitForFunction(() => document.querySelector('.tp-splash-status').textContent === 'This is taking longer than usual. Thank you for your patience.', null, { timeout: 8000 });
         await snap(p, '0b-loading-slow');
         await p.waitForSelector('#tp-nic', { timeout: 10000 });
         assert.equal(await p.evaluate(() => window.__splashRemoved), 1, 'and the form took its place');
+        assert.ok((await p.evaluate(() => window.__stages)).includes('tp-splash tp-p3'), 'the bar was full when the answer came in');
     });
     // Sinhala for a browser that asks for it; and a person who asked for less motion gets a calm bar
     await probe({ locale: 'si-LK', reducedMotion: 'reduce' }, 1500, async (p) => {
         await p.waitForFunction(() => document.querySelector('.tp-splash-status').textContent === 'ඔබේ ආරක්ෂිත පිටුව සූදානම් කරමින්');
         await p.waitForFunction(() => Number(getComputedStyle(document.querySelector('.tp-splash')).opacity) === 1);
         await snap(p, '0c-loading-si');
-        const calm = await p.evaluate(() => { const bar = getComputedStyle(document.querySelector('.tp-splash-bar span')); const glow = getComputedStyle(document.querySelector('.tp-splash-mark'), '::before'); return { barAnimation: bar.animationName, barWidth: bar.width, glowAnimation: glow.animationName, logoAnimation: getComputedStyle(document.querySelector('.tp-splash-logo')).animationName }; });
-        assert.deepEqual([calm.barAnimation, calm.glowAnimation, calm.logoAnimation], ['none', 'none', 'none'], 'nothing moves for a person who asked for less motion');
+        const calm = await p.evaluate(() => { const bar = getComputedStyle(document.querySelector('.tp-splash-bar span')); const shine = getComputedStyle(document.querySelector('.tp-splash-bar span'), '::after'); const glow = getComputedStyle(document.querySelector('.tp-splash-mark'), '::before'); const ring = getComputedStyle(document.querySelector('.tp-splash-mark'), '::after'); return { barAnimation: bar.animationName, barTransform: bar.transform, shine: shine.display, glowAnimation: glow.animationName, ringAnimation: ring.animationName, logoAnimation: getComputedStyle(document.querySelector('.tp-splash-logo')).animationName }; });
+        assert.deepEqual([calm.barAnimation, calm.barTransform, calm.shine, calm.glowAnimation, calm.ringAnimation, calm.logoAnimation], ['none', 'none', 'none', 'none', 'none', 'none'], 'nothing moves for a person who asked for less motion: a calm full line, no ring running, no shimmer');
         await p.waitForSelector('#tp-nic', { timeout: 10000 });
     });
     console.log('0. loading screen     -> drawn before the script, adopted by it, says it is slow after 5 s, Sinhala on request, still when motion is reduced');
@@ -216,9 +225,12 @@ await page.click('#tp-send');
 await page.waitForSelector('#tp-code');
 assert.equal(sent.length, before + 1);
 assert.equal(sent.at(-1).to, '+94771234567');
-const rightNicWords = await page.textContent('#tp-info');
-assert.match(rightNicWords, /We have sent a 6-digit verification code to \+94 ••• 4567\. It expires in 3 minutes\./, 'the page names the last four digits of the phone');
-assert.doesNotMatch(rightNicWords, /771234567/, 'and never more than the last four');
+const rightNicWords = await page.textContent('#tp-sent');
+assert.match(rightNicWords, /We sent a 6-digit code by text message to\s*\+94 •• ••• •567/, 'the page says where the code went: the phone, with only its last three digits');
+assert.doesNotMatch(rightNicWords, /771234567|4567/, 'and never more than the last three');
+assert.equal(await page.textContent('#tp-sent .tp-sr'), 'your mobile number ending in 5 6 7', 'a screen reader is told the digits, not the dots');
+assert.equal(await page.getAttribute('#tp-sent .tp-sent-num', 'aria-hidden'), 'true', 'the dots are drawn for the eye only');
+assert.equal(await page.isHidden('#tp-info'), true, 'the status box has nothing to say until there is something new');
 assert.doesNotMatch(await text(), /View my statement|Send a new code/);
 assert.equal((await page.textContent('#tp-verify')).trim(), 'Verify code');
 assert.match(await page.textContent('#tp-resend'), /Resend code in \d+s/);
@@ -578,7 +590,7 @@ console.log('10. five wrong codes  ->', JSON.stringify(locked));
         await askFor(p, two[0][0]);
         assert.deepEqual(await otp(p), { calls: 1, aborted: 0, transport: 'sms' }, 'the page asked the phone for a text-message code, once');
         assert.equal(lastLine(), `@www.wealthflow.lk #${newestCode()}`, 'the text ends with the origin-bound line');
-        assert.equal(await p.getAttribute('#tp-code', 'aria-describedby'), 'tp-info tp-err', 'the field is described by what was sent and by any refusal');
+        assert.equal(await p.getAttribute('#tp-code', 'aria-describedby'), 'tp-sent tp-info tp-err', 'the field is described by where the code went, by any news and by any refusal');
         await p.evaluate((c) => window.__otp.release(c), newestCode());
         await p.waitForSelector('#tp-out', { timeout: 8000 });
         assert.deepEqual(errs, []);
