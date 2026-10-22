@@ -5956,8 +5956,8 @@
                 <div class="nav-item" id="wfCribNavItem" onclick="showPage('crib',this)"><span class="nav-icon"><i data-wfi="fileText"></i></span> CRIB Credit Report</div>
                 <div class="nav-item" onclick="showPage('subscriptions',this)"><span class="nav-icon"><i data-wfi="bell"></i></span>
                     Subscriptions</div>
-                <div class="nav-item" onclick="showPage('debtdemo',this)"><span class="nav-icon"><i data-wfi="bomb"></i></span> Debt
-                    Demolisher</div>
+                <div class="nav-item" onclick="showPage('debtdemo',this)"><span class="nav-icon"><i data-wfi="bomb"></i></span> Debt Payoff
+                    Planner</div>
                 <div class="nav-item" onclick="showPage('montecarlo',this)"><span class="nav-icon"><i data-wfi="crystal"></i></span> Wealth
                     Simulator</div>
                 <div class="nav-item" onclick="showPage('cashflow3d',this)"><span class="nav-icon"><i data-wfi="globe"></i></span> 3D Cash
@@ -6047,12 +6047,11 @@
 
                     <div class="golden-frame">
                         <div class="gf-header">
-                            <div class="gf-title">@sparkles@ Gemini AI Insights</div>
+                            <div class="gf-title">@sparkles@ AI Insights</div>
                             <button class="gf-btn" onclick="generateAIInsights()">Generate Insight</button>
                         </div>
                         <div id="aiInsightsArea" style="font-size:14px; color:var(--text2); line-height:1.6;">
-                            Click generate to receive a real-time AI analysis of your current monthly cash flow based on
-                            the local Sri Lankan context.
+                            Tap Generate Insight for an AI analysis of this month's cash flow, based on Sri Lankan costs and conditions.
                         </div>
                     </div>
 
@@ -6531,17 +6530,17 @@
                         <div>
                             <div class="sh-title">@bot@ AI Financial Advisor</div>
                             <div style="font-size:11px;color:var(--text3);margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                                <span>Your personalized, always-learning wealth companion</span>
+                                <span>Your personal finance advisor, working from your own records</span>
                                 <span class="ai-sync-badge synced" id="aiSyncBadge">● Synced</span>
                             </div>
                         </div>
                         <div class="sh-actions" style="gap:8px;flex-wrap:wrap;">
                             <div id="aiPersonaStatus" style="font-size:11px;color:var(--accent);font-family:var(--mono);display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.2);border-radius:20px;">
                                 <span style="width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);animation:luxuryBlink 3s infinite;display:inline-block;"></span>
-                                <span id="aiPersonaLabel">Learning your style...</span>
+                                <span id="aiPersonaLabel">Learning your style…</span>
                             </div>
                             <button class="btn btn-secondary btn-sm" onclick="openLangModal()" title="AI language">@globe@ <span id="aiLangBadge">EN</span></button>
-                            <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')" title="Change AI personality">@user@ Persona</button>
+                            <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')" title="Change AI advisor style">@user@ Style</button>
                             <button class="btn btn-ghost btn-sm" onclick="clearAIChat()" title="Clear chat history"><i data-wfi="trash"></i></button>
                         </div>
                     </div>
@@ -6563,12 +6562,12 @@
                                     <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#0a1628,#162544);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;box-shadow:0 0 12px rgba(212,175,55,.15);">@bot@</div>
                                     <div>
                                         <div style="font-size:14px;font-weight:700;color:var(--accent);">WealthFlow AI</div>
-                                        <div style="font-size:10px;color:var(--text3);">Triple-Engine · Gemini · DeepSeek · Groq</div>
+                                        <div style="font-size:10px;color:var(--text3);">Answers from your own records</div>
                                     </div>
                                 </div>
                                 <div style="font-size:14px;color:var(--text);line-height:1.8;">
-                                    @user@ Hello! I'm your <strong style="color:var(--accent);">WealthFlow AI Advisor</strong> — I understand <em>your</em> unique financial patterns and learn from every conversation.<br><br>
-                                    @sparkles@ Ask me about your spending, savings goals, loan strategies, investments, or even just chat — I'm friendly!<br><br>
+                                    @user@ Hello. I am your <strong style="color:var(--accent);">WealthFlow AI advisor</strong>. I answer from your own records and learn how you like to work as we talk.<br><br>
+                                    @sparkles@ Ask me about your spending, savings goals, loans or investments, or about anything else you would like to talk through.<br><br>
                                     <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--text2);margin-top:8px;">
                                         <span style="background:rgba(66,133,244,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(66,133,244,0.25);">@globe@ 70+ languages</span>
                                         <span style="background:rgba(16,185,129,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(16,185,129,0.25);">@scan@ Scan receipts</span>
@@ -6594,9 +6593,9 @@
                             </div>
                             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
                                 <div id="aiTypingIndicator" style="font-size:11px;color:var(--text3);display:none;">
-                                    <span style="color:var(--accent);">●</span><span style="opacity:0.5;">●</span><span style="opacity:0.2;">●</span> AI is thinking...
+                                    <span style="color:var(--accent);">●</span><span style="opacity:0.5;">●</span><span style="opacity:0.2;">●</span> Thinking…
                                 </div>
-                                <div style="font-size:10px;color:var(--text3);margin-left:auto;font-family:var(--mono);" id="aiProviderInfo">Gemini · DeepSeek · Groq</div>
+                                <div style="font-size:10px;color:var(--text3);margin-left:auto;font-family:var(--mono);" id="aiProviderInfo"></div>
                             </div>
                         </div>
                     </div>
@@ -6639,8 +6638,8 @@
                 <!-- ==================== DEBT DEMOLISHER PAGE ==================== -->
                 <div class="page" id="page-debtdemo">
                     <div class="sh">
-                        <div class="sh-title">@bomb@ Debt Demolisher</div>
-                        <div style="font-size:12px;color:var(--text3);margin-top:3px;">AI-optimized debt payoff strategy
+                        <div class="sh-title">@bomb@ Debt Payoff Planner</div>
+                        <div style="font-size:12px;color:var(--text3);margin-top:3px;">Compare the fastest ways to pay off your loans
                         </div>
                     </div>
                     <div id="debtDemoContent"></div>
@@ -6712,7 +6711,7 @@
                         style="margin-top:14px;background:linear-gradient(145deg,rgba(212,175,55,0.04),var(--card));">
                         <div class="card-header">
                             <div class="card-title">@bot@ AI Simulation Interpreter</div>
-                            <div class="card-sub">Plain-language explanation of what the numbers mean for your real life
+                            <div class="card-sub">What these numbers mean for you, in plain language
                             </div>
                         </div>
                         <button class="btn btn-primary" onclick="generateMonteCarloAIInsight()" style="width:100%;">@sparkles@
@@ -6742,8 +6741,7 @@
                     <div class="card" style="padding:0;overflow:hidden;">
                         <div class="card-header" style="padding:16px 20px;">
                             <div class="card-title">@gem@ Live 3D Money Flow Animation</div>
-                            <div class="card-sub">Drag to rotate · Scroll to zoom · Each particle = a real LKR
-                                transaction</div>
+                            <div class="card-sub">Drag to rotate and scroll to zoom. Each particle is one real transaction.</div>
                         </div>
                         <div id="cf3dCanvasWrap"
                             style="height:520px;background:radial-gradient(ellipse at center, #0d1729 0%, #060a14 100%);position:relative;overflow:hidden;">
@@ -7225,7 +7223,7 @@
                 <div class="ai-vision-card__head">
                     <span class="ai-vision-card__emoji">@bot@</span>
                     <div style="flex:1;min-width:0;">
-                        <div class="ai-vision-card__title">AI Vision — Auto-Fill From Statement</div>
+                        <div class="ai-vision-card__title">Scan a statement with AI</div>
                         <div class="ai-vision-card__sub">Upload a CC statement / receipt photo. AI extracts cash advances, service fees, fuel and purchases automatically.</div>
                     </div>
                 </div>
@@ -7305,7 +7303,7 @@
             <!-- Scanning Progress Overlay (shown during AI scan) -->
             <div id="aiScanOverlay" style="display:none; position:absolute; inset:0; z-index:50; background:rgba(10,10,15,0.92); backdrop-filter:blur(12px); border-radius:inherit; display:none; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px;">
                 <div id="aiScanSpinner" style="width:64px; height:64px; border-radius:50%; border:3px solid rgba(212,175,55,0.15); border-top-color:var(--accent); animation:spin 0.8s linear infinite;"></div>
-                <div id="aiScanStage" style="font-size:15px; font-weight:700; color:var(--accent); text-align:center; letter-spacing:0.3px;"><i data-wfi="camera"></i> Optimizing Image…</div>
+                <div id="aiScanStage" style="font-size:15px; font-weight:700; color:var(--accent); text-align:center; letter-spacing:0.3px;"><i data-wfi="camera"></i> Preparing the image…</div>
                 <div id="aiScanDetail" style="font-size:12px; color:var(--text3); text-align:center; max-width:260px; line-height:1.5;">Compressing and enhancing for AI vision</div>
                 <div style="width:80%; max-width:240px; height:4px; background:var(--bg2); border-radius:4px; overflow:hidden; margin-top:4px;">
                     <div id="aiScanBar" style="height:100%; width:0%; background:linear-gradient(90deg,var(--accent),#f5c542); border-radius:4px; transition:width 0.5s ease;"></div>
@@ -7321,7 +7319,7 @@
                 <div class="ai-vision-card__head">
                     <span class="ai-vision-card__emoji">@bot@</span>
                     <div style="flex:1;min-width:0;">
-                        <div class="ai-vision-card__title">AI Vision — Auto-Fill From Receipt</div>
+                        <div class="ai-vision-card__title">Scan a receipt with AI</div>
                         <div class="ai-vision-card__sub">Capture or upload a receipt / invoice photo. AI extracts vendor, amount, date and category automatically.</div>
                     </div>
                 </div>
@@ -7540,7 +7538,7 @@
                 <div class="ai-vision-card__head">
                     <span class="ai-vision-card__emoji">@bot@</span>
                     <div style="flex:1;min-width:0;">
-                        <div class="ai-vision-card__title">AI Vision — Auto-Fill From Bill</div>
+                        <div class="ai-vision-card__title">Scan a bill with AI</div>
                         <div class="ai-vision-card__sub">Capture or upload a bill / invoice photo. AI extracts vendor, amount, billing cycle and category automatically.</div>
                     </div>
                 </div>
@@ -7650,50 +7648,50 @@
     <div class="mo" id="mdScannerSettings">
         <div class="md md-sm">
             <div class="md-hdr">
-                <div class="md-title">${(window.WFIcon ? WFIcon('scan') : '')} AI Scanner Settings</div>
+                <div class="md-title">@scan@ AI Scanner Settings</div>
                 <button class="md-x" aria-label="Close" onclick="closeModal('mdScannerSettings')"><i data-wfi="x"></i></button>
             </div>
-            <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">Tune how receipts, invoices &amp; PDFs are scanned. Higher modes = more accurate but slower.</p>
+            <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">Choose how receipts, invoices and PDFs are scanned. Higher modes are more accurate but slower.</p>
 
             <div class="fg">
                 <label class="fl">Scan Mode</label>
                 <div id="scanModeCards" style="display:flex;flex-direction:column;gap:8px;">
                     <div class="scan-mode-card" data-mode="quick" onclick="setScanSetting('scanMode','quick')">
                         <div style="font-size:20px;">@sparkles@</div>
-                        <div><div style="font-weight:700;font-size:13px;">Quick</div><div style="font-size:11px;color:var(--text3);">Single fast engine. ~3-5s. Good for clear receipts.</div></div>
+                        <div><div style="font-weight:700;font-size:13px;">Quick</div><div style="font-size:11px;color:var(--text3);">One fast reader, about 3 to 5 seconds. Good for clear receipts.</div></div>
                     </div>
                     <div class="scan-mode-card" data-mode="deep" onclick="setScanSetting('scanMode','deep')">
                         <div style="font-size:20px;">@search@</div>
-                        <div><div style="font-weight:700;font-size:13px;">Deep (Recommended)</div><div style="font-size:11px;color:var(--text3);">Multiple AI engines in parallel + consensus. ~8-12s.</div></div>
+                        <div><div style="font-weight:700;font-size:13px;">Deep (Recommended)</div><div style="font-size:11px;color:var(--text3);">Several AI readers compared against each other, about 8 to 12 seconds.</div></div>
                     </div>
                     <div class="scan-mode-card" data-mode="ultra" onclick="setScanSetting('scanMode','ultra')">
                         <div style="font-size:20px;">@trendUp@</div>
-                        <div><div style="font-weight:700;font-size:13px;">Ultra</div><div style="font-size:11px;color:var(--text3);">All engines + cross-validation. Best for faded/blurry. ~15s.</div></div>
+                        <div><div style="font-weight:700;font-size:13px;">Ultra</div><div style="font-size:11px;color:var(--text3);">Every reader, cross-checked, about 15 seconds. Best for faded or blurry scans.</div></div>
                     </div>
                     <div class="scan-mode-card" data-mode="frontier" onclick="setScanSetting('scanMode','frontier')">
                         <div style="font-size:20px;">@globe@</div>
-                        <div><div style="font-weight:700;font-size:13px;">Frontier (strongest readers)</div><div style="font-size:11px;color:var(--text3);">Maximum accuracy. Hard documents, multi-page PDFs. Adds the strongest models on top of every other engine. ~20s.</div></div>
+                        <div><div style="font-weight:700;font-size:13px;">Frontier (strongest readers)</div><div style="font-size:11px;color:var(--text3);">Maximum accuracy for hard documents and multi-page PDFs. Adds the strongest models on top of the other readers, about 20 seconds.</div></div>
                     </div>
                 </div>
             </div>
 
             <div class="setting-row" style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px;">
-                <div class="setting-info"><div class="setting-label">@camera@ TF.js Image Enhancement</div><div class="setting-desc">On-device AI sharpening + contrast boost before scanning. Improves accuracy on poor photos.</div></div>
-                <div class="toggle" id="scanTfToggle" role="switch" tabindex="0" aria-label="TF.js Image Enhancement" aria-checked="false" onclick="setScanSetting('scanTfEnhance', !_scanSetting('scanTfEnhance', true))"></div>
+                <div class="setting-info"><div class="setting-label">@camera@ Image enhancement</div><div class="setting-desc">Sharpens the image and boosts contrast on this device before scanning. Helps with poor photos.</div></div>
+                <div class="toggle" id="scanTfToggle" role="switch" tabindex="0" aria-label="Image enhancement" aria-checked="false" onclick="setScanSetting('scanTfEnhance', !_scanSetting('scanTfEnhance', true))"></div>
             </div>
 
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">@refresh@ Auto-Escalate</div><div class="setting-desc">If confidence is low, automatically retry with a higher mode.</div></div>
-                <div class="toggle" id="scanAutoEscToggle" role="switch" tabindex="0" aria-label="Auto-Escalate" aria-checked="false" onclick="setScanSetting('scanAutoEscalate', !_scanSetting('scanAutoEscalate', true))"></div>
+                <div class="setting-info"><div class="setting-label">@refresh@ Retry in a higher mode</div><div class="setting-desc">If the scan is uncertain, retry automatically in a higher mode.</div></div>
+                <div class="toggle" id="scanAutoEscToggle" role="switch" tabindex="0" aria-label="Retry in a higher mode" aria-checked="false" onclick="setScanSetting('scanAutoEscalate', !_scanSetting('scanAutoEscalate', true))"></div>
             </div>
 
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">@folder@ Auto-Categorize</div><div class="setting-desc">AI assigns the best expense category automatically.</div></div>
-                <div class="toggle" id="scanAutoCatToggle" role="switch" tabindex="0" aria-label="Auto-Categorize" aria-checked="false" onclick="setScanSetting('scanAutoCategory', !_scanSetting('scanAutoCategory', true))"></div>
+                <div class="setting-info"><div class="setting-label">@folder@ Choose categories automatically</div><div class="setting-desc">The AI picks the most likely expense category.</div></div>
+                <div class="toggle" id="scanAutoCatToggle" role="switch" tabindex="0" aria-label="Choose categories automatically" aria-checked="false" onclick="setScanSetting('scanAutoCategory', !_scanSetting('scanAutoCategory', true))"></div>
             </div>
 
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Clean Drive file browser</div><div class="setting-desc">A thumbnail-free list sorted by most-recently-modified, with folder navigation, instead of Google's picker. Turning this on asks for a one-time Google Drive read permission.</div></div>
+                <div class="setting-info"><div class="setting-label">Clean Drive file browser</div><div class="setting-desc">A plain list of your Drive files, newest first, with folders, instead of Google's picker. Turning this on asks once for permission to read your Google Drive.</div></div>
                 <div class="toggle" id="driveBrowserToggle" role="switch" tabindex="0" aria-label="Clean Drive file browser" aria-checked="false" onclick="_wfToggleDriveBrowser()"></div>
             </div>
 
@@ -7711,7 +7709,7 @@
                 </select>
             </div>
 
-            <div class="md-ftr"><button class="btn btn-primary" onclick="closeModal('mdScannerSettings');notify('Scanner settings saved','success')">@info@ Done</button></div>
+            <div class="md-ftr"><button class="btn btn-primary" onclick="closeModal('mdScannerSettings');notify('Scanner settings saved.','success')">@info@ Done</button></div>
         </div>
     </div>
 
@@ -11580,7 +11578,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 logger: m => {
                     if (m.status === 'recognizing text') {
                         const pct = Math.round((m.progress || 0) * 100);
-                        _showScanOverlay('Reading Text (Tesseract)…', `OCR progress: ${pct}%`, 30 + pct * 0.5, 'fileText');
+                        _showScanOverlay('Reading text on this device…', `Progress: ${pct}%`, 30 + pct * 0.5, 'fileText');
                     }
                 }
             });
@@ -11798,7 +11796,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
             triggerHaptic('medium');
 
             const isExpense = type === 'expense';
-            if (isExpense) _showScanOverlay('Optimizing Image…', `Processing ${sizeMB}MB photo`, 10, 'camera');
+            if (isExpense) _showScanOverlay('Preparing the image…', `Processing ${sizeMB}MB photo`, 10, 'camera');
             else notify(`Optimizing image (${sizeMB}MB)…`, 'info');
 
             try {
@@ -11818,7 +11816,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 // also runs on mobile via the memory-safe light path).
                 const { base64: base64Img, kb } = await _compressImageToBase64(file, dim, q, tfEnhance);
                 console.log(`[AI Scan v4] Mode=${scanMode} Compressed: ${sizeMB}MB → ${kb}KB @ ${dim}px`);
-                if (isExpense) _showScanOverlay('AI Vision Analyzing…', `${scanMode.toUpperCase()} scan in progress`, 35, 'bot');
+                if (isExpense) _showScanOverlay('Analysing with AI…', `${scanMode.charAt(0).toUpperCase() + scanMode.slice(1)} scan in progress`, 35, 'bot');
                 else notify(`${scanMode.toUpperCase()} scan with AI Vision…`, 'info');
 
                 // Step 2 — Build prompt
@@ -11853,12 +11851,12 @@ Be conversational and precise.`;
                 }
 
                 // Step 3 — Send to AI Vision
-                if (isExpense) _showScanOverlay('Deep Scanning Receipt…', 'Extracting vendor, amount, items', 60, 'scan');
+                if (isExpense) _showScanOverlay('Scanning the receipt…', 'Reading the vendor, amount and items', 60, 'scan');
                 const reply = await callAI(prompt, base64Img);
                 console.log('[AI Scan v4] Raw reply:', reply.substring(0, 300));
 
                 // Step 4 — Parse
-                if (isExpense) _showScanOverlay('Processing Results…', 'Validating extracted data', 85, 'chartLine');
+                if (isExpense) _showScanOverlay('Processing the results…', 'Checking the extracted details', 85, 'chartLine');
                 const result = _parseAIJson(reply);
 
                 // Validation: Ensure amount was extracted (allow strings with commas)
@@ -11877,7 +11875,7 @@ Be conversational and precise.`;
 
                 // ===== TIER 2: Simplified AI retry =====
                 try {
-                    if (isExpense) _showScanOverlay('Quick AI Retry…', 'Simplified extraction', 40, 'sparkles');
+                    if (isExpense) _showScanOverlay('Retrying with AI…', 'Using a simpler reading', 40, 'sparkles');
                     const { base64: smaller } = await _compressImageToBase64(file, 800, 0.65, false);
 
                     if (isExpense) {
@@ -11887,14 +11885,14 @@ Be conversational and precise.`;
                         if (r2 && r2.amount && _populateExpenseFromScan(r2)) {
                             _hideScanOverlay();
                             triggerHaptic('success');
-                            notify('Receipt scanned (quick mode)', 'success');
+                            notify('Receipt scanned (quick mode).', 'success');
                             e.target.value = '';
                             return;
                         }
                     } else if (type === 'ai_chat') {
                         const retry = await callAI('Describe financial details in this document briefly.', smaller);
                         appendAIMessage('bot', retry);
-                        notify('Scanned (quick mode)', 'success');
+                        notify('Scanned (quick mode).', 'success');
                         e.target.value = '';
                         return;
                     }
@@ -11905,16 +11903,16 @@ Be conversational and precise.`;
                     // ===== TIER 2b: OCR.space (Dedicated 3rd Party API) =====
                     try {
                         if (isExpense) {
-                            _showScanOverlay('Cloud OCR API…', 'Querying 3rd party OCR.space', 50, 'cloud');
+                            _showScanOverlay('Reading with cloud OCR…', 'Using the OCR.space online reader', 50, 'cloud');
                             const { base64: ocrImg } = await _compressImageToBase64(file, 1600, 0.85, true);
                             const ocrText = await _tryOCRSpace(ocrImg);
                             if (ocrText) {
-                                _showScanOverlay('Parsing Cloud OCR…', 'Extracting exact numbers', 75, 'chartLine');
+                                _showScanOverlay('Reading the OCR result…', 'Extracting the exact numbers', 75, 'chartLine');
                                 const parsed = _extractFromOCRText(ocrText);
                                 if (parsed && parsed.amount && _populateExpenseFromScan(parsed)) {
                                     _hideScanOverlay();
                                     triggerHaptic('success');
-                                    notify('Scanned via Cloud OCR', 'success');
+                                    notify('Scanned via Cloud OCR.', 'success');
                                     e.target.value = '';
                                     return;
                                 }
@@ -11925,12 +11923,12 @@ Be conversational and precise.`;
                     // ===== TIER 3: Tesseract.js — runs 100% in browser, no API =====
                     if (isExpense) {
                         try {
-                            _showScanOverlay('Tesseract OCR Engine…', 'Reading text directly from image (offline)', 25, 'fileText');
+                            _showScanOverlay('Reading on this device…', 'Reading the text from the image without the internet', 25, 'fileText');
                             console.log('[AI Scan v4] Falling back to Tesseract.js OCR');
                             const ocrText = await _ocrWithTesseract(file);
                             console.log('[AI Scan v4] Tesseract text:', ocrText.substring(0, 200));
 
-                            _showScanOverlay('Parsing OCR Results…', 'Extracting amounts and vendor', 85, 'chartLine');
+                            _showScanOverlay('Reading the OCR result…', 'Finding the amounts and vendor', 85, 'chartLine');
                             const ocrResult = _extractFromOCRText(ocrText);
 
                             if (ocrResult && _populateExpenseFromScan(ocrResult)) {
@@ -12089,9 +12087,9 @@ Be conversational and precise.`;
                 wb.className = 'ai-welcome-msg';
                 wb.id = 'aiWelcomeBlock';
                 try {
-                    wb.innerHTML = _aiGreetingBlock("I'm here whenever you need me — ask me anything, or just chat. @message@");
+                    wb.innerHTML = _aiGreetingBlock("I am here whenever you need me. Ask me anything about your money.");
                 } catch (_) {
-                    wb.innerHTML = '<div style="font-size:14px;color:var(--text);line-height:1.7;">@user@ Hello! I\'m your WealthFlow AI. Ask me anything @sparkles@</div>';
+                    wb.innerHTML = '<div style="font-size:14px;color:var(--text);line-height:1.7;">Hello. I am your WealthFlow AI advisor. Ask me anything about your money.</div>';
                 }
                 wrap.appendChild(wb);
                 return;
@@ -12400,7 +12398,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 input.value = originalText;
                 autoResizeAIInput(input);
                 input.focus();
-                notify('@edit@ Edit your message and send again', 'info');
+                notify('Edit your message, then send it again.', 'info');
             } catch (e) { console.error('[editMsg]', e); }
         }
         window._editUserMessage = _editUserMessage;
@@ -12482,7 +12480,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             if (_atts.length > 0) {
                 // Don't allow send while an upload is still in progress.
                 if (_atts.some(a => a && a.uploading)) {
-                    notify('@clock@ Please wait — files are still uploading…', 'info');
+                    notify('Files are still uploading. Please wait a moment.', 'info');
                     return;
                 }
                 if (typeof window._wfSendWithVision === 'function') {
@@ -12862,7 +12860,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 btn.style.opacity = '1';
                 btn.textContent = liked ? '@thumbsUp@ Thanks' : '@thumbsDown@ Noted';
                 if (typeof triggerHaptic === 'function') triggerHaptic('toggle');
-                if (typeof notify === 'function') notify(liked ? 'Thanks! The AI is learning your preferences @bot@' : 'Noted — the AI will adjust @bot@', 'success');
+                if (typeof notify === 'function') notify(liked ? 'Thanks. The AI will use this to learn your preferences.' : 'Noted. The AI will adjust.', 'success');
             } catch (e) { console.warn('[AI-ML] feedback error', e && e.message); }
         }
 
@@ -12925,8 +12923,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 if (window.currentUser && window.currentUser.displayName) name = window.currentUser.displayName.split(' ')[0];
                 else { const c = (typeof buildFinancialContext === 'function') ? buildFinancialContext() : null; if (c && c.userName && c.userName !== 'User') name = String(c.userName).split(' ')[0]; }
             } catch (_) {}
-            const hello = name ? `${part}, ${name}!` : `${part}!`;
-            return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">@bot@</div><div><div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI</div><div style="font-size:10px;color:var(--text3);">Your personal best-friend advisor</div></div></div><div style="font-size:14px;color:var(--text);line-height:1.7;">${emoji} ${hello} ${contextLine}</div>`;
+            const hello = name ? `${part}, ${name}.` : `${part}.`;
+            return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">@bot@</div><div><div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI</div><div style="font-size:10px;color:var(--text3);">Your personal financial advisor</div></div></div><div style="font-size:14px;color:var(--text);line-height:1.7;">${emoji} ${hello} ${contextLine}</div>`;
         }
 
         async function clearAIChat() {
@@ -12954,7 +12952,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const welcome = document.createElement('div');
                 welcome.id = 'aiWelcomeBlock';
                 welcome.className = 'ai-welcome-msg';
-                welcome.innerHTML = _aiGreetingBlock("Your chat is cleared and I still remember your goals & finances. What would you like to talk about? @message@");
+                welcome.innerHTML = _aiGreetingBlock("Your chat is cleared. I still remember your goals and finances. What would you like to talk about?");
                 container.appendChild(welcome);
             }
             notify('Chat history cleared (all devices).', 'info');
@@ -13001,7 +12999,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     const welcome = document.createElement('div');
                     welcome.id = 'aiWelcomeBlock';
                     welcome.className = 'ai-welcome-msg';
-                    welcome.innerHTML = _aiGreetingBlock("My memory has been completely reset on all your devices — a fresh start. What's on your mind? @trendUp@");
+                    welcome.innerHTML = _aiGreetingBlock("My memory has been reset on all your devices, so we are starting fresh. What would you like to talk about?");
                     container.appendChild(welcome);
                 }
 
@@ -13077,8 +13075,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const count = persona.questionCount;
                 if (count < 3) label.textContent = 'Learning your style...';
                 else if (count < 8) label.textContent = 'Getting to know you...';
-                else if (count < 20) label.textContent = `Personalized @info@ (${persona.style})`;
-                else label.textContent = `Fully personalized @info@`;
+                else if (count < 20) label.textContent = `Personalised (${persona.style})`;
+                else label.textContent = 'Fully personalised';
             }
         }
 
@@ -13337,7 +13335,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             s.aiResponseLang = code;
             DB.set('settings', s);
             const langName = WF_LANG_NAMES[code] || code;
-            notify('@info@ AI will now respond in ' + langName, 'success');
+            notify('The AI will now reply in ' + langName + '.', 'success');
             triggerHaptic('toggle');
             closeLangModal();
             const badge = document.getElementById('aiLangBadge');
@@ -13431,7 +13429,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 var label = document.getElementById('aiPersonaLabel');
                 if (label) {
                     var c = persona.questionCount || 0;
-                    label.textContent = c < 3 ? 'Learning your style...' : c < 8 ? 'Getting to know you...' : c < 20 ? 'Personalized @info@ (' + (persona.style||'balanced') + ')' : 'Fully personalized @info@';
+                    label.textContent = c < 3 ? 'Learning your style…' : c < 8 ? 'Getting to know you…' : c < 20 ? 'Personalised (' + (persona.style||'balanced') + ')' : 'Fully personalised';
                 }
             }
         }
@@ -13446,7 +13444,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
                 const standalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
                 if (isIOS && !standalone) {
-                    notify('@devices@ To get notifications on iPhone: tap Share → "Add to Home Screen", then open WealthFlow from the home screen.', 'info');
+                    notify('To get notifications on an iPhone, tap Share, then Add to Home Screen, and open WealthFlow from the home screen.', 'info');
                 }
                 return;
             }
@@ -13454,7 +13452,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 if (Notification.permission === 'default') {
                     const perm = await Notification.requestPermission();
                     if (perm === 'granted') {
-                        notify('@bell@ Notifications enabled on this device!', 'success');
+                        notify('Notifications are on for this device.', 'success');
                         // Make sure the SW is ready so iOS/Android can post to
                         // the real device notification panel.
                         if ('serviceWorker' in navigator) await navigator.serviceWorker.ready.catch(() => {});
@@ -18677,7 +18675,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
 
         // ==================== SIDEBAR ====================
-        const pgTitles = { dashboard: '<i data-wfi="dashboard"></i> Dashboard', monthly: '<i data-wfi="calendar"></i> Monthly Plan', income: '<i data-wfi="chartLine"></i> Investments', incRecv: '<i data-wfi="wallet"></i> Income', loans: '<i data-wfi="bank"></i> Bank Loans', ccinstall: '<i data-wfi="card"></i> CC Instalments', cconetime: '<i data-wfi="clock"></i> CC One-Time Payments', cheques: '<i data-wfi="cheque"></i> Cheque Tracker', expenses: '<i data-wfi="receipt"></i> Monthly Expenses', targets: '<i data-wfi="target"></i> Targets & Savings', dscr: '<i data-wfi="ruler"></i> DSCR Calculator', settings: '<i data-wfi="settings"></i> System Settings', ai: '<i data-wfi="bot"></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i data-wfi="trophy"></i> WealthFlow Score', subscriptions: '<i data-wfi="bell"></i> Subscriptions', debtdemo: '<i data-wfi="bomb"></i> Debt Demolisher', montecarlo: '<i data-wfi="crystal"></i> Wealth Simulator', cashflow3d: '<i data-wfi="globe"></i> 3D Cash Flow', sessions: '<i data-wfi="devices"></i> Active Sessions', liquidity: '<i data-wfi="gem"></i> Liquidity &amp; Credit Hub', crib: '<i data-wfi="fileText"></i> CRIB Credit Report', balance: '<i data-wfi="wallet"></i> Balance' };
+        const pgTitles = { dashboard: '<i data-wfi="dashboard"></i> Dashboard', monthly: '<i data-wfi="calendar"></i> Monthly Plan', income: '<i data-wfi="chartLine"></i> Investments', incRecv: '<i data-wfi="wallet"></i> Income', loans: '<i data-wfi="bank"></i> Bank Loans', ccinstall: '<i data-wfi="card"></i> CC Instalments', cconetime: '<i data-wfi="clock"></i> CC One-Time Payments', cheques: '<i data-wfi="cheque"></i> Cheque Tracker', expenses: '<i data-wfi="receipt"></i> Monthly Expenses', targets: '<i data-wfi="target"></i> Targets & Savings', dscr: '<i data-wfi="ruler"></i> DSCR Calculator', settings: '<i data-wfi="settings"></i> System Settings', ai: '<i data-wfi="bot"></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i data-wfi="trophy"></i> WealthFlow Score', subscriptions: '<i data-wfi="bell"></i> Subscriptions', debtdemo: '<i data-wfi="bomb"></i> Debt Payoff Planner', montecarlo: '<i data-wfi="crystal"></i> Wealth Simulator', cashflow3d: '<i data-wfi="globe"></i> 3D Cash Flow', sessions: '<i data-wfi="devices"></i> Active Sessions', liquidity: '<i data-wfi="gem"></i> Liquidity &amp; Credit Hub', crib: '<i data-wfi="fileText"></i> CRIB Credit Report', balance: '<i data-wfi="wallet"></i> Balance' };
 
         function showPage(name, navEl) {
             // RESTORED v6.9.2: biometric guard for sensitive zones
@@ -21767,7 +21765,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     throw new Error('SHARE_ALL_FAILED');
                 }
 
-                setProgress(90, 'Finalizing…');
+                setProgress(90, 'Finalising…');
                 await new Promise(r => setTimeout(r, 100));
 
                 setProgress(100, 'Ready!');
@@ -24014,8 +24012,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     /* Both numbers, always. A sweep that removed most of them
                      * and quietly gave up on the rest is how the same rows come
                      * back on the next refresh and the button looks broken. */
-                    if (removed) notify('Removed ' + removed + (failed ? ' · ' + failed + ' could not be removed' : ''), failed ? 'info' : 'success');
-                    else notify('Nothing could be removed', 'error');
+                    if (removed) notify('Removed ' + removed + (failed ? '. ' + failed + ' could not be removed.' : '.'), failed ? 'info' : 'success');
+                    else notify('Nothing could be removed.', 'error');
                     _mailSyncState.stage = 'idle';
                     runMailSync();
                 },
@@ -24465,7 +24463,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const item = ($q('#_pw_item').value || '').trim();
                         const principal = parseMoney($q('#_pw_principal').value);
                         const rate = parseFloat($q('#_pw_rate').value) || 0;
-                        if (!item) { notify('Name the item', 'error'); return; }
+                        if (!item) { notify('Name the item.', 'error'); return; }
                         if (!principal) { notify('How much was advanced?', 'error'); return; }
                         if (!rate) { notify('What is the monthly rate?', 'error'); return; }
                         const list = (DB.get('pawns') || []).slice();
@@ -24590,7 +24588,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         } else {
                             r = P.addPayment(p, { ...fields, id: uid(), now: Date.now(), confirmed: $q('#_pp_done').checked });
                         }
-                        if (!r.ok) { notify('That could not be recorded', 'error'); return; }
+                        if (!r.ok) { notify('That could not be recorded.', 'error'); return; }
                         _savePawn(r.pawn);
                         try { triggerHaptic('success'); } catch (_) {}
                         notify(editing ? 'Payment updated' : ($q('#_pp_done').checked ? 'Payment recorded' : 'Recorded — confirm it when it clears'), 'success');
@@ -24745,7 +24743,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (!p || !id || !window.WFPawn) return;
             const P = window.WFPawn;
             const run = (r, msg) => {
-                if (!r.ok) { notify('That row is no longer there', 'info'); renderLiquidity(); return; }
+                if (!r.ok) { notify('That row is no longer there.', 'info'); renderLiquidity(); return; }
                 _savePawn(r.pawn);
                 try { triggerHaptic(what === 'remove' ? 'light' : 'success'); } catch (_) {}
                 notify(msg, what === 'remove' ? 'info' : 'success');
@@ -24765,7 +24763,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (!p || !window.WFPawn) return;
             const P = window.WFPawn;
             const r = what === 'redeem' ? P.unredeem(p) : P.undoLastExtension(p);
-            if (!r.ok) { notify('There is nothing to undo there', 'info'); return; }
+            if (!r.ok) { notify('There is nothing to undo there.', 'info'); return; }
             _savePawn(r.pawn);
             try { triggerHaptic('light'); } catch (_) {}
             notify(what === 'redeem' ? 'Back to an active ticket' : 'Renewal undone', 'info');
@@ -24843,7 +24841,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * ticket that closes with no closing payment is a ledger
                      * that does not add up. And it can be undone. */
                     const r = window.WFPawn.redeem(p, { date: _liqToday(), id: uid(), now: Date.now() });
-                    if (!r.ok) { notify('That ticket is already redeemed', 'info'); return; }
+                    if (!r.ok) { notify('That ticket is already redeemed.', 'info'); return; }
                     if (!_savePawn(r.pawn)) return;
                     try { triggerHaptic('success'); } catch (_) {}
                     notify('Redeemed for ' + fmtS(r.paid), 'success');
@@ -24860,7 +24858,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 'btn-danger', 'Delete',
                 () => {
                     DB.set('pawns', (DB.get('pawns') || []).filter((x) => x && x.id !== p.id));
-                    notify('Deleted', 'success');
+                    notify('Pawn ticket deleted.', 'success');
                     renderLiquidity();
                 },
             );
@@ -24898,11 +24896,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const name = (ov.querySelector('#_db_name').value || '').trim();
                         const amountEl = ov.querySelector('#_db_amount');
                         const amount = amountEl ? parseMoney(amountEl.value) : 0;
-                        if (!name) { notify('Name the debtor', 'error'); return; }
+                        if (!name) { notify('Name the debtor.', 'error'); return; }
                         if (!existing && !amount) { notify('How much was lent?', 'error'); return; }
                         const smsForm = window.WFSms ? WFSms.readBlock(ov, '_db_sms') : null;
                         /* A reminder is about a date: with none there is nothing to remind them of, and silence would look like a promise kept. */
-                        if (smsForm && smsForm.enabled && smsForm.remindLate && !(ov.querySelector('#_db_due').value || '')) { notify('Set "Expected back by" so there is a date to remind about', 'error'); return; }
+                        if (smsForm && smsForm.enabled && smsForm.remindLate && !(ov.querySelector('#_db_due').value || '')) { notify('Set "Expected back by" so there is a date to remind about.', 'error'); return; }
                         /* The person: country, number and NIC / passport are checked together, and a problem is shown under the field it belongs to. */
                         const contact = WP ? WP.collect(ov, '_db', { smsOn: !!(smsForm && smsForm.enabled), kind: 'debtor' }) : null;
                         if (contact && !contact.ok) { notify(Object.values(contact.errors)[0], 'error'); return; }
@@ -25086,7 +25084,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             id: uid(), now: Date.now(),
                             confirmed: countedNow,
                         });
-                        if (!r.ok) { notify('That could not be recorded', 'error'); return; }
+                        if (!r.ok) { notify('That could not be recorded.', 'error'); return; }
                         list[at] = r.debtor;
                         DB.set('debtors', list);
                         try { triggerHaptic('success'); } catch (_) {}
@@ -25129,7 +25127,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     list[at] = r.record;
                     DB.set('debtors', list);
                     try { triggerHaptic('success'); } catch (_) {}
-                    notify('Balance text queued — the delivery alert appears here when it goes out. If it has not gone in half an hour, press Send balance again', 'success');
+                    notify('Balance text queued. A delivery alert appears here when it goes out. If it has not gone out in half an hour, press Send balance again.', 'success');
                     renderLiquidity();
                 },
             );
@@ -25149,10 +25147,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const at = list.findIndex((x) => x && x.id === d.id);
                     if (at < 0) return;
                     const r = window.WFLiquidity.settleInFull(list[at], { date: _liqToday(), id: uid(), now: Date.now() });
-                    if (!r.ok) { notify('There is nothing outstanding to settle', 'info'); return; }
+                    if (!r.ok) { notify('There is nothing outstanding to settle.', 'info'); return; }
                     list[at] = r.debtor;
                     DB.set('debtors', list);
-                    notify('Recorded — confirm it on the dashboard once the money is in', 'success');
+                    notify('Recorded. Confirm it on the dashboard once the money is in.', 'success');
                     renderLiquidity();
                     try { renderVerifyQueue(); } catch (_) {}
                 },
@@ -25168,7 +25166,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 'btn-danger', 'Delete',
                 () => {
                     DB.set('debtors', (DB.get('debtors') || []).filter((x) => x && x.id !== d.id));
-                    notify('Deleted', 'success');
+                    notify('Debtor deleted.', 'success');
                     renderLiquidity();
                 },
             );
@@ -25198,7 +25196,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (!d || !window.WFLiquidity) return;
             const L = window.WFLiquidity;
             const run = (r, msg, tone) => {
-                if (!r.ok) { notify('That row is no longer there', 'info'); renderLiquidity(); return; }
+                if (!r.ok) { notify('That row is no longer there.', 'info'); renderLiquidity(); return; }
                 _saveDebtor(r.debtor);
                 try { triggerHaptic(what === 'remove' ? 'light' : 'success'); } catch (_) {}
                 notify(msg, tone || 'success');
@@ -25224,7 +25222,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const L = window.WFLiquidity;
             const su = L.debtorSummary(d, new Date());
             const e = su.events.find((x) => x.id === eventId);
-            if (!e) { notify('That entry is no longer there', 'info'); renderLiquidity(); return; }
+            if (!e) { notify('That entry is no longer there.', 'info'); renderLiquidity(); return; }
             _liqOverlay(
                 (window.WFIcon ? WFIcon('edit') : '') + ' Edit entry for ' + _wfEsc(d.name || 'debtor'),
                 '<div class="fg"><label class="fl" for="_ee_amount">Amount</label>'
@@ -25247,17 +25245,17 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ov.querySelector('#_ee_kind').value = e.kind;
                     ov.querySelector('#_ee_save').onclick = () => {
                         const amount = parseMoney(ov.querySelector('#_ee_amount').value);
-                        if (!(amount > 0)) { notify('An entry needs an amount — use Remove to delete it', 'error'); return; }
+                        if (!(amount > 0)) { notify('An entry needs an amount. Use Remove to delete it.', 'error'); return; }
                         const r = L.updateEvent(d, eventId, {
                             amount,
                             kind: ov.querySelector('#_ee_kind').value,
                             date: ov.querySelector('#_ee_date').value || e.date,
                             note: (ov.querySelector('#_ee_note').value || '').trim(),
                         });
-                        if (!r.ok) { notify('That entry is no longer there', 'info'); close(); renderLiquidity(); return; }
+                        if (!r.ok) { notify('That entry is no longer there.', 'info'); close(); renderLiquidity(); return; }
                         _saveDebtor(r.debtor);
                         try { triggerHaptic('success'); } catch (_) {}
-                        notify('Entry updated', 'success');
+                        notify('Entry updated.', 'success');
                         close();
                     };
                 },
@@ -25462,9 +25460,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (row.source === 'pawn') {
                 const list = (DB.get('pawns') || []).slice();
                 const at = list.findIndex((x) => x && x.id === row.sourceId);
-                if (at < 0 || !window.WFPawn) { notify('That ticket is no longer there', 'info'); renderVerifyQueue(); return; }
+                if (at < 0 || !window.WFPawn) { notify('That ticket is no longer there.', 'info'); renderVerifyQueue(); return; }
                 const r = window.WFPawn.confirmPayment(list[at], row.eventId, { now });
-                if (!r.ok) { notify('That payment is no longer there', 'info'); renderVerifyQueue(); return; }
+                if (!r.ok) { notify('That payment is no longer there.', 'info'); renderVerifyQueue(); return; }
                 list[at] = r.pawn;
                 DB.set('pawns', list);
                 notify(fmtS(row.amount) + ' confirmed against ' + (row.name || 'the ticket'), 'success');
@@ -25481,7 +25479,7 @@ table.amort tbody tr { page-break-inside: avoid; }
              * the owner ruled out. It opens the form instead. */
             if (row.source === 'debtor-due') {
                 const d = (DB.get('debtors') || []).find((x) => x && x.id === row.sourceId);
-                if (!d) { notify('That debtor is no longer there', 'info'); renderVerifyQueue(); return; }
+                if (!d) { notify('That debtor is no longer there.', 'info'); renderVerifyQueue(); return; }
                 try { showPage('liquidity'); setLiquidityTab('debt'); } catch (_) {}
                 openDebtorEvent(d, 'repayment');
                 return;
@@ -25496,7 +25494,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const at = list.findIndex((x) => x && x.id === row.sourceId);
                 if (at < 0) return;
                 const r = window.WFLiquidity.confirmEvent(list[at], row.eventId, { now });
-                if (!r.ok) { notify('That entry is no longer there', 'info'); renderVerifyQueue(); return; }
+                if (!r.ok) { notify('That entry is no longer there.', 'info'); renderVerifyQueue(); return; }
                 list[at] = r.debtor;
                 DB.set('debtors', list);
                 const evRaw = (Array.isArray(list[at].events) ? list[at].events : []).find((x) => x && x.id === row.eventId);
@@ -25564,7 +25562,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         if (!r.ok) return;
                         list[at] = r.pawn;
                         DB.set('pawns', list);
-                        notify('Removed', 'success');
+                        notify('Payment removed.', 'success');
                         renderVerifyQueue();
                         try { if (window._wfActivePage === 'liquidity') renderLiquidity(); } catch (_) {}
                     },
@@ -25594,7 +25592,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const events = (list[at].events || []).filter((e) => !(e && e.id === row.eventId && e.confirmed === false));
                         list[at] = { ...list[at], events };
                         DB.set('debtors', list);
-                        notify('Removed', 'success');
+                        notify('Entry removed.', 'success');
                         renderVerifyQueue();
                         try { if (window._wfActivePage === 'liquidity') renderLiquidity(); } catch (_) {}
                     },
@@ -25908,11 +25906,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                             try {
                                 const r = await _gmailLink('POST', { action: 'delete', keys: [it.key] }, '?items=1');
                                 if (!r || !r.body || r.body.ok !== true) {
-                                    notify((r && r.body && r.body.error) || 'could not remove it', 'error');
+                                    notify((r && r.body && r.body.error) || 'Could not remove it.', 'error');
                                 } else {
-                                    notify('Removed', 'success');
+                                    notify('Removed.', 'success');
                                 }
-                            } catch (_) { notify('could not remove it', 'error'); }
+                            } catch (_) { notify('Could not remove it.', 'error'); }
                             _mailSyncState.stage = 'idle';
                             runMailSync();
                         },
@@ -26263,7 +26261,7 @@ table.amort tbody tr { page-break-inside: avoid; }
          */
         async function runBackfill(months) {
             if (_scan.stage === 'running') return;
-            if (!window.WFBackfill) { notify('Backfill engine is not loaded', 'error'); return; }
+            if (!window.WFBackfill) { notify('The statement search is not available. Reload the page and try again.', 'error'); return; }
 
             /* RESUMED, NOT RESTARTED.
              *
@@ -26375,7 +26373,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         /** Ask how far back, then scan. */
         function openBackfill() {
-            if (!currentUser) { notify('Sign in first', 'error'); return; }
+            if (!currentUser) { notify('Sign in first.', 'error'); return; }
             const overlay = document.createElement('div');
             overlay.className = 'mo';
             overlay.innerHTML = `
@@ -26472,7 +26470,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         async function runSenderDiscovery(months = DISCOVERY_MONTHS) {
             if (_discover.stage === 'running') return;
-            if (!window.WFBackfill) { notify('Backfill engine is not loaded', 'error'); return; }
+            if (!window.WFBackfill) { notify('The statement search is not available. Reload the page and try again.', 'error'); return; }
             _discover = { stage: 'running', label: '', found: 0, error: null, truncated: false };
             renderSenderList();
 
@@ -26553,7 +26551,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 notify(_senders.pending.length + ' sender'
                     + (_senders.pending.length === 1 ? '' : 's') + ' waiting for you to decide', 'success');
             } else {
-                notify('Searched every month. No senders found that you have not already decided about', 'info');
+                notify('Searched every month. No senders found that you have not already decided about.', 'info');
             }
             renderSenderList();
         }
@@ -26996,7 +26994,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         window.renderSenderList = renderSenderList;
 
         function openSenderList() {
-            if (!currentUser) { notify('Sign in first', 'error'); return; }
+            if (!currentUser) { notify('Sign in first.', 'error'); return; }
             const overlay = document.createElement('div');
             overlay.className = 'mo';
             overlay.innerHTML =
@@ -27727,7 +27725,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const more = groups.size - 1;
 
             if (typeof window._showCCReviewModal !== 'function') {
-                notify('The statement review screen is not loaded', 'error');
+                notify('The statement review screen is not available. Reload the page and try again.', 'error');
                 return;
             }
             // No mention of the statements the cap above held back: every wording
@@ -28013,7 +28011,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         /* Mailbox credentials are stored only by the server endpoint. */
         async function openGmailLink() {
-            if (!currentUser) { notify('Sign in first', 'error'); return; }
+            if (!currentUser) { notify('Sign in first.', 'error'); return; }
 
             const overlay = document.createElement('div');
             overlay.className = 'mo';
@@ -28131,8 +28129,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * watch is the comfortable lie this change removes. */
                     let w = null;
                     try { w = await _ensureMailWatch({ force: true }); } catch (_) { w = null; }
-                    if (w && w.watching) notify('Gmail connected — watching for statements', 'success');
-                    else notify('Token saved, but Gmail is not watching yet', 'error');
+                    if (w && w.watching) notify('Gmail connected. WealthFlow is watching for statements.', 'success');
+                    else notify('The token is saved, but Gmail is not being watched yet.', 'error');
                     try { renderMailSync(); } catch (_) {}
                 };
 
@@ -28142,8 +28140,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                         'The stored token is removed and statements stop arriving. Anything already filed stays.',
                         'btn-danger', 'Disconnect', async () => {
                             const res = await _gmailLink('DELETE');
-                            if (!res || !res.body || res.body.ok !== true) { notify('Could not disconnect', 'error'); return; }
-                            notify('Mailbox disconnected', 'info');
+                            if (!res || !res.body || res.body.ok !== true) { notify('Could not disconnect.', 'error'); return; }
+                            notify('Mailbox disconnected.', 'info');
                             close();
                             _mailSyncState.connected = false;
                             try { renderMailSync(); } catch (_) {}
@@ -28212,8 +28210,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             try { renderMailSync(); } catch (_) {}
             let w = null;
             try { w = await _ensureMailWatch({ force: true }); } catch (_) { w = null; }
-            if (w && w.watching) notify('Gmail connected: watching for statements', 'success');
-            else notify('Gmail connected, but it is not watching yet', 'error');
+            if (w && w.watching) notify('Gmail connected. WealthFlow is watching for statements.', 'success');
+            else notify('Gmail is connected, but it is not being watched yet.', 'error');
             try { renderMailSync(); } catch (_) {}
         }
         window._wfCompleteGmailConsent = _wfCompleteGmailConsent;
@@ -28391,7 +28389,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 },
             });
             DB.set('sweeps', list);
-            try { notify('Recorded — confirm it once the money has actually moved', 'success'); } catch (_) {}
+            try { notify('Recorded. Confirm it once the money has actually moved.', 'success'); } catch (_) {}
             try { renderSweeper(); renderSweepLedger(); } catch (_) {}
             try { renderRunwayCard(); } catch (_) {}
         }
@@ -28408,13 +28406,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             // The money has actually moved, so from now on the balance shows it
             // and the projection must stop taking it out a second time.
             _wfSweepPatch(id, { settled: true, date: window.WFCashflow.isoDay(new Date()) });
-            try { notify('Marked as moved', 'success'); } catch (_) {}
+            try { notify('Marked as moved.', 'success'); } catch (_) {}
         }
         window.wfSweepSettle = wfSweepSettle;
 
         function wfSweepWithdraw(id) {
             _wfSweepPatch(id, { status: 'withdrawn' });
-            try { notify('Marked withdrawn — add it back to your balance', 'info'); } catch (_) {}
+            try { notify('Marked as withdrawn. Add it back to your balance.', 'info'); } catch (_) {}
         }
         window.wfSweepWithdraw = wfSweepWithdraw;
 
@@ -30604,7 +30602,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         function undoBatch(batchId) {
             const b = (window.WFBatch ? WFBatch.list() : []).find(x => x.id === batchId);
-            if (!b) { notify('That import is no longer available', 'warn'); return; }
+            if (!b) { notify('That import is no longer available.', 'warn'); return; }
             const c = b.counts || {}; const total = (c.cconetime || 0) + (c.expenses || 0) + (c.incomeRecv || 0) + (c.ccPayments || 0) + (c.cheques || 0) + (c.subscription || 0) + ((b.loans || []).length) + ((b.cheques || []).length);
             showConfirm('@trash@', 'Undo this statement import?', 'This removes all ' + total + ' entr' + (total === 1 ? 'y' : 'ies') + ' this import added — across Expenses, Income, CC One-Time, Card Payments, Cheques, Loans and Subscriptions — and recalculates your dashboard. This cannot be redone.', 'btn-danger', 'Undo import', () => {
                 // Undoing an import legitimately removes every row it added, which on a
@@ -30614,7 +30612,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 try { _wfExpectBulkRemoval(['expenses', 'income', 'incomeRecv', 'cconetime', 'ccPayments', 'cheques', 'loans', 'subscriptions'], 30000); } catch (_) {}
                 let res = null; try { res = WFBatch.undo(batchId); } catch (e) { console.warn('[WFBatch] undo failed:', e); }
                 try { _wfExpectBulkRemoval([], 0); } catch (_) {}
-                if (!res) { notify('Undo failed', 'error'); return; }
+                if (!res) { notify('The undo did not complete.', 'error'); return; }
                 try { _pruneOrphanPayments(); } catch (_) {}   // v7.29.0 — clear payments left orphaned by removing a statement's charges
                 // refresh every affected tab + dashboard
                 try { renderCCOT(); updateCCOTBadge(); } catch (_) {}
@@ -30714,7 +30712,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const btnText = $('aiLangBtnText');
             if (btnText) btnText.textContent = `${WF_LANG_NAMES[val] || 'English'} (${val})`;
             const langName = WF_LANG_NAMES[val] || val;
-            notify(`@info@ AI will now respond in ${langName}`, 'success');
+            notify(`The AI will now reply in ${langName}.`, 'success');
             triggerHaptic('toggle');
         }
 
@@ -31718,7 +31716,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (eod <= new Date()) eod.setDate(eod.getDate() + 1);
                 queue.push({ id, fireAt: eod.getTime(), snoozed: true });
                 _saveNotifQueue(queue);
-                notify('@clock@ Will remind you at the end of the day', 'info');
+                notify('You will be reminded at the end of the day.', 'info');
             }
         }
 
@@ -32897,7 +32895,7 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
             const factorColors = ['var(--blue)', 'var(--green)', 'var(--cyan)', 'var(--purple)', 'var(--accent2)', 'var(--accent)', '#f472b6'];
             const factorIcons = ['@ruler@', '@wallet@', '@coins@', '@target@', '@ruler@', '@checkCircle@', '@globe@'];
             const factorTips = [
-                sc.dscr.value >= 2 ? 'Excellent — your income comfortably covers debt obligations.' : sc.dscr.value >= 1.25 ? 'Adequate — but room to improve. Aim for ratio above 2.' : 'Critical — debt payments are too close to your income. Prioritize debt reduction.',
+                sc.dscr.value >= 2 ? 'Excellent — your income comfortably covers debt obligations.' : sc.dscr.value >= 1.25 ? 'Adequate — but room to improve. Aim for ratio above 2.' : 'Critical — debt payments are too close to your income. Prioritise reducing debt.',
                 sc.savings.value >= 0.3 ? 'Outstanding savings rate.' : sc.savings.value >= 0.1 ? 'Decent — try to bring this above 20%.' : 'Low savings rate. Identify expense categories to trim.',
                 !sc.liquidity.cashKnown ? 'No cash balance is recorded, so this cannot be scored — set your cash on hand (the Balance card on the Dashboard).' : sc.liquidity.value >= 6 ? '6+ months of runway — financially resilient.' : sc.liquidity.value >= 3 ? 'Solid emergency buffer.' : 'Build a 3-6 month emergency fund as priority.',
                 sc.targets.value >= 0.5 ? 'On track with your goals.' : 'Review your targets and adjust monthly contributions.',
@@ -32920,7 +32918,7 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
                             <div class="score-label">${grade}</div>
                         </div>
                     </div>
-                    <div style="margin-top:16px;font-size:13px;color:var(--text2);">Your WealthFlow Score is rated <strong style="color:${color};">${grade}</strong> · 7 factors analyzed</div>
+                    <div style="margin-top:16px;font-size:13px;color:var(--text2);">Your WealthFlow Score is rated <strong style="color:${color};">${grade}</strong> · 7 factors analysed</div>
                     <div style="margin-top:6px;font-size:11px;color:var(--text3);line-height:1.5;">${_wfEsc(sc.basis || '')}</div>
                 </div>
                 <div class="card" style="margin-top:16px;">
@@ -32939,9 +32937,9 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
                 <div class="card" style="margin-top:16px;background:linear-gradient(145deg,rgba(212,175,55,0.04),var(--card));">
                     <div class="card-header">
                         <div class="card-title">@bot@ AI Score Coach</div>
-                        <div class="card-sub">Get a personalized improvement plan from our AI</div>
+                        <div class="card-sub">Get an improvement plan from the AI, based on your own records</div>
                     </div>
-                    <button class="btn btn-primary" onclick="generateWFScoreAIInsight()" style="width:100%;">@sparkles@ Get My Personalized Improvement Plan</button>
+                    <button class="btn btn-primary" onclick="generateWFScoreAIInsight()" style="width:100%;">@sparkles@ Get my improvement plan</button>
                     <div id="wfScoreAIInsight" style="margin-top:14px;"></div>
                 </div>
             `;
@@ -32951,7 +32949,7 @@ ${buildTable('Section III — Operations & Card Instalments', combinedExp.length
         async function generateWFScoreAIInsight() {
             const out = $('wfScoreAIInsight');
             if (!out) return;
-            out.innerHTML = `<div style="background:rgba(212,175,55,.06);border-radius:10px;padding:14px;font-size:12px;color:var(--accent);">@bot@ AI is building your personalized improvement plan…</div>`;
+            out.innerHTML = `<div style="background:rgba(212,175,55,.06);border-radius:10px;padding:14px;font-size:12px;color:var(--accent);">@bot@ The AI is building your improvement plan…</div>`;
             try {
                 const sc = calculateWFScore();
                 const ctx = buildFinancialContext();
@@ -33626,7 +33624,7 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             const wrap = $('debtDemoContent');
             if (!wrap) return;
-            if (!debtItems.length) { wrap.innerHTML = emptyState(_ic('trophy'), 'Debt Free!', 'No active loans or instalments. You are debt-free!'); return; }
+            if (!debtItems.length) { wrap.innerHTML = emptyState(_ic('trophy'), 'Debt free', 'No active loans or instalments. You have no debt to pay off.'); return; }
 
             const totalDebt = debtItems.reduce((s, d) => s + d.amount, 0);
             const totalMonthly = debtItems.reduce((s, d) => s + d.monthly, 0);
@@ -33677,7 +33675,7 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             wrap.innerHTML = `
                     <div class="wf-note" style="margin-bottom:16px;">
-                        <div class="wf-note-h">${_ic('info')} How to Use Debt Demolisher</div>
+                        <div class="wf-note-h">${_ic('info')} How to use the Debt Payoff Planner</div>
                         <div style="font-size:12px;color:var(--text2);line-height:1.6;">
                             This tool helps you pay off debt faster. Enter how much extra cash you can afford to pay each month using the slider. 
                             We calculate two different strategies:
@@ -33698,7 +33696,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     <div class="card" style="margin-bottom:16px;">
                         <div class="card-header">
                             <div class="card-title">${_ic('settings')} Interactive Payoff Simulator</div>
-                            <div class="card-sub">Slide to see how extra monthly payments demolish your debt faster!</div>
+                            <div class="card-sub">Move the slider to see how extra monthly payments shorten the time to pay off your debt.</div>
                         </div>
                         <div style="padding:10px 0 20px;">
                             <input type="range" id="debtDemoSlider" min="0" max="${maxExtra}" step="1000" value="${suggestedExtra}" ${customExtra !== null && prior && prior.dataset.userSet === '1' ? 'data-user-set="1"' : ''} 
@@ -33749,7 +33747,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                             <div class="card" style="margin-top:14px;background:linear-gradient(145deg,rgba(212,175,55,0.04),var(--card));">
                                 <div class="card-header">
                                     <div class="card-title">${_ic('bot')} AI Debt Strategist</div>
-                                    <div class="card-sub">Get a deeply personalized debt-elimination plan from our AI engine</div>
+                                    <div class="card-sub">Get a payoff plan from the AI, based on your own loans and instalments</div>
                                 </div>
                                 <button class="btn btn-primary" onclick="generateDebtAIInsight()" style="width:100%;">${_ic('sparkles')} Generate Deep AI Strategy</button>
                                 <div id="debtAIInsight" style="margin-top:14px;"></div>
@@ -33758,7 +33756,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     } else {
                         resWrap.innerHTML = `
                             <div class="card" style="margin-bottom:16px;">
-                                <div class="card-header"><div class="card-title">${_ic('target')} Your Personalized Payoff Plan</div><div class="card-sub">Based on adding ${fmt(ex)}/month to your highest-priority loan</div></div>
+                                <div class="card-header"><div class="card-title">${_ic('target')} Your Payoff Plan</div><div class="card-sub">Based on adding ${fmt(ex)}/month to your highest-priority loan</div></div>
                                 <div class="g2">
                                     <div style="padding:14px;background:rgba(16,185,129,0.06);border-radius:12px; border:1px solid rgba(16,185,129,0.2);">
                                         <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">${_ic('chartLine')} Avalanche</div>
@@ -33797,7 +33795,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                             <div class="card" style="margin-top:14px;background:linear-gradient(145deg,rgba(212,175,55,0.04),var(--card));">
                                 <div class="card-header">
                                     <div class="card-title">${_ic('bot')} AI Debt Strategist</div>
-                                    <div class="card-sub">Get a deeply personalized debt-elimination plan from our AI engine</div>
+                                    <div class="card-sub">Get a payoff plan from the AI, based on your own loans and instalments</div>
                                 </div>
                                 <button class="btn btn-primary" onclick="generateDebtAIInsight()" style="width:100%;">${_ic('sparkles')} Generate Deep AI Strategy</button>
                                 <div id="debtAIInsight" style="margin-top:14px;"></div>
@@ -33815,7 +33813,7 @@ Be direct and use real numbers. Avoid generic advice.`;
         async function generateDebtAIInsight() {
             const out = $('debtAIInsight');
             if (!out) return;
-            out.innerHTML = `<div style="background:rgba(212,175,55,.06);border-radius:10px;padding:14px;font-size:12px;color:var(--accent);">@bot@ Analyzing your debt structure with AI… (5-15 sec)</div>`;
+            out.innerHTML = `<div style="background:rgba(212,175,55,.06);border-radius:10px;padding:14px;font-size:12px;color:var(--accent);">@bot@ Analysing your debts with AI. This takes 5 to 15 seconds…</div>`;
             try {
                 const rawLoans = DB.get('loans').filter(l => loanEndDate(l) > new Date() && loanCurrentBalance(l) > 0);
                 const ccInstalls = DB.get('ccinstall').filter(c => !c.completed);
@@ -33855,7 +33853,7 @@ In 5-7 sentences, provide:
 
 Be direct, specific, and use real LKR numbers from above. Format with clear paragraphs.`;
                 const reply = await callAI(prompt);
-                out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(239,68,68,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">@bot@ Personalized Debt Strategy:</b><br><br>${(window.WFFmt && WFFmt.render) ? WFFmt.render(reply) : reply.replace(/\n/g, '<br>')}</div>`;
+                out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(239,68,68,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">@bot@ Your debt strategy:</b><br><br>${(window.WFFmt && WFFmt.render) ? WFFmt.render(reply) : reply.replace(/\n/g, '<br>')}</div>`;
             } catch (e) {
                 try { console.warn('[AI card] no answer:', (e && e.tech) || e); } catch (_) {}
                 out.innerHTML = `<div style="color:var(--red);font-size:12px;">@alert@ AI analysis unavailable: ${_wfEsc(_wfAiErrText(e))}</div>`;
@@ -34365,7 +34363,7 @@ Be concrete and reference actual LKR figures. No generic advice.`;
         async function generateCashFlow3DAIInsight() {
             const out = $('cf3dAIInsight');
             if (!out) return;
-            out.innerHTML = `<div style="background:rgba(212,175,55,.06);border-radius:10px;padding:12px;font-size:12px;color:var(--accent);">@clock@ Analyzing your cash flow…</div>`;
+            out.innerHTML = `<div style="background:rgba(212,175,55,.06);border-radius:10px;padding:12px;font-size:12px;color:var(--accent);">@clock@ Analysing your cash flow…</div>`;
             try {
                 const data = _cf3dGatherFlows();
                 const expSummary = Object.entries(data.expByCat || {})
@@ -35494,9 +35492,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             // currency changes looked like they did nothing).
             const labels = {
                 scanMode: 'Scan Mode',
-                scanTfEnhance: 'TF.js Image Enhancement',
-                scanAutoEscalate: 'Auto-Escalate',
-                scanAutoCategory: 'Auto-Categorize',
+                scanTfEnhance: 'Image enhancement',
+                scanAutoEscalate: 'Retry in a higher mode',
+                scanAutoCategory: 'Automatic categories',
                 scanCurrency: 'Default Currency'
             };
             const label = labels[key] || key;
@@ -36667,7 +36665,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             touched++;
                         }
                     });
-                    if (touched) { try { notify('@bot@ AI refined ' + touched + ' transaction type' + (touched === 1 ? '' : 's') + ' for accuracy', 'info'); } catch (_) {} }
+                    if (touched) { try { notify('The AI refined ' + touched + ' transaction type' + (touched === 1 ? '' : 's') + ' for accuracy.', 'info'); } catch (_) {} }
                 } catch (_) {}
             })();
 
@@ -36692,7 +36690,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (!picked.length) { notify('Tick at least one row first.', 'warn'); return; }
                 const last4 = (parsed && (parsed.card_last4 || parsed.last4)) || (typeof bank === 'string' && (bank.match(/\d{4}/) || [])[0]) || '';
                 window.wfStatementToQueue(picked, { currency: (parsed && parsed.currency) || 'LKR', card_last4: last4, source: 'statement' });
-                notify('@bot@ Handed ' + picked.length + ' transaction' + (picked.length === 1 ? '' : 's') + ' to the AI — it will sort them into the right tabs. You can keep working.', 'success');
+                notify('Handed ' + picked.length + ' transaction' + (picked.length === 1 ? '' : 's') + ' to the AI. It will sort them into the right tabs, and you can keep working.', 'success');
                 closeOvl();
             };
 
@@ -37024,7 +37022,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (chqBounced) parts.push(chqBounced + ' cheque' + (chqBounced > 1 ? 's' : '') + ' marked bounced');
                 if (sub) parts.push(sub + ' Subscription' + (sub > 1 ? 's' : '') + (subCreated ? (' · ' + subCreated + ' new') : ''));
                 const tail = (skipped ? (' · skipped ' + skipped) : '') + (dup ? (' · ' + dup + ' duplicate' + (dup > 1 ? 's' : '') + ' ignored') : '');
-                if (parts.length) { notify('@checkCircle@ Filed ' + parts.join(' · ') + tail, 'success'); triggerHaptic('success'); }
+                if (parts.length) { notify('Filed ' + parts.join(' · ') + tail, 'success'); triggerHaptic('success'); }
                 else { notify('Nothing added' + (dup ? (' · ' + dup + ' duplicate(s) ignored') : '') + (skipped ? (' · ' + skipped + ' skipped') : ''), 'warn'); }
                 if (chqReview.length) { try { notify('Cheque check: ' + chqReview.slice(0, 3).map(x => String(x).replace(/[<>&]/g, '')).join(' · ') + (chqReview.length > 3 ? ' · +' + (chqReview.length - 3) + ' more' : ''), 'warn'); } catch (_) {} }
                 /* A bank the owner set by hand is remembered for this card / account number, so its next statement is named without anyone being asked. */

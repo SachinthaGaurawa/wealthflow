@@ -356,7 +356,7 @@
                     try {
                         opened = await _vTask.promise;
                         if (opened) {
-                            if (typeof window.notify === 'function') window.notify('@lock@ Locked PDF opened automatically with your Vault keys', 'success');
+                            if (typeof window.notify === 'function') window.notify('Locked PDF opened with one of your saved passwords.', 'success');
                             break;
                         }
                     } catch (pe) {
@@ -1368,7 +1368,7 @@
                 }
                 P.end();
                 if (_hres && _hres.notStatement) {
-                    if (typeof window.notify === 'function') window.notify("That HTML file doesn't look like a bank statement.", 'warn');
+                    if (typeof window.notify === 'function') window.notify('That HTML file does not look like a bank statement.', 'warn');
                 } else {
                     /* The statement DID open — this is a layout the reader does not
                      * know yet. A bare "couldn't read transactions" names no cause
@@ -1470,7 +1470,7 @@
                         if (typeof window.notify === 'function') {
                             var _n = 'Read ' + _rows.length + ' transactions directly from the PDF';
                             if (_rc.ok === true) window.notify(_n + ' — every amount checks out against the statement\'s own balance.', 'success');
-                            else if (_rc.ok === false) window.notify(_n + ', but they don\'t add up to the closing balance (off by ' + Math.abs(_rc.difference) + '). Please check the list before saving.', 'warn');
+                            else if (_rc.ok === false) window.notify(_n + ', but they do not add up to the closing balance (off by ' + Math.abs(_rc.difference) + '). Please check the list before saving.', 'warn');
                             else window.notify(_n + '. This statement prints no running balance, so please confirm the amounts.', 'success');
                         }
                         window._showCCReviewModal(_parsed, ccotBank);
@@ -2094,7 +2094,7 @@
                 ': ' + (file.name || 'file') + '*');
         }
         if (typeof window.showAITyping === 'function') window.showAITyping(true);
-        if (typeof window.notify === 'function') window.notify('@search@ Deep scanning…', 'info');
+        if (typeof window.notify === 'function') window.notify('Deep scanning…', 'info');
 
         try {
             var hints = { currency: 'LKR', today: window.WFWhen.today() };
@@ -2143,7 +2143,7 @@
                 hist.push({ role: 'assistant', content: reply, ts: Date.now() });
                 window.saveAIHistory(hist);
             }
-            if (typeof window.notify === 'function') window.notify('@checkCircle@ Analysed', 'success');
+            if (typeof window.notify === 'function') window.notify('Analysis complete.', 'success');
         } catch (e) {
             console.error('[' + V + '] AI chat attachment failed:', e);
             if (typeof window.appendAIMessage === 'function') {
@@ -2181,7 +2181,7 @@
                             '@user@ Chat cleared. I still remember your style, goals, and finances. Just nothing to scroll through @info@</div>';
                         container.appendChild(welcome);
                     }
-                    if (typeof window.notify === 'function') window.notify('@trash@ Chat cleared (memory kept).', 'success');
+                    if (typeof window.notify === 'function') window.notify('Chat cleared. The AI memory was kept.', 'success');
                     if (typeof window.initAISuggestionPills === 'function') window.initAISuggestionPills();
                 } catch (e) { console.error(e); }
             }
@@ -2223,9 +2223,9 @@
                         container.appendChild(welcome);
                     }
                     if (typeof window.triggerHaptic === 'function') window.triggerHaptic('heavy');
-                    if (typeof window.notify === 'function') window.notify('@bot@ AI memory fully erased.', 'success');
+                    if (typeof window.notify === 'function') window.notify('AI memory erased.', 'success');
                 } catch (e) {
-                    if (typeof window.notify === 'function') window.notify('@alert@ Reset failed: ' + e.message, 'error');
+                    if (typeof window.notify === 'function') window.notify('The reset did not finish. Please try again.', 'error');
                 }
             }
         });
@@ -2522,7 +2522,7 @@
             };
             _saveScanSettings();
             close();
-            if (typeof window.notify === 'function') window.notify('@checkCircle@ Scanner settings saved', 'success');
+            if (typeof window.notify === 'function') window.notify('Scanner settings saved.', 'success');
         };
     };
     }  // end: if (typeof window.openScannerSettings !== 'function')
@@ -2758,7 +2758,7 @@
                             if (typeof window._wfMarkLocalWrite === 'function') window._wfMarkLocalWrite();
                         } catch (_) {}
                         if (typeof window.notify === 'function') {
-                            window.notify('@shield@ Restored ' + missingFromCurrent.length + ' entries (cloud sync race protected)', 'info');
+                            window.notify('Restored ' + missingFromCurrent.length + ' entries that a cloud sync had overwritten.', 'info');
                         }
                     }
                 }
@@ -3006,7 +3006,7 @@
         if (!files.length) return;
         var slotsLeft = 15 - _aiChatAttachments.length;
         if (slotsLeft <= 0) {
-            if (typeof window.notify === 'function') window.notify('@alert@ Maximum 15 files. Remove some first.', 'warning');
+            if (typeof window.notify === 'function') window.notify('You can attach up to 15 files. Remove some first.', 'warning');
             return;
         }
         files = files.slice(0, slotsLeft);
@@ -3057,7 +3057,7 @@
         _setSendLock(false); // unlock — files ready, user can send now
         if (e.target) e.target.value = '';
         if (typeof window.notify === 'function')
-            window.notify('@link@ Attached ' + files.length + ' file' + (files.length > 1 ? 's' : '') + ' — ready to send', 'success');
+            window.notify('Attached ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '. Ready to send.', 'success');
     }
 
     /* =========================================================================
@@ -3683,7 +3683,7 @@
             return;
         }
         if (atts.some(function (a) { return a && a.uploading; })) {
-            if (window.notify) window.notify('@clock@ Files still uploading…', 'info');
+            if (window.notify) window.notify('Files are still uploading…', 'info');
             return;
         }
 

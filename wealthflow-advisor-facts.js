@@ -446,12 +446,12 @@ export function renderFactSheet(f, o = {}) {
     if (f.typical) {
         const T = f.typical;
         const basis = T.source === 'books-profile'
-            ? (T.basis === 'this-month' ? 'this month so far (no complete month is recorded yet)' : `the books average: income over ${T.incomeMonths} month(s) that had income, outgoings over ${T.outgoMonths} month(s) that had spending, ${T.from} to ${T.to}; the same typical month the DSCR, WealthFlow Score and Debt Demolisher use`)
+            ? (T.basis === 'this-month' ? 'this month so far (no complete month is recorded yet)' : `the books average: income over ${T.incomeMonths} month(s) that had income, outgoings over ${T.outgoMonths} month(s) that had spending, ${T.from} to ${T.to}; the same typical month the DSCR, WealthFlow Score and Debt Payoff Planner use`)
             : `mean of the last ${T.months} complete month(s) with income, ${T.from} to ${T.to}`;
         out(`Typical month (${basis}): income ${lkr(T.income)}; outflow ${lkr(T.outflow)}${T.living !== null && T.living !== undefined ? ` (living costs ${lkr(T.living)} + debt payments ${lkr(T.debtService)})` : ''}; net ${lkr(T.net)}${T.savingsRatePct !== null ? `; savings rate ${pct(T.savingsRatePct)}` : ''}.`);
     }
     if (f.recent && f.typical && (f.typical.source === 'books-profile') && f.recent.months >= 1) out(`Last ${f.recent.months} complete month(s) with income, ${f.recent.from} to ${f.recent.to}, for comparison: income ${lkr(f.recent.income)}; outflow ${lkr(f.recent.outflow)}; net ${lkr(f.recent.net)}${f.recent.savingsRatePct !== null ? `; savings rate ${pct(f.recent.savingsRatePct)}` : ''}.`);
-    if (f.liquidity && f.liquidity.freeCashPerMonth !== null) out(`Left each month after living costs and the debt payments the loans and card plans ask: ${lkr(f.liquidity.freeCashPerMonth)} (the extra-payment pool the Debt Demolisher and the monthly saving the Wealth Simulator use).`);
+    if (f.liquidity && f.liquidity.freeCashPerMonth !== null) out(`Left each month after living costs and the debt payments the loans and card plans ask: ${lkr(f.liquidity.freeCashPerMonth)} (the extra-payment pool the Debt Payoff Planner and the monthly saving the Wealth Simulator use).`);
     if (f.trend) out(`Trend over ${f.trend.months} months: outflow ${f.trend.outflowPctPerMonth === null ? 'n/a' : `${f.trend.outflowPctPerMonth > 0 ? '+' : ''}${pct(f.trend.outflowPctPerMonth)}`} a month; income ${f.trend.incomePctPerMonth === null ? 'n/a' : `${f.trend.incomePctPerMonth > 0 ? '+' : ''}${pct(f.trend.incomePctPerMonth)}`} a month.`);
     out('');
 
