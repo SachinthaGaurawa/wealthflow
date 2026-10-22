@@ -5935,7 +5935,7 @@
                 <div class="nav-item" onclick="showPage('income',this)"><span class="nav-icon"><i data-wfi="chartLine"></i></span> Investments</div>
                 <div class="nav-item" onclick="showPage('loans',this)"><span class="nav-icon"><i data-wfi="bank"></i></span> Bank Loans</div>
                 <div class="nav-item" onclick="showPage('ccinstall',this)"><span class="nav-icon"><i data-wfi="card"></i></span> CC
-                    Installments</div>
+                    Instalments</div>
                 <div class="nav-item" onclick="showPage('cconetime',this)"><span class="nav-icon"><i data-wfi="clock"></i></span> CC One-Time
                     <span class="nb" id="nb-ccot" style="display:none">!</span>
                 </div>
@@ -6176,7 +6176,7 @@
 
                 <div class="page" id="page-ccinstall">
                     <div class="sh">
-                        <div class="sh-title">Credit Card Installments</div>
+                        <div class="sh-title">Credit Card Instalments</div>
                         <div class="sh-actions">
                             <div class="sort-bar"><span class="sb-lbl">Sort:</span>
                                 <span class="sb-btn active" onclick="sortList('cci','product',this)">Product</span>
@@ -6185,7 +6185,7 @@
                             </div>
                             <button class="btn btn-secondary btn-sm" onclick="openModal('mdSkip')">@play@ Skip Month</button>
                             <button class="btn btn-primary btn-sm" onclick="clearCCIForm(); openModal('mdCCI')">+ Add
-                                Installment</button>
+                                Instalment</button>
                         </div>
                     </div>
                     <div class="g4" id="cciStats" style="margin-bottom:16px;"></div>
@@ -6432,7 +6432,7 @@
                                     @wallet@ Gross Monthly Income (LKR)</div>
                                 <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; align-items:center;">
                                     <button class="btn btn-secondary btn-sm" style="white-space:nowrap;"
-                                        onclick="loadSystemIncomeAvg()">@refresh@ System 1-Yr Avg</button>
+                                        onclick="loadSystemIncomeAvg()">@refresh@ System 1-year average</button>
                                     <input class="fi money-input" id="dscrSysIncome" placeholder="Auto-calculated"
                                         readonly
                                         style="background:var(--card3); flex:1 1 130px; min-width:130px; font-family:var(--mono); font-weight:700; color:var(--green);"
@@ -6454,7 +6454,7 @@
                                     @chartLine@ Monthly Operating Expenses (LKR) <span style="text-transform:none;letter-spacing:0;font-weight:500;color:var(--text3);">· living costs only — loan and card instalments are in the box below</span></div>
                                 <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; align-items:center;">
                                     <button class="btn btn-secondary btn-sm" style="white-space:nowrap;"
-                                        onclick="loadSystemOpexAvg()">@refresh@ System 1-Yr Avg</button>
+                                        onclick="loadSystemOpexAvg()">@refresh@ System 1-year average</button>
                                     <input class="fi money-input" id="dscrSysOpex" placeholder="Auto-calculated"
                                         readonly
                                         style="background:var(--card3); flex:1 1 130px; min-width:130px; font-family:var(--mono); font-weight:700; color:var(--red);"
@@ -6475,7 +6475,7 @@
                                     style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">
                                     @bank@ Existing Loan Payments</div>
                                 <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:11px;color:var(--text2);line-height:1.55;">
-                                    <b style="color:var(--blue);">@info@ Banks use the MONTHLY INSTALLMENT (EMI)</b> from your CRIB — NOT the original loan amount, NOT the remaining balance. WealthFlow auto-loads your active loans' monthly installments below. Add, edit, or remove rows to match your CRIB.
+                                    <b style="color:var(--blue);">@info@ Banks use the monthly instalment (EMI)</b> shown on your CRIB report, not the original loan amount or the remaining balance. WealthFlow loads the monthly instalments of your active loans below. Add, edit or remove rows to match your CRIB report.
                                 </div>
                                 <div class="fg">
                                     <select class="fs" id="dscrAddExistingLoan" onchange="autoAddDSCRLoan()">
@@ -6811,10 +6811,10 @@
         <div class="celeb-box">
             <div class="celeb-x" onclick="closeCeleb()">@x@</div>
             <div class="celeb-emoji">@sparkles@</div>
-            <div class="celeb-title">TARGET ACHIEVED!</div>
-            <div class="celeb-sub" id="celebSub">Congratulations! You have reached your goal!</div>
+            <div class="celeb-title">Target reached</div>
+            <div class="celeb-sub" id="celebSub">You have reached your goal.</div>
             <div class="celeb-amt" id="celebAmt"></div>
-            <button class="btn btn-primary" style="margin-top:18px;" onclick="closeCeleb()">@sparkles@ Amazing!</button>
+            <button class="btn btn-primary" style="margin-top:18px;" onclick="closeCeleb()">Close</button>
         </div>
     </div>
 
@@ -7156,7 +7156,7 @@
     <div class="mo" id="mdCCI">
         <div class="md">
             <div class="md-hdr">
-                <div class="md-title" id="mdCCITitle">Add CC Installment Plan</div><button class="md-x" aria-label="Close"
+                <div class="md-title" id="mdCCITitle">Add CC Instalment Plan</div><button class="md-x" aria-label="Close"
                     onclick="closeModal('mdCCI')"><i data-wfi="x"></i></button>
             </div>
             <div class="fr">
@@ -7185,19 +7185,19 @@
             <div class="fg"><label class="fl">Notes</label><textarea class="fta" id="c_notes"
                     placeholder="Additional details..."></textarea></div>
             <div class="md-ftr"><button class="btn btn-ghost" onclick="closeModal('mdCCI')">Cancel</button><button
-                    class="btn btn-primary" onclick="saveCCI()">@download@ Save Installment</button></div>
+                    class="btn btn-primary" onclick="saveCCI()">@download@ Save Instalment</button></div>
         </div>
     </div>
 
     <div class="mo" id="mdSkip">
         <div class="md md-sm">
             <div class="md-hdr">
-                <div class="md-title">Skip / Double CC Installment</div><button class="md-x" aria-label="Close"
+                <div class="md-title">Skip / Double CC Instalment</div><button class="md-x" aria-label="Close"
                     onclick="closeModal('mdSkip')"><i data-wfi="x"></i></button>
             </div>
-            <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Select an installment plan, then choose a
+            <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Select an instalment plan, then choose a
                 month to skip. The payment will automatically double in the following month.</p>
-            <div class="fg"><label class="fl">Installment Plan *</label><select class="fs" id="skip_plan"></select>
+            <div class="fg"><label class="fl">Instalment Plan *</label><select class="fs" id="skip_plan"></select>
             </div>
             <div class="fg"><label class="fl">Select Month to Skip</label><input class="fi" id="skip_month"
                     type="month"></div>
@@ -18677,7 +18677,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
 
         // ==================== SIDEBAR ====================
-        const pgTitles = { dashboard: '<i data-wfi="dashboard"></i> Dashboard', monthly: '<i data-wfi="calendar"></i> Monthly Plan', income: '<i data-wfi="chartLine"></i> Investments', incRecv: '<i data-wfi="wallet"></i> Income', loans: '<i data-wfi="bank"></i> Bank Loans', ccinstall: '<i data-wfi="card"></i> CC Installments', cconetime: '<i data-wfi="clock"></i> CC One-Time Payments', cheques: '<i data-wfi="cheque"></i> Cheque Tracker', expenses: '<i data-wfi="receipt"></i> Monthly Expenses', targets: '<i data-wfi="target"></i> Targets & Savings', dscr: '<i data-wfi="ruler"></i> DSCR Calculator', settings: '<i data-wfi="settings"></i> System Settings', ai: '<i data-wfi="bot"></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i data-wfi="trophy"></i> WealthFlow Score', subscriptions: '<i data-wfi="bell"></i> Subscriptions', debtdemo: '<i data-wfi="bomb"></i> Debt Demolisher', montecarlo: '<i data-wfi="crystal"></i> Wealth Simulator', cashflow3d: '<i data-wfi="globe"></i> 3D Cash Flow', sessions: '<i data-wfi="devices"></i> Active Sessions', liquidity: '<i data-wfi="gem"></i> Liquidity &amp; Credit Hub', crib: '<i data-wfi="fileText"></i> CRIB Credit Report', balance: '<i data-wfi="wallet"></i> Balance' };
+        const pgTitles = { dashboard: '<i data-wfi="dashboard"></i> Dashboard', monthly: '<i data-wfi="calendar"></i> Monthly Plan', income: '<i data-wfi="chartLine"></i> Investments', incRecv: '<i data-wfi="wallet"></i> Income', loans: '<i data-wfi="bank"></i> Bank Loans', ccinstall: '<i data-wfi="card"></i> CC Instalments', cconetime: '<i data-wfi="clock"></i> CC One-Time Payments', cheques: '<i data-wfi="cheque"></i> Cheque Tracker', expenses: '<i data-wfi="receipt"></i> Monthly Expenses', targets: '<i data-wfi="target"></i> Targets & Savings', dscr: '<i data-wfi="ruler"></i> DSCR Calculator', settings: '<i data-wfi="settings"></i> System Settings', ai: '<i data-wfi="bot"></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i data-wfi="trophy"></i> WealthFlow Score', subscriptions: '<i data-wfi="bell"></i> Subscriptions', debtdemo: '<i data-wfi="bomb"></i> Debt Demolisher', montecarlo: '<i data-wfi="crystal"></i> Wealth Simulator', cashflow3d: '<i data-wfi="globe"></i> 3D Cash Flow', sessions: '<i data-wfi="devices"></i> Active Sessions', liquidity: '<i data-wfi="gem"></i> Liquidity &amp; Credit Hub', crib: '<i data-wfi="fileText"></i> CRIB Credit Report', balance: '<i data-wfi="wallet"></i> Balance' };
 
         function showPage(name, navEl) {
             // RESTORED v6.9.2: biometric guard for sensitive zones
@@ -18957,7 +18957,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const startEl = $('i_start');
             const dayEl = $('i_day');
             if (!startEl || !startEl.value) {
-                notify('Please pick the investment Start Date first', 'warning');
+                notify('Pick the investment start date first.', 'warning');
                 if (startEl) { try { startEl.focus(); } catch (e) {} }
                 return;
             }
@@ -19003,7 +19003,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
         function saveIncome() {
             const name = $('i_name').value.trim(), company = $('i_company').value.trim(), amount = parseMoney($('i_amount').value), rate = parseFloat($('i_rate').value) || 0;
-            if (!name || !company || !amount || !rate) { notify('Please fill required fields', 'error'); return; }
+            if (!name || !company || !amount || !rate) { notify('Add the source name, company, amount and rate.', 'error'); return; }
             const freq = $('i_freq').value;
             let calc = freq === 'monthly' ? amount * rate / 100 / 12 : freq === 'annual' ? amount * rate / 100 : amount * rate / 100 / 4;
             const override = parseMoney($('i_override').value);
@@ -19121,8 +19121,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
         function deleteIncome(id) {
             if (_wfKeepDone('investment', (DB.get('income') || []).find(x => x && x.id === id))) return;
-            showConfirm('@trash@', 'Delete Income Source?', 'This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
-                DB.set('income', DB.get('income').filter(x => x.id !== id)); renderIncome(); renderDash(); notify('Deleted', 'info');
+            showConfirm('@trash@', 'Delete income source?', 'The source is removed from Investments. This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
+                DB.set('income', DB.get('income').filter(x => x.id !== id)); renderIncome(); renderDash(); notify('Income source deleted.', 'info');
             });
         }
         /* An investment that has been paid out in full is CLOSED: stamped (the server sends one "fully settled" text for it when texts are on), moved to
@@ -19130,18 +19130,18 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         function settleInvestment(id) {
             const s = (DB.get('income') || []).find(x => x.id === id); if (!s || !window.WFSms) return;
             const texts = s.sms_notifications_enabled === true;
-            showConfirm('@checkCircle@', 'Mark this investment as fully settled?', 'It moves to Ended and no more interest is expected from it. You can re-open it later.' + (texts ? ' The investor is sent one text saying it is settled and closed' + (s.phone2 ? ' (to both of their numbers).' : '.') : ''), 'btn-primary', 'Settle & close', () => {
+            showConfirm('@checkCircle@', 'Mark this investment as fully settled?', 'It moves to Ended and no more interest is expected from it. You can re-open it later.' + (texts ? ' The investor is sent one text saying it is settled and closed' + (s.phone2 ? ' (to both of their numbers).' : '.') : ''), 'btn-primary', 'Settle and close', () => {
                 const r = WFSms.closeInvestment(s, { now: Date.now(), todayISO: today() });
-                if (!r.ok) { notify('This investment is already closed', 'info'); return; }
+                if (!r.ok) { notify('This investment is already closed.', 'info'); return; }
                 DB.set('income', (DB.get('income') || []).map(x => x.id === id ? r.record : x)); renderIncome(); renderDash();
-                notify('Investment settled and closed', 'success');
+                notify('Investment settled and closed.', 'success');
             });
         }
         function reopenInvestment(id) {
             const s = (DB.get('income') || []).find(x => x.id === id); if (!s || !window.WFSms) return;
             const r = WFSms.reopenInvestment(s); if (!r.ok) return;
             DB.set('income', (DB.get('income') || []).map(x => x.id === id ? r.record : x)); renderIncome(); renderDash();
-            notify('Investment re-opened', 'success');
+            notify('Investment reopened.', 'success');
         }
         /* ════════════════ INCOME TAB (received income) — v7.17.1 ════════════════
            Income is now its OWN tab, structured like Expenses: simple received
@@ -19335,7 +19335,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const type = $('i2_type').value || 'Other';
             const amount = parseMoney($('i2_amount').value);
             const date = $('i2_date').value;
-            if (!name || !amount || !date) { notify('Fill name, amount and date', 'error'); return; }
+            if (!name || !amount || !date) { notify('Add the name, amount and date.', 'error'); return; }
             const arr = DB.get('incomeRecv') || [];
             const rec = {
                 id: _incRecvEdit || uid(), name, type, amount,
@@ -19352,16 +19352,16 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
         function editIncomeRecv(id) { openIncomeRecvModal(id); }
         function deleteIncomeRecv(id) {
-            showConfirm('@trash@', 'Delete Income?', 'This income entry will be removed. This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
+            showConfirm('@trash@', 'Delete this income entry?', 'The entry is removed from your income list. This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
                 DB.set('incomeRecv', (DB.get('incomeRecv') || []).filter(r => r.id !== id));
-                renderIncRecv(); try { renderDash(); } catch (_) {} notify('Income deleted', 'info');
+                renderIncRecv(); try { renderDash(); } catch (_) {} notify('Income entry deleted.', 'info');
             });
         }
         function markIncRecvReceived(id) {
             const arr = DB.get('incomeRecv') || [];
             const r = arr.find(x => x.id === id); if (!r) return;
             r.received = true; DB.set('incomeRecv', arr); renderIncRecv();
-            notify('Marked received', 'success');
+            notify('Income marked as received.', 'success');
         }
 
 
@@ -19501,7 +19501,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             received[key] = { confirmedAt: Date.now(), month: curMonthStr, amount: ans.amount, notes: ans.notes };
             DB.set('incomeReceived', received);
             triggerHaptic('success');
-            notify('@checkCircle@ Income confirmed received for ' + curMonthStr + '!', 'success');
+            notify('Income for ' + curMonthStr + ' confirmed as received.', 'success');
             renderIncome();
             renderDash();
         }
@@ -19785,7 +19785,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 }
                 DB.set('incomeReceived', received);
                 triggerHaptic('success');
-                notify(`@checkCircle@ ${saved} past month${saved > 1 ? 's' : ''} confirmed for ${_wfEsc(source.name)}.`, 'success');
+                notify(`${saved} past month${saved > 1 ? 's' : ''} confirmed for ${_wfEsc(source.name)}.`, 'success');
                 closeOvl();
                 try { renderIncome(); } catch (_) {}
                 try { renderDash(); } catch (_) {}
@@ -19854,7 +19854,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 overlay.querySelector('#_pi_cancel').onclick = () => close(null);
                 overlay.querySelector('#_pi_save').onclick = () => {
                     const amt = parseMoney(inp.value);
-                    if (!amt || amt <= 0) { notify('Enter a valid amount', 'error'); return; }
+                    if (!amt || amt <= 0) { notify('Enter a valid amount.', 'error'); return; }
                     close({ amount: amt, notes: overlay.querySelector('#_pi_notes').value.trim() });
                 };
                 overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
@@ -19865,7 +19865,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         // ==================== LOANS ====================
         function saveLoan() {
             const name = $('l_name').value.trim(), bank = $('l_bank').value, amount = parseMoney($('l_amount').value), rate = parseFloat($('l_rate').value) || 0, dur = parseInt($('l_dur').value) || 0, start = $('l_start').value;
-            if (!name || !bank || !amount || !dur || !start) { notify('Please fill required fields', 'error'); return; }
+            if (!name || !bank || !amount || !dur || !start) { notify('Add the loan name, bank, amount, duration and start date.', 'error'); return; }
             const methodEl = document.querySelector('input[name="l_method"]:checked');
             const paymentMethod = methodEl && methodEl.value === 'reducing' ? 'reducing' : 'emi';
             // For EMI: l.monthly is the fixed payment. For Reducing: l.monthly is the FIRST month's
@@ -19918,7 +19918,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             } else arr.push(rec);
             DB.set('loans', arr);
             closeModal('mdLoan'); clearLoanForm(); renderLoans(); renderDash();
-            notify(editMode ? 'Loan updated!' : 'Loan added!');
+            notify(editMode ? 'Loan updated.' : 'Loan added.');
         }
         function clearLoanForm() {
             ['l_name', 'l_amount', 'l_rate', 'l_dur', 'l_monthly', 'l_start', 'l_purpose', 'l_notes'].forEach(id => $(id).value = '');
@@ -19949,18 +19949,18 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
         function deleteLoan(id) {
             if (_wfKeepDone('loan', (DB.get('loans') || []).find(x => x && x.id === id))) return;
-            showConfirm('@trash@', 'Delete Loan?', 'Monthly payments will no longer be tracked.', 'btn-danger', '@trash@ Delete', () => {
-                DB.set('loans', DB.get('loans').filter(x => x.id !== id)); renderLoans(); renderDash(); notify('Loan deleted', 'info');
+            showConfirm('@trash@', 'Delete this loan?', 'The loan and its monthly payments will no longer be tracked. This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
+                DB.set('loans', DB.get('loans').filter(x => x.id !== id)); renderLoans(); renderDash(); notify('Loan deleted.', 'info');
             });
         }
         function skipLoanM() {
             const planId = $('skip_plan_loan').value, month = $('skip_month_loan').value;
-            if (!planId || !month) { notify('Please select a loan and month', 'error'); return; }
+            if (!planId || !month) { notify('Choose a loan and a month.', 'error'); return; }
             const arr = DB.get('loans');
             const i = arr.findIndex(x => x.id === planId);
-            if (i < 0) { notify('Loan not found', 'error'); return; }
+            if (i < 0) { notify('That loan could not be found.', 'error'); return; }
             if (!arr[i].skipped) arr[i].skipped = [];
-            if (arr[i].skipped.includes(month)) { notify('This month is already skipped', 'warn'); return; }
+            if (arr[i].skipped.includes(month)) { notify('That month is already skipped.', 'warn'); return; }
             arr[i].skipped.push(month);
             DB.set('loans', arr);
             closeModal('mdSkipLoan');
@@ -20281,7 +20281,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 // Currently paid → unmark
                 l.payments[idx].paid = false;
                 l.payments[idx].unpaidAt = Date.now();
-                _wfSetLoanVia(l, monthKey, 'other', 0);   // not paid: no bank debit is this installment any more
+                _wfSetLoanVia(l, monthKey, 'other', 0);   // not paid: no bank debit is this instalment any more
                 DB.set('loans', arr);
                 renderLoans();
                 notify(`Payment for ${monthKey} reverted`, 'info');
@@ -20296,16 +20296,16 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             } else {
                 l.payments.push({ month: monthKey, paid: true, amount, paidAt: Date.now(), notes: ans.notes, via: ans.via });
             }
-            l.payVia = ans.via;                                   // the next installment starts from the same answer
+            l.payVia = ans.via;                                   // the next instalment starts from the same answer
             _wfSetLoanVia(l, monthKey, ans.via, amount);
             DB.set('loans', arr);
             renderLoans();
             renderDash();
             const diff = amount - l.monthly;
             if (Math.abs(diff) > 1) {
-                notify(`@info@ ${monthKey} paid as ${fmt(amount)} (${diff > 0 ? '+' : ''}${fmt(diff)} vs scheduled). Balance recalculated.`, 'success');
+                notify(`${monthKey} paid as ${fmt(amount)} (${diff > 0 ? '+' : ''}${fmt(diff)} vs scheduled). Balance recalculated.`, 'success');
             } else {
-                notify(`@info@ ${monthKey} marked paid`, 'success');
+                notify(`${monthKey} marked as paid.`, 'success');
             }
         }
 
@@ -20411,7 +20411,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     recommendedFixed: 0, recommendedLast: 0,
                     deltaVsOriginal: 0, onTrack: true,
                     direction: 'on_track',
-                    reason: 'Loan is already paid off — no further installments needed.'
+                    reason: 'Loan is already paid off — no further instalments needed.'
                 };
             }
 
@@ -20507,7 +20507,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             Method: <b>${isReducing ? 'Reducing Balance (floating)' : 'EMI (fixed)'}</b> · Rate: <b>${l.rate}% p.a.</b><br>
                             Scheduled this month: <b>${fmt(scheduledForMonth)}</b> · Balance: <b style="color:var(--red);">${fmt(curBal)}</b><br>
                             <span style="font-size:11px;color:var(--text3);">${isReducing
-                        ? 'Each month auto-adjusts based on remaining balance — overpaying drops every future installment.'
+                        ? 'Each month auto-adjusts based on remaining balance — overpaying drops every future instalment.'
                         : 'Pay any amount — extra goes to principal (reducing total interest), less means a partial payment.'}</span>
                         </div>
                         ${(() => {
@@ -20528,7 +20528,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                 <div style="color:var(--text2);">To finish on the original end date, you ${verb}:<br>
                                     <b style="color:${borderCol};font-size:13px;font-family:var(--mono);">${fmt(rec.recommendedFixed)}${isReducing ? ' next month' : ' / month'}</b>
                                     ${isReducing ? `<span style="color:var(--text3);font-size:10px;"> (drops to ${fmt(rec.recommendedLast)} by the end)</span>` : ''}
-                                    <span style="color:var(--text3);font-size:10px;"> · ${rec.remainingMonths} installments left</span>
+                                    <span style="color:var(--text3);font-size:10px;"> · ${rec.remainingMonths} instalments left</span>
                                 </div>
                                 <div style="color:var(--text3);font-size:10px;margin-top:3px;">vs. originally scheduled ${fmt(rec.scheduledNext)} ${isReduce ? '(' + fmt(Math.abs(rec.deltaVsOriginal)) + ' less)' : '(' + fmt(rec.deltaVsOriginal) + ' more)'}</div>
                             </div>`;
@@ -20558,12 +20558,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             <div id="_pp_proj_rows"></div>
                         </div>
                         <div class="fg" style="margin-top:10px;">
-                            <label class="fl">How did you pay this installment?</label>
+                            <label class="fl">How did you pay this instalment?</label>
                             <div style="display:flex;gap:6px;flex-wrap:wrap;">
                                 <button type="button" class="btn btn-sm _pp_via" data-via="bank">My bank account</button>
                                 <button type="button" class="btn btn-sm _pp_via" data-via="other">Cash / somewhere else</button>
                             </div>
-                            <div id="_pp_via_hint" style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5;">Choose one so this installment is counted only once.</div>
+                            <div id="_pp_via_hint" style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5;">Choose one so this instalment is counted only once.</div>
                         </div>
                         <div class="fg" style="margin-top:10px;">
                             <label class="fl">Notes (optional)</label>
@@ -20602,8 +20602,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         const nextMonthInterest = balAfter * monthlyRate;
                         const nextMonthPayment = principalPerMonth + nextMonthInterest;
                         html += `<div class="lp-row"><span>Next month's installment:</span><span class="lp-val" style="color:var(--accent);font-weight:700;">${fmt(nextMonthPayment)}</span></div>`;
-                        if (diff > 1) html += `<div class="lp-row"><span>Extra paid this month:</span><span class="lp-saving">+${fmt(diff)} → drops every future installment</span></div>`;
-                        else if (diff < -1) html += `<div class="lp-row"><span>Shortfall:</span><span style="color:var(--red);font-weight:700;">${fmt(Math.abs(diff))} (raises future installments)</span></div>`;
+                        if (diff > 1) html += `<div class="lp-row"><span>Extra paid this month:</span><span class="lp-saving">+${fmt(diff)} → drops every future instalment</span></div>`;
+                        else if (diff < -1) html += `<div class="lp-row"><span>Shortfall:</span><span style="color:var(--red);font-weight:700;">${fmt(Math.abs(diff))} (raises future instalments)</span></div>`;
                         // Project remaining months at floating method
                         let projBal = balAfter, projMonths = 0;
                         while (projBal > 0 && projMonths < 600) {
@@ -20668,7 +20668,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (via !== 'bank') { hint.textContent = 'Not on your bank statements, so this loan counts it here — once.'; return; }
                     const amt = parseMoney(inp.value), linked = (DB.get('expenses') || []).find(e => e && e.loanLink && e.loanLink.loanId === l.id && e.loanLink.month === monthKey), found = !linked && amt > 0 ? _wfFindLoanDebit(l, monthKey, amt) : null;
                     hint.textContent = linked ? 'Tied to the bank debit of ' + fmt(linked.amount) + ' — counted once, from your statement.'
-                        : found ? 'Found the bank debit of ' + fmt(found.amount) + ' (' + (found.date || monthKey) + ') — it will be tied to this installment, counted once.'
+                        : found ? 'Found the bank debit of ' + fmt(found.amount) + ' (' + (found.date || monthKey) + ') — it will be tied to this instalment, counted once.'
                         : 'It shows on your bank statement, so it is counted once from there — not again here. Tied to the debit as soon as the statement has it.';
                 };
                 overlay.querySelectorAll('._pp_via').forEach(b => { b.onclick = () => { via = b.dataset.via; showVia(); }; });
@@ -20684,7 +20684,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 overlay.querySelector('#_pp_cancel').onclick = () => close(null);
                 overlay.querySelector('#_pp_save').onclick = () => {
                     const amt = parseMoney(inp.value);
-                    if (!amt || amt <= 0) { notify('Enter a valid amount', 'error'); return; }
+                    if (!amt || amt <= 0) { notify('Enter a valid amount.', 'error'); return; }
                     close({ amount: amt, notes: overlay.querySelector('#_pp_notes').value.trim(), via });
                 };
                 overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
@@ -20749,7 +20749,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const displayMonthly = isReducingCard ? loanNextScheduledPayment(l) : l.monthly;
                 const methodBadge = isReducingCard
                     ? '<span class="badge bg-b" title="Floating / Reducing Balance — payment varies each month based on remaining balance × rate" style="font-size:9px;">@chartLine@ Reducing</span>'
-                    : '<span class="badge bg-gr" title="Equal Monthly Installment — fixed payment for the whole term" style="font-size:9px;">@chartLine@ EMI</span>';
+                    : '<span class="badge bg-gr" title="Equal Monthly Instalment — fixed payment for the whole term" style="font-size:9px;">@chartLine@ EMI</span>';
                 const monthlyHint = isReducingCard
                     ? `<div style="font-size:10px;color:var(--text3);font-weight:400;line-height:1;">next month (varies)</div>`
                     : '';
@@ -20763,7 +20763,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 </div>
             </div>
             <div class="pb" style="margin-bottom:6px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${prog.pct}%"></div></div>
-            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-bottom:10px;"><span>${prog.paid}/${prog.total} installments paid (${prog.pct}%) ${skipCount > 0 ? `· <span style="color:var(--accent);">${skipCount} skipped</span>` : ''}</span><span>Ends ${end.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-bottom:10px;"><span>${prog.paid}/${prog.total} instalments paid (${prog.pct}%) ${skipCount > 0 ? `· <span style="color:var(--accent);">${skipCount} skipped</span>` : ''}</span><span>Ends ${end.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}</span></div>
 
             <!-- ISSUE 1 FIX — Prominent "Pay This Month" CTA on the loan card -->
             ${active ? (() => {
@@ -20779,7 +20779,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             return `<div style="background:linear-gradient(135deg, rgba(245, 158, 11, 0.22), rgba(234, 88, 12, 0.18));backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(245, 158, 11, 0.35);color:#fff;border-radius:14px;padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;gap:12px;box-shadow: 0 4px 20px rgba(234, 88, 12, 0.12), inset 0 1px 0 rgba(255,255,255,0.08);">
                         <div style="font-size:24px;background:linear-gradient(135deg, rgba(245,158,11,0.35), rgba(234,88,12,0.3));padding:10px;border-radius:12px;line-height:1;display:flex;align-items:center;justify-content:center;border:1px solid rgba(245,158,11,0.25);">@sparkles@</div>
                         <div style="flex:1;font-size:13px;line-height:1.5;">
-                            <div style="font-weight:700;font-size:14px;color:#f59e0b;">${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Installment Paid</div>
+                            <div style="font-weight:700;font-size:14px;color:#f59e0b;">${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Instalment Paid</div>
                             <div style="color:var(--text2);font-size:12px;margin-top:2px;">
                                 Paid <b style="color:var(--text);">${fmt(thisPay.amount || scheduledThisMonth)}</b>
                                 ${diff > 1 ? `<span style="font-weight:700;color:#f59e0b;margin-left:4px;">(+${fmt(diff)} extra)</span>` : ''}
@@ -20792,7 +20792,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         return `<button class="loan-pay-cta" onclick="toggleLoanInstallment('${_wfJsAttr(l.id)}','${_wfJsAttr(todayMonthKey)}')">
                     <span style="font-size:20px;">@wallet@</span>
                     <div style="flex:1;text-align:left;">
-                        <div style="font-size:13px;font-weight:700;">Pay ${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Installment</div>
+                        <div style="font-size:13px;font-weight:700;">Pay ${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Instalment</div>
                         <div style="font-size:11px;opacity:.85;font-weight:500;">Scheduled: ${fmt(scheduledThisMonth)} · Tap to record (any amount)</div>
                     </div>
                     <span style="font-size:18px;">→</span>
@@ -20836,13 +20836,13 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         const label = isReduce ? 'AHEAD of schedule' : 'BEHIND schedule';
                         return `<div style="margin-top:10px;background:${bgGrad};border:1px solid ${accentCol};border-left:3px solid ${accentCol};border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.5;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-                        <div style="font-weight:700;color:${accentCol};">${icon} Recalculated Installment — You're ${label}</div>
+                        <div style="font-weight:700;color:${accentCol};">${icon} Recalculated Instalment — You're ${label}</div>
                         <span style="font-size:10px;color:var(--text3);background:var(--bg2);padding:2px 6px;border-radius:8px;">AUTO</span>
                     </div>
                     <div style="color:var(--text2);">
                         Pay <b style="color:${accentCol};font-size:14px;font-family:var(--mono);">${fmt(rec.recommendedFixed)}</b>
                         ${_loanMethod(l) === 'reducing' ? ' next month <span style="color:var(--text3);font-size:10px;">(drops to ' + fmt(rec.recommendedLast) + ' by the end)</span>' : ' / month'}
-                        to finish on the original end date <span style="color:var(--text3);">(${rec.remainingMonths} installments left)</span>
+                        to finish on the original end date <span style="color:var(--text3);">(${rec.remainingMonths} instalments left)</span>
                     </div>
                     <div style="font-size:10.5px;color:var(--text3);margin-top:4px;">
                         ${isReduce
@@ -20857,7 +20857,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             <!-- Monthly installment buttons -->
             <div style="margin-top:14px;border-top:1px dashed var(--border2);padding-top:12px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
-                    <div style="font-size:12px;font-weight:700;color:var(--text2);">@calendar@ Monthly Installments</div>
+                    <div style="font-size:12px;font-weight:700;color:var(--text2);">@calendar@ Monthly Instalments</div>
                     <div style="display:flex; gap:6px; flex-wrap:wrap;">
                         <button class="btn btn-ghost btn-sm" onclick="openLoanStatement('${_wfJsAttr(l.id)}')" title="Generate a professional bank-statement-style PDF for this loan">@fileText@ Statement</button>
                         <button class="btn btn-ghost btn-sm" onclick="_openLoanInstallmentsFresh('${_wfJsAttr(l.id)}')">@receipt@ View All ${months.length} Months</button>
@@ -20975,7 +20975,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     const icon = isReduce ? '@sparkles@' : '@sparkles@';
                     const isReducingLoan = _loanMethod(l) === 'reducing';
                     return `<div style="margin:0 16px 10px;background:${bgGrad};border:1px solid ${accentCol};border-left:3px solid ${accentCol};border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.5;flex-shrink:0;">
-                            <div style="font-weight:700;color:${accentCol};margin-bottom:4px;">${icon} Recalculated Installment <span style="font-size:9px;background:var(--bg2);padding:2px 6px;border-radius:8px;color:var(--text3);font-weight:500;">AUTO</span></div>
+                            <div style="font-weight:700;color:${accentCol};margin-bottom:4px;">${icon} Recalculated Instalment <span style="font-size:9px;background:var(--bg2);padding:2px 6px;border-radius:8px;color:var(--text3);font-weight:500;">AUTO</span></div>
                             <div style="color:var(--text2);">
                                 Pay <b style="color:${accentCol};font-size:14px;font-family:var(--mono);">${fmt(rec.recommendedFixed)}</b>${isReducingLoan ? ' next month' : ' / month'}
                                 to finish on the original end date.
@@ -21012,7 +21012,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                 </tr>
                             </thead>
                             <tbody>
-                                ${filteredSchedule.length === 0 ? `<tr><td colspan="6" style="padding:30px;text-align:center;color:var(--text3);">No installments match this filter.</td></tr>` : filteredSchedule.map(m => {
+                                ${filteredSchedule.length === 0 ? `<tr><td colspan="6" style="padding:30px;text-align:center;color:var(--text3);">No instalments match this filter.</td></tr>` : filteredSchedule.map(m => {
                     const isCurrent = m.isCurrent;
                     let bg;
                     if (m.paid) bg = 'rgba(16,185,129,0.05)';
@@ -21144,7 +21144,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 ['Bank', esc(l.bank)],
                 ['Loan ID', '<span style="font-family:monospace;">' + esc(l.id || '—') + '</span>'],
                 ['Purpose', esc(l.purpose) || '—'],
-                ['Repayment Method', isReducing ? 'Reducing Balance (Floating)' : 'Equal Monthly Installment (EMI)'],
+                ['Repayment Method', isReducing ? 'Reducing Balance (Floating)' : 'Equal Monthly Instalment (EMI)'],
                 ['Principal Amount', fmt(l.amount)],
                 ['Annual Interest Rate', l.rate + '% p.a.'],
                 ['Loan Term', l.duration + ' months'],
@@ -21153,17 +21153,17 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             ];
 
             const statusRows = [
-                ['Installments Paid', paidCount + ' / ' + proj.schedule.length],
+                ['Instalments Paid', paidCount + ' / ' + proj.schedule.length],
                 ['Total Paid', '<b style="color:' + colorPaid + ';">' + fmt(totalPaid) + '</b>'],
                 ['Interest Paid (so far)', '<b style="color:' + colorAccent + ';">' + fmt(interestPaid) + '</b>'],
                 ['Outstanding Balance', '<b style="color:' + colorUnder + ';">' + fmt(balToday) + '</b>'],
-                ['Installments Remaining', remainingCount + ' months'],
+                ['Instalments Remaining', remainingCount + ' months'],
                 ['Projected Total Interest', fmt(proj.totalInterestActual)],
                 ['Projected Total Payable', fmt(proj.totalLifetimeCost)],
             ];
             if (!rec.onTrack && rec.remainingMonths > 0) {
                 statusRows.push([
-                    'Recalculated Installment',
+                    'Recalculated Instalment',
                     '<b style="color:' + (rec.direction === 'reduce' ? colorPaid : colorUnder) + ';">' + fmt(rec.recommendedFixed) + '</b>' +
                     ' <span style="color:' + colorMuted + ';font-size:11px;">(' +
                     (rec.direction === 'reduce' ? '↓ ' + fmt(Math.abs(rec.deltaVsOriginal)) + ' less' : '↑ ' + fmt(rec.deltaVsOriginal) + ' more') +
@@ -21253,10 +21253,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
             const paidSectionRows = paidRows.length > 0
                 ? paidRows.join('') + buildTotalRow('SUBTOTAL — PAID (' + paidRows.length + ')', paidTotals)
-                : emptyRow('No installments paid yet.');
+                : emptyRow('No instalments paid yet.');
             const remainingSectionRows = remainingRows.length > 0
                 ? remainingRows.join('') + buildTotalRow('SUBTOTAL — REMAINING (' + remainingRows.length + ')', remainingTotals)
-                : emptyRow('All installments have been paid — loan complete.');
+                : emptyRow('All instalments have been paid — loan complete.');
 
             const summaryHTML = summaryRows.map(([k, v]) =>
                 '<tr><td style="padding:5px 10px 5px 0;color:' + colorMuted + ';font-size:12px;">' + k + '</td>' +
@@ -21350,7 +21350,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 <!-- Quick visual summary so reader sees Paid vs Remaining at a glance -->
 <div style="margin-top:24px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
     <div style="padding:14px 16px;border:1px solid ${colorBorder};border-left:4px solid ${colorPaid};border-radius:6px;background:#f4faf6;">
-        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">Paid Installments</div>
+        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">Paid Instalments</div>
         <div style="font-size:22px;font-weight:700;color:${colorPaid};margin-top:4px;font-variant-numeric:tabular-nums;">${paidRows.length} <span style="font-size:13px;color:${colorMuted};font-weight:500;">of ${proj.schedule.length}</span></div>
         <div style="font-size:11.5px;color:${colorText};margin-top:3px;">Total paid: <b>${fmtPay(paidTotals.amount)}</b></div>
     </div>
@@ -21363,7 +21363,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
 <div class="section-title" style="margin-top:22px;">
     <span style="display:inline-block;width:10px;height:10px;background:${colorPaid};border-radius:2px;margin-right:6px;vertical-align:middle;"></span>
-    Section A — Paid Installments (${paidRows.length})
+    Section A — Paid Instalments (${paidRows.length})
 </div>
 <table class="amort">
 <thead>
@@ -21383,7 +21383,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
 <div class="section-title" style="margin-top:22px;">
     <span style="display:inline-block;width:10px;height:10px;background:${colorAccent};border-radius:2px;margin-right:6px;vertical-align:middle;"></span>
-    Section B — Remaining Installments / To Be Paid (${remainingRows.length})
+    Section B — Remaining Instalments / To Be Paid (${remainingRows.length})
 </div>
 <table class="amort">
 <thead>
@@ -21403,7 +21403,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
 <div class="legend">
     <b>Legend:</b>
-    <span style="color:${colorPaid};">PAID</span> — installment recorded at scheduled amount &nbsp;·&nbsp;
+    <span style="color:${colorPaid};">PAID</span> — instalment recorded at scheduled amount &nbsp;·&nbsp;
     <span style="color:${colorOver};">PAID +</span> — paid more than scheduled &nbsp;·&nbsp;
     <span style="color:${colorUnder};">PAID −</span> — partial payment &nbsp;·&nbsp;
     <span style="color:${colorAccent};">CURRENT</span> — present billing month &nbsp;·&nbsp;
@@ -21488,7 +21488,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             frame.srcdoc = html;
             overlay.querySelector('#_ls_print').onclick = () => {
                 try { frame.contentWindow.focus(); frame.contentWindow.print(); }
-                catch (e) { notify('Print failed — try the popup version', 'error'); }
+                catch (e) { notify('Printing failed. Try the pop-up version instead.', 'error'); }
             };
             overlay.querySelector('#_ls_share').onclick = () => _shareLoanStatement(frame.contentWindow || window, l);
         }
@@ -22262,7 +22262,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             url: url
                         });
                     } catch (e) {
-                        if (e.name !== 'AbortError') notify('Share cancelled', 'info');
+                        if (e.name !== 'AbortError') notify('Sharing was cancelled.', 'info');
                     }
                 };
             }
@@ -22335,9 +22335,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
             try {
                 await navigator.clipboard.writeText(summaryText);
-                notify('@receipt@ Summary copied to clipboard — paste anywhere to share', 'success');
+                notify('Summary copied. Paste it wherever you want to share it.', 'success');
             } catch (e) {
-                notify('Sharing not available on this device — use Print / Save PDF instead', 'info');
+                notify('Sharing is not available on this device. Use Print / Save PDF instead.', 'info');
             }
         }
 
@@ -22364,7 +22364,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const l = DB.get('loans').find(x => x.id === loanId);
             if (!l) return;
             const pay = (l.payments || []).find(p => p.month === monthKey);
-            if (!pay || !pay.paid) { notify('No recorded payment for this month', 'info'); return; }
+            if (!pay || !pay.paid) { notify('There is no recorded payment for this month.', 'info'); return; }
             const diff = pay.amount - l.monthly;
             const d = new Date(pay.paidAt || Date.now());
             const overlay = document.createElement('div');
@@ -22376,7 +22376,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.innerHTML = `
                 <div class="md md-sm" style="max-width:420px;">
                     <div class="md-hdr">
-                        <div class="md-title">@eye@ ${monthKey} Installment</div>
+                        <div class="md-title">@eye@ ${monthKey} Instalment</div>
                         <button class="md-x" aria-label="Close" id="_vli_close"><i data-wfi="x"></i></button>
                     </div>
                     <div style="padding:6px 0 16px;">
@@ -22428,7 +22428,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 showConfirm(
                     '↺',
                     'Undo this payment?',
-                    'The ' + monthKey + ' installment of ' + fmt(pay.amount) + ' will be marked unpaid. You can record it again any time.',
+                    'The ' + monthKey + ' instalment of ' + fmt(pay.amount) + ' will be marked unpaid. You can record it again any time.',
                     'btn-danger',
                     '↺ Yes, Undo',
                     async () => {
@@ -22476,9 +22476,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                     renderDash();
                     const newDiff = ans.amount - l.monthly;
                     if (Math.abs(newDiff) > 1) {
-                        notify(`@info@ ${monthKey} updated to ${fmt(ans.amount)} (${newDiff > 0 ? '+' : ''}${fmt(newDiff)} vs scheduled)`, 'success');
+                        notify(`${monthKey} updated to ${fmt(ans.amount)} (${newDiff > 0 ? '+' : ''}${fmt(newDiff)} vs scheduled).`, 'success');
                     } else {
-                        notify(`@info@ ${monthKey} payment updated`, 'success');
+                        notify(`${monthKey} payment updated.`, 'success');
                     }
                 }
                 // Whether saved or cancelled, refresh the amortization modal if it's open so
@@ -22491,7 +22491,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ==================== CC INSTALLMENTS ====================
         function saveCCI() {
             const product = $('c_product').value.trim(), bank = $('c_bank').value, total = parseMoney($('c_total').value), dur = parseInt($('c_dur').value) || 0, date = $('c_date').value;
-            if (!product || !bank || !total || !dur || !date) { notify('Please fill required fields', 'error'); return; }
+            if (!product || !bank || !total || !dur || !date) { notify('Add the product name, bank, total amount, duration and purchase date.', 'error'); return; }
             const rate = parseFloat($('c_rate').value) || 0;
             const calc = calcEMI(total, rate, dur);
             const monthly = parseMoney($('c_monthly').value) || Math.round(calc);
@@ -22500,15 +22500,15 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) { rec.skipped = arr[i].skipped || []; arr[i] = rec; } } else arr.push(rec);
             DB.set('ccinstall', arr);
             closeModal('mdCCI'); clearCCIForm(); renderCCI(); renderDash();
-            notify(editMode ? 'Updated!' : 'Installment added!');
+            notify(editMode ? 'Instalment updated.' : 'Instalment added.');
         }
         function clearCCIForm() {
             ['c_product', 'c_buyer', 'c_total', 'c_rate', 'c_dur', 'c_monthly', 'c_date', 'c_notes'].forEach(id => $(id).value = '');
-            $('c_bank').value = ''; $('c_calc').textContent = ''; $('mdCCITitle').textContent = 'Add CC Installment Plan';
+            $('c_bank').value = ''; $('c_calc').textContent = ''; $('mdCCITitle').textContent = 'Add CC Instalment Plan';
         }
         function editCCI(id) {
             const item = DB.get('ccinstall').find(x => x.id === id); if (!item) return;
-            editMode = id; $('mdCCITitle').textContent = 'Edit Installment';
+            editMode = id; $('mdCCITitle').textContent = 'Edit Instalment';
             $('c_product').value = item.product; $('c_buyer').value = item.buyer || ''; $('c_bank').value = item.bank;
             $('c_total').value = fmtN(item.total); $('c_rate').value = item.rate; $('c_dur').value = item.duration;
             // Only pre-fill override if user had manually overridden
@@ -22519,29 +22519,29 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         function deleteCCI(id) {
             if (_wfKeepDone('ccinstall', (DB.get('ccinstall') || []).find(x => x && x.id === id))) return;
-            showConfirm('@trash@', 'Delete Installment?', '', 'btn-danger', '@trash@ Delete', () => {
-                DB.set('ccinstall', DB.get('ccinstall').filter(x => x.id !== id)); renderCCI(); renderDash(); notify('Deleted', 'info');
+            showConfirm('@trash@', 'Delete this instalment plan?', 'The plan and its payment records will be removed. This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
+                DB.set('ccinstall', DB.get('ccinstall').filter(x => x.id !== id)); renderCCI(); renderDash(); notify('Instalment plan deleted.', 'info');
             });
         }
         function markCCIDone(id) {
-            showConfirm('@checkCircle@', 'Mark Installment Complete?', 'Mark this plan as fully paid?', 'btn-success', '@checkCircle@ Complete', () => {
+            showConfirm('@checkCircle@', 'Mark this instalment plan as complete?', 'The plan will be treated as fully paid.', 'btn-success', '@checkCircle@ Complete', () => {
                 const arr = DB.get('ccinstall'); const i = arr.findIndex(x => x.id === id);
-                if (i > -1) { arr[i].completed = true; DB.set('ccinstall', arr); renderCCI(); notify('Marked complete!'); }
+                if (i > -1) { arr[i].completed = true; DB.set('ccinstall', arr); renderCCI(); notify('Instalment plan marked as complete.'); }
             });
         }
         function skipInstallmentM() {
             const planId = $('skip_plan').value, month = $('skip_month').value;
-            if (!planId || !month) { notify('Please select a plan and month', 'error'); return; }
+            if (!planId || !month) { notify('Choose a plan and a month.', 'error'); return; }
             const arr = DB.get('ccinstall');
             const i = arr.findIndex(x => x.id === planId);
-            if (i < 0) { notify('Plan not found', 'error'); return; }
+            if (i < 0) { notify('That plan could not be found.', 'error'); return; }
             if (!arr[i].skipped) arr[i].skipped = [];
-            if (arr[i].skipped.includes(month)) { notify('This month is already skipped', 'warn'); return; }
+            if (arr[i].skipped.includes(month)) { notify('That month is already skipped.', 'warn'); return; }
             arr[i].skipped.push(month);
             DB.set('ccinstall', arr);
             closeModal('mdSkip');
             renderCCI(); renderDash();
-            notify(`Month ${month} skipped. Next month will show double installment.`, 'warn');
+            notify(`Month ${month} skipped. Next month will show double instalment.`, 'warn');
         }
         function getCCIMonthlyForDate(item, yearN, monthN) {
             const ym = `${yearN}-${p2(monthN + 1)}`;
@@ -22578,7 +22578,7 @@ table.amort tbody tr { page-break-inside: avoid; }
     `;
             $('skip_plan').innerHTML = '<option value="">Select plan...</option>' + active.map(x => `<option value="${_wfEsc(x.id)}">${_wfEsc(x.product)} (${_wfEsc(x.bank)})</option>`).join('');
             const tbody = $('cciBody');
-            if (!arr.length) { tbody.innerHTML = `<tr><td colspan="11">${emptyState('@card@', 'No installments', 'Add credit card installment plans to track payments')}</td></tr>`; return; }
+            if (!arr.length) { tbody.innerHTML = `<tr><td colspan="11">${emptyState('@card@', 'No instalment plans yet', 'Add a credit card instalment plan to track its payments.')}</td></tr>`; return; }
             const _cap = _wfSplitCap('ccinstall', arr, 'ccinstall');
             tbody.innerHTML = _cap.rows.map(item => {
                 const prog = cciProgress(item);
@@ -22607,7 +22607,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         function saveCCOT() {
             const desc = $('ot_desc').value.trim(), bank = $('ot_bank').value, amount = parseMoney($('ot_amount').value), date = $('ot_date').value;
             const type = $('ot_type').value;
-            if (!desc || !bank || !amount || !date) { notify('Please fill required fields', 'error'); return; }
+            if (!desc || !bank || !amount || !date) { notify('Add the description, bank, amount and date.', 'error'); return; }
             // v7.29.0 — a Re-payment is money INTO the card (a credit), NOT a charge. Save
             // it as a card payment so it auto-matches outstanding charges (oldest first),
             // exactly like an imported/SMS repayment or a manually recorded payment.
@@ -22615,7 +22615,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (editMode) { DB.set('cconetime', DB.get('cconetime').filter(x => x.id !== editMode)); }
                 addCCPayment({ bank, amount, date, desc: desc || 'Re-payment', source: 'manual' });
                 closeModal('mdCCOT'); clearCCOTForm(); renderCCOT(); updateCCOTBadge();
-                notify('@wallet@ Re-payment recorded — charges auto-matched (oldest first)', 'success');
+                notify('Payment recorded. The oldest charges were cleared first.', 'success');
                 return;
             }
             const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
@@ -22669,11 +22669,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             DB.set('cconetime', arr);
             closeModal('mdCCOT'); clearCCOTForm(); renderCCOT(); updateCCOTBadge();
             if (type === 'cash_advance' && serviceFee > 0) {
-                notify(`@card@ Cash advance saved · Service fee LKR ${fmt(serviceFee)} auto-added · Total to repay LKR ${fmt(amount + serviceFee)}`, 'success');
+                notify(`Cash advance saved. A service fee of LKR ${fmt(serviceFee)} was added, so the total to repay is LKR ${fmt(amount + serviceFee)}.`, 'success');
             } else if (type === 'fuel' && serviceFee > 0) {
-                notify(`@coins@ Fuel purchase saved · ${fmt(serviceFee)} surcharge auto-added · Total LKR ${fmt(amount + serviceFee)}`, 'success');
+                notify(`Fuel purchase saved. A surcharge of LKR ${fmt(serviceFee)} was added, so the total is LKR ${fmt(amount + serviceFee)}.`, 'success');
             } else {
-                notify(editMode ? 'Payment updated!' : 'Payment added!');
+                notify(editMode ? 'Payment updated.' : 'Payment added.');
             }
         }
         function clearCCOTForm() {
@@ -22718,15 +22718,15 @@ table.amort tbody tr { page-break-inside: avoid; }
             }, 80);
         }
         function markCCOTPaid(id) {
-            showConfirm('@card@', 'Mark as Paid?', 'Confirm this CC payment has been repaid.', 'btn-success', '@checkCircle@ Mark Paid', () => {
+            showConfirm('@card@', 'Mark this charge as paid?', 'Confirm that this credit card charge has been repaid.', 'btn-success', '@checkCircle@ Mark Paid', () => {
                 const arr = DB.get('cconetime'); const i = arr.findIndex(x => x.id === id);
-                if (i > -1) { arr[i].paid = true; arr[i].paidManually = true; arr[i].autoPaid = false; arr[i].paidAt = Date.now(); DB.set('cconetime', arr); reconcileCC(); renderCCOT(); updateCCOTBadge(); notify('Marked as paid!'); }
+                if (i > -1) { arr[i].paid = true; arr[i].paidManually = true; arr[i].autoPaid = false; arr[i].paidAt = Date.now(); DB.set('cconetime', arr); reconcileCC(); renderCCOT(); updateCCOTBadge(); notify('Charge marked as paid.'); }
             });
         }
         function deleteCCOT(id) {
             if (_wfKeepDone('ccot', (DB.get('cconetime') || []).find(x => x && x.id === id))) return;
-            showConfirm('@trash@', 'Delete?', '', 'btn-danger', '@trash@ Delete', () => {
-                DB.set('cconetime', DB.get('cconetime').filter(x => x.id !== id)); const _rm = _pruneOrphanPayments(); reconcileCC(); renderCCOT(); updateCCOTBadge(); notify(_rm > 0 ? ('Deleted · ' + _rm + ' orphaned payment' + (_rm > 1 ? 's' : '') + ' cleared') : 'Deleted', 'info');
+            showConfirm('@trash@', 'Delete this charge?', 'This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
+                DB.set('cconetime', DB.get('cconetime').filter(x => x.id !== id)); const _rm = _pruneOrphanPayments(); reconcileCC(); renderCCOT(); updateCCOTBadge(); notify(_rm > 0 ? ('Charge deleted. ' + _rm + ' unmatched payment' + (_rm > 1 ? 's were' : ' was') + ' cleared.') : 'Charge deleted.', 'info');
             });
         }
         function dLeft(deadline) {
@@ -22853,9 +22853,9 @@ table.amort tbody tr { page-break-inside: avoid; }
         window.wfIngestCardSms = wfIngestCardSms;
 
         function deleteCCPayment(id) {
-            showConfirm('@trash@', 'Delete this payment?', 'Removing a credit may re-open charges it had settled.', 'btn-danger', '@trash@ Delete', () => {
+            showConfirm('@trash@', 'Delete this payment?', 'Removing this payment may re-open charges it had settled. This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
                 DB.set('ccPayments', (DB.get('ccPayments') || []).filter(x => x.id !== id));
-                reconcileCC(); renderCCOT(); updateCCOTBadge(); notify('Payment removed', 'info');
+                reconcileCC(); renderCCOT(); updateCCOTBadge(); notify('Payment removed.', 'info');
             });
         }
         window.deleteCCPayment = deleteCCPayment;
@@ -22907,9 +22907,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const amount = parseMoney(overlay.querySelector('#_ccpay_amt').value) || 0;
                 const date = overlay.querySelector('#_ccpay_date').value || today();
                 const desc = (overlay.querySelector('#_ccpay_desc').value || 'Payment').trim();
-                if (!amount) { notify('Enter an amount', 'warn'); return; }
+                if (!amount) { notify('Enter the payment amount.', 'warn'); return; }
                 addCCPayment({ bank, amount, date, desc, source: 'manual' });
-                notify('@wallet@ Payment recorded — charges auto-matched', 'success'); close();
+                notify('Payment recorded. Matching charges were cleared.', 'success'); close();
             };
         }
         window.openCCPaymentModal = openCCPaymentModal;
@@ -23096,7 +23096,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ==================== CHEQUES ====================
         function saveCheque() {
             const no = $('chq_no').value.trim(), party = $('chq_party').value.trim(), bank = $('chq_bank').value, amount = parseMoney($('chq_amount').value), issue = $('chq_issue').value, release = $('chq_release').value;
-            if (!no || !party || !bank || !amount || !issue || !release) { notify('Please fill required fields', 'error'); return; }
+            if (!no || !party || !bank || !amount || !issue || !release) { notify('Add the cheque number, party, bank, amount, issue date and release date.', 'error'); return; }
             const rec = { id: editMode || uid(), no, party, bank, type: $('chq_type').value, amount, issue, release, notes: $('chq_notes').value, status: 'pending' };
             const arr = DB.get('cheques');
             /* Editing a cheque used to start it again as "pending" and drop everything else the record held — a cheque the bank statement had cleared went back to pending, and the statement it came from was
@@ -23104,7 +23104,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) { const old = arr[i] || {}; arr[i] = { ...old, ...rec, status: old.status || 'pending' }; } } else arr.push(rec);
             DB.set('cheques', arr);
             closeModal('mdCheque'); clearChequeForm(); renderCheques(); updateChequeBadge();
-            notify('Cheque added!');
+            notify('Cheque saved.');
         }
         function clearChequeForm() {
             ['chq_no', 'chq_party', 'chq_amount', 'chq_notes'].forEach(id => $(id).value = '');
@@ -23122,20 +23122,20 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         function deleteCheque(id) {
             if (_wfKeepDone('cheque', (DB.get('cheques') || []).find(x => x && x.id === id))) return;
-            showConfirm('@trash@', 'Delete Cheque?', '', 'btn-danger', '@trash@ Delete', () => {
-                DB.set('cheques', DB.get('cheques').filter(x => x.id !== id)); renderCheques(); updateChequeBadge(); notify('Deleted', 'info');
+            showConfirm('@trash@', 'Delete this cheque?', 'This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
+                DB.set('cheques', DB.get('cheques').filter(x => x.id !== id)); renderCheques(); updateChequeBadge(); notify('Cheque deleted.', 'info');
             });
         }
         function markChequeCleared(id) {
-            showConfirm('@checkCircle@', 'Mark Cheque Cleared?', 'Confirm this cheque has been cleared/honoured.', 'btn-success', '@checkCircle@ Mark Cleared', () => {
+            showConfirm('@checkCircle@', 'Mark this cheque as cleared?', 'Confirm that the bank has honoured this cheque.', 'btn-success', '@checkCircle@ Mark Cleared', () => {
                 const arr = DB.get('cheques'); const i = arr.findIndex(x => x.id === id);
-                if (i > -1) { arr[i].status = 'cleared'; arr[i].clearedDate = today(); DB.set('cheques', arr); renderCheques(); updateChequeBadge(); notify('Cheque marked cleared!'); }
+                if (i > -1) { arr[i].status = 'cleared'; arr[i].clearedDate = today(); DB.set('cheques', arr); renderCheques(); updateChequeBadge(); notify('Cheque marked as cleared.'); }
             });
         }
         function markChequeBounced(id) {
-            showConfirm('@alert@', 'Mark as Bounced?', 'Mark this cheque as returned/bounced?', 'btn-danger', '@alert@ Mark Bounced', () => {
+            showConfirm('@alert@', 'Mark this cheque as bounced?', 'The cheque is recorded as returned by the bank.', 'btn-danger', '@alert@ Mark Bounced', () => {
                 const arr = DB.get('cheques'); const i = arr.findIndex(x => x.id === id);
-                if (i > -1) { arr[i].status = 'bounced'; arr[i].bouncedDate = today(); DB.set('cheques', arr); renderCheques(); updateChequeBadge(); notify('Cheque marked as bounced', 'warn'); }
+                if (i > -1) { arr[i].status = 'bounced'; arr[i].bouncedDate = today(); DB.set('cheques', arr); renderCheques(); updateChequeBadge(); notify('Cheque marked as bounced.', 'warn'); }
             });
         }
         function updateChequeBadge() {
@@ -23195,7 +23195,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ==================== EXPENSES ====================
         function saveExpense() {
             const desc = $('e_desc').value.trim(), cat = $('e_cat').value, amount = parseMoney($('e_amount').value), month = $('e_month').value;
-            if (!desc || !amount || !month) { notify('Please fill required fields', 'error'); return; }
+            if (!desc || !amount || !month) { notify('Add the description, amount and month.', 'error'); return; }
             const recurringVal = $('e_recurring').value;
             const rec = { id: editMode || uid(), desc, cat, amount, month, recurring: recurringVal === '1', recurringType: recurringVal, notes: $('e_notes').value, completed: false, source: 'manual' };
             const arr = DB.get('expenses');
@@ -23207,7 +23207,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             try { if (editMode && rec.source === 'statement' && window.WFMerchants && window.WFStatementRouter) window.WFMerchants.learn(desc, 'expenses', window.WFStatementRouter.classifierName(cat)); } catch (_) {}
             acSave('exp_desc', desc);
             closeModal('mdExpense'); renderExpenses(); renderDash();
-            notify(editMode ? 'Expense updated!' : 'Expense added!'); editMode = null;
+            notify(editMode ? 'Expense updated.' : 'Expense added.'); editMode = null;
         }
         /* The Category select can show only the names it has. A row filed under another name (an older statement row: "Groceries", "Cash Withdrawal") used to blank it, and saving
          * then wrote an empty category. The name's dropdown equivalent is chosen where there is one; a name with none is offered for as long as the editor is open (and removed again,
@@ -23240,14 +23240,14 @@ table.amort tbody tr { page-break-inside: avoid; }
             openModal('mdExpense'); setTimeout(initAllAC, 100);
         }
         function deleteExpense(id) {
-            showConfirm('@trash@', 'Delete Expense?', '', 'btn-danger', '@trash@ Delete', () => {
-                DB.set('expenses', DB.get('expenses').filter(x => x.id !== id)); renderExpenses(); renderDash(); notify('Deleted', 'info');
+            showConfirm('@trash@', 'Delete this expense?', 'This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
+                DB.set('expenses', DB.get('expenses').filter(x => x.id !== id)); renderExpenses(); renderDash(); notify('Expense deleted.', 'info');
             });
         }
         function markExpDone(id) {
-            showConfirm('@checkCircle@', 'Mark Expense Paid?', '', 'btn-success', '@checkCircle@ Mark Paid', () => {
+            showConfirm('@checkCircle@', 'Mark this expense as paid?', 'It is recorded as paid.', 'btn-success', '@checkCircle@ Mark Paid', () => {
                 const arr = DB.get('expenses'); const i = arr.findIndex(x => x.id === id);
-                if (i > -1) { arr[i].completed = true; DB.set('expenses', arr); renderExpenses(); notify('Marked as paid!'); }
+                if (i > -1) { arr[i].completed = true; DB.set('expenses', arr); renderExpenses(); notify('Expense marked as paid.'); }
             });
         }
         // Pre-existing button hook (was referenced in HTML but never defined). Toggles UI state only.
@@ -23648,14 +23648,14 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ==================== TARGETS ====================
         function saveTarget() {
             const name = $('t_name').value.trim(), amount = parseMoney($('t_amount').value), start = $('t_start').value, end = $('t_end').value;
-            if (!name || !amount || !start || !end) { notify('Please fill required fields', 'error'); return; }
+            if (!name || !amount || !start || !end) { notify('Add the target name, amount, start date and end date.', 'error'); return; }
             const rec = { id: editMode || uid(), name, amount, start, end, notes: $('t_notes').value, savings: [] };
             const arr = DB.get('targets');
             if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) { rec.savings = arr[i].savings; arr[i] = rec; } } else arr.push(rec);
             DB.set('targets', arr); closeModal('mdTarget');
             const wasEdit = !!editMode;
             clearTargetForm(); editMode = null;
-            renderTargets(); notify(wasEdit ? 'Target updated! @target@' : 'Target created! @target@');
+            renderTargets(); notify(wasEdit ? 'Target updated.' : 'Target created.');
         }
         function clearTargetForm() {
             ['t_name', 't_amount', 't_start', 't_end', 't_notes'].forEach(id => $(id).value = '');
@@ -23674,28 +23674,28 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         function saveSaving() {
             const tid = $('sav_tgt').value, amount = parseMoney($('sav_amt').value), date = $('sav_date').value;
-            if (!tid || !amount || !date) { notify('Please fill required fields', 'error'); return; }
+            if (!tid || !amount || !date) { notify('Add the target, amount and date.', 'error'); return; }
             const arr = DB.get('targets'); const i = arr.findIndex(x => x.id === tid);
-            if (i < 0) { notify('Target not found', 'error'); return; }
+            if (i < 0) { notify('That target could not be found.', 'error'); return; }
             arr[i].savings.push({ id: uid(), amount, date, note: $('sav_note').value });
             DB.set('targets', arr); closeModal('mdSaving');
             ['sav_amt', 'sav_note'].forEach(id => $(id).value = ''); $('sav_date').value = today();
             const saved = arr[i].savings.reduce((sum, x) => sum + x.amount, 0);
             renderTargets();
             if (saved >= arr[i].amount) setTimeout(() => showCelebration(arr[i]), 200);
-            else notify('Saving added! @wallet@');
+            else notify('Saving added.');
         }
         function deleteTarget(id) {
             if (_wfKeepDone('target', (DB.get('targets') || []).find(x => x && x.id === id))) return;
-            showConfirm('@trash@', 'Delete Target?', 'All saving entries will also be deleted.', 'btn-danger', '@trash@ Delete', () => {
-                DB.set('targets', DB.get('targets').filter(x => x.id !== id)); renderTargets(); notify('Deleted', 'info');
+            showConfirm('@trash@', 'Delete this target?', 'All its saving entries will also be deleted. This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
+                DB.set('targets', DB.get('targets').filter(x => x.id !== id)); renderTargets(); notify('Target deleted.', 'info');
             });
         }
         function deleteSaving(tid, sid) {
             const arr = DB.get('targets'); const i = arr.findIndex(x => x.id === tid);
             if (i < 0) return;
             arr[i].savings = arr[i].savings.filter(x => x.id !== sid);
-            DB.set('targets', arr); renderTargets(); notify('Saving entry removed', 'info');
+            DB.set('targets', arr); renderTargets(); notify('Saving entry removed.', 'info');
         }
         function showSavHistory(tid) {
             const t = DB.get('targets').find(x => x.id === tid); if (!t) return;
@@ -23711,7 +23711,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             openModal('mdSavHistory');
         }
         function showCelebration(target) {
-            $('celebSub').textContent = `You have achieved: "${_wfEsc(target.name)}"! @trophy@`;
+            $('celebSub').textContent = `You have reached your target: "${_wfEsc(target.name)}".`;
             $('celebAmt').textContent = fmt(target.amount);
             $('celeb').classList.add('show');
             const colors = ['#d4af37', '#f5a623', '#ffd166', '#10b981', '#3b82f6'];
@@ -28622,12 +28622,12 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         // ==================== BALANCE ====================
         function setBalance() {
-            const total = parseMoney($('bs_total').value); if (!total) { notify('Enter a valid amount', 'error'); return; }
+            const total = parseMoney($('bs_total').value); if (!total) { notify('Enter a valid amount.', 'error'); return; }
             const data = DB.getObj('balance', { total: 0, flows: [] });
             data.total = total;
             data.flows.push({ id: uid(), type: 'set', company: 'Balance Set', amount: total, date: $('bs_date').value || today(), notes: $('bs_notes').value || 'Balance updated' });
             DB.set('balance', data); closeModal('mdBalSet');
-            clearBalSetForm(); renderBalance(); notify('Balance updated!');
+            clearBalSetForm(); renderBalance(); notify('Balance updated.');
         }
         function bfTypeChanged() {
             const t = $('bf_type').value;
@@ -28667,7 +28667,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (!targetId) { notify('Please select a target (or create one first).', 'error'); return; }
                 if (!amount || !date) { notify('Please fill amount and date.', 'error'); return; }
             } else {
-                if (!company || !amount || !date) { notify('Please fill required fields', 'error'); return; }
+                if (!company || !amount || !date) { notify('Add the company or person, amount and date.', 'error'); return; }
             }
 
             const data = DB.getObj('balance', { total: 0, flows: [] });
@@ -28703,7 +28703,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             renderBalance();
             // also refresh targets if visible
             if (document.getElementById('page-targets')?.classList.contains('active')) renderTargets();
-            notify(wasEdit ? 'Flow updated!' : (type === 'target' ? '@target@ Saved toward target & balance updated!' : (type === 'out' ? 'Investment logged!' : 'Income logged!')));
+            notify(wasEdit ? 'Flow updated.' : (type === 'target' ? 'Saved toward the target and balance updated.' : (type === 'out' ? 'Investment logged.' : 'Income logged.')));
         }
         function editBalFlow(id) {
             const data = DB.getObj('balance', { total: 0, flows: [] });
@@ -28717,7 +28717,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         function deleteBalFlow(id) {
-            showConfirm('@trash@', 'Delete Flow?', '', 'btn-danger', '@trash@ Delete', () => {
+            showConfirm('@trash@', 'Delete this flow?', 'It is removed from your balance history. This cannot be undone.', 'btn-danger', '@trash@ Delete', () => {
                 const data = DB.getObj('balance', { total: 0, flows: [] });
                 const flow = data.flows.find(x => x.id === id);
                 // ISSUE 17 FIX — if flow links to a target saving, also remove the saving entry
@@ -28733,7 +28733,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 DB.set('balance', data);
                 renderBalance();
                 if (document.getElementById('page-targets')?.classList.contains('active')) renderTargets();
-                notify('Deleted', 'info');
+                notify('Flow deleted.', 'info');
             });
         }
         function renderBalance() {
@@ -28844,7 +28844,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             });
             const ym = `${year}-${p2(month + 1)}`;
-            let expTotal = 0, expItems = [], expDebt = 0;   // expDebt: the part of the expenses that is a loan installment paid from the bank (a debit tied to a loan) — debt service, not living costs
+            let expTotal = 0, expItems = [], expDebt = 0;   // expDebt: the part of the expenses that is a loan instalment paid from the bank (a debit tied to a loan) — debt service, not living costs
             (DB.get('expenses') || []).forEach(e => {
                 if (!e || future) return;   // an expense of a month that has not come is a plan, not something spent
                 if (e.month === ym || (e.recurring && e.month <= ym)) { expTotal += (e.amount || 0); if (e.loanLink || e.cat === 'Loan Repayment') expDebt += (e.amount || 0); expItems.push({ name: e.desc, cat: e.cat, amount: (e.amount || 0), debt: !!(e.loanLink || e.cat === 'Loan Repayment'), rec: !!e.recurring }); }
@@ -29122,7 +29122,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div class="mhi"><div class="mhi-lbl">Total Expenses</div><div class="mhi-val" style="color:var(--red);">${fmt(data.totalExp)}</div></div>
             </div>
             ${data.incomePending > 0 ? `<div style="font-size:12px;color:var(--text3);margin-top:10px;">${fmt(data.incomePending)} of income is not yet received — not counted.</div>` : ''}
-            ${dueTotal > 0 ? `<div style="font-size:12px;color:var(--text3);margin-top:${data.incomePending > 0 ? 4 : 10}px;">${fmt(dueTotal)} of loan installments ${isFutureMonth ? 'scheduled' : 'due'}, not paid — not counted.</div>` : ''}
+            ${dueTotal > 0 ? `<div style="font-size:12px;color:var(--text3);margin-top:${data.incomePending > 0 ? 4 : 10}px;">${fmt(dueTotal)} of loan instalments ${isFutureMonth ? 'scheduled' : 'due'}, not paid — not counted.</div>` : ''}
         </div>
         <div class="g2">
             <div class="card"><div class="card-header"><div class="card-title">@bank@ Loan Payments</div><div class="card-sub">${fmt(data.loanTotal)} paid</div></div>
@@ -29132,8 +29132,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 ${due.map(x => row(`${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span>`, fmt(x.amount), true)).join('')}
                 <div class="td-m" style="font-size:11px;padding-top:8px;">Mark it paid on Bank Loans and it moves up to Loan Payments.</div>
             </div>` : ''}
-            <div class="card"><div class="card-header"><div class="card-title">@card@ CC Installments</div><div class="card-sub">${fmt(data.ccTotal)}</div></div>
-                ${data.ccItems2.length ? data.ccItems2.map(x => row(`${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span>`, fmt(x.amount))).join('') : empty('No CC installments')}
+            <div class="card"><div class="card-header"><div class="card-title">@card@ CC Instalments</div><div class="card-sub">${fmt(data.ccTotal)}</div></div>
+                ${data.ccItems2.length ? data.ccItems2.map(x => row(`${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span>`, fmt(x.amount))).join('') : empty('No CC instalments')}
             </div>
             <div class="card"><div class="card-header"><div class="card-title">@receipt@ Other Expenses</div><div class="card-sub">${fmt(data.expTotal)}</div></div>
                 ${data.expItems.length ? data.expItems.map(x => row(`${_wfEsc(x.name)} <span class="badge bg-gr">${_wfEsc(x.cat)}</span>`, fmt(x.amount))).join('') : empty('No expenses')}
@@ -29550,7 +29550,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             } catch (_) {}
             $('dashStats').innerHTML = predictiveHtml + `
         <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div>${yrPending > 0 ? `<div class="stat-meta">${fmtS(yrPending)} not yet confirmed received</div>` : ''}</div>
-        <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div>${yrLoanUnpaid > 0 ? `<div class="stat-meta">${fmtS(yrLoanUnpaid)} of loan installments due, not marked paid</div>` : ''}</div>
+        <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div>${yrLoanUnpaid > 0 ? `<div class="stat-meta">${fmtS(yrLoanUnpaid)} of loan instalments due, not marked paid</div>` : ''}</div>
         <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val ${yrInc - yrExp < 0 ? 'is-neg' : 'is-pos'}">${fmtS(yrInc - yrExp)}</div>${forexHtml}</div>
         <div class="stat-card sc-blue"><div class="stat-label">${periodCardTitle}</div><div class="stat-val">${fmtS(periodExp)}</div><div class="stat-meta">${periodLabel}</div></div>
         ${DB.getObj('settings', {}).showSavingsRate === false ? '' : `<div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val ${yrInc > 0 && yrInc - yrExp < 0 ? 'is-neg' : 'is-pos'}">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>`}
@@ -29842,7 +29842,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const labelLine = loanLabel
                 ? `<div style="font-size:10px;color:var(--text3);margin-bottom:2px;line-height:1.3;">@receipt@ ${loanLabel}</div>` : '';
             el.innerHTML = `
-        <div class="fg" style="margin:0;flex:2;">${labelLine}<input class="fi money-input dscr-emi-input" value="${valStr}" placeholder="Monthly installment (CRIB / EMI in LKR)" oninput="calcDSCR()" title="Monthly installment as it appears on CRIB. NOT the outstanding balance, NOT the original loan amount."></div>
+        <div class="fg" style="margin:0;flex:2;">${labelLine}<input class="fi money-input dscr-emi-input" value="${valStr}" placeholder="Monthly instalment (CRIB / EMI in LKR)" oninput="calcDSCR()" title="Monthly instalment as it appears on CRIB. NOT the outstanding balance, NOT the original loan amount."></div>
         <div class="fg" style="margin:0;"><button class="btn btn-danger btn-sm" onclick="this.parentElement.parentElement.remove(); calcDSCR();" style="height:100%;"><i data-wfi="x"></i> Remove</button></div>
     `;
             wrap.appendChild(el);
@@ -29989,7 +29989,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         '<div style="font-size:10px;color:var(--red);">' + interestPct + '% of principal</div>' +
                         '</div>' +
                         '</div>' +
-                        '<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">First ' + maxShow + ' Installments (' + _getCurrency() + ')</div>' +
+                        '<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">First ' + maxShow + ' Instalments (' + _getCurrency() + ')</div>' +
                         '<div style="overflow-x:auto;border-radius:8px;border:1px solid var(--border);">' +
                         '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
                         '<thead><tr style="background:var(--card2);">' +
@@ -30001,7 +30001,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         '</tr></thead>' +
                         '<tbody>' + scheduleRows + '</tbody>' +
                         '</table></div>' +
-                        (newDur > 12 ? '<div style="font-size:11px;color:var(--text3);margin-top:6px;text-align:center;">Showing first 12 of ' + newDur + ' installments</div>' : '') +
+                        (newDur > 12 ? '<div style="font-size:11px;color:var(--text3);margin-top:6px;text-align:center;">Showing first 12 of ' + newDur + ' instalments</div>' : '') +
                         '</div>';
                 })() : ''}
 
@@ -31836,8 +31836,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     id,
                     title: '@wallet@ Income Day — ' + src.name,
                     message: `Did you receive your <b>${fmt(src.monthly)}</b> from <b>${_wfEsc(src.company)}</b> today?`,
-                    primary: 'Yes — Confirm Received',
-                    secondary: 'Not Yet',
+                    primary: 'Yes, confirm received',
+                    secondary: 'Not yet',
                     icon: '@wallet@',
                     color: 'var(--green)',
                     /* The figures the lock-screen buttons are built from. Same
@@ -31879,10 +31879,10 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                 showActionableBanner({
                     id,
-                    title: '@bank@ Loan Installment — ' + l.name,
-                    message: `Did you pay this month's installment of <b>${fmt(l.monthly)}</b> to <b>${_wfEsc(l.bank)}</b>?`,
-                    primary: 'Yes — Mark Paid',
-                    secondary: 'Not Yet',
+                    title: '@bank@ Loan Instalment — ' + l.name,
+                    message: `Did you pay this month's instalment of <b>${fmt(l.monthly)}</b> to <b>${_wfEsc(l.bank)}</b>?`,
+                    primary: 'Yes, mark as paid',
+                    secondary: 'Not yet',
                     icon: '@bank@',
                     color: 'var(--blue)',
                     confirm: { kind: 'loan', id: l.id, month: curMonthStr, amount: l.monthly, name: l.name },
@@ -32114,8 +32114,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                             const k = 'tgt:' + t.id + ':' + milestone;
                             if (!seen.ids.includes(k)) {
                                 sendOSNotification(
-                                    milestone === 100 ? '@sparkles@ Target Achieved!' : `@target@ ${milestone}% Milestone!`,
-                                    `${userName}, "${_wfEsc(t.name)}" is at ${pct}% (${fmt(saved)} saved). ${milestone === 100 ? 'Congratulations!' : 'Keep going!'}`,
+                                    milestone === 100 ? 'Target reached' : `${milestone}% of your target reached`,
+                                    `${userName}, "${_wfEsc(t.name)}" is at ${pct}% (${fmt(saved)} saved). ${milestone === 100 ? 'You have reached your target.' : 'Keep going.'}`,
                                     'wf-tgt-' + t.id
                                 );
                                 seen.ids.push(k);
@@ -32371,7 +32371,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             // Section 3: Cards & Opex
             const combinedExp = [];
-            md.ccItems2.forEach(c => combinedExp.push([esc(c.name) + ' (Card Installment)', esc(c.bank), fmtPay(c.amount)]));
+            md.ccItems2.forEach(c => combinedExp.push([esc(c.name) + ' (Card Instalment)', esc(c.bank), fmtPay(c.amount)]));
             md.expItems.forEach(e => combinedExp.push([esc(e.name), esc(e.cat), fmtPay(e.amount)]));
             const expHTML = combinedExp.map((e, idx) => buildRow([idx+1, e[0], e[1], e[2]], idx % 2 !== 0)).join('');
 
@@ -32462,7 +32462,7 @@ ${buildTable('Section II — Debt Servicing (Loans)', md.loanItems.length, [
     { label: '#' }, { label: 'Facility / Product' }, { label: 'Banking Institution' }, { label: 'Monthly Payment', r: true }
 ], loanHTML, 'No active debt obligations recorded.')}
 
-${buildTable('Section III — Operations & Card Installments', combinedExp.length, [
+${buildTable('Section III — Operations & Card Instalments', combinedExp.length, [
     { label: '#' }, { label: 'Description' }, { label: 'Category / Issuer' }, { label: 'Expense', r: true }
 ], expHTML, 'No operating expenses registered.')}
 
@@ -33020,7 +33020,7 @@ Be direct and use real numbers. Avoid generic advice.`;
             const cycle = $('sub_cycle').value, oneTime = cycle === 'once';
             const dueDate = oneTime ? String($('sub_due_date').value || '') : '';
             const day = oneTime ? parseInt(dueDate.slice(-2), 10) : parseInt($('sub_day').value, 10);
-            if (!name || !amount || !day || (oneTime && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) { notify('Fill required fields', 'error'); return; }
+            if (!name || !amount || !day || (oneTime && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) { notify('Add the name, amount and due date.', 'error'); return; }
             const arr = DB.get('subscriptions') || [];
             // Preserve existing per-month overrides / history when editing,
             // and never destroy them by clearing the form.
@@ -33054,7 +33054,7 @@ Be direct and use real numbers. Avoid generic advice.`;
             } else arr.push(rec);
             DB.set('subscriptions', arr);
             closeModal('mdSubscription'); clearSubForm(); renderSubscriptions();
-            notify(editMode ? 'Subscription updated!' : 'Subscription saved!');
+            notify(editMode ? 'Subscription updated.' : 'Subscription saved.');
             playUISound('success');
         }
         function clearSubForm() {
@@ -33245,7 +33245,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 if (i > -1) arr[i] = s;
                 DB.set('subscriptions', arr);
                 triggerHaptic('success');
-                notify(`@checkCircle@ Updated ${changed} month${changed > 1 ? 's' : ''} for ${_wfEsc(s.name)}.`, 'success');
+                notify(`Updated ${changed} month${changed > 1 ? 's' : ''} for ${_wfEsc(s.name)}.`, 'success');
                 closeOvl();
                 renderSubscriptions();
             };
@@ -33253,8 +33253,8 @@ Be direct and use real numbers. Avoid generic advice.`;
         window.setSubscriptionMonthAmount = setSubscriptionMonthAmount;
         function deleteSubscription(id) {
             if (_wfKeepDone('subscription', (DB.get('subscriptions') || []).find(x => x && x.id === id))) return;
-            showConfirm('@trash@', 'Delete Subscription?', '', 'btn-danger', 'Delete', () => {
-                DB.set('subscriptions', (DB.get('subscriptions') || []).filter(x => x.id !== id)); renderSubscriptions(); notify('Deleted', 'info');
+            showConfirm('@trash@', 'Delete this subscription?', 'This cannot be undone.', 'btn-danger', 'Delete', () => {
+                DB.set('subscriptions', (DB.get('subscriptions') || []).filter(x => x.id !== id)); renderSubscriptions(); notify('Subscription deleted.', 'info');
             });
         }
         function renderSubscriptions() {
@@ -33626,7 +33626,7 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             const wrap = $('debtDemoContent');
             if (!wrap) return;
-            if (!debtItems.length) { wrap.innerHTML = emptyState(_ic('trophy'), 'Debt Free!', 'No active loans or installments. You are debt-free!'); return; }
+            if (!debtItems.length) { wrap.innerHTML = emptyState(_ic('trophy'), 'Debt Free!', 'No active loans or instalments. You are debt-free!'); return; }
 
             const totalDebt = debtItems.reduce((s, d) => s + d.amount, 0);
             const totalMonthly = debtItems.reduce((s, d) => s + d.monthly, 0);
@@ -34223,7 +34223,7 @@ Be concrete and reference actual LKR figures. No generic advice.`;
                 const md = getMonthlyData(dt.getFullYear(), dt.getMonth());
                 groups.Income += md.income;
                 groups.Loans += md.loanTotal + md.expDebt;            // installments marked paid, and the ones paid from the bank
-                groups.CC += md.ccTotal + md.ccotTotal;                // card installment plans and card charges
+                groups.CC += md.ccTotal + md.ccotTotal;                // card instalment plans and card charges
                 groups.Expenses += md.expTotal - md.expDebt;           // everyday spending, statement debits and typed entries
                 groups.Bills += md.subTotal;                           // subscriptions and bills
                 groups.Cheques += md.cheTotal;                         // cheques that cleared

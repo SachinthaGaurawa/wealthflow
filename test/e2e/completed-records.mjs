@@ -95,7 +95,7 @@ const after = await page.evaluate(() => ({
 check(JSON.stringify(before) === JSON.stringify(after), `finished records must survive Delete: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
 await page.evaluate(() => deleteIncome('inv2'));
 await page.waitForTimeout(300);
-check(await page.evaluate(() => /Delete Income Source\?/.test(document.body.textContent)), 'an open investment still asks before deleting');
+check(await page.evaluate(() => /Delete income source\?/.test(document.body.textContent)), 'an open investment still asks before deleting');
 // The confirmation's own button: any other Delete-styled button in the page (Restore Vault's "Delete all restore points" is one, and sits earlier in the
 // document) is not the dialog this step is answering.
 await page.evaluate(() => { const b = document.getElementById('confBtn'); if (b && /Delete/.test(b.textContent) && b.className.includes('btn-danger')) b.click(); });
@@ -118,7 +118,7 @@ check(/Completed one-time payments \(1\)/.test(await text('#subscriptionList')) 
 check(/Open one-time bill/.test(await text('#subscriptionList')) && (await text('#subscriptionList')).indexOf('Open one-time bill') < (await text('#subscriptionList')).indexOf('Completed one-time payments'), 'Subscriptions: open bills come before the Completed header');
 await page.evaluate(() => { const s = DB.get('subscriptions').map((x) => x.id === 'SPaid' ? { ...x, reopened: true, paid: false, completed: false } : x); DB.set('subscriptions', s); deleteSubscription('SPaid'); });
 await page.waitForTimeout(300);
-check(await page.evaluate(() => /Delete Subscription\?/.test(document.body.textContent)), 'a reopened one-time bill can be deleted again');
+check(await page.evaluate(() => /Delete this subscription\?/.test(document.body.textContent)), 'a reopened one-time bill can be deleted again');
 await go('liquidity');
 await page.evaluate(() => setLiquidityTab('debt'));
 await page.waitForTimeout(500);

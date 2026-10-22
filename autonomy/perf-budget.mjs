@@ -345,7 +345,8 @@ export const BUDGETS = {
     // 2026-10-20 (the backup buttons: a real progress panel, a restore list that cannot stay on "Looking for copies…", Delete all restore points that stays deleted; measured 2,310,072 + ~0.1% headroom): 2_308_500 -> 2_312_500.
     // The panel (_wfBkPaint and the step plan), the restore list painted in two stages with a deadline for Drive, and the delete's own progress. The comments of the same backup block were shortened to pay for part of it. No new script or request.
     // 2026-10-21 (the Installments tab counts paid months and reads a finished plan as Done, OS notifications and the debt chart no longer print @icon@ tokens, the DSCR rows wrap on a phone; measured 2,312,824 + ~0.1% headroom): 2_312_500 -> 2_314_000.
-    htmlBytes: 2_314_000,
+    // 2026-10-22 (wording audit, money pages: every confirmation now says what is removed and whether it can be undone, every form error names the missing fields, one spelling of instalment; measured 2,314,471 + ~0.1% headroom): 2_314_000 -> 2_316_800. Text only: no new script, request or markup.
+    htmlBytes: 2_316_800,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

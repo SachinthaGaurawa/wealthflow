@@ -66,7 +66,7 @@ describe('the plan actually reaches the owner', () => {
          * a day. Ordering is the only thing that decides which is sacrificed if
          * the new code ever throws. */
         const incomeAt = html.indexOf("title: '@wallet@ Income Day — '");
-        const loanAt = html.indexOf("title: '@bank@ Loan Installment — '");
+        const loanAt = html.indexOf("title: '@bank@ Loan Instalment — '");
         const nudgeAt = html.indexOf('checkSweepNudge();');
         expect(incomeAt).toBeGreaterThan(0);
         expect(loanAt).toBeGreaterThan(0);
