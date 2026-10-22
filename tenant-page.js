@@ -55,7 +55,7 @@ export const TOKEN_PATH_RE = /^\/t\/([A-Za-z0-9_-]{16})\/?$/;
 export const COPY = Object.freeze({
     BAD_NIC: 'Please enter a valid NIC (9 digits followed by V or X, or 12 digits), or your passport / ID number.',
     BAD_CODE: 'Please enter the 6-digit verification code from your text message.',
-    OFFLINE: 'We could not connect to the server. Please check your internet connection and try again.',
+    OFFLINE: 'We could not reach WealthFlow. Please check your internet connection and try again.',
     FAILED: 'Something went wrong. Please try again in a moment.',
     PDF_FAILED: 'We could not prepare your PDF. Please try again.',
     INVALID_LINK: 'This link is not valid. Please use the link from your text message.',
@@ -675,7 +675,7 @@ export function createPage(env) {
     const steps = (n) => h(doc, 'div', { class: 'tp-steps', 'aria-hidden': 'true' }, h(doc, 'span', { class: 'tp-on' }), h(doc, 'span', { class: n > 1 ? 'tp-on' : null }));
 
     /** Three short promises under the sign-in form, each true of this page: a text-message code, a closing session, nothing kept. */
-    const trust = () => h(doc, 'ul', { class: 'tp-trust' }, [['message', t('Verification code sent by text message')], ['clock', t('Session ends automatically after 20 minutes')], ['shield', t('Nothing is stored on your device')]].map(([ico, words]) => h(doc, 'li', {}, icon(doc, ico), h(doc, 'span', { text: words }))));
+    const trust = () => h(doc, 'ul', { class: 'tp-trust' }, [['message', t('Verification code sent by text message')], ['clock', t('Session ends automatically after 20 minutes')], ['shield', t('Your statement is not saved on your device')]].map(([ico, words]) => h(doc, 'li', {}, icon(doc, ico), h(doc, 'span', { text: words }))));
 
     function errorBox() { st.els.err = h(doc, 'p', { class: 'tp-error', role: 'alert', id: 'tp-err' }); return st.els.err; }
 

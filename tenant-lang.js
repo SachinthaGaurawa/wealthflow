@@ -235,7 +235,7 @@ export const SI = Object.freeze({
     'Please enter a valid NIC (9 digits followed by V or X, or 12 digits), or your passport / ID number.':
         'කරුණාකර වලංගු ජාතික හැඳුනුම්පත් අංකයක් (ඉලක්කම් 9ක් සහ V හෝ X, නැතහොත් ඉලක්කම් 12ක්), නැතහොත් ඔබේ ගමන් බලපත්‍ර / හැඳුනුම්පත් අංකය ඇතුළත් කරන්න.',
     'Please enter the 6-digit verification code from your text message.': 'කරුණාකර ඔබේ කෙටි පණිවිඩයේ ඇති ඉලක්කම් 6ක තහවුරු කිරීමේ කේතය ඇතුළත් කරන්න.',
-    'We could not connect to the server. Please check your internet connection and try again.': 'සේවාදායකයට සම්බන්ධ විය නොහැකි විය. කරුණාකර ඔබේ අන්තර්ජාල සම්බන්ධතාව පරීක්ෂා කර නැවත උත්සාහ කරන්න.',
+    'We could not reach WealthFlow. Please check your internet connection and try again.': 'WealthFlow වෙත සම්බන්ධ විය නොහැකි විය. කරුණාකර ඔබේ අන්තර්ජාල සම්බන්ධතාව පරීක්ෂා කර නැවත උත්සාහ කරන්න.',
     'Something went wrong. Please try again in a moment.': 'යම් දෝෂයක් සිදු විය. කරුණාකර මොහොතකින් නැවත උත්සාහ කරන්න.',
     'We could not prepare your PDF. Please try again.': 'ඔබේ PDF එක සූදානම් කළ නොහැකි විය. කරුණාකර නැවත උත්සාහ කරන්න.',
     'This link is not valid. Please use the link from your text message.': 'මෙම සබැඳිය වලංගු නැත. කරුණාකර ඔබේ කෙටි පණිවිඩයේ ඇති සබැඳිය භාවිතා කරන්න.',
@@ -246,7 +246,7 @@ export const SI = Object.freeze({
     'We could not verify that code. It may be incorrect or expired. Please check it, or request a new one.':
         'එම කේතය තහවුරු කළ නොහැකි විය. එය වැරදි හෝ කල් ඉකුත් වී තිබිය හැක. කරුණාකර එය පරීක්ෂා කරන්න, නැතහොත් නව කේතයක් ඉල්ලන්න.',
     'Too many attempts. For your security, please wait before trying again.': 'උත්සාහ කිරීම් ඕනෑවට වඩා වැඩියි. ඔබේ ආරක්ෂාව සඳහා කරුණාකර මද වේලාවක් රැඳී සිට නැවත උත්සාහ කරන්න.',
-    'The limit for verification codes has been reached. Please try again later.': 'තහවුරු කිරීමේ කේත සඳහා සීමාව ළඟා වී ඇත. කරුණාකර පසුව නැවත උත්සාහ කරන්න.',
+    'We cannot send another code just now. Please try again later.': 'මේ මොහොතේ තවත් කේතයක් යැවිය නොහැක. කරුණාකර පසුව නැවත උත්සාහ කරන්න.',
     'Verification codes are temporarily unavailable. Please try again later.': 'තහවුරු කිරීමේ කේත තාවකාලිකව නොමැත. කරුණාකර පසුව නැවත උත්සාහ කරන්න.',
     'This service is temporarily unavailable. Please try again later.': 'මෙම සේවාව තාවකාලිකව නොමැත. කරුණාකර පසුව නැවත උත්සාහ කරන්න.',
     'Try again in about {n} minutes.': 'මිනිත්තු {n}කින් පමණ නැවත උත්සාහ කරන්න.',
@@ -265,7 +265,7 @@ export const SI = Object.freeze({
     'Colour theme': 'වර්ණ තේමාව',
     'Verification code sent by text message': 'තහවුරු කිරීමේ කේතය කෙටි පණිවිඩයෙන් එවයි',
     'Session ends automatically after 20 minutes': 'මිනිත්තු 20කට පසු සැසිය ස්වයංක්‍රීයව අවසන් වේ',
-    'Nothing is stored on your device': 'ඔබේ උපාංගයේ කිසිවක් ගබඩා නොකරයි',
+    'Your statement is not saved on your device': 'ඔබේ ප්‍රකාශය ඔබේ උපාංගයේ සුරැකෙන්නේ නැත',
 });
 
 /** The text that goes on the language button: the language you would switch TO, in its own letters. */

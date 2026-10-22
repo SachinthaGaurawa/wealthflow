@@ -502,3 +502,21 @@ describe('the page while it is out of sight', () => {
         expect(css).toMatch(/html\.tp-away body > \* \{ visibility: hidden; \}/);
     });
 });
+
+describe('what the page says about itself is something it keeps', () => {
+    const src = readFileSync(new URL('../tenant-page.js', import.meta.url), 'utf8');
+
+    it('promises that the statement is not saved on the device, not that nothing is: the 20-minute session cookie is on the device', () => {
+        // The sign-in sets a session cookie (HttpOnly, 20 minutes), so "nothing is stored on your device" was more than the page keeps.
+        expect(src).not.toMatch(/Nothing is stored on your device/);
+        expect(src).toMatch(/t\('Your statement is not saved on your device'\)/);
+    });
+
+    it('says WealthFlow when the connection fails, not "the server", and has a Sinhala line for every sentence changed here', async () => {
+        expect(COPY.OFFLINE).toBe('We could not reach WealthFlow. Please check your internet connection and try again.');
+        const { SI: table } = await import('../tenant-lang.js');
+        for (const key of [COPY.OFFLINE, 'Your statement is not saved on your device', 'We cannot send another code just now. Please try again later.']) {
+            expect(table[key], key).toBeTruthy();
+        }
+    });
+});
