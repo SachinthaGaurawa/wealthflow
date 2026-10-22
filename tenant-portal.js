@@ -32,13 +32,14 @@ import { getAdminDb } from './admin-db.mjs';
 import { TextLkClient } from './textlk.mjs';
 import { platformWaitUntil } from './statement-chain.mjs';
 import { portalSecret } from './tenant-links.mjs';
-import { publicOrigin } from './wealthflow-public-identity.mjs';
+import { OFFICIAL_ORIGIN, publicOrigin } from './wealthflow-public-identity.mjs';
 import { renderStatementPdf, pdfFileName } from './tenant-pdf.mjs';
 import {
     MSG, LIMITS, requestCode, verifyCode, readSession, loadStatement, endSession, hit, ipKey, clearCookie,
 } from './tenant-portal.mjs';
 
 const MAX_BODY_CHARS = 2000;
+const OFFICIAL_HOST = new URL(OFFICIAL_ORIGIN).host;
 const HOUR = 3600e3;
 
 /**
@@ -116,6 +117,18 @@ export function sameSite(req) {
     try { return new URL(origin).host === String(header(req, 'host') || ''); } catch (_) { return false; }
 }
 
+/**
+ * The host the code text's last line names ("@host #code"). A phone offers the code only to a page of that host, so it must be the host the
+ * person is really on, and the setting for the public address can be older than the address people now arrive at (a link issued under a
+ * former host is sent on to the official one before the page loads). The request's own Host header says where the page is, but a caller can
+ * write any Host it likes, so only the official host and the configured one are believed; anything else gets the configured host.
+ */
+export function portalHost(req, env) {
+    const configured = new URL(publicOrigin(env)).host;
+    const asked = String(header(req, 'host') || '').trim().toLowerCase();
+    return asked && (asked === configured || asked === OFFICIAL_HOST) ? asked : configured;
+}
+
 /** The body as an object, or null. Anything that is not a small JSON object is refused. */
 export function readBody(req) {
     const type = String(header(req, 'content-type') || '').toLowerCase();
@@ -148,7 +161,7 @@ export async function handlePortal(req, res, deps) {
         const action = text(body.action);
 
         if (action === 'request') {
-            const out = await requestCode({ db, client: deps.client(), token: text(body.token), nic: text(body.nic), ip, secret, now, random: deps.randomInt, pad: deps.pad || undefined, defer: deps.waitUntil ? deps.waitUntil() : null, host: new URL(publicOrigin(deps.env)).host });
+            const out = await requestCode({ db, client: deps.client(), token: text(body.token), nic: text(body.nic), ip, secret, now, random: deps.randomInt, pad: deps.pad || undefined, defer: deps.waitUntil ? deps.waitUntil() : null, host: portalHost(req, deps.env) });
             return send(res, out);
         }
         if (action === 'verify') {

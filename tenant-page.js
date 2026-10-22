@@ -588,7 +588,7 @@ export function createPage(env) {
         if (typeof el.focus === 'function') el.focus({ preventScroll: true });
     });
     const watchSections = typeof env.watchSections === 'function' ? env.watchSections : null;       // (ids, onActive) => stop: which section is on screen, for the section bar
-    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', theme: THEMES.includes(env.theme) ? env.theme : 'light', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', listen: null, codeMessage: '', nicError: '', misses: 0, phone: '', slow: false, tick: null, hide: false, unwatch: null, els: {} };
+    const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', theme: THEMES.includes(env.theme) ? env.theme : 'light', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', listen: null, heard: '', codeMessage: '', nicError: '', misses: 0, phone: '', slow: false, tick: null, hide: false, unwatch: null, els: {} };
     let t = makeT(st.lang);
 
     /** One door to the server. With `file`, a PDF answer comes back as a blob (never parsed as JSON); everything else is JSON. */
@@ -683,7 +683,7 @@ export function createPage(env) {
 
     function mount(title, nodes, focus, { bar = [], wide = false } = {}) {
         stopTick();
-        stopListening();
+        if (st.screen !== 'code') stopListening();                 // the code screen inherits the wait that began with its request
         st.busy = false;
         if (st.unwatch) { st.unwatch(); st.unwatch = null; }
         const brand = brandEl(doc);
@@ -736,29 +736,39 @@ export function createPage(env) {
         showError(error ? t(error) : '');
     }
 
-    /** Stops waiting for the phone to hand over the code: the person typed it, asked for a new one, or left this screen. */
+    /** Stops waiting for the phone to hand over the code: the person typed it, asked for a new one, or left this screen. A code the phone handed over early is forgotten with it. */
     function stopListening() {
         if (st.listen) { st.listen.abort(); st.listen = null; }
+        st.heard = '';
     }
 
-    /**
-     * Where the browser can read the text for this page (Chrome on Android, from a text whose last line names this host), it asks the person
-     * once, in its own sheet; the code then fills the field and is checked as if it had been typed. Anywhere else, or if they decline, nothing
-     * changes: the field is a one-time-code field, so iPhone and others still offer the code on the keyboard, and typing always works.
-     */
-    async function listenForSms() {
-        stopListening();
-        if (!listenForCode || typeof AbortController !== 'function') return;
-        const ctl = new AbortController();
-        st.listen = ctl;
-        let code = null;
-        try { code = await listenForCode(ctl.signal); } catch (_) { code = null; }
-        if (st.listen !== ctl) return;                                         // a newer wait, a submit or another screen took over
-        st.listen = null;
+    /** A six-digit code goes into the field and is checked as if it had been typed. */
+    function fillCode(code) {
         if (st.screen !== 'code' || st.busy || !st.els.input || !/^\d{6}$/.test(String(code || ''))) return;
         st.els.input.value = String(code);
         const form = st.els.input.form;
         if (form && typeof form.requestSubmit === 'function') form.requestSubmit(); else onVerify();
+    }
+
+    /**
+     * Where the browser can read the text for this page (Chrome on Android, from a text whose last line names this host), it asks the person
+     * once, in its own sheet. It only sees texts that arrive AFTER it starts to wait, and the text leaves the server while the request is still
+     * open, so the wait begins before the request is made, not when its answer has been drawn. A code that arrives before the code screen is
+     * up is held and goes in as the screen appears. Anywhere else, or if they decline, nothing changes: the field is a one-time-code field, so
+     * iPhone and others still offer the code on the keyboard, and typing always works.
+     */
+    function startListening() {
+        stopListening();
+        if (!listenForCode || typeof AbortController !== 'function') return;
+        const ctl = new AbortController();
+        st.listen = ctl;
+        Promise.resolve(listenForCode(ctl.signal)).then((code) => {
+            if (st.listen !== ctl) return;                                      // a newer wait, a submit or another screen took over
+            st.listen = null;
+            if (!/^\d{6}$/.test(String(code || ''))) return;
+            if (st.screen === 'code') fillCode(code);
+            else if (st.screen === 'nic' && st.busy) st.heard = String(code);   // the request is still open: the code screen takes it when it appears
+        }, () => { if (st.listen === ctl) st.listen = null; });
     }
 
     function screenCode({ message = '', value = '' } = {}) {
@@ -802,7 +812,9 @@ export function createPage(env) {
         };
         paint();
         st.tick = setTick(paint, 1000);
-        listenForSms();
+        const early = st.heard;
+        st.heard = '';
+        if (early) fillCode(early); else if (!st.listen) startListening();
     }
 
     /** A copy button was pressed: the text goes to the clipboard, and the person is told it worked (or that it did not). */
@@ -971,6 +983,7 @@ export function createPage(env) {
         st.nicError = '';
         showError('');
         busy(true, t('Verifying details...'));
+        startListening();                                   // the text leaves the server before the answer comes back
         const res = await api('request', { token, nic: raw });
         if (res.status === 200 && res.body && res.body.ok) {
             st.nic = raw;
@@ -982,6 +995,7 @@ export function createPage(env) {
             screenCode({ message: res.body.message || '' });
             return;
         }
+        stopListening();
         busy(false, t('Verify and continue'));
         if (res.status === 401) {
             // these are not the details the link was made for: said plainly, and no code goes out. The field keeps what was typed, selected, so the retype is one move
@@ -1004,6 +1018,7 @@ export function createPage(env) {
         if (st.busy || now() < st.resendAt) return;
         busy(true);
         st.els.resend.disabled = true;
+        startListening();
         const res = await api('request', { token, nic: st.nic });
         busy(false);
         if (res.status === 200 && res.body && res.body.ok) {
@@ -1011,7 +1026,6 @@ export function createPage(env) {
             st.codeExpiresAt = now() + (Number(res.body.expiresInSec) || 180) * 1000;
             showError('');
             showInfo(t('A new verification code has been sent. The previous code is no longer valid.'));
-            listenForSms();
             return;
         }
         showError(res.status === 0 ? t(COPY.OFFLINE) : describeFailure(res.status, res.body, t));

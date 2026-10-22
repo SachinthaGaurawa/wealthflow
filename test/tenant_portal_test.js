@@ -59,7 +59,7 @@ describe('asking for a code', () => {
         expect(out.body.ok).toBe(true);
         expect(gw.sent).toHaveLength(1);
         expect(gw.sent[0].to).toBe('+94771234567');
-        expect(gw.sent[0].message).toBe('123456 is your WealthFlow verification code. It expires in 3 minutes. Do not share it with anyone.\n@www.wealthflow.lk #123456');
+        expect(gw.sent[0].message).toBe('123456 is your WealthFlow verification code. It expires in 3 minutes. Do not share it with anyone.\n\n@www.wealthflow.lk #123456');
         const stored = fs.data.get(`wf-tenants/${token}/otp/current`);
         expect(stored.hash).toBe(codeProof(SECRET, token, T0, '123456'));
         expect(stored.expiresAt).toBe(T0 + OTP_TTL_MS);

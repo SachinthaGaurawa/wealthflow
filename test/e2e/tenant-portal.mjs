@@ -576,7 +576,7 @@ console.log('10. five wrong codes  ->', JSON.stringify(locked));
 
 /* 11b. the phone's own offer of the texted code (WebOTP): fills the field and checks it; stops waiting when the person types, asks again or leaves --------- */
 {
-    const two = [['199012345678', '077 765 4321'], ['198812345671', '077 765 4322']];
+    const two = [['199012345678', '077 765 4321'], ['198812345671', '077 765 4322'], ['199512345678', '077 765 4323']];
     const tokens = [];
     for (const [i, [nic, phone]] of two.entries()) {
         assert.equal(normalizeNic(nic).ok, true);
@@ -639,15 +639,15 @@ console.log('10. five wrong codes  ->', JSON.stringify(locked));
         skew += 61000;                                                      // the server's 60 s gap between two texts for one link
         await askFor(p, two[1][0]);
         assert.deepEqual(await otp(p), { calls: 2, aborted: 1, transport: 'sms' }, 'a new code screen is a new wait');
-        await p.click('#tp-lang');                                          // redrawing the screen replaces the wait, it does not stack another
+        await p.click('#tp-lang');                                          // redrawing the screen keeps the wait that is open: it does not stack another or start over
         await p.waitForSelector('#tp-code');
-        assert.deepEqual(await otp(p), { calls: 3, aborted: 2, transport: 'sms' });
+        assert.deepEqual(await otp(p), { calls: 2, aborted: 1, transport: 'sms' });
         await p.click('#tp-lang');                                          // and back to English
         await p.waitForFunction(() => document.documentElement.lang === 'en');
-        assert.deepEqual(await otp(p), { calls: 4, aborted: 3, transport: 'sms' });
+        assert.deepEqual(await otp(p), { calls: 2, aborted: 1, transport: 'sms' });
         await p.click('#tp-back');
         await p.waitForSelector('#tp-nic');
-        assert.deepEqual(await otp(p), { calls: 4, aborted: 4, transport: 'sms' }, 'leaving the code screen withdrew the wait');
+        assert.deepEqual(await otp(p), { calls: 2, aborted: 2, transport: 'sms' }, 'leaving the code screen withdrew the wait');
         skew += 61000;
         await askFor(p, two[1][0]);
         await p.clock.fastForward(61000);
@@ -664,6 +664,34 @@ console.log('10. five wrong codes  ->', JSON.stringify(locked));
         assert.deepEqual(errs, []);
         await ctx.close();
     }
+    // (d) the text can reach the phone before the page has the server's answer: the wait is already open, and the code goes in as the code screen appears
+    {
+        const { ctx, p, errs } = await open(tokens[2]);
+        let letGo = null;
+        const held = new Promise((resolve) => { letGo = resolve; });
+        await p.route('**/api/tenant-portal', async (route) => {
+            const body = route.request().postData() || '';
+            if (!body.includes('"request"')) return route.continue();
+            const answer = await route.fetch();                          // the server has sent the text by now
+            await held;                                                  // ...but the page has not been told yet
+            return route.fulfill({ response: answer });
+        });
+        const before = sent.length;
+        await p.fill('#tp-nic', two[2][0]);
+        await p.click('#tp-send');
+        await p.waitForFunction(() => window.__otp.calls === 1);
+        assert.equal((await otp(p)).calls, 1, 'the wait began with the request, before any answer');
+        for (let i = 0; i < 100 && sent.length === before; i += 1) await p.waitForTimeout(50);
+        assert.equal(sent.length, before + 1, 'the text went out while the request was still open');
+        await p.evaluate((c) => window.__otp.release(c), newestCode());   // the phone hands the code over while the page still shows the first screen
+        await p.waitForTimeout(200);
+        assert.equal(await p.locator('#tp-code').count(), 0, 'the answer has not arrived, so the code screen is not there yet');
+        letGo();
+        await p.waitForSelector('#tp-out', { timeout: 8000 });
+        assert.deepEqual(await otp(p), { calls: 1, aborted: 0, transport: 'sms' }, 'one wait, never restarted, and nothing left hanging');
+        assert.deepEqual(errs, []);
+        await ctx.close();
+    }
     // (c) a browser with no such offer behaves exactly as before: the field is there, typing works
     {
         const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
@@ -674,7 +702,7 @@ console.log('10. five wrong codes  ->', JSON.stringify(locked));
         assert.equal(await p.getAttribute('#tp-send', 'type'), 'submit');
         await ctx.close();
     }
-    console.log('11b. WebOTP           -> the phone fills the code when it can; typing, resending and leaving withdraw the wait; no error anywhere');
+    console.log('11b. WebOTP           -> the phone fills the code when it can, even when the text beats the answer; typing, resending and leaving withdraw the wait; no error anywhere');
 }
 
 /* 12. layouts: nothing scrolls sideways on a small phone or a desktop ---------- */
