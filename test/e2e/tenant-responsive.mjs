@@ -399,6 +399,56 @@ console.log('the dark theme was checked on a phone, a tablet and a laptop');
     await ctx.close();
 }
 
+/* the section bar: a pressed tab is the chosen one at once and stays chosen, and its section lands just below the bar, not under it ---- */
+// A long Upcoming list and a short one: when the list is short the section after it is already near the top once Upcoming is there, and the
+// page used to hand the choice to that neighbour (so "Upcoming" looked as if it did nothing) or leave Upcoming's heading hidden under the bar.
+for (const [device, width, height] of [['iPhone SE (1st gen)', 320, 568], ['iPhone 14', 390, 844], ['iPhone Pro Max', 430, 932], ['phone, landscape', 667, 375], ['iPad mini', 744, 1133]]) {
+    for (const short of [false, true]) {
+        const ctx = await browser.newContext({ viewport: { width, height }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+        await ctx.addCookies(cookies);
+        const page = await ctx.newPage();
+        const label = `${device} ${width}x${height}${short ? ', short Upcoming' : ''}`;
+        page.on('pageerror', (e) => problems.push(`${label}: pageerror ${e.message}`));
+        await page.goto(`${base}/t/${TOKEN}`);
+        await page.waitForSelector('#tp-out');
+        if (short) await page.evaluate(() => { const s = document.getElementById('tp-next').style; s.maxHeight = '90px'; s.overflow = 'hidden'; });   // through the style object: the page's policy refuses a style tag
+        const settle = async () => {          // a smooth scroll has finished when the page has stopped moving
+            let last = -1; let still = 0;
+            for (let i = 0; i < 40 && still < 4; i += 1) { await page.waitForTimeout(100); const y = await page.evaluate(() => Math.round(window.scrollY)); still = y === last ? still + 1 : 0; last = y; }
+        };
+        const read = () => page.evaluate(() => {
+            const bar = document.querySelector('.tp-top');
+            const gap = bar && getComputedStyle(bar).position === 'sticky' ? Math.round(bar.getBoundingClientRect().height) : 0;
+            const current = [...document.querySelectorAll('.tp-tab')].filter((b) => b.getAttribute('aria-current') === 'true').map((b) => b.getAttribute('data-to'));
+            const atEnd = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+            return { gap, current, atEnd, y: Math.round(window.scrollY), tops: Object.fromEntries(['tp-hero', 'tp-next', 'tp-pay', 'tp-records'].map((id) => { const el = document.getElementById(id); return [id, el ? Math.round(el.getBoundingClientRect().top) : null]; })) };
+        });
+        const tabs = await page.evaluate(() => [...document.querySelectorAll('.tp-tab')].map((b) => b.getAttribute('data-to')));
+        if (tabs.join() !== 'tp-hero,tp-next,tp-pay,tp-records') problems.push(`${label}: the section bar has ${tabs.join() || 'no tabs'}`);
+        for (const id of ['tp-next', 'tp-pay', 'tp-records', 'tp-next', 'tp-hero', 'tp-pay', 'tp-next']) {
+            await page.click(`.tp-tab[data-to="${id}"]`);
+            await page.waitForTimeout(150);
+            const early = await read();
+            if (early.current.join() !== id) problems.push(`${label}: pressing ${id} shows ${early.current.join() || 'no tab'} as the chosen one at once`);
+            await settle();
+            const r = await read();
+            if (r.current.join() !== id) problems.push(`${label}: after ${id} was pressed and the page settled, the chosen tab is ${r.current.join() || 'none'}`);
+            if (id === 'tp-hero') { if (r.y !== 0) problems.push(`${label}: Overview stopped at ${r.y}px, not the top of the page`); continue; }
+            const top = r.tops[id];
+            if (top < r.gap - 1) problems.push(`${label}: ${id} landed ${r.gap - top}px under the bar`);
+            if (!r.atEnd && top > r.gap + 40) problems.push(`${label}: ${id} stopped ${top - r.gap}px below the bar`);
+        }
+        // after the lock has run out, the scroll chooses again: scrolling back to the top hands the choice back to Overview
+        await page.waitForTimeout(1400);
+        await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+        await page.waitForTimeout(400);
+        const back = await read();
+        if (back.current.join() !== 'tp-hero') problems.push(`${label}: scrolling to the top leaves ${back.current.join() || 'no tab'} chosen instead of Overview`);
+        await ctx.close();
+    }
+}
+console.log('the section bar was pressed on five screens, with a long and a short Upcoming');
+
 /* the sign-in answers: the loading screen, a refused NIC (with the warning that follows a few), and the code screen that names the phone ---- */
 // Each screen gets its own hour on the server's clock (the limits are per address and per link), and this runs last: moving the clock ends the earlier session.
 async function signInStates(device, width, height, touch, dark) {

@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 globalThis.__WF_TENANT_NO_BOOT = true;
-const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY, splashWait, splashEl, phoneLabel, watchAway, SPLASH_AFTER_MS, SPLASH_MIN_MS, SPLASH_SLOW_MS, STILL_AFTER } = await import('../tenant-page.js');
+const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY, splashWait, splashEl, phoneLabel, watchAway, SPLASH_AFTER_MS, SPLASH_MIN_MS, SPLASH_SLOW_MS, STILL_AFTER, barGap, TAB_LOCK_MS } = await import('../tenant-page.js');
 const { makeT } = await import('../tenant-lang.js');
 
 class El {
@@ -458,6 +458,24 @@ describe('the balance card and the section bar', () => {
         const amounts = classes(statementView(doc, st, makeT('en')), 'tp-amt');
         expect(amounts.length).toBeGreaterThan(8);
         expect(classes(statementView(doc, st, makeT('en')), 'tp-item-amount')[0].attrs.class).toContain('tp-amt');
+    });
+
+    it('knows how much of the top of the screen the bar covers: its height while it stays put, nothing once it scrolls away or is missing', () => {
+        const page = (position, height) => ({
+            defaultView: { getComputedStyle: () => ({ position }) },
+            querySelector: (sel) => (sel === '.tp-top' ? { getBoundingClientRect: () => ({ height }) } : null),
+        });
+        expect(barGap(page('sticky', 64.6))).toBe(65);
+        expect(barGap(page('static', 64))).toBe(0);                       // a phone held sideways: the bar goes with the page
+        expect(barGap({ defaultView: { getComputedStyle: () => ({ position: 'sticky' }) }, querySelector: () => null })).toBe(0);
+        expect(barGap({ querySelector: () => ({ getBoundingClientRect: () => ({ height: 60 }) }) })).toBe(0);   // no window to ask
+        expect(barGap(null)).toBe(0);
+        expect(barGap({})).toBe(0);
+    });
+
+    it('keeps a pressed tab chosen for a little over a second, long enough for the page to finish scrolling to it', () => {
+        expect(TAB_LOCK_MS).toBeGreaterThanOrEqual(900);
+        expect(TAB_LOCK_MS).toBeLessThanOrEqual(2500);                    // and no longer than a person waits before scrolling on their own
     });
 });
 

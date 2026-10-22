@@ -48,6 +48,19 @@ export const SPLASH_SLOW_MS = 5000;
 /** After this many details the link did not recognise, the helper under the field stops being a hint and says what to check, and warns that a few more will pause the link. */
 export const STILL_AFTER = 3;
 
+/** After a tab is pressed, the page is scrolling there; for this long the scroll must not pick another tab. */
+export const TAB_LOCK_MS = 1200;
+/** Air between the bar and the top of a section a tab has brought into view. */
+const BAR_AIR = 14;
+
+/** How much of the top of the screen the bar covers while the page scrolls under it: its height where it stays put, nothing where it scrolls away with the page. */
+export function barGap(doc) {
+    const view = doc && doc.defaultView;
+    const bar = doc && typeof doc.querySelector === 'function' ? doc.querySelector('.tp-top') : null;
+    if (!bar || !view || typeof view.getComputedStyle !== 'function' || typeof bar.getBoundingClientRect !== 'function') return 0;
+    return view.getComputedStyle(bar).position === 'sticky' ? Math.round(bar.getBoundingClientRect().height) : 0;
+}
+
 export const ENDPOINT = '/api/tenant-portal';
 export const FETCH_TIMEOUT_MS = 20000;
 export const TOKEN_PATH_RE = /^\/t\/([A-Za-z0-9_-]{16})\/?$/;
@@ -559,7 +572,21 @@ export function createPage(env) {
     const shareFile = typeof env.shareFile === 'function' ? env.shareFile : null;       // 'shared' | 'cancelled' | 'unsupported'
     const listenForCode = typeof env.listenForCode === 'function' ? env.listenForCode : null;       // the phone's own offer of the texted code (WebOTP); null where the browser has none
     const calm = () => { const w = doc.defaultView; return !!(w && typeof w.matchMedia === 'function' && w.matchMedia('(prefers-reduced-motion: reduce)').matches); };
-    const jumpTo = env.jumpTo || ((id) => { const el = doc.getElementById ? doc.getElementById(id) : null; if (el) { if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: calm() ? 'auto' : 'smooth', block: 'start' }); if (typeof el.focus === 'function') el.focus({ preventScroll: true }); } });
+    /**
+     * Brings a section into view from a tab or a link. The bar at the top stays on screen, so a section scrolled to the very top would have its heading
+     * hidden under it: it lands just below the bar instead. The first section (Overview) is the top of the page, with the heading that belongs to it.
+     */
+    const jumpTo = env.jumpTo || ((id) => {
+        const el = doc.getElementById ? doc.getElementById(id) : null;
+        if (!el) return;
+        const view = doc.defaultView;
+        const behavior = calm() ? 'auto' : 'smooth';
+        if (view && typeof view.scrollTo === 'function' && typeof el.getBoundingClientRect === 'function') {
+            const top = id === 'tp-hero' ? 0 : Math.max(0, Math.round(el.getBoundingClientRect().top + (view.scrollY || 0) - barGap(doc) - BAR_AIR));
+            view.scrollTo({ top, behavior });
+        } else if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior, block: 'start' });
+        if (typeof el.focus === 'function') el.focus({ preventScroll: true });
+    });
     const watchSections = typeof env.watchSections === 'function' ? env.watchSections : null;       // (ids, onActive) => stop: which section is on screen, for the section bar
     const st = { screen: '', lang: env.lang === 'si' ? 'si' : 'en', theme: THEMES.includes(env.theme) ? env.theme : 'light', nic: '', verified: false, busy: false, pdfBusy: false, resendAt: 0, codeExpiresAt: 0, sessionEndsAt: 0, statement: null, pdfBlob: null, pdfName: '', pdfLang: '', listen: null, codeMessage: '', nicError: '', misses: 0, phone: '', slow: false, tick: null, hide: false, unwatch: null, els: {} };
     let t = makeT(st.lang);
@@ -894,11 +921,15 @@ export function createPage(env) {
         st.els.pdf = pdf; st.els.share = share; st.els.refresh = refresh;
         st.els.err = h(doc, 'p', { class: 'tp-error', role: 'alert' });
         st.els.info = h(doc, 'p', { class: 'tp-info', role: 'status', id: 'tp-info', hidden: true });
-        const { left, right, sections } = statementColumns(doc, statement, t, { copy: onCopy, calendar: onCalendar, planCalendar: onPlanCalendar, jump: jumpTo, hide: onHide, hidden: st.hide });
+        // a tab (or a link to a section) is chosen at once and stays chosen while the page scrolls there; the scroll must not hand it to the neighbour
+        st.tabLock = null;
+        st.markTab = null;
+        const jumpSection = (id) => { st.tabLock = { id, until: now() + TAB_LOCK_MS }; if (st.markTab) st.markTab(id); jumpTo(id); };
+        const { left, right, sections } = statementColumns(doc, statement, t, { copy: onCopy, calendar: onCalendar, planCalendar: onPlanCalendar, jump: jumpSection, hide: onHide, hidden: st.hide });
         const actionRow = h(doc, 'div', { class: 'tp-actions', role: 'group', 'aria-label': t('Quick actions') }, pdf, share, csv, print, refresh);
         left.splice(sections.length && sections[0][0] === 'tp-hero' ? 1 : 0, 0, actionRow);
         const tabs = sections.length > 1 ? h(doc, 'nav', { class: 'tp-tabs', 'aria-label': t('Sections') }, sections.map(([id, label, ico]) => {
-            const b = h(doc, 'button', { type: 'button', class: 'tp-tab', 'data-to': id, onclick: () => jumpTo(id) });
+            const b = h(doc, 'button', { type: 'button', class: 'tp-tab', 'data-to': id, onclick: () => jumpSection(id) });
             return labelled(b, ico, label);
         })) : null;
         mount('Your WealthFlow statement', [
@@ -914,9 +945,10 @@ export function createPage(env) {
         if (root.classList) root.classList.toggle('tp-hide', st.hide);
         if (tabs && watchSections) {
             const buttons = tabs.querySelectorAll ? [...tabs.querySelectorAll('button')] : [];
-            const on = (id) => { for (const b of buttons) { if (b.getAttribute('data-to') === id) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current'); } };
-            on(sections[0][0]);
-            st.unwatch = watchSections(sections.map((x) => x[0]), on);
+            const mark = (id) => { for (const b of buttons) { if (b.getAttribute('data-to') === id) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current'); } };
+            st.markTab = mark;
+            mark(sections[0][0]);
+            st.unwatch = watchSections(sections.map((x) => x[0]), (id) => { if (!st.tabLock || now() >= st.tabLock.until) mark(id); });
         }
         const paint = () => {
             const left = Math.ceil((st.sessionEndsAt - now()) / 1000);
@@ -1130,7 +1162,8 @@ function browserEnv(win) {
             if (typeof win.IntersectionObserver !== 'function') return () => {};
             const els = ids.map((id) => doc.getElementById(id)).filter(Boolean);
             const pick = () => {
-                const line = (win.innerHeight || 600) * 0.4;
+                // a section is the current one once its top has reached the line just under the bar: the last section that has
+                const line = barGap(doc) + BAR_AIR + 10;
                 const atEnd = (win.innerHeight || 0) + (win.scrollY || 0) >= doc.documentElement.scrollHeight - 4;
                 let active = els.length ? els[0].id : '';
                 for (const el of els) if (el.getBoundingClientRect().top <= line) active = el.id;
