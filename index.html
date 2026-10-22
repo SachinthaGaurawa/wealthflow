@@ -213,7 +213,7 @@
          fields still works (the OS handles that independently). -->
     <meta name="viewport"
         content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>WealthFlow | Elite Financial System</title>
+    <title>WealthFlow | Personal finance</title>
     <meta name="application-name" content="WealthFlow">
     <meta name="description" content="WealthFlow — track income, loans, credit cards, cheques and spending in one private dashboard, with an AI advisor that reads your real numbers.">
     <meta name="theme-color" content="#0a0d13">
@@ -5583,12 +5583,12 @@
         <div class="sp-logo"><svg class="wf-mark" role="img" aria-label="WealthFlow"><use href="#wf-mark"/></svg></div>
         <div class="sp-title-wrap">
             <div class="sp-title">WealthFlow</div>
-            <div class="sp-sub">Infinity Engine</div>
+            <div class="sp-sub">Personal finance</div>
         </div>
         <div class="sp-bar-wrap">
             <div class="sp-fill" id="spFill"></div>
         </div>
-        <div class="sp-status" id="spStatus" role="status" aria-live="polite">Initializing secure protocol...</div>
+        <div class="sp-status" id="spStatus" role="status" aria-live="polite">Opening your secure workspace…</div>
     </div>
 
     <!-- ============================================================ -->
@@ -5739,13 +5739,13 @@
                 <div id="authErrCode" style="margin-top:6px;font-size:11px;opacity:.7;word-break:break-word;"></div>
             </div>
             <div style="margin-top:16px;font-size:11px;color:var(--text3);line-height:1.6;display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;"><i data-wfi="lock"></i> Encrypted in transit ·
-                Your data stays yours · Powered by Google Firebase &amp; Gemini AI</div>
+                Your data stays yours · Cloud sync by Google Firebase</div>
             <div style="margin-top:8px;font-size:11px;color:var(--text3);line-height:1.6;text-align:center;"><a href="/?public=1" style="color:inherit;">Home</a> · <a href="/privacy" style="color:inherit;">Privacy Policy</a> · <a href="/terms" style="color:inherit;">Terms of Service</a></div>
         </div>
 
         <div class="auth-box" id="authLogin" style="display:none;">
             <div class="auth-logo"><svg class="wf-mark" role="img" aria-label="WealthFlow"><use href="#wf-mark"/></svg></div>
-            <div class="auth-title">Welcome Back</div>
+            <div class="auth-title">Welcome back</div>
             <div class="auth-sub" id="authLoginSub">Enter your 6-digit PIN to unlock</div>
             <div class="pin-dots" id="loginDots"></div>
             <div class="numpad" id="loginPad"></div>
@@ -5754,18 +5754,18 @@
                 style="display:none; width:100%; padding:14px 20px; margin-top:16px; border:2px solid var(--accent); border-radius:16px; background:linear-gradient(135deg, rgba(212,175,55,0.08), rgba(212,175,55,0.02)); color:var(--accent); font-size:16px; font-weight:700; font-family:var(--font); cursor:pointer; transition:all .25s; letter-spacing:0.5px; backdrop-filter:blur(10px);">
                 <span style="display:flex;align-items:center;justify-content:center;gap:10px;">
                     <span style="font-size:22px;">@lock@</span>
-                    <span>Unlock with Biometrics</span>
+                    <span>Unlock with biometrics</span>
                 </span>
             </button>
             <div style="display:flex;gap:16px;justify-content:center;margin-top:12px;">
-                <div class="auth-link" onclick="showAuthView('authForgot')" style="margin:0;">@lock@ Forgot Passcode?</div>
-                <div class="auth-link" onclick="switchGoogleAccount()" style="margin:0;">@refresh@ Switch Account</div>
+                <div class="auth-link" onclick="showAuthView('authForgot')" style="margin:0;">@lock@ Forgot your PIN?</div>
+                <div class="auth-link" onclick="switchGoogleAccount()" style="margin:0;">@refresh@ Switch account</div>
             </div>
         </div>
 
         <div class="auth-box" id="authSetup" style="display:none;">
             <div class="auth-logo">@lock@</div>
-            <div class="auth-title">Create Passcode</div>
+            <div class="auth-title">Create your PIN</div>
             <div class="auth-sub" id="setupSub">Set a secure 6-digit PIN to protect your data</div>
             <div class="pin-dots" id="setupDots"></div>
             <div class="numpad" id="setupPad"></div>
@@ -5774,15 +5774,15 @@
 
         <div class="auth-box" id="authForgot" style="display:none;">
             <div class="auth-logo">@lock@</div>
-            <div class="auth-title">Account Recovery</div>
-            <div class="auth-sub">Choose how you'd like to recover your access</div>
+            <div class="auth-title">Recover your account</div>
+            <div class="auth-sub">Choose how to recover your access</div>
 
             <!-- BANNER shown when arriving from email link -->
             <div id="emailLinkBanner"
                 style="display:none;background:rgba(16,185,129,.08);border:1px solid var(--green);border-radius:12px;padding:14px;margin:14px 0;text-align:left;">
-                <div style="font-weight:700;color:var(--green);margin-bottom:6px;">@checkCircle@ Email Verified</div>
+                <div style="font-weight:700;color:var(--green);margin-bottom:6px;">@checkCircle@ Email verified</div>
                 <div style="font-size:12px;color:var(--text2);">You can now set a new 6-digit PIN.</div>
-                <button class="auth-btn" style="margin-top:10px;" onclick="proceedToNewPin()">Set New PIN →</button>
+                <button class="auth-btn" style="margin-top:10px;" onclick="proceedToNewPin()">Set a new PIN</button>
             </div>
 
             <div style="display:flex;flex-direction:column;gap:10px;margin:18px 0;" id="recoveryMethodList">
@@ -5790,17 +5790,17 @@
                     style="display:flex;align-items:center;gap:12px;justify-content:flex-start;">
                     <span style="font-size:22px;">@mail@</span>
                     <div style="text-align:left;flex:1;">
-                        <div style="font-weight:700;">Magic Sign-In Link <span class="badge bg-g"
+                        <div style="font-weight:700;">Email me a sign-in link <span class="badge bg-g"
                                 style="font-size:9px;padding:2px 6px;">RECOMMENDED</span></div>
-                        <div style="font-size:11px;opacity:.7;">Get a one-time login link sent to your Google email. Tap it and you're in.</div>
+                        <div style="font-size:11px;opacity:.7;">A one-time sign-in link is sent to your Google email. Open it on this device to continue.</div>
                     </div>
                 </button>
                 <button class="auth-btn" onclick="startRecoveryMethod('secq')"
                     style="display:flex;align-items:center;gap:12px;justify-content:flex-start;background:var(--card2);border:1px solid var(--border2);">
                     <span style="font-size:22px;">@shield@</span>
                     <div style="text-align:left;flex:1;">
-                        <div style="font-weight:700;">Security Question + Recovery Code</div>
-                        <div style="font-size:11px;opacity:.7;">Use the answer + 16-character code you saved at setup
+                        <div style="font-weight:700;">Security question and recovery code</div>
+                        <div style="font-size:11px;opacity:.7;">Use your answer and the 16-character code you saved at setup
                         </div>
                     </div>
                 </button>
@@ -5809,8 +5809,8 @@
                     id="recovBioBtn">
                     <span style="font-size:22px;">@lock@</span>
                     <div style="text-align:left;flex:1;">
-                        <div style="font-weight:700;">Biometric Recovery</div>
-                        <div style="font-size:11px;opacity:.7;">Use FaceID / TouchID / Windows Hello on this device
+                        <div style="font-weight:700;">Biometric recovery</div>
+                        <div style="font-size:11px;opacity:.7;">Use Face ID, Touch ID or Windows Hello on this device
                         </div>
                     </div>
                 </button>
@@ -5821,50 +5821,50 @@
                 <div id="recovOtpStep1">
                     <div class="fg"><label class="auth-form-label">Your email address</label><input class="auth-input"
                             id="recovOtpEmail" type="email" placeholder="your@gmail.com"></div>
-                    <button class="auth-btn" onclick="sendRecoveryOTP()">@mail@ Send 6-Digit Code</button>
+                    <button class="auth-btn" onclick="sendRecoveryOTP()">@mail@ Send a 6-digit code</button>
                 </div>
                 <div id="recovOtpStep2" style="display:none;">
                     <div
                         style="background:rgba(16,185,129,.06);border-radius:10px;padding:10px;margin-bottom:14px;font-size:12px;color:var(--green);text-align:center;">
-                        @checkCircle@ Code sent! Check your inbox (and spam). Code expires in 10 minutes.
+                        @checkCircle@ Code sent. Check your inbox and spam folder. It expires in 10 minutes.
                     </div>
-                    <div class="fg"><label class="auth-form-label">Enter 6-digit code</label><input class="auth-input"
+                    <div class="fg"><label class="auth-form-label">Enter the 6-digit code</label><input class="auth-input"
                             id="recovOtpCode" placeholder="123456" maxlength="6"
                             style="font-family:var(--mono);font-size:22px;letter-spacing:8px;text-align:center;"></div>
-                    <button class="auth-btn" onclick="verifyRecoveryOTP()">@checkCircle@ Verify Code</button>
+                    <button class="auth-btn" onclick="verifyRecoveryOTP()">@checkCircle@ Verify code</button>
                     <button class="auth-btn ghost"
                         onclick="$('recovOtpStep2').style.display='none';$('recovOtpStep1').style.display='block';">←
-                        Resend / Change email</button>
+                        Resend or change email</button>
                 </div>
             </div>
 
             <!-- Magic-link flow -->
             <div id="recovEmailFlow" style="display:none;">
-                <div class="fg"><label class="auth-form-label">Verify your email</label><input class="auth-input"
+                <div class="fg"><label class="auth-form-label">Your email address</label><input class="auth-input"
                         id="recovEmailAddr" type="email" placeholder="your@gmail.com"></div>
-                <button class="auth-btn" onclick="sendRecoveryEmail()">@mail@ Send Recovery Link</button>
+                <button class="auth-btn" onclick="sendRecoveryEmail()">@mail@ Send recovery link</button>
                 <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.6;">A secure one-time
-                    sign-in link will be sent to your email. Open it on this same device and you'll automatically return
+                    sign-in link will be sent to your email. Open it on this same device and you will return
                     here to set a new PIN. The link expires in 1 hour.</div>
             </div>
 
             <!-- Security question flow -->
             <div id="recovSecQFlow" style="display:none;">
-                <div class="fg"><label class="auth-form-label" id="recovSecQ">Security Question</label><input
-                        class="auth-input" id="recovSecA" placeholder="Your answer..."></div>
-                <div class="fg"><label class="auth-form-label">Verification Code</label><input class="auth-input"
+                <div class="fg"><label class="auth-form-label" id="recovSecQ">Security question</label><input
+                        class="auth-input" id="recovSecA" placeholder="Your answer"></div>
+                <div class="fg"><label class="auth-form-label">Recovery code</label><input class="auth-input"
                         id="recovCode" placeholder="16-character recovery code"
                         style="font-family:var(--mono);letter-spacing:2px;"></div>
-                <button class="auth-btn" onclick="verifyRecovery()">@checkCircle@ Verify & Reset PIN</button>
+                <button class="auth-btn" onclick="verifyRecovery()">@checkCircle@ Verify and reset PIN</button>
             </div>
 
-            <button class="auth-btn ghost" onclick="showAuthView('authLogin')">← Back to Login</button>
+            <button class="auth-btn ghost" onclick="showAuthView('authLogin')">← Back to sign in</button>
             <div class="auth-err" id="recovErr"></div>
         </div>
 
         <div class="auth-box" id="authNewPin" style="display:none;">
             <div class="auth-logo">@checkCircle@</div>
-            <div class="auth-title">Create New PIN</div>
+            <div class="auth-title">Create a new PIN</div>
             <div class="auth-sub" id="newPinSub">Enter your new 6-digit PIN</div>
             <div class="pin-dots" id="newPinDots"></div>
             <div class="numpad" id="newPinPad"></div>
@@ -5873,23 +5873,23 @@
 
         <div class="auth-box" id="authRecovShow" style="display:none;">
             <div class="auth-logo">@receipt@</div>
-            <div class="auth-title">Save Recovery Code</div>
+            <div class="auth-title">Save your recovery code</div>
             <div class="auth-sub">Store this code safely. You will need it if you forget your PIN.</div>
             <div style="background:var(--bg2);border:2px dashed var(--accent);border-radius:var(--r);padding:18px;margin:16px 0;font-family:var(--mono);font-size:20px;font-weight:700;letter-spacing:4px;color:var(--accent);word-break:break-all;"
                 id="recovCodeDisplay"></div>
-            <div style="font-size:12px;color:var(--text3);margin-bottom:16px;">@alert@ This code will only be shown once.
-                Save it now!</div>
-            <button class="auth-btn" id="copyRecovBtn" onclick="copyRecovCode()">@receipt@ Copy Code</button>
-            <button class="auth-btn ghost" onclick="confirmRecovSaved()">@checkCircle@ I've Saved It</button>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:16px;">@alert@ This code is shown only once.
+                Save it now.</div>
+            <button class="auth-btn" id="copyRecovBtn" onclick="copyRecovCode()">@receipt@ Copy code</button>
+            <button class="auth-btn ghost" onclick="confirmRecovSaved()">@checkCircle@ I have saved it</button>
         </div>
 
         <div class="auth-box" id="authSecQ" style="display:none;">
             <div class="auth-logo">@shield@</div>
-            <div class="auth-title">Security Question</div>
-            <div class="auth-sub">Set a recovery question for account access</div>
-            <div class="fg"><label class="auth-form-label">Security Question</label>
+            <div class="auth-title">Set a security question</div>
+            <div class="auth-sub">Choose a question only you can answer. It helps you recover your account.</div>
+            <div class="fg"><label class="auth-form-label">Security question</label>
                 <select class="auth-input fs" id="secQSelect">
-                    <option value="">Choose a question...</option>
+                    <option value="">Choose a question…</option>
                     <option>What is the name of your first pet?</option>
                     <option>What is your mother's maiden name?</option>
                     <option>What city were you born in?</option>
@@ -5900,10 +5900,10 @@
                 </select>
             </div>
             <div class="fg" id="customQWrap" style="display:none;"><label class="auth-form-label">Custom
-                    Question</label><input class="auth-input" id="customQ" placeholder="Enter your question..."></div>
-            <div class="fg"><label class="auth-form-label">Your Answer</label><input class="auth-input" id="secAns"
+                    Question</label><input class="auth-input" id="customQ" placeholder="Enter your question"></div>
+            <div class="fg"><label class="auth-form-label">Your answer</label><input class="auth-input" id="secAns"
                     placeholder="Answer (case-insensitive)"></div>
-            <button class="auth-btn" onclick="saveSecQ()">@lock@ Save & Continue</button>
+            <button class="auth-btn" onclick="saveSecQ()">@lock@ Save and continue</button>
             <div class="auth-err" id="secQErr"></div>
         </div>
     </div>
@@ -5918,7 +5918,7 @@
                     </div>
                     <div>
                         <div class="sb-title">WealthFlow</div>
-                        <div class="sb-sub">Infinity Engine</div>
+                        <div class="sb-sub">Personal finance</div>
                     </div>
                 </div>
             </div>
@@ -5970,13 +5970,13 @@
                 <div class="nav-item" onclick="showPage('settings',this)"><span class="nav-icon"><i data-wfi="settings"></i></span> Settings<span class="nb" id="nb-settings" style="display:none;background:#ef4444;color:#fff;">1</span>
                 </div>
                 <div class="nav-item" onclick="signOutGoogle()" style="color:var(--red);"><span
-                        class="nav-icon">@logOut@</span> Sign Out</div>
+                        class="nav-icon">@logOut@</span> Sign out</div>
             </nav>
             <div class="sb-footer">
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">@user@</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver" id="wfSbVer">WealthFlow · Infinity Engine</div>
+                <div class="sb-ver" id="wfSbVer">WealthFlow</div>
             </div>
         </aside>
 
@@ -6954,28 +6954,27 @@
     <div class="mo" id="mdFactoryReset">
         <div class="md md-sm" style="border: 1px solid var(--red);">
             <div class="md-hdr">
-                <div class="md-title" style="color:var(--red);">@alert@ Core System Reset</div><button class="md-x" aria-label="Close"
+                <div class="md-title" style="color:var(--red);">@alert@ Erase all data</div><button class="md-x" aria-label="Close"
                     onclick="closeModal('mdFactoryReset')"><i data-wfi="x"></i></button>
             </div>
-            <p style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5;">This will wipe ALL
-                financial data from your devices and the cloud. <b style="color:var(--green);">Your Master PIN and
-                    Settings will be kept safe.</b> A safety copy is saved in your account first and kept for 30 days, so a mistake can be undone from
-                Restore Vault. Restore points you already have stay until they rotate out (up to 60 days) and can be deleted in Restore Vault.
+            <p style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5;">This erases all
+                financial data from your devices and the cloud. <b style="color:var(--green);">Your PIN and
+                    settings are kept.</b> A safety copy is saved in your account first and kept for 30 days, so a mistake can be undone from
+                Restore data. Restore points you already have stay until they rotate out (up to 60 days) and can be deleted in Restore data.
                 Enter your PIN to confirm.</p>
-            <div class="fg"><label class="fl">Master PIN *</label><input class="fi auth-numpad-only" id="fr_pin"
+            <div class="fg"><label class="fl">PIN *</label><input class="fi auth-numpad-only" id="fr_pin"
                     type="password" autocomplete="off" inputmode="numeric" maxlength="6" placeholder="••••••"
                     style="letter-spacing: 4px; font-family:var(--mono); text-align:center; font-size:24px;"></div>
             <div class="auth-err" id="fr_err"></div>
             <div class="md-ftr" id="fr_action_btns">
                 <button class="btn btn-ghost" id="fr_cancel_btn" onclick="closeModal('mdFactoryReset')">Cancel</button>
-                <button class="btn btn-danger" id="fr_exec_btn" onclick="executeFactoryReset()">Authenticate &
-                    Wipe</button>
+                <button class="btn btn-danger" id="fr_exec_btn" onclick="executeFactoryReset()">Erase data</button>
             </div>
             <div id="fr_success" style="display:none; text-align:center; padding: 20px 0;">
                 <div style="font-size:40px; margin-bottom:10px;">@checkCircle@</div>
-                <div style="color:var(--green); font-weight:700; font-size:16px;">Core Data Wiped Successfully</div>
+                <div style="color:var(--green); font-weight:700; font-size:16px;">Your data has been erased</div>
                 <div style="font-size:14px; color:var(--text2); margin-top:8px; font-weight:600;" id="fr_countdown">
-                    System Rebooting in 3...</div>
+                    Restarting in 3…</div>
             </div>
         </div>
     </div>
@@ -6983,13 +6982,13 @@
     <div class="mo" id="mdRestoreCloud">
         <div class="md md-sm">
             <div class="md-hdr">
-                <div class="md-title">Restore Data</div><button class="md-x" aria-label="Close"
+                <div class="md-title">Restore data</div><button class="md-x" aria-label="Close"
                     onclick="closeModal('mdRestoreCloud')"><i data-wfi="x"></i></button>
             </div>
 
             <div
                 style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px;">
-                Option 1: Restore Point or Google Drive</div>
+                Option 1: restore point or Google Drive</div>
             <p style="font-size:12px;color:var(--text2);margin-bottom:8px;">Pick a saved copy. What you have now is saved as a
                 restore point first, so a restore can always be undone from this same list.</p>
             <div class="fr">
@@ -7003,11 +7002,11 @@
 
             <div
                 style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px; border-top:1px solid var(--border); padding-top:18px;">
-                Option 2: Local File Recovery</div>
-            <p style="font-size:12px;color:var(--text2);margin-bottom:8px;">Upload a previously downloaded JSON backup
-                file to restore.</p>
+                Option 2: file on this device</div>
+            <p style="font-size:12px;color:var(--text2);margin-bottom:8px;">Choose a backup file you downloaded earlier
+                to restore from.</p>
             <button class="btn btn-secondary" style="width:100%; justify-content:center;"
-                onclick="document.getElementById('importFile').click()">Browse Local JSON File</button>
+                onclick="document.getElementById('importFile').click()">Choose a backup file</button>
 
             <div
                 style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px; border-top:1px solid var(--border); padding-top:18px;">
@@ -7505,7 +7504,7 @@
     <div class="mo" id="mdChangePin">
         <div class="md md-sm">
             <div class="md-hdr">
-                <div class="md-title">@lock@ Change Master PIN</div><button class="md-x" aria-label="Close"
+                <div class="md-title">@lock@ Change PIN</div><button class="md-x" aria-label="Close"
                     onclick="closePinModal()"><i data-wfi="x"></i></button>
             </div>
             <p style="font-size:12px;color:var(--text2);margin-bottom:18px;line-height:1.5;">Your PIN is synced across
@@ -7519,7 +7518,7 @@
                     type="password" autocomplete="off" inputmode="numeric" maxlength="6" placeholder="Enter new 6-digit PIN"
                     style="letter-spacing: 6px; font-family:var(--mono); text-align:center; font-size:22px; padding:14px;">
             </div>
-            <div class="fg"><label class="fl">Confirm New PIN *</label><input class="fi auth-numpad-only"
+            <div class="fg"><label class="fl">Confirm new PIN *</label><input class="fi auth-numpad-only"
                     id="cp_confirm" type="password" autocomplete="off" inputmode="numeric" maxlength="6" placeholder="Re-enter new PIN"
                     style="letter-spacing: 6px; font-family:var(--mono); text-align:center; font-size:22px; padding:14px;">
             </div>
@@ -7608,39 +7607,38 @@
     <div class="mo" id="mdAIPersona">
         <div class="md md-sm">
             <div class="md-hdr">
-                <div class="md-title">@user@ AI Advisor Persona</div><button class="md-x" aria-label="Close"
+                <div class="md-title">@user@ AI advisor style</div><button class="md-x" aria-label="Close"
                     onclick="closeModal('mdAIPersona')"><i data-wfi="x"></i></button>
             </div>
-            <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">Choose how your AI advisor communicates
-                with you.</p>
+            <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">Choose how your AI advisor speaks to you.</p>
             <div id="personaCards">
                 <div class="ai-persona-card" onclick="setAIAdvisorPersona('supportive')">
                     <div class="ai-persona-emoji">@user@</div>
                     <div>
-                        <div class="ai-persona-name">Supportive & Gentle</div>
-                        <div class="ai-persona-desc">Motivates you even when expenses are high. Encouraging and kind.
+                        <div class="ai-persona-name">Supportive</div>
+                        <div class="ai-persona-desc">Encouraging and kind, even in a month with high spending.
                         </div>
                     </div>
                 </div>
                 <div class="ai-persona-card" onclick="setAIAdvisorPersona('balanced')">
                     <div class="ai-persona-emoji">@ruler@</div>
                     <div>
-                        <div class="ai-persona-name">Balanced Professional</div>
-                        <div class="ai-persona-desc">Mix of encouragement and practical advice. Default mode.</div>
+                        <div class="ai-persona-name">Balanced</div>
+                        <div class="ai-persona-desc">Encouragement with practical advice. This is the default.</div>
                     </div>
                 </div>
                 <div class="ai-persona-card" onclick="setAIAdvisorPersona('strict')">
                     <div class="ai-persona-emoji">@user@</div>
                     <div>
-                        <div class="ai-persona-name">Strict Financial Advisor</div>
-                        <div class="ai-persona-desc">Blunt, direct advice. Calls out overspending harshly.</div>
+                        <div class="ai-persona-name">Strict</div>
+                        <div class="ai-persona-desc">Direct and firm. Points out overspending plainly.</div>
                     </div>
                 </div>
                 <div class="ai-persona-card" onclick="setAIAdvisorPersona('aggressive')">
                     <div class="ai-persona-emoji">@sparkles@</div>
                     <div>
-                        <div class="ai-persona-name">Aggressive Wealth Builder</div>
-                        <div class="ai-persona-desc">Pushes you hard to maximize savings and cut all waste.</div>
+                        <div class="ai-persona-name">Growth-focused</div>
+                        <div class="ai-persona-desc">Pushes you to save more and cut every avoidable cost.</div>
                     </div>
                 </div>
             </div>
@@ -8046,7 +8044,7 @@
             } catch (_) {}
             console.error('Sign-in failed:', err);
             wfAuthShowError(err, diag);
-            try { notify('Sign-in failed: ' + ((err && err.message) || (err && err.code) || 'unknown'), 'error'); } catch (_) {}
+            try { notify('Sign-in did not complete (' + ((err && err.message) || (err && err.code) || 'no details') + '). Please try again.', 'error'); } catch (_) {}
         }
 
         function signInWithGoogle() {
@@ -8383,8 +8381,8 @@
                     + ' ' + key + ' records — no bulk removal was announced. The rows are kept.');
                 try {
                     if (typeof notify === 'function') {
-                        notify('Something tried to remove ' + _gone.length + ' of your ' + key
-                            + ' records at once. That was blocked and nothing was deleted.', 'error');
+                        notify('WealthFlow blocked a change that would have removed ' + _gone.length + ' of your ' + key
+                            + ' records at once. Nothing was deleted.', 'error');
                     }
                 } catch (_) {}
                 // Hand back everything: the new array plus the rows that vanished.
@@ -8990,7 +8988,7 @@
                         try {
                             if (typeof notify === 'function') {
                                 notify('This device is out of storage, so changes are not being saved '
-                                    + 'on the phone. They are still syncing to your account. Free some '
+                                    + 'on this device. They are still syncing to your account. Free some '
                                     + 'space, or export and clear old statements.', 'error');
                             }
                         } catch (_) {}
@@ -9516,7 +9514,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (!done) {
                 try { const ta = document.createElement('textarea'); ta.value = payload; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done = true; } catch (_) {}
             }
-            try { if (typeof notify === 'function') notify(done ? 'Diagnostics copied — paste it to me and I\'ll pinpoint the cause.' : 'Couldn\'t copy automatically — open the console and run _wfCrashReport().', done ? 'success' : 'warn'); } catch (_) {}
+            try { if (typeof notify === 'function') notify(done ? 'Diagnostics copied to your clipboard.' : 'Diagnostics could not be copied automatically. Open the browser console and run _wfCrashReport() instead.', done ? 'success' : 'warn'); } catch (_) {}
             try { if (btn) { const o = btn.textContent; btn.textContent = done ? 'Copied @info@' : 'Copy failed'; setTimeout(() => { btn.textContent = o; }, 1800); } } catch (_) {}
         };
         // v7.44.0 — let the user wipe the diagnostics log (also runs automatically on
@@ -9864,7 +9862,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
          * paints: the caller repaints every surface once this resolves.
          */
         async function forceSyncFromCloud() {
-            if (!userDocRef) { notify('Not connected to cloud.', 'error'); return { ok: false, pulled: false }; }
+            if (!userDocRef) { notify('Not connected to your cloud account. Sign in again to sync.', 'error'); return { ok: false, pulled: false }; }
             setSyncStatus('syncing');
             let pulled = false;
             try {
@@ -9900,7 +9898,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     setSyncStatus('online');
                     lastSyncTime = Date.now();
                     console.log('[SYNC] @checkCircle@ Force-pulled from cloud');
-                    notify('Synced — showing the latest from all your devices', 'success');
+                    notify('Synced. Showing the latest data from all your devices.', 'success');
                     /* THE RE-RENDER USED TO LIVE HERE, and it covered the active
                      * page and two badges. It has moved to refreshAllSurfaces(),
                      * which the only caller runs after this resolves: this
@@ -9915,7 +9913,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                      * of the session with nothing coming. There is nothing to
                      * pull, and saying so is the honest end of the cycle. */
                     setSyncStatus(navigator.onLine ? 'online' : 'offline');
-                    notify('Nothing in the cloud for this account yet — this device is the source.', 'info');
+                    notify('Nothing is saved in the cloud for this account yet, so this device holds your data.', 'info');
                 }
             } catch (err) {
                 console.error('[SYNC] @x@ Force pull failed:', err);
@@ -9924,10 +9922,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 // keeps us synced — so don't scare the user with a false "Offline".
                 if (navigator.onLine) {
                     setSyncStatus('online');
-                    notify('Sync had a brief hiccup — your data is safe and still live.', 'warn');
+                    notify('Sync was interrupted briefly. Your data is safe and live updates continue.', 'warn');
                 } else {
                     setSyncStatus('offline');
-                    notify('Offline — changes will sync automatically when you reconnect.', 'error');
+                    notify('You are offline. Changes will sync automatically when you reconnect.', 'error');
                 }
                 return { ok: false, pulled: false };
             }
@@ -10432,7 +10430,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             $('authScreen').classList.add('show');
             pinMode = 'login';
             showAuthView('authLogin');
-            notify('Session locked due to inactivity.', 'info');
+            notify('WealthFlow locked after a period of inactivity.', 'info');
         }
 
         // ===== passcode-free entry — signed in with Google, on ANY device =====
@@ -10471,7 +10469,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         function toggleSkipLock(on) {
             if (typeof on !== 'boolean') on = !_skipLockEnabled();
             if (!on) return _applySkipLock(false);
-            showConfirm('', 'Turn on passcode-free entry?', 'Signed in with Google, WealthFlow will open without a passcode on every device. Anyone who can open it on a device signed in to your account will see your data. The passcode still protects the vault and Change PIN.', 'btn-primary', 'Turn ON', () => _applySkipLock(true));
+            showConfirm('', 'Turn on PIN-free entry?', 'WealthFlow will open without asking for your PIN on every device signed in with Google. Anyone who can open it on those devices will see your data. Your PIN still protects the vault and Change PIN.', 'btn-primary', 'Turn on', () => _applySkipLock(true));
         }
         function _syncSkipLockUI() {
             const button = document.getElementById('skipLockToggle');
@@ -10488,8 +10486,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             try { const auth = DB.getObj('auth') || {}; auth.skipLock = !!on; DB.set('auth', auth); } catch (_) {}   // explicit false: a stale true on another device must lose
             finally { window._wfSettingsAtomicWrite = false; }
             _syncSkipLockUI();
-            notify(on ? 'Passcode-free entry ON — signed in with Google, WealthFlow opens straight to your dashboard on every device.'
-                : 'Passcode-free entry OFF — your passcode / biometric is required to enter again.', on ? 'success' : 'info');
+            notify(on ? 'PIN-free entry is on. WealthFlow opens straight to your dashboard on every device signed in with Google.'
+                : 'PIN-free entry is off. WealthFlow asks for your PIN or biometrics again.', on ? 'success' : 'info');
         }
 
         // ==================== AI ENGINE (Multi-Provider: Vercel → Gemini → Groq → DeepSeek) ====================
@@ -13463,7 +13461,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         scheduleAINotifications();
                         sendSmartNotification('WealthFlow', "You're all set — I'll keep you posted right here. @wallet@");
                     } else {
-                        notify('Notifications are blocked. Enable them in your browser/OS settings to get reminders.', 'info');
+                        notify('Notifications are blocked. Allow them in your browser or device settings to get reminders.', 'info');
                     }
                 } else if (Notification.permission === 'granted') {
                     if ('serviceWorker' in navigator) await navigator.serviceWorker.ready.catch(() => {});
@@ -13712,7 +13710,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         // Central token requester — sets the phase so the async error handler knows
         // how to escalate. interactive=false → silent (no UI); true → consent popup.
         function _wfDriveRequestToken(interactive) {
-            if (typeof tokenClient === 'undefined' || !tokenClient) { notify('Google Services failing to load. Check connection.', 'error'); return; }
+            if (typeof tokenClient === 'undefined' || !tokenClient) { notify('Google sign-in could not load. Check your connection and try again.', 'error'); return; }
             _wfDriveAuthPhase = interactive ? 'interactive' : 'silent';
             const opts = interactive ? { prompt: 'consent' } : { prompt: '' };
             if (window.currentUser && window.currentUser.email) opts.login_hint = window.currentUser.email;
@@ -14348,7 +14346,7 @@ function _wfBeginDriveAuthStart() {
                 'btn-primary', 'Approve Google Drive', function () { _wfRedirectToGoogleForCode(); });
         } else if (tries > 120) {                                 // ~60s
             clearInterval(iv);
-            try { notify('Please sign in to WealthFlow with the same account, then tap Connect again.', 'warn'); } catch (_) {}
+            try { notify('Please sign in to WealthFlow with the same account, then tap Connect via browser again.', 'warn'); } catch (_) {}
         }
     }, 500);
 }
@@ -14407,7 +14405,7 @@ async function _wfCompleteDriveAuthCallback(code, state) {
             if (typeof userDocRef !== 'undefined' && userDocRef) {
                 userDocRef.update(relay)
                     .then(function () { try { notify('Google Drive connected — your app will stay connected. You can return to WealthFlow now.', 'success'); } catch (_) {} })
-                    .catch(function () { try { userDocRef.set(relay, { merge: true }); notify('Google Drive connected. Return to WealthFlow now.', 'success'); } catch (_) {} });
+                    .catch(function () { try { userDocRef.set(relay, { merge: true }); notify('Google Drive connected. You can return to WealthFlow now.', 'success'); } catch (_) {} });
             }
             return;
         }
@@ -14530,7 +14528,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             //    escalates to an interactive consent popup, then to the browser
             //    bridge. This replaces the old silent-only call that failed
             //    asynchronously with no fallback and no message.
-            notify('@cloud@ Connecting to Google Drive…', 'info');
+            notify('Connecting to Google Drive…', 'info');
             _wfDriveRequestToken(false);
         }
 
@@ -14746,14 +14744,14 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     : empty ? 'There is nothing to back up yet.' : 'Backup failed: ' + reason;
                 _wfBkEnd(R, ok || empty, msg);
                 if (!silent) {
-                    if (ok) { notify('@checkCircle@ ' + msg, haveRp && (!drive || drive.ok) ? 'success' : 'warn'); triggerHaptic('success'); }
+                    if (ok) { notify(msg, haveRp && (!drive || drive.ok) ? 'success' : 'warn'); triggerHaptic('success'); }
                     else notify(msg, empty ? 'info' : 'error');
                 }
                 _wfRefreshBackupState(true);
                 return ok;
             } catch (e) {
                 console.error('[backupNow]', e);
-                const msg = 'Backup failed: ' + ((e && e.message) || 'unknown error');
+                const msg = 'Backup failed: ' + ((e && e.message) || 'please try again');
                 _wfBkEnd(R, false, msg);
                 if (!silent) notify(msg, 'error');
                 return false;
@@ -14789,7 +14787,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             try { ok = await executeDriveBackup(R.P); } catch (_) {}
             const msg = ok ? 'Backup complete · Google Drive verified' : 'Drive backup did not complete. ' + (B ? B.driveReasonText(_wfLastDriveOutcome && _wfLastDriveOutcome.reason) : '');
             _wfBkEnd(R, ok, msg);
-            if (ok) { notify('@checkCircle@ ' + msg, 'success'); triggerHaptic('success'); }
+            if (ok) { notify(msg, 'success'); triggerHaptic('success'); }
             else notify(msg, 'error');
         }
 
@@ -14809,7 +14807,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const st = _wfBackupStateNow(), rp = (st.rps && st.rps[0]) || null, status = st.status;
             const lad = s.lastDriveBackup && s.lastDriveBackup.verified ? s.lastDriveBackup : null;
             let when;
-            if (!last) when = 'No backup yet — tap "Backup Now" to make the first one.';
+            if (!last) when = 'No backup yet. Tap "Back up now" to make the first one.';
             else {
                 const d = new Date(last);
                 when = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }) + ' <span style="color:var(--green);font-weight:600;">(' + _wfAgo(last) + ')</span>';
@@ -14828,7 +14826,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const driveState = status && status.drive ? { ok: !!status.drive.ok, reason: status.drive.reason } : (lad ? { ok: true } : null);
             const v = B ? B.describeBackup({ freq, lastGoodMs: last, rp, drive: driveState, attempt }) : { lines: [] };
             const col = (l) => l === 'bad' ? 'var(--red)' : l === 'warn' ? 'var(--amber,#f59e0b)' : 'var(--text3)';
-            return '<div style="font-weight:700;font-size:14px;color:var(--text);">Last Backup</div>'
+            return '<div style="font-weight:700;font-size:14px;color:var(--text);">Last backup</div>'
                 + '<div style="font-size:12px;color:var(--text3);margin-top:2px;">' + when + '</div>'
                 + '<div style="font-size:11px;color:var(--text3);margin-top:4px;">' + bits.join(' · ') + '</div>'
                 + v.lines.map((l) => '<div style="font-size:11px;margin-top:4px;font-weight:' + (l.level === 'info' ? 400 : 700) + ';color:' + col(l.level) + ';">' + _wfEsc(l.text) + '</div>').join('');
@@ -14995,7 +14993,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const type = _WF_DRIVE_TYPE_MAP[inputId] || 'ccot';
             try {
                 if (typeof google === 'undefined' || !tokenClient) {
-                    notify('Google Drive isn\'t ready yet — please try again in a moment.', 'warning'); return;
+                    notify('Google Drive is not ready yet — please try again in a moment.', 'warning'); return;
                 }
                 // v7.54.0 — when the user has enabled the clean, thumbnail-free browser,
                 // use it (drive.readonly). It requests its token from THIS tap (so the
@@ -15004,7 +15002,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 if (_scanSetting('driveCleanBrowser', false)) { _wfOpenDriveBrowser(inputId, type); return; }
                 notify('Connecting to Google Drive…', 'info');
                 const token = await _wfDriveToken(true);
-                if (!token) { notify('Couldn\'t connect to Google Drive. Please try again.', 'error'); return; }
+                if (!token) { notify('Could not connect to Google Drive. Please try again.', 'error'); return; }
                 await Promise.all([_wfEnsurePicker(), _wfLoadDriveConfig()]);
                 _wfShowDrivePicker(token, inputId, type);
             } catch (e) {
@@ -15076,7 +15074,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 return;
             }
             if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
-                notify('Google Drive isn\'t ready yet — please try again in a moment.', 'warning'); return;
+                notify('Google Drive is not ready yet — please try again in a moment.', 'warning'); return;
             }
             notify('Requesting Google Drive read access…', 'info');
             _wfDriveReadonlyToken(true).then(tok => {
@@ -15086,7 +15084,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     try { triggerHaptic('success'); } catch (_) {}
                     notify('Clean Drive browser enabled — folders and files, newest first, no thumbnails.', 'success');
                 } else {
-                    notify('Couldn\'t enable it. Add the "drive.readonly" scope to this app\'s Google Cloud consent screen, then try again. The Google picker still works meanwhile.', 'error');
+                    notify('Could not enable it. Add the "drive.readonly" scope to this app\'s Google Cloud consent screen, then try again. The Google picker still works meanwhile.', 'error');
                 }
             });
         }
@@ -15212,10 +15210,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         notify('Drive session expired — reconnecting…', 'info');
                         _wfDriveReadonlyToken(true).then(tok => {
                             if (tok && _wfBrowse) { _wfBrowse.token = tok; _wfBrowseLoad(append); }
-                            else { _wfCloseDriveBrowser(); notify('Couldn\'t reconnect — opening Google\'s picker instead.', 'warning'); _wfPickerFallback(inp, ty); }
+                            else { _wfCloseDriveBrowser(); notify('Could not reconnect — opening Google\'s picker instead.', 'warning'); _wfPickerFallback(inp, ty); }
                         });
                     } else {
-                        notify('Couldn\'t open that folder. Please try again.', 'error');
+                        notify('Could not open that folder. Please try again.', 'error');
                         _wfRenderBrowser();
                     }
                 });
@@ -15238,11 +15236,11 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (run) run.handoff();
                     _wfRouteFileToInput(file, inputId, type);
                 })
-                .catch(err => { if (run) run.end(); console.error('[Drive browser download]', err); notify('Couldn\'t download that file from Drive. Please try again.', 'error'); });
+                .catch(err => { if (run) run.end(); console.error('[Drive browser download]', err); notify('Could not download that file from Drive. Please try again.', 'error'); });
         }
         function _wfPickerFallback(inputId, type) {
             _wfDriveToken(true).then(token => {
-                if (!token) { notify('Couldn\'t connect to Google Drive. Please use Upload File instead.', 'error'); return; }
+                if (!token) { notify('Could not connect to Google Drive. Please use Upload File instead.', 'error'); return; }
                 Promise.all([_wfEnsurePicker(), _wfLoadDriveConfig()]).then(() => _wfShowDrivePicker(token, inputId, type))
                     .catch(() => notify('Google Drive is unavailable right now — please use Upload File.', 'error'));
             });
@@ -15298,7 +15296,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 }, 50);
             } catch (e) {
                 console.error('[Drive picker]', e);
-                notify('Couldn\'t open the Google Drive picker. Please use Upload File instead.', 'error');
+                notify('Could not open the Google Drive picker. Please use Upload File instead.', 'error');
             }
         }
 
@@ -15355,7 +15353,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             } catch (e) {
                 if (run) run.end();
                 console.error('[Drive download]', e);
-                notify('Couldn\'t download that file from Drive. Please try again.', 'error');
+                notify('Could not download that file from Drive. Please try again.', 'error');
             }
         }
 
@@ -15379,9 +15377,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 if (typeof window.handleAIScan === 'function') {
                     window.handleAIScan({ target: { files: [file], value: '' } }, type);
                 } else {
-                    notify('Couldn\'t hand the file to the scanner. Please use Upload File.', 'error');
+                    notify('Could not hand the file to the scanner. Please use Upload File.', 'error');
                 }
-            } catch (e) { console.error('[Drive route]', e); notify('Couldn\'t process the Drive file.', 'error'); }
+            } catch (e) { console.error('[Drive route]', e); notify('Could not process the Drive file.', 'error'); }
         }
         window._wfDriveImport = _wfDriveImport;
 
@@ -15849,7 +15847,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     appData.expenses = [{ id: 'de1', desc: 'Groceries', cat: 'Food & Groceries', amount: 15000, month: new Date().toISOString().substr(0, 7), recurring: '1' }];
                     appData.balance = { total: 250000, flows: [] };
                     launchApp();
-                    notify('Welcome back! @user@', 'success');
+                    notify('Welcome back.', 'success');
                     return;
                 }
 
@@ -15902,7 +15900,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                     try { localStorage.setItem('wf2_auth', JSON.stringify(appData.auth)); } catch (_) {}
                                     pinMode = 'login'; pinTemp = '';
                                     buildDots('loginDots', 6, 0);
-                                    notify('Welcome back — please enter your existing PIN.', 'info');
+                                    notify('Welcome back. Please enter your existing PIN.', 'info');
                                     showAuthView('authLogin');
                                     return;
                                 }
@@ -15935,7 +15933,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         auth.pin = hash;
                         DB.set('auth', auth);
                         pinMode = 'login'; pinTemp = '';
-                        notify('PIN changed successfully! @lock@', 'success');
+                        notify('PIN changed.', 'success');
                         // ISSUE 4 FIX — If we got here via recovery flow, user is already
                         // authenticated via magic link. Launch app directly.
                         if (window._inRecoveryMode === true) {
@@ -16054,7 +16052,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const cust = $('customQ')?.value?.trim();
             const ans = $('secAns').value.trim();
             let q = sel; if (sel === 'Custom question') q = cust;
-            if (!q || !ans) { $('secQErr').textContent = 'Please fill in all fields.'; return; }
+            if (!q || !ans) { $('secQErr').textContent = 'Please complete all fields.'; return; }
 
             const hash = await sha256(ans.toLowerCase() + 'wf_ans_sg');
             const code = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
@@ -16085,7 +16083,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
         function confirmRecovSaved() {
             showAuthView('authLogin');
-            notify('Setup complete! Welcome to WealthFlow @sparkles@', 'success');
+            notify('Setup complete. Welcome to WealthFlow.', 'success');
         }
 
         // ==================== ADVANCED MULTI-METHOD RECOVERY (Issue 1 — UPGRADED) ====================
@@ -16150,7 +16148,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const data = await response.json();
 
                 if (!response.ok) {
-                    throw new Error(data.error || 'Failed to send OTP email. Contact support or use alternative recovery.');
+                    throw new Error(data.error || 'The verification email could not be sent. Please try another recovery method.');
                 }
 
                 sessionStorage.setItem('wf_otp_hash', data.hash);
@@ -16163,7 +16161,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 $('recovOtpStep1').style.display = 'none';
                 $('recovOtpStep2').style.display = 'block';
                 $('recovErr').textContent = '';
-                notify('OTP sent to ' + email + ' @mail@', 'success');
+                notify('Verification code sent to ' + email + '.', 'success');
             } catch (err) {
                 console.error('[Recovery] Failed:', err);
                 $('recovErr').textContent = '@x@ ' + (err.message || 'Could not send code.');
@@ -16184,7 +16182,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const expiresAt = sessionStorage.getItem('wf_otp_expires');
 
             if (!hash || !expiresAt) {
-                $('recovErr').textContent = '@x@ No active code session. Please request a new code.';
+                $('recovErr').textContent = '@x@ This code is no longer active. Please request a new one.';
                 return;
             }
 
@@ -16205,7 +16203,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 sessionStorage.removeItem('wf_otp_expires');
 
                 $('recovErr').style.color = 'var(--green)';
-                $('recovErr').textContent = '@checkCircle@ Verified! Set your new PIN…';
+                $('recovErr').textContent = '@checkCircle@ Verified. Set your new PIN.';
                 setTimeout(() => proceedToNewPin(), 600);
             } catch (err) {
                 console.error('[Recovery] OTP verify failed:', err);
@@ -16228,7 +16226,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
             try {
                 if (typeof firebase === 'undefined' || !firebase.auth) {
-                    $('recovErr').textContent = 'Email recovery requires online connection. Try other methods.';
+                    $('recovErr').textContent = 'Email recovery needs an internet connection. Connect and try again, or use another method.';
                     return;
                 }
                 const actionCodeSettings = {
@@ -16239,8 +16237,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 window._persistRaw('wf_recov_email', emailIn);
                 window._persistRaw('wf_last_email', emailIn);
                 $('recovErr').style.color = 'var(--green)';
-                $('recovErr').textContent = '@checkCircle@ Recovery link sent! Check your inbox (and spam folder). Open the link on this device.';
-                notify('Recovery email sent! @mail@', 'success');
+                $('recovErr').textContent = '@checkCircle@ Recovery link sent. Check your inbox and spam folder, and open the link on this device.';
+                notify('Recovery email sent.', 'success');
                 setTimeout(() => { $('recovErr').style.color = ''; }, 5000);
             } catch (err) {
                 console.error('[Recovery] Email send failed:', err);
@@ -16269,11 +16267,11 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 });
                 if (credential) {
                     $('recovErr').style.color = 'var(--green)';
-                    $('recovErr').textContent = '@checkCircle@ Biometric verified — proceeding to set new PIN…';
+                    $('recovErr').textContent = '@checkCircle@ Biometrics verified. Set your new PIN.';
                     setTimeout(() => proceedToNewPin(), 800);
                 }
             } catch (err) {
-                $('recovErr').textContent = '@x@ Biometric check cancelled or failed: ' + err.message;
+                $('recovErr').textContent = '@x@ The biometric check was cancelled or did not succeed: ' + err.message;
             }
         }
 
@@ -16598,7 +16596,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const code = $('recovCode').value.trim().toUpperCase();
             const auth = DB.getObj('auth');
 
-            if (!auth.secQ) { $('recovErr').textContent = 'No security question set up.'; return; }
+            if (!auth.secQ) { $('recovErr').textContent = 'No security question has been set up.'; return; }
 
             const ansHash = await sha256(ans + 'wf_ans_sg');
             const codeHash = await sha256(code + 'wf_code_sg');
@@ -16615,18 +16613,18 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
         async function changePin() {
             const curr = $('cp_current').value, nw = $('cp_new').value, conf = $('cp_confirm').value;
-            if (nw.length !== 6) { $('cp_err').textContent = 'PIN must be 6 digits'; return; }
-            if (nw !== conf) { $('cp_err').textContent = 'New PINs do not match'; return; }
+            if (nw.length !== 6) { $('cp_err').textContent = 'Your PIN must be 6 digits.'; return; }
+            if (nw !== conf) { $('cp_err').textContent = 'The new PINs do not match.'; return; }
             const auth = DB.getObj('auth');
             const currHash = await sha256(curr + 'wf_salt_sg2026');
-            if (currHash !== auth.pin) { $('cp_err').textContent = 'Current PIN is incorrect'; return; }
+            if (currHash !== auth.pin) { $('cp_err').textContent = 'Your current PIN is incorrect.'; return; }
             const newHash = await sha256(nw + 'wf_salt_sg2026');
             auth.pin = newHash;
             auth._pinChangedAt = Date.now(); // Timestamp for forcing logout on other devices
             DB.set('auth', auth); // Pushes to cloud → other devices detect PIN change via onSnapshot
             closeModal('mdChangePin');
             $('cp_current').value = ''; $('cp_new').value = ''; $('cp_confirm').value = ''; $('cp_err').textContent = '';
-            notify('PIN changed on ALL devices! All other sessions will be logged out. @lock@', 'success');
+            notify('PIN changed. All other devices will be signed out.', 'success');
         }
 
         // Switch to a different Google account
@@ -16698,7 +16696,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         async function registerBiometrics() {
             const available = await isBiometricAvailable();
             if (!available) {
-                notify('Biometrics not available on this device. Make sure FaceID/TouchID/Windows Hello is enabled in your system settings.', 'error');
+                notify('Biometrics are not available on this device. Check that Face ID, Touch ID or Windows Hello is turned on in your device settings.', 'error');
                 return;
             }
             try {
@@ -16755,7 +16753,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const bioBtn = $('biometricBtn');
                 if (bioBtn) bioBtn.style.display = '';
 
-                notify('Biometrics registered on THIS device! @sparkles@', 'success');
+                notify('Biometrics registered on this device.', 'success');
                 triggerHaptic('success');
                 renderSettings();
             } catch (err) {
@@ -16763,9 +16761,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 if (err.name === 'NotAllowedError') {
                     notify('Biometric registration was cancelled.', 'warn');
                 } else if (err.name === 'SecurityError') {
-                    notify('Security error. Make sure you are using HTTPS.', 'error');
+                    notify('A security check failed. Open WealthFlow over a secure (https) connection and try again.', 'error');
                 } else {
-                    notify('Biometric registration failed: ' + err.message, 'error');
+                    notify('Biometric registration did not complete: ' + err.message, 'error');
                 }
             }
         }
@@ -16773,13 +16771,13 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         async function loginWithBiometrics() {
             const bio = getDeviceBiometric();
             if (!bio || !bio.rawId) {
-                notify('No biometric key registered on this device. Go to Settings to register.', 'warn');
+                notify('No biometric key is registered on this device. Register one in Settings.', 'warn');
                 return;
             }
 
             const available = await isBiometricAvailable();
             if (!available) {
-                notify('Biometric hardware not available on this device.', 'error');
+                notify('This device has no biometric hardware available.', 'error');
                 return;
             }
 
@@ -16842,9 +16840,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 if (err.name === 'NotAllowedError') {
                     notify('Biometric verification cancelled. Use your PIN instead.', 'warn');
                 } else if (err.name === 'InvalidStateError') {
-                    notify('No matching biometric key found. Re-register via Settings.', 'warn');
+                    notify('No matching biometric key was found. Register it again in Settings.', 'warn');
                 } else {
-                    notify('Biometric failed: ' + (err.message || err.name || 'unknown') + '. Please use PIN.', 'warn');
+                    notify('Biometric sign-in did not work (' + (err.message || err.name || 'no details') + '). Please use your PIN.', 'warn');
                 }
             }
         }
@@ -17243,7 +17241,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                                             $('authScreen').classList.add('show');
                                                             pinMode = 'login';
                                                             showAuthView('authLogin');
-                                                            notify('PIN changed from another device. Please re-login with the new PIN.', 'warn');
+                                                            notify('Your PIN was changed on another device. Please sign in again with the new PIN.', 'warn');
                                                         }
                                                         return;
                                                     }
@@ -17435,7 +17433,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (auth.pin) {
                         pinMode = 'login';
                         showAuthView('authLogin');
-                        notify('@checkCircle@ Signed in with Google — please enter your PIN', 'success');
+                        notify('Signed in with Google. Please enter your PIN.', 'success');
                     } else {
                         // Local has no PIN — but an existing user on a new device / after a
                         // cache clear has it in the CLOUD, not here yet. Resolve against the
@@ -17519,9 +17517,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         if (window._inRecoveryMode === true) {
                             pinMode = 'newpin';
                             pinTemp = '';
-                            if ($('newPinSub')) $('newPinSub').textContent = '@lock@ Email verified. Set a NEW 6-digit PIN to recover access.';
+                            if ($('newPinSub')) $('newPinSub').textContent = '@lock@ Email verified. Set a new 6-digit PIN to recover access.';
                             showAuthView('authNewPin');
-                            notify('@checkCircle@ Email verified — please set a new PIN', 'success');
+                            notify('Email verified. Please set a new PIN.', 'success');
                             return;
                         }
 
@@ -17697,7 +17695,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
             // Use dynamic user name from Firebase Auth
             const firstName = currentUser ? (currentUser.displayName || 'there').split(' ')[0] : 'there';
-            notify(`${greeting}, ${firstName}! Checking your daily schedule...`, 'info');
+            notify(`${greeting}, ${firstName}. Checking today\'s schedule…`, 'info');
 
             setTimeout(() => {
                 const income = DB.get('income');
@@ -17708,14 +17706,14 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const payday = income.find(i => i.monthly > 0);
                 if (payday) {
                     const templates = [
-                        `Today is payday! LKR ${fmtN(payday.monthly)} from ${_wfEsc(payday.name)} is scheduled to arrive.`,
-                        `Your investment in ${_wfEsc(payday.name)} matures yielding LKR ${fmtN(payday.monthly)}. Great job!`,
-                        `Reminder: LKR ${fmtN(payday.monthly)} return expected today from ${_wfEsc(payday.name)}.`
+                        `LKR ${fmtN(payday.monthly)} from ${_wfEsc(payday.name)} is scheduled to arrive today.`,
+                        `Your investment in ${_wfEsc(payday.name)} is due to pay LKR ${fmtN(payday.monthly)} today.`,
+                        `LKR ${fmtN(payday.monthly)} is expected today from ${_wfEsc(payday.name)}.`
                     ];
                     const msg = templates[Math.floor(Math.random() * templates.length)];
                     notify(msg, 'success');
                 } else {
-                    notify('No major inflows scheduled for today. Keep pushing!', 'info');
+                    notify('No payments are scheduled to arrive today.', 'info');
                 }
             }, 2500);
         }
@@ -17794,7 +17792,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const now = Date.now();
             const days = Math.floor((now - lastMs) / (1000 * 86400));
             if (days >= 14) {
-                setTimeout(() => notify(`@alert@ It has been ${days} days since your last backup. Tap Backup Now in Settings, or turn on the Auto-Backup Schedule.`, 'warn'), 3000);
+                setTimeout(() => notify(`It has been ${days} days since your last backup. Tap Back up now in Settings, or turn on the Auto-Backup Schedule.`, 'warn'), 3000);
             }
         }
 
@@ -17841,7 +17839,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     /* AWAITED. This one word is most of the bug. */
                     await forceSyncFromCloud();
                 } else {
-                    notify('Offline — showing what is on this device. It will sync when you reconnect.', 'warn');
+                    notify('Offline. Showing what is on this device. It will sync when you reconnect.', 'warn');
                 }
                 /* REPAINTED WHETHER OR NOT THE PULL FOUND ANYTHING NEW. A
                  * refresh that only repaints when the cloud differs is a
@@ -17850,7 +17848,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 refreshAllSurfaces();
             } catch (e) {
                 console.error('[REFRESH] failed:', e);
-                notify('Could not refresh — your data is safe on this device.', 'error');
+                notify('Could not refresh. Your data is safe on this device.', 'error');
             } finally {
                 const spent = Date.now() - started;
                 const rest = Math.max(0, REFRESH_MIN_SPIN_MS - spent);
@@ -18231,11 +18229,11 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             triggerHaptic('success');
             const plat = _detectHapticPlatform();
             if (plat === 'ios') {
-                notify('Tapped! On iPhone, haptics need iOS 17.4+ and feel strongest in the installed app (Add to Home Screen).', 'info');
+                notify('On iPhone, haptics need iOS 17.4 or later and feel strongest in the installed app (Add to Home Screen).', 'info');
             } else if (plat === 'android') {
-                notify('Feel that buzz? @sparkles@', 'info');
+                notify('Haptic feedback is on.', 'info');
             } else {
-                notify('Haptics are a phone feature — on desktop you\'ll see a subtle visual pulse instead.', 'info');
+                notify('Haptics are a phone feature. On a computer you will see a subtle visual pulse instead.', 'info');
             }
         }
         window._testHaptic = _testHaptic;
@@ -18655,7 +18653,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     <button aria-label="Remove this account" class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
                 </div>`).join('');
             triggerHaptic('delete');
-            notify('Entry removed from suggestions', 'info');
+            notify('Removed from suggestions.', 'info');
         }
 
         // Close all dropdowns when clicking outside
@@ -18689,7 +18687,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     verifyBiometricZone().then(ok => {
                         if (ok) _proceedShowPage(name, navEl);
                         else {
-                            notify('Biometric verification failed. Access Denied.', 'error');
+                            notify('Biometric verification failed. Access was not granted.', 'error');
                             triggerHaptic('error');
                         }
                     });
@@ -18816,7 +18814,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             try {
                 if (localStorage.getItem('wf_theme_reverted')) {
                     localStorage.removeItem('wf_theme_reverted');
-                    setTimeout(function () { try { if (typeof notify === 'function') notify('Switched back to Dark mode — Light mode caused a display problem on this device.', 'warn'); } catch (_) {} }, 2500);
+                    setTimeout(function () { try { if (typeof notify === 'function') notify('Switched back to dark mode, because light mode caused a display problem on this device.', 'warn'); } catch (_) {} }, 2500);
                 }
             } catch (_) {}
             if ($('themeBtn')) $('themeBtn').innerHTML = settings.theme === 'dark' ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>' : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>';
@@ -21791,7 +21789,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 console.error('[Share] Error:', e);
                 const msg = (e && e.message) || 'Unknown error';
                 if (msg === 'SHARE_ALL_FAILED' || /all_hosts_failed/.test(msg)) {
-                    notify('@alert@ Couldn\'t create the share link right now (network busy). Sharing the summary as text instead — or tap @link@ Share again in a moment.', 'warning');
+                    notify('@alert@ Could not create the share link right now (network busy). Sharing the summary as text instead — or tap @link@ Share again in a moment.', 'warning');
                 } else {
                     notify('@alert@ Could not generate link: ' + msg + '. Sharing summary as text instead.', 'warning');
                 }
@@ -30048,7 +30046,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             _stHost.innerHTML = `
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(212,175,55,0.05), var(--card)); border: 1px solid var(--accent); position:relative; overflow:hidden;">
             <div style="position:absolute;top:-20px;right:-20px;font-size:80px;opacity:0.05;">${(window.WFIcon ? WFIcon('user') : '')}</div>
-            <div class="settings-title" style="color:var(--accent);">Account & Identity</div>
+            <div class="settings-title" style="color:var(--accent);">Account</div>
             <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
                 ${userPhoto ? `<img src="${userPhoto}" alt="" data-fallback="user" onerror="_wfAvatarFail(this)" style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);object-fit:cover;">` : '<div style="width:48px;height:48px;border-radius:50%;background:var(--card3);display:flex;align-items:center;justify-content:center;font-size:24px;">' + _ic('user') + '</div>'}
                 <div>
@@ -30077,17 +30075,17 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--accent);">Appearance & Experience</div>
+            <div class="settings-title" style="color:var(--accent);">Appearance</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Dark Theme</div><div class="setting-desc">Switch between Light and Dark aesthetic modes.</div></div>
+                <div class="setting-info"><div class="setting-label">Dark theme</div><div class="setting-desc">Switch between light and dark appearance.</div></div>
                 ${settingSwitch('theme', s.theme === 'dark', '', 'toggleTheme(this)')}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Haptic Feedback</div><div class="setting-desc">Enable luxury vibration patterns for physical interactions. No sound — pure vibration.</div></div>
+                <div class="setting-info"><div class="setting-label">Haptic feedback</div><div class="setting-desc">Gentle vibration when you tap, confirm or receive an alert. No sound.</div></div>
                 ${settingSwitch('haptics', !!s.haptics)}
             </div>
             <div class="setting-row" data-setting-dependent="haptics" ${s.haptics ? 'aria-hidden="false"' : 'hidden aria-hidden="true"'} style="padding-left:24px; border-left:3px solid var(--accent);">
-                <div class="setting-info"><div class="setting-label">Haptic Intensity</div><div class="setting-desc">How strong each vibration feels. The pattern stays the same at every level — only its strength changes.</div></div>
+                <div class="setting-info"><div class="setting-label">Haptic intensity</div><div class="setting-desc">How strong each vibration feels. Only the strength changes, not the pattern.</div></div>
                 <div style="display:flex;gap:8px;align-items:center;">
                     <!-- The stored value may still be the older gentle/intense
                          naming; hapticIntensity() resolves both, so the option
@@ -30102,11 +30100,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Compact Mode</div><div class="setting-desc">Reduce spacing for smaller screens and faster scanning.</div></div>
+                <div class="setting-info"><div class="setting-label">Compact layout</div><div class="setting-desc">Tighter spacing, so more fits on a small screen.</div></div>
                 ${settingSwitch('compactMode', !!s.compactMode)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Currency Display</div><div class="setting-desc">Primary currency for all financial displays.</div></div>
+                <div class="setting-info"><div class="setting-label">Display currency</div><div class="setting-desc">The main currency shown across WealthFlow.</div></div>
                 <select class="fi" style="width:120px; border-color:var(--border2);" onchange="toggleSetting('currency', this.value)">
                     <option value="LKR" ${s.currency === 'LKR' ? 'selected' : ''}>LKR — Sri Lanka</option>
                     <option value="USD" ${s.currency === 'USD' ? 'selected' : ''}>USD — United States</option>
@@ -30120,7 +30118,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- System Integration / Gemini API Key removed from UI per security best practice. Backend keys are managed via Vercel ENV. -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(66, 133, 244, 0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#4285F4;">AI Engine Status</div>
+            <div class="settings-title" style="color:#4285F4;">AI status</div>
             <div class="setting-row">
                 <div class="setting-info">
                     <div class="setting-label">AI services</div>
@@ -30131,16 +30129,16 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info">
-                    <div class="setting-label">Test AI Connection</div>
-                    <div class="setting-desc">Verify that your AI advisor is reachable. Useful when troubleshooting.</div>
+                    <div class="setting-label">Check AI connection</div>
+                    <div class="setting-desc">Confirm that the AI advisor can be reached. Useful if something seems wrong.</div>
                 </div>
-                <button class="btn btn-secondary btn-sm" onclick="testAIConnection()">${(window.WFIcon ? WFIcon('scan') : '')} Run Diagnostic</button>
+                <button class="btn btn-secondary btn-sm" onclick="testAIConnection()">${(window.WFIcon ? WFIcon('scan') : '')} Run check</button>
             </div>
         </div>
 
         <!-- ISSUE 3 FIX — AI Language & Voice settings -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#818cf8;">AI Intelligence &amp; Language</div>
+            <div class="settings-title" style="color:#818cf8;">AI and language</div>
             <!-- v7.10.0 — SMS Paste mount point. The wealthflow-sms-paste.js
                  module auto-injects the "Paste Bank SMS" banner here. -->
             <div id="wfSmsPasteMount" style="margin-bottom:14px;"></div>
@@ -30151,11 +30149,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div style="margin:4px 0 16px;padding:15px;border:1px solid var(--border2);border-radius:14px;background:linear-gradient(145deg,rgba(16,185,129,0.06),var(--card));">
                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
                     <span style="font-size:22px;">${(window.WFIcon ? WFIcon('fileText') : '')}</span>
-                    <div style="font-weight:800;font-size:15px;color:var(--text);">Statement Upload</div>
+                    <div style="font-weight:800;font-size:15px;color:var(--text);">Statement upload</div>
                 </div>
-                <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Upload a PDF or photo of a bank / card statement. The AI reads every line, finds the merchant, picks the right category &amp; tab, removes duplicates — then you can walk away while it files them.</div>
+                <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Upload a PDF or photo of a bank or card statement. WealthFlow reads every line, identifies the merchant, picks the category and tab, and skips duplicates. You can leave while it files them.</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button type="button" class="btn btn-primary btn-sm" style="flex:1;min-width:140px;" onclick="_triggerAIVisionUpload('ccot_ai_scan')">${(window.WFIcon ? WFIcon('upload') : '')} Upload Statement</button>
+                    <button type="button" class="btn btn-primary btn-sm" style="flex:1;min-width:140px;" onclick="_triggerAIVisionUpload('ccot_ai_scan')">${(window.WFIcon ? WFIcon('upload') : '')} Upload statement</button>
                     <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_wfDriveImport('ccot_ai_scan')"><i data-wfi="cloud"></i> From Drive</button>
                     <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_triggerAIVisionCapture('ccot_ai_scan')">${(window.WFIcon ? WFIcon('camera') : '')} Photo</button>
                 </div>
@@ -30169,34 +30167,34 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div style="margin:4px 0 16px;padding:15px;border:1px solid var(--border2);border-radius:14px;background:var(--card);">
                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
                     <span style="color:#d4af37;display:inline-flex;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg></span>
-                    <div style="font-weight:800;font-size:15px;color:var(--text);">Cards &amp; Accounts</div>
+                    <div style="font-weight:800;font-size:15px;color:var(--text);">Cards and accounts</div>
                 </div>
-                <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Register each card &amp; account to see live <b>outstanding balances, credit-limit utilization, spend and next-due dates</b> — and let WealthFlow <b>auto-file every charge to the correct tab</b> by its last-4 (a debit on a credit card goes to CC One-Time with its service charge; on a bank account it goes to Expenses).</div>
-                <button type="button" class="btn btn-secondary btn-sm" style="width:100%;" onclick="wfOpenCardRegistry()">Manage cards &amp; accounts</button>
+                <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Register each card and account to see <b>outstanding balances, credit-limit use, spending and next due dates</b>, and let WealthFlow <b>file every charge in the right tab</b> by its last four digits. A card charge goes to CC One-Time with its service charge; a bank debit goes to Expenses.</div>
+                <button type="button" class="btn btn-secondary btn-sm" style="width:100%;" onclick="wfOpenCardRegistry()">Manage cards and accounts</button>
                 <button type="button" class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px;" onclick="wfOpenMerchantReview()">Merchant review <span data-wfv-badge style="display:none;margin-left:6px;background:rgba(245,158,11,.18);color:#f0b34e;border-radius:999px;padding:1px 7px;font-size:11px;font-weight:800;"></span></button>
             </div>
             <div class="setting-row">
                 <div class="setting-info" style="flex:1;min-width:0;">
-                    <div class="setting-label">AI Response Language</div>
-                    <div class="setting-desc">The AI replies in this language regardless of what language you write. 70+ languages supported. The AI also understands mixed-language input.</div>
+                    <div class="setting-label">AI reply language</div>
+                    <div class="setting-desc">The advisor replies in this language, whichever language you write in. More than 70 languages are supported, and mixed-language messages are understood.</div>
                 </div>
             </div>
             <div style="margin-top:6px;">
                 <button class="btn btn-secondary" style="width:100%; justify-content:space-between; background:var(--bg2); padding:12px 16px; border:1px solid var(--border2); text-align:left;" onclick="openLangModal()">
-                    <span id="aiLangBtnText" style="font-weight:600; color:var(--text);">Loading...</span> 
+                    <span id="aiLangBtnText" style="font-weight:600; color:var(--text);">Loading…</span> 
                     <span style="font-size:11px; color:var(--accent); background:rgba(212,175,55,0.1); padding:4px 8px; border-radius:8px;">Change</span>
                 </button>
             </div>
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info"><div class="setting-label">AI Personality</div><div class="setting-desc">Choose how your AI advisor communicates. Supportive, Balanced, Strict, or Aggressive.</div></div>
-                <button class="btn btn-secondary btn-sm ai-persona-btn" onclick="openModal('mdAIPersona')">${(window.WFIcon ? WFIcon('bot') : '')} ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
+                <div class="setting-info"><div class="setting-label">AI advisor style</div><div class="setting-desc">Choose how your AI advisor speaks to you: supportive, balanced, strict or growth-focused.</div></div>
+                <button class="btn btn-secondary btn-sm ai-persona-btn" onclick="openModal('mdAIPersona')">${(window.WFIcon ? WFIcon('bot') : '')} ${wfPersonaLabel(s.aiAdvisorPersona)}</button>
             </div>
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info"><div class="setting-label">${(window.WFIcon ? WFIcon('scan') : '')} AI Scanner Settings</div><div class="setting-desc">Tune scan mode (Quick / Deep / Ultra / Frontier with the strongest models), TF.js enhancement, and default currency for receipts &amp; PDFs.</div></div>
-                <button class="btn btn-secondary btn-sm" style="color:var(--accent); border-color:var(--accent);" onclick="if(typeof openScannerSettings==='function'){openScannerSettings()}else{notify('Scanner module still loading…','info')}">${_ic('settings')} Configure</button>
+                <div class="setting-info"><div class="setting-label">${(window.WFIcon ? WFIcon('scan') : '')} Scanner settings</div><div class="setting-desc">Choose how thoroughly receipts and PDFs are scanned, turn on-device image enhancement on or off, and set the default currency.</div></div>
+                <button class="btn btn-secondary btn-sm" style="color:var(--accent); border-color:var(--accent);" onclick="if(typeof openScannerSettings==='function'){openScannerSettings()}else{notify('The scanner is still loading. Please try again in a moment.','info')}">${_ic('settings')} Configure</button>
             </div>
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info"><div class="setting-label" style="color:var(--red);">${(window.WFIcon ? WFIcon('bot') : '')} Reset AI Memory</div><div class="setting-desc">Permanently erase the AI's memory of your conversation patterns and chat history.</div></div>
+                <div class="setting-info"><div class="setting-label" style="color:var(--red);">${(window.WFIcon ? WFIcon('bot') : '')} Reset AI memory</div><div class="setting-desc">Permanently erase what the AI has learned from your conversations, and your chat history.</div></div>
                 <button class="btn btn-secondary btn-sm" style="color:var(--red); border-color:var(--red);" onclick="confirmResetAIMemory()">Reset</button>
             </div>
         </div>
@@ -30204,106 +30202,106 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="settings-section" id="wfntfSettingsCard" style="background: linear-gradient(145deg, rgba(212,175,55,0.05), var(--card)); border: 1px solid var(--border2);"></div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#818cf8;">Device Access &amp; Encryption</div>
+            <div class="settings-title" style="color:#818cf8;">Device access and encryption</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Auto-Lock Timer</div><div class="setting-desc">Secure the vault after inactivity to prevent unauthorized access.</div></div>
+                <div class="setting-info"><div class="setting-label">Auto-lock</div><div class="setting-desc">Lock WealthFlow after a period of inactivity, to prevent unauthorised access.</div></div>
                 <select class="fi" style="width:140px; border-color:var(--border2);" onchange="updateAutoLock(this.value)">
-                    <option value="0" ${_autoLockMin === 0 ? 'selected' : ''}>Disabled (Unsafe)</option>
-                    <option value="1" ${_autoLockMin === 1 ? 'selected' : ''}>1 Minute</option>
-                    <option value="5" ${_autoLockMin === 5 ? 'selected' : ''}>5 Minutes</option>
-                    <option value="15" ${_autoLockMin === 15 ? 'selected' : ''}>15 Minutes</option>
-                    <option value="30" ${_autoLockMin === 30 ? 'selected' : ''}>30 Minutes</option>
-                    <option value="60" ${_autoLockMin === 60 ? 'selected' : ''}>1 Hour</option>
+                    <option value="0" ${_autoLockMin === 0 ? 'selected' : ''}>Never (not recommended)</option>
+                    <option value="1" ${_autoLockMin === 1 ? 'selected' : ''}>1 minute</option>
+                    <option value="5" ${_autoLockMin === 5 ? 'selected' : ''}>5 minutes</option>
+                    <option value="15" ${_autoLockMin === 15 ? 'selected' : ''}>15 minutes</option>
+                    <option value="30" ${_autoLockMin === 30 ? 'selected' : ''}>30 minutes</option>
+                    <option value="60" ${_autoLockMin === 60 ? 'selected' : ''}>1 hour</option>
                 </select>
             </div>
             <div class="setting-row">
                 <div class="setting-info">
-                    <div class="setting-label">Passcode-free entry</div>
-                    <div class="setting-desc">Signed in with Google? Open straight to your dashboard on <b>any device</b> — the installed app or a browser — with no passcode or biometric. It follows your account, so it applies on every device you sign in on. Turn it OFF to ask for the passcode again. <span style="color:var(--accent);">Anyone who can open WealthFlow on a device that is signed in to your Google account will see your data.</span> The passcode still protects the vault and Change PIN.</div>
+                    <div class="setting-label">PIN-free entry</div>
+                    <div class="setting-desc">Signed in with Google? Open straight to your dashboard on <b>any device</b> — the installed app or a browser — with no PIN or biometrics. It follows your account, so it applies on every device you sign in on. Turn it off to ask for your PIN again. <span style="color:var(--accent);">Anyone who can open WealthFlow on a device that is signed in to your Google account will see your data.</span> Your PIN still protects the vault and Change PIN.</div>
                 </div>
                 <button id="skipLockToggle" class="btn btn-sm ${_skipLockEnabled() ? 'btn-success' : 'btn-secondary'}" style="min-width:64px;" aria-pressed="${String(_skipLockEnabled())}" onclick="toggleSkipLock()">${_skipLockEnabled() ? 'ON' : 'OFF'}</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info">
-                    <div class="setting-label">Biometric Key (WebAuthn)</div>
-                    <div class="setting-desc">${bioRegistered ? _ic('checkCircle') + ' Registered on ' + (bioData.registeredAt ? new Date(bioData.registeredAt).toLocaleDateString() : 'this device') : _ic('info') + ' Not registered — Link FaceID / TouchID / Windows Hello'}</div>
+                    <div class="setting-label">Biometric sign-in</div>
+                    <div class="setting-desc">${bioRegistered ? _ic('checkCircle') + ' Registered on ' + (bioData.registeredAt ? new Date(bioData.registeredAt).toLocaleDateString() : 'this device') : _ic('info') + ' Not registered. Link Face ID, Touch ID or Windows Hello.'}</div>
                 </div>
                 <button class="btn ${bioRegistered ? 'btn-ghost' : 'btn-secondary'} btn-sm" onclick="registerBiometrics()">${bioRegistered ? _ic('refresh') + ' Re-register' : _ic('lock') + ' Register'}</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Master PIN Management</div><div class="setting-desc">Update your AES-256 encrypted master access key.</div></div>
+                <div class="setting-info"><div class="setting-label">PIN</div><div class="setting-desc">Change the PIN that protects your data.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdChangePin')">Change PIN</button>
             </div>
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--blue);">Infinity Cloud Sync</div>
+            <div class="settings-title" style="color:var(--blue);">Cloud sync</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Real-time Connection</div><div class="setting-desc">Engine is monitoring connection to Google Firebase.</div></div>
+                <div class="setting-info"><div class="setting-label">Connection</div><div class="setting-desc">Shows whether WealthFlow can reach your cloud account.</div></div>
                 <div><span id="settingsCloudStatus" class="badge wf-sync-badge ${navigator.onLine ? 'bg-g' : 'bg-r'}" style="padding: 6px 12px;">${navigator.onLine ? '\u25CF Connected' : '\u25CB Offline'}</span></div>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Sync Engine</div><div class="setting-desc">Force a manual cloud synchronization now.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="syncToCloud(); notify('Cloud sync triggered.', 'info');">⟳ Force Sync</button>
+                <div class="setting-info"><div class="setting-label">Sync now</div><div class="setting-desc">Pull the latest data from your cloud account.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="syncToCloud(); notify('Syncing with your cloud account…', 'info');">⟳ Sync now</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Notifications</div><div class="setting-desc">Enable proactive financial alerts and reminders.</div></div>
+                <div class="setting-info"><div class="setting-label">Notifications</div><div class="setting-desc">Alerts and reminders about your money.</div></div>
                 ${settingSwitch('notifications', s.notifications !== false)}
             </div>
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--accent);">Data Management & Reports</div>
+            <div class="settings-title" style="color:var(--accent);">Data and reports</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Generate Elite Report</div><div class="setting-desc">Export a luxury PDF statement, Raw JSON, or Analytics CSV.</div></div>
+                <div class="setting-info"><div class="setting-label">Export report</div><div class="setting-desc">Download a PDF report, a spreadsheet (CSV) for analysis, or a full data backup (JSON).</div></div>
                 <button class="btn btn-primary btn-sm" style="box-shadow: 0 4px 15px var(--ag);" onclick="openModal('mdExport')">${(window.WFIcon ? WFIcon('sparkles') : '')} Export Data</button>
             </div>
             
             <div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 8px;">Google Drive Backup</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Instant Cloud Backup</div><div class="setting-desc">Saves a copy of your data in a private "WealthFlow Backups" folder in your own Google Drive, and checks that the file arrived at exactly the size that was sent. You'll see a toast when it is verified.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="requestDrivePermission('backup')">Backup to Drive</button>
+                <div class="setting-info"><div class="setting-label">Back up to Google Drive</div><div class="setting-desc">Saves a copy of your data in a private "WealthFlow Backups" folder in your own Google Drive and checks that the file arrived intact. You will see a message when it is verified.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="requestDrivePermission('backup')">Back up to Drive</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Restore Data Protocol</div><div class="setting-desc">Recover your data from a restore point, Google Drive or a local file. A safety copy of what you have now is saved first, so a restore can always be undone.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="openRestoreModal()">Restore Vault</button>
+                <div class="setting-info"><div class="setting-label">Restore your data</div><div class="setting-desc">Recover your data from a restore point, Google Drive or a local file. A safety copy of what you have now is saved first, so a restore can always be undone.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="openRestoreModal()">Restore data</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Drive won't connect in the installed app?</div><div class="setting-desc">Google blocks its sign-in cookies inside installed apps. Finish a <b>one-time</b> sign-in in your browser with the same Google account and your app then <b>stays connected permanently</b> — no cookies, no repeat sign-ins.</div></div>
+                <div class="setting-info"><div class="setting-label">Google Drive not connecting in the installed app?</div><div class="setting-desc">Google blocks sign-in cookies inside installed apps. Finish a <b>one-time</b> sign-in in your browser with the same Google account, and the app then <b>stays connected</b> without repeat sign-ins.</div></div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button class="btn btn-primary btn-sm" onclick="_wfStartDriveDurableAuth()">Connect (stays connected)</button>
+                    <button class="btn btn-primary btn-sm" onclick="_wfStartDriveDurableAuth()">Connect via browser</button>
                     <button class="btn btn-secondary btn-sm" onclick="_wfDisconnectDrive()">Disconnect</button>
                 </div>
             </div>
 
             <div style="font-size:12px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 8px;">Danger Zone</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Wipe System Data</div><div class="setting-desc">Format all financial records. Your PIN and Settings will remain safe.</div></div>
-                <button class="btn btn-danger btn-sm" onclick="openModal('mdFactoryReset')">Format Database</button>
+                <div class="setting-info"><div class="setting-label">Erase all financial data</div><div class="setting-desc">Permanently erase all financial records. Your PIN and settings are kept, and a safety copy is saved first.</div></div>
+                <button class="btn btn-danger btn-sm" onclick="openModal('mdFactoryReset')">Erase data</button>
             </div>
         </div>
         
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(139,92,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--purple);">AI Advisor Preferences</div>
+            <div class="settings-title" style="color:var(--purple);">AI advisor</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Auto-Categorize Expenses</div><div class="setting-desc">AI automatically assigns categories to new expenses based on the title entered.</div></div>
+                <div class="setting-info"><div class="setting-label">Auto-categorise expenses</div><div class="setting-desc">Let the AI choose a category for new expenses from the description you type.</div></div>
                 ${settingSwitch('autoCategory', s.autoCategory !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">AI Auto-Notifications</div><div class="setting-desc">AI proactively sends smart financial reminders and insights.</div></div>
+                <div class="setting-info"><div class="setting-label">AI reminders</div><div class="setting-desc">The AI sends reminders and insights about your money.</div></div>
                 ${settingSwitch('aiNotifications', s.aiNotifications !== false)}
             </div>
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(6,182,212,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--cyan);">Sound & Feedback</div>
+            <div class="settings-title" style="color:var(--cyan);">Sound</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Dynamic Soundscapes</div><div class="setting-desc">Subtle luxury UI sounds for interactions (soft chimes, ticks, satisfying sounds).</div></div>
+                <div class="setting-info"><div class="setting-label">Interface sounds</div><div class="setting-desc">Soft sounds for taps and confirmations.</div></div>
                 ${settingSwitch('sounds', !!s.sounds)}
             </div>
             <div class="setting-row" data-setting-dependent="sounds" ${s.sounds ? 'aria-hidden="false"' : 'hidden aria-hidden="true"'} style="padding-left:24px;border-left:3px solid var(--cyan);">
-                <div class="setting-info"><div class="setting-label">Sound Volume</div><div class="setting-desc">Adjust the volume of UI sounds.</div></div>
+                <div class="setting-info"><div class="setting-label">Volume</div><div class="setting-desc">How loud the interface sounds are.</div></div>
                 <select class="fi" style="width:120px;" onchange="toggleSetting('soundVolume', this.value)">
                     <option value="low" ${(s.soundVolume || 'low') === 'low' ? 'selected' : ''}>Low</option>
                     <option value="medium" ${(s.soundVolume || 'low') === 'medium' ? 'selected' : ''}>Medium</option>
@@ -30313,10 +30311,10 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(239,68,68,0.03), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--red);">Advanced Security</div>
+            <div class="settings-title" style="color:var(--red);">Advanced security</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Panic Mode / Decoy Vault</div><div class="setting-desc">Set a decoy PIN that opens a fake database with dummy numbers to protect you.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="setupDecoyPin()">${(window.WFIcon ? WFIcon('lock') : '')} ${DB.getObj('auth').decoyPin ? 'Configured ' + _ic('check') : 'Setup Decoy'}</button>
+                <div class="setting-info"><div class="setting-label">Decoy PIN</div><div class="setting-desc">A second PIN that opens a sample vault with made-up figures, in case you are ever pressed to unlock WealthFlow.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="setupDecoyPin()">${(window.WFIcon ? WFIcon('lock') : '')} ${DB.getObj('auth').decoyPin ? 'Configured ' + _ic('check') : 'Set up'}</button>
             </div>
             <!-- BANK STATEMENT PASSWORDS.
                  Encrypted with a key derived from the master PIN, so the stored
@@ -30326,29 +30324,29 @@ table.amort tbody tr { page-break-inside: avoid; }
                  ciphertext, which is a fair trade for a NIC and not one for a
                  bank password. See wealthflow-vault.js. -->
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Bank Statement Passwords</div><div class="setting-desc">PDF and HTML statement passwords. PIN-encrypted on this device; securely sealed in your private cloud vault when background processing is configured.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="openBankVault()">${(window.WFIcon ? WFIcon('lock') : '')} ${(window.WFVault && window.WFVault.isSet()) ? 'Manage' : 'Set Up'}</button>
+                <div class="setting-info"><div class="setting-label">Bank statement passwords</div><div class="setting-desc">Passwords for PDF and HTML statements. They are encrypted with your PIN on this device, and sealed in your private cloud vault when background processing is set up.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="openBankVault()">${(window.WFIcon ? WFIcon('lock') : '')} ${(window.WFVault && window.WFVault.isSet()) ? 'Manage' : 'Set up'}</button>
             </div>
-            <div class="setting-row"><div class="setting-info"><div class="setting-label">Background Statement Sync</div><div class="setting-desc" id="_statement_cloud_status">${window.WFStatementCloud?.getState().saved ? 'Private cloud vault saved. Background decryption is enabled.' : 'Save your statement passwords to enable processing while this app is closed.'}</div></div><button class="btn btn-secondary btn-sm" onclick="window.WFStatementCloud?.openReview()">Needs Review</button></div>
+            <div class="setting-row"><div class="setting-info"><div class="setting-label">Background statement sync</div><div class="setting-desc" id="_statement_cloud_status">${window.WFStatementCloud?.getState().saved ? 'Private cloud vault saved. Background decryption is enabled.' : 'Save your statement passwords to enable processing while this app is closed.'}</div></div><button class="btn btn-secondary btn-sm" onclick="window.WFStatementCloud?.openReview()">Needs Review</button></div>
             <!-- The ID-details vault has existed since v7.7.0 and had NO caller:
                  openVaultModal was defined, exported on window.wfVault, and
                  reachable from nothing. Locked PDFs could never be auto-opened
                  because the owner had no way to put anything in it. -->
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Statement ID Details</div><div class="setting-desc">NIC, date of birth and card last-4. Sri Lankan banks commonly use one of these as the PDF password.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="openIdVault()">${(window.WFIcon ? WFIcon('card') : '')} ${(window.wfVault && window.wfVault.exists && window.wfVault.exists()) ? 'Saved' : 'Add Details'}</button>
+                <div class="setting-info"><div class="setting-label">Statement ID details</div><div class="setting-desc">NIC, date of birth and card last-4. Sri Lankan banks commonly use one of these as the PDF password.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="openIdVault()">${(window.WFIcon ? WFIcon('card') : '')} ${(window.wfVault && window.wfVault.exists && window.wfVault.exists()) ? 'Saved' : 'Add details'}</button>
             </div>
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(59,130,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--blue);">Advanced Backup & Data</div>
+            <div class="settings-title" style="color:var(--blue);">Backups</div>
             <div class="wf-bk-card" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:14px;">
                 <div id="wfBackupIcon" style="width:42px;height:42px;border-radius:50%;background:rgba(59,130,246,0.12);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">${_wfBackupIconHtml()}</div>
                 <!-- One place says what is true: the newest copy that really exists (a restore point or a verified Drive file), what the
                      last run did, and what the schedule will do next. _wfKickBackupRefresh asks the account what it holds — another
                      device or the server run may have saved a copy while this tab was closed — and repaints this block in place. -->
                 <div id="wfBackupInfo" style="flex:1;min-width:0;">${_wfBackupInfoHtml(s)}${_wfKickBackupRefresh()}</div>
-                <button class="btn btn-secondary btn-sm" style="flex-shrink:0;color:var(--blue);border-color:var(--blue);" onclick="backupNow()">${(window.WFIcon ? WFIcon('cloud') : '')} Backup Now</button>
+                <button class="btn btn-secondary btn-sm" style="flex-shrink:0;color:var(--blue);border-color:var(--blue);" onclick="backupNow()">${(window.WFIcon ? WFIcon('cloud') : '')} Back up now</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Backup Schedule</div><div class="setting-desc">Saves a restore point in your account at 23:55 (Daily · Weekly on the last day of your week · Monthly on the last day of the month) — also while the app is closed — and keeps the last 5 plus one per day for 14 days. If Google Drive is connected, the same copy goes to your Drive while the app is open. A missed run catches up when you reopen the app, and a failed one is shown here and retried.</div></div>
@@ -30356,7 +30354,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <option value="off" ${(s.autoBackupFreq || 'off') === 'off' ? 'selected' : ''}>Off</option>
                     <option value="daily" ${(s.autoBackupFreq || 'off') === 'daily' ? 'selected' : ''}>Daily (23:55)</option>
                     <option value="weekly" ${(s.autoBackupFreq || 'off') === 'weekly' ? 'selected' : ''}>Weekly (${_weekStartDay() === 0 ? 'Sat' : 'Sun'})</option>
-                    <option value="monthly" ${(s.autoBackupFreq || 'off') === 'monthly' ? 'selected' : ''}>Monthly (End)</option>
+                    <option value="monthly" ${(s.autoBackupFreq || 'off') === 'monthly' ? 'selected' : ''}>Monthly (month end)</option>
                 </select>
             </div>
             <!-- CLOUD SYNC FREQUENCY — REMOVED, AND THAT IS THE HONEST FIX.
@@ -30370,7 +30368,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                  switch that pretends to control something is worse than no
                  switch, so the row states what actually happens instead. -->
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Cloud Sync</div><div class="setting-desc">Changes sync the moment you make them, on every signed-in device.</div></div>
+                <div class="setting-info"><div class="setting-label">Cloud sync</div><div class="setting-desc">Changes sync the moment you make them, on every signed-in device.</div></div>
                 <div style="font-size:12px;font-weight:700;color:var(--green);">Real-time</div>
             </div>
             ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? `<div class="backup-schedule">${(window.WFIcon ? WFIcon('clock') : '')} Next auto-backup: ${getNextBackupTime(s.autoBackupFreq)}</div>` : ''}
@@ -30378,9 +30376,9 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ====== FINANCIAL PREFERENCES (per screenshot) ====== -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(59,130,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--blue);">Financial Preferences</div>
+            <div class="settings-title" style="color:var(--blue);">Financial preferences</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Default Dashboard Period</div><div class="setting-desc">The default time period shown in your dashboard overview.</div></div>
+                <div class="setting-info"><div class="setting-label">Default dashboard period</div><div class="setting-desc">The default time period shown in your dashboard overview.</div></div>
                 <select class="fi" style="width:160px;" onchange="toggleSetting('dashPeriod', this.value)">
                     <option value="thisMonth"  ${(s.dashPeriod || 'thisMonth') === 'thisMonth' ? 'selected' : ''}>This Month</option>
                     <option value="lastMonth"  ${(s.dashPeriod || 'thisMonth') === 'lastMonth' ? 'selected' : ''}>Last Month</option>
@@ -30390,15 +30388,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </select>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Show Savings Rate on Dashboard</div><div class="setting-desc">Display your monthly savings rate percentage prominently on the dashboard.</div></div>
+                <div class="setting-info"><div class="setting-label">Show savings rate on the dashboard</div><div class="setting-desc">Show your monthly savings rate on the dashboard.</div></div>
                 ${settingSwitch('showSavingsRate', s.showSavingsRate !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Smart Expense Suggestions</div><div class="setting-desc">AI suggests expense categories as you type descriptions.</div></div>
+                <div class="setting-info"><div class="setting-label">Expense suggestions</div><div class="setting-desc">The AI suggests a category as you type an expense description.</div></div>
                 ${settingSwitch('smartExpenseSuggest', s.smartExpenseSuggest !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Loan Interest Alert Threshold</div><div class="setting-desc">Warn when a new loan rate exceeds this percentage.</div></div>
+                <div class="setting-info"><div class="setting-label">Loan interest alert</div><div class="setting-desc">Warn when a new loan's rate is above this percentage.</div></div>
                 <select class="fi" style="width:120px;" onchange="toggleSetting('loanAlertPct', parseFloat(this.value))">
                     <option value="8"  ${(s.loanAlertPct || 15) === 8 ? 'selected' : ''}>8%</option>
                     <option value="10" ${(s.loanAlertPct || 15) === 10 ? 'selected' : ''}>10%</option>
@@ -30410,15 +30408,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </select>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Round Display Amounts</div><div class="setting-desc">Hide trailing decimals in the dashboard for cleaner reading.</div></div>
+                <div class="setting-info"><div class="setting-label">Round amounts</div><div class="setting-desc">Hide decimals on the dashboard for easier reading.</div></div>
                 ${settingSwitch('roundAmounts', !!s.roundAmounts, 'setTgl_roundAmounts')}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Hide Sensitive Numbers</div><div class="setting-desc">Privacy mode — replaces amounts with • • • • until tapped.</div></div>
+                <div class="setting-info"><div class="setting-label">Hide amounts</div><div class="setting-desc">Privacy mode. Amounts show as • • • • until you tap them.</div></div>
                 ${settingSwitch('privacyMode', !!(s.privacyMode || s.hideSensitive), 'setTgl_privacyMode')}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Week Starts On</div><div class="setting-desc">The first day of your week. The weekly auto-backup runs on the last day of it (Sunday for a Monday start, Saturday for a Sunday start).</div></div>
+                <div class="setting-info"><div class="setting-label">Week starts on</div><div class="setting-desc">The first day of your week. The weekly auto-backup runs on the last day of it (Sunday for a Monday start, Saturday for a Sunday start).</div></div>
                 <select class="fi" style="width:140px;" onchange="toggleSetting('weekStart', this.value)">
                     <option value="monday"  ${(s.weekStart || 'monday') === 'monday' ? 'selected' : ''}>Monday</option>
                     <option value="sunday"  ${(s.weekStart || 'monday') === 'sunday' ? 'selected' : ''}>Sunday</option>
@@ -30428,49 +30426,49 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ====== SMART NOTIFICATION SETTINGS (per screenshot) ====== -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(16,185,129,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--green);">Smart Notification Settings</div>
+            <div class="settings-title" style="color:var(--green);">Notifications</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">All Notifications</div><div class="setting-desc">Master switch for all WealthFlow notifications and reminders.</div></div>
+                <div class="setting-info"><div class="setting-label">All notifications</div><div class="setting-desc">Turn all WealthFlow notifications and reminders on or off.</div></div>
                 ${settingSwitch('notifications', s.notifications !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Loan Payment Reminders</div><div class="setting-desc">Notify 7, 3, and 1 day before each loan payment is due.</div></div>
+                <div class="setting-info"><div class="setting-label">Loan payment reminders</div><div class="setting-desc">A reminder 7, 3 and 1 day before each loan payment is due.</div></div>
                 ${settingSwitch('notifLoan', s.notifLoan !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">CC One-Time Deadline Alerts</div><div class="setting-desc">Last 10 days reminders for credit card one-time purchases (50-day rule).</div></div>
+                <div class="setting-info"><div class="setting-label">Card one-time deadline alerts</div><div class="setting-desc">Reminders during the last 10 days of the 50-day period for card one-time purchases.</div></div>
                 ${settingSwitch('notifCCOT', s.notifCCOT !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Cheque Release Reminders</div><div class="setting-desc">Alert before each cheque release date so you can ensure funds.</div></div>
+                <div class="setting-info"><div class="setting-label">Cheque release reminders</div><div class="setting-desc">A reminder before each cheque release date, so you can make sure the funds are there.</div></div>
                 ${settingSwitch('notifCheque', s.notifCheque !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Salary / Payday Alerts</div><div class="setting-desc">Confirm receipt on each scheduled payday.</div></div>
+                <div class="setting-info"><div class="setting-label">Payday alerts</div><div class="setting-desc">A reminder to confirm each payment on its scheduled payday.</div></div>
                 ${settingSwitch('notifPayday', s.notifPayday !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Budget Alerts</div><div class="setting-desc">Alert when monthly spending exceeds 50% of income by mid-month.</div></div>
+                <div class="setting-info"><div class="setting-label">Budget alerts</div><div class="setting-desc">An alert when spending passes 50% of income by mid-month.</div></div>
                 ${settingSwitch('notifBudget', s.notifBudget !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Subscription Anomaly Alerts</div><div class="setting-desc">Detect unusually high or duplicate subscription charges.</div></div>
+                <div class="setting-info"><div class="setting-label">Unusual subscription alerts</div><div class="setting-desc">An alert for unusually high or duplicate subscription charges.</div></div>
                 ${settingSwitch('notifAnomaly', s.notifAnomaly !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Target Progress Updates</div><div class="setting-desc">Celebrate every 25%, 50%, 75%, and 100% target milestone.</div></div>
+                <div class="setting-info"><div class="setting-label">Target progress updates</div><div class="setting-desc">A note when a target reaches 25%, 50%, 75% and 100%.</div></div>
                 ${settingSwitch('notifTarget', s.notifTarget !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Weekly Financial Tips</div><div class="setting-desc">Get a personalized financial tip every Friday evening.</div></div>
+                <div class="setting-info"><div class="setting-label">Weekly tips</div><div class="setting-desc">A short money tip every Friday evening.</div></div>
                 ${settingSwitch('notifWeeklyTip', s.notifWeeklyTip !== false)}
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Quiet Hours</div><div class="setting-desc">Suppress all non-critical notifications during this window.</div></div>
+                <div class="setting-info"><div class="setting-label">Quiet hours</div><div class="setting-desc">Hold non-urgent notifications during this window.</div></div>
                 ${settingSwitch('quietHoursEnabled', s.quietHoursEnabled !== false)}
             </div>
             <div class="setting-row ${s.quietHoursEnabled === false ? 'setting-dependent-disabled' : ''}" data-setting-disabled="quietHoursEnabled" aria-disabled="${s.quietHoursEnabled === false ? 'true' : 'false'}">
-                <div class="setting-info"><div class="setting-label" style="font-size:12px;">↳ Quiet Window</div><div class="setting-desc">From → To (24-hour format)</div></div>
+                <div class="setting-info"><div class="setting-label" style="font-size:12px;">Quiet window</div><div class="setting-desc">From → To (24-hour format)</div></div>
                 <div style="display:flex;gap:6px;align-items:center;">
                     <input type="time" class="fi" style="width:104px;" value="${s.quietStart || '22:00'}" onchange="toggleSetting('quietStart', this.value)">
                     <span style="color:var(--text3);">→</span>
@@ -30478,7 +30476,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Daily Notification Limit</div><div class="setting-desc">Maximum smart notifications per day.</div></div>
+                <div class="setting-info"><div class="setting-label">Daily notification limit</div><div class="setting-desc">The most smart notifications sent in a day.</div></div>
                 <select class="fi" style="width:120px;" onchange="toggleSetting('notifMaxPerDay', parseInt(this.value))">
                     <option value="1" ${(s.notifMaxPerDay || 3) === 1 ? 'selected' : ''}>1</option>
                     <option value="2" ${(s.notifMaxPerDay || 3) === 2 ? 'selected' : ''}>2</option>
@@ -30488,8 +30486,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </select>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Test Notification</div><div class="setting-desc">Send a test notification to verify your setup works.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="testNotificationNow()">${(window.WFIcon ? WFIcon('bell') : '')} Test Now</button>
+                <div class="setting-info"><div class="setting-label">Test notification</div><div class="setting-desc">Send a test notification to confirm they work on this device.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="testNotificationNow()">${(window.WFIcon ? WFIcon('bell') : '')} Send test</button>
             </div>
         </div>
 
@@ -30502,45 +30500,45 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ====== PWA & APP SETTINGS (per screenshot) ====== -->
         <div class="settings-section" id="wfPwaSection" style="background: linear-gradient(145deg, rgba(139,92,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--purple);">PWA & App Settings</div>
+            <div class="settings-title" style="color:var(--purple);">App and installation</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Install as App</div><div class="setting-desc">Add WealthFlow to your home screen for a native app experience on any device.</div></div>
-                <button id="installAppBtn" class="btn btn-primary btn-sm" onclick="triggerInstallApp()">${(window.WFIcon ? WFIcon('devices') : '')} Install App</button>
+                <div class="setting-info"><div class="setting-label">Install the app</div><div class="setting-desc">Add WealthFlow to your home screen so it opens like an app on any device.</div></div>
+                <button id="installAppBtn" class="btn btn-primary btn-sm" onclick="triggerInstallApp()">${(window.WFIcon ? WFIcon('devices') : '')} Install</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Installation Status</div><div class="setting-desc" id="pwaStatusDesc">Detecting current install status…</div></div>
+                <div class="setting-info"><div class="setting-label">Installation</div><div class="setting-desc" id="pwaStatusDesc">Detecting current install status…</div></div>
                 <span id="pwaStatusBadge" class="badge bg-gr" style="padding:6px 12px;">Detecting…</span>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Force Update Service Worker</div><div class="setting-desc">Re-register the service worker and clear cached assets — useful after a deploy.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="forceServiceWorkerUpdate()">${(window.WFIcon ? WFIcon('refresh') : '')} Update SW</button>
+                <div class="setting-info"><div class="setting-label">Refresh app files</div><div class="setting-desc">Clear cached app files and load the latest version. Useful if something looks out of date.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="forceServiceWorkerUpdate()">${(window.WFIcon ? WFIcon('refresh') : '')} Refresh</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Notification Permission</div><div class="setting-desc">Browser-level permission for showing notifications on your device.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="requestNotificationPermission().then(r=>{notify('Permission: '+r,'info'); renderSettings();})" id="permBtn">${('Notification' in window) ? Notification.permission : 'unsupported'}</button>
+                <div class="setting-info"><div class="setting-label">Notification permission</div><div class="setting-desc">Whether this browser may show WealthFlow notifications on your device.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="requestNotificationPermission().then(r=>{notify(r === 'granted' ? 'Notifications are allowed on this device.' : r === 'denied' ? 'Notifications are blocked. Allow them in your browser settings to turn them on.' : 'Notifications were not allowed.','info'); renderSettings();})" id="permBtn">${('Notification' in window) ? ({ granted: 'Allowed', denied: 'Blocked', default: 'Not set' })[Notification.permission] || Notification.permission : 'Not supported'}</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Open Install Guide</div><div class="setting-desc">Step-by-step instructions for iPhone, Android, Windows, and Mac.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
+                <div class="setting-info"><div class="setting-label">Install guide</div><div class="setting-desc">Step-by-step instructions for iPhone, Android, Windows and Mac.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.35</span> Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.35</span> is installed on this device.</div></div>
                 <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.35</span>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes, misbehaves, or a statement is stuck in "Needs review", tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory), plus why statements are stuck (reason counts, bank names, and why "Map statement layout" couldn't read one), with no date, amount, or transaction detail ever included, so the exact cause can be fixed fast.</div></div>
+                <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page crashes, misbehaves, or a statement is stuck in "Needs review", tap Copy diagnostics right afterwards and share the result. It captures the latest errors with technical detail (stack, page, memory) and the reasons statements are stuck (counts, bank names, and why "Map statement layout" could not read one). No date, amount or transaction detail is ever included.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="_wfCopyDiagnostics(this)">Copy diagnostics</button>
                 <button class="btn btn-ghost btn-sm" onclick="_wfClearDiagnostics(this)" style="margin-left:8px;">Clear log</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
-                <button class="btn btn-danger btn-sm" onclick="signOutGoogle()">${(window.WFIcon ? WFIcon('logOut') : '')} Sign Out</button>
+                <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign out</div><div class="setting-desc">Sign out of WealthFlow and return to the sign-in screen.</div></div>
+                <button class="btn btn-danger btn-sm" onclick="signOutGoogle()">${(window.WFIcon ? WFIcon('logOut') : '')} Sign out</button>
             </div>
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;" id="wfFooterVer">WealthFlow · Infinity Engine</div>
-            <div>@info@ ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
+            <div style="margin-bottom:4px;" id="wfFooterVer">WealthFlow</div>
+            <div>&copy; ${new Date().getFullYear()} WealthFlow · Cloud sync by Google Firebase</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
    `;
@@ -30573,11 +30571,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             try {
                 const v = (window.wfUpdate && window.wfUpdate.version) || '';
                 const fv = document.getElementById('wfFooterVer');
-                if (fv && v) fv.textContent = 'WealthFlow v' + v + ' · Infinity Engine';
+                if (fv && v) fv.textContent = 'WealthFlow v' + v;
                 if (v) {
                     const vt = document.getElementById('wfVerText'); if (vt) vt.textContent = 'v' + v;
                     const vp = document.getElementById('wfVerPill'); if (vp) vp.textContent = 'v' + v;
-                    const sv = document.getElementById('wfSbVer'); if (sv) sv.textContent = 'WealthFlow v' + v + ' · Infinity Engine';
+                    const sv = document.getElementById('wfSbVer'); if (sv) sv.textContent = 'WealthFlow v' + v;
                 }
             } catch (_) {}
             try { renderBatchList(); } catch (_) {}
@@ -30726,7 +30724,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const s = DB.getObj('settings', {});
             s.autoLock = parseInt(val);
             DB.set('settings', s);
-            notify(val === '0' ? 'Auto-lock disabled (Not Recommended)' : `Vault secures after ${val} minutes`);
+            notify(val === '0' ? 'Auto-lock is off. This is not recommended.' : `WealthFlow will lock after ${val} minute${val === '1' ? '' : 's'} of inactivity.`);
             resetAutoLockTimer();
         }
 
@@ -30823,19 +30821,19 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             }
             if (key === 'currency') {
-                notify(`Currency changed to ${val}`, 'success');
+                notify(`Display currency set to ${val}.`, 'success');
             }
-            if (key === 'roundAmounts') notify(val ? 'Amounts rounded' : 'Showing full decimals', 'success');
-            if (key === 'privacyMode' || key === 'hideSensitive') notify(val ? '@lock@ Sensitive numbers hidden' : '@eye@ Numbers visible', 'success');
+            if (key === 'roundAmounts') notify(val ? 'Amounts are now rounded.' : 'Amounts now show full decimals.', 'success');
+            if (key === 'privacyMode' || key === 'hideSensitive') notify(val ? 'Amounts are now hidden.' : 'Amounts are now visible.', 'success');
             if (key === 'weekStart') {
-                notify(`Week now starts on ${String(val).charAt(0).toUpperCase()+String(val).slice(1)}`, 'success');
+                notify(`The week now starts on ${String(val).charAt(0).toUpperCase()+String(val).slice(1)}.`, 'success');
                 // The weekly backup follows the week: move its day and say so in the schedule's own label.
                 try {
                     document.querySelectorAll('#settingsContent option[value="weekly"]').forEach((o) => { o.textContent = 'Weekly (' + (_weekStartDay() === 0 ? 'Sat' : 'Sun') + ')'; });
                     if (typeof scheduleAutoBackup === 'function') scheduleAutoBackup();
                 } catch (_) {}
             }
-            if (key === 'dashPeriod') notify('Dashboard period updated', 'success');
+            if (key === 'dashPeriod') notify('Default dashboard period updated.', 'success');
         }
 
         document.addEventListener('keydown', function (event) {
@@ -30909,7 +30907,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         window.addEventListener('appinstalled', () => {
             _isPWAInstalled = true;
             _deferredInstallPrompt = null;
-            notify('@sparkles@ WealthFlow is now installed on your device!', 'success');
+            notify('WealthFlow is now installed on this device.', 'success');
             updatePWAStatusBadge();
         });
 
@@ -30931,7 +30929,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         async function triggerInstallApp() {
             // Already installed?
             if (isStandalone()) {
-                notify('App already installed and running in standalone mode! @sparkles@', 'success');
+                notify('WealthFlow is already installed and running as an app.', 'success');
                 return;
             }
             const platform = detectPlatform();
@@ -30942,7 +30940,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     _deferredInstallPrompt.prompt();
                     const choice = await _deferredInstallPrompt.userChoice;
                     if (choice && choice.outcome === 'accepted') {
-                        notify('Installing WealthFlow… @trendUp@', 'success');
+                        notify('Installing WealthFlow…', 'success');
                     } else {
                         notify('Install dismissed. You can install anytime from Settings.', 'info');
                     }
@@ -30978,15 +30976,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                 badge.className = 'badge bg-g';
                 desc.textContent = 'Running as an installed app on this device.';
                 const btn = document.getElementById('installAppBtn');
-                if (btn) { btn.textContent = '@info@ Already Installed'; btn.disabled = true; btn.style.opacity = '.6'; }
+                if (btn) { btn.textContent = 'Already installed'; btn.disabled = true; btn.style.opacity = '.6'; }
             } else if (_deferredInstallPrompt) {
-                badge.textContent = 'Ready to Install';
+                badge.textContent = 'Ready to install';
                 badge.className = 'badge bg-a';
-                desc.textContent = 'Tap "Install App" to add to your home screen.';
+                desc.textContent = 'Tap Install app to add WealthFlow to your home screen.';
             } else {
-                badge.textContent = 'Browser Mode';
+                badge.textContent = 'Browser mode';
                 badge.className = 'badge bg-gr';
-                desc.textContent = 'Visit Install Guide for manual instructions on this platform.';
+                desc.textContent = 'Open the install guide for steps on this device.';
             }
         }
 
@@ -30998,10 +30996,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const keys = await caches.keys();
                     await Promise.all(keys.map(k => caches.delete(k)));
                 }
-                notify('Service worker updated. Reloading…', 'success');
+                notify('App files refreshed. Reloading…', 'success');
                 setTimeout(() => location.reload(), 700);
             } catch (e) {
-                notify('Update failed: ' + e.message, 'error');
+                notify('The refresh did not complete: ' + e.message, 'error');
             }
         }
 
@@ -31017,7 +31015,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
                 const userName = currentUser ? (currentUser.displayName || 'User').split(' ')[0] : 'User';
                 sendOSNotification('@bell@ Test Notification', `Hi ${userName}! Your WealthFlow notifications are working perfectly. @info@`, 'wf-test');
-                notify('Test notification sent! Check your notification panel.', 'success');
+                notify('Test notification sent. Check your notification panel.', 'success');
             });
         }
 
@@ -31051,7 +31049,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         // what a person should read from one stored report: { txt, cls, detail, level }
         function _aiBoardReading(d) {
             const report = d && d.report, b = report && report.board;
-            if (!b) return { txt: '● Not measured yet', cls: 'bg-gr', detail: 'No reading of the AI services yet. Press Run Diagnostic to measure them now.', level: 'none' };
+            if (!b) return { txt: '● Not measured yet', cls: 'bg-gr', detail: 'No reading of the AI services yet. Press Run check to measure them now.', level: 'none' };
             const age = _aiAgeText(d.ageSec);
             const when = age ? ' · checked ' + age : '';
             if (b.unanimous) return { txt: '● Online', cls: 'bg-g', detail: b.answered + ' of ' + b.asked + ' AI services answered and agreed' + when + '.', level: 'good' };
@@ -31105,13 +31103,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                         d = await _aiFetchBoard('canary', 40000);
                     }
                     if (d && d.notJson) {
-                        _setEngineBadge('● Offline', 'bg-r', 'The AI service is not deployed on this server (got a non-JSON ' + d.status + ' answer).');
-                        if (manual) notify('The AI endpoint is not live on this deployment (non-JSON ' + d.status + ' answer).', 'error');
+                        _setEngineBadge('● Offline', 'bg-r', 'The AI service is not available on this server right now (status ' + d.status + ').');
+                        if (manual) notify('The AI service is not available right now (status ' + d.status + ').', 'error');
                         return;
                     }
                     if (!d || d.status) {
                         _setEngineBadge('● Degraded', 'bg-a', 'The AI status check did not answer (HTTP ' + ((d && d.status) || '?') + ').');
-                        if (manual) notify('The AI status check did not answer. Try again in a moment.', 'error');
+                        if (manual) notify('The AI status check did not respond. Please try again in a moment.', 'error');
                         return;
                     }
                     const reading = _aiBoardReading(d);
@@ -34930,7 +34928,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 overlay.querySelector('#_vp_cancel').onclick = () => close(false);
                 const verify = async () => {
                     const pin = overlay.querySelector('#_vp_pin').value;
-                    if (pin.length !== 6) { overlay.querySelector('#_vp_err').textContent = 'PIN must be 6 digits'; return; }
+                    if (pin.length !== 6) { overlay.querySelector('#_vp_err').textContent = 'Your PIN must be 6 digits.'; return; }
                     const auth = DB.getObj('auth');
                     const hash = await sha256(pin + 'wf_salt_sg2026');
                     if (hash !== auth.pin) { overlay.querySelector('#_vp_err').textContent = '@x@ Incorrect PIN'; return; }
@@ -34987,9 +34985,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
          * press Check now again. See _mailSyncState.locked.
          */
         async function openBankVault(opts = {}) {
-            if (!window.WFVault) { notify('Secure vault module not loaded', 'error'); return; }
+            if (!window.WFVault) { notify('The secure vault is still loading. Please try again.', 'error'); return; }
             if (!(window.crypto && window.crypto.subtle)) {
-                notify('This browser cannot store passwords securely (no Web Crypto)', 'error');
+                notify('This browser cannot store passwords securely, so the vault is unavailable here.', 'error');
                 return;
             }
 
@@ -35052,7 +35050,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const err = body.querySelector('#_bv_err');
                 const go = body.querySelector('#_bv_go');
                 const pin = el.value;
-                if (pin.length < 6) { err.textContent = 'PIN must be 6 digits'; return; }
+                if (pin.length < 6) { err.textContent = 'Your PIN must be 6 digits.'; return; }
                 busy = true;
                 const idle = go ? go.innerHTML : '';
                 if (go) { go.disabled = true; go.textContent = 'Unlocking…'; }
@@ -35082,7 +35080,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         try {
                             const cloudEntries = await _statementCloudEntries(unlockedEntries);
                             if (cloudEntries.length) await window.WFStatementCloud?.migrateUnlockedVault(cloudEntries);
-                        } catch (_) { notify('Vault unlocked; cloud migration will retry later.', 'warn'); }
+                        } catch (_) { notify('Vault unlocked. Moving it to the cloud will be retried later.', 'warn'); }
                     })();
                     try { triggerHaptic('success'); } catch (_) {}
                     if (opts.closeOnUnlock === true) { close(); return; }
@@ -35207,7 +35205,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 try { if (window._wfBankVaultCloud) await window._wfBankVaultCloud.remove(); } catch (_) { /* device copy is still erased below */ }
                                 window.WFVault.destroy();
                                 window.WFVault.lock();
-                                notify('Password vault deleted', 'info');
+                                notify('Password vault deleted.', 'info');
                                 close();
                                 try { renderSettings(); } catch (_) {}
                             });
@@ -35220,7 +35218,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         const r = await window.WFVault.save(usable, { cloud: window._wfBankVaultCloud });
                         if (!r.ok) {
                             if (r.reason === window.WFVault.VAULT.CLOUD_NEWER) notify('These passwords were changed on another device. Close this window and open it again to load them, then make your change again.', 'warn');
-                            else notify('Could not save — secure storage refused the write', 'error');
+                            else notify('Could not save. Secure storage on this device did not accept the change.', 'error');
                             return;
                         }
                         try { triggerHaptic('success'); } catch (_) {}
@@ -35248,7 +35246,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             if (window.wfVault && typeof window.wfVault.openModal === 'function') {
                 window.wfVault.openModal();
             } else {
-                notify('Intelligence layer not loaded', 'error');
+                notify('The insights tools are still loading. Please try again.', 'error');
             }
         }
         window.openIdVault = openIdVault;
@@ -35289,7 +35287,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 // Hard-signout this device
                 _performHardSignOut('Signing out this device.');
             } else {
-                notify('@checkCircle@ Session revoked. The other device will sign out instantly.', 'success');
+                notify('That device has been signed out of WealthFlow.', 'success');
             }
         }
 
@@ -35322,7 +35320,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 }
             } catch (e) { console.warn('[Revoke all] Firestore push failed:', e); }
 
-            notify('@checkCircle@ All other sessions revoked. They will sign out within 1 second.', 'success');
+            notify('All other devices have been signed out.', 'success');
         }
 
         // ISSUE 2 FIX — Real-time session revoke watcher.
@@ -35439,15 +35437,18 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             if (!pin || pin.length !== 6) { notify('Decoy PIN must be 6 digits.', 'error'); return; }
             sha256(pin + 'wf_salt_sg2026').then(hash => {
                 const auth = DB.getObj('auth');
-                if (hash === auth.pin) { notify('Decoy PIN cannot be the same as your real PIN!', 'error'); return; }
+                if (hash === auth.pin) { notify('The decoy PIN must be different from your real PIN.', 'error'); return; }
                 auth.decoyPin = hash;
                 DB.set('auth', auth);
-                notify('Decoy PIN configured! Use it to open a fake vault.', 'success');
+                notify('Decoy PIN saved. It opens a sample vault instead of your real data.', 'success');
                 renderSettings();
             });
         }
 
         // ==================== AI PERSONA SELECTOR ====================
+        function wfPersonaLabel(p) {
+            return ({ supportive: 'Supportive', balanced: 'Balanced', strict: 'Strict', aggressive: 'Growth-focused' })[p || 'balanced'] || 'Balanced';
+        }
         function setAIAdvisorPersona(persona) {
             const s = DB.getObj('settings', {});
             s.aiAdvisorPersona = persona;
@@ -35458,12 +35459,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             }
             
             // Update button text in settings and chat UI
-            const personaLabel = persona.charAt(0).toUpperCase() + persona.slice(1);
+            const personaLabel = wfPersonaLabel(persona);
             document.querySelectorAll('.ai-persona-btn, button[onclick="openModal(\'mdAIPersona\')"]').forEach(btn => {
                 btn.innerHTML = `@user@ ${personaLabel}`;
             });
 
-            notify(`AI persona set to ${personaLabel}!`, 'success');
+            notify(`AI advisor style set to ${personaLabel}.`, 'success');
             playUISound('success');
         }
 
@@ -35507,7 +35508,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             // VERIFY the setting actually took effect on the next scan.
             if (key === 'scanMode') {
                 const engineCount = { quick: 1, deep: 5, ultra: 12, frontier: 19 }[val] || 5;
-                setTimeout(() => notify(`Next scan will use ~${engineCount} AI engine${engineCount>1?'s':''}`, 'info'), 900);
+                setTimeout(() => notify(`The next scan will use ${engineCount} AI service${engineCount>1?'s':''}.`, 'info'), 900);
             }
         }
         function _refreshScannerSettingsUI() {
@@ -35820,8 +35821,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         async function executeFactoryReset() {
             // ISSUE 5 FIX — Decoy mode users CANNOT factory-reset
             if (window._isDecoyMode === true) {
-                $('fr_err').textContent = '@alert@ Operation not permitted in this mode.';
-                notify('Operation not allowed.', 'error');
+                $('fr_err').textContent = '@alert@ That action is not available in this mode.';
+                notify('That action is not available here.', 'error');
                 return;
             }
 
@@ -35941,7 +35942,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             countText.textContent = String(count);
                             countText.style.color = count === 1 ? '#ef4444' : 'var(--red)';
                         } else {
-                            countText.textContent = 'System Rebooting...';
+                            countText.textContent = 'Restarting…';
                             countText.style.fontSize = '18px';
                             countText.style.color = 'var(--green)';
                         }
@@ -35964,7 +35965,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 localStorage.clear();
                 Object.keys(appData).forEach(k => _persistLocal('wf2_' + k, appData[k]));
                 const countText = $('fr_countdown');
-                countText.textContent = 'Rebooting (offline)...';
+                countText.textContent = 'Restarting (offline)…';
                 setTimeout(() => { window.location.href = window.location.href; }, 1500);
             }
         }
@@ -36691,7 +36692,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (!picked.length) { notify('Tick at least one row first.', 'warn'); return; }
                 const last4 = (parsed && (parsed.card_last4 || parsed.last4)) || (typeof bank === 'string' && (bank.match(/\d{4}/) || [])[0]) || '';
                 window.wfStatementToQueue(picked, { currency: (parsed && parsed.currency) || 'LKR', card_last4: last4, source: 'statement' });
-                notify('@bot@ Handed ' + picked.length + ' transaction' + (picked.length === 1 ? '' : 's') + ' to the AI — it\'ll sort them into the right tabs. You can keep working.', 'success');
+                notify('@bot@ Handed ' + picked.length + ' transaction' + (picked.length === 1 ? '' : 's') + ' to the AI — it will sort them into the right tabs. You can keep working.', 'success');
                 closeOvl();
             };
 

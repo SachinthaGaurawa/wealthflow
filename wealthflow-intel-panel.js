@@ -25,26 +25,26 @@
 
     const CARD_HTML = `
       <div class="settings-section" id="wfIntelPanel" style="background:linear-gradient(145deg,rgba(16,185,129,0.05),var(--card));border:1px solid var(--border2);">
-        <div class="settings-title" style="color:#10b981;">Autonomous AI Engine</div>
+        <div class="settings-title" style="color:#10b981;">AI automation</div>
         <div class="setting-row">
-          <div class="setting-info"><div class="setting-label">Learned Merchants</div><div class="setting-desc">Shops &amp; services the AI remembers the category for — it gets faster and smarter every time you confirm one.</div></div>
+          <div class="setting-info"><div class="setting-label">Learned merchants</div><div class="setting-desc">Shops and services whose category WealthFlow remembers. Each one you confirm is filed automatically next time.</div></div>
           <div style="text-align:right;"><div id="wfIntelMemCount" style="font-weight:900;font-size:18px;color:#10b981;">—</div><button class="btn btn-ghost btn-sm" id="wfIntelForget" style="margin-top:4px;">Reset</button></div>
         </div>
         <div class="setting-row">
-          <div class="setting-info"><div class="setting-label">Needs-Review</div><div class="setting-desc">Transactions the AI wasn't sure about and parked for your one-tap decision (remembered across sessions).</div></div>
+          <div class="setting-info"><div class="setting-label">Needs review</div><div class="setting-desc">Transactions the AI was not sure about. They wait here for your decision and stay until you decide.</div></div>
           <div style="text-align:right;"><div id="wfIntelReviewCount" style="font-weight:900;font-size:18px;color:#f59e0b;">—</div><button class="btn btn-secondary btn-sm" id="wfIntelReview" style="margin-top:4px;">Review</button></div>
         </div>
         <div class="setting-row">
-          <div class="setting-info"><div class="setting-label">Duplicate Scanner</div><div class="setting-desc">Finds the same transaction filed twice (statement + SMS, or a re-paste) using amount + day + merchant + card. Never removes on a weak match.</div></div>
+          <div class="setting-info"><div class="setting-label">Duplicate scanner</div><div class="setting-desc">Finds the same transaction filed twice, for example from a statement and an SMS, by matching amount, day, merchant and card. It removes nothing unless the match is certain.</div></div>
           <button class="btn btn-secondary btn-sm" id="wfIntelDedup">Scan now</button>
         </div>
         <div id="wfIntelDedupResult" style="display:none;margin:4px 0 8px;padding:11px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;font-size:12.5px;"></div>
         <div class="setting-row">
-          <div class="setting-info"><div class="setting-label">Background Processing</div><div class="setting-desc">Hand the AI a paste or screenshot and walk away — it files everything on its own with a live progress bar.</div></div>
+          <div class="setting-info"><div class="setting-label">Background processing</div><div class="setting-desc">Give the AI a pasted message or a screenshot and it files the transactions in the background, with a progress bar.</div></div>
           <div style="text-align:right;"><div id="wfIntelQueueState" style="font-weight:800;font-size:13px;color:var(--text2);">Idle</div><button class="btn btn-ghost btn-sm" id="wfIntelQueueRun" style="margin-top:4px;">Run pending</button></div>
         </div>
         <div class="setting-row" style="border-top:1px solid var(--border);margin-top:6px;padding-top:12px;">
-          <div class="setting-info"><div class="setting-label">AI Data Encryption</div><div class="setting-desc">All AI memory, the review queue and the job queue are encrypted at rest (and in cloud sync).</div></div>
+          <div class="setting-info"><div class="setting-label">AI data encryption</div><div class="setting-desc">The AI memory, the review queue and the job queue are encrypted on this device and in cloud sync.</div></div>
           <span id="wfIntelCryptoBadge" class="badge bg-g" style="padding:6px 12px;">AES-256-GCM</span>
         </div>
       </div>`;
@@ -81,7 +81,7 @@
                 try {
                     const map = await window.wfMemory.export();
                     for (const k of Object.keys(map || {})) { try { await window.wfMemory.forget(map[k].display || k); } catch (_) {} }
-                    _notify('AI merchant memory reset.', 'success');
+                    _notify('Learned merchants cleared.', 'success');
                 } catch (_) {}
                 _refresh();
             };
@@ -95,11 +95,11 @@
             }
         });
         on('wfIntelReview', () => { if (window.wfReview && window.wfReview.openModal) window.wfReview.openModal(); });
-        on('wfIntelQueueRun', () => { if (window.wfQueue && window.wfQueue.start) { window.wfQueue.start(); _notify('Processing any pending items…', 'info'); } });
+        on('wfIntelQueueRun', () => { if (window.wfQueue && window.wfQueue.start) { window.wfQueue.start(); _notify('Processing the pending items.', 'info'); } });
         on('wfIntelDedup', async () => {
             const btn = document.getElementById('wfIntelDedup');
             const out = document.getElementById('wfIntelDedupResult');
-            if (!window.wfDedup) { _notify('Duplicate scanner not loaded.', 'warn'); return; }
+            if (!window.wfDedup) { _notify('The duplicate scanner is not available yet. Reload the page and try again.', 'warn'); return; }
             if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
             let clusters = [];
             try { clusters = window.wfDedup.scanExisting() || []; } catch (_) {}
@@ -130,7 +130,7 @@
             if (cbtn) cbtn.onclick = () => {
                 let removed = 0;
                 try { removed = window.wfDedup.autoCleanExact(); } catch (_) {}
-                _notify(removed ? '@info@ Removed ' + removed + ' duplicate' + (removed === 1 ? '' : 's') + '.' : 'Nothing certain enough to remove.', removed ? 'success' : 'info');
+                _notify(removed ? 'Removed ' + removed + ' duplicate' + (removed === 1 ? '' : 's') + '.' : 'No duplicates were certain enough to remove.', removed ? 'success' : 'info');
                 ['renderDash', 'renderExpenses', 'renderIncome', 'renderSubscriptions', 'renderCCOneTime', 'renderCCInstall'].forEach(fn => { try { if (typeof window[fn] === 'function') window[fn](); } catch (_) {} });
                 document.getElementById('wfIntelDedup').click();
             };

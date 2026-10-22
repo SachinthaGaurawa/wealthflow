@@ -177,13 +177,13 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         ov.innerHTML =
             '<div style="width:100%;max-width:460px;max-height:86vh;display:flex;flex-direction:column;background:var(--bg,#070b16);border:1px solid var(--border,#1f2638);border-radius:18px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.6);">' +
                 '<div style="padding:18px 20px;border-bottom:1px solid var(--border,#1f2638);">' +
-                    '<div style="font-size:18px;font-weight:800;color:var(--text,#fff);">Review &amp; Approve Release</div>' +
-                    '<div style="font-size:12px;color:var(--text3,#8b95a8);margin-top:2px;">The autonomous system proposes; you approve. One tap ships it.</div>' +
+                    '<div style="font-size:18px;font-weight:800;color:var(--text,#fff);">Review and approve the release</div>' +
+                    '<div style="font-size:12px;color:var(--text3,#8b95a8);margin-top:2px;">WealthFlow proposes the release. It is published only when you approve it.</div>' +
                 '</div>' +
                 '<div id="wfRaBody" style="padding:18px 20px;overflow-y:auto;flex:1;"><div style="text-align:center;color:var(--text3,#8b95a8);font-size:13px;">Loading proposal…</div></div>' +
                 '<div style="padding:14px 20px;border-top:1px solid var(--border,#1f2638);display:flex;gap:10px;">' +
                     '<button id="wfRaReject" style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--border,#1f2638);background:transparent;color:var(--text2,#c7cdd9);font-weight:700;cursor:pointer;">Reject</button>' +
-                    '<button id="wfRaApprove" style="flex:2;padding:11px;border-radius:10px;border:none;background:var(--accent,#f5a623);color:#1a1300;font-weight:800;cursor:pointer;">Approve &amp; Deploy</button>' +
+                    '<button id="wfRaApprove" style="flex:2;padding:11px;border-radius:10px;border:none;background:var(--accent,#f5a623);color:#1a1300;font-weight:800;cursor:pointer;">Approve and publish</button>' +
                 '</div>' +
                 '<div style="padding:0 20px 14px;"><button id="wfRaClose" style="width:100%;padding:9px;border-radius:10px;border:none;background:transparent;color:var(--text3,#8b95a8);font-size:12px;cursor:pointer;">Close</button></div>' +
             '</div>';
@@ -235,11 +235,11 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         card.id = 'wfReleasePanel';
         card.style.cssText = 'background:linear-gradient(145deg,rgba(245,166,35,0.05),var(--card));border:1px solid var(--border2);';
         card.innerHTML =
-            '<div class="settings-title" style="color:#f5a623;">Autonomous Release</div>' +
+            '<div class="settings-title" style="color:#f5a623;">Software release</div>' +
             '<div class="setting-row">' +
                 '<div class="setting-info">' +
-                    '<div class="setting-label">Review &amp; approve release</div>' +
-                    '<div class="setting-desc">The system proposes the next release from user feedback and drafts the fix list. Tap to review the proposal and ship it with one approval. Only the owner can approve.</div>' +
+                    '<div class="setting-label">Review and approve the release</div>' +
+                    '<div class="setting-desc">WealthFlow drafts the next release from user feedback and lists the fixes. Review the proposal here and approve it to publish. Only the owner can approve.</div>' +
                 '</div>' +
                 '<button id="wfReleaseOpenBtn" style="padding:9px 16px;border-radius:10px;border:none;background:var(--accent,#f5a623);color:#1a1300;font-weight:800;cursor:pointer;white-space:nowrap;">Review</button>' +
             '</div>';

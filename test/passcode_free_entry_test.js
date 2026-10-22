@@ -77,9 +77,9 @@ describe('the settings row and the boot paths', () => {
     it('says what the option does on any device, how to turn it off, and what stays protected — and no longer says "installed app only"', () => {
         expect(html).not.toContain('Passcode-free entry (installed app only)');
         expect(html).not.toContain("it takes effect once you open the installed app");
-        expect(html).toMatch(/Passcode-free entry<\/div>\s*<div class="setting-desc">Signed in with Google\? Open straight to your dashboard on <b>any device<\/b>/);
+        expect(html).toMatch(/PIN-free entry<\/div>\s*<div class="setting-desc">Signed in with Google\? Open straight to your dashboard on <b>any device<\/b>/);
         expect(html).toMatch(/Anyone who can open WealthFlow on a device that is signed in to your Google account will see your data/);
-        expect(html).toMatch(/passcode still protects the vault and Change PIN/);
+        expect(html).toMatch(/PIN still protects the vault and Change PIN/);
     });
     it('every route that would show the passcode screen to a signed-in user goes through the one chokepoint', () => {
         const route = source('_wfRouteToPinScreen');
@@ -94,7 +94,7 @@ describe('turning it on asks first', () => {
         context.showConfirm.mockImplementation(() => {});                        // the owner has not answered yet
         context.toggleSkipLock(true);
         expect(context.showConfirm).toHaveBeenCalledTimes(1);
-        expect(context.showConfirm.mock.calls[0][2]).toMatch(/without a passcode on every device[\s\S]*will see your data[\s\S]*still protects the vault and Change PIN/);
+        expect(context.showConfirm.mock.calls[0][2]).toMatch(/without asking for your PIN on every device[\s\S]*will see your data[\s\S]*still protects the vault and Change PIN/);
         expect(appData.auth.skipLock).toBeUndefined();
         context.showConfirm.mock.calls[0][5]();                                   // "Turn ON"
         expect(appData.auth.skipLock).toBe(true);

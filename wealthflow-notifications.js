@@ -155,7 +155,7 @@
         try { console.warn('[wfNotif] could not save ' + what + ' — device storage is full or blocked:', e && e.message); } catch (_) { }
         if (!_warnedStorage) {
             _warnedStorage = true;
-            toast('Device storage is full, so notifications can’t remember what you’ve read. Clear some space in Settings → Data.', 'warn');
+            toast('Device storage is full, so alerts cannot remember what you have read. Free some space in Settings, then Data.', 'warn');
         }
     }
 
@@ -400,8 +400,8 @@
         }
     }
     function requestPush() {
-        if (!('Notification' in window)) { toast('Notifications aren\u2019t supported on this device or browser.', 'warn'); return; }
-        if (window.Notification.permission === 'denied') { toast('Notifications are blocked for this site. Enable them in your browser settings, then try again.', 'warn'); return; }
+        if (!('Notification' in window)) { toast('This device or browser does not support notifications.', 'warn'); return; }
+        if (window.Notification.permission === 'denied') { toast('Notifications are blocked for this site. Allow them in your browser settings, then try again.', 'warn'); return; }
         try {
             var p = window.Notification.requestPermission(function (perm) { _afterPerm(perm); });
             if (p && p.then) p.then(_afterPerm).catch(function () { });
@@ -419,7 +419,7 @@
             else showDeviceNotification('WealthFlow notifications are on', 'You\u2019ll be reminded here when a payment or cheque needs attention.', '', 1, 'wf-info');
             toast('Device notifications enabled.', 'success');
         } else {
-            toast('Permission not granted \u2014 device push stays off.', 'warn');
+            toast('Permission was not granted, so device notifications stay off.', 'warn');
         }
     }
 
@@ -679,17 +679,17 @@
                 '</div>';
         }
         card.innerHTML =
-            '<div class="settings-title" style="color:var(--accent,#d4af37);">Notifications</div>' +
+            '<div class="settings-title" style="color:var(--accent,#d4af37);">Alerts</div>' +
             '<div id="wfntfSettingsBody">' +
-            row('enabled', 'Enable notifications', 'Master switch for the topbar bell and its red unseen badge.', false) +
-            row('push', 'Device push notifications', 'Also remind you in your phone/computer notification centre when something needs attention.', true, '<div class="wfntf-pushstate" id="wfntfPushState">Off</div>') +
-            row('urgent', 'Urgent alerts', 'Overdue items and payments due very soon. These count toward the red badge.', true) +
-            row('dueSoon', 'Due-soon warnings', 'Upcoming payments and cheques approaching their date.', true) +
+            row('enabled', 'Show alerts', 'Turns the bell at the top and its red unseen count on or off.', false) +
+            row('push', 'Device notifications', 'Also remind you in your phone or computer notification centre when something needs attention.', true, '<div class="wfntf-pushstate" id="wfntfPushState">Off</div>') +
+            row('urgent', 'Urgent alerts', 'Overdue items and payments due very soon. These count towards the red number on the bell.', true) +
+            row('dueSoon', 'Due soon', 'Upcoming payments and cheques approaching their date.', true) +
             row('cheques', 'Cheques', 'Pending cheques nearing or past their release date.', true) +
             row('ccOneTime', 'Card payments', 'Unpaid one-time credit-card charges nearing or past their deadline.', true) +
-            row('loans', 'Loan instalments', 'Loan EMIs due this month or overdue.', true) +
-            row('subs', 'Bills & subscriptions', 'Recurring bills and unpaid one-time payments due soon or overdue.', true) +
-            row('ccInstall', 'Card instalments', 'Active credit-card instalment plans (informational).', true) +
+            row('loans', 'Loan instalments', 'Loan instalments due this month or overdue.', true) +
+            row('subs', 'Bills and subscriptions', 'Recurring bills and unpaid one-time payments due soon or overdue.', true) +
+            row('ccInstall', 'Card instalments', 'Active credit card instalment plans. For information only.', true) +
             '</div>';
         card.setAttribute('data-built', '1');
         syncSettingsUI();

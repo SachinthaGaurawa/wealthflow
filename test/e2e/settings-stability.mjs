@@ -98,7 +98,7 @@ try {
             ['\u25CF Online', 'bg-g', '8 of 8 AI services answered and agreed \u00B7 checked just now.'],
             ['\u25CF Offline', 'bg-r', 'The AI service is not deployed on this server (got a non-JSON 404 answer).'],
             ['\u25CF Degraded', 'bg-a', 'Only 3 of 8 AI services answered (4 are needed to file anything) \u00B7 checked 59 min ago. Most free services are busy or out of credit.'],
-            ['\u25CF Not measured yet', 'bg-gr', 'No reading of the AI services yet. Press Run Diagnostic to measure them now.'],
+            ['\u25CF Not measured yet', 'bg-gr', 'No reading of the AI services yet. Press Run check to measure them now.'],
         ];
         const rows = await page.evaluate((rs) => rs.map(([txt, cls, detail]) => {
             const b = document.getElementById('aiEngineHealth'); const l = document.getElementById('aiEngineDetail');
