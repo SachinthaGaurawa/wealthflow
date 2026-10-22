@@ -38,9 +38,18 @@ const WF = fs.readFileSync(path.join(ROOT, '.github/workflows/autonomous-discove
  * Run discover.mjs the way CI does and report exit status + step summary.
  * A hard timeout is the point of the test: the bug WAS the absence of an exit.
  */
-function runDiscover({ args = [], breakBrowser = false, timeoutMs = 90_000 } = {}) {
+function runDiscover({ args = [], breakBrowser = false, timeoutMs = 90_000, auditTimeoutMs = 12_000, npmStub = null } = {}) {
     const summary = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wf-disc-')), 'summary.md');
-    const env = { ...process.env, GITHUB_STEP_SUMMARY: summary };
+    // `npm audit` is a registry call. Left unbounded, a slow registry ate the whole 60 s budget of the
+    // tests below (CI: 3 failures, "Terminate orphan process (npm audit)"), so the scanner is given a short,
+    // explicit audit budget here. A stub `npm` first on PATH stands in for the registry when a test needs
+    // a particular answer from it.
+    const env = { ...process.env, GITHUB_STEP_SUMMARY: summary, WF_AUDIT_TIMEOUT_MS: String(auditTimeoutMs) };
+    if (npmStub) {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-npm-'));
+        fs.writeFileSync(path.join(dir, 'npm'), `#!/bin/sh\n${npmStub}\n`, { mode: 0o755 });
+        env.PATH = `${dir}${path.delimiter}${process.env.PATH}`;
+    }
     if (breakBrowser) env.PLAYWRIGHT_BROWSERS_PATH = '/nonexistent-on-purpose';
     const r = spawnSync(process.execPath, ['autonomy/discover.mjs', ...args], {
         cwd: ROOT, env, timeout: timeoutMs, encoding: 'utf8',
@@ -192,6 +201,67 @@ describe('coverage and findings are separate facts and both are always reported'
         expect(() => renderSummary()).not.toThrow();
         expect(renderSummary()).toMatch(/\*\*Coverage/);
     });
+});
+
+describe('a dependency audit that cannot answer is reported as such, and cannot hold the scanner up', () => {
+    const GAVE_UP = { completed: false, reason: 'npm audit did not answer within 120 s' };
+    const FOUND = [{ severity: 'high', kind: 'dep-vuln', key: 'nanoid' }];
+    const BROKE = { ran: false, reason: 'could not launch Chromium: spawn ENOENT' };
+    const RAN = { ran: true, reason: null };
+    let renderSummary;
+    beforeAll(async () => { ({ renderSummary } = await import('../autonomy/discover.mjs')); });
+
+    it('says the audit did not finish, in every combination of findings and browser sweep', () => {
+        for (const ui of [BROKE, RAN]) {
+            for (const uiDisabled of [false, true]) {
+                for (const findings of [[], FOUND]) {
+                    const md = renderSummary({ findings, ui, uiDisabled, audit: GAVE_UP });
+                    const where = `ui.ran=${ui.ran} uiDisabled=${uiDisabled} findings=${findings.length}`;
+                    expect(md, where).toMatch(/Dependency audit: did not finish/);
+                    expect(md, where).toMatch(/did not answer within 120 s/);
+                    expect(md, `${where}: a run that skipped the audit must not open with an OK`).toMatch(/^### \[(WARNING)\]/);
+                }
+            }
+        }
+    });
+
+    it('stays silent about the audit when it did finish, so the warning keeps its meaning', () => {
+        const md = renderSummary({ findings: [], ui: RAN, audit: { completed: true, reason: null } });
+        expect(md).not.toMatch(/Dependency audit/);
+        expect(md).toMatch(/^### \[OK\]/);
+        expect(renderSummary({ findings: [], ui: RAN })).not.toMatch(/Dependency audit/);
+    });
+
+    it('gives up on a registry that never answers, exits cleanly, and says so', () => {
+        // `exec` so the stub IS the sleeping process: a shell that merely spawns `sleep` would leave the
+        // sleeper holding the pipe and the test would measure the sleep, not the timeout.
+        const t0 = Date.now();
+        const r = runDiscover({ args: ['--no-ui'], timeoutMs: 40_000, auditTimeoutMs: 2000, npmStub: 'exec sleep 120' });
+        expect(r.timedOut, 'the scanner waited on npm audit').toBe(false);
+        expect(Date.now() - t0).toBeLessThan(30_000);
+        expect(r.status).toBe(0);
+        expect(r.summary).toMatch(/Dependency audit: did not finish/);
+        expect(r.summary).toMatch(/did not answer within 2 s/);
+        expect(r.summary).toMatch(/^### \[WARNING\]/);
+    }, 60_000);
+
+    it('treats a registry that is unreachable (JSON error, non-zero exit) as a failed audit, not a clean one', () => {
+        const r = runDiscover({ args: ['--no-ui'], timeoutMs: 40_000, npmStub: `echo '{"error":{"code":"ENOTFOUND","summary":"request failed"}}'; exit 1` });
+        expect(r.status).toBe(0);
+        expect(r.summary).toMatch(/Dependency audit: did not finish/);
+        expect(r.summary).toMatch(/could not reach the registry \(ENOTFOUND\)/);
+    }, 60_000);
+
+    it('does not raise the alarm when the audit answers, with or without vulnerabilities', () => {
+        const r = runDiscover({ args: ['--no-ui'], timeoutMs: 40_000, npmStub: `echo '{"vulnerabilities":{}}'` });
+        expect(r.status).toBe(0);
+        expect(r.summary).not.toMatch(/Dependency audit/);
+        expect(r.summary).toMatch(/static detectors only/i);
+        const withVuln = runDiscover({ args: ['--no-ui'], timeoutMs: 40_000, npmStub: `echo '{"vulnerabilities":{"left-pad":{"severity":"high","via":[]}}}'; exit 1` });
+        expect(withVuln.status).toBe(0);
+        expect(withVuln.summary).not.toMatch(/Dependency audit/);
+        expect(withVuln.summary).toMatch(/left-pad/);
+    }, 60_000);
 });
 
 describe('the workflow can actually install the browser it depends on', () => {

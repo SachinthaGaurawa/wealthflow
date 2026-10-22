@@ -31,7 +31,7 @@ import { normalizeNic } from '../../wealthflow-nic.js';
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 const PAGE_HEADERS = Object.fromEntries(VERCEL.headers.find((h) => h.source === '/t/(.*)').headers.map((h) => [h.key, h.value]));
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.woff2': 'font/woff2' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
 
 const ENV = { TENANT_PORTAL_SECRET: 'e2e-secret-'.repeat(4) };
 const NIC = '853400937V';
@@ -82,7 +82,7 @@ const server = http.createServer((req, res) => {
     if (/^\/t\/[A-Za-z0-9_-]{16}$/.test(file)) { file = '/tenant.html'; Object.assign(headers, PAGE_HEADERS); }
     const f = path.resolve(ROOT, '.' + file);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end('not found'); }
-    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|tenant-inter\.woff2|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
+    if (!/^\/(tenant\.html|tenant-page\.(js|css)|tenant-logo\.png|assets\/wf-mark\.svg|tenant-inter\.woff2|tenant-(lang|tools)\.js|wealthflow-nic\.js)$/.test(file)) { res.writeHead(404); return res.end('not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', ...headers });
     res.end(fs.readFileSync(f));
 });
@@ -440,8 +440,10 @@ async function signInStates(device, width, height, touch, dark) {
     await page.fill('#tp-nic', NIC);
     await page.click('#tp-send');
     await page.waitForSelector('#tp-code');
-    const info = await page.textContent('#tp-info');
-    if (!/\+94 ••• 4567/.test(info) || /771234567/.test(info)) problems.push(`${label}: the code screen should name only the last four digits (${info})`);
+    const info = await page.textContent('#tp-sent');
+    if (!/\+94 •• ••• •567/.test(info) || /771234567|4567/.test(info)) problems.push(`${label}: the code screen should name only the last three digits (${info})`);
+    const sentBox = await page.evaluate(() => { const r = document.querySelector('#tp-sent').getBoundingClientRect(); const n = document.querySelector('#tp-sent .tp-sent-num'); return { right: r.right, vw: document.documentElement.clientWidth, numWraps: n.getClientRects().length > 1 || n.scrollWidth > n.clientWidth + 1 }; });
+    if (sentBox.right > sentBox.vw + 1 || sentBox.numWraps) problems.push(`${label}: the phone card is cut off or its number breaks (${JSON.stringify(sentBox)})`);
     await inspect(page, `${label}, code screen`, touch);
     if (width === 390) contrasted += await contrast(page, `${label}, code screen`);
     await shot(page, `${tag}-1d-code`);

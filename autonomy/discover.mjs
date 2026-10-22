@@ -115,15 +115,41 @@ export function productionDeps(repoDir = process.cwd()) {
     } catch { return new Set(); }
 }
 
+// `npm audit` is a network call to the registry and had no bound: when the
+// registry was slow it never returned, and the scanner that must terminate (see
+// the exit note at the bottom) waited on it for as long as the runner allowed.
+// A run that gives up on the audit must also SAY so — an empty report from a
+// timed-out audit is the same "could not look" that reads as "found nothing".
+const AUDIT_TIMEOUT_MS = Math.max(1000, Number(process.env.WF_AUDIT_TIMEOUT_MS) || 120_000);
+let auditStatus = { completed: false, reason: 'not attempted' };
+export function getAuditStatus() { return { ...auditStatus }; }
+
 function runAudit(repoDir) {
     try {
-        return execFileSync('npm', ['audit', '--json'], {
+        const out = execFileSync('npm', ['audit', '--json'], {
             cwd: repoDir, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: AUDIT_TIMEOUT_MS, killSignal: 'SIGKILL',
         });
+        auditStatus = { completed: true, reason: null };
+        return out;
     } catch (e) {
+        if (e?.code === 'ETIMEDOUT' || e?.signal === 'SIGKILL') {
+            auditStatus = { completed: false, reason: `npm audit did not answer within ${Math.round(AUDIT_TIMEOUT_MS / 1000)} s` };
+            return '';
+        }
         // npm audit exits NONZERO when it finds vulnerabilities — that is the
         // normal path, and stdout still holds the report.
-        return e?.stdout || '';
+        if (e?.stdout) {
+            let report = null;
+            try { report = JSON.parse(e.stdout); } catch { /* not a report */ }
+            // An unreachable registry still prints JSON, but it is {"error": …}
+            // with no vulnerabilities key: that is a failed audit, not a clean one.
+            if (report && report.vulnerabilities) { auditStatus = { completed: true, reason: null }; return e.stdout; }
+            auditStatus = { completed: false, reason: `npm audit could not reach the registry${report?.error?.code ? ` (${report.error.code})` : ''}` };
+            return '';
+        }
+        auditStatus = { completed: false, reason: `npm audit returned no report${e?.code ? ` (${e.code})` : ''}` };
+        return '';
     }
 }
 
@@ -672,7 +698,10 @@ export async function fileFindings(findings, { env = process.env, max = MAX_PER_
  * every combination of (findings × coverage) is asserted deterministically
  * instead of depending on the state of the lockfile.
  * ────────────────────────────────────────────────────────────────────────────*/
-export function renderSummary({ findings = [], ui = { ran: false, reason: 'not attempted' }, uiDisabled = false } = {}) {
+export function renderSummary({ findings = [], ui = { ran: false, reason: 'not attempted' }, uiDisabled = false, audit = { completed: true, reason: null } } = {}) {
+    const auditNote = audit.completed ? ''
+        : '\n**Dependency audit: did not finish.** Vulnerable packages were not checked on this run, so the '
+          + `absence of a dependency finding below means nothing.\n\n> ${audit.reason}\n`;
     const coverage = uiDisabled
         ? '\n**Coverage:** static detectors only — the browser sweep was skipped by request (`--no-ui`).\n'
         : !ui.ran
@@ -698,7 +727,8 @@ export function renderSummary({ findings = [], ui = { ran: false, reason: 'not a
         // as "nothing is there".
         : 'Nothing to file from the detectors that ran.\n';
 
-    return `${heading}\n\n${body}${coverage}`;
+    const flagged = audit.completed ? heading : heading.replace(/^### \[(OK|REVIEW)\]/, '### [WARNING]');
+    return `${flagged}\n\n${body}${coverage}${auditNote}`;
 }
 
 const invokedDirectly = (process.argv[1] || '').endsWith('discover.mjs');
@@ -740,6 +770,7 @@ if (invokedDirectly) {
             findings,
             ui: getUiSweepStatus(),
             uiDisabled: process.argv.includes('--no-ui'),
+            audit: getAuditStatus(),
         });
         try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n'); } catch { /* ignore */ }
     }

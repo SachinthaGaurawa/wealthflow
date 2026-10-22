@@ -206,6 +206,15 @@ p { margin: 0 0 12px; }
 }
 .tp-badge .tp-ico { width: 26px; height: 26px; }
 .tp-badge-warn { background: linear-gradient(135deg, #7a3d00, #b45309); box-shadow: 0 8px 20px rgba(180, 83, 9, 0.3); }
+/* where the code went: the phone's last digits in a card of their own, like a bank's or a mail service's "we sent a code to" */
+.tp-sent { display: flex; align-items: center; gap: 14px; margin: 16px 0 0; padding: 14px 16px; border-radius: 14px; text-align: left; background: var(--primary-weak); border: 1px solid var(--primary-line); }
+.tp-sent .tp-ico { flex: none; width: 26px; height: 26px; color: var(--primary); }
+.tp-sent-body { display: grid; gap: 2px; margin: 0; min-width: 0; }
+.tp-sent-label { font-size: 13px; line-height: 1.35; color: var(--mute); }
+.tp-sent-num { font-size: clamp(17px, 5.6vw, 21px); line-height: 1.25; font-weight: 700; letter-spacing: 0.05em; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 300px) { .tp-sent { gap: 0; padding: 12px; } .tp-sent .tp-ico { display: none; } }
+/* read by a screen reader and not drawn */
+.tp-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .tp-steps { display: flex; gap: 6px; margin: 0 auto 14px; max-width: 160px; }
 .tp-steps span { flex: 1 1 0; height: 4px; border-radius: 4px; background: var(--line); }
 .tp-steps span.tp-on { background: var(--primary); }
@@ -296,28 +305,66 @@ select:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .tp-info { margin: 14px 0 0; padding: 11px 14px; border-radius: 12px; color: var(--primary); background: var(--primary-weak); border: 1px solid var(--primary-line); font-size: 14px; }
 .tp-info[hidden] { display: none; }
 
-/* ── the loading screen: the mark, the name, a thin bar that runs, one honest line ──────────────────────────────────────────
-   tenant.html draws it before any script has arrived and tenant-page.js adopts the same element, so nothing restarts. It is invisible for the
-   first 0.3 s (a quick load never shows it) and, once seen, the script keeps it up a moment so it does not flash. */
+/* ── the loading screen: WealthFlow's own loading look, on white ───────────────────────────────────────────────────────────
+   The app tile with a gold ring running round it, the name, "Infinity Engine" in gold, a gold bar and one honest line: the same pieces as the
+   app's own loading screen, drawn light because this page is light. The bar is not a made-up percentage: it stands at a start, moves when
+   the page's script is running and again when the answer has come, and a shimmer on it says the page is alive in between.
+   It covers the screen with its own white (the page's canvas is blue-grey) and scales with the screen's smaller side, so a 240 px phone, a
+   landscape phone and a wide monitor each get a whole, centred composition; if the screen is too short for it, it scrolls rather than clips.
+   tenant.html draws it before any script has arrived and tenant-page.js adopts the same element, so nothing restarts. It is invisible for
+   the first 0.3 s (a quick load never shows it) and, once seen, the script keeps it up a moment so it does not flash. */
 .tp-splash {
-    --splash-glow: rgba(11, 79, 179, 0.22);
-    min-height: 100vh; min-height: 100svh;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    --splash-bg: #ffffff;
+    --splash-gold-a: #be9444;
+    --splash-gold-b: #eccb74;
+    --splash-gold-text: #7d5f12;           /* the gold as lettering: 6:1 on white, where the bright gold would be 2.3:1 */
+    --splash-track: rgba(15, 27, 51, 0.09);
+    --splash-glow: rgba(190, 148, 68, 0.3);
+    --splash-tile: rgba(11, 36, 87, 0.26);
+    --splash-size: clamp(72px, 21vmin, 128px);
+    --splash-p: 0.18;
+    position: fixed; inset: 0; z-index: 5;
+    display: flex; flex-direction: column; align-items: center;
+    overflow-y: auto; overscroll-behavior: contain;
     padding: 24px max(24px, env(safe-area-inset-right)) calc(72px + env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+    background: var(--splash-bg);
     text-align: center;
     animation: tp-late 0.3s linear 0.3s both;
 }
-:root[data-theme="dark"] .tp-splash { --splash-glow: rgba(106, 164, 255, 0.2); }
-.tp-splash-mark { position: relative; width: 72px; height: 72px; }
-.tp-splash-mark::before { content: ""; position: absolute; inset: -24px; border-radius: 50%; background: radial-gradient(closest-side, var(--splash-glow), transparent); }
-.tp-splash-logo { position: relative; display: block; width: 72px; height: 72px; border-radius: 20px; box-shadow: 0 12px 30px rgba(11, 36, 87, 0.28); }
-.tp-splash-name { margin: 26px 0 0; font-size: 22px; line-height: 1.1; font-weight: 750; letter-spacing: -0.02em; color: var(--ink); }
-.tp-splash-bar { position: relative; width: 120px; height: 3px; margin: 22px 0 0; border-radius: 3px; background: var(--line); overflow: hidden; }
-.tp-splash-bar span { position: absolute; top: 0; bottom: 0; left: 0; width: 42%; border-radius: 3px; background: linear-gradient(90deg, var(--hero-b), #3d8bff); }
-/* room for two lines, so the sentence changing to the slow one does not move anything */
-.tp-splash-status { margin: 16px 0 0; min-height: 3em; max-width: 30ch; font-size: 14px; line-height: 1.5; color: var(--mute); text-wrap: balance; }
+:root[data-theme="dark"] .tp-splash {
+    --splash-bg: #0a111f;
+    --splash-gold-text: #e3bf62;
+    --splash-track: rgba(255, 255, 255, 0.12);
+    --splash-glow: rgba(236, 203, 116, 0.2);
+    --splash-tile: rgba(0, 0, 0, 0.5);
+}
+.tp-splash.tp-p2 { --splash-p: 0.62; }
+.tp-splash.tp-p3 { --splash-p: 1; }
+/* first and last child take the spare room, so the composition is centred when it fits and scrolls from its top when it does not */
+.tp-splash > :first-child { margin-top: auto; }
+.tp-splash > :last-child { margin-bottom: auto; }
+.tp-splash-mark { position: relative; flex: none; width: var(--splash-size); height: var(--splash-size); }
+.tp-splash-mark::before { content: ""; position: absolute; inset: -38%; border-radius: 50%; background: radial-gradient(closest-side, var(--splash-glow), transparent); }
+.tp-splash-mark::after {
+    content: ""; position: absolute; inset: -13%; border-radius: 50%;
+    background: conic-gradient(from 0deg, transparent 0 38%, var(--splash-gold-a) 80%, var(--splash-gold-b) 100%);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+    box-shadow: inset 0 0 0 3px rgba(190, 148, 68, 0.16);       /* the faint full circle the bright arc runs along */
+}
+/* the mark is the app's own drawing (sharp at any size); the navy tile behind it is drawn here, the way the app's loading screen does */
+.tp-splash-logo { position: relative; display: block; box-sizing: border-box; width: 100%; height: 100%; padding: 19% 12%; object-fit: contain; border-radius: 22%; background: #0d1d3c; box-shadow: 0 14px 34px var(--splash-tile), 0 0 0 1px rgba(190, 148, 68, 0.28); }
+.tp-splash-name { margin: calc(var(--splash-size) * 0.32) 0 0; font-size: clamp(30px, 8.5vmin, 54px); line-height: 1.05; font-weight: 800; letter-spacing: -0.03em; color: var(--ink); }
+.tp-splash-sub { margin: 8px 0 0; padding-left: 0.32em; font-size: clamp(12px, 2.7vmin, 15px); line-height: 1.2; font-weight: 650; letter-spacing: 0.32em; text-transform: uppercase; color: var(--splash-gold-text); }
+.tp-splash-bar { position: relative; flex: none; width: min(clamp(220px, 30vmin, 320px), 70vw); height: 4px; margin: clamp(22px, 4.6vmin, 38px) 0 0; border-radius: 4px; background: var(--splash-track); overflow: hidden; }
+.tp-splash-bar span { position: absolute; inset: 0; border-radius: 4px; overflow: hidden; transform-origin: left center; transform: scaleX(var(--splash-p)); background: linear-gradient(90deg, var(--splash-gold-a), var(--splash-gold-b)); }
+.tp-splash-bar span::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), transparent); transform: translateX(-100%); }
+/* room for three lines, so the sentence changing to the slow one does not move anything */
+.tp-splash-status { margin: clamp(16px, 3.4vmin, 22px) 0 0; min-height: 4.7em; max-width: 32ch; font: clamp(13px, 1.55vmin, 16px)/1.55 ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; letter-spacing: 0.01em; color: var(--mute); text-wrap: balance; }
 /* for a script that never runs (a very old browser): after 12 s the static page asks for a reload; the script removes this line the moment it starts */
 .tp-splash-stuck { margin: 0; max-width: 34ch; font-size: 13px; line-height: 1.5; color: var(--mute); animation: tp-late 0.4s linear 12s both; }
+/* a screen held sideways has little height: the spare room under the line is given back */
+@media (max-height: 480px) { .tp-splash { padding-bottom: calc(24px + env(safe-area-inset-bottom)); } .tp-splash-status { min-height: 3.3em; } }
 @media (scripting: none) { .tp-splash { display: none; } }
 
 /* ── signed in: the header of the statement ───────────────────────────────── */
@@ -607,8 +654,11 @@ td.tp-num, th.tp-num { text-align: right; }
     .tp-col-b > :nth-child(3) { animation-delay: 0.2s; }
     .tp-toasts > * { animation: tp-pop 0.22s ease-out both; }
     .tp-splash-mark::before { animation: tp-breathe 2.6s ease-in-out infinite; }
+    .tp-splash-mark::after { animation: tp-spin 1.5s linear infinite; }
     .tp-splash-logo { animation: tp-settle 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) 0.3s both; }
-    .tp-splash-bar span { animation: tp-run 1.4s cubic-bezier(0.45, 0, 0.25, 1) infinite; }
+    .tp-splash-bar span { transition: transform 0.9s cubic-bezier(0.2, 0.7, 0.2, 1); }
+    .tp-splash-bar span::after { animation: tp-run 1.6s ease-in-out infinite; }
+    @keyframes tp-spin { to { transform: rotate(360deg); } }
     /* the second step fills in rather than switching on; a refused field gives one small nudge (a "no" without blame); a busy button runs a thin bar */
     .tp-steps span.tp-on:last-child { transform-origin: left; animation: tp-fill 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
     input[aria-invalid="true"] { animation: tp-nudge 0.32s ease-in-out both; }
@@ -624,7 +674,8 @@ td.tp-num, th.tp-num { text-align: right; }
 @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; }
     /* nothing runs: the bar is a calm full line, not a progress that seems stuck halfway */
-    .tp-splash-bar span { width: 100%; opacity: 0.4; }
+    .tp-splash-bar span { transform: none; opacity: 0.4; }
+    .tp-splash-bar span::after { display: none; }
 }
 
 /* ── print: a plain statement on white, nothing that only works on a screen ─ */

@@ -123,10 +123,16 @@ export function splashWait(elapsedMs) {
     return Math.max(0, SPLASH_AFTER_MS + SPLASH_MIN_MS - e);
 }
 
-/** "+94*****4567" (all but the last four digits hidden by the server) as "+94 ••• 4567"; anything else is not shown at all. */
+/**
+ * "+94*****4567" (all but the last four digits hidden by the server) as "+94 •• ••• •567": the country code, the shape of a Sri Lankan
+ * number so it reads as a phone number, and only the last three digits, enough to recognise the phone and not enough to use it. The
+ * fourth digit from the end, which the server sent, is hidden again here. Anything that is not that shape is not shown at all.
+ */
 export function phoneLabel(masked) {
-    const m = /^(\+\d{1,3})\*+(\d{4})$/.exec(String(masked || ''));
-    return m ? `${m[1]} ••• ${m[2]}` : '';
+    const m = /^(\+\d{1,3})(\*+)(\d{4})$/.exec(String(masked || ''));
+    if (!m) return '';
+    const hidden = m[2].length + 1;
+    return m[2].length + 4 === 9 ? `${m[1]} •• ••• •${m[3].slice(1)}` : `${m[1]} ${'•'.repeat(hidden)} ${m[3].slice(1)}`;
 }
 
 /** What to tell the person when the server said no. The server's own sentence wins; a wait is added in minutes. */
@@ -190,6 +196,7 @@ const ICONS = {
     bank: ['M3 10l9-6 9 6', 'M5 10v8', 'M9 10v8', 'M15 10v8', 'M19 10v8', 'M3 21h18'],
     list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
     message: ['M4 5h16v11H9l-5 4z'],
+    phone: ['M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z', 'M11 18h2'],
     clock: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M12 7v5l3 2'],
     chevron: ['m6 9 6 6 6-6'],
     sun: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M12 2v2', 'M12 20v2', 'M4.9 4.9l1.4 1.4', 'M17.7 17.7l1.4 1.4', 'M2 12h2', 'M20 12h2', 'M4.9 19.1l1.4-1.4', 'M17.7 6.3l1.4-1.4'],
@@ -420,17 +427,26 @@ export function brandEl(doc) {
 }
 
 /**
- * The loading screen: the mark, the name, a thin bar that runs and one line saying what is happening. The same markup is written into
- * tenant.html, so the first thing a person sees is not an empty page while this file is still downloading; this builds it again only when the
- * page needs it and it is not there. Nothing in it is a promise the page does not keep: the bar is indeterminate on purpose (a made-up
- * percentage would be a lie), and the line under it is the page's actual state.
+ * The loading screen, in WealthFlow's own loading look on white: the app tile with a gold ring round it, the name, "Infinity Engine", a gold bar
+ * and one line saying what is happening. The same markup is written into tenant.html, so the first thing a person sees is not an empty page
+ * while this file is still downloading; this builds it again only when the page needs it and it is not there. Nothing in it is a promise the
+ * page does not keep: the bar is not a made-up percentage but stands at three real moments (the page drawn, this script running, the answer
+ * in; see splashStage), and the line under it is the page's actual state.
  */
 export function splashEl(doc) {
     return h(doc, 'div', { class: 'tp-splash', id: 'tp-splash', role: 'status' },
-        h(doc, 'div', { class: 'tp-splash-mark', 'aria-hidden': 'true' }, h(doc, 'img', { class: 'tp-splash-logo', src: '/tenant-logo.png', alt: '', width: '72', height: '72' })),
+        h(doc, 'div', { class: 'tp-splash-mark', 'aria-hidden': 'true' }, h(doc, 'img', { class: 'tp-splash-logo', src: '/assets/wf-mark.svg', alt: '', width: '112', height: '112' })),
         h(doc, 'h1', { class: 'tp-splash-name', text: 'WealthFlow' }),
+        h(doc, 'p', { class: 'tp-splash-sub', 'aria-hidden': 'true', text: 'Infinity Engine' }),
         h(doc, 'div', { class: 'tp-splash-bar', 'aria-hidden': 'true' }, h(doc, 'span')),
         h(doc, 'p', { class: 'tp-splash-status' }));
+}
+
+/** Moves the loading screen's bar to a real milestone: 1 the page is drawn (how it starts), 2 this script is running, 3 the answer is in. */
+export function splashStage(box, stage) {
+    if (!box || !box.classList) return;
+    box.classList.toggle('tp-p2', stage === 2);
+    box.classList.toggle('tp-p3', stage >= 3);
 }
 
 /** One bank account, with a copy button on the number (the thing that gets typed wrongly) and one for the lot. */
@@ -732,7 +748,7 @@ export function createPage(env) {
         st.els = {};
         st.verified = false;
         st.codeMessage = message;
-        const input = h(doc, 'input', { id: 'tp-code', name: 'code', class: 'tp-code', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', maxlength: '6', required: true, 'aria-describedby': 'tp-info tp-err', 'aria-label': t('6-digit verification code'), oninput: forgive });
+        const input = h(doc, 'input', { id: 'tp-code', name: 'code', class: 'tp-code', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', maxlength: '6', required: true, 'aria-describedby': st.phone ? 'tp-sent tp-info tp-err' : 'tp-info tp-err', 'aria-label': t('6-digit verification code'), oninput: forgive });
         if (value) input.value = value;
         const verify = h(doc, 'button', { class: 'tp-btn', type: 'submit', id: 'tp-verify', text: t('Verify code') });
         const resend = h(doc, 'button', { class: 'tp-btn tp-ghost tp-quiet', type: 'button', id: 'tp-resend', disabled: true, onclick: onResend });
@@ -741,16 +757,24 @@ export function createPage(env) {
         st.els.input = input; st.els.button = verify; st.els.resend = resend; st.els.expiry = expiry;
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
         st.els.info = infoBox;
-        const sentTo = st.phone ? t('We have sent a 6-digit verification code to {phone}. It expires in 3 minutes.', { phone: st.phone }) : (message ? t(message) : '');
+        // where the code went, the way a bank or a mail service says it: the phone's last three digits in a card of their own (the dots are for the eye;
+        // a screen reader is given the digits instead of "bullet bullet bullet"). Without a number to show, the server's own sentence is all there is.
+        const sentTo = st.phone ? h(doc, 'div', { class: 'tp-sent', id: 'tp-sent' },
+            icon(doc, 'phone'),
+            h(doc, 'p', { class: 'tp-sent-body' },
+                h(doc, 'span', { class: 'tp-sent-label', text: t('We sent a 6-digit code by text message to') }),
+                h(doc, 'span', { class: 'tp-sent-num', 'aria-hidden': 'true', text: st.phone }),
+                h(doc, 'span', { class: 'tp-sr', text: t('your mobile number ending in {digits}', { digits: st.phone.slice(-3).split('').join(' ') }) }))) : null;
         mount('Enter verification code', [h(doc, 'section', { class: 'tp-card tp-auth' },
             h(doc, 'span', { class: 'tp-badge', 'aria-hidden': 'true' }, icon(doc, 'message')),
             steps(2),
             h(doc, 'h2', { tabindex: '-1', text: t('Enter verification code') }),
+            sentTo,
             infoBox,
             h(doc, 'form', { novalidate: true, onsubmit: onVerify }, h(doc, 'label', { for: 'tp-code', text: t('Verification code') }), input, errorBox(), verify),
             expiry, h(doc, 'div', { class: 'tp-quiet-row' }, resend, back),
             h(doc, 'p', { class: 'tp-small', text: st.phone ? t('No message after a minute? Check that the number above is still yours. If it is not, ask your lender to update it. Otherwise, resend the code.') : t('No message after a minute? Resend the code. If it still does not arrive, please contact your lender.') }))], '#tp-code');
-        showInfo(sentTo);
+        showInfo(st.phone ? '' : (message ? t(message) : ''));
         const paint = () => {
             const left = Math.ceil((st.resendAt - now()) / 1000);
             resend.disabled = left > 0 || st.busy;
@@ -1040,6 +1064,7 @@ export function createPage(env) {
         // the static page's "reload this page" line is for a script that never ran; this one is running
         const stuck = typeof box.querySelector === 'function' ? box.querySelector('.tp-splash-stuck') : null;
         if (stuck) stuck.remove();
+        splashStage(box, 2);
         const say = () => {
             const line = typeof box.querySelector === 'function' ? box.querySelector('.tp-splash-status') : null;
             if (line) line.textContent = st.slow ? t('This is taking longer than usual. Thank you for your patience.') : t('Preparing your secure page');
@@ -1058,6 +1083,7 @@ export function createPage(env) {
         screenLoading();
         const got = await api('statement', { token });
         if (st.screen !== 'loading') return;                       // the person got ahead of it
+        splashStage(typeof root.querySelector === 'function' ? root.querySelector('.tp-splash') : null, 3);
         // a loader that flashes is worse than none: once the loading screen has been seen it stays a moment longer, then the next screen takes its place
         const hold = splashWait(sinceStart());
         if (hold > 0) { await new Promise((resolve) => later(resolve, hold)); if (st.screen !== 'loading') return; }
