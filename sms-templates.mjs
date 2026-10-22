@@ -177,15 +177,16 @@ export function buildMessage(kind, ctx = {}) {
 /**
  * The portal's one-time code. Says what it is for, how long it lives and never to share it.
  *
- * The last line is the web's origin-bound format, "@host #code" (the host only: no scheme, port or path; one space; nothing after it). A
- * phone that sees it offers the code on the keyboard of the page that really is that host, and only there, so a look-alike site cannot
- * collect it; Chrome on Android can fill it in with one tap. It is one line break and 28 characters, so the text stays one part.
+ * The last line is the web's origin-bound format, "@host #code" (the host only: no scheme, port or path; one space; nothing after it), set
+ * off from the sentence by a blank line exactly as the format's own examples are (https://github.com/WICG/sms-one-time-codes). A phone that
+ * sees it offers the code on the keyboard of the page that really is that host, and only there, so a look-alike site cannot collect it;
+ * Chrome on Android can fill it in with one tap. The blank line and the last line are 29 characters, so the text stays one part.
  */
 export function otpMessage(code, minutes = 3, host = OFFICIAL_HOST) {
     const c = s(code).replace(/\D/g, '');
     const text = asciiOnly(`${c} is your WealthFlow verification code. It expires in ${minutes} minutes. Do not share it with anyone.`);
     const h = s(host).trim().toLowerCase();
-    return /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(h) && c ? `${text}\n@${h} #${c}` : text;
+    return /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(h) && c ? `${text}\n\n@${h} #${c}` : text;
 }
 
 export default { KINDS, currencyOf, fmtMoney, fmtDay, fmtMonth, refCode, buildMessage, otpMessage, asciiOnly };

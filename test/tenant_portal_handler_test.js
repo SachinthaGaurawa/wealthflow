@@ -8,7 +8,7 @@
  * ===========================================================================*/
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { handlePortal, sameSite, readBody, guardNote } from '../tenant-portal.js';
+import { handlePortal, sameSite, readBody, guardNote, portalHost } from '../tenant-portal.js';
 import { portalSecret } from '../tenant-links.mjs';
 import { LIMITS } from '../tenant-portal.mjs';
 import zlib from 'node:zlib';
@@ -61,6 +61,28 @@ describe('the text names the site it came from', () => {
         expect(gw.sent).toHaveLength(1);
         expect(gw.sent[0].message.split('\n').at(-1)).toBe('@portal.example.lk #246810');
         expect(gw.sent[0].message).not.toMatch(/https?:/);
+    });
+
+    it('names the official host the person is really on, even when the setting still holds an older address', async () => {
+        const ctx = {}; Object.assign(ctx, makeDb());
+        const token = await seed(ctx);
+        const { d, gw } = deps({ ctx, env: { ...ENV, WEALTHFLOW_PUBLIC_ORIGIN: 'https://wealthflow-personal.vercel.app' } });
+        const official = { host: 'www.wealthflow.lk', origin: 'https://www.wealthflow.lk' };
+        await call(d, { headers: official, body: { action: 'request', token, nic: NIC } });
+        expect(gw.sent).toHaveLength(1);
+        expect(gw.sent[0].message.split('\n').at(-1)).toBe('@www.wealthflow.lk #246810');
+        expect(gw.sent[0].message.split('\n').at(-2)).toBe('');
+    });
+
+    it('never names a host the caller made up: only the official host and the configured one are believed', () => {
+        const env = { WEALTHFLOW_PUBLIC_ORIGIN: 'https://portal.example.lk' };
+        const at = (host) => portalHost({ headers: { host } }, env);
+        expect(at('www.wealthflow.lk')).toBe('www.wealthflow.lk');
+        expect(at('WWW.WealthFlow.LK')).toBe('www.wealthflow.lk');
+        expect(at('portal.example.lk')).toBe('portal.example.lk');
+        for (const bad of ['evil.example', 'www.wealthflow.lk.evil.example', 'www.wealthflow.lk:8443', 'wealthflow.lk', '', undefined]) expect(at(bad), String(bad)).toBe('portal.example.lk');
+        expect(portalHost({ headers: {} }, {})).toBe('www.wealthflow.lk');                  // nothing set, nothing asked: the official site
+        expect(portalHost({ headers: { host: ['www.wealthflow.lk', 'x'] } }, env)).toBe('www.wealthflow.lk');
     });
 });
 

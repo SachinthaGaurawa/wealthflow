@@ -117,9 +117,10 @@ describe('the one-time code message', () => {
     });
     it('ends with the origin-bound line a phone reads to offer the code only to the real site', () => {
         const t = otpMessage('048213', 3);
-        expect(t).toBe(`048213 ${SENTENCE}\n@www.wealthflow.lk #048213`);
+        expect(t).toBe(`048213 ${SENTENCE}\n\n@www.wealthflow.lk #048213`);          // the sentence, a blank line, then the line a phone reads: the layout the format's own examples have
         const last = t.split('\n').at(-1);
         expect(last).toMatch(/^@[a-z0-9.-]+ #\d{6}$/);                         // the host only, one space, the code, and nothing after it
+        expect(t.split('\n').at(-2)).toBe('');                                  // set off from the sentence by a blank line, as the format's examples are
         expect(last).not.toMatch(/https?:|\/|:\d/);                           // no scheme, path or port
         expect(t.endsWith(last)).toBe(true);
     });
