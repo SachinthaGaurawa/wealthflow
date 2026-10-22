@@ -17,7 +17,8 @@
  *     without a pre-flight this endpoint never grants (no CORS headers are ever sent).
  *   - Origin / Sec-Fetch-Site must be this site's own. The cookie is SameSite=Strict as well;
  *     either alone would do, both is cheap.
- *   - Nothing is cached, nothing is indexed, nothing is framed: every answer says so.
+ *   - Nothing is cached, nothing is indexed, nothing is framed: every answer says so. No CORS header is ever sent (the router skips
+ *     this route for them, and this file removes any that arrive), and a request that is refused in bulk leaves one line a minute in the log.
  *
  * WHAT IS NEVER DONE: logging the NIC, the code, the cookie or the request body. Errors are
  * logged by message only, and the caller gets one fixed sentence.
@@ -40,14 +41,49 @@ import {
 const MAX_BODY_CHARS = 2000;
 const HOUR = 3600e3;
 
+/**
+ * Said on every answer, JSON or file. None of it is needed to read the answer; all of it shuts a door that something else
+ * could one day open: another site reading it (Cross-Origin-Resource-Policy), a browser treating it as a page that can run or be
+ * framed (the sandboxed, empty policy and X-Frame-Options), a proxy or the back button keeping it (no-store).
+ */
+const SAFE_HEADERS = Object.freeze({
+    'Cache-Control': 'no-store, max-age=0',
+    'Pragma': 'no-cache',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Robots-Tag': 'noindex, nofollow',
+    'Referrer-Policy': 'no-referrer',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+    'X-Frame-Options': 'DENY',
+    'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; sandbox",
+});
+const putSafeHeaders = (res) => { for (const [k, v] of Object.entries(SAFE_HEADERS)) res.setHeader(k, v); };
+
+/** CORS headers are never sent by this door, whatever put them on the response before it got here (the API router sets them for the other endpoints). */
+const CORS_HEADERS = ['Access-Control-Allow-Origin', 'Access-Control-Allow-Methods', 'Access-Control-Allow-Headers', 'Access-Control-Allow-Credentials', 'Access-Control-Expose-Headers', 'Access-Control-Max-Age'];
+const dropCors = (res) => { if (res && typeof res.removeHeader === 'function') for (const h of CORS_HEADERS) res.removeHeader(h); };
+
+/**
+ * Someone being refused in bulk should be visible to the owner without the log filling up: one line a minute per kind and per server
+ * instance, a count of how many were refused since, and nothing about who (no address, no link, no NIC, no code).
+ */
+const GUARD_EVERY_MS = 60e3;
+const guardSeen = new Map();
+export function guardNote(kind, now = Date.now()) {
+    const g = guardSeen.get(kind) || { at: 0, n: 0 };
+    g.n += 1;
+    if (now - g.at >= GUARD_EVERY_MS) {
+        console.warn(`[WF-PORTAL-GUARD] refused: ${kind} (${g.n} since the last note)`);
+        g.at = now; g.n = 0;
+    }
+    guardSeen.set(kind, g);
+}
+const GUARD_KINDS = Object.freeze({ 403: 'request from another site', 429: 'too many attempts or a locked link' });
+
 function send(res, out) {
     res.statusCode = out.status;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    res.setHeader('Referrer-Policy', 'no-referrer');
+    putSafeHeaders(res);
+    if (GUARD_KINDS[out.status]) guardNote(GUARD_KINDS[out.status]);
     if (out.status === 429 && out.body && out.body.retryAfterSec) res.setHeader('Retry-After', String(out.body.retryAfterSec));
     if (out.cookie) res.setHeader('Set-Cookie', out.cookie);
     res.end(JSON.stringify(out.body));
@@ -62,15 +98,13 @@ function sendPdf(res, file, name) {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
     res.setHeader('Content-Length', String(file.length));
-    res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    res.setHeader('Referrer-Policy', 'no-referrer');
+    putSafeHeaders(res);
     res.end(file);
 }
 
 const fail = (status, error, extra = {}) => ({ status, body: { ok: false, error }, ...extra });
+/** A field is text or it is nothing: an object that carries its own toString (or a number, a list, null) is never turned into a string by guesswork, because that is where a hostile body could make String() throw. */
+const text = (v) => (typeof v === 'string' ? v : '');
 const header = (req, name) => { const v = req.headers && req.headers[name]; return Array.isArray(v) ? v[0] : v; };
 
 /** Only the site's own pages may call this. A caller with no browser headers at all is not a browser, so the cookie is not at risk from it. */
@@ -98,6 +132,7 @@ export function readBody(req) {
 
 export async function handlePortal(req, res, deps) {
     try {
+        dropCors(res);
         if (String(req.method || '').toUpperCase() !== 'POST') { res.setHeader('Allow', 'POST'); return send(res, fail(405, 'method not allowed')); }
         if (!sameSite(req)) return send(res, fail(403, MSG.FAILED));
         const body = readBody(req);
@@ -110,14 +145,14 @@ export async function handlePortal(req, res, deps) {
 
         const now = deps.now();
         const ip = ipKey(req, secret);
-        const action = String(body.action || '');
+        const action = text(body.action);
 
         if (action === 'request') {
-            const out = await requestCode({ db, client: deps.client(), token: String(body.token || ''), nic: String(body.nic || ''), ip, secret, now, random: deps.randomInt, pad: deps.pad || undefined, defer: deps.waitUntil ? deps.waitUntil() : null, host: new URL(publicOrigin(deps.env)).host });
+            const out = await requestCode({ db, client: deps.client(), token: text(body.token), nic: text(body.nic), ip, secret, now, random: deps.randomInt, pad: deps.pad || undefined, defer: deps.waitUntil ? deps.waitUntil() : null, host: new URL(publicOrigin(deps.env)).host });
             return send(res, out);
         }
         if (action === 'verify') {
-            const out = await verifyCode({ db, token: String(body.token || ''), nic: String(body.nic || ''), code: String(body.code || ''), ip, secret, now, randomBytes: deps.randomBytes, defer: deps.waitUntil ? deps.waitUntil() : null });
+            const out = await verifyCode({ db, token: text(body.token), nic: text(body.nic), code: text(body.code), ip, secret, now, randomBytes: deps.randomBytes, defer: deps.waitUntil ? deps.waitUntil() : null });
             // The person who has just proved who they are is going to ask for the statement next: it is read now and sent with this answer, so the
             // page needs no second trip. If it cannot be read, the answer is the same without it and the page asks for it the usual way.
             if (out.status === 200 && out.ctx) {
@@ -132,7 +167,7 @@ export async function handlePortal(req, res, deps) {
             const live = await readSession({ db, cookieHeader: header(req, 'cookie'), now });
             if (!live) return send(res, fail(401, MSG.NO_SESSION, { cookie: clearCookie() }));
             // a session belongs to one link: the page of another link does not get to read it (and does not get to end it either)
-            if (String(body.token || '') !== live.token) return send(res, fail(401, MSG.NO_SESSION));
+            if (text(body.token) !== live.token) return send(res, fail(401, MSG.NO_SESSION));
             if (action === 'logout') { await endSession({ db, live }); return send(res, { status: 200, body: { ok: true }, cookie: clearCookie() }); }
             const statement = await loadStatement({ db, live, secret, now });
             return send(res, { status: 200, body: { ok: true, statement, expiresAt: Number(live.session.expiresAt) || 0 } });
@@ -142,7 +177,7 @@ export async function handlePortal(req, res, deps) {
             if (!gate.ok) return send(res, { status: 429, body: { ok: false, error: MSG.SLOW_DOWN, retryAfterSec: Math.max(1, Math.ceil(gate.retryAfterMs / 1000)) } });
             const live = await readSession({ db, cookieHeader: header(req, 'cookie'), now });
             if (!live) return send(res, fail(401, MSG.NO_SESSION, { cookie: clearCookie() }));
-            if (String(body.token || '') !== live.token) return send(res, fail(401, MSG.NO_SESSION));
+            if (text(body.token) !== live.token) return send(res, fail(401, MSG.NO_SESSION));
             const statement = await loadStatement({ db, live, secret, now });
             // the language the person is reading the page in: anything but 'si' is English, so a request cannot choose what it should not
             const lang = body.lang === 'si' ? 'si' : 'en';

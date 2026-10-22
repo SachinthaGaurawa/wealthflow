@@ -7,8 +7,9 @@
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 globalThis.__WF_TENANT_NO_BOOT = true;
-const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY, splashWait, splashEl, splashStage, phoneLabel, SPLASH_AFTER_MS, SPLASH_MIN_MS, SPLASH_SLOW_MS, STILL_AFTER } = await import('../tenant-page.js');
+const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY, splashWait, splashEl, phoneLabel, watchAway, SPLASH_AFTER_MS, SPLASH_MIN_MS, SPLASH_SLOW_MS, STILL_AFTER } = await import('../tenant-page.js');
 const { makeT } = await import('../tenant-lang.js');
 
 class El {
@@ -92,25 +93,10 @@ describe('the loading screen and the sign-in answers', () => {
         const root = splashEl(doc);
         const classes = [];
         root.walk((n) => classes.push(n.attrs.class || ''));
-        expect(classes).toEqual(['tp-splash', 'tp-splash-mark', 'tp-splash-logo', 'tp-splash-name', 'tp-splash-sub', 'tp-splash-bar', '', 'tp-splash-status']);
+        expect(classes).toEqual(['tp-splash', 'tp-splash-mark', 'tp-splash-logo', 'tp-splash-name', 'tp-splash-bar', '', 'tp-splash-status']);
         expect(root.attrs.role).toBe('status');
         expect(root.attrs.id).toBe('tp-splash');
-        expect(root.textContent).toBe('WealthFlowInfinity Engine');                                     // the status line is filled in by the page, in the person's language
-        let logo = null;
-        root.walk((n) => { if ((n.attrs.class || '') === 'tp-splash-logo') logo = n; });
-        expect(logo.attrs.src).toBe('/assets/wf-mark.svg');                                             // the app's own mark, drawn sharp at any size
-    });
-
-    it('moves the loading bar only at real moments: drawn, script running, answer in', () => {
-        const on = new Set();
-        const box = { classList: { toggle: (name, force) => { if (force) on.add(name); else on.delete(name); } } };
-        splashStage(box, 2);
-        expect([...on]).toEqual(['tp-p2']);
-        splashStage(box, 3);
-        expect([...on]).toEqual(['tp-p3']);
-        splashStage(box, 1);
-        expect([...on]).toEqual([]);
-        for (const none of [null, undefined, {}, 'x']) expect(() => splashStage(none, 2)).not.toThrow();
+        expect(root.textContent).toBe('WealthFlow');                                                    // the status line is filled in by the page, in the person's language
     });
 
     it('shows only the last three digits of the phone the code went to, drawn as the page draws it, and nothing else', () => {
@@ -472,5 +458,47 @@ describe('the balance card and the section bar', () => {
         const amounts = classes(statementView(doc, st, makeT('en')), 'tp-amt');
         expect(amounts.length).toBeGreaterThan(8);
         expect(classes(statementView(doc, st, makeT('en')), 'tp-item-amount')[0].attrs.class).toContain('tp-amt');
+    });
+});
+
+describe('the page while it is out of sight', () => {
+    // a document that only knows what watchAway asks of it
+    const fakeWin = (state = 'visible') => {
+        const classes = new Set();
+        const listeners = {};
+        const doc = {
+            visibilityState: state,
+            documentElement: { classList: { toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); return on; }, contains: (c) => classes.has(c) } },
+            addEventListener: (t, f) => { listeners[t] = f; },
+            removeEventListener: (t, f) => { if (listeners[t] === f) delete listeners[t]; },
+        };
+        return { win: { document: doc }, doc, classes, listeners, set: (v) => { doc.visibilityState = v; listeners.visibilitychange && listeners.visibilitychange(); } };
+    };
+
+    it('is marked away the moment it is hidden and clear the moment it is back', () => {
+        const w = fakeWin();
+        const stop = watchAway(w.win);
+        expect(w.classes.has('tp-away')).toBe(false);
+        w.set('hidden');
+        expect(w.classes.has('tp-away')).toBe(true);
+        w.set('visible');
+        expect(w.classes.has('tp-away')).toBe(false);
+        stop();
+        expect(w.listeners.visibilitychange).toBeUndefined();                       // and stops watching when told to
+    });
+
+    it('is already away if it is opened while hidden', () => {
+        const w = fakeWin('hidden');
+        watchAway(w.win);
+        expect(w.classes.has('tp-away')).toBe(true);
+    });
+
+    it('does nothing, and does not throw, where there is no document to watch', () => {
+        for (const win of [null, undefined, {}, { document: {} }, { document: { documentElement: {} } }]) expect(() => watchAway(win)()).not.toThrow();
+    });
+
+    it('is drawn as nothing by the stylesheet, for every child of the body', () => {
+        const css = readFileSync(new URL('../tenant-page.css', import.meta.url), 'utf8');
+        expect(css).toMatch(/html\.tp-away body > \* \{ visibility: hidden; \}/);
     });
 });

@@ -153,6 +153,12 @@ const HANDLERS = {
     'vision-sms': () => import('../vision-sms.js'),
 };
 
+// Routes that only this site's own pages may call. They get no CORS headers at all and no answer to a
+// pre-flight, so another site's page cannot even send them a request from a browser (the tenant portal's door
+// checks Origin and Sec-Fetch-Site as well; either alone would do, both is cheap). They also never echo an
+// internal error message: a caller learns that it failed, not why.
+const PRIVATE_ROUTES = new Set(['tenant-portal']);
+
 function setCors(res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
@@ -355,10 +361,14 @@ function watchSlow(name, method) {
 }
 
 export default async function handler(req, res) {
-    setCors(res);
-    if (req.method === 'OPTIONS') { res.status(204).end(); return; }
-
     var name = resolveName(req);
+    var isPrivate = PRIVATE_ROUTES.has(name);
+    if (!isPrivate) setCors(res);
+    if (req.method === 'OPTIONS') {
+        if (isPrivate) { res.setHeader('Allow', 'POST'); res.status(405).end(); return; }
+        res.status(204).end(); return;
+    }
+
     if (!name || name === 'index') {
         return res.status(200).json({ ok: true, service: 'wealthflow-api', router: 'v7.24.1', endpoints: Object.keys(HANDLERS).length });
     }
@@ -379,7 +389,7 @@ export default async function handler(req, res) {
         } catch (importErr) {
             console.error(`[api-router] Module import missing for ${name}:`, importErr);
             return res.status(500).json({
-                error: 'Endpoint file not bundled by Vercel', endpoint: name, detail: importErr.message,
+                error: 'Endpoint file not bundled by Vercel', endpoint: name, detail: isPrivate ? undefined : importErr.message,
                 reason: 'the ' + name + ' endpoint was not included in this build.',
             });
         }
@@ -426,7 +436,7 @@ export default async function handler(req, res) {
         console.error('[api-router] ' + name + ' failed:', err && err.stack || err);
         if (!res.headersSent) {
             res.status(500).json({
-                error: 'Endpoint runtime crash', endpoint: name, detail: String(err && err.message || err),
+                error: 'Endpoint runtime crash', endpoint: name, detail: isPrivate ? undefined : String(err && err.message || err),
                 reason: 'the ' + name + ' endpoint crashed while handling the request.',
             });
         }

@@ -48,6 +48,7 @@
  * ===========================================================================*/
 
 import crypto from 'node:crypto';
+import net from 'node:net';
 import { normalizeIdentity, identityCandidates } from './wealthflow-nic.js';
 import { normalizePhone, maskPhone } from './wealthflow-phone.js';
 import { otpMessage } from './sms-templates.mjs';
@@ -127,8 +128,26 @@ export function clientIp(req) {
     const first = (v) => s(Array.isArray(v) ? v[0] : v).split(',')[0].trim();
     return [h['x-vercel-forwarded-for'], h['x-real-ip'], h['x-forwarded-for']].map(first).find(Boolean) || 'unknown';
 }
+/**
+ * What the per-address limits count. An IPv4 address is one caller. An IPv6 customer is handed a whole /64 (2^64 addresses), and moving
+ * between them costs nothing, so counting single addresses would let one machine walk round every per-address limit; the network prefix is
+ * what is counted instead. (The per-link caps, which are what stop guessing, never looked at the address at all.)
+ */
+export function addressBucket(ip) {
+    const a = s(ip).trim().toLowerCase().replace(/^\[|\]$/g, '').split('%')[0];
+    if (!a.includes(':')) return a;
+    const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(a);
+    if (mapped) return mapped[1];                                        // an IPv4 caller written the IPv6 way
+    if (a.includes('.') || !net.isIPv6(a)) return a;
+    const [head, tail] = a.split('::');
+    const front = head ? head.split(':') : [];
+    const back = tail === undefined ? [] : (tail ? tail.split(':') : []);
+    const full = tail === undefined ? front : [...front, ...Array(8 - front.length - back.length).fill('0'), ...back];
+    return `${full.slice(0, 4).map((g) => g.padStart(4, '0')).join(':')}::/64`;
+}
+
 /** The caller's address as an HMAC, so the limiter's documents hold no address. */
-export const ipKey = (req, secret) => crypto.createHmac('sha256', secret).update(`ip|${clientIp(req)}`).digest('hex').slice(0, 24);
+export const ipKey = (req, secret) => crypto.createHmac('sha256', secret).update(`ip|${addressBucket(clientIp(req))}`).digest('hex').slice(0, 24);
 
 export function parseCookies(header) {
     const out = {};

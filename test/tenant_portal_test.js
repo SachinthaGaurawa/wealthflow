@@ -9,7 +9,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
     requestCode, verifyCode, readSession, loadStatement, endSession, newCode, codeProof, failState, hit, pickRecipient, sessionHash,
-    LIMITS, LOCK, OTP_TTL_MS, RESEND_GAP_MS, SESSION_TTL_MS, MSG, LIMITS_COL, MIN_ANSWER_MS, ipKey, clientIp, parseCookies, sessionCookie,
+    LIMITS, LOCK, OTP_TTL_MS, RESEND_GAP_MS, SESSION_TTL_MS, MSG, LIMITS_COL, MIN_ANSWER_MS, ipKey, clientIp, parseCookies, sessionCookie, addressBucket,
 } from '../tenant-portal.mjs';
 import { ensureTenantToken, phoneHashOf } from '../tenant-links.mjs';
 import { KIND } from '../textlk.mjs';
@@ -560,6 +560,24 @@ describe('small helpers', () => {
         expect(clientIp({ headers: {} })).toBe('unknown');
         expect(ipKey({ headers: { 'x-real-ip': '1.2.3.4' } }, SECRET)).toMatch(/^[0-9a-f]{24}$/);
         expect(ipKey({ headers: { 'x-real-ip': '1.2.3.4' } }, SECRET)).not.toContain('1.2.3.4');
+    });
+
+    it('counts an IPv6 caller by the /64 network it was given, since every address inside it is free to use', () => {
+        const key = (ip) => ipKey({ headers: { 'x-vercel-forwarded-for': ip } }, SECRET);
+        // one network, many spellings and many addresses: one caller
+        const same = ['2001:db8:abcd:12::1', '2001:DB8:ABCD:12:ffff:ffff:ffff:ffff', '2001:db8:abcd:0012:0:0:0:0', '2001:db8:abcd:12::', '[2001:db8:abcd:12::7]', '2001:db8:abcd:12::1%eth0'];
+        for (const ip of same) expect(addressBucket(ip), ip).toBe('2001:0db8:abcd:0012::/64');
+        expect(new Set(same.map(key)).size).toBe(1);
+        // another network is another caller, and so is another IPv4 address
+        expect(key('2001:db8:abcd:13::1')).not.toBe(key('2001:db8:abcd:12::1'));
+        expect(key('1.2.3.4')).not.toBe(key('1.2.3.5'));
+        expect(addressBucket('1.2.3.4')).toBe('1.2.3.4');
+        expect(addressBucket('::ffff:1.2.3.4')).toBe('1.2.3.4');                     // an IPv4 caller written the IPv6 way is the IPv4 caller
+        expect(key('::ffff:1.2.3.4')).toBe(key('1.2.3.4'));
+        // anything that is not an address is left alone (it is only ever hashed), and nothing throws
+        for (const odd of ['unknown', '', 'not-an-ip:x', '64:ff9b::1.2.3.4', ':::', '1:2:3:4:5:6:7:8:9', undefined, null, 7]) expect(() => addressBucket(odd), String(odd)).not.toThrow();
+        expect(addressBucket('unknown')).toBe('unknown');
+        expect(addressBucket(undefined)).toBe('');
     });
 
     it('parses cookies, and builds one that cannot be read by script, sent cross-site or sent to any other path', () => {
