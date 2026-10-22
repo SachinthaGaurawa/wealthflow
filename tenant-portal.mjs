@@ -94,7 +94,7 @@ export const MSG = Object.freeze({
     BAD_CODE: 'Please enter the 6-digit verification code from your text message.',
     DENIED: 'We could not verify that code. It may be incorrect or expired. Please check it, or request a new one.',
     SLOW_DOWN: 'Too many attempts. For your security, please wait before trying again.',
-    CODES_CAPPED: 'The limit for verification codes has been reached. Please try again later.',
+    CODES_CAPPED: 'We cannot send another code just now. Please try again later.',
     UNAVAILABLE: 'Verification codes are temporarily unavailable. Please try again later.',
     NO_SESSION: 'Your session has ended. Please verify your identity again to continue.',
     FAILED: 'Something went wrong. Please try again in a moment.',
