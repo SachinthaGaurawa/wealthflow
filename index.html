@@ -3225,6 +3225,9 @@
         .income-archive-card:hover {
             opacity: 0.75;
         }
+        /* a settled debtor: still readable and still editable, set back from the people who owe you */
+        .liq-row.liq-done { opacity: .8; }
+        .liq-row.liq-done:hover, .liq-row.liq-done:focus-within { opacity: 1; }
 
         /* ================== AI STATUS BADGE ================== */
         .ai-provider-badge {
@@ -7884,6 +7887,16 @@
         // `window.db` inside a function rather than at load time, and each already
         // guards with `window.db || (fb && fb.firestore ? fb.firestore() : null)`.
         // Nothing reads the handle while it is still null.
+        /* The connection mode (see wealthflow-sync-health.js, where the same rule is kept in pure form and a test pins the two to agree). Inline here because it must
+         * run before Firestore is first used, which can be before that module has loaded. */
+        const _WF_FS_KEY = 'wf_fs_transport';
+        function _wfChooseTransport(ua, maxTouchPoints, stored) {
+            if (stored === 'steady') return { steady: true, why: 'chosen' };
+            if (stored === 'fast') return { steady: false, why: 'chosen' };
+            const u = String(ua || '');
+            const webkit = /iPhone|iPad|iPod/.test(u) || (/Macintosh/.test(u) && Number(maxTouchPoints) > 1) || (/Safari\//.test(u) && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Android|SamsungBrowser/.test(u));
+            return webkit ? { steady: true, why: 'safari' } : { steady: false, why: 'default' };
+        }
         function _wfInitFirebase() {
             if (window._WF_REDIRECTING) return;
             if (!window.firebase || typeof firebase.initializeApp !== 'function') {
@@ -7898,6 +7911,16 @@
 
         firebase.initializeApp(firebaseConfig);
         db = firebase.firestore();
+        /* HOW THIS DEVICE TALKS TO THE ACCOUNT (wealthflow-sync-health.js, "the connection mode"). Firestore's default stream is held up by iCloud Private Relay,
+         * many VPNs and filtered networks: sign-in and our server answer, but reading and saving the account time out ("deadline-exceeded"). Safari and every
+         * iPhone / iPad browser, and any device that chose it, use the steady mode (plain request-and-answer calls) instead. It has to be decided HERE, before
+         * Firestore is first used; a later change is saved and the page reloads. */
+        try {
+            let stored = ''; try { stored = localStorage.getItem(_WF_FS_KEY) || ''; } catch (_) { }
+            const t = _wfChooseTransport(navigator.userAgent, navigator.maxTouchPoints, stored);
+            window._wfTransport = t;
+            if (t.steady && typeof db.settings === 'function') db.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true });
+        } catch (e) { try { console.warn('[SYNC] connection mode not applied:', e && e.message); } catch (_) { } }
         // Expose globally so the self-check, feedback form and other modules can
         // detect that Firestore initialised (db is otherwise a local variable).
         try { window.db = db; } catch (_) {}
@@ -9918,12 +9941,13 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 host.parentNode.insertBefore(el, host);
             }
             el.className = 'show ' + v.tone;
-            const sig = v.title + '|' + v.reason + '|' + v.code;
+            const sig = v.title + '|' + v.reason + '|' + v.code + '|' + v.kind;
             if (el.dataset.sig === sig) return;
             el.dataset.sig = sig;
             el.innerHTML = '<div class="sb-t">' + _wfEsc(v.title) + '</div><div class="sb-r">' + _wfEsc(v.reason) + '</div><div class="sb-n">' + _wfEsc(v.note) + '</div>'
                 + (v.code ? '<div class="sb-c">Code: ' + _wfEsc(v.code) + '</div>' : '')
-                + '<div class="sb-b"><button class="btn btn-sm btn-primary" onclick="_wfSyncTryAgain(this)">Try Again</button><button class="btn btn-sm btn-secondary" onclick="_wfOpenSyncCheck()">Check Connection</button></div>';
+                + '<div class="sb-b"><button class="btn btn-sm btn-primary" onclick="_wfSyncTryAgain(this)">Try Again</button><button class="btn btn-sm btn-secondary" onclick="_wfOpenSyncCheck()">Check Connection</button>'
+                + (v.kind === 'network' && !(window._wfTransport && window._wfTransport.steady) ? '<button class="btn btn-sm btn-secondary" onclick="_wfSetTransport(\'steady\')">Use steady mode</button>' : '') + '</div>';
         }
         /* Every few seconds: keep the tracker in step with isDirty, start a retry if a change has waited without any upload running, redraw the notice. */
         function _wfSyncTick() {
@@ -9970,6 +9994,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             const kb = n => Math.max(1, Math.round(n / 1024)) + ' KB';
             let payload = null;
             const checks = [
+                { id: 'mode', label: 'Connection mode', run: async () => window.WFSyncHealth.transportText(window._wfTransport) },
                 { id: 'server', label: 'WealthFlow server', run: async () => {
                     const r = await fetch('/api/version?t=' + Date.now(), { cache: 'no-store' });
                     if (!r.ok) throw new Error('it answered ' + r.status);
@@ -10000,6 +10025,13 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             ];
             return { checks, payload: () => payload };
         }
+        /* Save the connection mode and reload: Firestore takes its transport once, before first use. Nothing is lost: unsaved changes are kept on this device. */
+        function _wfSetTransport(mode) {
+            try { localStorage.setItem(_WF_FS_KEY, mode); } catch (_) { notify('This browser would not remember the choice, so the connection mode could not be changed.', 'warn'); return; }
+            notify(mode === 'steady' ? 'Switching to the steady connection mode...' : 'Switching to the fast connection mode...', 'info');
+            setTimeout(() => { try { location.reload(); } catch (_) { } }, 600);
+        }
+        window._wfSetTransport = _wfSetTransport;
         function _wfOpenSyncCheck() {
             const H = window.WFSyncHealth;
             if (!H) { notify('The connection check could not load. Reload the page and try again.', 'error'); return; }
@@ -10007,7 +10039,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 '<div class="liq-sub" style="margin:0 0 10px;">Each step of saving to your account is tested in turn, so the one that fails is named.</div>'
                 + '<div id="_sc_rows" style="font-size:12.5px;line-height:1.8;"></div>'
                 + '<div id="_sc_v" aria-live="polite" style="font-size:12.5px;line-height:1.6;margin:10px 0;"></div>'
-                + '<div class="md-ftr" style="display:flex;gap:8px;"><button class="btn btn-secondary" id="_sc_copy" style="flex:1;" disabled>Copy Report</button><button class="btn btn-primary" id="_sc_run" style="flex:1;">Check Again</button></div>',
+                + '<div class="md-ftr" style="display:flex;gap:8px;"><button class="btn btn-secondary" id="_sc_copy" style="flex:1;" disabled>Copy Report</button><button class="btn btn-primary" id="_sc_run" style="flex:1;">Check Again</button></div>'
+                + '<div style="margin-top:8px;"><button class="btn btn-secondary" id="_sc_modeBtn" style="width:100%;"></button><div class="liq-sub" id="_sc_modeNote" style="margin:6px 0 0;"></div></div>',
                 (ov) => {
                     const rowsEl = ov.querySelector('#_sc_rows'), vEl = ov.querySelector('#_sc_v'), copyBtn = ov.querySelector('#_sc_copy'), runBtn = ov.querySelector('#_sc_run');
                     let report = '';
@@ -10021,9 +10054,16 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                         } });
                         const v = H.verdict(rows);
                         vEl.textContent = v.text; vEl.style.color = v.ok ? 'var(--green)' : 'var(--red)';
-                        report = H.reportText(rows, { build: window.WF_APP_VERSION, online: navigator.onLine, payload: payload() });
+                        report = H.reportText(rows, { build: window.WF_APP_VERSION, online: navigator.onLine, payload: payload(), transport: window._wfTransport });
                         runBtn.disabled = false; copyBtn.disabled = false;
                     };
+                    const modeBtn = ov.querySelector('#_sc_modeBtn'), modeNote = ov.querySelector('#_sc_modeNote');
+                    const steadyNow = !!(window._wfTransport && window._wfTransport.steady);
+                    modeBtn.textContent = steadyNow ? 'Use the fast connection mode' : 'Use the steady connection mode';
+                    modeNote.textContent = steadyNow
+                        ? 'Steady mode talks to your account with plain request-and-answer calls, which iCloud Private Relay, VPNs and filtered networks let through. It stays live across your devices.'
+                        : 'If reading or saving your account does not answer, steady mode talks to it with plain request-and-answer calls, which iCloud Private Relay, VPNs and filtered networks let through. The page reloads; nothing is lost.';
+                    modeBtn.onclick = () => _wfSetTransport(steadyNow ? 'fast' : 'steady');
                     runBtn.onclick = run;
                     copyBtn.onclick = async () => { try { await navigator.clipboard.writeText(report); notify('Report copied.', 'success'); } catch (_) { notify('Could not copy the report. Select the text and copy it by hand.', 'warn'); } };
                     run();
@@ -14253,8 +14293,8 @@ function _wfKeepDone(kind, rec) {
     return true;
 }
 /* The Completed header every list shares: what it is, how many, and why Delete is off. */
-function _wfDoneLabel(n, what) {
-    return '<div class="income-section-label wf-done-label" style="margin-top:20px;color:var(--text3);">@checkCircle@ Completed ' + what + ' (' + n + ') <span style="font-weight:500;font-size:11px;">kept for your records</span></div>';
+function _wfDoneLabel(n, what, word) {
+    return '<div class="income-section-label wf-done-label" style="margin-top:20px;color:var(--text3);">@checkCircle@ ' + (word || 'Completed') + ' ' + what + ' (' + n + ') <span style="font-weight:500;font-size:11px;">kept for your records</span></div>';
 }
 function _wfDoneRow(n, what, cols) {
     return '<tr class="wf-done-sep"><td colspan="' + cols + '" style="padding:14px 10px 6px;font-weight:700;font-size:12px;color:var(--text3);">Completed ' + what + ' (' + n + ') · kept for your records</td></tr>';
@@ -24502,7 +24542,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             ${d.phone ? ' · <a href="tel:' + _wfEsc(String(d.phone).replace(/[^0-9+]/g, '')) + '" style="color:var(--accent);">' + _wfEsc(window.WFPeople ? WFPeople.showPhone(d.phone) : d.phone) + '</a>' : ''}
                         </div>` : (d.phone ? `<div class="liq-sub" style="margin-top:2px;"><a href="tel:${_wfEsc(String(d.phone).replace(/[^0-9+]/g, ''))}" style="color:var(--accent);">${_wfEsc(window.WFPeople ? WFPeople.showPhone(d.phone) : d.phone)}</a></div>` : '');
                     return `
-                    <div class="liq-row" data-wf-id="${_wfEsc(d.id || '')}">
+                    <div class="liq-row${open ? '' : ' liq-done'}" data-wf-id="${_wfEsc(d.id || '')}">
                         <div class="liq-head">
                             <div class="liq-name" style="flex:1;min-width:150px;">${_wfEsc(d.name || 'Debtor')}</div>
                             ${chip}
@@ -24524,7 +24564,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-liq-ddel="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('trash') : 'Delete')}</button>
                         </div>
                     </div>`;
-                }).join('');
+                });
+                /* A debtor who has settled moves to its own "Settled debtors" section under the open ones, the way a finished investment moves to Completed
+                 * investments: still listed, still editable and re-openable, no longer mixed in with the people who owe you. */
+                const _openRows = [], _settledRows = [];
+                debtors.forEach((d, i) => { (L.debtorSummary(d, now).state === L.DEBT_STATE.OPEN ? _openRows : _settledRows).push(rows[i]); });
+                const rowsHtml = _openRows.join('') + (_settledRows.length ? _wfDoneLabel(_settledRows.length, 'debtors', 'Settled') + _settledRows.join('') : '');
 
                 host.innerHTML = `
                     <div class="card" style="padding:16px;">
@@ -24542,7 +24587,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             </div>
                         </div>
                         ${debtors.length ? `<div class="wf-listsearch"><input type="search" id="debtSearch" class="fi" placeholder="Search name, nickname, NIC or phone number" autocomplete="off" aria-label="Search debtors" value="${_wfEsc(_wfListQuery.debtor)}" oninput="_wfListSearch('debtor', this.value)"></div>` : ''}
-                        ${rows || '<div style="font-size:12.5px;color:var(--text3);padding:14px 0;">Nobody owes you anything here yet. Add a debtor to track partial repayments, further advances and what is still outstanding.</div>'}
+                        ${rowsHtml || '<div style="font-size:12.5px;color:var(--text3);padding:14px 0;">Nobody owes you anything here yet. Add a debtor to track partial repayments, further advances and what is still outstanding.</div>'}
                     </div>`;
 
                 _wfApplyListSearch('debtor');

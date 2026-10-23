@@ -249,10 +249,11 @@ export async function installChartJs(page, file = 'node_modules/chart.js/dist/ch
     return true;
 }
 
-export async function bootApp({ repoDir = process.cwd(), pin = '123456', headless = true } = {}) {
+export async function bootApp({ repoDir = process.cwd(), pin = '123456', headless = true, userAgent = '', initScript = null } = {}) {
     const server = await serveRepo(repoDir);
     const browser = await launchChromium({ headless });
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, ...(userAgent ? { userAgent } : {}) });
+    if (initScript) await page.addInitScript(initScript);       // runs before the page's own scripts: lets a test pre-set storage
 
     const pageErrors = [];
     const consoleErrors = [];

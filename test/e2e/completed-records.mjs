@@ -123,6 +123,16 @@ await go('liquidity');
 await page.evaluate(() => setLiquidityTab('debt'));
 await page.waitForTimeout(500);
 check(/Settled Debtor/.test(await text('#page-liquidity')) && /SETTLED/.test(await text('#page-liquidity')), 'Debtors: settled debtor still listed');
+// a settled debtor sits in its own "Settled debtors" section under the open ones, the way a finished investment sits under Completed investments
+const debtText = await text('#liqBody');
+check(/Settled debtors \(1\)/.test(debtText) && /kept for your records/.test(debtText), `Debtors: a Settled debtors header with the count, got ${JSON.stringify(debtText.slice(0, 400))}`);
+check(debtText.indexOf('Open Debtor') > -1 && debtText.indexOf('Open Debtor') < debtText.indexOf('Settled debtors') && debtText.indexOf('Settled debtors') < debtText.indexOf('Settled Debtor'), 'Debtors: the open debtor comes first, then the Settled header, then the settled debtor');
+check(await page.evaluate(() => { const r = [...document.querySelectorAll('#liqBody .liq-row')]; return r.length === 2 && !r[0].classList.contains('liq-done') && r[1].classList.contains('liq-done'); }), 'Debtors: only the settled row is set back (liq-done)');
+check(await page.evaluate(() => { const r = document.querySelector('#liqBody .liq-row.liq-done'); return !!r && !!r.querySelector('[data-liq-dreopen]') && !!r.querySelector('[data-liq-dedit]') && !!r.querySelector('[data-liq-pay]'); }), 'Debtors: a settled debtor keeps Reopen, Edit and Log repayment');
+// lending more re-opens the debt: the debtor moves back up and the section disappears
+await page.evaluate(() => { const l = DB.get('debtors').map((d) => d.id === 'DSettled' ? { ...d, events: d.events.concat([{ id: 'e4', kind: 'topup', amount: 500, date: new Date().toISOString().slice(0, 10), confirmed: true }]) } : d); DB.set('debtors', l); window.renderLiquidity(); });
+await page.waitForTimeout(300);
+check(!/Settled debtors/.test(await text('#liqBody')), 'Debtors: with nobody settled the header is gone');
 
 if (app.pageErrors.length) fail.push(`uncaught page errors: ${app.pageErrors.join(' | ')}`);
 await app.close();

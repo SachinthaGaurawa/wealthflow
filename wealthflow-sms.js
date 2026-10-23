@@ -640,20 +640,28 @@ export function autoRunLine(status, now, when = () => '') {
  *     verified the number the server recorded as proved (the status card carries it), E.164 or ''
  *     form     what is being typed right now, kept across redraws: { phone, enabled, pendingPhone, resendAt, busy, msg, tone }
  * A number that is not the verified one gets a Send code button instead of Save, and the code row once a code is on its way.
+ *
+ * LOCKED once verified (owner, 2026-10-23: "a verified number must not change by a slip of the hand"). A number that is saved AND verified is shown read-only
+ * with a Change number button; the box is editable only after that button (form.editing), a different number then needs its own verification code, and
+ * Cancel puts the saved one back. The switch is the one thing that stays live while locked: it saves the moment it is ticked.
  */
 export function ownerAlertsHtml(owner) {
     const o = owner && typeof owner === 'object' ? owner : {};
     const f = o.form && typeof o.form === 'object' ? o.form : {};
-    const typed = f.phone !== undefined ? s(f.phone) : s(o.phone);
-    const enabled = f.enabled !== undefined ? f.enabled === true : o.enabled === true;
-    const p = typed.trim() ? normalizePhone(typed) : { ok: false };
     const verified = s(o.verified);
+    const savedP = s(o.phone).trim() ? normalizePhone(s(o.phone)) : { ok: false };
+    const locked = savedP.ok && savedP.e164 === verified && f.editing !== true;
+    const typed = locked ? s(o.phone) : (f.phone !== undefined ? s(f.phone) : s(o.phone));
+    const enabled = !locked && f.enabled !== undefined ? f.enabled === true : o.enabled === true;
+    const p = typed.trim() ? normalizePhone(typed) : { ok: false };
     const isVerified = p.ok && p.e164 === verified;
     const needsCode = p.ok && !isVerified;
     const waiting = needsCode && f.pendingPhone === p.e164;
     const busy = f.busy === true ? ' disabled' : '';
     const tone = f.tone === 'bad' ? 'var(--red,#e5484d)' : 'var(--green,#30a46c)';
-    const state = isVerified
+    const state = locked
+        ? '<div id="_wf_own_state" style="font-size:12px;margin-top:6px;color:var(--green,#30a46c);line-height:1.5;">Verified: ' + esc(formatPhone(p.e164)) + '<span style="color:var(--text3);"> &middot; Locked, so it cannot change by accident. To use another number, press Change number; the new one needs its own verification code.</span></div>'
+        : isVerified
         ? '<div id="_wf_own_state" style="font-size:12px;margin-top:6px;color:var(--green,#30a46c);">Verified: ' + esc(formatPhone(p.e164)) + '</div>'
         : needsCode
             ? '<div id="_wf_own_state" style="font-size:12px;margin-top:6px;color:var(--text3);line-height:1.5;">This number is not verified yet. Alerts go only to a number you have confirmed with a verification code' + (verified ? ', so they keep going to ' + esc(formatPhone(verified)) + ' until then' : '') + '.</div>'
@@ -667,8 +675,12 @@ export function ownerAlertsHtml(owner) {
         + '<div style="font-weight:700;font-size:13px;">Alerts to my own number</div>'
         + '<div style="font-size:12px;color:var(--text3);margin:3px 0 8px;line-height:1.5;">A text to you before a loan instalment, cheque, bill, one-time payment or a card payment you entered yourself is due (7, 3 and 1 days, and the day itself; a one-time payment from 14 days). Card purchases your bank already texts you about are not repeated here. Sent by the server, so it reaches you when the app is closed. Uses SMS credit. A new number is added only after you enter the verification code sent to it.</div>'
         + '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;margin-bottom:6px;"><input type="checkbox" id="_wf_own_on"' + (enabled ? ' checked' : '') + '> Send me these alerts</label>'
-        + '<div style="display:flex;gap:8px;"><input class="fi" id="_wf_own_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + esc(typed) + '" style="flex:1;">'
-        + '<button class="btn btn-primary btn-sm" id="_wf_own_save" data-mode="' + (needsCode ? 'send' : 'save') + '"' + busy + '>' + (needsCode ? 'Send code' : 'Save') + '</button></div>'
+        + (locked
+            ? '<div style="display:flex;gap:8px;"><input class="fi" id="_wf_own_phone" type="tel" inputmode="tel" value="' + esc(typed) + '" readonly aria-readonly="true" aria-label="Your verified number (locked)" style="flex:1;opacity:.85;cursor:default;">'
+                + '<button class="btn btn-sm" id="_wf_own_change"' + busy + '>Change number</button></div>'
+            : '<div style="display:flex;gap:8px;"><input class="fi" id="_wf_own_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + esc(typed) + '" style="flex:1;">'
+                + '<button class="btn btn-primary btn-sm" id="_wf_own_save" data-mode="' + (needsCode ? 'send' : 'save') + '"' + busy + '>' + (needsCode ? 'Send code' : 'Save') + '</button></div>'
+                + (f.editing === true ? '<div style="margin-top:6px;"><button class="btn btn-sm" id="_wf_own_cancel"' + busy + '>Cancel, keep the saved number</button></div>' : ''))
         + state + code
         + '<div id="_wf_own_msg" style="font-size:12px;margin-top:6px;min-height:14px;' + (f.msg ? 'color:' + tone + ';' : '') + '">' + esc(f.msg || '') + '</div></div>';
 }
@@ -805,10 +817,30 @@ export function boot(win) {
     /** Make the panel's own form do something: called after every draw. */
     function bindOwner(host) {
         const q = (sel) => (host && host.querySelector ? host.querySelector(sel) : null);
+        const say = (text, tone) => { setForm({ msg: text, tone: tone || 'ok' }); const msg = q('#_wf_own_msg'); if (msg) { msg.textContent = text; msg.style.color = tone === 'bad' ? 'var(--red,#e5484d)' : 'var(--green,#30a46c)'; } };
+        // LOCKED: a verified, saved number is read-only. Only the switch is live (it saves when ticked), and Change number opens the box for another number,
+        // which then needs its own code. Nothing here can alter the saved number.
+        const change = q('#_wf_own_change');
+        if (change) {
+            const on = q('#_wf_own_on');
+            on.addEventListener('change', () => {
+                const saved = ownerNow();
+                const r = setOwnerAlerts({ enabled: on.checked, phone: saved.phone });
+                if (!r.ok) { on.checked = !on.checked; say(r.error, 'bad'); return; }
+                say(on.checked ? 'Alerts are on.' : 'Alerts are off.', 'ok');
+            });
+            change.onclick = () => {
+                setForm({ editing: true, phone: undefined, enabled: undefined, pendingPhone: '', code: '', msg: '', tone: 'ok' });
+                redraw();
+                win.setTimeout(() => { const box = q('#_wf_own_phone'); if (box && box.focus) { box.focus(); if (box.select) box.select(); } }, 0);
+            };
+            return;
+        }
         const save = q('#_wf_own_save');
         if (!save) return;
         const typedNow = () => ({ phone: q('#_wf_own_phone').value, enabled: q('#_wf_own_on').checked });
-        const say = (text, tone) => { setForm({ msg: text, tone: tone || 'ok' }); const msg = q('#_wf_own_msg'); if (msg) { msg.textContent = text; msg.style.color = tone === 'bad' ? 'var(--red,#e5484d)' : 'var(--green,#30a46c)'; } };
+        const cancel = q('#_wf_own_cancel');
+        if (cancel) cancel.onclick = () => { setForm({ editing: false, phone: undefined, enabled: undefined, pendingPhone: '', code: '', msg: '', tone: 'ok' }); redraw(); };
         const lock = (on) => { for (const id of ['#_wf_own_save', '#_wf_own_verify', '#_wf_own_resend']) { const b = q(id); if (b) b.disabled = !!on; } setForm({ busy: !!on }); };
         // the button says what the typed number needs: Save for the verified one, Send code for any other
         const sync = () => {
@@ -823,7 +855,7 @@ export function boot(win) {
         const finish = (phone, enabled) => {
             const r = setOwnerAlerts({ enabled, phone });
             if (!r.ok) { say(r.error, 'bad'); return; }
-            setForm({ pendingPhone: '', code: '', phone: undefined, enabled: undefined });
+            setForm({ pendingPhone: '', code: '', phone: undefined, enabled: undefined, editing: false });
             say(enabled ? 'Number verified. Alerts will be sent to it.' : 'Number verified. Tick "Send me these alerts" and press Save to start.', 'ok');
             redraw();
         };
@@ -861,6 +893,7 @@ export function boot(win) {
             const v = typedNow(); setForm(v);
             const r = setOwnerAlerts(v);
             say(r.ok ? 'Saved.' : r.error, r.ok ? 'ok' : 'bad');
+            if (r.ok) { setForm({ editing: false, phone: undefined, enabled: undefined, pendingPhone: '', code: '' }); redraw(); }   // the saved, verified number locks again
         };
         const verifyBtn = q('#_wf_own_verify'); if (verifyBtn) verifyBtn.onclick = verify;
         const codeBox = q('#_wf_own_code');

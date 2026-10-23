@@ -98,7 +98,7 @@ export function firebaseStubSource(user = TEST_USER) {
       },
       runTransaction: function (fn) { try { return Promise.resolve(fn({ get: function () { return Promise.resolve(emptySnap()); }, set: function () {}, update: function () {}, delete: function () {} })); } catch (e) { return Promise.resolve(); } },
       enablePersistence: function () { return Promise.resolve(); },
-      settings: function () {},
+      settings: function (s) { (window.__fsSettings = window.__fsSettings || []).push(s); },
     };
     return db;
   };

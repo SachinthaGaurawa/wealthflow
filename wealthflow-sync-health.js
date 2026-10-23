@@ -62,7 +62,7 @@ export function explainPushError(err) {
         return { kind: 'busy', retry: true, text: 'Another device was saving at the same moment. WealthFlow tries again on its own.' };
     }
     if (has(/unavailable|deadline-exceeded|cancelled|network|offline|failed to fetch|timeout|timed out/)) {
-        return { kind: 'network', retry: true, text: 'This device could not reach your cloud account. That is usually a weak or filtered connection (a VPN, private relay or content blocker can cause it). WealthFlow keeps trying.' };
+        return { kind: 'network', retry: true, text: 'This device could not reach your cloud account. That is usually a weak or filtered connection. WealthFlow keeps trying, and Check Connection can switch this device to its steadier connection mode.' };
     }
     return { kind: 'other', retry: true, text: 'The cloud account did not accept the save. WealthFlow keeps trying.' };
 }
@@ -71,6 +71,49 @@ export function explainPushError(err) {
 export function retryDelayMs(failures) {
     const n = Math.max(1, Math.floor(Number(failures) || 1));
     return SYNC.RETRY_MS[Math.min(n, SYNC.RETRY_MS.length) - 1];
+}
+
+/* ── 0. the connection mode ───────────────────────────────────────────────── */
+
+/**
+ * HOW THIS DEVICE TALKS TO THE ACCOUNT. Firestore's default is a long-lived stream. A stream is what iCloud Private Relay, many VPNs, content blockers and
+ * some mobile networks hold up or cut: sign-in and our own server answer (they are ordinary requests) while reading and saving the account time out
+ * ("Reading your account did not answer in 12 seconds", code deadline-exceeded; reported 2026-10-23 with Private Relay on). The steady mode is the same
+ * account over plain request-and-answer calls (Firestore "long polling"), which every one of those networks lets through. Nothing else changes: same data,
+ * same rules, still live across devices.
+ *
+ *   steady   always on for Safari and every iPhone / iPad browser (WebKit, where Private Relay lives and streams are least reliable),
+ *            and on any device where the person chose it (Check Connection offers it).
+ *   fast     the default stream everywhere else, which is a little quicker on a clean network.
+ *
+ * The choice is made before Firestore is first used (the SDK allows no change after that), so a switch is saved and the page reloads.
+ */
+export const TRANSPORT_KEY = 'wf_fs_transport';
+
+/** Safari (macOS) or any browser on iPhone / iPad: they all run WebKit. Chrome, Edge, Firefox and Opera on desktop or Android are not. */
+export function isWebKitFamily(ua, maxTouchPoints = 0) {
+    const u = s(ua);
+    if (/iPhone|iPad|iPod/.test(u)) return true;
+    if (/Macintosh/.test(u) && Number(maxTouchPoints) > 1) return true;      // iPadOS asks for the desktop site
+    return /Safari\//.test(u) && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Android|SamsungBrowser/.test(u);
+}
+
+/** { steady, why } for this device. `stored` is what the person chose last ('steady', 'fast' or ''). */
+export function chooseTransport({ ua = '', maxTouchPoints = 0, stored = '' } = {}) {
+    if (stored === 'steady') return { steady: true, why: 'chosen' };
+    if (stored === 'fast') return { steady: false, why: 'chosen' };
+    if (isWebKitFamily(ua, maxTouchPoints)) return { steady: true, why: 'safari' };
+    return { steady: false, why: 'default' };
+}
+
+/** The Firestore settings that make a steady connection (merged over the defaults). Auto-detect is switched off because the SDK refuses both together. */
+export const STEADY_SETTINGS = Object.freeze({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true });
+
+/** One line for Check Connection and the report. */
+export function transportText(t) {
+    const x = t || {};
+    if (x.steady) return 'steady' + (x.why === 'safari' ? ' (always on in Safari and on iPhone and iPad)' : x.why === 'chosen' ? ' (chosen on this device)' : '');
+    return 'fast' + (x.why === 'chosen' ? ' (chosen on this device)' : '');
 }
 
 /* ── 1. say it ────────────────────────────────────────────────────────────── */
@@ -226,10 +269,10 @@ export async function runChecks(checks, { timeoutMs = SYNC.CHECK_TIMEOUT_MS, onS
 }
 
 const VERDICTS = Object.freeze({
-    server: 'This device cannot reach the WealthFlow server, the one that sends the text messages. Check the connection, and switch off any VPN, private relay or content blocker for this site.',
-    google: 'This device cannot reach Google\'s cloud database, where your account is kept. A VPN, private relay, content blocker or a filtered mobile network is the usual cause. Try Wi-Fi, or switch the blocker off for this site.',
+    server: 'This device cannot reach the WealthFlow server, the one that sends the text messages. Check the connection and try again.',
+    google: 'This device cannot reach Google\'s cloud database, where your account is kept. A filtered or unsteady connection is the usual cause. Try Check Connection again in steady mode, or try Wi-Fi.',
     signin: 'Your sign-in could not be renewed. Sign out and sign in again with the same Google account. Everything on this device is kept.',
-    read: 'This device reached the cloud but could not read your account from it.',
+    read: 'This device reached the cloud but could not read your account from it. The steady connection mode, which Check Connection can switch on, avoids long-lived streams that some networks hold up.',
     write: 'This device reached the cloud and can read your account but was not allowed to save to it. Sign out and sign in again with the same Google account.',
     data: 'The data on this device cannot be stored as it is. This is the reason changes made here never reach your other devices.',
 });
@@ -242,8 +285,9 @@ export function verdict(rows) {
 }
 
 /** A plain-text report the person can copy and send. No account id, no token, no data from the books. */
-export function reportText(rows, { build = '', online = true, when = new Date(), payload = null } = {}) {
+export function reportText(rows, { build = '', online = true, when = new Date(), payload = null, transport = null } = {}) {
     const lines = ['WealthFlow connection report', 'Time: ' + when.toISOString(), 'Build: ' + (build || 'n/a'), 'Browser says online: ' + (online ? 'yes' : 'no')];
+    if (transport) lines.push('Connection mode: ' + transportText(transport));
     for (const r of rows || []) lines.push((r.ok ? 'OK     ' : 'FAILED ') + r.label + ' (' + r.ms + ' ms) - ' + r.detail);
     if (payload) {
         lines.push('Data size: ' + payload.bytes + ' bytes' + (payload.nearLimit ? ' (close to the account limit)' : ''));
@@ -254,7 +298,7 @@ export function reportText(rows, { build = '', online = true, when = new Date(),
     return lines.join('\n');
 }
 
-const api = { SYNC, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText };
+const api = { SYNC, TRANSPORT_KEY, STEADY_SETTINGS, isWebKitFamily, chooseTransport, transportText, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText };
 if (typeof window !== 'undefined') { try { window.WFSyncHealth = api; } catch (_) { /* a frozen window is not an error */ } }
 
 export default api;
