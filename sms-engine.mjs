@@ -47,6 +47,8 @@ import crypto from 'node:crypto';
 import { KIND, maskPhone, analyzeSms, SEND_TIMEOUT_MS } from './textlk.mjs';
 import { buildMessage, KINDS } from './sms-templates.mjs';
 import { deriveEvents, nextSendWindow, MAX_AGE_MS, LOCAL_OFFSET_MIN } from './sms-events.mjs';
+import { withVerifiedOwner } from './sms-owner.mjs';
+import { verifiedPhoneOf } from './sms-owner-otp.mjs';
 import { linksEnabled, linkFor, ensureTenantToken, portalSecret } from './tenant-links.mjs';
 import { creditReserve, creditPaused, isPausedKind } from './sms-guard.mjs';
 
@@ -490,7 +492,7 @@ export async function checkDelivery({ db, uid, client, now, until = 0, clock = D
 }
 
 /** Write the owner's status card: what is switched on but cannot work, whether the gateway is configured, whether credit is low. */
-export async function writeStatus({ db, uid, issues, configured, units = null, now, reserve = 0, balanceRead = false, auto = false }) {
+export async function writeStatus({ db, uid, issues, configured, units = null, now, reserve = 0, balanceRead = false, auto = false, ownerVerified }) {
     // A sweep that did not ask the gateway for the balance (the page's nudge after a save) knows nothing about it, and must not erase what the
     // last one that did (the daily sweep) found: writing `units: null` here made the low-credit warning vanish at the owner's next save.
     // A balance that WAS read but could not be made sense of (units null) clears the old warning: a card saying "credit is low, reminders paused"
@@ -500,7 +502,7 @@ export async function writeStatus({ db, uid, issues, configured, units = null, n
         : balanceRead ? { units: null, lowCredit: false, unitsAt: now, reserve, creditPaused: false } : {};
     // `autoRunAt`: the last time the SCHEDULED sweep (no page, nobody signed in) looked after this account. A page nudge never sets it, so the panel can
     // tell "texts go out by themselves" from "texts only go out while the app is open".
-    await mirror(db, uid, '_status', { kind: 'status', configured: !!configured, issues: issues.slice(0, 50), ...credit, ...(auto ? { autoRunAt: now } : {}) }, now);
+    await mirror(db, uid, '_status', { kind: 'status', configured: !!configured, issues: issues.slice(0, 50), ...credit, ...(auto ? { autoRunAt: now } : {}), ...(ownerVerified === undefined ? {} : { ownerVerified: s(ownerVerified) }) }, now);
 }
 
 /**
@@ -514,7 +516,11 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
     const phases = {};
     const lap = (name) => { const at = Date.now(); phases[name] = at - lapAt; lapAt = at; };
     const wallLeft = () => budgetMs - (Date.now() - wallStart);
-    const { events, issues } = deriveEvents(user, now);
+    // The owner's own number is texted only when it is the one the server recorded as verified (sms-owner-otp.mjs). The record is on the sealed account
+    // document; whatever the synced settings claim about it is overwritten here. A failed read stops the run: an unreadable record must not look like "not verified" and cancel what is queued.
+    const rootSnap = await db.collection(ROOT).doc(uid).get();
+    const ownerVerified = verifiedPhoneOf((rootSnap && rootSnap.exists && rootSnap.data()) || {});
+    const { events, issues } = deriveEvents(withVerifiedOwner(user, ownerVerified), now);
     const owned = new Set(events.map((e) => e.key));
     const summary = { derived: events.length, issues: issues.length, configured: client.configured, enqueued: {}, cancelled: 0, sent: 0, held: 0, retry: 0, failed: 0, remaining: 0 };
 
@@ -585,7 +591,7 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
     if (units === null && client.configured && typeof client.balance === 'function' && wallLeft() > 3000) {         // (not when the time is spent: the last finding stands)
         try { const b = await within(client.balance(), Math.min(6000, wallLeft())); if (b && b.ok) { balanceRead = true; units = Number.isFinite(Number(b.units)) && b.units !== null ? Number(b.units) : null; } } catch (_) { /* unknown: the last finding stays */ }
     }
-    await writeStatus({ db, uid, issues, configured: client.configured, units, now, reserve, balanceRead, auto });
+    await writeStatus({ db, uid, issues, configured: client.configured, units, now, reserve, balanceRead, auto, ownerVerified });
     lap('status');
     summary.phases = { ...phases, total: Date.now() - wallStart };
     return summary;

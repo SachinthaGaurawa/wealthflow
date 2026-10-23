@@ -8,6 +8,8 @@
  *
  *   POST /api/sms-notify   Authorization: Bearer <Firebase ID token>
  *        -> { ok, summary:{ derived, enqueued, sent, held, retry, failed, cancelled, remaining, issues, configured } }
+ *        body { action:'owner-otp-send', phone }          -> text a verification code to the number being added to "Alerts to my own number"
+ *        body { action:'owner-otp-verify', phone, code }  -> check it; the number becomes the account's verified number (sms-owner-otp.mjs)
  *   GET  /api/sms-notify   (same auth)       -> { ok, allowed, configured }
  *   GET  /api/sms-notify?check=1  (no auth)  -> { ok, configured, tokenAccepted }   two booleans: is a token set, does the gateway accept it
  *   GET  /api/sms-notify?check=1  (allowed account) -> the same plus { reachable, lowCredit, senderId, balanceReadable, balanceFields, failure }
@@ -33,6 +35,7 @@ import { TextLkClient, KIND } from './textlk.mjs';
 import { smsAllowed } from './sms-access.mjs';
 import { sweepUser, ROOT } from './sms-engine.mjs';
 import { hasSmsRecords } from './sms-events.mjs';
+import { sendOwnerCode, verifyOwnerCode } from './sms-owner-otp.mjs';
 
 /** Two kicks closer together than this are one kick: the page may call twice on a save. */
 export const MIN_KICK_GAP_MS = 6000;
@@ -83,6 +86,21 @@ async function healthFor(req, client, deps, now) {
     return base;
 }
 
+/** The two steps of adding a number to "Alerts to my own number". The caller's identity and allow-list were checked; the number is the only thing taken from the body. */
+async function handleOwnerOtp({ res, body, db, uid, client, deps, now }) {
+    try {
+        const out = body.action === 'owner-otp-send'
+            ? await sendOwnerCode({ db, uid, phone: body.phone, client, env: deps.env, now, randomInt: deps.randomInt })
+            : await verifyOwnerCode({ db, uid, phone: body.phone, code: body.code, env: deps.env, now });
+        if (out.ok) return j(res, 200, out);
+        const { status, ...rest } = out;
+        return j(res, status || 400, { ...rest, error: out.reason });
+    } catch (e) {
+        console.error('[WF-SMS] owner code failed:', String((e && e.message) || e).slice(0, 200));
+        return j(res, 500, { ok: false, error: 'failed', message: 'The code could not be handled just now. Try again in a moment.' });
+    }
+}
+
 export async function handleNotify(req, res, deps) {
     const method = String(req.method || 'GET').toUpperCase();
     if (!['GET', 'POST'].includes(method)) return j(res, 405, { ok: false, error: 'method not allowed' });
@@ -103,11 +121,12 @@ export async function handleNotify(req, res, deps) {
     if (method === 'GET') return j(res, 200, { ok: true, allowed: true, configured: client.configured });
 
     const now = deps.now();
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    if (body.action === 'owner-otp-send' || body.action === 'owner-otp-verify') return handleOwnerOtp({ res, body, db, uid: who.uid, client, deps, now });
     const rootRef = db.collection(ROOT).doc(who.uid);
     try {
         const root = await withDeadline(rootRef.get(), 8000, 'wf-sms');
         const state = (root.exists && root.data()) || {};
-        const body = req.body && typeof req.body === 'object' ? req.body : {};
         if (!body.force && now - Number(state.lastKickAt || 0) < MIN_KICK_GAP_MS) return j(res, 200, { ok: true, throttled: true });
         await rootRef.set({ lastKickAt: now }, { merge: true });                 // the throttle first: a slow sweep must not be started twice
 
