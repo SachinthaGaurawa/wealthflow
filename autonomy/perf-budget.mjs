@@ -347,7 +347,8 @@ export const BUDGETS = {
     // 2026-10-21 (the Installments tab counts paid months and reads a finished plan as Done, OS notifications and the debt chart no longer print @icon@ tokens, the DSCR rows wrap on a phone; measured 2,312,824 + ~0.1% headroom): 2_312_500 -> 2_314_000.
     // 2026-10-22 (wording audit, money pages: every confirmation now says what is removed and whether it can be undone, every form error names the missing fields, one spelling of instalment; measured 2,314,471 + ~0.1% headroom): 2_314_000 -> 2_316_800. Text only: no new script, request or markup.
     // 2026-10-23 (a change that never reaches the account is now SEEN and retried: the "Not saved to your account yet" notice, its watchdog and retry hooks, the Check Connection steps, and the toasts that wait for the upload before saying a text is queued; the Settle in full dialog that says why nobody is texted until it is confirmed; measured 2,333,495 + ~0.1% headroom): 2_316_800 -> 2_336_000. About half is the comments recording why. The rules live in wealthflow-sync-health.js. No new request at load beyond that module.
-    htmlBytes: 2_336_000,
+    // 2026-10-23 (the live listener that cannot die quietly: _wfListen with its error callback and resubscribe, the 20 s read plus the focus read, the revoked-session listener that restarts, and the Check Connection live step; measured 2,336,220 + ~0.1% headroom): 2_336_000 -> 2_338_800. About a third is comments. No new script or request at load.
+    htmlBytes: 2_338_800,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

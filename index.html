@@ -9922,6 +9922,26 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             });
             window.addEventListener('pagehide', leave);
         }
+        /* THE LIVE LISTENER THAT CANNOT DIE QUIETLY. It was started once, with no error callback: the first error (a token the account refused for a
+         * moment, a dropped stream the SDK gave up on) ended it for good and the device then heard nothing from the others until the page was reloaded, which
+         * is "the devices work separately". Now an error starts it again after a growing pause, a reconcile that finds what the listener never delivered
+         * starts it again, and Check Connection shows its state. */
+        const _wfLive = { unsub: null, heardAt: 0, errors: 0, restarts: 0, missed: 0, lastErr: '', timer: null };
+        window._wfLive = _wfLive;
+        function _wfListen() {
+            if (!userDocRef || typeof window._wfSnapHandler !== 'function') return;
+            if (_wfLive.timer) { clearTimeout(_wfLive.timer); _wfLive.timer = null; }
+            if (_wfLive.unsub) { try { _wfLive.unsub(); } catch (_) { } _wfLive.unsub = null; _wfLive.restarts++; }
+            _wfLive.unsub = userDocRef.onSnapshot((snap) => {
+                _wfLive.heardAt = Date.now(); _wfLive.lastErr = '';
+                window._wfSnapHandler(snap);
+            }, (err) => {
+                _wfLive.errors++; _wfLive.lastErr = (err && (err.code || err.message)) || 'error'; _wfLive.unsub = null;
+                console.warn('[SYNC] live listener ended:', _wfLive.lastErr);
+                const pause = [2000, 5000, 15000, 60000][Math.min(_wfLive.errors - 1, 3)];
+                _wfLive.timer = setTimeout(_wfListen, pause);
+            });
+        }
         /* The steps an upload needs, in order; the first one that fails is the answer. */
         function _wfSyncChecks() {
             const kb = n => Math.max(1, Math.round(n / 1024)) + ' KB';
@@ -9944,6 +9964,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     if (!userDocRef) throw new Error('no account is open');
                     await userDocRef.collection('syncProbe').doc('ping').set({ at: Date.now(), device: _getDeviceId() });
                     return 'saved';
+                } },
+                { id: 'live', label: 'Live updates from other devices', run: async () => {
+                    if (!_wfLive.unsub) throw new Error(_wfLive.lastErr ? 'the listener ended (' + _wfLive.lastErr + ') and is starting again' : 'the listener is not running');
+                    return 'listening' + (_wfLive.restarts || _wfLive.errors ? ', restarted ' + (_wfLive.restarts + _wfLive.errors) + ' time(s) so far' : '');
                 } },
                 { id: 'data', label: 'Data on this device', run: async () => {
                     payload = window.WFSyncHealth.inspectPayload(_wfCloudSafe(appData));
@@ -10002,6 +10026,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 let applied; try { applied = _wfApplyCloudData(doc.data()); } finally { isSyncingFromCloud = false; }
                 lastSyncTime = Date.now();
                 _wfLastReconcile = { at: lastSyncTime, why: why, changed: !!(applied.nonSessionChanged || applied.sessionsChanged), push: !!applied.needPush };
+                // The server had something this device had not been told: the listener is not delivering, so it is started again.
+                if (_wfLastReconcile.changed && why !== 'start') { try { _wfLive.missed++; _wfListen(); } catch (_) { } }
                 try { _wfApplyPendingDeletesLocally(); _flushCloudDeletes(); } catch (_) { }
                 _wfPaintCloudChange(applied);
                 if (isDirty || applied.needPush) { setDirty(true); debouncedSync(); }
@@ -10014,7 +10040,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _wfReconcileWithCloud('resume'); });
                 window.addEventListener('online', () => _wfReconcileWithCloud('online'));
                 window.addEventListener('pageshow', e => { if (e && e.persisted) _wfReconcileWithCloud('pageshow'); });
-                setInterval(() => { if (document.visibilityState !== 'hidden') _wfReconcileWithCloud('interval'); }, 60000);
+                setInterval(() => { if (document.visibilityState !== 'hidden') _wfReconcileWithCloud('interval'); }, 20000);
+                window.addEventListener('focus', () => _wfReconcileWithCloud('focus'));
                 setTimeout(() => _wfReconcileWithCloud('start'), 3000);
             } catch (_) { }
         }
@@ -17361,7 +17388,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
                                     // Real-time listener for cross-device sync (PROVEN-WORKING v6.9.1 LOGIC)
                                     try {
-                                        userDocRef.onSnapshot((snap) => {
+                                        window._wfSnapHandler = (snap) => {
                                             try {
                                                 if (!snap.exists || !isInitialised) return;
 
@@ -17483,7 +17510,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                             } catch (snapErr) {
                                                 console.error('[SYNC] Snapshot processing error:', snapErr);
                                             }
-                                        });
+                                        };
+                                        _wfListen();
                                     } catch (listenerErr) {
                                         console.error('[SYNC] Snapshot listener setup error:', listenerErr);
                                     }
@@ -35641,6 +35669,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             } catch (e) { console.warn('[Revoke listener]', e); }
                         }, (err) => {
                             console.warn('[Revoke listener] error:', err && err.message);
+                            // an ended listener hears nothing more: start it again after a pause instead of leaving a revoked session open
+                            _sessionRevokeUnsub = null;
+                            setTimeout(() => { try { _startSessionRevokeWatcher(); } catch (_) { } }, 10000);
                         });
                 }
             } catch (e) { console.warn('[Revoke listener] setup failed:', e); }

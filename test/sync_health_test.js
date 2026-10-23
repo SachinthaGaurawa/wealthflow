@@ -369,4 +369,35 @@ describe('the page: a failed upload is counted, explained and retried', () => {
         expect(up).toMatch(/await window\._wfSyncRun/);
         expect(up).toMatch(/return !isDirty/);
     });
+    it('the live listener has an error callback that starts it again, and is wired through _wfListen', () => {
+        const listen = fnBody('_wfListen');
+        expect(listen).toMatch(/userDocRef\.onSnapshot\(\(snap\) => \{[\s\S]*\}, \(err\) => \{/);
+        expect(listen).toMatch(/_wfLive\.timer = setTimeout\(_wfListen, pause\)/);
+        expect(listen).toMatch(/\[2000, 5000, 15000, 60000\]/);
+        expect(HTML).toMatch(/window\._wfSnapHandler = \(snap\) => \{/);
+        expect(HTML).not.toMatch(/userDocRef\.onSnapshot\(\(snap\) => \{\s*\n\s*if \(!isInitialised\)/);
+        expect(HTML).toMatch(/\n\s*_wfListen\(\);\s*\n\s*\} catch \(listenerErr\)/);
+    });
+
+    it('a read that finds what the listener never delivered starts the listener again', () => {
+        const rec = fnBody('_wfReconcileWithCloud');
+        expect(rec).toMatch(/_wfLastReconcile\.changed && why !== 'start'[\s\S]{0,120}_wfLive\.missed\+\+; _wfListen\(\)/);
+    });
+
+    it('every device reads the account every 20 seconds while visible, and again on focus, resume and reconnect', () => {
+        const loop = fnBody('_wfStartReconcileLoop');
+        expect(loop).toMatch(/_wfReconcileWithCloud\('interval'\); \}, 20000\)/);
+        expect(loop).toMatch(/addEventListener\('focus'/);
+        expect(loop).toMatch(/addEventListener\('visibilitychange'/);
+        expect(loop).toMatch(/addEventListener\('online'/);
+    });
+
+    it('Check Connection includes the live listener step', () => {
+        expect(fnBody('_wfSyncChecks')).toContain("id: 'live'");
+    });
+
+    it('a revoked-session listener that ends is started again', () => {
+        const w = fnBody('_startSessionRevokeWatcher');
+        expect(w).toMatch(/_sessionRevokeUnsub = null;\s*\n\s*setTimeout\(\(\) => \{ try \{ _startSessionRevokeWatcher\(\)/);
+    });
 });

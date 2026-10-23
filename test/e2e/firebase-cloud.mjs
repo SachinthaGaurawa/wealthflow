@@ -151,8 +151,8 @@ export function cloudStubSource(user = TEST_USER) {
         return call('update', { pairs: pairs });
       },
       delete: function () { return Promise.resolve(); },
-      onSnapshot: function (cb) {
-        var entry = { cb: cb, last: null };
+      onSnapshot: function (cb, errCb) {
+        var entry = { cb: cb, err: typeof errCb === 'function' ? errCb : null, last: null };
         snapListeners.push(entry);
         call('get').then(function (r) { entry.last = JSON.stringify(r); try { cb(snapOf(r)); } catch (e) {} }).catch(function () {});
         return function () { snapListeners = snapListeners.filter(function (x) { return x !== entry; }); };
@@ -192,12 +192,23 @@ export function cloudStubSource(user = TEST_USER) {
     return v;
   }
 
+  var silent = false;
   window.__cloudDeliver = function () {
+    if (silent) return Promise.resolve();
     return call('get').then(function (r) {
       var sig = JSON.stringify(r);
       snapListeners.slice().forEach(function (e) { if (e.last !== sig) { e.last = sig; try { e.cb(snapOf(r)); } catch (err) {} } });
     }).catch(function () {});
   };
+  // A listener the server ends with an error (a dropped stream, an expired token): every error callback fires and the listeners go away.
+  window.__cloudBreakListeners = function (code) {
+    var gone = snapListeners; snapListeners = [];
+    gone.forEach(function (e) { if (e.err) { var er = new Error(String(code || 'unavailable')); er.code = code || 'unavailable'; try { e.err(er); } catch (x) {} } });
+    return gone.length;
+  };
+  // A listener that stays open but is never told anything again (a half-open connection): deliveries are swallowed until switched off.
+  window.__cloudSilence = function (on) { silent = !!on; };
+  window.__cloudListenerCount = function () { return snapListeners.length; };
 
   var firestore = function () {
     var db = {
