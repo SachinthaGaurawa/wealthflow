@@ -7,7 +7,7 @@
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
-import { upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvCell, csvFile, todayNo, payoffPlan, planFile, balanceTrail } from '../tenant-tools.js';
+import { upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvCell, csvFile, todayNo, payoffPlan, planFile, balanceTrail, niceTicks, fmtAxis, chartData, chartLayout } from '../tenant-tools.js';
 import { makeT } from '../tenant-lang.js';
 
 const t = makeT('en');
@@ -198,5 +198,181 @@ describe('a repayment plan', () => {
     it('draws a loan\'s balance from its movements', () => {
         expect(balanceTrail(st().groups[0])).toEqual([50000, 30000]);
         for (const bad of [null, {}, { events: 5 }]) expect(balanceTrail(bad)).toEqual([]);
+    });
+});
+
+describe('the balance chart', () => {
+    const NOW = '2026-10-23T05:00:00.000Z';
+    const loan = (over = {}) => ({
+        kind: 'loan', ref: 'DEB-CCCCCC', currency: 'LKR', status: 'open', due: '2026-10-30',
+        events: [
+            { date: '2026-10-05', kind: 'lent', amount: 1000, balance: 1000 },
+            { date: '2026-10-06', kind: 'repayment', amount: 150, balance: 850 },
+            { date: '2026-10-06', kind: 'repayment', amount: 300, balance: 550 },
+            { date: '2026-10-09', kind: 'repayment', amount: 100, balance: 450 },
+        ],
+        ...over,
+    });
+
+    it('picks round figures for the up-axis that fill the chart', () => {
+        expect(niceTicks(1000).ticks).toEqual([0, 250, 500, 750, 1000]);
+        expect(niceTicks(730)).toEqual({ top: 750, ticks: [0, 250, 500, 750] });
+        expect(niceTicks(30000).ticks).toEqual([0, 10000, 20000, 30000]);
+        expect(niceTicks(5000000).ticks).toEqual([0, 2500000, 5000000]);
+        expect(niceTicks(123456).top).toBe(150000);
+        expect(niceTicks(0.5).ticks).toEqual([0, 0.25, 0.5]);
+        for (const v of [1, 7, 99, 999, 1234, 48250, 99999, 1e6, 7.3e7]) {
+            const { top, ticks } = niceTicks(v);
+            expect(top).toBeGreaterThanOrEqual(v);
+            expect(ticks[0]).toBe(0);
+            expect(ticks.length).toBeGreaterThanOrEqual(3);
+            expect(ticks.length).toBeLessThanOrEqual(5);
+            expect(ticks[ticks.length - 1]).toBe(top);
+        }
+        for (const bad of [0, -3, 'x', null, undefined, NaN, Infinity]) expect(niceTicks(bad)).toEqual({ top: 1, ticks: [0, 1] });
+    });
+
+    it('writes axis figures short enough for a phone', () => {
+        expect(['0', 7, 250, 999].map(fmtAxis)).toEqual(['0', '7', '250', '999']);
+        expect([1000, 1500, 12345, 2400000, 1e6].map(fmtAxis)).toEqual(['1K', '1.5K', '12.35K', '2.4M', '1M']);
+        expect(fmtAxis(-1500)).toBe('1.5K');
+        expect(fmtAxis('x')).toBe('0');
+    });
+
+    it('turns a settled loan into points on a real date axis, with no extra point for today', () => {
+        const d = chartData(loan({ status: 'settled', due: null, events: [
+            { date: '2026-10-05', kind: 'lent', amount: 1000, balance: 1000 },
+            { date: '2026-10-06', kind: 'repayment', amount: 150, balance: 850 },
+            { date: '2026-10-09', kind: 'repayment', amount: 850, balance: 0 },
+        ] }), NOW);
+        expect(d.points.map((p) => [p.iso, p.kind, p.balance, p.index])).toEqual([
+            ['2026-10-05', 'lent', 1000, 0], ['2026-10-06', 'repayment', 850, 1], ['2026-10-09', 'repayment', 0, 2],
+        ]);
+        expect(d.end - d.start).toBe(4);
+        expect(d.settled).toBe(true);
+        expect(d.active).toBe(false);
+        expect(d.due).toBeNull();
+        expect(d.top).toBe(1000);
+        expect(d.ticks).toEqual([0, 250, 500, 750, 1000]);
+        expect(d.currency).toBe('LKR');
+    });
+
+    it('keeps an open loan running to today at the balance it still has', () => {
+        const d = chartData(loan({ due: null }), NOW);
+        const last = d.points[d.points.length - 1];
+        expect([last.kind, last.iso, last.balance, last.index, last.amount]).toEqual(['now', '2026-10-23', 450, -1, 0]);
+        expect(d.active).toBe(true);
+        // a movement today needs no extra point
+        const same = chartData(loan({ due: null, events: [...loan().events, { date: '2026-10-23', kind: 'repayment', amount: 50, balance: 400 }] }), NOW);
+        expect(same.points.some((p) => p.kind === 'now')).toBe(false);
+    });
+
+    it('marks the due date when it is on the drawn stretch, or close enough to extend it', () => {
+        // due next week: the axis stretches to it, and it is not late
+        const next = chartData(loan(), NOW);
+        expect(next.due).toEqual({ day: next.end, iso: '2026-10-30', late: false });
+        // due in the middle of the stretch and already past: late
+        const late = chartData(loan({ due: '2026-10-12' }), NOW);
+        expect(late.due.iso).toBe('2026-10-12');
+        expect(late.due.late).toBe(true);
+        expect(late.points[late.points.length - 1].iso).toBe('2026-10-23');
+        // due on the last day (today): on the stretch, not late
+        expect(chartData(loan({ due: '2026-10-23' }), NOW).due.late).toBe(false);
+        // far in the future (a three-year loan): left off so the chart does not flatten
+        expect(chartData(loan({ due: '2029-10-23' }), NOW).due).toBeNull();
+        // before the loan began, or not a date, or on a settled loan: nothing
+        expect(chartData(loan({ due: '2026-09-01' }), NOW).due).toBeNull();
+        expect(chartData(loan({ due: 'soon' }), NOW).due).toBeNull();
+        expect(chartData(loan({ status: 'settled' }), NOW).due).toBeNull();
+    });
+
+    it('draws nothing when there is nothing to see', () => {
+        expect(chartData(null, NOW)).toBeNull();
+        expect(chartData({}, NOW)).toBeNull();
+        expect(chartData(loan({ events: 5 }), NOW)).toBeNull();
+        expect(chartData(loan({ events: [] }), NOW)).toBeNull();
+        // one movement on a settled loan
+        expect(chartData(loan({ status: 'settled', events: [loan().events[0]] }), NOW)).toBeNull();
+        // every movement on one day, and the loan is settled
+        expect(chartData(loan({ status: 'settled', events: [loan().events[1], loan().events[2]] }), NOW)).toBeNull();
+        // nothing was ever owed
+        expect(chartData(loan({ status: 'settled', events: [
+            { date: '2026-10-05', kind: 'lent', amount: 0, balance: 0 }, { date: '2026-10-06', kind: 'repayment', amount: 0, balance: 0 },
+        ] }), NOW)).toBeNull();
+    });
+
+    it('skips rows it cannot place and puts the rest in date order', () => {
+        const d = chartData(loan({ due: null, events: [
+            { date: '2026-10-09', kind: 'repayment', amount: 100, balance: 450 },
+            { date: 'garbage', kind: 'repayment', amount: 1, balance: 10 },
+            { date: '2026-10-05', kind: 'lent', amount: 1000, balance: 1000 },
+            { date: '2026-10-07', kind: 'repayment', amount: 1, balance: -5 },
+            { date: '2026-10-08', kind: 'repayment', amount: 1, balance: 'x' },
+            null,
+            { date: '2026-10-06', kind: 'repayment', amount: 150, balance: 850 },
+        ] }), NOW);
+        expect(d.points.filter((p) => p.kind !== 'now').map((p) => [p.iso, p.balance, p.index])).toEqual([
+            ['2026-10-05', 1000, 2], ['2026-10-06', 850, 6], ['2026-10-09', 450, 0],
+        ]);
+    });
+
+    it('lays out a staircase that never slopes, inside the room the labels need', () => {
+        const d = chartData(loan({ status: 'settled', due: null }), NOW);
+        const L = chartLayout(d, 360, 200);
+        expect([L.width, L.height]).toEqual([360, 200]);
+        expect(L.x0).toBeGreaterThanOrEqual(30);
+        expect(L.x1).toBe(344);
+        expect(L.pts).toHaveLength(d.points.length);
+        // every vertical step stays on the x of the movement, and every flat run is level with the balance before it
+        const segs = L.line.slice(1).split(' L').map((s) => s.split(' ').map(Number));
+        for (let i = 3; i < segs.length; i += 2) {
+            expect(segs[i - 1][1]).toBe(segs[i - 2][1]);
+            expect(segs[i][0]).toBe(segs[i - 1][0]);
+        }
+        expect(L.area.endsWith('Z')).toBe(true);
+        // higher balance, higher on the screen; the base line is the bottom of the plot
+        expect(L.yTicks[0]).toMatchObject({ v: 0, y: L.y1, label: '0' });
+        expect(L.yTicks[L.yTicks.length - 1]).toMatchObject({ v: d.top, y: L.y0 });
+        expect(L.pts[0].y).toBeLessThan(L.pts[L.pts.length - 1].y);
+        expect(L.pts[0].x).toBe(L.x0);
+        expect(L.pts[L.pts.length - 1].x).toBe(L.x1);
+        // room for a marked due date above the plot only when there is one
+        expect(chartLayout(chartData(loan(), NOW), 360, 200).y0).toBeGreaterThan(L.y0);
+    });
+
+    it('labels the dates with as many as fit, never crowded, starting and ending on the first and last day', () => {
+        const d = chartData(loan({ status: 'settled', due: null }), NOW);
+        const narrow = chartLayout(d, 240, 200);
+        const wide = chartLayout(d, 1000, 240);
+        expect(narrow.xTicks.length).toBeLessThanOrEqual(wide.xTicks.length);
+        expect(wide.xTicks.length).toBeLessThanOrEqual(5);
+        for (const L of [narrow, wide]) {
+            expect(L.xTicks.length).toBeGreaterThanOrEqual(2);
+            expect(L.xTicks[0]).toMatchObject({ day: d.start, anchor: 'start' });
+            expect(L.xTicks[L.xTicks.length - 1]).toMatchObject({ day: d.end, anchor: 'end' });
+            for (let i = 1; i < L.xTicks.length; i += 1) expect(L.xTicks[i].x - L.xTicks[i - 1].x).toBeGreaterThanOrEqual(66 - 1);
+        }
+        // a four-day stretch has only four dates to show
+        expect(new Set(wide.xTicks.map((k) => k.day)).size).toBe(wide.xTicks.length);
+    });
+
+    it('finds the movement under a finger, and a wide label never runs off the left edge', () => {
+        const d = chartData(loan({ status: 'settled', due: null }), NOW);
+        const L = chartLayout(d, 360, 200);
+        expect(L.nearest(-50)).toBe(0);
+        expect(L.nearest(L.pts[0].x)).toBe(0);
+        expect(L.nearest(9999)).toBe(L.pts.length - 1);
+        expect(L.nearest(L.pts[3].x - 1)).toBe(3);
+        const big = chartLayout(chartData(loan({ status: 'settled', due: null, events: [
+            { date: '2026-01-05', kind: 'lent', amount: 1100000, balance: 1100000 }, { date: '2026-10-09', kind: 'repayment', amount: 1100000, balance: 0 },
+        ] }), NOW), 320, 200);
+        expect(big.yTicks.map((k) => k.label)).toEqual(['0', '500K', '1M', '1.5M']);
+        expect(big.x0).toBeGreaterThan(L.x0);
+        expect(big.x0).toBeLessThanOrEqual(72);
+        // a tiny canvas still gets a sane layout
+        const tiny = chartLayout(d, 10, 10);
+        expect(tiny.width).toBeGreaterThanOrEqual(160);
+        expect(tiny.height).toBeGreaterThanOrEqual(120);
+        expect(tiny.x1).toBeGreaterThan(tiny.x0);
     });
 });

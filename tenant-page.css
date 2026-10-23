@@ -678,10 +678,88 @@ td.tp-num, th.tp-num { text-align: right; }
 }
 
 /* ── the balance chart and the repayment plan ─────────────────────────────── */
-.tp-trail { display: flex; flex-direction: column; gap: 6px; margin: 0 0 16px; }
-.tp-spark { display: block; width: 100%; height: 64px; border-radius: 12px; background: var(--surface-2); }
-.tp-spark-area { fill: var(--primary-weak); stroke: none; }
-.tp-spark-line { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linejoin: round; }
+.tp-trail { display: flex; flex-direction: column; gap: 12px; margin: 0 0 16px; padding: 16px 14px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-2); }
+.tp-trail > .tp-progress-label { font-size: 14px; color: var(--ink); font-weight: 700; }
+
+/* the card that says the chosen movement, with the two buttons that step through them */
+.tp-ch-read { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
+.tp-ch-info { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.tp-ch-when { font-size: 14px; font-weight: 650; color: var(--ink); }
+.tp-ch-steps { display: flex; gap: 8px; }
+.tp-ch-step { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; color: var(--primary); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 50%; cursor: pointer; transition: background 0.15s, border-color 0.15s, transform 0.12s, opacity 0.15s; }
+.tp-ch-step .tp-ico { width: 20px; height: 20px; }
+.tp-ch-step:hover:not([aria-disabled="true"]) { background: var(--primary-weak); border-color: var(--primary); }
+.tp-ch-step:active:not([aria-disabled="true"]) { transform: scale(0.94); }
+.tp-ch-step[aria-disabled="true"] { opacity: 0.38; cursor: default; }
+.tp-ch-main { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 4px 12px; }
+.tp-ch-label { display: block; font-size: 12px; font-weight: 650; color: var(--mute); text-transform: uppercase; letter-spacing: 0.05em; }
+.tp-ch-money { font-size: 26px; line-height: 1.2; font-weight: 750; letter-spacing: -0.02em; color: var(--ink); }
+.tp-ch-money .tp-ccy { font-size: 14px; opacity: 0.8; }
+.tp-ch-delta { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--mute); }
+.tp-ch-delta.tp-down { color: var(--green); }
+.tp-ch-delta.tp-up { color: var(--primary); }
+
+/* the chart itself: drawn at the width it is given, so its words are the size they say */
+.tp-ch-plot { position: relative; touch-action: pan-y; cursor: crosshair; border-radius: 12px; user-select: none; -webkit-user-select: none; }
+.tp-ch-plot:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.tp-ch { display: block; width: 100%; height: auto; overflow: visible; }
+.tp-ch-grid { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 2 5; opacity: 0.7; }
+.tp-ch-base { stroke: var(--line-strong); stroke-width: 1.5; }
+.tp-ch-lab { fill: var(--mute); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tp-ch-s1 { stop-color: var(--primary); stop-opacity: 0.34; }
+.tp-ch-s2 { stop-color: var(--primary); stop-opacity: 0.02; }
+.tp-ch-area { stroke: none; }
+.tp-ch-line { fill: none; stroke: var(--primary); stroke-width: 2.75; stroke-linejoin: round; stroke-linecap: round; }
+.tp-ch-due { stroke: var(--amber); stroke-width: 1.75; stroke-dasharray: 5 4; }
+.tp-ch-due.tp-late { stroke: var(--red); }
+.tp-ch-duelab { fill: var(--amber); font-size: 12px; font-weight: 700; }
+.tp-ch-duelab.tp-late { fill: var(--red); }
+.tp-ch-guide { stroke: var(--primary); stroke-width: 1.5; stroke-dasharray: 2 3; opacity: 0.6; }
+.tp-ch .tp-k-lent { fill: var(--primary); }
+.tp-ch .tp-k-pay { fill: var(--green); }
+.tp-ch .tp-k-now { fill: var(--surface-2); stroke: var(--primary); stroke-width: 2.5; }
+.tp-ch .tp-ch-mk { stroke: var(--surface-2); stroke-width: 2; }
+.tp-ch .tp-ch-mk.tp-k-now { stroke: var(--primary); }
+.tp-ch .tp-ch-halo { stroke: none; opacity: 0.2; }
+.tp-ch .tp-ch-halo.tp-k-now { fill: var(--primary); }
+.tp-ch .tp-ch-dot { stroke: var(--surface); stroke-width: 3; }
+.tp-ch .tp-ch-dot.tp-k-now { fill: var(--surface); stroke: var(--primary); }
+
+/* what the colours mean, the sentence under the chart, and the hint that goes away after the first touch */
+.tp-ch-key { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--mute); }
+.tp-ch-key li { display: inline-flex; align-items: center; gap: 6px; }
+.tp-key-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; }
+.tp-key-dot.tp-k-lent { background: var(--primary); }
+.tp-key-dot.tp-k-pay { background: var(--green); }
+.tp-key-dot.tp-k-now { background: var(--surface); border: 2px solid var(--primary); }
+.tp-key-dot.tp-key-due { width: 14px; height: 0; border-radius: 0; border-top: 2px dashed var(--amber); }
+.tp-ch-sum { display: flex; flex-direction: column; gap: 2px; margin: 0; font-size: 13px; color: var(--mute); }
+.tp-ch-hint { margin: 0; font-size: 12px; color: var(--mute); }
+.tp-ch-hint[hidden], .tp-chip[hidden] { display: none; }
+tbody tr.tp-row-on td { background: var(--primary-weak); }
+@media (prefers-reduced-motion: no-preference) {
+    .tp-ch-in .tp-ch-line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: tp-ch-draw 0.95s cubic-bezier(0.2, 0.7, 0.2, 1) 0.15s forwards; }
+    .tp-ch-in .tp-ch-area, .tp-ch-in .tp-ch-mk { opacity: 0; animation: tp-ch-fade 0.5s ease 0.7s forwards; }
+    @keyframes tp-ch-draw { to { stroke-dashoffset: 0; } }
+    @keyframes tp-ch-fade { to { opacity: 1; } }
+}
+@media (forced-colors: active) {
+    .tp-ch-line, .tp-ch-guide { stroke: CanvasText; }
+    .tp-ch-lab, .tp-ch-duelab { fill: CanvasText; }
+    .tp-ch .tp-k-lent, .tp-ch .tp-k-pay { fill: Highlight; }
+}
+@media print {
+    .tp-trail { background: #fff; border-color: #999; break-inside: avoid; }
+    .tp-ch-steps, .tp-ch-hint { display: none; }
+    .tp-ch-line, .tp-ch-guide { stroke: #000; }
+    .tp-ch-lab, .tp-ch-duelab, .tp-ch-key, .tp-ch-sum, .tp-ch-label, .tp-ch-when { fill: #333; color: #333; }
+    .tp-ch-s1, .tp-ch-s2 { stop-color: #000; }
+    tbody tr.tp-row-on td { background: #fff; }
+}
+@media (max-width: 360px) {
+    .tp-trail { padding: 14px 10px 12px; }
+    .tp-ch-money { font-size: 22px; }
+}
 .tp-plan { margin: 0 0 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); padding: 0 14px 14px; }
 .tp-plan > summary { display: flex; align-items: center; gap: 10px; min-height: 52px; font-weight: 700; color: var(--primary); cursor: pointer; list-style: none; }
 .tp-plan > summary::-webkit-details-marker { display: none; }

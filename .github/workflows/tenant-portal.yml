@@ -20,6 +20,7 @@ on:
       - vercel.json
       - test/e2e/tenant-portal.mjs
       - test/e2e/tenant-responsive.mjs
+      - test/e2e/tenant-chart.mjs
       - test/e2e/harness.mjs
       - .github/workflows/tenant-portal.yml
   workflow_dispatch:
@@ -43,3 +44,6 @@ jobs:
       # Twenty-one screen sizes, from a 240 px feature phone to an ultrawide monitor: no sideways scroll, nothing cut off,
       # touch-sized controls, readable type, a centred column, an A4 print layout; sign-in forms and the statement, English and Sinhala.
       - run: node test/e2e/tenant-responsive.mjs
+      # The balance-over-time chart: drawn at the real width, a date axis, hover/touch/keyboard, the due-date marker, hidden amounts,
+      # dark, Sinhala, reduced motion, 320 px, and no console errors, under the page's real Content-Security-Policy.
+      - run: node test/e2e/tenant-chart.mjs
