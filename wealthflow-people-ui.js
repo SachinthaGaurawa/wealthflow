@@ -16,7 +16,8 @@
  *   MESSAGES         the text-message log, as the third tab.
  *
  * DEVICE CONTACTS. Only Chrome on Android lets a web page open the address book (navigator.contacts); no other browser on any
- * system does, whatever the device. So every "Contacts" button opens one sheet with every way that works: the phone's own
+ * system does, whatever the device. Inside the WealthFlow app shell (native/, Capacitor) the app's own picker opens the system chooser on
+ * Android and iPhone instead (wealthflow-people.js pickContactResult, one service for both). Everywhere else every "Contacts" button opens one sheet with every way that works: the phone's own
  * picker where there is one, a contacts file (vCard from any phone, Mac, Google or iCloud; CSV from Google or Outlook), a file
  * dropped on the sheet, or text copied from a contacts app (a number, "Name: number", a whole card) pasted or read from the
  * clipboard. The sheet tells each kind of device (Android, iPhone, Mac, Windows, other) the exact steps. Nothing leaves the
@@ -675,19 +676,22 @@ export function boot(win) {
      * The "Contacts" button on a form. Where the browser has a contact picker (Chrome on Android) it opens at once, as one tap; if that fails
      * (permission refused, an embedded browser) or there is none, the sheet with every other way in opens instead.
      */
-    let picking = false;
     function chooseContact(root, p, nameId, field = 'phone') {
         const iso = () => (at(root, p + '_cc') || {}).value || homeCountry();
         const onCards = (cards) => {
+            if (!root.isConnected) return;                                                // the form was closed (or the account changed) while the system picker was open
             if (cards.length === 1) return useContact(root, p, nameId, cards[0], field);
             return openContactChooser(cards, iso(), (name, number) => applyNumber(root, p, nameId, name, number, field));
         };
         if (People.contactPickerSupported(win)) {
-            if (picking) return;                                                          // the system picker is already open: a second tap must not stack another
-            picking = true;
-            People.pickContacts(win, { multiple: false }).then((picked) => { if (picked.length) onCards(picked); })
-                .catch((e) => { toast((e && e.userMessage) || 'Could not open your contacts. Paste the number instead.', 'info'); openContactSource({ multiple: false, onCards }); })
-                .finally(() => { picking = false; });
+            // one tap, straight to the device's own chooser; the service ignores a second tap while it is open
+            People.pickContactResult(win, { multiple: false }).then((r) => {
+                if (r.status === 'selected' || r.status === 'no-phone-number') onCards(r.contacts);
+                else if (r.status === 'unsupported' || r.status === 'permission-denied' || r.status === 'error') {
+                    if (!root.isConnected) return;
+                    toast(r.userMessage || 'Could not open your contacts. Paste the number instead.', 'info'); openContactSource({ multiple: false, onCards });
+                }
+            }).catch(() => { if (root.isConnected) { toast('Could not open your contacts. Paste the number instead.', 'info'); openContactSource({ multiple: false, onCards }); } });
             return;
         }
         openContactSource({ multiple: false, onCards });

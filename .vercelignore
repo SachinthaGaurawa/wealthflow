@@ -26,3 +26,6 @@ tests/
 policy/
 autonomy/
 *.md
+
+# The native app shell (Capacitor projects, plugin sources): never part of the website
+/native/

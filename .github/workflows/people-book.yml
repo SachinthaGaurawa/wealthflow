@@ -18,6 +18,8 @@ on:
       - test/e2e/sms-notices.mjs
       - test/e2e/owner-otp.mjs
       - test/e2e/contacts-device.mjs
+      - test/e2e/contacts-native.mjs
+      - native/**
       - sms-owner-otp.mjs
       - sms-owner.mjs
       - sms-notify.js
@@ -53,3 +55,6 @@ jobs:
       # The Contacts buttons beside Mobile number and Second mobile number: the device picker's number goes into its own field, cancel and refusal change nothing,
       # and a browser with no picker never opens a file dialog by itself.
       - run: node test/e2e/contacts-device.mjs
+      # The same buttons inside the WealthFlow app shell (a stand-in for the native bridge): the system chooser's number goes into its own field, a cancel, refusal,
+      # failure or malformed answer changes nothing, rapid taps open one chooser, and an answer that arrives after the form closed is dropped.
+      - run: node test/e2e/contacts-native.mjs

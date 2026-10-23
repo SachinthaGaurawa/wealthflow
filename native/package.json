@@ -1,0 +1,1 @@
+{"name":"wealthflow-native","private":true,"version":"0.1.0","type":"module","dependencies":{"@capacitor/core":"8.5.3","@capacitor/android":"8.5.3","@capacitor/ios":"8.5.3"},"devDependencies":{"@capacitor/cli":"8.5.3"}}

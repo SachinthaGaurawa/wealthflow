@@ -1,0 +1,16 @@
+{
+  "appId": "lk.wealthflow.app",
+  "appName": "WealthFlow",
+  "webDir": "www",
+  "server": {
+    "url": "https://www.wealthflow.lk/app",
+    "cleartext": false,
+    "allowNavigation": ["www.wealthflow.lk", "wealthflow.lk"]
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "ios": {
+    "contentInset": "never"
+  }
+}
