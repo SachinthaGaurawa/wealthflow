@@ -691,3 +691,25 @@ describe('a second number (optional): every text goes to both', () => {
         expect(t.maxAgeMs - (t.notBefore - t.occurredAt)).toBe(p.maxAgeMs - (p.notBefore - p.occurredAt));    // the same 24 hours, counted from each one's own window
     });
 });
+
+describe('Settle in full, through the real ledger writes', () => {
+    it('a settle that is only logged owes nobody a text; counting it owes the receipt and the closing text, and so does settling with the money already counted', async () => {
+        const { settleInFull, confirmEvent } = await import('../wealthflow-liquidity.js');
+        const lent = { id: 'e1', kind: 'lent', amount: 500, date: '2026-10-09', confirmed: true, at: T('2026-10-09T05:00:00Z'), confirmedAt: T('2026-10-09T05:00:00Z') };
+        const now = T('2026-10-23T09:50:00Z');
+        const base = debtor({ events: [lent], [FIELDS.ENABLED_AT]: T('2026-10-01T00:00:00Z') });
+        const keys = (d) => deriveEvents({ debtors: [d] }, now).events.map((e) => e.key);
+
+        const logged = settleInFull(base, { date: '2026-10-23', id: 'e2', now }).debtor;
+        expect(logged.events[1]).toMatchObject({ kind: 'repayment', amount: 500, confirmed: false, note: 'Settled in full' });
+        expect(keys(logged)).toEqual(['B:d1:e1:out']);                                   // a claim nobody has verified is not news
+
+        const counted = confirmEvent(logged, 'e2', { now: now + 1000 }).debtor;
+        expect(keys(counted)).toEqual(['B:d1:e1:out', 'B:d1:e2:in', 'B:d1:e2:closed']);
+        const receipt = deriveEvents({ debtors: [counted] }, now + 2000).events.find((e) => e.key === 'B:d1:e2:in');
+        expect(receipt).toMatchObject({ kind: KINDS.B_REPAYMENT, amount: 500, balance: 0, settled: true });
+
+        const atOnce = settleInFull(base, { date: '2026-10-23', id: 'e3', now, confirmed: true }).debtor;
+        expect(keys(atOnce)).toEqual(['B:d1:e1:out', 'B:d1:e3:in', 'B:d1:e3:closed']);
+    });
+});

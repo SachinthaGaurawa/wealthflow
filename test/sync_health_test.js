@@ -1,0 +1,372 @@
+// =============================================================================
+// An upload that fails must be SEEN (wealthflow-sync-health.js + the page's wiring).
+// -----------------------------------------------------------------------------
+// Reported 2026-10-23: "Settle in full" and "Confirm" on the phone sent no text, the same two taps on the laptop did. A text goes out only after the
+// change is uploaded, and a failed upload was silent: the error sat in a variable nobody read, the badge went back to "Online", and the retries hung off
+// an edit, a reconnect or a successful read. These tests pin the pieces that make it audible: the notice, the retry that needs nothing else to keep going,
+// the connection check that names the first failing step, and the page wiring that uses them.
+// =============================================================================
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import H, { SYNC, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText } from '../wealthflow-sync-health.js';
+
+const T0 = 1_700_000_000_000;
+
+describe('what a failed upload means, in words', () => {
+    it('reads the code with or without the firestore/ prefix', () => {
+        expect(codeOf({ code: 'firestore/unavailable' })).toBe('unavailable');
+        expect(codeOf({ code: 'permission-denied' })).toBe('permission-denied');
+        expect(codeOf(null)).toBe('');
+        expect(codeOf('aborted')).toBe('aborted');
+    });
+
+    it('a sign-in the account no longer accepts is named as one', () => {
+        for (const code of ['permission-denied', 'unauthenticated']) {
+            const e = explainPushError({ code, message: 'Missing or insufficient permissions.' });
+            expect(e.kind).toBe('signin');
+            expect(e.text).toMatch(/sign out and sign in again/i);
+        }
+    });
+
+    it('a network that cannot reach the cloud keeps being retried and the words say so', () => {
+        for (const code of ['unavailable', 'deadline-exceeded', 'cancelled']) {
+            const e = explainPushError({ code });
+            expect(e.kind).toBe('network');
+            expect(e.retry).toBe(true);
+            expect(e.text).toMatch(/keeps trying/);
+        }
+        expect(explainPushError({ message: 'Failed to fetch' }).kind).toBe('network');
+    });
+
+    it('data the cloud cannot store is the one case where trying the same thing again cannot help', () => {
+        const nested = explainPushError({ code: 'invalid-argument', message: 'Nested arrays are not supported' });
+        expect(nested.kind).toBe('data');
+        expect(nested.retry).toBe(false);
+        expect(explainPushError({ message: 'Document exceeds the maximum size' }).kind).toBe('data');
+        expect(nested.text).toMatch(/Check Connection/);
+    });
+
+    it('contention, a usage limit and anything else each have their own plain sentence', () => {
+        expect(explainPushError({ code: 'aborted', message: 'Transaction failed all retries.' }).kind).toBe('busy');
+        expect(explainPushError({ code: 'resource-exhausted' }).kind).toBe('quota');
+        const other = explainPushError({ code: 'something-new' });
+        expect(other.kind).toBe('other');
+        expect(other.text).not.toMatch(/unknown/i);
+    });
+
+    it('the pause grows with each failure and stops growing at the last step', () => {
+        expect(retryDelayMs(1)).toBe(5000);
+        expect(retryDelayMs(2)).toBe(15000);
+        expect(retryDelayMs(3)).toBe(45000);
+        expect(retryDelayMs(4)).toBe(120000);
+        expect(retryDelayMs(40)).toBe(120000);
+        expect(retryDelayMs(0)).toBe(5000);
+    });
+});
+
+describe('the notice', () => {
+    const ctx = { online: true, signedIn: true, holding: false, decoy: false };
+
+    it('shows nothing while the account has everything', () => {
+        const tr = createTracker(() => T0);
+        expect(tr.view(ctx, T0 + 600000).show).toBe(false);
+        tr.noteDirty(T0); tr.noteClean(T0 + 1000);
+        expect(tr.view(ctx, T0 + 600000).show).toBe(false);
+    });
+
+    it('stays quiet while a normal upload is still on its way, then speaks when a change has waited too long', () => {
+        const tr = createTracker(() => T0);
+        tr.noteDirty(T0);
+        expect(tr.view(ctx, T0 + 5000).show).toBe(false);
+        const v = tr.view(ctx, T0 + SYNC.SHOW_AFTER_MS);
+        expect(v.show).toBe(true);
+        expect(v.title).toBe('Not saved to your account yet');
+        expect(v.reason).toMatch(/longer than usual/);
+    });
+
+    it('a failed upload is shown soon after, with the reason and the code', () => {
+        const tr = createTracker(() => T0);
+        tr.noteDirty(T0);
+        tr.noteFailure({ code: 'firestore/unavailable', message: 'The service is currently unavailable.' }, T0 + 2000);
+        expect(tr.view(ctx, T0 + 4000).show).toBe(false);          // one retry gets its chance first
+        const v = tr.view(ctx, T0 + SYNC.SHOW_AFTER_FAIL_MS);
+        expect(v.show).toBe(true);
+        expect(v.kind).toBe('network');
+        expect(v.code).toBe('unavailable');
+        expect(v.reason).toMatch(/could not reach your cloud account/);
+        expect(v.note).toMatch(/text messages to your debtors and tenants/);
+    });
+
+    it('offline reads as waiting, not as a fault, and signed out says so', () => {
+        const tr = createTracker(() => T0);
+        tr.noteDirty(T0);
+        const off = tr.view({ ...ctx, online: false }, T0 + 30000);
+        expect(off.tone).toBe('wait');
+        expect(off.title).toBe('Waiting to save to your account');
+        expect(off.reason).toMatch(/no internet/);
+        expect(tr.view({ ...ctx, signedIn: false }, T0 + 30000).reason).toMatch(/signed out/);
+    });
+
+    it('is never shown in the duress (decoy) mode or while a restore holds the sync', () => {
+        const tr = createTracker(() => T0);
+        tr.noteDirty(T0); tr.noteFailure({ code: 'unavailable' }, T0);
+        expect(tr.view({ ...ctx, decoy: true }, T0 + 60000).show).toBe(false);
+        expect(tr.view({ ...ctx, holding: true }, T0 + 60000).show).toBe(false);
+    });
+
+    it('a successful upload clears the failures and the notice with them', () => {
+        const tr = createTracker(() => T0);
+        tr.noteDirty(T0); tr.noteFailure({ code: 'unavailable' }, T0 + 1000);
+        expect(tr.state.failures).toBe(1);
+        tr.noteClean(T0 + 9000);
+        expect(tr.state).toMatchObject({ dirtySince: 0, failures: 0, code: '' });
+        expect(tr.view(ctx, T0 + 60000).show).toBe(false);
+    });
+
+    it('the wait is counted from the FIRST unsaved change, not from the latest edit', () => {
+        const tr = createTracker(() => T0);
+        tr.noteDirty(T0); tr.noteDirty(T0 + 15000); tr.noteDirty(T0 + 19000);
+        expect(tr.view(ctx, T0 + 20000).show).toBe(true);
+    });
+});
+
+describe('the retry that needs nothing else to keep going', () => {
+    function rig({ results, pendingFlags }) {
+        const timers = []; const calls = [];
+        let i = 0;
+        const loop = createRetryLoop({
+            attempt: async () => { calls.push('attempt'); const r = results[Math.min(i, results.length - 1)]; i += 1; if (r instanceof Error) throw r; return r; },
+            pending: () => (typeof pendingFlags === 'function' ? pendingFlags() : true),
+            setTimer: (fn, ms) => { const t = { fn, ms, live: true }; timers.push(t); return t; },
+            clearTimer: (t) => { t.live = false; },
+        });
+        const fire = async () => { const t = timers.filter((x) => x.live).pop(); if (!t) return false; t.live = false; t.fn(); await Promise.resolve(); await Promise.resolve(); await new Promise((r) => setImmediate(r)); return true; };
+        return { loop, timers, calls, fire };
+    }
+
+    it('after a failure it schedules the next try by itself, with a growing pause', async () => {
+        const r = rig({ results: [false, false, false, false, true] });
+        await r.loop.run();
+        expect(r.timers.map((t) => t.ms)).toEqual([5000]);
+        await r.fire();
+        expect(r.timers.map((t) => t.ms)).toEqual([5000, 15000]);
+        await r.fire();
+        await r.fire();
+        expect(r.timers.map((t) => t.ms)).toEqual([5000, 15000, 45000, 120000]);
+        await r.fire();                                   // the fifth attempt succeeds
+        expect(r.calls.length).toBe(5);
+        expect(r.loop.failures).toBe(0);
+        expect(r.loop.scheduled).toBe(false);
+    });
+
+    it('a rejected attempt counts as a failure instead of ending the loop', async () => {
+        const r = rig({ results: [new Error('boom'), true] });
+        await r.loop.run();
+        expect(r.loop.scheduled).toBe(true);
+        await r.fire();
+        expect(r.loop.scheduled).toBe(false);
+    });
+
+    it('stops when nothing is waiting any more', async () => {
+        let waiting = true;
+        const r = rig({ results: [false], pendingFlags: () => waiting });
+        await r.loop.run();
+        expect(r.loop.scheduled).toBe(true);
+        waiting = false;                                  // saved by some other path in the meantime
+        await r.fire();
+        expect(r.calls.length).toBe(1);
+        expect(r.loop.scheduled).toBe(false);
+    });
+
+    it('runs one attempt at a time', async () => {
+        let release; const gate = new Promise((res) => { release = res; });
+        let n = 0;
+        const loop = createRetryLoop({ attempt: () => { n += 1; return gate; }, pending: () => true, setTimer: () => 1, clearTimer: () => {} });
+        const first = loop.run();
+        const second = await loop.run();
+        expect(second).toBe(false);
+        release(true);
+        await first;
+        expect(n).toBe(1);
+    });
+
+    it('a sooner request replaces a pause that is still waiting, a later one does not', () => {
+        const r = rig({ results: [true] });
+        r.loop.schedule(60000);
+        r.loop.schedule();
+        expect(r.timers.length).toBe(1);
+        r.loop.schedule(0);
+        expect(r.timers.length).toBe(2);
+        expect(r.timers[0].live).toBe(false);
+        expect(r.timers[1].ms).toBe(0);
+    });
+});
+
+describe('what would be uploaded, looked at as the cloud will look at it', () => {
+    it('a clean document passes and reports its size', () => {
+        const r = inspectPayload({ expenses: [{ id: 'a', amount: 5 }], settings: { theme: 'dark' } });
+        expect(r.problems).toEqual([]);
+        expect(r.bytes).toBeGreaterThan(20);
+        expect(r.biggest[0].key).toBe('expenses');
+    });
+
+    it('a list inside a list is named by its path', () => {
+        const r = inspectPayload({ debtors: [{ id: 'd', events: [[1, 2]] }] });
+        expect(r.problems).toEqual([{ path: 'debtors[0].events[0]', why: 'a list inside a list' }]);
+    });
+
+    it('reserved and empty field names are named', () => {
+        const r = inspectPayload({ a: { '__x__': 1, '': 2 } });
+        expect(r.problems.map((p) => p.why).sort()).toEqual(['a reserved field name', 'an empty field name']);
+    });
+
+    it('more than one document can hold is the first thing said, and near the limit is flagged without being a problem', () => {
+        const big = inspectPayload({ blob: 'x'.repeat(SYNC.DOC_LIMIT_BYTES + 10) });
+        expect(big.problems[0].why).toMatch(/more than one account document can hold/);
+        const near = inspectPayload({ blob: 'x'.repeat(SYNC.DOC_WARN_BYTES + 10) });
+        expect(near.nearLimit).toBe(true);
+        expect(near.problems).toEqual([]);
+    });
+
+    it('the three largest fields are reported, largest first', () => {
+        const r = inspectPayload({ a: 'x'.repeat(10), b: 'x'.repeat(1000), c: 'x'.repeat(100), d: 'x'.repeat(500) });
+        expect(r.biggest.map((b) => b.key)).toEqual(['b', 'd', 'c']);
+    });
+});
+
+describe('the connection check names the first step that fails', () => {
+    const ok = (id, detail = 'fine') => ({ id, label: id.toUpperCase(), run: async () => detail });
+    const bad = (id, err) => ({ id, label: id.toUpperCase(), run: async () => { throw err; } });
+
+    it('runs every step in order, even after one fails, and times each on its own', async () => {
+        const seen = [];
+        const rows = await runChecks([ok('server'), bad('google', Object.assign(new Error('blocked'), { code: 'unavailable' })), ok('signin')], { onStep: (r) => seen.push(r.id) });
+        expect(rows.map((r) => [r.id, r.ok])).toEqual([['server', true], ['google', false], ['signin', true]]);
+        expect(seen).toEqual(['server', 'google', 'signin']);
+        expect(rows[1].detail).toBe('unavailable: blocked');
+    });
+
+    it('a step that never answers fails with a plain reason instead of hanging the check', async () => {
+        const rows = await runChecks([{ id: 'read', label: 'Reading your account', run: () => new Promise(() => {}) }], { timeoutMs: 20 });
+        expect(rows[0].ok).toBe(false);
+        expect(rows[0].detail).toMatch(/did not answer/);
+    });
+
+    it('a step can fail without throwing', async () => {
+        const rows = await runChecks([{ id: 'data', label: 'Data', run: async () => ({ ok: false, detail: 'a list inside a list' }) }]);
+        expect(rows[0]).toMatchObject({ ok: false, detail: 'a list inside a list' });
+    });
+
+    it('the verdict is the first failing step in plain words, or the all-clear', () => {
+        const all = verdict([{ id: 'server', label: 'S', ok: true, detail: 'x' }]);
+        expect(all.ok).toBe(true);
+        const v = verdict([{ id: 'server', label: 'S', ok: true, detail: 'x' }, { id: 'google', label: 'Google cloud database', ok: false, detail: 'unavailable: blocked' }, { id: 'write', label: 'W', ok: false, detail: 'y' }]);
+        expect(v.ok).toBe(false);
+        expect(v.failed).toBe('google');
+        expect(v.text).toMatch(/cannot reach Google's cloud database/);
+        expect(v.text).toMatch(/Google cloud database: unavailable: blocked/);
+    });
+
+    it('the copied report carries the steps and the size, and nothing that names the account', () => {
+        const rows = [{ id: 'server', label: 'WealthFlow server', ok: true, detail: 'reachable', ms: 40 }, { id: 'write', label: 'Saving to your account', ok: false, detail: 'permission-denied: Missing or insufficient permissions.', ms: 120 }];
+        const text = reportText(rows, { build: '7.69.35', online: true, when: new Date('2026-10-23T10:00:00Z'), payload: inspectPayload({ expenses: [{ id: 'a' }] }) });
+        expect(text).toContain('Build: 7.69.35');
+        expect(text).toContain('OK     WealthFlow server (40 ms) - reachable');
+        expect(text).toContain('FAILED Saving to your account (120 ms)');
+        expect(text).toContain('Data size:');
+        expect(text).not.toMatch(/uid|token|@/i);
+    });
+});
+
+describe('the module registers itself for the page', () => {
+    it('the default export is the same object the page reads from window.WFSyncHealth', () => {
+        expect(typeof H.createTracker).toBe('function');
+        expect(H.SYNC).toBe(SYNC);
+    });
+});
+
+/* ── the page's wiring ───────────────────────────────────────────────────── */
+const ROOT = path.resolve(__dirname, '..');
+const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+const fnBody = (name) => {
+    const a = HTML.search(new RegExp(`(?:async )?function ${name}\\(`));
+    expect(a, `${name} is gone from index.html`).toBeGreaterThan(-1);
+    const next = HTML.slice(a + 10).search(/\n {8}(?:async )?function |\n {8}\/\* [A-Z]/);
+    return HTML.slice(a, next < 0 ? a + 6000 : a + 10 + next);
+};
+
+describe('the page: a failed upload is counted, explained and retried', () => {
+    const sync = fnBody('syncToCloud');
+
+    it('loads the module', () => {
+        expect(HTML).toContain('<script type="module" src="wealthflow-sync-health.js"></script>');
+    });
+
+    it('syncToCloud reports success and failure through window hooks and stays self-contained', () => {
+        expect(sync).toMatch(/window\._wfSyncOk/);
+        expect(sync).toMatch(/window\._wfSyncFailed\(err\)/);
+        expect(sync).not.toMatch(/_wfTracker|_wfSyncRetry|WFSyncHealth/);
+    });
+
+    it('a failure feeds the tracker and schedules the retry loop unless the data itself is the problem', () => {
+        const hook = HTML.slice(HTML.indexOf('window._wfSyncFailed = function'), HTML.indexOf('window._wfSyncOk = function'));
+        expect(hook).toMatch(/tr\.noteFailure\(err\)/);
+        expect(hook).toMatch(/explainPushError\(err\)\.retry/);
+        expect(hook).toMatch(/loop\.schedule\(H\.retryDelayMs\(tr\.state\.failures\)\)/);
+    });
+
+    it('a retry after a rejected sign-in renews the token first', () => {
+        expect(HTML).toMatch(/unauthenticated\|permission-denied[\s\S]{0,200}getIdToken\(true\)/);
+    });
+
+    it('a watchdog starts a retry when a change has waited without any upload running', () => {
+        const tick = fnBody('_wfSyncTick');
+        expect(tick).toMatch(/isDirty && loop && !window\._wfSyncRun && !loop\.scheduled && Date\.now\(\) - tr\.state\.dirtySince >= 15000/);
+        expect(HTML).toMatch(/setInterval\(_wfSyncTick, 4000\)/);
+    });
+
+    it('leaving the page flushes the change instead of waiting out the debounce, and coming back retries at once', () => {
+        expect(HTML).toMatch(/window\.addEventListener\('pagehide', leave\)/);
+        expect(HTML).toMatch(/visibilityState === 'hidden'\) leave\(\)/);
+    });
+
+    it('the notice has Try Again and Check Connection, and says texts follow the save', () => {
+        const draw = fnBody('_wfRenderSyncBanner');
+        expect(draw).toContain('_wfSyncTryAgain(this)');
+        expect(draw).toContain('_wfOpenSyncCheck()');
+        expect(HTML).toMatch(/#syncBanner\.show \{ display: block; \}/);
+    });
+
+    it('the connection check tests the server, Google, the sign-in, a read, a write and the data, and the write goes to a path the rules already allow', () => {
+        const checks = fnBody('_wfSyncChecks');
+        for (const id of ['server', 'google', 'signin', 'read', 'write', 'data']) expect(checks).toContain(`id: '${id}'`);
+        expect(checks).toContain("collection('syncProbe').doc('ping')");
+        const rules = fs.readFileSync(path.join(ROOT, 'firestore.rules'), 'utf8');
+        expect(rules).toMatch(/match \/users\/\{uid\}\/\{collection\}\/\{document=\*\*\}/);
+        expect(rules).not.toMatch(/'syncProbe'/);                       // not in the server-owned list, so the owner may write it
+    });
+
+    it('Refresh and Sync now say when the account does NOT have the changes', () => {
+        const pull = fnBody('forceSyncFromCloud');
+        expect(pull).toMatch(/_saved = await _wfUploadNow\(\)/);
+        expect(pull).toMatch(/not saved to your account yet/);
+        expect(HTML).toMatch(/Sync now<\/div>[\s\S]{0,200}onclick="refreshApp\(this\)"/);
+        expect(HTML).toMatch(/onclick="_wfOpenSyncCheck\(\)">Check Connection<\/button>/);
+    });
+
+    it('the debtor actions that send a text wait for the upload and say which happened', () => {
+        const act = fnBody('_debtorAction');
+        expect(act).toMatch(/_wfUploadNow\(\)\.then\(\(ok\) => notify\(upload\(ok\)/);
+        expect(act).toMatch(/not saved to your account yet\. The text goes out once it is saved/);
+        const settle = fnBody('_settleDebtor');
+        expect(settle).toMatch(/countedNow && smsOn[\s\S]{0,120}_wfUploadNow\(\)/);
+    });
+
+    it('_wfUploadNow cancels the debounce, waits for a push in flight and reports whether the account has everything', () => {
+        const up = fnBody('_wfUploadNow');
+        expect(up).toMatch(/clearTimeout\(syncDebounceTimer\)/);
+        expect(up).toMatch(/await window\._wfSyncRun/);
+        expect(up).toMatch(/return !isDirty/);
+    });
+});

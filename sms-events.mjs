@@ -254,14 +254,14 @@ function investmentEvents(user, now, currency, out, issues) {
             sink.push({ ...base, key: `A:${inv.id}:closed:${closedAt}`, kind: KINDS.A_CLOSED, occurredAt: closedAt, amount: 0, dateISO: new Date(closedAt + base.tzMin * 60000).toISOString().slice(0, 10) });
         }
 
-        // (c) a payment the owner confirmed. `auto` and `historical` marks are bookkeeping for pre-join months, never a payment to acknowledge.
+        // (c) a payment the owner confirmed. `auto`, `historical` and `retroactive` marks are bookkeeping for months that are long past (Past months), never a payment to acknowledge, and the receipt names no month, never a payment to acknowledge.
         const prefix = `${inv.id}_`;
         for (const k of Object.keys(received)) {
             if (!k.startsWith(prefix)) continue;
             const mk = k.slice(prefix.length);
             if (!/^\d{4}-\d{2}$/.test(mk)) continue;
             const entry = received[k];
-            if (!entry || typeof entry !== 'object' || entry.auto || entry.historical) continue;
+            if (!entry || typeof entry !== 'object' || entry.auto || entry.historical || entry.retroactive) continue;
             const confirmedAt = num(entry.confirmedAt) || num(entry.at);
             if (!(confirmedAt > 0) || !eligible(confirmedAt, enabledAt, now)) continue;
             const amount = num(entry.amount) > 0 ? num(entry.amount) : interest;
@@ -298,22 +298,32 @@ function debtorEvents(user, now, currency, out, issues) {
         // The raw events carry `at` / `confirmedAt`, which the ledger's own normaliser drops.
         const rawById = new Map(arr(d.events).filter((e) => e && e.id).map((e) => [str(e.id), e]));
         const events = debtorSummary(d, new Date(now)).events;          // normalised, oldest first, unknown kinds dropped
-        let lent = 0; let repaid = 0; let outs = 0;
+        // Walked in the order the owner CONFIRMED them, not the order of their dates: bank lines are confirmed out of order all the time, and a
+        // text must carry the balance of everything confirmed up to that moment. Money is in cents, so every sum is rounded back to cents (45126.98 - 7842.49 - 37284.49
+        // is 7e-12 in floating point, and "LKR 0.00 is still outstanding" is what that used to say).
+        const cents = (n) => Math.round(n * 100) / 100;
+        const walk = [];
         for (const e of events) {
             if (!e.confirmed) continue;                                  // a claim nobody has verified is not news
             const raw = rawById.get(e.id) || {};
-            const isOut = e.kind === EVENT.LENT || e.kind === EVENT.TOPUP;
-            if (isOut) { lent += e.amount; outs += 1; } else repaid += e.amount;
-            const balance = Math.max(0, lent - repaid);
             const day = parseDay(e.date);
-            const occurredAt = Math.max(num(raw.at), num(raw.confirmedAt)) || (day ? day.getTime() : 0);
+            walk.push({ e, occurredAt: Math.max(num(raw.at), num(raw.confirmedAt)) || (day ? day.getTime() : 0) });
+        }
+        walk.sort((a, b) => (a.occurredAt - b.occurredAt) || (a.e.date < b.e.date ? -1 : a.e.date > b.e.date ? 1 : (a.e.id < b.e.id ? -1 : 1)));
+        let lent = 0; let repaid = 0; let outs = 0;
+        for (const { e, occurredAt } of walk) {
+            const isOut = e.kind === EVENT.LENT || e.kind === EVENT.TOPUP;
+            const before = Math.max(0, cents(lent - repaid));
+            if (isOut) { lent = cents(lent + e.amount); outs += 1; } else repaid = cents(repaid + e.amount);
+            const balance = Math.max(0, cents(lent - repaid));
             if (!(occurredAt > 0) || !eligible(occurredAt, enabledAt, now)) continue;
             sink.push(isOut
                 ? { ...base, key: `B:${d.id}:${e.id}:out`, kind: KINDS.B_DISBURSED, occurredAt, amount: e.amount, balance, dateISO: str(e.date).slice(0, 10), further: e.kind === EVENT.TOPUP || outs > 1 }
                 : { ...base, key: `B:${d.id}:${e.id}:in`, kind: KINDS.B_REPAYMENT, occurredAt, amount: e.amount, balance, dateISO: str(e.date).slice(0, 10), settled: balance <= 0 });
             // The payment that brings the balance to nothing also closes the loan: that is news of its own, a text of its own, one tick after the
-            // receipt so it never arrives first. Keyed by the payment, so a loan that is borrowed on again and settled again is closed again.
-            if (!isOut && balance <= 0 && lent > 0) {
+            // receipt so it never arrives first. Keyed by the payment, so a loan that is borrowed on again and settled again is closed again. Only the
+            // payment that TAKES the balance to nothing closes it: a further payment on a loan already at nothing is a receipt and no more.
+            if (!isOut && balance <= 0 && before > 0) {
                 sink.push({ ...base, key: `B:${d.id}:${e.id}:closed`, kind: KINDS.B_CLOSED, occurredAt: occurredAt + 1, amount: 0, balance: 0, dateISO: str(e.date).slice(0, 10) });
             }
         }

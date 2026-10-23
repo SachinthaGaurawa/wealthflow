@@ -44,7 +44,7 @@
  * ===========================================================================*/
 
 import crypto from 'node:crypto';
-import { KIND, maskPhone, analyzeSms } from './textlk.mjs';
+import { KIND, maskPhone, analyzeSms, SEND_TIMEOUT_MS } from './textlk.mjs';
 import { buildMessage, KINDS } from './sms-templates.mjs';
 import { deriveEvents, nextSendWindow, MAX_AGE_MS, LOCAL_OFFSET_MIN } from './sms-events.mjs';
 import { linksEnabled, linkFor, ensureTenantToken, portalSecret } from './tenant-links.mjs';
@@ -148,7 +148,8 @@ export async function enqueue({ db, uid, events, now, env = process.env, deps = 
     let looked = 0, seen = 0;
     for (const ev of start ? [...events.slice(start), ...events.slice(0, start)] : events) {
         seen += 1;
-        if (out.created + out.reopened >= ENQUEUE_PER_RUN || looked >= SCAN_PER_RUN) break;
+        // A run that stops because it has done its share also says where, or the next one starts at the oldest again and the notices after the share are never reached.
+        if (out.created + out.reopened >= ENQUEUE_PER_RUN || looked >= SCAN_PER_RUN) { out.resume = (start + seen - 1) % events.length; break; }
         if (until > 0 && clock() >= until) { out.deferred = events.length - seen + 1; out.resume = (start + seen - 1) % events.length; break; }
         // Under the credit reserve the reminders nobody is waiting for are left owed, not queued (see sms-guard.mjs): they are put in once the balance is back.
         if (pause && isPausedKind(ev.kind)) { out.paused += 1; continue; }
@@ -281,10 +282,14 @@ export async function claim({ db, uid, id, now }) {
         // A scheduled text is one that is not news the moment it happens (a reminder, a monthly interest notice), so it only ever goes out in the
         // recipient's 08:00-20:00. "Due" is not enough: the daily sweep and a page nudge run at any hour, and a text that was queued for the
         // morning must not go at 03:00 just because that is when a sweep got to it. Outside the window it waits for the next one.
-        if (d.status === STATUS.QUEUED && d.scheduled === true) {
+        // A text whose worker died mid-send is claimed again after its lease, and outside the window it goes back to waiting for it too (still flagged: the gateway may have taken it).
+        if (d.scheduled === true) {
             const tz = Number.isFinite(d.tzMin) ? d.tzMin : LOCAL_OFFSET_MIN;
             const open = nextSendWindow(now, tz);
-            if (open > now) { tx.set(ref, { ...d, nextAttemptAt: open, ...(d.lastError && d.lastError.kind === 'reserve' ? { lastError: null } : {}) }); return null; }
+            if (open > now) {
+                tx.set(ref, { ...d, ...(crashed ? { status: STATUS.QUEUED, leaseUntil: 0, possiblyDuplicated: true } : {}), nextAttemptAt: open, ...(d.lastError && d.lastError.kind === 'reserve' ? { lastError: null } : {}) });
+                return null;
+            }
         }
         const doc = { ...d, status: STATUS.SENDING, leaseUntil: now + LEASE_MS, attempts: num(d.attempts) + 1, possiblyDuplicated: !!d.possiblyDuplicated || crashed };
         tx.set(ref, doc);
@@ -552,14 +557,22 @@ export async function sweepUser({ db, uid, user, client, now = Date.now(), env =
             await noteReserve({ db, uid, ids: stopped.filter((x) => x.status === STATUS.QUEUED && x.held !== 'reserve').map((x) => x.id), units, reserve, now });
         }
         const groups = dueGroups(due);
+        const kindOf = new Map(due.map((x) => [x.id, x.kind]));
+        const closedKinds = new Set([KINDS.B_CLOSED, KINDS.A_CLOSED]);
         await pool(groups, CONCURRENCY, async (ids) => {
-            for (const id of ids) {
-                if (clock() - startedAt > budgetMs) { summary.remaining += 1; continue; }
+            // The "closed" text after a receipt waits behind a receipt that is held or will be tried again, so it never arrives first.
+            let behind = false;
+            for (let i = 0; i < ids.length; i += 1) {
+                const id = ids[i];
+                if (behind && closedKinds.has(kindOf.get(id))) { summary.remaining += 1; continue; }
+                // a send that starts must be able to finish (and be written down) before the function is cut off, so it is not begun in the last seconds
+                if (clock() - startedAt > budgetMs - Math.min(SEND_TIMEOUT_MS + 2000, budgetMs * 0.25)) { summary.remaining += 1; continue; }
                 const claimed = await claim({ db, uid, id, now });
                 if (!claimed) continue;
                 if (claimed.expired) { await mirror(db, uid, id, mirrorOf(claimed.doc), now); continue; }
                 const outcome = await deliver({ db, uid, id, doc: claimed.doc, client, now, limits, deps });
                 summary[outcome] += 1;
+                behind = outcome === 'retry' || outcome === 'held';
             }
         });
     }
