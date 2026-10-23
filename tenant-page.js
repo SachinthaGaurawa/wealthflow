@@ -33,7 +33,7 @@
 
 import { identityCandidates } from './wealthflow-nic.js';
 import { makeT, detectLang, LANG_BUTTON, noteText } from './tenant-lang.js';
-import { upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvFile, payoffPlan, planFile, balanceTrail } from './tenant-tools.js';
+import { upcoming, dayLabel, loanProgress, termProgress, calendarFile, csvFile, payoffPlan, planFile, chartData, chartLayout } from './tenant-tools.js';
 
 const THEMES = ['light', 'dark'];
 const THEME_ICON = { light: 'sun', dark: 'moon' };
@@ -212,6 +212,8 @@ const ICONS = {
     phone: ['M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z', 'M11 18h2'],
     clock: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M12 7v5l3 2'],
     chevron: ['m6 9 6 6 6-6'],
+    back: ['m15 6-6 6 6 6'],
+    next: ['m9 6 6 6-6 6'],
     sun: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M12 2v2', 'M12 20v2', 'M4.9 4.9l1.4 1.4', 'M17.7 17.7l1.4 1.4', 'M2 12h2', 'M20 12h2', 'M4.9 19.1l1.4-1.4', 'M17.7 6.3l1.4-1.4'],
     moon: ['M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'],
 };
@@ -304,31 +306,164 @@ function investmentCard(doc, g, st, t, actions) {
 }
 
 
+/** A date for the chart's axis: "5 Oct" ("Oct 5" in Sinhala), with the year when the stretch drawn covers more than one. */
+export function fmtShortDay(iso, lang, withYear) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+    if (!m || !MONTHS[Number(m[2]) - 1]) return '-';
+    const day = Number(m[3]);
+    if (lang === 'si') return `${withYear ? `${m[1]} ` : ''}${MONTHS_SI_SHORT[Number(m[2]) - 1]} ${day}`;
+    return `${day} ${MONTHS[Number(m[2]) - 1]}${withYear ? ` ’${m[1].slice(2)}` : ''}`;
+}
+
+const KIND_CLASS = { lent: 'tp-k-lent', further: 'tp-k-lent', repayment: 'tp-k-pay', now: 'tp-k-now' };
+
+function svgEl(doc, name, attrs, ...kids) {
+    const e = doc.createElementNS(SVG_NS, name);
+    for (const [k, v] of Object.entries(attrs || {})) if (v !== null && v !== undefined) e.setAttribute(k, String(v));
+    for (const kid of kids) if (kid) e.append(kid);
+    return e;
+}
+
 /**
- * A little chart of a loan's balance after each movement, from the amount paid out down to what is left.
- * Nothing is drawn for a document that cannot make SVG, or for fewer than two movements.
+ * "Balance over time": what a loan's balance was after each movement, on a real date axis. The balance only changes when something
+ * happens, so the line is a staircase (a repayment is a step down you can see), and an open loan carries on flat to today, with
+ * its due date marked. The person touches or slides along the chart (or uses the arrow keys, or the two buttons) and a card above it
+ * says that movement: the day, what it was, and the balance after. It is drawn at the width the screen gives it, so its words are
+ * never stretched, and drawn again if that width changes. `api.onPick(i)` is told which movement of the loan (an index into
+ * `g.events`, -1 for today) is chosen, so the table below can mark its row. Nothing is drawn for fewer than two points.
  */
-function trailChart(doc, g, t) {
-    const pts = balanceTrail(g);
-    const top = Math.max(...pts, 0);
-    if (typeof doc.createElementNS !== 'function' || pts.length < 2 || !(top > 0)) return null;
-    const W = 240;
-    const H = 64;
-    const x = (i) => Math.round((i / (pts.length - 1)) * W * 10) / 10;
-    const y = (v) => Math.round((H - 6 - (v / top) * (H - 14)) * 10) / 10;
-    let line = `M0 ${y(pts[0])}`;
-    for (let i = 1; i < pts.length; i += 1) line += ` L${x(i)} ${y(pts[i])}`;
-    const svg = doc.createElementNS(SVG_NS, 'svg');
-    for (const [k, v] of Object.entries({ class: 'tp-spark', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', focusable: 'false', 'aria-label': t('Balance went from {from} to {to}', { from: fmtMoney(pts[0], g.currency), to: fmtMoney(pts[pts.length - 1], g.currency) }) })) svg.setAttribute(k, v);
-    const area = doc.createElementNS(SVG_NS, 'path');
-    area.setAttribute('class', 'tp-spark-area');
-    area.setAttribute('d', `${line} L${W} ${H} L0 ${H} Z`);
-    const stroke = doc.createElementNS(SVG_NS, 'path');
-    stroke.setAttribute('class', 'tp-spark-line');
-    stroke.setAttribute('d', line);
-    stroke.setAttribute('vector-effect', 'non-scaling-stroke');
-    svg.append(area, stroke);
-    return h(doc, 'div', { class: 'tp-trail' }, h(doc, 'span', { class: 'tp-progress-label', text: t('Balance over time') }), svg);
+function trailChart(doc, g, st, t) {
+    const data = chartData(g, st && st.asOf);
+    if (typeof doc.createElementNS !== 'function' || !data) return null;
+    const lang = t.lang;
+    const cur = data.currency;
+    const pts = data.points;
+    const last = pts.length - 1;
+    const withYear = new Date(data.start * 86400000).getUTCFullYear() !== new Date(data.end * 86400000).getUTCFullYear();
+    const gid = `tp-g-${String(g.ref || 'loan').replace(/[^A-Za-z0-9]/g, '')}`;
+    const api = { onPick: null, sync() { if (api.onPick) api.onPick(pts[sel].index); } };
+    let sel = last;
+    let layout = null;
+    let ui = null;
+    let width = 0;
+    let drawn = false;
+    let dragging = false;
+    let touched = false;
+
+    const when = h(doc, 'span', { class: 'tp-ch-when' });
+    const tag = h(doc, 'span', { class: 'tp-chip tp-ch-tag' });
+    const done = h(doc, 'span', { class: 'tp-chip tp-ok tp-ch-done', text: t('Fully repaid'), hidden: true });
+    const label = h(doc, 'span', { class: 'tp-ch-label' });
+    const fig = h(doc, 'div', { class: 'tp-ch-fig' });
+    const delta = h(doc, 'span', { class: 'tp-ch-delta' });
+    const prev = h(doc, 'button', { type: 'button', class: 'tp-ch-step', 'aria-label': t('Earlier movement'), onclick: () => pick(sel - 1, true) }, icon(doc, 'back'));
+    const next = h(doc, 'button', { type: 'button', class: 'tp-ch-step', 'aria-label': t('Later movement'), onclick: () => pick(sel + 1, true) }, icon(doc, 'next'));
+    const plot = h(doc, 'div', { class: 'tp-ch-plot', role: 'slider', tabindex: '0', 'aria-label': t('Balance over time'), 'aria-orientation': 'horizontal', 'aria-valuemin': '1', 'aria-valuemax': String(pts.length) });
+    const hint = h(doc, 'p', { class: 'tp-ch-hint', text: t('Tap or slide along the chart to see each movement') });
+
+    /** What a screen reader says for one point. */
+    const say = (p) => (p.kind === 'now'
+        ? `${t('Today')}, ${fmtDay(p.iso, lang)}. ${t('Balance today')}: ${fmtMoney(p.balance, cur)}`
+        : `${fmtDay(p.iso, lang)}, ${t(LOAN_EVENT[p.kind] || '-')}: ${fmtMoney(p.amount, cur)}. ${t('Balance after')}: ${fmtMoney(p.balance, cur)}`);
+
+    function moveSel() {
+        if (!layout || !ui) return;
+        const p = layout.pts[sel];
+        const cls = KIND_CLASS[p.kind] || 'tp-k-lent';
+        ui.guide.setAttribute('x1', p.x); ui.guide.setAttribute('x2', p.x);
+        for (const [el, name] of [[ui.halo, 'tp-ch-halo'], [ui.dot, 'tp-ch-dot']]) { el.setAttribute('cx', p.x); el.setAttribute('cy', p.y); el.setAttribute('class', `${name} ${cls}`); }
+    }
+
+    function paint() {
+        const p = pts[sel];
+        const now = p.kind === 'now';
+        when.textContent = fmtDay(p.iso, lang);
+        tag.textContent = now ? t('Today') : t(LOAN_EVENT[p.kind] || '-');
+        tag.className = `tp-chip tp-ch-tag${p.kind === 'repayment' ? ' tp-ok' : now ? '' : ' tp-open'}`;
+        done.hidden = !(p.balance === 0 && !now);
+        label.textContent = now ? t('Balance today') : t('Balance after');
+        fig.replaceChildren(money(doc, p.balance, cur, 'tp-ch-money'));
+        if (now) { delta.className = 'tp-ch-delta'; delta.textContent = t('No movement since {date}', { date: fmtDay(pts[sel - 1].iso, lang) }); }
+        else { delta.className = `tp-ch-delta tp-amt ${p.kind === 'repayment' ? 'tp-down' : 'tp-up'}`; delta.textContent = `${p.kind === 'repayment' ? '−' : '+'}${fmtNum(p.amount)}`; }
+        prev.setAttribute('aria-disabled', sel === 0 ? 'true' : 'false');
+        next.setAttribute('aria-disabled', sel === last ? 'true' : 'false');
+        plot.setAttribute('aria-valuenow', String(sel + 1));
+        plot.setAttribute('aria-valuetext', say(p));
+        moveSel();
+        api.sync();
+    }
+
+    function pick(i, byPerson) {
+        const j = Math.max(0, Math.min(last, i));
+        if (byPerson && !touched) { touched = true; hint.hidden = true; }
+        if (j === sel) return;
+        sel = j;
+        paint();
+    }
+
+    function draw(w) {
+        const L = chartLayout(data, w, w < 400 ? 196 : w < 640 ? 216 : 240, { labelPx: lang === 'si' ? 78 : 68 });
+        layout = L;
+        const svg = svgEl(doc, 'svg', { class: drawn ? 'tp-ch' : 'tp-ch tp-ch-in', viewBox: `0 0 ${L.width} ${L.height}`, width: L.width, height: L.height, 'aria-hidden': 'true', focusable: 'false' });
+        drawn = true;
+        svg.append(svgEl(doc, 'defs', {}, svgEl(doc, 'linearGradient', { id: gid, x1: '0', y1: '0', x2: '0', y2: '1' }, svgEl(doc, 'stop', { offset: '0', class: 'tp-ch-s1' }), svgEl(doc, 'stop', { offset: '1', class: 'tp-ch-s2' }))));
+        const text = (cls, x, y, anchor, words) => { const e = svgEl(doc, 'text', { class: cls, x, y, 'text-anchor': anchor }); e.textContent = words; return e; };
+        for (const tk of L.yTicks) svg.append(svgEl(doc, 'line', { class: tk.v === 0 ? 'tp-ch-base' : 'tp-ch-grid', x1: L.x0, x2: L.x1, y1: tk.y, y2: tk.y }), text('tp-ch-lab tp-amt', L.x0 - 8, tk.y + 4, 'end', tk.label));
+        for (const tk of L.xTicks) svg.append(text('tp-ch-lab', tk.x, L.height - 9, tk.anchor, fmtShortDay(tk.iso, lang, withYear)));
+        if (L.due) {
+            const late = L.due.late ? ' tp-late' : '';
+            const flip = L.due.x > L.x1 - 100;
+            svg.append(svgEl(doc, 'line', { class: `tp-ch-due${late}`, x1: L.due.x, x2: L.due.x, y1: L.y0 - 6, y2: L.y1 }), text(`tp-ch-duelab${late}`, L.due.x + (flip ? -6 : 6), L.y0 - 12, flip ? 'end' : 'start', t('Due {date}', { date: fmtShortDay(L.due.iso, lang, withYear) })));
+        }
+        svg.append(svgEl(doc, 'path', { class: 'tp-ch-area', d: L.area, fill: `url(#${gid})` }), svgEl(doc, 'path', { class: 'tp-ch-line', d: L.line, pathLength: '1' }));
+        for (const p of L.pts) svg.append(svgEl(doc, 'circle', { class: `tp-ch-mk ${KIND_CLASS[p.kind] || 'tp-k-lent'}`, cx: p.x, cy: p.y, r: p.kind === 'now' ? 5 : 4.5 }));
+        ui = { guide: svgEl(doc, 'line', { class: 'tp-ch-guide', y1: L.y0, y2: L.y1 }), halo: svgEl(doc, 'circle', { r: 13 }), dot: svgEl(doc, 'circle', { r: 7 }) };
+        svg.append(ui.guide, ui.halo, ui.dot);
+        plot.replaceChildren(svg);
+        moveSel();
+    }
+
+    const at = (ev) => { const r = plot.getBoundingClientRect(); return layout.nearest((ev.clientX - r.left) * (layout.width / Math.max(1, r.width))); };
+    plot.addEventListener('pointerdown', (ev) => {
+        if (!layout || (ev.pointerType === 'mouse' && ev.button)) return;
+        dragging = true;
+        try { plot.setPointerCapture(ev.pointerId); } catch (_) { /* a pointer that is already gone */ }
+        pick(at(ev), true);
+    });
+    plot.addEventListener('pointermove', (ev) => { if (layout && (dragging || ev.pointerType === 'mouse')) pick(at(ev), true); });
+    for (const end of ['pointerup', 'pointercancel']) plot.addEventListener(end, () => { dragging = false; });
+    plot.addEventListener('keydown', (ev) => {
+        const to = { ArrowLeft: sel - 1, ArrowDown: sel - 1, ArrowRight: sel + 1, ArrowUp: sel + 1, Home: 0, End: last, PageDown: sel - 1, PageUp: sel + 1 }[ev.key];
+        if (to === undefined) return;
+        ev.preventDefault();
+        pick(to, true);
+    });
+
+    const view = doc.defaultView || null;
+    const watch = view && typeof view.ResizeObserver === 'function' ? view.ResizeObserver : null;
+    const measure = () => { const w = Math.floor(plot.clientWidth || 0); if (w >= 160 && Math.abs(w - width) > 1) { width = w; draw(w); } };
+    if (watch) new watch(measure).observe(plot);
+    else { width = 340; draw(width); }
+    paint();
+
+    const kinds = new Set(pts.map((p) => KIND_CLASS[p.kind]));
+    const keys = [kinds.has('tp-k-lent') ? ['tp-k-lent', t('Money lent')] : null, kinds.has('tp-k-pay') ? ['tp-k-pay', t('Repayment')] : null, kinds.has('tp-k-now') ? ['tp-k-now', t('Today')] : null, data.due ? ['tp-key-due', t('Due date')] : null].filter(Boolean);
+    const pays = pts.filter((p) => p.kind === 'repayment');
+    const first = pts[0].balance;
+    const finish = pts[last].balance;
+    const el = h(doc, 'div', { class: 'tp-trail' },
+        h(doc, 'span', { class: 'tp-progress-label', text: t('Balance over time') }),
+        h(doc, 'div', { class: 'tp-ch-read' },
+            h(doc, 'div', { class: 'tp-ch-info' }, when, tag, done),
+            h(doc, 'div', { class: 'tp-ch-steps' }, prev, next),
+            h(doc, 'div', { class: 'tp-ch-main' }, h(doc, 'div', {}, label, fig), delta)),
+        plot,
+        h(doc, 'ul', { class: 'tp-ch-key' }, keys.map(([cls, words]) => h(doc, 'li', {}, h(doc, 'span', { class: `tp-key-dot ${cls}`, 'aria-hidden': 'true' }), words))),
+        h(doc, 'div', { class: 'tp-ch-sum' },
+            first !== finish ? h(doc, 'span', { class: 'tp-amt', text: t('Balance went from {from} to {to}', { from: fmtMoney(first, cur), to: fmtMoney(finish, cur) }) }) : null,
+            pays.length ? h(doc, 'span', { text: `${t('Repayments made: {n}', { n: pays.length })} · ${t('Last repayment: {date}', { date: fmtDay(pays[pays.length - 1].iso, lang) })}` }) : null),
+        hint);
+    return { el, api };
 }
 
 const readAmount = (text) => { const n = Number(String(text || '').replace(/[,\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : 0; };
@@ -376,6 +511,16 @@ function loanCard(doc, g, st, t, actions) {
     const status = g.status === 'settled' ? [t('Settled'), 'tp-chip tp-ok'] : g.status === 'closed' ? [t('Closed'), 'tp-chip'] : [t('Active'), 'tp-chip tp-open'];
     const late = Number(g.overdueDays) > 0 ? Math.floor(Number(g.overdueDays)) : 0;
     const due = g.due ? `${fmtDay(g.due, t.lang)}${late ? ` (${late === 1 ? t('1 day ago') : t('{n} days ago', { n: late })})` : ''}` : '';
+    const trail = trailChart(doc, g, st, t);
+    const moves = Array.isArray(g.events) && g.events.length
+        ? table(doc, t('Transactions, in {cur}', { cur }), [[t('Date')], [t('Amount'), true], [t('Balance'), true]], g.events.map((e) => [[fmtDay(e.date, t.lang), false, t(LOAN_EVENT[e.kind] || '-')], [fmtNum(e.amount), true], [fmtNum(e.balance), true]]), t)
+        : null;
+    // the movement the chart is on is marked in the table below it
+    if (trail && moves && typeof moves.querySelectorAll === 'function') {
+        const rows = Array.from(moves.querySelectorAll('tbody tr'));
+        trail.api.onPick = (index) => rows.forEach((tr, i) => tr.classList.toggle('tp-row-on', i === index));
+        trail.api.sync();
+    }
     return h(doc, 'section', { class: 'tp-card', 'aria-label': `${t('Loan')} ${g.ref}` },
         h(doc, 'div', { class: 'tp-group-head' }, h(doc, 'h3', { text: t('Loan') }), refChip(doc, g.ref, t, actions), lenderChip(doc, g, st, t), h(doc, 'span', { class: status[1], text: status[0] })),
         h(doc, 'dl', { class: 'tp-facts' },
@@ -384,11 +529,9 @@ function loanCard(doc, g, st, t, actions) {
             fact(doc, t('Outstanding balance'), fmtMoney(g.outstanding, cur), 'tp-amt'),
             due ? fact(doc, t('Repayment due by'), due, late ? 'tp-late' : null) : null),
         (() => { const pct = loanProgress(g); return pct === null ? null : bar(doc, t('{n}% repaid', { n: pct }), pct); })(),
-        trailChart(doc, g, t),
+        trail && trail.el,
         planWidget(doc, g, st, t, actions),
-        Array.isArray(g.events) && g.events.length
-            ? table(doc, t('Transactions, in {cur}', { cur }), [[t('Date')], [t('Amount'), true], [t('Balance'), true]], g.events.map((e) => [[fmtDay(e.date, t.lang), false, t(LOAN_EVENT[e.kind] || '-')], [fmtNum(e.amount), true], [fmtNum(e.balance), true]]), t)
-            : h(doc, 'p', { class: 'tp-note', text: t('No transactions have been recorded yet.') }));
+        moves || h(doc, 'p', { class: 'tp-note', text: t('No transactions have been recorded yet.') }));
 }
 
 /**

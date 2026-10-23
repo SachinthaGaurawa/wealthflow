@@ -416,7 +416,7 @@ console.log('5f. balance card      -> holder, hide amounts (kept over a refresh)
     const [planIcs] = await Promise.all([page.waitForEvent('download'), page.click('.tp-plan-out .tp-small-btn')]);
     const planText = fs.readFileSync(await planIcs.path(), 'utf8');
     assert.match(planText, /RRULE:FREQ=WEEKLY;INTERVAL=1;COUNT=3/, 'the plan downloads as a repeating reminder');
-    assert.ok(await page.locator('.tp-trail .tp-spark').count() >= 1, 'the loan draws its balance over time');
+    assert.ok(await page.locator('.tp-trail .tp-ch').count() >= 1, 'the loan draws its balance over time');
     await shot('3e-repayment-plan');
     console.log('5g. repayment plan    -> payments and end date follow the amount, a repeating calendar reminder, balance chart');
 }

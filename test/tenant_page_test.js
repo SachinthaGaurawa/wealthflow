@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 globalThis.__WF_TENANT_NO_BOOT = true;
-const { fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY, splashWait, splashEl, phoneLabel, watchAway, SPLASH_AFTER_MS, SPLASH_MIN_MS, SPLASH_SLOW_MS, STILL_AFTER, barGap, TAB_LOCK_MS } = await import('../tenant-page.js');
+const { fmtShortDay, fmtDay, fmtMonth, fmtMoney, fmtNum, fmtAsOf, fmtClock, fmtLeft, SOON_SEC, describeFailure, statementView, statementColumns, initials, tokenFromPath, accountText, COPY, splashWait, splashEl, phoneLabel, watchAway, SPLASH_AFTER_MS, SPLASH_MIN_MS, SPLASH_SLOW_MS, STILL_AFTER, barGap, TAB_LOCK_MS } = await import('../tenant-page.js');
 const { makeT } = await import('../tenant-lang.js');
 
 class El {
@@ -46,6 +46,14 @@ describe('formatting', () => {
         expect(fmtAsOf('nope')).toBe('');
         expect(fmtClock(185)).toBe('3:05');
         expect(fmtClock(-4)).toBe('0:00');
+    });
+
+    it('writes a short day for the chart axis, with the year only when the chart spans more than one', () => {
+        expect(fmtShortDay('2026-10-05', 'en')).toBe('5 Oct');
+        expect(fmtShortDay('2026-10-05', 'en', true)).toBe('5 Oct ’26');
+        expect(fmtShortDay('2026-10-05', 'si')).toBe('ඔක් 5');
+        expect(fmtShortDay('2026-10-05', 'si', true)).toBe('2026 ඔක් 5');
+        for (const bad of ['', null, undefined, 'x', '2026-13-01']) expect(fmtShortDay(bad, 'en')).toBe('-');
     });
 
     it('says the time left calmly: whole minutes until the last two minutes, then the clock', () => {

@@ -11,7 +11,9 @@
  *   calendarFile(item, ...)       an .ics reminder for one of those dates
  *   payoffPlan(loan, asOf, opts)  "if I pay X every week / fortnight / month, when am I done?", and what clears a loan by its due date
  *   planFile(plan, ...)           an .ics series with one reminder for every payment of such a plan
- *   balanceTrail(loan)            the balance after each movement of a loan, for the little chart
+ *   balanceTrail(loan)            the balance after each movement of a loan, as plain numbers
+ *   chartData(loan, asOf)         what the balance chart draws (the staircase, today, the due date), in days and money
+ *   chartLayout(data, w, h)       where each of those goes on a canvas of that many CSS pixels
  *   csvFile(statement)            every movement and payment as a spreadsheet file
  *
  * Dates are Sri Lanka calendar days: the statement's own `asOf` instant is read in Sri Lanka time, so "today"
@@ -230,6 +232,121 @@ export function balanceTrail(g) {
     return ev.map((e) => num(e && e.balance)).filter((n) => Number.isFinite(n));
 }
 
+/* ── the balance chart ─────────────────────────────────────────────────────── */
+
+const round1 = (v) => Math.round(v * 10) / 10;
+const trim2 = (v) => String(Math.round(v * 100) / 100);
+
+/**
+ * Round figures for the up-axis: of the "nice" steps (1, 2, 2.5 or 5 times a power of ten) that reach `max` in two to four steps,
+ * the one that stops soonest after `max` (so the line fills the chart), and of those the one with the most lines. { top, ticks }:
+ * `top` is the last tick, never below `max`.
+ */
+export function niceTicks(max) {
+    const m = Number(max);
+    if (!(m > 0) || !Number.isFinite(m)) return { top: 1, ticks: [0, 1] };
+    let best = null;
+    const mag = 10 ** Math.floor(Math.log10(m));
+    for (const base of [mag / 100, mag / 10, mag]) {
+        for (const k of [1, 2, 2.5, 5]) {
+            const step = base * k;
+            const count = Math.ceil(m / step - 1e-9);
+            if (count < 2 || count > 4) continue;
+            const top = count * step;
+            if (!best || top < best.top - 1e-9 || (Math.abs(top - best.top) <= 1e-9 && count > best.count)) best = { step, count, top };
+        }
+    }
+    const ticks = Array.from({ length: best.count + 1 }, (_, i) => Math.round(i * best.step * 1e6) / 1e6);
+    return { top: ticks[best.count], ticks };
+}
+
+/** A figure for the up-axis, short enough for a phone: 250, 1.5K, 2.4M. */
+export function fmtAxis(v) {
+    const n = Math.abs(num(v));
+    if (n >= 1e6) return `${trim2(n / 1e6)}M`;
+    if (n >= 1e3) return `${trim2(n / 1e3)}K`;
+    return trim2(n);
+}
+
+/**
+ * What the balance chart draws for one loan, in the units of the data (days and money), not pixels.
+ * `points` are the loan's movements in order, each with the balance AFTER it; an open loan gets one more, kind 'now', when
+ * time has passed since the last movement, because the balance stays what it was until the next one. The line is a staircase
+ * for the same reason. `due` is the repayment date when it falls on the drawn stretch (or shortly after it, which then
+ * extends the stretch), so the person can see the balance against the date. Null when there is nothing worth drawing:
+ * fewer than two points, or all of them on one day.
+ */
+export function chartData(g, asOf) {
+    const ev = g && Array.isArray(g.events) ? g.events : [];
+    const points = [];
+    ev.forEach((e, index) => {
+        const day = dayNo(e && e.date);
+        const balance = Number(e && e.balance);
+        if (!Number.isFinite(day) || !Number.isFinite(balance) || balance < 0) return;
+        points.push({ index, day, iso: isoOfDayNo(day), kind: String(e.kind || ''), amount: num(e.amount), balance });
+    });
+    points.sort((a, b) => a.day - b.day || a.index - b.index);
+    const active = !!g && g.status === 'open';
+    const today = todayNo(asOf);
+    if (points.length && active && Number.isFinite(today) && today > points[points.length - 1].day) {
+        points.push({ index: -1, day: today, iso: isoOfDayNo(today), kind: 'now', amount: 0, balance: points[points.length - 1].balance });
+    }
+    if (points.length < 2) return null;
+    const start = points[0].day;
+    let end = points[points.length - 1].day;
+    if (end - start < 1) return null;
+    const peak = Math.max(...points.map((p) => p.balance));
+    if (!(peak > 0)) return null;
+    let due = null;
+    const d = dayNo(g.due);
+    if (active && Number.isFinite(d) && d >= start) {
+        const late = Number.isFinite(today) && d < today;
+        if (d <= end) due = { day: d, iso: isoOfDayNo(d), late };
+        else if (d - end <= Math.max(7, Math.round((end - start) * 0.6))) { due = { day: d, iso: isoOfDayNo(d), late }; end = d; }
+    }
+    const { top, ticks } = niceTicks(peak);
+    return { currency: g.currency, points, start, end, due, top, ticks, active, settled: g.status === 'settled' };
+}
+
+/**
+ * Where everything goes on a canvas of `width` x `height` CSS pixels (so text drawn on it is the size it says): the room
+ * the axis labels need, the up-axis lines, the date labels (as many as fit, `labelPx` apart), the staircase line and the
+ * area under it, a place for each point, and `nearest(px)`, which point a finger or pointer at that x is on.
+ */
+export function chartLayout(data, width, height, { labelPx = 66 } = {}) {
+    const W = Math.max(160, Math.round(width));
+    const H = Math.max(120, Math.round(height));
+    const left = Math.min(72, Math.max(30, Math.max(...data.ticks.map((v) => fmtAxis(v).length)) * 7 + 14));
+    const right = 16;
+    const top = data.due ? 30 : 16;
+    const bottom = 32;
+    const x0 = left;
+    const x1 = W - right;
+    const y0 = top;
+    const y1 = H - bottom;
+    const span = data.end - data.start;
+    const x = (day) => round1(x0 + ((day - data.start) / span) * (x1 - x0));
+    const y = (v) => round1(y1 - (v / data.top) * (y1 - y0));
+    const pts = data.points.map((p) => ({ ...p, x: x(p.day), y: y(p.balance) }));
+    let line = `M${pts[0].x} ${y1} L${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length; i += 1) line += ` L${pts[i].x} ${pts[i - 1].y} L${pts[i].x} ${pts[i].y}`;
+    const area = `${line} L${pts[pts.length - 1].x} ${y1} L${pts[0].x} ${y1} Z`;
+    const count = Math.max(2, Math.min(5, Math.floor((x1 - x0) / labelPx)));
+    const days = [];
+    for (let k = 0; k < count; k += 1) { const day = Math.round(data.start + (k * span) / (count - 1)); if (!days.includes(day)) days.push(day); }
+    const xTicks = days.map((day, k) => ({ day, iso: isoOfDayNo(day), x: x(day), anchor: k === 0 ? 'start' : k === days.length - 1 ? 'end' : 'middle' }));
+    const nearest = (px) => {
+        let best = 0;
+        for (let i = 1; i < pts.length; i += 1) if (Math.abs(pts[i].x - px) <= Math.abs(pts[best].x - px)) best = i;
+        return best;
+    };
+    return {
+        width: W, height: H, x0, x1, y0, y1, pts, line, area, xTicks, nearest,
+        yTicks: data.ticks.map((v) => ({ v, y: y(v), label: fmtAxis(v) })),
+        due: data.due ? { ...data.due, x: x(data.due.day) } : null,
+    };
+}
+
 /* ── a spreadsheet ───────────────────────────────────────────────────────── */
 
 /** A cell as CSV: quoted, and defanged if a spreadsheet would run it as a formula. */
@@ -261,4 +378,4 @@ export function csvFile(statement) {
     return `\uFEFF${rows.map((r) => r.map(csvCell).join(',')).join('\r\n')}\r\n`;
 }
 
-export default { todayNo, upcoming, dayLabel, loanProgress, termProgress, calendarFile, payoffPlan, planFile, balanceTrail, PLAN_EVERY, csvCell, csvFile };
+export default { todayNo, upcoming, dayLabel, loanProgress, termProgress, calendarFile, payoffPlan, planFile, balanceTrail, niceTicks, fmtAxis, chartData, chartLayout, PLAN_EVERY, csvCell, csvFile };
