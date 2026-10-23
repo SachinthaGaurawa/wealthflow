@@ -8145,6 +8145,23 @@
             try { return (window.location.pathname || '/app') + '?signedout=' + Date.now().toString(36); } catch (_) { return '/app'; }
         }
 
+        /* Which account the books in this browser belong to. First sign-in on a device (or one from before this was recorded) only records it. A
+         * different uid removes everything account-owned (wf2_* books, stamps, queue, dirty flag, AI history marks, notices) but keeps the device's own
+         * identity, then records the new uid; the caller reloads so memory starts from the empty storage too. */
+        function _wfAccountSwitched(uid) {
+            try {
+                const prev = localStorage.getItem('wf_account_uid');
+                if (!prev || prev === uid) { if (!prev) _persistRaw('wf_account_uid', uid); return false; }
+                const drop = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (/^wf2_/.test(k) || /^wf_(ai_|notif_dismissed_|alerted_today|shared_statements|share_inbox|last_email|recov_email|scan_settings|preupdate_snapshot|gmail_oauth|drive_|vault_|last_auto_backup|backup_fail|revoked_sessions|session_id)/.test(k)) drop.push(k);
+                }
+                drop.forEach(k => { try { localStorage.removeItem(k); } catch (_) { } });
+                _persistRaw('wf_account_uid', uid);
+                return true;
+            } catch (_) { return false; }
+        }
         async function signOutGoogle() {
             // ISSUE 2 FIX — True full Google sign-out (no silent re-login)
             try {
@@ -9809,6 +9826,12 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     }), { merge: true });
                 });
             } catch (err) { _push = Promise.reject(err); }
+            /* A transaction that never answers (a half-open connection, a browser that suspended the page mid-save, an IndexedDB that stalls on a phone) used to
+             * leave this promise pending for good: the push counted as "running", so no retry, no watchdog and no Check Connection could start another. A
+             * deadline turns the silence into an ordinary failure, which is counted, explained and retried like any other. */
+            let _deadline;
+            _push = Promise.race([_push, new Promise((_, rej) => { _deadline = setTimeout(() => rej(Object.assign(new Error('The upload did not finish in time.'), { code: 'deadline-exceeded' })), window._wfPushDeadlineMs || 30000); })]);
+            _push.then(() => clearTimeout(_deadline), () => clearTimeout(_deadline));
             const run = _push.then(() => {
                 if (_dirtyGen === gen) setDirty(false); else setTimeout(debouncedSync, 50);   // changed while in flight: still dirty
                 lastSyncTime = Date.now();
@@ -17235,6 +17258,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             window._lastProcessedUid = _newUid;
 
                             if (user) {
+                                /* ONE BROWSER, TWO ACCOUNTS: the books on this device belong to the account that last signed in here. A different Google account
+                                 * finding them would merge them into its own cloud copy and upload them, so they are removed first and the page starts again clean. */
+                                if (_wfAccountSwitched(user.uid)) { console.warn('[AUTH] another account signed in on this device: local books removed, reloading'); window.location.reload(); return; }
                                 currentUser = user;
                                 window.currentUser = user;
                                 userDocRef = db.collection('users').doc(user.uid);
@@ -17529,6 +17555,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                     if (window.__wfClearFailsafe) window.__wfClearFailsafe();
                                     if (window.__wfBootCompleted) window.__wfBootCompleted();
                                     finishBoot();
+                                    // Working from this device's copy is not a reason to stop hearing from the others: the read every 20 s and the live listener start here too.
+                                    try { _wfStartReconcileLoop(); } catch (_) { }
+                                    try { _wfListen(); } catch (_) { }
                                 }
                             } else {
                                 // User is signed out

@@ -14,6 +14,10 @@ on:
       - test/e2e/settings-sync.mjs
       - test/e2e/settings-stability.mjs
       - test/e2e/settings-runtime.mjs
+      - test/e2e/sync-banner.mjs
+      - test/e2e/live-sync.mjs
+      - test/e2e/convergence.mjs
+      - wealthflow-sync-health.js
       - test/e2e/devices.mjs
       - test/e2e/firebase-cloud.mjs
       - test/e2e/firebase-stub.mjs
@@ -25,7 +29,7 @@ permissions:
 jobs:
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -44,3 +48,10 @@ jobs:
       - run: node test/e2e/settings-sync.mjs
       # Nothing on the page moves when a switch is flipped, the page is rebuilt or the theme is swapped (phone, tablet and laptop widths).
       - run: node test/e2e/settings-stability.mjs
+      # A change that never reaches the account is seen and retried: the notice, the retry on its own, Check Connection.
+      - run: node test/e2e/sync-banner.mjs
+      # The live listener cannot die quietly: ON/OFF/ON between two devices, a listener ended by an error, a silent stall, coming back to the foreground.
+      - run: node test/e2e/live-sync.mjs
+      # Three devices, one cloud document: rapid conflicting flips, simultaneous records, duplicate snapshots, a missed event, an upload that never answers,
+      # another account's books left on the device, and the commit-to-visible latency.
+      - run: node test/e2e/convergence.mjs
