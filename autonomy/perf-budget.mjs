@@ -716,7 +716,8 @@ export const BUDGETS = {
     // 2026-10-23 (wealthflow-sync-health.js, about 12 KB, a third of it the comments recording why: what a failed upload means in words, the notice, the retry loop, the connection check; measured 2,657,878 + ~0.1% headroom): 2_642_200 -> 2_660_500.
     // 2026-10-23 (wealthflow-sms.js: the verification-code flow of "Alerts to my own number", about 8.7 KB, a third of it the comments recording why: send code, enter code, the lost-click and pasted-code cases; measured 2,669,246 + ~0.05% headroom): 2_660_500 -> 2_670_500.
     // 2026-10-23 (wealthflow-people-ui.js / wealthflow-people.js: the Contacts sheet on a browser with no contact picker leads with paste and drag, the file choice sits behind its own heading; measured 2,671,775 + ~0.03% headroom): 2_670_500 -> 2_672_500.
-    totalJsBytes: 2_672_500,
+    // 2026-10-23 (wealthflow-people.js: one contact-selection service with explicit outcomes for the app's own picker and Chrome's; measured 2,678,324 + ~0.02% headroom): 2_672_500 -> 2_679_000.
+    totalJsBytes: 2_679_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

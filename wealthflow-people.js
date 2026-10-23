@@ -624,31 +624,123 @@ function harvestId(u) {
 /* ── contacts from the phone ──────────────────────────────────────────────── */
 
 /** The browser's Contact Picker (Chrome on Android; not Safari, not desktop). */
-export function contactPickerSupported(win) {
+function webContactPickerSupported(win) {
     try { return !!(win && win.navigator && 'contacts' in win.navigator && win.navigator.contacts && typeof win.navigator.contacts.select === 'function' && 'ContactsManager' in win); } catch (_) { return false; }
 }
 
 /**
- * Open the phone's contact chooser. Must be called from a tap. Resolves to [{name, tels}]; an empty list when the person closed it.
- * @throws an Error whose `.userMessage` is fit to show, for anything that is not a plain "closed it".
+ * The WealthFlow app's own contact picker. Inside the app shell (native/, a Capacitor build) the page is told about the plugin `WealthFlowContactPicker`,
+ * whose one method `pick()` opens the operating system's contact chooser and answers { cancelled:true } or { cancelled:false, name, number }: the one number
+ * the person touched, nothing else from the address book. It asks for no contacts permission (Android's picker intent and iOS's CNContactPickerViewController
+ * both hand the app only what was chosen). In a plain browser this is null.
  */
-export async function pickContacts(win, { multiple = false } = {}) {
-    if (!contactPickerSupported(win)) { const e = new Error('unsupported'); e.userMessage = 'This browser cannot open your contacts. Type the number, or paste it.'; throw e; }
-    let picked;
-    try { picked = await win.navigator.contacts.select(['name', 'tel'], { multiple: !!multiple }); }
-    catch (err) {
-        if (err && err.name === 'AbortError') return [];
-        const e = new Error(str(err && err.message) || 'contacts failed');
-        e.userMessage = err && err.name === 'SecurityError' ? 'The browser only opens contacts from a tap. Please tap the button again.'
-            : err && err.name === 'InvalidStateError' ? 'Your contacts are already open. Choose a contact there, or close it and try again.'
-                : err && err.name === 'NotAllowedError' ? 'WealthFlow was not allowed to open your contacts. Allow contacts for this site in the browser settings, or paste the number instead.'
-                    : 'Could not open your contacts. Paste the number instead.';
-        throw e;
-    }
-    return (Array.isArray(picked) ? picked : []).map((c) => ({
-        name: squash(Array.isArray(c && c.name) ? c.name[0] : ''),
-        tels: [...new Set((Array.isArray(c && c.tel) ? c.tel : []).map((t) => squash(t)).filter(Boolean))],
-    })).filter((c) => c.name || c.tels.length);
+const nativePickers = new WeakMap();
+function nativeContactPicker(win) {
+    try {
+        const cap = win && win.Capacitor;
+        if (!cap || typeof cap.isNativePlatform !== 'function' || !cap.isNativePlatform()) return null;
+        if (nativePickers.has(win)) return nativePickers.get(win);                    // only a found plugin is remembered: the bridge may not have been there on the first look
+        let plugin = cap.Plugins && cap.Plugins.WealthFlowContactPicker;
+        if (!plugin && typeof cap.isPluginAvailable === 'function' && cap.isPluginAvailable('WealthFlowContactPicker') && typeof cap.registerPlugin === 'function') plugin = cap.registerPlugin('WealthFlowContactPicker');
+        if (!plugin || typeof plugin.pick !== 'function') return null;
+        nativePickers.set(win, plugin);
+        return plugin;
+    } catch (_) { return null; }
+}
+
+/** Is there anything on this device that opens the contacts from a tap: the app's own picker, or Chrome's on Android. */
+export function contactPickerSupported(win) {
+    return !!nativeContactPicker(win) || webContactPickerSupported(win);
+}
+
+/** Which kind of picker would open: 'native' (the WealthFlow app), 'web' (Chrome on Android), or '' (none: paste, drag or a file). */
+export function contactPickerKind(win) {
+    return nativeContactPicker(win) ? 'native' : webContactPickerSupported(win) ? 'web' : '';
+}
+
+const PICK_WORDS = {
+    unsupported: 'This browser cannot open your contacts. Type the number, or paste it.',
+    denied: 'WealthFlow was not allowed to open your contacts. Allow contacts for this site in the browser settings, or paste the number instead.',
+    security: 'The browser only opens contacts from a tap. Please tap the button again.',
+    open: 'Your contacts are already open. Choose a contact there, or close it and try again.',
+    failed: 'Could not open your contacts. Paste the number instead.',
+};
+
+const pickFailure = (status, userMessage) => ({ status, contacts: [], userMessage });
+let pickOpen = false;                                                     // the system picker is on screen: a second tap must not stack another
+
+/** What the app's picker answered, as cards; null when the answer is not in the documented shape. */
+function cardsFromNative(res) {
+    if (!res || typeof res !== 'object' || Array.isArray(res)) return null;
+    if (res.cancelled === true) return [];
+    const has = (k) => res[k] !== undefined && res[k] !== null;
+    if (!has('name') && !has('number') && !has('numbers') && res.cancelled !== false) return null;
+    if (has('name') && typeof res.name !== 'string') return null;
+    if (has('number') && typeof res.number !== 'string') return null;
+    if (has('numbers') && (!Array.isArray(res.numbers) || res.numbers.some((n) => typeof n !== 'string'))) return null;
+    const tels = [...new Set([...(has('number') ? [res.number] : []), ...(has('numbers') ? res.numbers : [])].map((n) => squash(n)).filter(Boolean))];
+    const name = has('name') ? squash(res.name) : '';
+    return name || tels.length ? [{ name, tels }] : [];
+}
+
+/**
+ * Open the contact chooser the device has, from a tap. Never opens a file dialog and never touches a form: the caller decides what to do with the answer.
+ * @returns {Promise<{status:'selected'|'cancelled'|'unsupported'|'permission-denied'|'no-phone-number'|'busy'|'error', contacts:{name:string,tels:string[]}[], source?:'native'|'web', userMessage?:string}>}
+ *   selected          one or more contacts that each carry a number
+ *   no-phone-number   the person chose someone with no number (contacts still lists them, so the page can say who)
+ *   cancelled         the person closed the chooser, or it gave back nothing
+ *   busy              a chooser is already open
+ *   unsupported / permission-denied / error carry `userMessage`, fit to show.
+ */
+export async function pickContactResult(win, { multiple = false } = {}) {
+    const native = nativeContactPicker(win);
+    const web = !native && webContactPickerSupported(win);
+    if (!native && !web) return pickFailure('unsupported', PICK_WORDS.unsupported);
+    if (pickOpen) return { status: 'busy', contacts: [] };
+    pickOpen = true;
+    try {
+        let cards;
+        if (native) {
+            let res;
+            try { res = await native.pick(); }
+            catch (err) {
+                const code = str(err && (err.code || err.errorCode)).toLowerCase();
+                const msg = str(err && err.message).toLowerCase();
+                if (/cancel/.test(code) || /cancel|dismiss/.test(msg)) return { status: 'cancelled', contacts: [], source: 'native' };
+                if (/denied|permission|not.?allowed|restricted/.test(code + ' ' + msg)) return { ...pickFailure('permission-denied', PICK_WORDS.denied), source: 'native' };
+                return { ...pickFailure('error', PICK_WORDS.failed), source: 'native' };
+            }
+            cards = cardsFromNative(res);
+            if (cards === null) return { ...pickFailure('error', PICK_WORDS.failed), source: 'native' };
+        } else {
+            let picked;
+            try { picked = await win.navigator.contacts.select(['name', 'tel'], { multiple: !!multiple }); }
+            catch (err) {
+                if (err && err.name === 'AbortError') return { status: 'cancelled', contacts: [], source: 'web' };
+                if (err && err.name === 'NotAllowedError') return { ...pickFailure('permission-denied', PICK_WORDS.denied), source: 'web' };
+                return { ...pickFailure('error', err && err.name === 'SecurityError' ? PICK_WORDS.security : err && err.name === 'InvalidStateError' ? PICK_WORDS.open : PICK_WORDS.failed), source: 'web' };
+            }
+            cards = (Array.isArray(picked) ? picked : []).map((c) => ({
+                name: squash(Array.isArray(c && c.name) ? c.name[0] : ''),
+                tels: [...new Set((Array.isArray(c && c.tel) ? c.tel : []).map((t) => squash(t)).filter(Boolean))],
+            })).filter((c) => c.name || c.tels.length);
+        }
+        const source = native ? 'native' : 'web';
+        if (!cards.length) return { status: 'cancelled', contacts: [], source };
+        return { status: cards.some((c) => c.tels.length) ? 'selected' : 'no-phone-number', contacts: cards, source };
+    } finally { pickOpen = false; }
+}
+
+/**
+ * pickContactResult for callers that want the cards: [] when the person closed it, the cards otherwise (a card with no number included, so the page can
+ * say so), and an Error carrying `.userMessage` for anything that is not a plain "closed it".
+ * @throws {Error} with `.userMessage`
+ */
+export async function pickContacts(win, opts = {}) {
+    const r = await pickContactResult(win, opts);
+    if (r.status === 'selected' || r.status === 'no-phone-number') return r.contacts;
+    if (r.status === 'cancelled' || r.status === 'busy') return [];
+    const e = new Error(r.status); e.userMessage = r.userMessage; e.status = r.status; throw e;
 }
 
 /** Decode a quoted-printable value (Android's contacts export writes non-English names this way). */
@@ -875,5 +967,5 @@ export function draftFromContact(contact, iso = DEFAULT_REGION) {
 export default {
     PEOPLE_KEY, LINK_FIELD, LIMITS, SHARED, phoneProblem, idProblem, resolvePhone, isoOfPhone, secondNumberOf, storedId, idKindOf, cleanPerson, newPerson, defaultId,
     personById, listPeople, findDuplicate, sameNameOnly, searchPeople, recordMatches, readShared, writeShared, usageOf, booksOf, sharedDiff, propagate, linkRecord, updatePerson, previewUpdate, addPerson, addPeople, removePerson,
-    unfiledRecords, harvestPeople, contactPickerSupported, pickContacts, parseVCards, parseContactsCsv, parseContactsText, parseContacts, platformOf, draftFromContact,
+    unfiledRecords, harvestPeople, contactPickerSupported, contactPickerKind, pickContactResult, pickContacts, parseVCards, parseContactsCsv, parseContactsText, parseContacts, platformOf, draftFromContact,
 };
