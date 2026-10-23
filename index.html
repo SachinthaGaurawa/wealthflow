@@ -570,6 +570,7 @@
     <!-- Text-message notices to the people the owner has invested for or lent to: the switch on a record (a boolean, the phone, the NIC, when it was
          switched on), the nudge to the server after a save, the "SMS delivered" alert and the log. The server decides what is owed and sends it; this
          file holds no authority and never sees the gateway token. ESM; window.WFSms. -->
+    <script type="module" src="wealthflow-sync-health.js"></script>
     <script type="module" src="wealthflow-sms.js"></script>
     <!-- The saved-people book and the payment details: country / mobile / NIC-or-passport fields with the phone's own contacts, the "Saved people"
          picker on the loan and investment forms, the people / payment details / messages screens, and the bank accounts the statement page shows.
@@ -4371,6 +4372,26 @@
         #offlineBanner.show {
             display: flex;
         }
+
+        /* ============ CHANGES NOT SAVED TO THE ACCOUNT (wealthflow-sync-health.js) ============ */
+        #syncBanner {
+            display: none;
+            background: rgba(239, 68, 68, .12);
+            border: 1px solid rgba(239, 68, 68, .3);
+            border-radius: var(--r2);
+            padding: 12px 16px;
+            margin-bottom: 14px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--text);
+        }
+
+        #syncBanner.show { display: block; }
+        #syncBanner.wait { background: rgba(245, 166, 35, .12); border-color: rgba(245, 166, 35, .35); }
+        #syncBanner .sb-t { font-weight: 700; color: var(--red2); margin-bottom: 2px; }
+        #syncBanner.wait .sb-t { color: var(--accent2); }
+        #syncBanner .sb-n, #syncBanner .sb-c { font-size: 12px; color: var(--text2); margin-top: 4px; }
+        #syncBanner .sb-b { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 
         /* ================== LIST ITEMS ================== */
         .li-item {
@@ -9797,17 +9818,169 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 try { _wfPaintCloudChange(seen); } catch (_) { }
                 // The text-message notices are derived on the server from what this push just wrote; tell it to look again if anything it cares about changed.
                 try { if (window.WFSms) window.WFSms.afterPush(); } catch (_) { }
+                try { if (window._wfSyncOk) window._wfSyncOk(); } catch (_) { }
                 return true;
             }).catch(err => {
                 console.error('[SYNC] @x@ Push failed:', err && err.code, err && err.message);
-                // Stay dirty: it is retried on the next change, on coming back online, and by the reconcile loop.
+                // Stay dirty: it is retried by the watched retry below, on the next change, on coming back online, and by the reconcile loop.
                 setTimeout(() => setSyncStatus(navigator.onLine ? 'online' : 'offline'), 1000);
                 _lastCloudPushError = (err && (err.code || err.message)) || 'unknown';
+                try { if (window._wfSyncFailed) window._wfSyncFailed(err); } catch (_) { }
                 return false;
             });
             window._wfSyncRun = run;
             run.then(() => { if (window._wfSyncRun === run) window._wfSyncRun = null; });
             return run;
+        }
+
+        /* THE UPLOAD, WATCHED (wealthflow-sync-health.js says why and when; this wires it to the page).
+         *
+         * Reported 2026-10-23: Settle in full and Confirm on the phone sent no text; the same two taps on the laptop did. A text goes out only after the
+         * change is UPLOADED (the server derives it from the cloud copy), and a failed upload used to be silent: the error was kept in a variable
+         * nobody read, and the retries hung off an edit, a reconnect or a successful read. Now a failure is counted and explained, a retry
+         * loop keeps going on its own, a watchdog notices a change that has waited without any upload starting, and the page says so
+         * ("Not saved to your account yet") with Try Again and Check Connection. window hooks, so syncToCloud stays self-contained. */
+        let _wfSyncTr = null, _wfSyncLoop = null;
+        function _wfTracker() { const H = window.WFSyncHealth; return H ? (_wfSyncTr || (_wfSyncTr = H.createTracker())) : null; }
+        function _wfSyncRetry() {
+            const H = window.WFSyncHealth; if (!H) return null;
+            return _wfSyncLoop || (_wfSyncLoop = H.createRetryLoop({
+                pending: () => isDirty && window._isDecoyMode !== true && window._wfHoldSync !== true,
+                attempt: async () => {
+                    const tr = _wfTracker();
+                    if (tr && /^(unauthenticated|permission-denied)$/.test(tr.state.code) && currentUser && currentUser.getIdToken) { try { await currentUser.getIdToken(true); } catch (_) { } }
+                    if (window._wfSyncRun) { try { await window._wfSyncRun; } catch (_) { } if (!isDirty) return true; }
+                    return syncToCloud();
+                },
+            }));
+        }
+        window._wfSyncFailed = function (err) {
+            const tr = _wfTracker(); if (!tr) return;
+            tr.noteFailure(err);
+            const H = window.WFSyncHealth, loop = _wfSyncRetry();
+            if (loop && H.explainPushError(err).retry) loop.schedule(H.retryDelayMs(tr.state.failures));
+            _wfSyncTick();
+        };
+        window._wfSyncOk = function () {
+            const tr = _wfTracker(); if (!tr) return;
+            if (!isDirty) tr.noteClean(); else { tr.state.failures = 0; tr.state.code = ''; }
+            const loop = _wfSyncRetry(); if (loop) loop.reset();
+            _wfSyncTick();
+        };
+        /* Upload what is waiting NOW and say whether the account has it. Used by the actions whose result is a text message, and by Try Again. */
+        async function _wfUploadNow() {
+            if (syncDebounceTimer) { clearTimeout(syncDebounceTimer); syncDebounceTimer = null; }
+            for (let i = 0; i < 3; i++) {
+                if (window._wfSyncRun) { try { await window._wfSyncRun; } catch (_) { } }
+                if (!isDirty) return true;
+                if (!(await syncToCloud())) return false;
+            }
+            return !isDirty;
+        }
+        async function _wfSyncTryAgain(btn) {
+            if (btn) btn.disabled = true;
+            const loop = _wfSyncRetry(); if (loop) loop.reset();
+            const ok = await _wfUploadNow();
+            if (btn) btn.disabled = false;
+            notify(ok ? 'Saved to your account.' : 'Still not saved to your account. Choose Check Connection to see why.', ok ? 'success' : 'warn');
+            _wfSyncTick();
+        }
+        /* The notice. Redrawn only when its words change, so a button is not rebuilt under a finger. */
+        function _wfRenderSyncBanner(v) {
+            let el = document.getElementById('syncBanner');
+            if (!v.show) { if (el) el.classList.remove('show'); return; }
+            if (!el) {
+                const host = document.getElementById('offlineBanner'); if (!host || !host.parentNode) return;
+                el = document.createElement('div'); el.id = 'syncBanner'; el.setAttribute('role', 'status');
+                host.parentNode.insertBefore(el, host);
+            }
+            el.className = 'show ' + v.tone;
+            const sig = v.title + '|' + v.reason + '|' + v.code;
+            if (el.dataset.sig === sig) return;
+            el.dataset.sig = sig;
+            el.innerHTML = '<div class="sb-t">' + _wfEsc(v.title) + '</div><div class="sb-r">' + _wfEsc(v.reason) + '</div><div class="sb-n">' + _wfEsc(v.note) + '</div>'
+                + (v.code ? '<div class="sb-c">Code: ' + _wfEsc(v.code) + '</div>' : '')
+                + '<div class="sb-b"><button class="btn btn-sm btn-primary" onclick="_wfSyncTryAgain(this)">Try Again</button><button class="btn btn-sm btn-secondary" onclick="_wfOpenSyncCheck()">Check Connection</button></div>';
+        }
+        /* Every few seconds: keep the tracker in step with isDirty, start a retry if a change has waited without any upload running, redraw the notice. */
+        function _wfSyncTick() {
+            try {
+                const tr = _wfTracker(); if (!tr) return;
+                if (isDirty) tr.noteDirty(); else if (tr.state.dirtySince) tr.noteClean();
+                const loop = _wfSyncRetry();
+                if (isDirty && loop && !window._wfSyncRun && !loop.scheduled && Date.now() - tr.state.dirtySince >= 15000) loop.schedule(0);
+                _wfRenderSyncBanner(tr.view({ online: navigator.onLine, signedIn: !!currentUser, holding: window._wfHoldSync === true, decoy: window._isDecoyMode === true }));
+            } catch (_) { }
+        }
+        if (!window.__wfSyncTickTimer) {
+            window.__wfSyncTickTimer = setInterval(_wfSyncTick, 4000);
+            /* Leaving the page (iOS freezes a backgrounded page within seconds) must not strand a change that was still inside the 0.3 s wait, and coming back must retry at once. */
+            const leave = () => { if (isDirty && userDocRef && navigator.onLine && !window._wfSyncRun) { if (syncDebounceTimer) { clearTimeout(syncDebounceTimer); syncDebounceTimer = null; } syncToCloud(); } };
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') leave();
+                else if (isDirty) { const loop = _wfSyncRetry(); if (loop) loop.schedule(0); }
+            });
+            window.addEventListener('pagehide', leave);
+        }
+        /* The steps an upload needs, in order; the first one that fails is the answer. */
+        function _wfSyncChecks() {
+            const kb = n => Math.max(1, Math.round(n / 1024)) + ' KB';
+            let payload = null;
+            const checks = [
+                { id: 'server', label: 'WealthFlow server', run: async () => {
+                    const r = await fetch('/api/version?t=' + Date.now(), { cache: 'no-store' });
+                    if (!r.ok) throw new Error('it answered ' + r.status);
+                    const j = await r.json().catch(() => ({}));
+                    return 'reachable' + (j && j.version ? ', live version ' + j.version : '');
+                } },
+                { id: 'google', label: 'Google cloud database', run: async () => { await fetch('https://firestore.googleapis.com/', { method: 'HEAD', mode: 'no-cors', cache: 'no-store' }); return 'reachable'; } },
+                { id: 'signin', label: 'Sign-in', run: async () => { if (!currentUser) throw new Error('you are signed out'); await currentUser.getIdToken(true); return 'renewed'; } },
+                { id: 'read', label: 'Reading your account', run: async () => {
+                    if (!userDocRef) throw new Error('no account is open');
+                    const d = await userDocRef.get({ source: 'server' });
+                    return d.exists ? 'read, ' + kb(JSON.stringify(d.data()).length) + ' stored' : 'nothing is saved there yet';
+                } },
+                { id: 'write', label: 'Saving to your account', run: async () => {
+                    if (!userDocRef) throw new Error('no account is open');
+                    await userDocRef.collection('syncProbe').doc('ping').set({ at: Date.now(), device: _getDeviceId() });
+                    return 'saved';
+                } },
+                { id: 'data', label: 'Data on this device', run: async () => {
+                    payload = window.WFSyncHealth.inspectPayload(_wfCloudSafe(appData));
+                    if (payload.problems.length) return { ok: false, detail: payload.problems.slice(0, 3).map(p => (p.path || 'the whole document') + ' is ' + p.why).join('; ') };
+                    return kb(payload.bytes) + ' of about 1,024 KB' + (payload.nearLimit ? ', close to the limit' : '');
+                } },
+            ];
+            return { checks, payload: () => payload };
+        }
+        function _wfOpenSyncCheck() {
+            const H = window.WFSyncHealth;
+            if (!H) { notify('The connection check could not load. Reload the page and try again.', 'error'); return; }
+            _liqOverlay('Check Connection',
+                '<div class="liq-sub" style="margin:0 0 10px;">Each step of saving to your account is tested in turn, so the one that fails is named.</div>'
+                + '<div id="_sc_rows" style="font-size:12.5px;line-height:1.8;"></div>'
+                + '<div id="_sc_v" aria-live="polite" style="font-size:12.5px;line-height:1.6;margin:10px 0;"></div>'
+                + '<div class="md-ftr" style="display:flex;gap:8px;"><button class="btn btn-secondary" id="_sc_copy" style="flex:1;" disabled>Copy Report</button><button class="btn btn-primary" id="_sc_run" style="flex:1;">Check Again</button></div>',
+                (ov) => {
+                    const rowsEl = ov.querySelector('#_sc_rows'), vEl = ov.querySelector('#_sc_v'), copyBtn = ov.querySelector('#_sc_copy'), runBtn = ov.querySelector('#_sc_run');
+                    let report = '';
+                    const run = async () => {
+                        const { checks, payload } = _wfSyncChecks();
+                        runBtn.disabled = true; copyBtn.disabled = true; vEl.textContent = '';
+                        rowsEl.innerHTML = checks.map(c => '<div id="_sc_' + c.id + '"><b>' + _wfEsc(c.label) + '</b>: checking…</div>').join('');
+                        const rows = await H.runChecks(checks, { onStep: (r) => {
+                            const el = ov.querySelector('#_sc_' + r.id);
+                            if (el) el.innerHTML = '<b>' + _wfEsc(r.label) + '</b>: ' + (r.ok ? 'OK' : '<span style="color:var(--red);font-weight:600;">failed</span>') + ' <span style="color:var(--text3);">' + _wfEsc(r.detail) + '</span>';
+                        } });
+                        const v = H.verdict(rows);
+                        vEl.textContent = v.text; vEl.style.color = v.ok ? 'var(--green)' : 'var(--red)';
+                        report = H.reportText(rows, { build: window.WF_APP_VERSION, online: navigator.onLine, payload: payload() });
+                        runBtn.disabled = false; copyBtn.disabled = false;
+                    };
+                    runBtn.onclick = run;
+                    copyBtn.onclick = async () => { try { await navigator.clipboard.writeText(report); notify('Report copied.', 'success'); } catch (_) { notify('Could not copy the report. Select the text and copy it by hand.', 'warn'); } };
+                    run();
+                });
         }
 
         /* THE DOCUMENT IS RE-READ FROM THE SERVER, NOT TRUSTED TO ARRIVE.
@@ -9879,9 +10052,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     // cloud copy still carried, then flush the deletes to the server.
                     try { _wfApplyPendingDeletesLocally(); _flushCloudDeletes(); } catch (_) { }
 
+                    let _saved = true;
                     if (isDirty || _applied.needPush) {
                         setDirty(true);
-                        debouncedSync(); // push the merged truth so the cloud converges
+                        _saved = await _wfUploadNow(); // push the merged truth so the cloud converges, and know whether it did
                     }
 
                     // ── v7.42.0 — the network fetch SUCCEEDED, so mark Online NOW,
@@ -9896,7 +10070,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     setSyncStatus('online');
                     lastSyncTime = Date.now();
                     console.log('[SYNC] @checkCircle@ Force-pulled from cloud');
-                    notify('Synced. Showing the latest data from all your devices.', 'success');
+                    notify(_saved ? 'Synced. Showing the latest data from all your devices.' : 'Showing the latest data, but your own changes are not saved to your account yet. WealthFlow keeps trying.', _saved ? 'success' : 'warn');
                     /* THE RE-RENDER USED TO LIVE HERE, and it covered the active
                      * page and two badges. It has moved to refreshAllSurfaces(),
                      * which the only caller runs after this resolves: this
@@ -9920,7 +10094,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 // keeps us synced — so don't scare the user with a false "Offline".
                 if (navigator.onLine) {
                     setSyncStatus('online');
-                    notify('Sync was interrupted briefly. Your data is safe and live updates continue.', 'warn');
+                    notify(isDirty ? 'Sync was interrupted. Your changes are saved on this device and not in your account yet. WealthFlow keeps trying.' : 'Sync was interrupted briefly. Your data is safe and live updates continue.', 'warn');
                 } else {
                     setSyncStatus('offline');
                     notify('You are offline. Changes will sync automatically when you reconnect.', 'error');
@@ -25154,26 +25328,60 @@ table.amort tbody tr { page-break-inside: avoid; }
             );
         }
 
+        /* Settle in full is a repayment like any other: it waits for the owner's confirmation unless they say the money is in the bank, and the debtor's texts
+         * (the receipt, then "settled and closed") go when it is COUNTED. The dialog says so: a Settle that texted nobody and did not say why looked broken. */
         function _settleDebtor(d) {
             if (!d) return;
             const su = window.WFLiquidity.debtorSummary(d, new Date());
-            showConfirm(
-                'checkCircle', 'Settle in full?',
-                'This records a final repayment of ' + fmtS(su.outstanding) + ' from ' + (d.name || 'this debtor')
-                    + ' and closes them. It waits for your confirmation on the dashboard before it counts, '
-                    + 'so nothing changes until you have seen the money.',
-                'btn-primary', 'Settle',
-                () => {
-                    const list = (DB.get('debtors') || []).slice();
-                    const at = list.findIndex((x) => x && x.id === d.id);
-                    if (at < 0) return;
-                    const r = window.WFLiquidity.settleInFull(list[at], { date: _liqToday(), id: uid(), now: Date.now() });
-                    if (!r.ok) { notify('There is nothing outstanding to settle.', 'info'); return; }
-                    list[at] = r.debtor;
-                    DB.set('debtors', list);
-                    notify('Recorded. Confirm it on the dashboard once the money is in.', 'success');
-                    renderLiquidity();
-                    try { renderVerifyQueue(); } catch (_) {}
+            if (!(su.outstanding > 0)) { notify('There is nothing outstanding to settle.', 'info'); return; }
+            const smsOn = d.sms_notifications_enabled === true;
+            const who = d.name || 'The debtor';
+            _liqOverlay(
+                (window.WFIcon ? WFIcon('checkCircle') : '') + ' Settle ' + _wfEsc(d.name || 'debtor') + ' in full',
+                '<div class="liq-sub" style="margin:0 0 10px;">This records a final repayment of <b>' + _wfEsc(fmtS(su.outstanding)) + '</b> and closes the loan.</div>'
+                + '<label for="_st_now" style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;cursor:pointer;margin:2px 0 8px;">'
+                + '<input type="checkbox" id="_st_now" style="width:18px;height:18px;margin-top:1px;flex:0 0 auto;">'
+                + '<span>I can already see this money in my bank, count it now.</span></label>'
+                + '<div id="_st_hint" aria-live="polite" style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:2px 0 10px;"></div>'
+                + '<div class="md-ftr"><button class="btn btn-primary" id="_st_save" style="width:100%;">Settle</button></div>',
+                (ov, close) => {
+                    const nowEl = ov.querySelector('#_st_now');
+                    const hintEl = ov.querySelector('#_st_hint');
+                    const refresh = () => {
+                        const counted = !!nowEl.checked;
+                        hintEl.textContent = (counted
+                            ? 'It is counted now and the loan is closed.'
+                            : 'It is logged as waiting for your confirmation. Nothing changes, and nobody is texted, until you confirm it on the dashboard.')
+                            + (!smsOn ? ' Texts are switched off for ' + who + ', so no text is sent.'
+                                : !String(d.phone || '').trim() ? ' ' + who + ' has no phone number saved, so no text can be sent.'
+                                : ' ' + who + ' is texted the repayment, then a separate text saying the loan is fully settled and closed' + (counted ? '.' : ', once it is confirmed.'));
+                    };
+                    nowEl.addEventListener('change', refresh);
+                    refresh();
+                    ov.querySelector('#_st_save').onclick = () => {
+                        const list = (DB.get('debtors') || []).slice();
+                        const at = list.findIndex((x) => x && x.id === d.id);
+                        if (at < 0) return;
+                        const countedNow = !!nowEl.checked;
+                        const r = window.WFLiquidity.settleInFull(list[at], { date: _liqToday(), id: uid(), now: Date.now(), confirmed: countedNow });
+                        if (!r.ok) { notify('There is nothing outstanding to settle.', 'info'); close(); return; }
+                        list[at] = r.debtor;
+                        DB.set('debtors', list);
+                        try { triggerHaptic('success'); } catch (_) {}
+                        if (countedNow && smsOn) {
+                            _wfUploadNow().then((ok) => notify(ok
+                                ? 'Settled and closed · the receipt and the closing text are queued'
+                                : 'Settled and closed on this device, but not saved to your account yet. The texts go out once it is saved.', ok ? 'success' : 'warn'));
+                        } else {
+                            notify(countedNow
+                                ? 'Settled and closed'
+                                : 'Recorded. Confirm it on the dashboard once the money is in' + (smsOn ? ' and ' + who + ' is texted then.' : '.'), 'success');
+                        }
+                        close();
+                        renderLiquidity();
+                        try { renderVerifyQueue(); } catch (_) {}
+                        try { renderDash(); } catch (_) {}
+                    };
                 },
             );
         }
@@ -25216,16 +25424,22 @@ table.amort tbody tr { page-break-inside: avoid; }
         function _debtorAction(d, eventId, what) {
             if (!d || !window.WFLiquidity) return;
             const L = window.WFLiquidity;
-            const run = (r, msg, tone) => {
+            const run = (r, msg, tone, upload) => {
                 if (!r.ok) { notify('That row is no longer there.', 'info'); renderLiquidity(); return; }
                 _saveDebtor(r.debtor);
                 try { triggerHaptic(what === 'remove' ? 'light' : 'success'); } catch (_) {}
+                /* A text goes out only once the change is in the account (the server derives it from there), so the toast waits for the upload and says which happened. */
+                if (upload) { _wfUploadNow().then((ok) => notify(upload(ok), ok ? 'success' : 'warn')); return; }
                 notify(msg, tone || 'success');
             };
             if (what === 'confirm') {
                 const ev = (Array.isArray(d.events) ? d.events : []).find((x) => x && x.id === eventId);
                 const texted = d.sms_notifications_enabled === true && ev && ev.kind === 'repayment';
-                return run(L.confirmEvent(d, eventId, { now: Date.now() }), 'Confirmed' + (texted ? ' · a text with the new balance is queued' : ''));
+                const done = L.confirmEvent(d, eventId, { now: Date.now() });
+                const closes = texted && done.ok && !(L.debtorSummary(done.debtor, new Date()).outstanding > 0);
+                return run(done, 'Confirmed', 'success', texted ? (ok) => (ok
+                    ? 'Confirmed' + (closes ? ' · the receipt and the closing text are queued' : ' · a text with the new balance is queued')
+                    : 'Confirmed on this device, but not saved to your account yet. The text goes out once it is saved.') : null);
             }
             if (what === 'unconfirm') return run(L.unconfirmEvent(d, eventId), 'Back to unconfirmed', 'info');
             if (what === 'reopen') return run(L.reopenDebtor(d), 'Reopened', 'info');
@@ -30260,8 +30474,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div><span id="settingsCloudStatus" class="badge wf-sync-badge ${navigator.onLine ? 'bg-g' : 'bg-r'}" style="padding: 6px 12px;">${navigator.onLine ? '\u25CF Connected' : '\u25CB Offline'}</span></div>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Sync now</div><div class="setting-desc">Pull the latest data from your cloud account.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="syncToCloud(); notify('Syncing with your cloud account…', 'info');">⟳ Sync now</button>
+                <div class="setting-info"><div class="setting-label">Sync now</div><div class="setting-desc">Saves your changes to your cloud account and pulls the latest data from your other devices.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="refreshApp(this)">⟳ Sync now</button>
+            </div>
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Check connection</div><div class="setting-desc">Tests each step of saving to your account and names the one that fails. Use it when this device and another show different data.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="_wfOpenSyncCheck()">Check Connection</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Notifications</div><div class="setting-desc">Alerts and reminders about your money.</div></div>

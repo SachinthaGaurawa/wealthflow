@@ -132,8 +132,10 @@ export function debtorSummary(debtor, asOf) {
         else pendingRepaid += e.amount;
     }
 
-    const outstanding = Math.max(0, lent - repaid);
-    const outstandingIfConfirmed = Math.max(0, (lent + pendingLent) - (repaid + pendingRepaid));
+    /* Cents, rounded back: 45126.98 - 7842.49 - 37284.49 is 7e-12 in floating point, which is "still outstanding" to every test of > 0. */
+    const cents = (n) => Math.round(n * 100) / 100;
+    const outstanding = Math.max(0, cents(lent - repaid));
+    const outstandingIfConfirmed = Math.max(0, cents((lent + pendingLent) - (repaid + pendingRepaid)));
     const closed = !!d.closedAt || s(d.state).toUpperCase() === DEBT_STATE.CLOSED;
 
     return {

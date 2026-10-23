@@ -119,7 +119,8 @@ export function redact(text, token) {
         out = out.split(t).join('[token]');
         try { out = out.split(encodeURIComponent(t)).join('[token]'); } catch (_) { /* malformed */ }
     }
-    return out.replace(/Bearer\s+[A-Za-z0-9._~+/=|-]{8,}/gi, 'Bearer [token]').slice(0, 300);
+    // A gateway that echoes the recipient or the message body must not put a phone number or a verification code into a log the account holder can read.
+    return out.replace(/Bearer\s+[A-Za-z0-9._~+/=|-]{8,}/gi, 'Bearer [token]').replace(/\+?94\d{9}\b/g, '[number]').replace(/\b\d{6,}\b/g, '[digits]').slice(0, 300);
 }
 
 /** Classify a gateway failure from the HTTP status and whatever human-readable message came with it. */
@@ -137,6 +138,12 @@ export function classifyFailure(httpStatus, message) {
     if (httpStatus === 429) return KIND.RATE_LIMIT;
     if (httpStatus === 408) return KIND.TIMEOUT;
     if (httpStatus >= 500) return KIND.SERVER;
+    // Wording nobody has seen before must not kill a text on the first try: the account running dry, a daily limit, an account that is not active and a
+    // service that is down are all things that pass, and a FAILED text is only ever revived by a phone change.
+    if (/balance (?:is )?(?:0|zero)\b|(?:quota|limit)\b.{0,20}\b(?:exceeded|reached)|daily (?:sending )?limit/.test(m)) return KIND.CREDIT;
+    if (/authentication failed|account\b.{0,30}\b(?:not active|inactive|suspended|disabled|deactivated|expired)/.test(m)) return KIND.AUTH;
+    if (/temporar|unavailable|try again|maintenance|overload|busy/.test(m)) return KIND.SERVER;
+    if (httpStatus >= 200 && httpStatus < 400) return KIND.SERVER;        // "status: error" in a 200 answer with words we do not know: retried, then reported after the last attempt
     return KIND.REJECTED;
 }
 
@@ -213,7 +220,10 @@ export class TextLkClient {
             });
         } catch (e) {
             const timedOut = !!(e && (e.name === 'TimeoutError' || e.name === 'AbortError'));
-            return { problem: this._fail(timedOut ? KIND.TIMEOUT : KIND.NETWORK, timedOut ? `no answer within ${this.timeoutMs}ms` : (e && e.message) || 'network error', { possiblySent: timedOut }) };
+            // the request never left when the name did not resolve or the connection was refused; a reset after the request was written may have been delivered
+            const code = s(e && (e.code || (e.cause && e.cause.code)));
+            const neverLeft = /^(?:ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)$/.test(code);
+            return { problem: this._fail(timedOut ? KIND.TIMEOUT : KIND.NETWORK, timedOut ? `no answer within ${this.timeoutMs}ms` : (e && e.message) || 'network error', { possiblySent: timedOut || !neverLeft }) };
         }
         let text = '';
         // a body that stalls after the headers is read under the same deadline, and its connection is torn down rather than left half-read
@@ -256,7 +266,8 @@ export class TextLkClient {
         if (status === 'error' || (httpStatus >= 400 && httpStatus < 600)) {
             const kind = classifyFailure(httpStatus, gatewayMessage);
             const after = kind === KIND.RATE_LIMIT ? retryAfterMs(headerOf(response, 'retry-after'), this._now()) : 0;
-            return this._fail(kind, gatewayMessage || `HTTP ${httpStatus}`, { httpStatus, ...(after ? { retryAfterMs: after } : {}) });
+            // a 5xx from a proxy can come after the backend took the message: it is retried, and flagged as a possible duplicate
+            return this._fail(kind, gatewayMessage || `HTTP ${httpStatus}`, { httpStatus, ...(after ? { retryAfterMs: after } : {}), ...(httpStatus >= 500 ? { possiblySent: true } : {}) });
         }
         // 2xx with a body that says neither success nor error: the message may well have gone
         return this._fail(KIND.UNKNOWN, `unreadable answer (HTTP ${httpStatus}): ${gatewayMessage}`, { httpStatus, possiblySent: true });

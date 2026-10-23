@@ -177,6 +177,19 @@ describe('the Debtors screen: a part payment and the balance', () => {
         expect(HTML).toMatch(/const textedRow = list\[at\]\.sms_notifications_enabled === true && evRaw && evRaw\.kind === 'repayment';/);
     });
 
+    it('Settle in full asks the same question as a repayment, starts unticked, and says what will be texted and when', () => {
+        const body = fn('_settleDebtor', 'function _deleteDebtor');
+        expect(body).toMatch(/id="_st_now" style="[^"]*">/);
+        expect(body).not.toMatch(/id="_st_now"[^>]*checked/);
+        expect(body).toContain('confirmed: countedNow });');
+        expect(body).toContain('waiting for your confirmation');
+        expect(body).toContain('nobody is texted, until you confirm');
+        expect(body).toContain('a separate text saying the loan is fully settled and closed');
+        expect(body).toContain('Texts are switched off for');
+        expect(body).toContain('has no phone number saved');
+        expect(body).not.toMatch(/DB\.set\('balance'/);
+    });
+
     it('the late-payment box is on the debtor form only, is passed to the one validator, and a reminder is refused before saving when there is no date to remind about', () => {
         const body = fn('openDebtorModal', 'window.openDebtorModal');
         expect(body).toContain("WFSms.blockHtml('_db_sms', { layer: 'B', record: d })");
