@@ -164,9 +164,22 @@ console.log('2. keyboard and buttons -> arrows, Home, End and the two buttons mo
 /* a finger or a mouse: the nearest movement to where it is ------------------- */
 {
     const centre = async (n) => paid.locator('.tp-ch-mk').nth(n).evaluate((e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+    // the page may still be scrolling smoothly to the chart from the step before: measure once it has stopped
+    for (let last = -1, again = 0; again < 3;) { const top = await paid.locator('.tp-ch-plot').evaluate((e) => e.getBoundingClientRect().top); again = top === last ? again + 1 : 0; last = top; await page.waitForTimeout(80); }
     const where = await centre(3);
     await page.mouse.move(where.x + 2, where.y - 40);
     assert.equal(await paid.locator('.tp-ch-when').textContent(), '9 Oct 2026', 'moving the mouse over the chart picks the movement under it');
+    // two repayments on 6 Oct stand one above the other: the pointer's height picks which
+    const upper = await centre(1);
+    const lower = await centre(2);
+    assert.ok(Math.abs(upper.x - lower.x) < 1 && lower.y > upper.y + 8, 'two movements on one day stand one above the other');
+    const figure = async () => (await paid.locator('.tp-ch-money').textContent()).replace(/\s+/g, ' ');
+    await page.mouse.move(upper.x, upper.y);
+    assert.equal(await figure(), 'LKR 850.00', 'on the upper of two same-day movements the pointer gets the earlier one');
+    await page.mouse.move(lower.x, lower.y);
+    assert.equal(await figure(), 'LKR 550.00', 'and on the lower one, the later one');
+    await page.mouse.move(upper.x + 3, upper.y - 20);
+    assert.equal(await figure(), 'LKR 850.00', 'a little above both is still the earlier one');
     const first = await centre(0);
     await page.mouse.move(first.x - 6, first.y);
     assert.equal(await paid.locator('.tp-ch-when').textContent(), '5 Oct 2026', 'and just left of the first one is still the first');
