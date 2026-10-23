@@ -17,6 +17,7 @@ on:
       - test/e2e/part-payment.mjs
       - test/e2e/sms-notices.mjs
       - test/e2e/owner-otp.mjs
+      - test/e2e/contacts-device.mjs
       - sms-owner-otp.mjs
       - sms-owner.mjs
       - sms-notify.js
@@ -49,3 +50,6 @@ jobs:
       # "Alerts to my own number": a number is offered Send code instead of Save, the code row appears, a wrong code saves nothing, the right code saves the number
       # with the switch on, and switching off needs no code.
       - run: node test/e2e/owner-otp.mjs
+      # The Contacts buttons beside Mobile number and Second mobile number: the device picker's number goes into its own field, cancel and refusal change nothing,
+      # and a browser with no picker never opens a file dialog by itself.
+      - run: node test/e2e/contacts-device.mjs

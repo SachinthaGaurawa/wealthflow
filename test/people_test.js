@@ -409,7 +409,11 @@ describe('contacts from the phone', () => {
     it('anything else says something a person can act on', async () => {
         const denied = win(async () => { const e = new Error('x'); e.name = 'SecurityError'; throw e; });
         await expect(pickContacts(denied)).rejects.toMatchObject({ userMessage: expect.stringMatching(/tap/i) });
-        await expect(pickContacts({ navigator: {} })).rejects.toMatchObject({ userMessage: expect.stringMatching(/contacts file|import/i) });
+        await expect(pickContacts({ navigator: {} })).rejects.toMatchObject({ userMessage: expect.stringMatching(/paste/i) });
+        for (const [name, re] of [['NotAllowedError', /not allowed.*settings/i], ['InvalidStateError', /already open/i], ['TypeError', /paste the number/i]]) {
+            const w = win(async () => { const e = new Error('x'); e.name = name; throw e; });
+            await expect(pickContacts(w)).rejects.toMatchObject({ userMessage: expect.stringMatching(re) });
+        }
     });
     it('turns a contact into a name and numbers a form can use, keeping what it cannot', () => {
         const d = draftFromContact({ name: 'Nimal Perera', tels: ['077 123 4567', '+44 7911 123456', '0112345678', '077 123 4567'] }, 'LK');
