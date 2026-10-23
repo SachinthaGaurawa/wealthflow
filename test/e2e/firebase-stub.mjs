@@ -97,7 +97,10 @@ export function firebaseStubSource(user = TEST_USER) {
         return { set: function () {}, update: function () {}, delete: function () {}, commit: function () { return Promise.resolve(); } };
       },
       runTransaction: function (fn) { try { return Promise.resolve(fn({ get: function () { return Promise.resolve(emptySnap()); }, set: function () {}, update: function () {}, delete: function () {} })); } catch (e) { return Promise.resolve(); } },
-      enablePersistence: function () { return Promise.resolve(); },
+      enablePersistence: function (o) { window.__fsPersistCalls = (window.__fsPersistCalls || 0) + 1; return Promise.resolve(); },
+      terminate: function () { window.__fsTerminated = true; return Promise.resolve(); },
+      clearPersistence: function () { window.__fsCleared = true; return Promise.resolve(); },
+      waitForPendingWrites: function () { return Promise.resolve(); },
       settings: function (s) { (window.__fsSettings = window.__fsSettings || []).push(s); },
     };
     return db;

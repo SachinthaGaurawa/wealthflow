@@ -235,7 +235,10 @@ export function cloudStubSource(user = TEST_USER) {
         };
         return run();
       },
-      enablePersistence: function () { return Promise.resolve(); },
+      enablePersistence: function (o) { window.__fsPersistCalls = (window.__fsPersistCalls || 0) + 1; return Promise.resolve(); },
+      terminate: function () { window.__fsTerminated = true; return Promise.resolve(); },
+      clearPersistence: function () { window.__fsCleared = true; return Promise.resolve(); },
+      waitForPendingWrites: function () { return Promise.resolve(); },
       settings: function () {},
     };
     return db;
