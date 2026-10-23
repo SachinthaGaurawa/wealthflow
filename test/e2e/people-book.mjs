@@ -574,7 +574,7 @@ await page.evaluate(() => {
 await openDebtor(null);
 await page.waitForSelector('#_db_phone');
 await openSheet();
-assert.match(await page.textContent('.wfp-src .wfp-tips'), /Safari cannot open your Contacts/);
+assert.match(await page.textContent('.wfp-src .wfp-tips'), /iPhone and iPad: open the Contacts app/);
 assert.match(await page.textContent('.wfp-src .wfp-tips'), /touch and hold their number and choose Copy/);
 await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
 console.log('10g. iPhone            -> told exactly what to do on an iPhone');
