@@ -17,7 +17,8 @@ const NOW = Date.UTC(2026, 9, 10, 6, 0, 0);                    // 10 Oct 2026, 1
 const iso = (n) => new Date(NOW + n * 86400000).toISOString().slice(0, 10);
 const day = (iso0) => Date.parse(`${iso0}T00:00:00Z`) / 86400000;
 const TODAY = day(iso(0));
-const on = (extra = {}) => ({ settings: { owner_sms: { enabled: true, phone: '0771234567', at: 1 } }, ...extra });
+const VERIFIED = { ownerVerified: { phone: '+94771234567', at: 1 } };         // what the server records once the code was entered (sms-owner-otp.mjs)
+const on = (extra = {}) => ({ settings: { owner_sms: { enabled: true, phone: '0771234567', at: 1, verifiedPhone: '+94771234567' } }, ...extra });
 const events = (u) => deriveEvents(u, NOW).events.filter((e) => e.layer === 'O');
 const keys = (u) => events(u).map((e) => e.key);
 
@@ -134,7 +135,7 @@ describe('card charges the bank already texted about', () => {
         const sent = [];
         const down = { configured: false, senderId: 'WealthFlow', async send() { return { ok: false }; } };
         const up = { configured: true, senderId: 'WealthFlow', async send({ to, message }) { sent.push({ to, message }); return { ok: true, gatewayId: 'g', cost: 1, segments: 1 }; } };
-        const { db } = createFirestore();
+        const { db } = createFirestore({ 'wf-sms/u1': VERIFIED });
         const settings = { currency: 'LKR', owner_sms: { enabled: true, phone: '0771234567', at: 1 } };
         const run = (u, client) => sweepUser({ db, uid: 'u1', user: u, client, now: NOW, env: {}, deps: { random: () => 0.5 } });
         const first = await run({ settings, cconetime: [charge('c9')] }, down);       // owed and queued, but the gateway is not set up yet
@@ -152,7 +153,7 @@ describe('through the real sweep, with nobody signed in', () => {
     const user = on({ settings: { currency: 'LKR', owner_sms: { enabled: true, phone: '0771234567', at: 1 } }, subscriptions: [{ id: 'o1', name: 'Lifetime licence', amount: 45000, cycle: 'once', dueDate: iso(1), createdAt: iso(-9) }] });
     it('texts the owner\'s own number once, and a second sweep (or a second cron) sends nothing more', async () => {
         sent.length = 0;
-        const { db } = createFirestore();
+        const { db } = createFirestore({ 'wf-sms/u1': VERIFIED });
         const run = (u, now = NOW) => sweepUser({ db, uid: 'u1', user: u, client, now, env: {}, deps: { random: () => 0.5 } });
         await run(user);
         expect(sent).toHaveLength(1);
@@ -164,7 +165,7 @@ describe('through the real sweep, with nobody signed in', () => {
     });
     it('a payment that is marked paid before the sweep gets to it is not texted', async () => {
         sent.length = 0;
-        const { db } = createFirestore();
+        const { db } = createFirestore({ 'wf-sms/u2': VERIFIED });
         await sweepUser({ db, uid: 'u2', user: { ...user, subscriptions: [{ ...user.subscriptions[0], paid: true }] }, client, now: NOW, env: {}, deps: { random: () => 0.5 } });
         expect(sent).toHaveLength(0);
     });

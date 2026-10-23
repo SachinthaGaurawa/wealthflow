@@ -38,11 +38,24 @@ const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const str = (v) => String(v == null ? '' : v).trim();
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
-/** The owner's switch, as stored, or null when it is off or has no usable number. */
+/**
+ * The owner's switch, as stored, or null when it is off or has no usable number.
+ * `verifiedPhone` is NOT something the page can say: sms-engine.mjs overwrites it with the number the server proved (sms-owner-otp.mjs) before anything
+ * is derived, so a value written into the synced settings is replaced, never believed. Missing means "not verified".
+ */
 export function ownerSettings(user) {
     const o = user && user.settings && user.settings[OWNER_FIELD];
     if (!o || o.enabled !== true) return null;
-    return { phone: str(o.phone), at: num(o.at) };
+    return { phone: str(o.phone), at: num(o.at), verifiedPhone: str(o.verifiedPhone) };
+}
+
+/** The user as the engine must read it: the owner's number counts as verified only when it is the one the server recorded (`verified`, an E.164 string or ''). */
+export function withVerifiedOwner(user, verified) {
+    const u = user && typeof user === 'object' ? user : {};
+    const settings = u.settings && typeof u.settings === 'object' ? u.settings : {};
+    const own = settings[OWNER_FIELD];
+    if (!own || typeof own !== 'object') return u;
+    return { ...u, settings: { ...settings, [OWNER_FIELD]: { ...own, verifiedPhone: str(verified) } } };
 }
 
 export const ownerAlertsOn = (user) => !!ownerSettings(user);
@@ -150,6 +163,8 @@ export function ownerEvents(user, now, currency, nextWindow) {
     if (!mine) return { events, issues };
     const p = normalizePhone(mine.phone);
     if (!p.ok) { issues.push({ recordKind: 'owner', recordId: 'owner', reason: mine.phone ? `phone-${p.reason}` : 'no-phone' }); return { events, issues }; }
+    // Only a number whose one-time code was entered receives anything. An older number, or one typed on another device, waits for its code.
+    if (mine.verifiedPhone !== p.e164) { issues.push({ recordKind: 'owner', recordId: 'owner', reason: 'phone-not-verified' }); return { events, issues }; }
     const tz = Number.isFinite(utcOffsetOf(p.e164)) ? utcOffsetOf(p.e164) : LOCAL_OFFSET_MIN;
     const today = Math.floor((now + tz * 60000) / DAY);                       // the owner's calendar day
     const base = { layer: 'O', recordKind: 'owner', phone: p.e164, tzMin: tz, subject: null, scheduled: true, currency };
@@ -194,4 +209,4 @@ export function ownerEvents(user, now, currency, nextWindow) {
     return { events, issues };
 }
 
-export default { bankFiled, OWNER_FIELD, LOAN_BANDS, CARD_BANDS, CHEQUE_BANDS, ONCE_BANDS, BILL_BANDS, subDues, ownerSettings, ownerAlertsOn, bandFor, loanDues, ownerEvents };
+export default { withVerifiedOwner, bankFiled, OWNER_FIELD, LOAN_BANDS, CARD_BANDS, CHEQUE_BANDS, ONCE_BANDS, BILL_BANDS, subDues, ownerSettings, ownerAlertsOn, bandFor, loanDues, ownerEvents };

@@ -22,7 +22,7 @@
  * broken one. ESM; window.WFSms.
  * ===========================================================================*/
 
-import { normalizePhone } from './wealthflow-phone.js';
+import { normalizePhone, formatPhone } from './wealthflow-phone.js';
 import { phoneProblem as phoneText, idProblem, storedId, idKindOf } from './wealthflow-people.js';
 
 /** The record fields. The server reads the same ten; a test pins that they agree (sms-events.mjs FIELDS). */
@@ -573,9 +573,16 @@ for (const k of Object.keys(ISSUE_TEXT)) {
     if (k.startsWith('phone-') && k !== 'phone-empty') ISSUE_TEXT['phone2-' + k.slice(6)] = ISSUE_TEXT[k].replace('has a phone number', 'has a second phone number') + ' (the first number still gets its texts)';
 }
 
+/** What is wrong with the owner's own-number alerts, as whole sentences (the other issues name a record and finish its sentence). */
+const OWNER_ISSUE_TEXT = {
+    'phone-not-verified': 'Alerts to your own number are paused until this number is verified. Press Send code in that box, then enter the code that arrives.',
+    'no-phone': 'Alerts to your own number are switched on but have no number, so nothing is sent.',
+};
+
 /** One line for the status card: what is switched on but cannot work. `nameOf(kind, id)` supplies the record's name. */
 export function describeIssue(issue, nameOf) {
     const i = issue || {};
+    if (i.recordKind === 'owner') return OWNER_ISSUE_TEXT[i.reason] || 'Alerts to your own number cannot be sent yet. Check the number and save it again.';
     let name = '';
     try { name = nameOf ? s(nameOf(i.recordKind, i.recordId)) : ''; } catch (_) { name = ''; }
     const who = name || (i.recordKind === 'debtor' ? 'A debtor' : 'An investment');
@@ -626,16 +633,44 @@ export function autoRunLine(status, now, when = () => '') {
     return now > AUTO_STAMP_SINCE + AUTO_STALE_MS ? 'The automatic daily check has not run yet. ' + gap : '';
 }
 
-/** The whole panel as markup. Everything is escaped. */
+/**
+ * "Alerts to my own number", as markup. Everything is escaped.
+ *   owner = { enabled, phone, verified, form }
+ *     phone    the number saved in the settings (it only ever changes to a number whose code was entered)
+ *     verified the number the server recorded as proved (the status card carries it), E.164 or ''
+ *     form     what is being typed right now, kept across redraws: { phone, enabled, pendingPhone, resendAt, busy, msg, tone }
+ * A number that is not the verified one gets a Send code button instead of Save, and the code row once a code is on its way.
+ */
 export function ownerAlertsHtml(owner) {
     const o = owner && typeof owner === 'object' ? owner : {};
+    const f = o.form && typeof o.form === 'object' ? o.form : {};
+    const typed = f.phone !== undefined ? s(f.phone) : s(o.phone);
+    const enabled = f.enabled !== undefined ? f.enabled === true : o.enabled === true;
+    const p = typed.trim() ? normalizePhone(typed) : { ok: false };
+    const verified = s(o.verified);
+    const isVerified = p.ok && p.e164 === verified;
+    const needsCode = p.ok && !isVerified;
+    const waiting = needsCode && f.pendingPhone === p.e164;
+    const busy = f.busy === true ? ' disabled' : '';
+    const tone = f.tone === 'bad' ? 'var(--red,#e5484d)' : 'var(--green,#30a46c)';
+    const state = isVerified
+        ? '<div id="_wf_own_state" style="font-size:12px;margin-top:6px;color:var(--green,#30a46c);">Verified: ' + esc(formatPhone(p.e164)) + '</div>'
+        : needsCode
+            ? '<div id="_wf_own_state" style="font-size:12px;margin-top:6px;color:var(--text3);line-height:1.5;">This number is not verified yet. Alerts go only to a number you have confirmed with a verification code' + (verified ? ', so they keep going to ' + esc(formatPhone(verified)) + ' until then' : '') + '.</div>'
+            : '<div id="_wf_own_state"></div>';
+    const code = waiting
+        ? '<div style="display:flex;gap:8px;margin-top:8px;"><input class="fi" id="_wf_own_code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6-digit code" value="' + esc(f.code || '') + '" style="flex:1;min-width:0;">'
+            + '<button class="btn btn-primary btn-sm" id="_wf_own_verify"' + busy + '>Verify</button></div>'
+            + '<div style="margin-top:6px;"><button class="btn btn-sm" id="_wf_own_resend" data-at="' + num(f.resendAt) + '"' + busy + '>Resend code</button></div>'
+        : '';
     return '<div style="border:1px solid var(--border,rgba(128,128,128,.25));border-radius:10px;padding:10px 12px;margin-bottom:10px;">'
         + '<div style="font-weight:700;font-size:13px;">Alerts to my own number</div>'
-        + '<div style="font-size:12px;color:var(--text3);margin:3px 0 8px;line-height:1.5;">A text to you before a loan instalment, cheque, bill, one-time payment or a card payment you entered yourself is due (7, 3 and 1 days, and the day itself; a one-time payment from 14 days). Card purchases your bank already texts you about are not repeated here. Sent by the server, so it reaches you when the app is closed. Uses SMS credit.</div>'
-        + '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;margin-bottom:6px;"><input type="checkbox" id="_wf_own_on"' + (o.enabled === true ? ' checked' : '') + '> Send me these alerts</label>'
-        + '<div style="display:flex;gap:8px;"><input class="fi" id="_wf_own_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + esc(o.phone || '') + '" style="flex:1;">'
-        + '<button class="btn btn-primary btn-sm" id="_wf_own_save">Save</button></div>'
-        + '<div id="_wf_own_msg" style="font-size:12px;margin-top:6px;min-height:14px;"></div></div>';
+        + '<div style="font-size:12px;color:var(--text3);margin:3px 0 8px;line-height:1.5;">A text to you before a loan instalment, cheque, bill, one-time payment or a card payment you entered yourself is due (7, 3 and 1 days, and the day itself; a one-time payment from 14 days). Card purchases your bank already texts you about are not repeated here. Sent by the server, so it reaches you when the app is closed. Uses SMS credit. A new number is added only after you enter the verification code sent to it.</div>'
+        + '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;margin-bottom:6px;"><input type="checkbox" id="_wf_own_on"' + (enabled ? ' checked' : '') + '> Send me these alerts</label>'
+        + '<div style="display:flex;gap:8px;"><input class="fi" id="_wf_own_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + esc(typed) + '" style="flex:1;">'
+        + '<button class="btn btn-primary btn-sm" id="_wf_own_save" data-mode="' + (needsCode ? 'send' : 'save') + '"' + busy + '>' + (needsCode ? 'Send code' : 'Save') + '</button></div>'
+        + state + code
+        + '<div id="_wf_own_msg" style="font-size:12px;margin-top:6px;min-height:14px;' + (f.msg ? 'color:' + tone + ';' : '') + '">' + esc(f.msg || '') + '</div></div>';
 }
 
 export function panelHtml({ rows = [], status = null, disabled = false, lastError = '', nameOf = null, fmtWhen = null, now = Date.now(), owner = null, showOwner = false } = {}) {
@@ -696,10 +731,35 @@ export function openPanel(win, getModel) {
     return overlay;
 }
 
+/**
+ * One call of the verification-code endpoint. Never throws; the answer always has `ok` and, when it is false, a `message` that is fit to show.
+ *   deps: { getIdToken(force), fetchImpl }   body: { action: 'owner-otp-send', phone } | { action: 'owner-otp-verify', phone, code }
+ */
+export async function ownerCodeCall(deps, body) {
+    let token = null;
+    try { token = await deps.getIdToken(false); } catch (_) { token = null; }
+    if (!token) return { ok: false, message: 'Sign in again, then try once more.' };
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), CLIENT.FETCH_TIMEOUT_MS) : null;
+    try {
+        const r = await deps.fetchImpl(CLIENT.ENDPOINT, {
+            method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body), ...(ctl ? { signal: ctl.signal } : {}),
+        });
+        let json = null;
+        try { json = await r.json(); } catch (_) { json = null; }
+        if (r.status === 403) return { ok: false, message: 'SMS notifications are not enabled for this account.' };
+        if (r.status === 401) return { ok: false, message: 'Sign in again, then try once more.' };
+        if (json && typeof json === 'object') return { ...json, ok: json.ok === true, status: r.status, ...(json.ok === true || json.message ? {} : { message: 'Something went wrong. Try again in a moment.' }) };
+        return { ok: false, message: 'Something went wrong. Try again in a moment.' };
+    } catch (_) {
+        return { ok: false, message: 'Could not reach WealthFlow. Check the connection and try again.' };
+    } finally { if (timer) clearTimeout(timer); }
+}
+
 /** Wire the notifier and the listener to the running app. Safe to call more than once; never throws. */
 export function boot(win) {
     const now = () => Date.now();
-    const live = { uid: null, unsub: null, notifier: null, rows: [], status: null, timer: null, bound: false, told: false };
+    const live = { uid: null, unsub: null, notifier: null, rows: [], status: null, timer: null, bound: false, told: false, verifiedLocal: '', tick: null };
     const decoy = () => win._isDecoyMode === true;
     const storage = (() => { try { return win.localStorage; } catch (_) { return null; } })();
     const toast = (t) => { try { if (typeof win.notify === 'function') win.notify(t.text + (t.detail ? ' (' + t.detail + ')' : ''), t.tone === 'error' ? 'error' : (t.tone === 'info' ? 'info' : 'success')); } catch (_) { /* a toast is a courtesy */ } };
@@ -710,29 +770,114 @@ export function boot(win) {
             return r ? s(r.name || r.company) : '';
         } catch (_) { return ''; }
     };
-    const ownerNow = () => { try { const o = win.appData && win.appData.settings && win.appData.settings.owner_sms; return o && typeof o === 'object' ? { enabled: o.enabled === true, phone: s(o.phone) } : { enabled: false, phone: '' }; } catch (_) { return { enabled: false, phone: '' }; } };
+    // What is being typed in the "Alerts to my own number" box lives here, not in the markup: the log redraws when a text arrives, and a code half typed must survive that.
+    const form = { value: null };
+    const setForm = (patch) => { form.value = { ...(form.value || {}), ...patch }; };
+    const verifiedNow = () => s((live.status && live.status.ownerVerified) || live.verifiedLocal || '');
+    const ownerNow = () => { try { const o = win.appData && win.appData.settings && win.appData.settings.owner_sms; return { enabled: !!(o && o.enabled === true), phone: o && typeof o === 'object' ? s(o.phone) : '', verified: verifiedNow(), form: form.value }; } catch (_) { return { enabled: false, phone: '', verified: verifiedNow(), form: form.value }; } };
     const model = () => ({ rows: rowsOf(live.rows, now()), status: live.status, disabled: !!(live.notifier && live.notifier.state.disabled), lastError: (live.notifier && live.notifier.state.lastError) || '', nameOf, owner: ownerNow(), showOwner: !decoy() });
-    /** Save the owner's switch and number into the settings the sync carries, then ask the server to look. Returns { ok, error? }. */
+    const redraw = () => { try { if (win.__wfSmsRedraw) win.__wfSmsRedraw(); } catch (_) { /* a stale host is not an error */ } };
+    /**
+     * Save the owner's switch and number into the settings the sync carries, then ask the server to look. Returns { ok, error? }.
+     * A number is saved only once the server has verified it (the status card says which one): the switch cannot be turned on for any other number, and
+     * the number that is already saved is never replaced by one that has not been verified.
+     */
     function setOwnerAlerts({ enabled, phone }) {
         const text = s(phone).trim();
         if (enabled && !text) return { ok: false, error: 'Type the number to send the alerts to.' };
-        if (text) { const p = normalizePhone(text); if (!p.ok) return { ok: false, error: phoneText(p.reason) || 'That number cannot be texted.' }; }
+        let keep = text;
+        if (text) {
+            const p = normalizePhone(text);
+            if (!p.ok) return { ok: false, error: phoneText(p.reason) || 'That number cannot be texted.' };
+            if (p.e164 !== verifiedNow()) {
+                if (enabled) return { ok: false, error: 'Verify this number first: press Send code, then enter the code that arrives.' };
+                try { const o = win.appData && win.appData.settings && win.appData.settings.owner_sms; keep = o && typeof o === 'object' ? s(o.phone) : ''; } catch (_) { keep = ''; }
+            }
+        }
         try {
             const cur = win.DB.getObj('settings', {});
-            win.DB.set('settings', { ...cur, owner_sms: { enabled: !!enabled, phone: text, at: now() } });
+            win.DB.set('settings', { ...cur, owner_sms: { enabled: !!enabled, phone: keep, at: now() } });
         } catch (_) { return { ok: false, error: 'Could not save. Try again.' }; }
         try { if (live.notifier) live.notifier.afterPush(); } catch (_) { /* the daily check still picks it up */ }
         return { ok: true };
     }
+    const callDeps = () => ({ getIdToken: (force) => win.currentUser.getIdToken(!!force), fetchImpl: (...a) => win.fetch(...a) });
     /** Make the panel's own form do something: called after every draw. */
     function bindOwner(host) {
-        const save = host && host.querySelector && host.querySelector('#_wf_own_save');
+        const q = (sel) => (host && host.querySelector ? host.querySelector(sel) : null);
+        const save = q('#_wf_own_save');
         if (!save) return;
-        save.onclick = () => {
-            const r = setOwnerAlerts({ enabled: host.querySelector('#_wf_own_on').checked, phone: host.querySelector('#_wf_own_phone').value });
-            const msg = host.querySelector('#_wf_own_msg');
-            if (msg) { msg.textContent = r.ok ? 'Saved.' : r.error; msg.style.color = r.ok ? 'var(--green,#30a46c)' : 'var(--red,#e5484d)'; }
+        const typedNow = () => ({ phone: q('#_wf_own_phone').value, enabled: q('#_wf_own_on').checked });
+        const say = (text, tone) => { setForm({ msg: text, tone: tone || 'ok' }); const msg = q('#_wf_own_msg'); if (msg) { msg.textContent = text; msg.style.color = tone === 'bad' ? 'var(--red,#e5484d)' : 'var(--green,#30a46c)'; } };
+        const lock = (on) => { for (const id of ['#_wf_own_save', '#_wf_own_verify', '#_wf_own_resend']) { const b = q(id); if (b) b.disabled = !!on; } setForm({ busy: !!on }); };
+        // the button says what the typed number needs: Save for the verified one, Send code for any other
+        const sync = () => {
+            const v = typedNow(); setForm(v);
+            const p = v.phone.trim() ? normalizePhone(v.phone) : { ok: false };
+            const need = p.ok && p.e164 !== verifiedNow();
+            save.dataset.mode = need ? 'send' : 'save'; save.textContent = need ? 'Send code' : 'Save';
         };
+        q('#_wf_own_phone').addEventListener('input', sync);
+        q('#_wf_own_phone').addEventListener('change', sync);                              // (never a redraw here: it would replace the button between mouse-down and mouse-up, and the click would be lost)
+        q('#_wf_own_on').addEventListener('change', sync);
+        const finish = (phone, enabled) => {
+            const r = setOwnerAlerts({ enabled, phone });
+            if (!r.ok) { say(r.error, 'bad'); return; }
+            setForm({ pendingPhone: '', code: '', phone: undefined, enabled: undefined });
+            say(enabled ? 'Number verified. Alerts will be sent to it.' : 'Number verified. Tick "Send me these alerts" and press Save to start.', 'ok');
+            redraw();
+        };
+        const sendCode = async () => {
+            const v = typedNow(); setForm(v);
+            const p = normalizePhone(v.phone);
+            if (!p.ok) { say(phoneText(p.reason) || 'That number cannot be texted.', 'bad'); return; }
+            lock(true); say('Sending the code...', 'ok');
+            const r = await ownerCodeCall(callDeps(), { action: 'owner-otp-send', phone: v.phone });
+            lock(false);
+            if (r.ok && r.alreadyVerified) { live.verifiedLocal = p.e164; finish(v.phone, v.enabled); return; }
+            if (r.ok) {
+                setForm({ pendingPhone: p.e164, resendAt: now() + num(r.resendAfterMs), code: '' });
+                say('A code was sent to ' + s(r.sentTo) + '. Enter it below.', 'ok'); redraw();
+                try { const c = q('#_wf_own_code'); if (c && c.focus) c.focus(); } catch (_) { /* focus is a courtesy */ }
+                return;
+            }
+            if (r.reason === 'wait' && num(r.retryAfterMs) > 0) setForm({ pendingPhone: p.e164, resendAt: now() + num(r.retryAfterMs) });
+            say(s(r.message) || 'The code could not be sent. Try again in a moment.', 'bad'); redraw();
+        };
+        const verify = async () => {
+            const v = typedNow(); setForm(v);
+            const codeEl = q('#_wf_own_code'); const entered = s(codeEl && codeEl.value).replace(/\D/g, '');          // "482 913" or "482-913", as it may be pasted
+            setForm({ code: entered });
+            if (!/^\d{6}$/.test(entered)) { say('The code is six digits.', 'bad'); return; }
+            lock(true); say('Checking the code...', 'ok');
+            const r = await ownerCodeCall(callDeps(), { action: 'owner-otp-verify', phone: v.phone, code: entered });
+            lock(false);
+            if (r.ok) { live.verifiedLocal = s(r.phone); finish(v.phone, v.enabled); return; }
+            if (['expired', 'too-many-tries', 'no-code'].includes(r.reason)) setForm({ pendingPhone: '', code: '' });
+            say(s(r.message) || 'The code could not be checked. Try again.', 'bad'); redraw();
+        };
+        save.onclick = () => {
+            if (save.dataset.mode === 'send') { sendCode(); return; }
+            const v = typedNow(); setForm(v);
+            const r = setOwnerAlerts(v);
+            say(r.ok ? 'Saved.' : r.error, r.ok ? 'ok' : 'bad');
+        };
+        const verifyBtn = q('#_wf_own_verify'); if (verifyBtn) verifyBtn.onclick = verify;
+        const codeBox = q('#_wf_own_code');
+        if (codeBox) { codeBox.addEventListener('input', () => setForm({ code: codeBox.value })); codeBox.addEventListener('keydown', (e) => { if (e && e.key === 'Enter') verify(); }); }
+        const resend = q('#_wf_own_resend');
+        if (resend) {
+            resend.onclick = sendCode;
+            // the button waits out the gap the server asked for, counting down in its own label
+            if (live.tick) win.clearInterval(live.tick);
+            const paint = () => {
+                if (!host.isConnected || !q('#_wf_own_resend')) { win.clearInterval(live.tick); live.tick = null; return; }
+                const left = Math.ceil((num(resend.dataset.at) - now()) / 1000);
+                resend.textContent = left > 0 ? 'Resend code (' + left + ' s)' : 'Resend code';
+                if (!form.value || form.value.busy !== true) resend.disabled = left > 0;
+            };
+            paint(); live.tick = win.setInterval(paint, 1000);
+        }
     }
 
     function start() {
@@ -771,7 +916,7 @@ export function boot(win) {
     function stop() {
         try { if (live.unsub) live.unsub(); } catch (_) { /* already gone */ }
         if (live.notifier) live.notifier.cancel();
-        live.unsub = null; live.notifier = null; live.uid = null; live.rows = []; live.status = null;
+        live.unsub = null; live.notifier = null; live.uid = null; live.rows = []; live.status = null; live.verifiedLocal = ''; form.value = null;
     }
     const api = {
         applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, SMS_FIELDS, BALANCE, balanceWaitMs, requestBalance,
@@ -781,7 +926,8 @@ export function boot(win) {
         /** The log, drawn into an element the page owns (the people screens carry it as a tab). Returns the function that stops redrawing it. */
         panelInto(host) {
             start();
-            const draw = () => { try { if (host.querySelector && host.querySelector('#_wf_own_phone') && win.document.activeElement === host.querySelector('#_wf_own_phone')) return; host.innerHTML = panelHtml(model()); bindOwner(host); } catch (_) { /* a stale host is not an error */ } };
+            if (!(form.value && form.value.pendingPhone)) form.value = null;                // a fresh look at what is saved, unless a code is on its way
+            const draw = () => { try { if (host.querySelector) { const act = win.document.activeElement; if (act && (act === host.querySelector('#_wf_own_phone') || act === host.querySelector('#_wf_own_code'))) return; } host.innerHTML = panelHtml(model()); bindOwner(host); } catch (_) { /* a stale host is not an error */ } };
             win.__wfSmsRedraw = draw;
             draw();
             return () => { if (win.__wfSmsRedraw === draw) win.__wfSmsRedraw = null; };
@@ -802,4 +948,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFSms = boot(window); } catch (e) { console.warn('[WF-SMS] page side did not start:', e && e.message); }
 }
 
-export default { SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, ownerAlertsHtml, describeIssue };
+export default { ownerCodeCall, SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, ownerAlertsHtml, describeIssue };
