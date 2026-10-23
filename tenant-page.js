@@ -423,7 +423,7 @@ function trailChart(doc, g, st, t) {
         moveSel();
     }
 
-    const at = (ev) => { const r = plot.getBoundingClientRect(); return layout.nearest((ev.clientX - r.left) * (layout.width / Math.max(1, r.width))); };
+    const at = (ev) => { const r = plot.getBoundingClientRect(); return layout.nearest((ev.clientX - r.left) * (layout.width / Math.max(1, r.width)), (ev.clientY - r.top) * (layout.height / Math.max(1, r.height))); };
     plot.addEventListener('pointerdown', (ev) => {
         if (!layout || (ev.pointerType === 'mouse' && ev.button)) return;
         dragging = true;

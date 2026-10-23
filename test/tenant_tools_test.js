@@ -363,6 +363,14 @@ describe('the balance chart', () => {
         expect(L.nearest(L.pts[0].x)).toBe(0);
         expect(L.nearest(9999)).toBe(L.pts.length - 1);
         expect(L.nearest(L.pts[3].x - 1)).toBe(3);
+        // two movements on one day stand on one x: with no height the later one, with a height the one the pointer is nearer to
+        expect(L.pts[1].x).toBe(L.pts[2].x);
+        expect(L.nearest(L.pts[1].x)).toBe(2);
+        expect(L.nearest(L.pts[1].x, L.pts[1].y - 5)).toBe(1);
+        expect(L.nearest(L.pts[1].x + 2, L.pts[2].y + 5)).toBe(2);
+        expect(L.nearest(L.pts[1].x, L.y0)).toBe(1);
+        expect(L.nearest(L.pts[1].x, L.y1)).toBe(2);
+        expect(L.nearest(L.pts[3].x, L.y0)).toBe(3);
         const big = chartLayout(chartData(loan({ status: 'settled', due: null, events: [
             { date: '2026-01-05', kind: 'lent', amount: 1100000, balance: 1100000 }, { date: '2026-10-09', kind: 'repayment', amount: 1100000, balance: 0 },
         ] }), NOW), 320, 200);

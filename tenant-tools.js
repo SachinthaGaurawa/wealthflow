@@ -311,7 +311,7 @@ export function chartData(g, asOf) {
 /**
  * Where everything goes on a canvas of `width` x `height` CSS pixels (so text drawn on it is the size it says): the room
  * the axis labels need, the up-axis lines, the date labels (as many as fit, `labelPx` apart), the staircase line and the
- * area under it, a place for each point, and `nearest(px)`, which point a finger or pointer at that x is on.
+ * area under it, a place for each point, and `nearest(px, py)`, which point a finger or pointer there is on (on a day with several movements, the height decides).
  */
 export function chartLayout(data, width, height, { labelPx = 66 } = {}) {
     const W = Math.max(160, Math.round(width));
@@ -335,10 +335,14 @@ export function chartLayout(data, width, height, { labelPx = 66 } = {}) {
     const days = [];
     for (let k = 0; k < count; k += 1) { const day = Math.round(data.start + (k * span) / (count - 1)); if (!days.includes(day)) days.push(day); }
     const xTicks = days.map((day, k) => ({ day, iso: isoOfDayNo(day), x: x(day), anchor: k === 0 ? 'start' : k === days.length - 1 ? 'end' : 'middle' }));
-    const nearest = (px) => {
+    const nearest = (px, py) => {
         let best = 0;
         for (let i = 1; i < pts.length; i += 1) if (Math.abs(pts[i].x - px) <= Math.abs(pts[best].x - px)) best = i;
-        return best;
+        if (!Number.isFinite(py)) return best;
+        // movements on one day stand on one x, one above the other: how high the pointer is says which of them it means
+        let pick = best;
+        for (let i = 0; i < pts.length; i += 1) if (Math.abs(pts[i].x - pts[best].x) < 0.5 && Math.abs(pts[i].y - py) < Math.abs(pts[pick].y - py)) pick = i;
+        return pick;
     };
     return {
         width: W, height: H, x0, x1, y0, y1, pts, line, area, xTicks, nearest,
