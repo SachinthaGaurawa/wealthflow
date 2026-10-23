@@ -192,6 +192,9 @@ try {
     // quiet hours must not be in the way of the probes
     await setOn('quietHoursEnabled', false); await setOn('notifications', true);
     await setOn('notifCCOT', true); await setOn('notifLoan', true); await setOn('notifCheque', true); await setOn('notifTarget', true); await setOn('notifAnomaly', true);
+    // The Friday-evening tip (17:00-21:59 local, its own switch) quotes the top insight, here the probe subscription, so on a Friday evening it would answer
+    // the "anomaly off" probe below. It has its own check further down, which switches it on itself.
+    await setOn('notifWeeklyTip', false);
 
     await check('notifications (master) + notifCCOT + notifLoan + notifCheque + notifTarget + notifAnomaly -> deadline alerts', async () => {
         const all = await deadlines();
