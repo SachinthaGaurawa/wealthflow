@@ -401,3 +401,59 @@ describe('the page: a failed upload is counted, explained and retried', () => {
         expect(w).toMatch(/_sessionRevokeUnsub = null;\s*\n\s*setTimeout\(\(\) => \{ try \{ _startSessionRevokeWatcher\(\)/);
     });
 });
+
+// =============================================================================
+// The connection mode. Reported 2026-10-23: with iCloud Private Relay on, "Reading your account did not answer in 12 seconds" and uploads failed with
+// deadline-exceeded while sign-in and the WealthFlow server answered. Firestore's default stream is what such networks hold up; the steady mode (long polling)
+// is plain request-and-answer. The rule lives twice (the page needs it before the module has loaded); these tests pin the two to agree.
+// =============================================================================
+describe('the connection mode', () => {
+    const SAFARI_MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
+    const IPHONE_SAFARI = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+    const IPHONE_CHROME = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/126.0.0.0 Mobile/15E148 Safari/604.1';
+    const IPAD_DESKTOP_SITE = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
+    const CHROME_MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+    const CHROME_ANDROID = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36';
+    const FIREFOX = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:127.0) Gecko/20100101 Firefox/127.0';
+    const EDGE = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0';
+
+    it('Safari and every iPhone / iPad browser are steady; the others are fast', () => {
+        for (const ua of [SAFARI_MAC, IPHONE_SAFARI, IPHONE_CHROME]) expect(H.chooseTransport({ ua })).toEqual({ steady: true, why: 'safari' });
+        expect(H.chooseTransport({ ua: IPAD_DESKTOP_SITE, maxTouchPoints: 5 })).toEqual({ steady: true, why: 'safari' });
+        for (const ua of [CHROME_MAC, CHROME_ANDROID, FIREFOX, EDGE, '']) expect(H.chooseTransport({ ua })).toEqual({ steady: false, why: 'default' });
+    });
+    it('a saved choice beats the browser, both ways, and nonsense is ignored', () => {
+        expect(H.chooseTransport({ ua: CHROME_MAC, stored: 'steady' })).toEqual({ steady: true, why: 'chosen' });
+        expect(H.chooseTransport({ ua: SAFARI_MAC, stored: 'fast' })).toEqual({ steady: false, why: 'chosen' });
+        expect(H.chooseTransport({ ua: SAFARI_MAC, stored: 'banana' })).toEqual({ steady: true, why: 'safari' });
+    });
+    it('the settings given to Firestore switch long polling on and auto-detect off (the SDK refuses both together)', () => {
+        expect(H.STEADY_SETTINGS).toEqual({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true });
+        expect(Object.isFrozen(H.STEADY_SETTINGS)).toBe(true);
+    });
+    it('the page decides the same way as the module, from the same inputs, and gives Firestore exactly those settings before it is first used', () => {
+        const html = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf8');
+        const src = html.slice(html.indexOf('function _wfChooseTransport('));
+        const fn = new Function('return ' + src.slice(0, src.indexOf('\n        }\n') + 10).replace(/^function _wfChooseTransport/, 'function'))();
+        const key = /const _WF_FS_KEY = '([^']+)'/.exec(html)[1];
+        expect(key).toBe(H.TRANSPORT_KEY);
+        for (const ua of [SAFARI_MAC, IPHONE_SAFARI, IPHONE_CHROME, IPAD_DESKTOP_SITE, CHROME_MAC, CHROME_ANDROID, FIREFOX, EDGE, ''])
+            for (const mtp of [0, 5]) for (const stored of ['', 'steady', 'fast', 'x'])
+                expect(fn(ua, mtp, stored), `${ua} ${mtp} ${stored}`).toEqual(H.chooseTransport({ ua, maxTouchPoints: mtp, stored }));
+        const init = html.slice(html.indexOf('db = firebase.firestore();'), html.indexOf('db.enablePersistence('));
+        expect(init).toContain('db.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true })');
+        expect(init.indexOf('db.settings(')).toBeGreaterThan(-1);   // inside the slice that ends at enablePersistence, the first use
+    });
+    it('says which mode in words, for Check Connection and the copied report', () => {
+        expect(H.transportText({ steady: true, why: 'safari' })).toMatch(/^steady .*Safari/);
+        expect(H.transportText({ steady: true, why: 'chosen' })).toBe('steady (chosen on this device)');
+        expect(H.transportText({ steady: false, why: 'default' })).toBe('fast');
+        const text = reportText([{ id: 'server', label: 'WealthFlow server', ok: true, ms: 5, detail: 'reachable' }], { transport: { steady: true, why: 'safari' }, when: new Date('2026-10-23T10:00:00Z') });
+        expect(text).toMatch(/Connection mode: steady/);
+    });
+    it('no longer tells the person to switch their private relay off: the app works with it', () => {
+        const all = [explainPushError({ code: 'deadline-exceeded' }).text, verdict([{ id: 'server', label: 'x', ok: false, detail: '' }]).text, verdict([{ id: 'google', label: 'x', ok: false, detail: '' }]).text, verdict([{ id: 'read', label: 'x', ok: false, detail: '' }]).text].join('\n');
+        expect(all).not.toMatch(/switch off|private relay|VPN/i);
+        expect(explainPushError({ code: 'deadline-exceeded' }).text).toMatch(/steadier connection mode/);
+    });
+});

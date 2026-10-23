@@ -351,11 +351,37 @@ describe('the door: POST /api/sms-notify with an owner-otp action', () => {
 });
 
 describe('the panel', () => {
-    it('shows Save for a verified number, with who is verified', () => {
+    it('a saved, verified number is LOCKED: read-only, with Change number, and no Save or Send code to press by mistake', () => {
         const html = ownerAlertsHtml({ enabled: true, phone: PHONE, verified: E164 });
-        expect(html).toContain('data-mode="save"');
         expect(html).toMatch(/Verified: \+94 77 878 7998/);
+        expect(html).toMatch(/id="_wf_own_phone"[^>]*readonly/);
+        expect(html).toContain('id="_wf_own_change"');
+        expect(html).not.toContain('_wf_own_save');
         expect(html).not.toContain('_wf_own_code');
+        expect(html).not.toContain('_wf_own_cancel');
+        expect(html).toMatch(/Locked/);
+        expect(html).toContain('id="_wf_own_on" checked');                                           // the switch stays live and shows what is saved
+    });
+    it('locked shows the SAVED number whatever half-typed text a redraw still carries', () => {
+        const html = ownerAlertsHtml({ enabled: true, phone: PHONE, verified: E164, form: { phone: '071 222 3344', enabled: false } });
+        expect(html).toContain('value="' + PHONE + '"');
+        expect(html).not.toContain('071 222 3344');
+        expect(html).toContain('id="_wf_own_on" checked');
+    });
+    it('after Change number the box is open: Save for the same number, Send code for another, and Cancel puts the saved one back', () => {
+        const same = ownerAlertsHtml({ enabled: true, phone: PHONE, verified: E164, form: { editing: true } });
+        expect(same).toContain('data-mode="save"');
+        expect(same).not.toMatch(/id="_wf_own_phone"[^>]*readonly/);
+        expect(same).toContain('id="_wf_own_cancel"');
+        expect(same).not.toContain('_wf_own_change');
+        const other = ownerAlertsHtml({ enabled: true, phone: PHONE, verified: E164, form: { editing: true, phone: '071 222 3344' } });
+        expect(other).toContain('data-mode="send"');
+        expect(other).toMatch(/keep going to \+94 77 878 7998/);
+    });
+    it('a number that was saved but is not the verified one stays open (an older number is never shown as locked)', () => {
+        const html = ownerAlertsHtml({ enabled: true, phone: PHONE, verified: '+94771234567' });
+        expect(html).not.toContain('_wf_own_change');
+        expect(html).not.toMatch(/readonly/);
     });
     it('shows Send code for a number that is not the verified one, and says the verified one keeps going meanwhile', () => {
         const html = ownerAlertsHtml({ enabled: true, phone: PHONE, verified: '+94771234567' });

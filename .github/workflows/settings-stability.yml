@@ -17,6 +17,7 @@ on:
       - test/e2e/sync-banner.mjs
       - test/e2e/live-sync.mjs
       - test/e2e/convergence.mjs
+      - test/e2e/transport-mode.mjs
       - wealthflow-sync-health.js
       - test/e2e/devices.mjs
       - test/e2e/firebase-cloud.mjs
@@ -55,3 +56,6 @@ jobs:
       # Three devices, one cloud document: rapid conflicting flips, simultaneous records, duplicate snapshots, a missed event, an upload that never answers,
       # another account's books left on the device, and the commit-to-visible latency.
       - run: node test/e2e/convergence.mjs
+      # The connection mode: Safari and every iPhone / iPad browser talk to the account in steady mode (plain request-and-answer, which iCloud Private Relay lets through),
+      # others keep the fast default, a saved choice wins, and Check Connection shows and switches it.
+      - run: node test/e2e/transport-mode.mjs
