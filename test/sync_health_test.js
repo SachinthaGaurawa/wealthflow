@@ -454,6 +454,77 @@ describe('the connection mode', () => {
     it('no longer tells the person to switch their private relay off: the app works with it', () => {
         const all = [explainPushError({ code: 'deadline-exceeded' }).text, verdict([{ id: 'server', label: 'x', ok: false, detail: '' }]).text, verdict([{ id: 'google', label: 'x', ok: false, detail: '' }]).text, verdict([{ id: 'read', label: 'x', ok: false, detail: '' }]).text].join('\n');
         expect(all).not.toMatch(/switch off|private relay|VPN/i);
-        expect(explainPushError({ code: 'deadline-exceeded' }).text).toMatch(/steadier connection mode/);
+        expect(explainPushError({ code: 'deadline-exceeded' }).text).toMatch(/Check Connection finds which step is stuck and can repair it/);
     });
+});
+
+describe('a save that never answers: the verdict names the stuck part, and repair is offered only when it can help', () => {
+    const ok = (id) => ({ id, label: id, ok: true, ms: 5, detail: 'fine' });
+    const bad = (id, detail = 'did not answer in 12 seconds') => ({ id, label: id, ok: false, ms: 12000, detail });
+    const front = [ok('server'), ok('google'), ok('signin'), ok('read')];
+
+    it('a save the account refused still says to sign in again, and offers no repair', () => {
+        const v = verdict([...front, bad('write', 'permission-denied')]);
+        expect(v.text).toMatch(/refused the save/);
+        expect(v.repair).toBeFalsy();
+    });
+    it('a save that only times out is NOT called a refusal (the old text told people to sign out for a stuck queue)', () => {
+        const v = verdict([...front, bad('write')]);
+        expect(v.text).not.toMatch(/sign out and sign in|not allowed/i);
+        expect(v.repair).toBe(true);
+    });
+    it('a direct save that works while the SDK save does not points at the browser\'s own queue', () => {
+        const v = verdict([...front, bad('write'), ok('direct')]);
+        expect(v.text).toMatch(/saving queue inside this browser/);
+        expect(v.repair).toBe(true);
+    });
+    it('a direct save that fails too points at the network and offers no repair', () => {
+        const v = verdict([...front, bad('write'), bad('direct')]);
+        expect(v.text).toMatch(/Something on the network/);
+        expect(v.repair).toBeFalsy();
+    });
+    it('browser storage that does not answer is the first thing named, and repair is offered', () => {
+        const v = verdict([...front, bad('write'), ok('direct'), bad('storage')]);
+        expect(v.text).toMatch(/browser's own storage/);
+        expect(v.repair).toBe(true);
+        expect(verdict([...front, ok('write'), bad('storage')]).repair).toBe(true);
+    });
+    it('a stuck queue seen alone also offers repair', () => {
+        const v = verdict([...front, ok('write'), bad('queue')]);
+        expect(v.failed).toBe('queue');
+        expect(v.repair).toBe(true);
+    });
+    it('the banner offers repair only after repeated network failures', () => {
+        const st = (failures) => ({ dirtySince: T0, failures, code: 'deadline-exceeded', message: '' });
+        const v2 = bannerView(st(2), { online: true, signedIn: true }, T0 + 120_000);
+        const v4 = bannerView(st(4), { online: true, signedIn: true }, T0 + 120_000);
+        expect(!!v2.repairable).toBe(false);
+        expect(!!v4.repairable).toBe(true);
+    });
+});
+
+describe('the offline cache choice and the automatic repair', () => {
+    it('only an explicit "off" turns the cache off', () => {
+        expect(H.choosePersistence('off')).toBe('off');
+        for (const s of ['', 'on', null, undefined, 'x']) expect(H.choosePersistence(s)).toBe('on');
+    });
+    it('says what each state means without alarming anyone', () => {
+        expect(H.persistText('on')).toBe('on');
+        expect(H.persistText('off')).toMatch(/nothing is lost/);
+        expect(H.persistText('failed')).toMatch(/saving still works/);
+    });
+    it('repairs on its own after six failures in a row of the unreachable kind, once per 12 hours, never when already off', () => {
+        const base = { failures: SYNC.AUTO_REPAIR_AFTER, kind: 'network', lastRepairAt: 0, now: T0, persist: 'on' };
+        expect(H.shouldAutoRepair(base)).toBe(true);
+        expect(H.shouldAutoRepair({ ...base, failures: SYNC.AUTO_REPAIR_AFTER - 1 })).toBe(false);
+        expect(H.shouldAutoRepair({ ...base, kind: 'permission' })).toBe(false);
+        expect(H.shouldAutoRepair({ ...base, persist: 'off' })).toBe(false);
+        expect(H.shouldAutoRepair({ ...base, lastRepairAt: T0 - 3600_000 })).toBe(false);
+        expect(H.shouldAutoRepair({ ...base, lastRepairAt: T0 - SYNC.AUTO_REPAIR_GAP_MS })).toBe(true);
+    });
+    it('the copied report says whether the offline cache is on', () => {
+        const text = reportText([ok0()], { persist: 'off', when: new Date('2026-10-23T10:00:00Z') });
+        expect(text).toMatch(/Offline cache: off on this device/);
+    });
+    function ok0() { return { id: 'server', label: 'WealthFlow server', ok: true, ms: 5, detail: 'reachable' }; }
 });

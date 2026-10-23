@@ -30,6 +30,8 @@ export const SYNC = Object.freeze({
     DOC_WARN_BYTES: 900000,
     MAX_DEPTH: 20,                 // Firestore: a map or list can be nested 20 levels deep
     KEY_LIMIT_BYTES: 1500,
+    AUTO_REPAIR_AFTER: 6,          // failed uploads in a row (about ten minutes of trying) before the device repairs its own connection
+    AUTO_REPAIR_GAP_MS: 12 * 3600000,   // and at most once in this long
 });
 
 const s = (v) => String(v == null ? '' : v);
@@ -62,7 +64,7 @@ export function explainPushError(err) {
         return { kind: 'busy', retry: true, text: 'Another device was saving at the same moment. WealthFlow tries again on its own.' };
     }
     if (has(/unavailable|deadline-exceeded|cancelled|network|offline|failed to fetch|timeout|timed out/)) {
-        return { kind: 'network', retry: true, text: 'This device could not reach your cloud account. That is usually a weak or filtered connection. WealthFlow keeps trying, and Check Connection can switch this device to its steadier connection mode.' };
+        return { kind: 'network', retry: true, text: 'This device could not reach your cloud account. That is usually a weak or filtered connection, or the connection cache inside this browser being stuck. WealthFlow keeps trying. Check Connection finds which step is stuck and can repair it.' };
     }
     return { kind: 'other', retry: true, text: 'The cloud account did not accept the save. WealthFlow keeps trying.' };
 }
@@ -116,6 +118,32 @@ export function transportText(t) {
     return 'fast' + (x.why === 'chosen' ? ' (chosen on this device)' : '');
 }
 
+
+/* ── 0b. the offline cache ────────────────────────────────────────────────── */
+
+/**
+ * Firestore keeps a copy of the account in the browser's own database (IndexedDB) so it can answer offline, and every save goes through a queue kept in
+ * that same database. WealthFlow does not need either: the books themselves are kept by the app in this browser's storage and the dirty flag re-uploads
+ * them, so the cache is only a convenience. When the browser's database stalls (Safari after a killed tab, a second tab that holds the lead, a quota
+ * hit), reads that the live stream already answered still work while every save waits behind the stalled queue and times out, in fast and steady mode
+ * alike (reported 2026-10-23 on Safari for Mac: "Saving to your account did not answer in 12 seconds", 69 listener restarts, 4 killed tabs).
+ * "Repair connection" clears that cache and runs this device without it ('off'); nothing the person owns is stored only in it.
+ */
+export const PERSIST_KEY = 'wf_fs_persist';
+
+/** 'off' only when the person (or the repair) turned the offline cache off on this device; anything else is the default, on. */
+export function choosePersistence(stored) { return stored === 'off' ? 'off' : 'on'; }
+
+export function persistText(p) { return p === 'off' ? 'off on this device (nothing is lost: your books are kept in this browser and in your account)' : p === 'failed' ? 'could not start in this browser (saving still works without it)' : 'on'; }
+
+/** True when a device that keeps failing to save should repair its own connection now: many failures in a row, of the unreachable kind, not repaired lately. */
+export function shouldAutoRepair({ failures = 0, kind = '', lastRepairAt = 0, now = Date.now(), persist = 'on' } = {}) {
+    if (persist === 'off') return false;                       // already running without the cache: a repair would change nothing
+    if (kind !== 'network') return false;
+    if (failures < SYNC.AUTO_REPAIR_AFTER) return false;
+    return !lastRepairAt || now - lastRepairAt >= SYNC.AUTO_REPAIR_GAP_MS;
+}
+
 /* ── 1. say it ────────────────────────────────────────────────────────────── */
 
 /**
@@ -143,6 +171,7 @@ export function bannerView(st, ctx, now) {
         note: 'Your changes are safe on this device. Other devices, and the text messages to your debtors and tenants, only follow once they are saved to your account.',
         code: st.code || '',
         kind: why ? why.kind : 'wait',
+        repairable: !!(why && why.kind === 'network' && st.failures >= 3),
         failures: st.failures,
         waitedMs: waited,
     };
@@ -273,21 +302,39 @@ const VERDICTS = Object.freeze({
     google: 'This device cannot reach Google\'s cloud database, where your account is kept. A filtered or unsteady connection is the usual cause. Try Check Connection again in steady mode, or try Wi-Fi.',
     signin: 'Your sign-in could not be renewed. Sign out and sign in again with the same Google account. Everything on this device is kept.',
     read: 'This device reached the cloud but could not read your account from it. The steady connection mode, which Check Connection can switch on, avoids long-lived streams that some networks hold up.',
-    write: 'This device reached the cloud and can read your account but was not allowed to save to it. Sign out and sign in again with the same Google account.',
+    write: 'The account refused the save. Sign out and sign in again with the same Google account.',
+    silent: 'The account did not answer a save within the time allowed. Reading and sign-in work, so the way in is open; the save itself is stuck. Press Repair connection below: it clears only this browser\'s connection cache, and nothing on this device or in your account is deleted.',
+    stuck: 'A save sent directly to your account went through, but the same save sent through this browser\'s own connection did not. So your account and the network are fine, and what is stuck is the saving queue inside this browser (its offline cache). Press Repair connection below: it clears that cache only, and nothing on this device or in your account is deleted.',
+    blocked: 'A save sent directly to your account did not go through either, although sign-in and reading did. Something on the network is holding saves back (a filter, VPN, relay or a very weak signal). Try another network, for example mobile data instead of Wi-Fi, then check again.',
+    storage: 'This browser\'s own storage did not answer in time, so its saving queue cannot move. Press Repair connection below: it clears the connection cache and, if the browser still will not answer, close every other WealthFlow tab and window and open it once. Nothing on this device or in your account is deleted.',
     data: 'The data on this device cannot be stored as it is. This is the reason changes made here never reach your other devices.',
 });
 
-/** One plain sentence for the person: the first step that failed, or "all good". */
+/** One plain sentence for the person: the first step that failed, or "all good". `repair` says the Repair connection button is the answer. */
 export function verdict(rows) {
-    const bad = (rows || []).find((r) => !r.ok);
+    const list = rows || [];
+    const by = (id) => list.find((r) => r.id === id);
+    const bad = list.find((r) => !r.ok);
     if (!bad) return { ok: true, text: 'Everything an upload needs is working on this device. If a change still does not show elsewhere, choose Try Again and check again in a minute.' };
-    return { ok: false, failed: bad.id, text: (VERDICTS[bad.id] || 'One step of the upload failed.') + ' (' + bad.label + ': ' + bad.detail + ')' };
+    let key = bad.id, repair = false;
+    if (bad.id === 'write') {
+        const refused = /permission-denied|unauthenticated|not allowed|insufficient/i.test(bad.detail || '');
+        const direct = by('direct'), storage = by('storage');
+        if (refused) key = 'write';
+        else if (storage && !storage.ok) { key = 'storage'; repair = true; }
+        else if (direct && direct.ok) { key = 'stuck'; repair = true; }
+        else if (direct && !direct.ok) key = 'blocked';
+        else { key = 'silent'; repair = true; }
+    } else if (bad.id === 'storage') { key = 'storage'; repair = true; }
+    else if (bad.id === 'queue') { key = 'silent'; repair = true; }
+    return { ok: false, failed: bad.id, repair, text: (VERDICTS[key] || 'One step of the upload failed.') + ' (' + bad.label + ': ' + bad.detail + ')' };
 }
 
 /** A plain-text report the person can copy and send. No account id, no token, no data from the books. */
-export function reportText(rows, { build = '', online = true, when = new Date(), payload = null, transport = null } = {}) {
+export function reportText(rows, { build = '', online = true, when = new Date(), payload = null, transport = null, persist = null } = {}) {
     const lines = ['WealthFlow connection report', 'Time: ' + when.toISOString(), 'Build: ' + (build || 'n/a'), 'Browser says online: ' + (online ? 'yes' : 'no')];
     if (transport) lines.push('Connection mode: ' + transportText(transport));
+    if (persist) lines.push('Offline cache: ' + persistText(persist));
     for (const r of rows || []) lines.push((r.ok ? 'OK     ' : 'FAILED ') + r.label + ' (' + r.ms + ' ms) - ' + r.detail);
     if (payload) {
         lines.push('Data size: ' + payload.bytes + ' bytes' + (payload.nearLimit ? ' (close to the account limit)' : ''));
@@ -298,7 +345,7 @@ export function reportText(rows, { build = '', online = true, when = new Date(),
     return lines.join('\n');
 }
 
-const api = { SYNC, TRANSPORT_KEY, STEADY_SETTINGS, isWebKitFamily, chooseTransport, transportText, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText };
+const api = { SYNC, TRANSPORT_KEY, PERSIST_KEY, choosePersistence, persistText, shouldAutoRepair, STEADY_SETTINGS, isWebKitFamily, chooseTransport, transportText, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText };
 if (typeof window !== 'undefined') { try { window.WFSyncHealth = api; } catch (_) { /* a frozen window is not an error */ } }
 
 export default api;

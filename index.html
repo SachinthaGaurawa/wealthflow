@@ -7938,7 +7938,14 @@
         } catch (_) {}
 
         // Enable offline persistence (returns a Promise, must use .catch)
-        db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+        /* The offline cache is a convenience, not where the books live (the app keeps them in this browser's storage and re-uploads whatever the account is
+         * missing). When the browser's database stalls, every save waits behind it, so "Repair connection" clears it and turns it off on this device
+         * (wealthflow-sync-health.js, "the offline cache"). */
+        let _wfPersistChoice = 'on';
+        try { if (localStorage.getItem('wf_fs_persist') === 'off') _wfPersistChoice = 'off'; } catch (_) { }
+        window._wfPersist = _wfPersistChoice;
+        if (_wfPersistChoice === 'on') db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+            window._wfPersist = 'failed';
             if (err.code === 'failed-precondition') {
                 console.warn("Persistence failed: Multiple tabs open. Only one tab can use persistence at a time.");
             } else if (err.code === 'unimplemented') {
@@ -8185,6 +8192,14 @@
                 return true;
             } catch (_) { return false; }
         }
+        /* localStorage.clear() on sign-out and reset also wiped what this device had learned about its own connection (the steady / fast mode and the offline-cache
+         * choice), so a choice that fixed saving came undone the next time somebody signed in. These three belong to the device, not to the account. */
+        function _wfClearLocal() {
+            const keep = {};
+            ['wf_fs_transport', 'wf_fs_persist', 'wf_fs_repaired_at'].forEach(k => { try { const v = localStorage.getItem(k); if (v !== null) keep[k] = v; } catch (_) { } });
+            localStorage.clear();
+            Object.keys(keep).forEach(k => { try { localStorage.setItem(k, keep[k]); } catch (_) { } });
+        }
         async function signOutGoogle() {
             // ISSUE 2 FIX — True full Google sign-out (no silent re-login)
             try {
@@ -8206,7 +8221,7 @@
                 } catch (e) { }
 
                 // Clear ALL local state
-                localStorage.clear();
+                _wfClearLocal();
                 sessionStorage.clear();
 
                 // Hard navigate (replace) so back button can't revive the session.
@@ -8216,7 +8231,7 @@
                 window.location.replace(_wfSignedOutUrl());
             } catch (err) {
                 console.error('Sign-out failed:', err);
-                localStorage.clear();
+                _wfClearLocal();
                 sessionStorage.clear();
                 window.location.reload();
             }
@@ -9905,6 +9920,12 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             tr.noteFailure(err);
             const H = window.WFSyncHealth, loop = _wfSyncRetry();
             if (loop && H.explainPushError(err).retry) loop.schedule(H.retryDelayMs(tr.state.failures));
+            /* A device that keeps failing to reach the account repairs its own connection once (not more than once in 12 hours): the stuck queue is the one
+             * cause that no retry can clear. */
+            try {
+                let last = 0; try { last = Number(localStorage.getItem('wf_fs_repaired_at')) || 0; } catch (_) { }
+                if (H.shouldAutoRepair({ failures: tr.state.failures, kind: H.explainPushError(err).kind, lastRepairAt: last, now: Date.now(), persist: window._wfPersist })) _wfRepairConnection('auto after ' + tr.state.failures + ' failed saves');
+            } catch (_) { }
             _wfSyncTick();
         };
         window._wfSyncOk = function () {
@@ -9941,12 +9962,13 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 host.parentNode.insertBefore(el, host);
             }
             el.className = 'show ' + v.tone;
-            const sig = v.title + '|' + v.reason + '|' + v.code + '|' + v.kind;
+            const sig = v.title + '|' + v.reason + '|' + v.code + '|' + v.kind + '|' + (v.repairable ? 'r' : '');
             if (el.dataset.sig === sig) return;
             el.dataset.sig = sig;
             el.innerHTML = '<div class="sb-t">' + _wfEsc(v.title) + '</div><div class="sb-r">' + _wfEsc(v.reason) + '</div><div class="sb-n">' + _wfEsc(v.note) + '</div>'
                 + (v.code ? '<div class="sb-c">Code: ' + _wfEsc(v.code) + '</div>' : '')
                 + '<div class="sb-b"><button class="btn btn-sm btn-primary" onclick="_wfSyncTryAgain(this)">Try Again</button><button class="btn btn-sm btn-secondary" onclick="_wfOpenSyncCheck()">Check Connection</button>'
+                + (v.repairable && window._wfPersist !== 'off' ? '<button class="btn btn-sm btn-secondary" onclick="_wfRepairConnection(\'banner\')">Repair connection</button>' : '')
                 + (v.kind === 'network' && !(window._wfTransport && window._wfTransport.steady) ? '<button class="btn btn-sm btn-secondary" onclick="_wfSetTransport(\'steady\')">Use steady mode</button>' : '') + '</div>';
         }
         /* Every few seconds: keep the tracker in step with isDirty, start a retry if a change has waited without any upload running, redraw the notice. */
@@ -9995,6 +10017,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             let payload = null;
             const checks = [
                 { id: 'mode', label: 'Connection mode', run: async () => window.WFSyncHealth.transportText(window._wfTransport) },
+                { id: 'persist', label: 'Offline cache', run: async () => window.WFSyncHealth.persistText(window._wfPersist) },
                 { id: 'server', label: 'WealthFlow server', run: async () => {
                     const r = await fetch('/api/version?t=' + Date.now(), { cache: 'no-store' });
                     if (!r.ok) throw new Error('it answered ' + r.status);
@@ -10012,6 +10035,46 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     if (!userDocRef) throw new Error('no account is open');
                     await userDocRef.collection('syncProbe').doc('ping').set({ at: Date.now(), device: _getDeviceId() });
                     return 'saved';
+                } },
+                /* The same kind of save, sent straight to the account with the sign-in token and nothing of this browser's connection library or database
+                 * in between. It tells "the network or the account refuses saves" apart from "the saving queue inside this browser is stuck". */
+                { id: 'direct', label: 'Saving directly, bypassing this browser\'s queue', run: async () => {
+                    if (!currentUser) throw new Error('you are signed out');
+                    const pid = window.firebaseConfig && window.firebaseConfig.projectId; if (!pid) throw new Error('the project is not known');
+                    const tok = await currentUser.getIdToken();
+                    const ac = typeof AbortController === 'function' ? new AbortController() : null, stop = setTimeout(() => { try { if (ac) ac.abort(); } catch (_) { } }, 11000);
+                    try {
+                        const doc = 'projects/' + pid + '/databases/(default)/documents/users/' + currentUser.uid + '/syncProbe/direct';
+                        const r = await fetch('https://firestore.googleapis.com/v1/projects/' + pid + '/databases/(default)/documents:commit', {
+                            method: 'POST', cache: 'no-store', signal: ac ? ac.signal : undefined,
+                            headers: { 'Authorization': 'Bearer ' + tok, 'Content-Type': 'text/plain' },
+                            body: JSON.stringify({ writes: [{ update: { name: doc, fields: { at: { integerValue: String(Date.now()) }, device: { stringValue: String(_getDeviceId()) } } } }] })
+                        });
+                        if (!r.ok) { let e = ''; try { const j = await r.json(); e = (j && j.error && j.error.status) || ''; } catch (_) { } throw Object.assign(new Error('the account answered ' + r.status + (e ? ' ' + e : '')), { code: /PERMISSION|UNAUTH/i.test(e) || r.status === 401 || r.status === 403 ? 'permission-denied' : '' }); }
+                        return 'saved';
+                    } catch (e) { if (e && e.name === 'AbortError') throw new Error('it did not answer in 11 seconds'); throw e; } finally { clearTimeout(stop); }
+                } },
+                /* The browser's own database, which the connection library keeps its saving queue in. */
+                { id: 'storage', label: 'This browser\'s storage', run: () => new Promise((res, rej) => {
+                    if (!window.indexedDB) return rej(new Error('this browser has no IndexedDB'));
+                    const name = 'wf_probe_' + Date.now(); let done = false;
+                    const fin = (f, v) => { if (done) return; done = true; clearTimeout(t); try { indexedDB.deleteDatabase(name); } catch (_) { } f(v); };
+                    const t = setTimeout(() => fin(rej, new Error('it did not answer in 8 seconds')), 8000);
+                    let rq; try { rq = indexedDB.open(name, 1); } catch (e) { return fin(rej, e); }
+                    rq.onupgradeneeded = () => { try { rq.result.createObjectStore('p'); } catch (_) { } };
+                    rq.onerror = () => fin(rej, rq.error || new Error('it refused to open'));
+                    rq.onsuccess = () => {
+                        try {
+                            const d2 = rq.result, tx = d2.transaction('p', 'readwrite'); tx.objectStore('p').put(1, 'k');
+                            tx.oncomplete = () => { try { d2.close(); } catch (_) { } fin(res, 'answers'); };
+                            tx.onerror = tx.onabort = () => { try { d2.close(); } catch (_) { } fin(rej, tx.error || new Error('a write was refused')); };
+                        } catch (e) { fin(rej, e); }
+                    };
+                }) },
+                { id: 'queue', label: 'Saves waiting in this browser', run: async () => {
+                    const d = window.db; if (!d || typeof d.waitForPendingWrites !== 'function') return 'not applicable';
+                    const r = await Promise.race([d.waitForPendingWrites().then(() => 'clear'), new Promise((res) => setTimeout(() => res('late'), 4000))]);
+                    return r === 'late' ? { ok: false, detail: 'saves are still waiting behind each other in this browser' } : 'none waiting';
                 } },
                 { id: 'live', label: 'Live updates from other devices', run: async () => {
                     if (!_wfLive.unsub) throw new Error(_wfLive.lastErr ? 'the listener ended (' + _wfLive.lastErr + ') and is starting again' : 'the listener is not running');
@@ -10032,6 +10095,31 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             setTimeout(() => { try { location.reload(); } catch (_) { } }, 600);
         }
         window._wfSetTransport = _wfSetTransport;
+        /* REPAIR CONNECTION. Stops the Firestore client, deletes its offline cache from this browser's database and runs this device without that cache from now
+         * on (key wf_fs_persist = off). The books are untouched: they live in this browser's own storage (wf2_*) and in the account, and whatever the account
+         * is missing is uploaded again by the dirty flag after the reload. Safe to run at any time; the auto form runs at most once in 12 hours. */
+        async function _wfRepairConnection(why) {
+            try { localStorage.setItem('wf_fs_persist', 'off'); localStorage.setItem('wf_fs_repaired_at', String(Date.now())); } catch (_) { }
+            const wait = (p, ms) => Promise.race([Promise.resolve(p).catch(() => { }), new Promise((res) => setTimeout(res, ms))]);
+            const d = window.db;
+            try { if (d && typeof d.terminate === 'function') await wait(d.terminate(), 4000); } catch (_) { }
+            try { if (d && typeof d.clearPersistence === 'function') await wait(d.clearPersistence(), 6000); } catch (_) { }
+            try {
+                if (window.indexedDB && typeof indexedDB.databases === 'function') {
+                    const dbs = await wait(indexedDB.databases(), 3000);
+                    (dbs || []).forEach((x) => { if (x && /^firestore\//.test(x.name || '')) { try { indexedDB.deleteDatabase(x.name); } catch (_) { } } });
+                }
+            } catch (_) { }
+            try { console.warn('[SYNC] connection repaired (' + (why || 'asked') + '); reloading'); } catch (_) { }
+            try { location.reload(); } catch (_) { }
+        }
+        window._wfRepairConnection = _wfRepairConnection;
+        function _wfSetPersist(on) {
+            try { if (on) localStorage.removeItem('wf_fs_persist'); else localStorage.setItem('wf_fs_persist', 'off'); } catch (_) { notify('This browser would not remember the choice.', 'warn'); return; }
+            notify(on ? 'Turning the offline cache back on...' : 'Turning the offline cache off...', 'info');
+            setTimeout(() => { try { location.reload(); } catch (_) { } }, 600);
+        }
+        window._wfSetPersist = _wfSetPersist;
         function _wfOpenSyncCheck() {
             const H = window.WFSyncHealth;
             if (!H) { notify('The connection check could not load. Reload the page and try again.', 'error'); return; }
@@ -10040,6 +10128,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 + '<div id="_sc_rows" style="font-size:12.5px;line-height:1.8;"></div>'
                 + '<div id="_sc_v" aria-live="polite" style="font-size:12.5px;line-height:1.6;margin:10px 0;"></div>'
                 + '<div class="md-ftr" style="display:flex;gap:8px;"><button class="btn btn-secondary" id="_sc_copy" style="flex:1;" disabled>Copy Report</button><button class="btn btn-primary" id="_sc_run" style="flex:1;">Check Again</button></div>'
+                + '<div style="margin-top:8px;"><button class="btn btn-secondary" id="_sc_repairBtn" style="width:100%;">Repair connection</button><div class="liq-sub" id="_sc_repairNote" style="margin:6px 0 0;">Clears only this browser\'s connection cache and reloads. Nothing on this device or in your account is deleted; anything not yet saved is saved again afterwards.</div></div>'
                 + '<div style="margin-top:8px;"><button class="btn btn-secondary" id="_sc_modeBtn" style="width:100%;"></button><div class="liq-sub" id="_sc_modeNote" style="margin:6px 0 0;"></div></div>',
                 (ov) => {
                     const rowsEl = ov.querySelector('#_sc_rows'), vEl = ov.querySelector('#_sc_v'), copyBtn = ov.querySelector('#_sc_copy'), runBtn = ov.querySelector('#_sc_run');
@@ -10054,7 +10143,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                         } });
                         const v = H.verdict(rows);
                         vEl.textContent = v.text; vEl.style.color = v.ok ? 'var(--green)' : 'var(--red)';
-                        report = H.reportText(rows, { build: window.WF_APP_VERSION, online: navigator.onLine, payload: payload(), transport: window._wfTransport });
+                        const rb = ov.querySelector('#_sc_repairBtn'); if (rb) { rb.classList.toggle('btn-primary', !!v.repair); rb.classList.toggle('btn-secondary', !v.repair); }
+                        report = H.reportText(rows, { build: window.WF_APP_VERSION, online: navigator.onLine, payload: payload(), transport: window._wfTransport, persist: window._wfPersist });
                         runBtn.disabled = false; copyBtn.disabled = false;
                     };
                     const modeBtn = ov.querySelector('#_sc_modeBtn'), modeNote = ov.querySelector('#_sc_modeNote');
@@ -10064,6 +10154,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                         ? 'Steady mode talks to your account with plain request-and-answer calls, which iCloud Private Relay, VPNs and filtered networks let through. It stays live across your devices.'
                         : 'If reading or saving your account does not answer, steady mode talks to it with plain request-and-answer calls, which iCloud Private Relay, VPNs and filtered networks let through. The page reloads; nothing is lost.';
                     modeBtn.onclick = () => _wfSetTransport(steadyNow ? 'fast' : 'steady');
+                    const repairBtn = ov.querySelector('#_sc_repairBtn');
+                    repairBtn.onclick = () => { repairBtn.disabled = true; repairBtn.textContent = 'Repairing...'; _wfRepairConnection('check connection'); };
                     runBtn.onclick = run;
                     copyBtn.onclick = async () => { try { await navigator.clipboard.writeText(report); notify('Report copied.', 'success'); } catch (_) { notify('Could not copy the report. Select the text and copy it by hand.', 'warn'); } };
                     run();
@@ -16913,7 +17005,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             provider.setCustomParameters({ prompt: 'select_account' });
             firebase.auth().signOut().then(() => {
                 // Clear local state
-                localStorage.clear();
+                _wfClearLocal();
                 firebase.auth().signInWithPopup(provider).catch(err => {
                     if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user') {
                         firebase.auth().signInWithRedirect(provider);
@@ -36255,8 +36347,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     _lastModifiedBy: currentUser ? currentUser.uid : 'reset'
                 }));
 
-                // Wipe local storage and rewrite preserved data
+                // Wipe local storage and rewrite preserved data (the connection choices belong to this device and stay)
+                const _wfDev = {}; ['wf_fs_transport', 'wf_fs_persist', 'wf_fs_repaired_at'].forEach(k => { try { const v = localStorage.getItem(k); if (v !== null) _wfDev[k] = v; } catch (_) { } });
                 localStorage.clear();
+                Object.keys(_wfDev).forEach(k => { try { localStorage.setItem(k, _wfDev[k]); } catch (_) { } });
                 Object.keys(appData).forEach(k => _persistLocal('wf2_' + k, appData[k]));
 
                 // Countdown: Show one number at a time with animation
@@ -36304,7 +36398,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             } catch (err) {
                 console.error('Factory reset cloud error:', err);
                 // Offline fallback — still wipe and reload
+                const _wfDev = {}; ['wf_fs_transport', 'wf_fs_persist', 'wf_fs_repaired_at'].forEach(k => { try { const v = localStorage.getItem(k); if (v !== null) _wfDev[k] = v; } catch (_) { } });
                 localStorage.clear();
+                Object.keys(_wfDev).forEach(k => { try { localStorage.setItem(k, _wfDev[k]); } catch (_) { } });
                 Object.keys(appData).forEach(k => _persistLocal('wf2_' + k, appData[k]));
                 const countText = $('fr_countdown');
                 countText.textContent = 'Restarting (offline)…';

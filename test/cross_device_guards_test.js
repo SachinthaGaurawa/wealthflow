@@ -49,7 +49,11 @@ describe('the books on a device belong to one account', () => {
     });
 
     it('signing out still clears everything, which also forgets the recorded account', () => {
-        expect(fnBody('signOutGoogle')).toMatch(/localStorage\.clear\(\)/);
+        expect(fnBody('signOutGoogle')).toMatch(/_wfClearLocal\(\)/);
+        const clear = fnBody('_wfClearLocal');
+        expect(clear).toMatch(/localStorage\.clear\(\)/);
+        // ...except what this device learned about its own connection: the mode and the offline-cache choice outlive a sign-out
+        for (const k of ['wf_fs_transport', 'wf_fs_persist', 'wf_fs_repaired_at']) expect(clear).toContain(k);
     });
 });
 

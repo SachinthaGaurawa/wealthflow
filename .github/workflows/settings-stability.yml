@@ -18,6 +18,7 @@ on:
       - test/e2e/live-sync.mjs
       - test/e2e/convergence.mjs
       - test/e2e/transport-mode.mjs
+      - test/e2e/connection-repair.mjs
       - wealthflow-sync-health.js
       - test/e2e/devices.mjs
       - test/e2e/firebase-cloud.mjs
@@ -59,3 +60,6 @@ jobs:
       # The connection mode: Safari and every iPhone / iPad browser talk to the account in steady mode (plain request-and-answer, which iCloud Private Relay lets through),
       # others keep the fast default, a saved choice wins, and Check Connection shows and switches it.
       - run: node test/e2e/transport-mode.mjs
+      # Repair connection: a save that times out is not called a refusal, the direct-save / browser-storage / queue steps appear, the repair turns the offline cache off
+      # and it stays off after the reload, and the connection choices survive sign-out.
+      - run: node test/e2e/connection-repair.mjs
