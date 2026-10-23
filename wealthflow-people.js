@@ -633,13 +633,16 @@ export function contactPickerSupported(win) {
  * @throws an Error whose `.userMessage` is fit to show, for anything that is not a plain "closed it".
  */
 export async function pickContacts(win, { multiple = false } = {}) {
-    if (!contactPickerSupported(win)) { const e = new Error('unsupported'); e.userMessage = 'This browser cannot open your contacts. Type the number, or import a contacts file.'; throw e; }
+    if (!contactPickerSupported(win)) { const e = new Error('unsupported'); e.userMessage = 'This browser cannot open your contacts. Type the number, or paste it.'; throw e; }
     let picked;
     try { picked = await win.navigator.contacts.select(['name', 'tel'], { multiple: !!multiple }); }
     catch (err) {
         if (err && err.name === 'AbortError') return [];
         const e = new Error(str(err && err.message) || 'contacts failed');
-        e.userMessage = err && err.name === 'SecurityError' ? 'The browser only opens contacts from a tap. Please tap the button again.' : 'Could not open your contacts.';
+        e.userMessage = err && err.name === 'SecurityError' ? 'The browser only opens contacts from a tap. Please tap the button again.'
+            : err && err.name === 'InvalidStateError' ? 'Your contacts are already open. Choose a contact there, or close it and try again.'
+                : err && err.name === 'NotAllowedError' ? 'WealthFlow was not allowed to open your contacts. Allow contacts for this site in the browser settings, or paste the number instead.'
+                    : 'Could not open your contacts. Paste the number instead.';
         throw e;
     }
     return (Array.isArray(picked) ? picked : []).map((c) => ({

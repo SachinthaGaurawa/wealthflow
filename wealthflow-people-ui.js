@@ -118,13 +118,13 @@ export function contactHtml(prefix, { kind = 'debtor', record = null, people = [
         + '<div class="fg"><label class="fl" for="' + p + '_phone">Mobile number</label>'
         + '<div class="wfp-row"><input class="fi" id="' + p + '_phone" type="tel" inputmode="tel" autocomplete="off" maxlength="40" data-wfp="phone"' + common
         + ' placeholder="077 123 4567" value="' + esc(info && info.ok ? info.pretty : phoneRaw) + '">'
-        + '<button type="button" class="btn btn-secondary btn-sm wfp-btn" data-wfp="contacts"' + common + ' title="Take the number from your contacts, a contacts file, or text you copied">Contacts</button></div>'
+        + '<button type="button" class="btn btn-secondary btn-sm wfp-btn" data-wfp="contacts"' + common + ' title="Take the number from your contacts" aria-label="Choose the mobile number from your contacts">Contacts</button></div>'
         + '<div class="wfp-pv ' + pv.cls + '" id="' + p + '_pv" role="status" aria-live="polite">' + esc(pv.text) + '</div>'
         + (phoneHelp ? '<div class="wfp-help">' + esc(phoneHelp) + '</div>' : '') + '</div>'
         + '<div class="fg"><label class="fl" for="' + p + '_phone2">Second mobile number <span class="wfp-opt">(optional)</span></label>'
         + '<div class="wfp-row"><input class="fi" id="' + p + '_phone2" type="tel" inputmode="tel" autocomplete="off" maxlength="' + People.LIMITS.phone2 + '" data-wfp="phone2"' + common
         + ' placeholder="Optional. Every text goes to this number too" value="' + esc(info2 && info2.ok ? info2.pretty : phone2Raw) + '">'
-        + '<button type="button" class="btn btn-secondary btn-sm wfp-btn" data-wfp="contacts2"' + common + ' title="Take the second number from your contacts, a contacts file, or text you copied">Contacts</button></div>'
+        + '<button type="button" class="btn btn-secondary btn-sm wfp-btn" data-wfp="contacts2"' + common + ' title="Take the second number from your contacts" aria-label="Choose the second mobile number from your contacts">Contacts</button></div>'
         + '<div class="wfp-pv ' + pv2.cls + '" id="' + p + '_pv2" role="status" aria-live="polite">' + esc(pv2.text) + '</div>'
         + '<div class="wfp-help">Sri Lankan mobile numbers only (07X XXX XXXX): the text service delivers inside Sri Lanka.</div></div>'
         + '<div class="fg"><label class="fl" for="' + p + '_nic" id="' + p + '_nic_l">' + ID_LABEL[idKind] + '</label>'
@@ -221,36 +221,49 @@ export function collectContact(c, { smsOn = false } = {}) {
 export function contactTips(platform, picker = false) {
     const share = {
         android: 'On Android, Chrome opens your contacts directly. In another browser, open the Contacts app, touch the person, choose Share or Copy, then paste it into the box below.',
-        ios: 'iPhone and iPad: Safari cannot open your Contacts. Open the Contacts app, touch the person, touch and hold their number and choose Copy, then paste it into the box below. To bring a whole contact: Contacts, touch the person, Share Contact, Save to Files, then choose that file here.',
-        mac: 'Mac: browsers cannot open your Contacts. In the Contacts app select the person (or several), choose File, Export, Export vCard, then choose or drop that file here. Or select a person, press Command-C, and paste into the box below.',
-        windows: 'Windows: browsers cannot open your contacts. In Outlook or the People app export your contacts (vCard or CSV) and choose that file here, or copy a number and paste it into the box below.',
-        linux: 'Browsers cannot open the contacts on this device. Export them as vCard or CSV and choose that file here, or copy a number and paste it into the box below.',
-        other: 'Browsers cannot open the contacts on this device. Export them as vCard or CSV and choose that file here, or copy a number and paste it into the box below.',
+        ios: 'iPhone and iPad: open the Contacts app, touch the person, touch and hold their number and choose Copy, then paste it into the box below. To bring a whole contact: Contacts, touch the person, Share Contact, Save to Files, then use Have a contacts file instead.',
+        mac: 'Mac: select the person in the Contacts app and drag them onto the dotted box, or press Command-C and paste into the box below. To bring several at once, select them, choose File, Export, Export vCard, then use Have a contacts file instead.',
+        windows: 'Windows: copy the number (or the contact card) in Outlook or the People app and paste it into the box below. To bring several at once, export them (vCard or CSV) and use Have a contacts file instead.',
+        linux: 'Copy a number or a contact card from your contacts app and paste it into the box above. To bring several at once, export them as vCard or CSV and use Have a contacts file instead.',
+        other: 'Copy a number or a contact card from your contacts app and paste it into the box above. To bring several at once, export them as vCard or CSV and use Have a contacts file instead.',
     };
     const lines = [share[platform] || share.other];
-    lines.push('Google or iCloud contacts: on contacts.google.com or icloud.com choose Export (vCard or CSV), then choose that file here.');
+    lines.push('Google or iCloud contacts: on contacts.google.com or icloud.com choose Export (vCard or CSV), then use Have a contacts file instead.');
     if (!picker && platform === 'android') lines.unshift('This browser has no contact picker, so use one of these instead.');
     return lines;
 }
 
-/** The sheet that brings a contact in: the phone's picker where there is one, a file, a dropped file, or pasted text. Every dynamic value is escaped. */
+/**
+ * The sheet that brings a contact in. Where the browser has a contact picker the phone's own picker is the first thing on it. Where it has none (Safari, every desktop
+ * browser: no web page can read an address book there) the sheet says so plainly and leads with the way that takes two taps, a number or card copied from the Contacts
+ * app, or dragged out of it; a contacts file is the last resort and sits behind its own heading, so nothing here looks like "attach a file". Every dynamic value is escaped.
+ */
 export function contactSourceHtml({ platform = 'other', picker = false, clipboard = false, multiple = false, status = '' } = {}) {
     const tips = contactTips(platform, picker);
-    return '<div class="md wfp-src"><div class="md-hdr"><div class="md-title">' + (multiple ? 'Import contacts' : 'Bring in a contact') + '</div>' + xButtonHtml + '</div>'
-        + (picker ? '<button type="button" class="btn btn-primary wfp-wide" data-c="device">Choose from this device’s contacts</button><div class="wfp-or">or</div>' : '')
-        + '<button type="button" class="btn ' + (picker ? 'btn-secondary' : 'btn-primary') + ' wfp-wide" data-c="file">Choose a contacts file</button>'
+    const draggable = platform === 'mac' || platform === 'windows' || platform === 'linux';
+    const fileBlock = (picker ? '' : '<details class="wfp-det wfp-filebox"><summary>Have a contacts file instead?</summary>')
+        + '<button type="button" class="btn btn-secondary wfp-wide" data-c="file">Choose a contacts file</button>'
         + '<div class="wfp-help wfp-center">vCard (.vcf) or spreadsheet (.csv) exported from your phone, Google, iCloud or Outlook. You can also drop the file here.</div>'
         + '<input type="file" data-c="fileinput" accept=".vcf,.vcard,.csv,.txt,text/vcard,text/x-vcard,text/directory,text/csv,text/plain" ' + (multiple ? 'multiple ' : '') + 'hidden aria-label="Contacts file">'
-        + '<div class="wfp-or">or</div>'
-        + '<label class="fl" for="wfp_paste">Paste a number or a contact</label>'
+        + (picker ? '' : '</details>');
+    const pasteBlock = '<label class="fl" for="wfp_paste">Paste a number or a contact</label>'
         + '<textarea class="fi wfp-paste" id="wfp_paste" data-c="paste" rows="3" maxlength="200000" autocomplete="off" spellcheck="false" placeholder="+94 77 123 4567, or Nimal Perera 077 123 4567, or a whole contact card"></textarea>'
         + '<div class="wfp-actions" style="margin-top:6px;">'
-        + (clipboard ? '<button type="button" class="btn btn-secondary btn-sm" data-c="clip">Paste from clipboard</button>' : '')
-        + '<button type="button" class="btn btn-primary btn-sm" data-c="use" disabled>Use this</button></div>'
-        + '<div class="wfp-pv" data-c="status" role="status" aria-live="polite">' + esc(status) + '</div>'
-        + '<details class="wfp-det wfp-tips"' + (picker ? '' : ' open') + '><summary>How do I get my contact in here?</summary>'
-        + tips.map((t) => '<p class="wfp-help" style="margin:0 0 8px;">' + esc(t) + '</p>').join('') + '</details>'
-        + '</div>';
+        + (clipboard ? '<button type="button" class="btn ' + (picker ? 'btn-secondary' : 'btn-primary') + ' btn-sm" data-c="clip">Paste from clipboard</button>' : '')
+        + '<button type="button" class="btn ' + (clipboard && !picker ? 'btn-secondary' : 'btn-primary') + ' btn-sm" data-c="use" disabled>Use this</button></div>';
+    const statusBlock = '<div class="wfp-pv" data-c="status" role="status" aria-live="polite">' + esc(status) + '</div>';
+    const tipsBlock = '<details class="wfp-det wfp-tips"' + (picker ? '' : ' open') + '><summary>How do I get my contact in here?</summary>'
+        + tips.map((x) => '<p class="wfp-help" style="margin:0 0 8px;">' + esc(x) + '</p>').join('') + '</details>';
+    const head = '<div class="md-hdr"><div class="md-title">' + (multiple ? 'Import contacts' : 'Bring in a contact') + '</div>' + xButtonHtml + '</div>';
+    if (picker) {
+        return '<div class="md wfp-src">' + head
+            + '<button type="button" class="btn btn-primary wfp-wide" data-c="device">Choose from this device’s contacts</button><div class="wfp-or">or</div>'
+            + fileBlock + '<div class="wfp-or">or</div>' + pasteBlock + statusBlock + tipsBlock + '</div>';
+    }
+    return '<div class="md wfp-src">' + head
+        + '<div class="wfp-help wfp-nopicker" data-c="nopicker">This browser cannot open the contacts on this device. No website can on a ' + (platform === 'ios' ? 'iPhone or iPad' : platform === 'mac' ? 'Mac' : platform === 'windows' ? 'Windows PC' : 'computer or iPhone') + ', so copy the contact and paste it here.</div>'
+        + (draggable ? '<div class="wfp-dropzone" data-c="drop">Drag a contact here from your Contacts app</div>' : '')
+        + pasteBlock + statusBlock + tipsBlock + fileBlock + '</div>';
 }
 const xButtonHtml = '<button class="md-x" aria-label="Close" data-c="close"><i data-wfi="x"></i></button>';
 
@@ -413,7 +426,7 @@ const STYLE = `
 .wfp-imp{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--border,rgba(128,128,128,.2));cursor:pointer}.wfp-imp input[type=checkbox]{width:20px;height:20px;flex:none}.wfp-imp.wfp-off{opacity:.55;cursor:default}
 .wfp-num{margin-top:4px;min-height:36px}.wfp-implist{margin:0 0 10px}
 .wfp-acct{border:1px solid var(--border,rgba(128,128,128,.25));border-radius:12px;padding:10px 12px;margin:8px 0}.wfp-kv{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:3px 0}.wfp-kv span{color:var(--text3)}.wfp-kv b{text-align:right;word-break:break-word}
-.wfp-chooser .md{max-width:460px}.wfp-wide{width:100%;min-height:46px;margin:0 0 6px}.wfp-or{text-align:center;color:var(--text3);font-size:12px;margin:8px 0}.wfp-center{text-align:center;margin:0 0 4px}.wfp-paste{width:100%;min-height:64px;resize:vertical;font-family:inherit}.wfp-src.wfp-drop{outline:2px dashed var(--accent,#4f8cff);outline-offset:-6px}.wfp-tips{margin-top:12px}.wfp-pick{margin-bottom:10px}.wfp-home{margin:16px 0 4px;padding-top:12px;border-top:1px solid var(--border,rgba(128,128,128,.2))}
+.wfp-chooser .md{max-width:460px}.wfp-wide{width:100%;min-height:46px;margin:0 0 6px}.wfp-or{text-align:center;color:var(--text3);font-size:12px;margin:8px 0}.wfp-center{text-align:center;margin:0 0 4px}.wfp-paste{width:100%;min-height:64px;resize:vertical;font-family:inherit}.wfp-src.wfp-drop{outline:2px dashed var(--accent,#4f8cff);outline-offset:-6px}.wfp-tips{margin-top:12px}.wfp-nopicker{margin:0 0 10px;line-height:1.5}.wfp-dropzone{border:2px dashed var(--border,rgba(128,128,128,.4));border-radius:12px;padding:16px 12px;text-align:center;color:var(--text3);font-size:13px;margin:0 0 12px}.wfp-src.wfp-drop .wfp-dropzone{border-color:var(--accent,#4f8cff);color:inherit}.wfp-filebox{margin-top:12px}.wfp-filebox>summary{cursor:pointer;font-size:12.5px;color:var(--text3);margin-bottom:8px}.wfp-pick{margin-bottom:10px}.wfp-home{margin:16px 0 4px;padding-top:12px;border-top:1px solid var(--border,rgba(128,128,128,.2))}
 .wfp-det{border:1px solid var(--border,rgba(128,128,128,.25));border-radius:12px;padding:0 12px;margin:0 0 10px}.wfp-det>summary{cursor:pointer;font-weight:700;padding:12px 0;min-height:24px}.wfp-det[open]>summary{border-bottom:1px solid var(--border,rgba(128,128,128,.2));margin-bottom:10px}.wfp-det>summary span{font-weight:500;color:var(--text3)}
 `;
 
@@ -654,7 +667,7 @@ export function boot(win) {
                 else if (dt) { const text = dt.getData('text/vcard') || dt.getData('text/x-vcard') || dt.getData('text/plain'); if (text && paste) { paste.value = text.slice(0, 200000); sync(); } }
             });
         }
-        win.setTimeout(() => { try { (picker ? q('device') : q('file')).focus(); } catch (_) { /* focus is a courtesy */ } }, 60);
+        win.setTimeout(() => { try { (picker ? q('device') : (q('clip') || q('paste'))).focus(); } catch (_) { /* focus is a courtesy */ } }, 60);
         return o;
     }
 
@@ -662,6 +675,7 @@ export function boot(win) {
      * The "Contacts" button on a form. Where the browser has a contact picker (Chrome on Android) it opens at once, as one tap; if that fails
      * (permission refused, an embedded browser) or there is none, the sheet with every other way in opens instead.
      */
+    let picking = false;
     function chooseContact(root, p, nameId, field = 'phone') {
         const iso = () => (at(root, p + '_cc') || {}).value || homeCountry();
         const onCards = (cards) => {
@@ -669,8 +683,11 @@ export function boot(win) {
             return openContactChooser(cards, iso(), (name, number) => applyNumber(root, p, nameId, name, number, field));
         };
         if (People.contactPickerSupported(win)) {
+            if (picking) return;                                                          // the system picker is already open: a second tap must not stack another
+            picking = true;
             People.pickContacts(win, { multiple: false }).then((picked) => { if (picked.length) onCards(picked); })
-                .catch((e) => { toast((e && e.userMessage) || 'Could not open your contacts. Choose a file or paste the number instead.', 'info'); openContactSource({ multiple: false, onCards }); });
+                .catch((e) => { toast((e && e.userMessage) || 'Could not open your contacts. Paste the number instead.', 'info'); openContactSource({ multiple: false, onCards }); })
+                .finally(() => { picking = false; });
             return;
         }
         openContactSource({ multiple: false, onCards });

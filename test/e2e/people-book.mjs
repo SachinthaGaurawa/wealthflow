@@ -179,7 +179,8 @@ const vcf = [
     'BEGIN:VCARD', 'VERSION:3.0', 'FN:Sara Smith', 'TEL;TYPE=CELL:0722223333', 'END:VCARD',
 ].join('\r\n');
 await page.click('button[data-wfp="contacts"][data-p="_db"]');
-await page.waitForSelector('.wfp-src [data-c="file"]');
+await page.waitForSelector('.wfp-src [data-c="paste"]');
+await page.click('.wfp-src .wfp-filebox > summary');                 // a contacts file is the last resort: behind its own heading
 const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
     page.click('.wfp-src [data-c="file"]'),
@@ -317,7 +318,8 @@ const bulk = [
     ['Dilan Fernando', '0712345678'], ['Sara Smith', '0722223333'], ['Landline Only', '011 234 5678'], ['Maria Garcia', '0712223344'], ['Tom Abroad', '+44 7911 123456'],
 ].map(([n, t]) => `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${n}\r\nTEL:${t}\r\nEND:VCARD`).join('\r\n');
 await page.click('.wfp-hub [data-h="import"]');
-await page.waitForSelector('.wfp-src [data-c="file"]');
+await page.waitForSelector('.wfp-src [data-c="paste"]');
+await page.click('.wfp-src .wfp-filebox > summary');
 const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('.wfp-src [data-c="file"]')]);
 await fc.setFiles({ name: 'all.vcf', mimeType: 'text/vcard', buffer: Buffer.from(bulk) });
 await page.waitForSelector('.wfp-hub [data-h="impgo"]');
@@ -494,7 +496,10 @@ await page.waitForSelector('#_db_phone');
 const openSheet = async () => { await page.click('button[data-wfp="contacts"][data-p="_db"]'); await page.waitForSelector('.wfp-src [data-c="paste"]'); };
 await openSheet();
 assert.equal(await page.isVisible('.wfp-src [data-c="device"]'), false, 'no picker here, so no button for one');
-assert.ok(await page.isVisible('.wfp-src [data-c="file"]'), 'a file can always be chosen');
+assert.equal(await page.isVisible('.wfp-src [data-c="file"]'), false, 'a file is not the first thing offered');
+await page.click('.wfp-src .wfp-filebox > summary');
+assert.ok(await page.isVisible('.wfp-src [data-c="file"]'), 'but a file can always be chosen');
+await page.click('.wfp-src .wfp-filebox > summary');
 assert.match(await page.textContent('.wfp-src .wfp-tips'), /Google or iCloud contacts/, 'the steps are written out where the owner is looking');
 assert.equal(await page.isDisabled('.wfp-src [data-c="use"]'), true);
 
@@ -530,6 +535,7 @@ console.log('10c. pasted card       -> number chooser');
 await page.fill('#_db_phone', ''); await page.fill('#_db_name', '');
 await openSheet();
 const csv = 'First Name,Last Name,Phone 1 - Label,Phone 1 - Value\nDilan,Fernando,Mobile,0712345678\nSara,Smith,Mobile,+1 (415) 555-2671\n';
+await page.click('.wfp-src .wfp-filebox > summary');
 const [fc2] = await Promise.all([page.waitForEvent('filechooser'), page.click('.wfp-src [data-c="file"]')]);
 await fc2.setFiles({ name: 'contacts.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
 await page.waitForSelector('.wfp-chooser [data-c="q"]');
@@ -552,6 +558,7 @@ console.log('10e. dropped vCard     -> applied');
 
 await page.fill('#_db_phone', ''); await page.fill('#_db_name', '');
 await openSheet();
+await page.click('.wfp-src .wfp-filebox > summary');
 const [fc3] = await Promise.all([page.waitForEvent('filechooser'), page.click('.wfp-src [data-c="file"]')]);
 await fc3.setFiles({ name: 'photo.xlsx', mimeType: 'application/octet-stream', buffer: Buffer.from([0x50, 0x4b, 3, 4, 0, 1, 2, 3]) });
 await page.waitForFunction(() => /spreadsheet or archive/.test(document.querySelector('.wfp-src [data-c="status"]').textContent));
@@ -567,7 +574,7 @@ await page.evaluate(() => {
 await openDebtor(null);
 await page.waitForSelector('#_db_phone');
 await openSheet();
-assert.match(await page.textContent('.wfp-src .wfp-tips'), /Safari cannot open your Contacts/);
+assert.match(await page.textContent('.wfp-src .wfp-tips'), /iPhone and iPad: open the Contacts app/);
 assert.match(await page.textContent('.wfp-src .wfp-tips'), /touch and hold their number and choose Copy/);
 await page.evaluate(() => document.querySelectorAll('body > .mo:not([id])').forEach((m) => m.remove()));
 console.log('10g. iPhone            -> told exactly what to do on an iPhone');
