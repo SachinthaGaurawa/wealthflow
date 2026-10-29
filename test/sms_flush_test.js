@@ -372,6 +372,30 @@ describe('what the page sends', () => {
         expect(CLIENT.FLUSH_MAX_BYTES).toBeLessThan(64 * 1024);                             // the browser's limit for a request that outlives the page
     });
 
+    it('never sends more than the server takes in one request (it refuses the WHOLE request over the limit), and the limits are the server\'s own', () => {
+        expect(CLIENT.FLUSH_MAX_RECORDS).toBe(FLUSH.MAX_RECORDS);
+        expect(CLIENT.FLUSH_MAX_MARKS).toBe(FLUSH.MAX_MAP_KEYS);
+        expect(CLIENT.FLUSH_MAX_TOMBS).toBe(FLUSH.MAX_TOMBS);
+        // 450 tiny records, 450 deletions and 700 month marks, with room for all of them in bytes
+        const user = {
+            debtors: Array.from({ length: 450 }, (_, i) => ({ id: 'd' + i, _ut: 1000 + i, [FIELDS.ENABLED]: true })),
+            income: [{ id: 'inv', _ut: 5, [FIELDS.ENABLED]: true }],
+            incomeReceived: Object.fromEntries(Array.from({ length: 700 }, (_, i) => ['inv_m' + i, true])),
+            _kuf: { incomeReceived: Object.fromEntries(Array.from({ length: 700 }, (_, i) => ['inv_m' + i, 2000 + i])) },
+            _tomb: { debtors: Object.fromEntries(Array.from({ length: 450 }, (_, i) => ['g' + i, 3000 + i])) },
+        };
+        const out = pendingFlush(user, 0, 10_000_000);
+        expect(out.records.debtors).toHaveLength(FLUSH.MAX_RECORDS);
+        expect(out.records.debtors[0].id).toBe('d449');                                         // the newest first
+        expect(Object.keys(out.incomeReceived)).toHaveLength(FLUSH.MAX_MAP_KEYS);
+        expect(Object.keys(out.tombs.debtors)).toHaveLength(FLUSH.MAX_TOMBS);
+        expect(out.trimmed).toBe(50 + 100 + 50);
+        // and the server takes exactly what the page sends
+        const clean = cleanFlush({ ...out }, NOW + 1e9);
+        expect(clean.ok).toBe(true);
+        expect(clean.records.debtors).toHaveLength(FLUSH.MAX_RECORDS);
+    });
+
     it('counts bytes, not letters: a Sinhala name takes three bytes a letter and the request must still fit', () => {
         const user = { debtors: Array.from({ length: 40 }, (_, i) => on('d' + i, 1000 + i, { name: 'කෞෂිගේ අම්මා'.repeat(30) })) };
         const out = pendingFlush(user, 0, 20000);

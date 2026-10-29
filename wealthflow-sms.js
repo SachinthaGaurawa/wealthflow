@@ -51,6 +51,9 @@ export const CLIENT = Object.freeze({
     FLUSH_DELAY_MS: 1200,                    // a change is handed to the server this soon, not after the upload and the wait above
     FLUSH_MAX_WAIT_MS: 4000,                 // ... and never later than this, however steadily something else keeps writing
     FLUSH_MAX_BYTES: 56000,                  // a request that must outlive the page may not exceed 64 KB (fetch keepalive)
+    FLUSH_MAX_RECORDS: 400,                  // what the server takes in one request, per list (sms-flush.mjs FLUSH): over it the whole request is refused,
+    FLUSH_MAX_MARKS: 600,                    // so none of it would be applied. test/sms_flush_test.js keeps these equal to the server's.
+    FLUSH_MAX_TOMBS: 400,
     TOKEN_SLACK_MS: 30000,
     LEAVE_GAP_MS: 10000,                     // the same state is not sent twice by a page that is closing (hidden, then pagehide)
     LOG_LIMIT: 40,
@@ -337,7 +340,10 @@ export function pendingFlush(user, since = 0, maxBytes = CLIENT.FLUSH_MAX_BYTES)
     let bytes = 96;
     let trimmed = 0;
     const room = (n) => { if (bytes + n > maxBytes) { trimmed += 1; return false; } bytes += n; return true; };
-    for (const c of cand) if (room(bytesOf(JSON.stringify(c.r)) + 2)) records[c.key].push(c.r);
+    for (const c of cand) {
+        if (records[c.key].length >= CLIENT.FLUSH_MAX_RECORDS) { trimmed += 1; continue; }              // newest first: what does not fit goes with the page's own upload
+        if (room(bytesOf(JSON.stringify(c.r)) + 2)) records[c.key].push(c.r);
+    }
 
     // a debtor or an investment deleted since: the server must not text about it from the copy it still holds
     const tombs = { debtors: {}, income: {} };
@@ -346,7 +352,9 @@ export function pendingFlush(user, since = 0, maxBytes = CLIENT.FLUSH_MAX_BYTES)
         const m = dead[key] && typeof dead[key] === 'object' ? dead[key] : {};
         for (const id of Object.keys(m).sort()) {
             const t = num(m[id]);
-            if (t > after && room(bytesOf(id) + 24)) tombs[key][id] = t;
+            if (!(t > after)) continue;
+            if (Object.keys(tombs[key]).length >= CLIENT.FLUSH_MAX_TOMBS) { trimmed += 1; continue; }
+            if (room(bytesOf(id) + 24)) tombs[key][id] = t;
         }
     }
 
@@ -359,6 +367,7 @@ export function pendingFlush(user, since = 0, maxBytes = CLIENT.FLUSH_MAX_BYTES)
     const prefixes = (Array.isArray(u.income) ? u.income : []).filter((r) => r && r.id != null && r[SMS_FIELDS.ENABLED] === true).map((r) => s(r.id) + '_');
     for (const k of Object.keys(marks).sort()) {
         if (!(clockOf[k] > after) || !marks[k] || !prefixes.some((p) => k.startsWith(p))) continue;
+        if (Object.keys(incomeReceived).length >= CLIENT.FLUSH_MAX_MARKS) { trimmed += 1; continue; }
         if (room(bytesOf(k) + bytesOf(JSON.stringify(marks[k])) + 24)) { incomeReceived[k] = marks[k]; kuf[k] = clockOf[k]; }
     }
     return { records, incomeReceived, kuf, tombs, trimmed };
