@@ -390,7 +390,16 @@ export function createNotifier(deps) {
     const emit = () => { try { if (deps.onState) deps.onState({ disabled: st.disabled, lastSummary: st.lastSummary, lastError: st.lastError, busy: st.inFlight }); } catch (_) { /* a listener must not break the notifier */ } };
     const sigKey = (uid) => 'wf_sms_sig_' + uid;
     const readSig = (uid) => safeStorage(deps.storage, (x) => (x ? x.getItem(sigKey(uid)) : '') || '') || '';
-    const writeSig = (uid, sig) => safeStorage(deps.storage, (x) => { if (x) x.setItem(sigKey(uid), sig); });
+    // An EMPTY state (the last record that texts was deleted) is stored as '-', so "the server has looked at nothing" is different from "never looked".
+    const writeSig = (uid, sig) => safeStorage(deps.storage, (x) => { if (x) x.setItem(sigKey(uid), sig || '-'); });
+    const usedKey = (uid) => 'wf_sms_used_' + uid;
+    /** Has this account ever had a record that texts, on this device? A deletion of the last one still has to reach the server, before it has ever answered. */
+    const everUsed = (uid, sig) => {
+        if (sig) { safeStorage(deps.storage, (x) => { if (x && x.getItem(usedKey(uid)) !== '1') x.setItem(usedKey(uid), '1'); }); return true; }
+        return !!readSig(uid) || safeStorage(deps.storage, (x) => (x ? x.getItem(usedKey(uid)) : '')) === '1';
+    };
+    /** Has the server already looked at exactly this state? */
+    const looked = (uid, sig) => readSig(uid) === (sig || '-');
 
     function schedule(ms, ctx) {
         if (st.timer) clearTimer(st.timer);
@@ -479,8 +488,7 @@ export function createNotifier(deps) {
                 const uid = deps.getUid();
                 if (!uid) return false;
                 const sig = signatureOf(deps.getUser());
-                const prev = readSig(uid);
-                if (sig === prev) return false;
+                if (!everUsed(uid, sig) || looked(uid, sig)) return false;
                 schedule(CLIENT.DEBOUNCE_MS, { sig, reason: 'save' });
                 return true;
             } catch (_) { return false; }
@@ -496,8 +504,7 @@ export function createNotifier(deps) {
                 const uid = deps.getUid();
                 if (!uid) return false;
                 const sig = signatureOf(deps.getUser());
-                if (!sig && !readSig(uid)) return false;
-                if (sig === readSig(uid)) return false;
+                if (!everUsed(uid, sig) || looked(uid, sig)) return false;
                 if (st.flushTimer) clearTimer(st.flushTimer);
                 const t = now();
                 if (!st.flushFirst) st.flushFirst = t;
@@ -517,8 +524,7 @@ export function createNotifier(deps) {
                 const uid = deps.getUid();
                 if (!uid) return false;
                 const sig = signatureOf(deps.getUser());
-                if (!sig && !readSig(uid)) return false;
-                if (sig === readSig(uid)) return false;
+                if (!everUsed(uid, sig) || looked(uid, sig)) return false;
                 const token = deps.peekIdToken ? deps.peekIdToken() : '';
                 if (!token) return false;
                 // hidden and pagehide arrive together on a page that is closing: the same state is sent once, and again only after a while or a failure
@@ -541,7 +547,7 @@ export function createNotifier(deps) {
                 const uid = deps.getUid();
                 if (!uid) return false;
                 const sig = signatureOf(deps.getUser());
-                if (!sig && !readSig(uid)) return false;                      // this account has never used SMS: no request at all
+                if (!everUsed(uid, sig)) return false;                        // this account has never used SMS: no request at all
                 if (st.timer) return false;
                 schedule(reason === 'open' ? CLIENT.OPEN_DELAY_MS : CLIENT.DEBOUNCE_MS, { sig, reason });
                 return true;

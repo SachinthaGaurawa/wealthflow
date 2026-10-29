@@ -217,8 +217,18 @@ assert.ok(del.tombs.debtors.dK > 0, 'the deletion of the debtor travels with the
 assert.deepEqual(del.records.debtors, [], 'and carries no record of it');
 console.log('3c2. debtor deleted    -> the flush carries its tombstone');
 
+// 3c3. the last record that texts is deleted before the server has ever answered on this device: it still has to be told
+await page.evaluate(() => { window.__calls.length = 0; DB.set('debtors', [{ id: 'dQ', name: 'Quick', phone: '+94771234567', sms_notifications_enabled: true, sms_enabled_at: 1, events: [{ id: 'q1', kind: 'lent', amount: 5000, date: '2026-10-29', confirmed: true }] }]); });
+await page.waitForFunction(() => window.__calls.some((c) => c.body.action === 'flush' && c.body.records.debtors.some((d) => d.id === 'dQ')), null, { timeout: 6000 });
+await page.waitForTimeout(300);
+await page.evaluate(() => { localStorage.removeItem('wf_sms_sig_e2e-sweep-user'); window.__calls.length = 0; DB.set('debtors', []); });
+await page.waitForFunction(() => window.__calls.some((c) => c.body.action === 'flush'), null, { timeout: 6000 });
+const quick = await page.evaluate(() => window.__calls.find((c) => c.body.action === 'flush').body);
+assert.ok(quick.tombs.debtors.dQ > 0, 'the deletion reaches the server although it has never answered on this device (the signature is empty and nothing was stored)');
+console.log('3c3. last record gone  -> still reported before the server has ever answered');
+
 // 3d. a book that never used texts costs no request at all
-await page.evaluate(() => { window.__vis = 'visible'; window.__calls.length = 0; localStorage.removeItem('wf_sms_sig_e2e-sweep-user'); });
+await page.evaluate(() => { window.__vis = 'visible'; window.__calls.length = 0; localStorage.removeItem('wf_sms_sig_e2e-sweep-user'); localStorage.removeItem('wf_sms_used_e2e-sweep-user'); });
 await page.evaluate(() => { DB.set('debtors', [{ id: 'dN', name: 'Plain', phone: '', events: [{ id: 'n1', kind: 'lent', amount: 1000, date: '2026-10-29', confirmed: true }], _ut: Date.now() }]); window.__vis = 'hidden'; document.dispatchEvent(new Event('visibilitychange')); });
 await page.waitForTimeout(1800);
 // (the page's own timed look at the server, the one it makes after opening, is a nudge and not a flush: only flushes are counted)

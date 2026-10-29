@@ -457,6 +457,35 @@ describe('the notifier hands the server the change', () => {
         expect(timers.map((t) => t.ms)).toEqual([0]);
     });
 
+    it('deleting the LAST record that texts reaches the server even before it has ever answered (the six seconds after the page opens)', async () => {
+        const r = rig();
+        // the page opened with a record that texts: noticed, though the server has not answered yet
+        expect(r.n.onOpen('open')).toBe(true);
+        r.user.debtors = [];                                                                 // the owner deletes it at once
+        r.user._tomb = { debtors: { d1: 900 } };
+        expect(signatureOf(r.user)).toBe('');                                                // nothing is left that texts: the state is empty
+        expect(r.n.onLocalChange()).toBe(true);                                              // ... and it is still a change the server must hear about
+        expect(r.n.leave('hidden')).toBe(true);
+        expect(r.calls).toHaveLength(1);
+        expect(r.calls[0].body.tombs.debtors).toEqual({ d1: 900 });
+        await new Promise((res2) => setTimeout(res2, 0)); await new Promise((res2) => setTimeout(res2, 0));
+        expect(r.store.get('wf_sms_sig_u1')).toBe('-');                                      // the server has looked at "nothing": remembered, so it is not sent again
+        expect(r.n.onLocalChange()).toBe(false);
+        expect(r.n.afterPush()).toBe(false);
+    });
+
+    it('an account that never had a record that texts still sends nothing, deletions included', () => {
+        const r = rig();
+        r.user.debtors = [{ id: 'x', _ut: 1 }];
+        r.user._tomb = { debtors: { gone: 900 } };
+        expect(r.n.onOpen('open')).toBe(false);
+        expect(r.n.onLocalChange()).toBe(false);
+        expect(r.n.afterPush()).toBe(false);
+        expect(r.n.leave()).toBe(false);
+        expect(r.calls).toHaveLength(0);
+        expect(r.store.has('wf_sms_used_u1')).toBe(false);
+    });
+
     it('does nothing for an account that never used texts, or when the server has already seen this state', async () => {
         const plain = rig(); plain.user.debtors = [{ id: 'x', _ut: 1 }];
         expect(plain.n.onLocalChange()).toBe(false);
