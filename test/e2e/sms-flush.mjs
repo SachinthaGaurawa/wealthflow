@@ -155,6 +155,7 @@ await page.evaluate((t) => {
     window.fetch = (url, init) => {
         if (String(url).includes('/api/sms-notify')) {
             window.__calls.push({ url: String(url), keepalive: !!(init && init.keepalive), auth: (init && init.headers && init.headers.Authorization) || '', body: JSON.parse((init && init.body) || '{}'), at: Date.now() });
+            if (window.__fail) return Promise.reject(new TypeError('Load failed'));
             return Promise.resolve(new Response(JSON.stringify({ ok: true, summary: { sent: 1 } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
         }
         return real.call(window, url, init);
@@ -172,10 +173,12 @@ await page.evaluate(() => { localStorage.removeItem('wf_sms_sig_e2e-sweep-user')
 
 // 3a. the owner confirms a repayment and leaves the page open: the changed record goes after a moment, not after the upload and its wait
 const t0 = await page.evaluate(() => Date.now());
+// (the seeding above is itself a change, handed over a moment after it: this looks for the request that carries the confirmation)
+const confirmedP1 = (c) => c.body.action === 'flush' && c.body.records.debtors.some((d) => (d.events || []).some((e) => e.id === 'p1' && e.confirmed === true));
 await page.click('[data-db-conf="0|p1"]');
-await page.waitForFunction(() => window.__calls.some((c) => c.body.action === 'flush'), null, { timeout: 6000 });
-const a = await page.evaluate(() => window.__calls.find((c) => c.body.action === 'flush'));
-assert.ok(a.at - t0 < 3000, 'sent within a few seconds of the tap (' + (a.at - t0) + ' ms), not after the upload and the pause that follows it');
+await page.waitForFunction(() => window.__calls.some((c) => c.body.action === 'flush' && c.body.records.debtors.some((d) => (d.events || []).some((e) => e.id === 'p1' && e.confirmed === true))), null, { timeout: 6000 });
+const a = await page.evaluate(() => window.__calls.find((c) => c.body.action === 'flush' && c.body.records.debtors.some((d) => (d.events || []).some((e) => e.id === 'p1' && e.confirmed === true))));
+assert.ok(a.at - t0 < 1500, 'sent within a moment of the tap (' + (a.at - t0) + ' ms), not after the upload and the pause that follows it');
 assert.equal(a.keepalive, true, 'a request the browser finishes without the page');
 assert.equal(a.auth, 'Bearer ' + jwt, 'with the token the page already held');
 assert.equal(a.body.records.debtors.length, 1);
@@ -234,6 +237,18 @@ await page.waitForTimeout(1800);
 // (the page's own timed look at the server, the one it makes after opening, is a nudge and not a flush: only flushes are counted)
 assert.equal(await page.evaluate(() => window.__calls.filter((c) => c.body.action === 'flush').length), 0, 'a debtor whose texts were never switched on sends nothing');
 console.log('3d. texts never on     -> no request');
+
+
+// 3e. a request that never got an answer (no network, the app killed) leaves the change owed, and the page hands it over again when it is next in front
+await page.evaluate(() => { window.__vis = 'visible'; window.__calls.length = 0; window.__fail = true; localStorage.removeItem('wf_sms_sig_e2e-sweep-user'); });
+await page.evaluate(() => { DB.set('debtors', [{ id: 'dR', name: 'Retry', phone: '+94771234567', sms_notifications_enabled: true, sms_enabled_at: 1, events: [{ id: 'r1', kind: 'lent', amount: 5000, date: '2026-10-29', confirmed: true }], _ut: Date.now() }]); });
+await page.waitForFunction(() => window.__calls.some((c) => c.body.action === 'flush' && c.body.records.debtors.some((d) => d.id === 'dR')), null, { timeout: 6000 });
+await page.waitForTimeout(200);
+assert.ok(Number(await page.evaluate(() => localStorage.getItem('wf_sms_outbox_e2e-sweep-user'))) > 0, 'the change is still owed: the request got no answer');
+await page.evaluate(() => { window.__fail = false; window.__calls.length = 0; document.dispatchEvent(new Event('visibilitychange')); });
+await page.waitForFunction(() => window.__calls.some((c) => c.body.action === 'flush' && c.body.reason === 'outbox' && c.body.records.debtors.some((d) => d.id === 'dR')), null, { timeout: 8000 });
+await page.waitForFunction(() => Number(localStorage.getItem('wf_sms_outbox_e2e-sweep-user')) === 0, null, { timeout: 4000 });
+console.log('3e. no answer          -> owed, handed over again as the records when the page is next in front, then no longer owed');
 
 assert.deepEqual(errors, [], 'no page error: ' + errors.join(' | '));
 await app.close();

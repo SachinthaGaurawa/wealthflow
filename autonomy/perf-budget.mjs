@@ -731,7 +731,8 @@ export const BUDGETS = {
     // 2026-10-29 (wealthflow-people.js: a loan that names a name two people share is nobody's, and an edit that will claim a loan asks first; measured 2,711,916 + ~0.01% headroom): 2_711_300 -> 2_712_300.
     // 2026-10-29 (the final save step of Sync now, in index.html and the runner; measured 2,712,366 + ~0.01% headroom): 2_712_300 -> 2_712_900.
     // 2026-10-29 (wealthflow-sms.js: a flush never carries more records, marks or deletions than the server takes in one request; measured 2,713,538 + ~0.01% headroom): 2_712_900 -> 2_713_900.
-    totalJsBytes: 2_713_900,
+    // 2026-10-29 (wealthflow-sms.js: the outbox, a longer wait for the server and honest error wording; measured 2,716,408 + ~0.02% headroom): 2_713_900 -> 2_717_000.
+    totalJsBytes: 2_717_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

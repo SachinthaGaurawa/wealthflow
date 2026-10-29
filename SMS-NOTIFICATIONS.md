@@ -145,13 +145,18 @@ eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends 
   hands the server the change itself (`sms-flush.mjs`, `action: 'flush'` on `/api/sms-notify`): the records a text is derived from that changed since
   the account last acknowledged an upload (`debtors`, `income`, and the months an investment was marked received), in ONE request. A `fetch` with
   `keepalive` is finished by the browser even after the page is gone, and it needs a token read from memory, so the page keeps the current Firebase ID
-  token as it is issued. It is sent about 1.2 s after a change (never later than 4 s however steadily something else writes), and **at once when the
+  token as it is issued. It is sent 150 ms after a change (never later than 1 s however steadily something else writes), and **at once when the
   page is hidden or closed** (`visibilitychange`, `pagehide`). The server merges the records into the caller's own document the way the page's upload would
   (the newest `_ut` wins, a deletion recorded after the edit stays deleted, nothing is removed, no account is created; the merge is a copy of the page's and
   `test/sms_flush_test.js` runs both on the same inputs), then sweeps. Sending it twice, or after the page has uploaded, changes nothing, and a request the
   server has already answered cancels the nudge that was waiting. A request is at most 56 KB (the browser allows 64 KB to a closing page); what does not fit
-  still goes with the page's own upload. Not covered, honestly: a page that is closed while OFFLINE cannot reach the server by any means, so that text goes
-  when the app is next opened (the unsent change is kept on the device and uploaded then), or at the next cron run once it has been uploaded.
+  still goes with the page's own upload. **The outbox.** A change is marked as owed on the device (`wf_sms_outbox_<uid>`) the moment it is made and is cleared only when the server answers that it holds it,
+  and only up to the moment that request left (a newer change made while it was in flight stays owed). A page that was closed, offline or killed before the answer
+  hands the changed records over again as soon as it is next open or in front (1.5 s, as a flush, whether or not its own upload ever worked). A request is waited
+  for 50 s, longer than the server works on one (40 s), because a shorter wait reported "could not reach the server" for a request that was in fact served; an
+  answer of any kind clears an error that was shown, a retry is never held back by "too soon", and the panel says which it was (slow to answer, or not reached)
+  and that the change is kept. Not covered, honestly: a page closed while OFFLINE with no later visit cannot reach the server by any means; the change is kept on
+  the device and goes the next time the app is open, and the cron covers whatever has been uploaded.
   **Sync now** (More sheet, Settings, command palette) also pushes what waits and then asks the server to look, for an account that uses texts.
 * **Who is swept.** An account is on the cron's list because it registered, but that is not a licence for ever: before an account's
   texts are sent the sweep asks Firebase Auth again whether the sign-in may still use SMS (not disabled, a verified email, on
