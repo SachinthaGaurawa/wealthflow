@@ -137,6 +137,17 @@ describe('merging a flush into the account document', () => {
         expect(newer.patch.debtors).toEqual([{ id: 'a', _ut: 400, phone: 'NEWER' }]);
     });
 
+    it('a newer stamp on the same content is carried to the document, so a copy from another device stamped in between cannot win over it later', () => {
+        const doc = { debtors: [{ id: 'a', _ut: 100, phone: 'X' }] };
+        const m = mergeFlush(doc, clean({ debtors: [{ id: 'a', _ut: 300, phone: 'X' }] }));
+        expect(m.patch.debtors).toEqual([{ id: 'a', _ut: 300, phone: 'X' }]);
+        expect(m.changed.debtors).toBe(1);
+        // another device's version stamped between the two now loses, as it would in the page's own merge
+        expect(mergeFlush(m.user, clean({ debtors: [{ id: 'a', _ut: 200, phone: 'Y' }] })).patch).toEqual({});
+        // and the same flush again changes nothing
+        expect(mergeFlush(m.user, clean({ debtors: [{ id: 'a', _ut: 300, phone: 'X' }] })).patch).toEqual({});
+    });
+
     it('never revives a record that was deleted after the edit, and takes a later edit of one that was deleted before it', () => {
         const doc = { debtors: [], _tomb: { debtors: { gone: 500 } } };
         expect(mergeFlush(doc, clean({ debtors: [{ id: 'gone', _ut: 400 }] })).patch).toEqual({});

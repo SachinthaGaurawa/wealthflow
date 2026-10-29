@@ -179,7 +179,8 @@ export function mergeFlush(cloud, clean) {
     const tomb = isPlain(doc._tomb) ? doc._tomb : {};
     const patch = {};
     const changed = { debtors: 0, income: 0, incomeReceived: 0, deleted: 0 };
-    let tombPatch = null;
+    const nextTomb = { ...tomb };                                                            // the page's tombstones, with this flush's added
+    let tombChanged = false;
 
     for (const key of FLUSH.RECORD_KEYS) {
         const incoming = clean.records[key];
@@ -195,18 +196,20 @@ export function mergeFlush(cloud, clean) {
             const ex = have.get(r.id);
             const del = dead[r.id];
             if (typeof del === 'number' && del >= utOf(r)) continue;                         // deleted after this edit
-            if (!ex || (recPreferred(r, ex) === r && recSig(r) !== recSig(ex))) n += 1;
+            // a newer stamp on the same content is still a change: the page's own merge would carry it, and a stale copy from another device with a stamp in
+            // between must not win over it later (review finding on the second commit)
+            if (!ex || (recPreferred(r, ex) === r && (recSig(r) !== recSig(ex) || utOf(r) > utOf(ex)))) n += 1;
         }
         // a record the document holds that a (new) tombstone now covers goes, by the same rule: deleted at or after its last edit
         let gone = 0;
         if (newTomb) for (const [id, r] of have) { const del = dead[id]; if (typeof del === 'number' && del >= utOf(r)) gone += 1; }
-        if (newTomb) { tombPatch = { ...(tombPatch || tomb), [key]: dead }; }
+        if (newTomb) { nextTomb[key] = dead; tombChanged = true; }
         if (!n && !gone) continue;
         patch[key] = mergeRecordArray(incoming, doc[key], dead);
         changed[key] = n;
         changed.deleted += gone;
     }
-    if (tombPatch) patch._tomb = { ...tomb, ...tombPatch };
+    if (tombChanged) patch._tomb = nextTomb;
 
     const marks = Object.keys(clean.received);
     if (marks.length) {
