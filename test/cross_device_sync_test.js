@@ -160,13 +160,14 @@ function makeDevice(name, cloud, { skewMs = 0 } = {}) {
         blockAt('function _wfCloudSafe(v, d = 0)'),
         'let isDirty = false, _dirtyGen = 0, isSyncingFromCloud = false, lastSyncTime = 0, _lastLocalWriteTs = 0, _lastCloudPushError = "", isInitialised = true, _wfLocalWriteBlocked = false, syncDebounceTimer = 0;',
         blockAt('function setDirty(state)'),
+        blockAt('function _wfPaintAfterCloud()'),
         blockAt('function _wfPaintCloudChange(applied)'),
         blockAt('function syncToCloud()'),
         constAt(/let _wfReconciling = false, _wfReconcileStarted = false, _wfLastReconcile = null;/, 'reconcile state'),
         blockAt('async function _wfReconcileWithCloud(why)'),
     ].join('\n');
     const factory = new Function('localStorage', 'appData', 'notify', 'console', 'window', 'navigator', 'Date', 'userDocRef', 'firebase', 'currentUser',
-        '_getDeviceId', 'setSyncStatus', '_flushCloudDeletes', '_wfApplyPendingDeletesLocally', 'debouncedSync', '$', 'document', '_wfAfterScrollIdle', 'renderPage', 'updateCCOTBadge', 'updateChequeBadge', '_renderSessionsDebounced',
+        '_getDeviceId', 'setSyncStatus', '_flushCloudDeletes', '_wfApplyPendingDeletesLocally', 'debouncedSync', '$', 'document', '_wfAfterScrollIdle', 'renderPage', 'updateCCOTBadge', 'updateChequeBadge', '_renderSessionsDebounced', 'refreshAllSurfaces',
         src + '\nreturn {'
         + ' edit: (key, fn) => { const next = fn(JSON.parse(JSON.stringify(appData[key] || []))); appData[key] = _wfStampAndTomb(key, next); _persistLocal("wf2_" + key, appData[key]); setDirty(true); },'
         + ' setDirty, syncToCloud, reconcile: _wfReconcileWithCloud, applyCloud: _wfApplyCloudData, stampNow: _wfStampNow,'
@@ -177,7 +178,7 @@ function makeDevice(name, cloud, { skewMs = 0 } = {}) {
         () => name, (s) => syncStatus.push(s), () => {}, () => {}, () => { pending.debounced++; },
         (id) => (id === 'app' ? { classList: { contains: (c) => c === 'show' } } : null),
         { querySelector: () => ({ id: 'page-expenses' }), getElementById: () => null },
-        (_why, fn) => fn(), (p) => renders.push(p), () => {}, () => {}, () => {});
+        (_why, fn) => fn(), (p) => renders.push(p), () => {}, () => {}, () => {}, () => renders.push('everything'));
     return Object.assign(api, {
         name, appData, store, notes, renders, syncStatus, pending, win, nav, clock,
         ids: (key) => (appData[key] || []).map(r => r.id).sort(),
@@ -356,7 +357,7 @@ describe('offline work and a stalled live stream', () => {
         expect(phone.ids('expenses'), 'sanity: the phone has heard nothing').toEqual([]);
         expect(await phone.reconcile('resume')).toBe(true);
         expect(phone.ids('expenses')).toEqual(['r1']);
-        expect(phone.renders, 'the phone merged the change but the screen still shows the old list').toEqual(['expenses']);
+        expect(phone.renders, 'the phone merged the change but the screen still shows the old list').toEqual(['everything']);          // a change from another device repaints EVERY surface, not only the page in front
         expect(phone.lastReconcile).toMatchObject({ why: 'resume', changed: true });
     });
 

@@ -8,6 +8,8 @@
  *
  *   POST /api/sms-notify   Authorization: Bearer <Firebase ID token>
  *        -> { ok, summary:{ derived, enqueued, sent, held, retry, failed, cancelled, remaining, issues, configured } }
+ *        body { action:'flush', records:{ debtors, income }, incomeReceived, kuf }   the page is closing: the changed records ride in this ONE request (fetch keepalive),
+ *                         are merged into the caller's own document the way the page's upload would have, and the sweep runs at once (sms-flush.mjs)
  *        body { action:'owner-otp-send', phone }          -> text a verification code to the number being added to "Alerts to my own number"
  *        body { action:'owner-otp-verify', phone, code }  -> check it; the number becomes the account's verified number (sms-owner-otp.mjs)
  *   GET  /api/sms-notify   (same auth)       -> { ok, allowed, configured }
@@ -18,9 +20,11 @@
  *
  * WHAT THE CALLER CANNOT CHOOSE: the recipient, the amount, the wording and the kind.
  * Every one of them is read from the caller's OWN document on the server. A request
- * body is a nudge ("look again"), never an instruction ("send this to that number"),
- * so a stolen or malicious client cannot use this endpoint to send anything the
- * books do not already say.
+ * body is a nudge ("look again") or, for `flush`, the caller's own changed records
+ * to be merged into the caller's own document first, never an instruction ("send this
+ * to that number"): a flush can write nothing the caller could not already write to
+ * their own document through Firestore, so a stolen or malicious client cannot use
+ * this endpoint to send anything the books do not already say.
  *
  * WHO MAY: sms-access.mjs. Everyone else gets a 403 that names nothing about the
  * gateway.
@@ -36,6 +40,7 @@ import { smsAllowed } from './sms-access.mjs';
 import { sweepUser, ROOT } from './sms-engine.mjs';
 import { hasSmsRecords } from './sms-events.mjs';
 import { sendOwnerCode, verifyOwnerCode } from './sms-owner-otp.mjs';
+import { cleanFlush, applyFlush } from './sms-flush.mjs';
 
 /** Two kicks closer together than this are one kick: the page may call twice on a save. */
 export const MIN_KICK_GAP_MS = 6000;
@@ -101,6 +106,32 @@ async function handleOwnerOtp({ res, body, db, uid, client, deps, now }) {
     }
 }
 
+/**
+ * The page is closing (or has just changed something) and cannot wait for its own upload: merge what it sends, then look. What the body may carry is
+ * the books a text is derived from and nothing else; who is texted, how much and in what words are still read from the stored document afterwards.
+ */
+async function handleFlush({ res, body, db, who, client, deps, now }) {
+    const clean = cleanFlush(body, now);
+    if (!clean.ok) return j(res, 413, { ok: false, error: clean.reason });
+    const rootRef = db.collection(ROOT).doc(who.uid);
+    try {
+        const applied = await withDeadline(applyFlush({ db, uid: who.uid, clean, now }), 12000, 'wf-flush');
+        // no account document yet (a flush that raced the first upload): nothing was merged and nothing looked at, so the page must not count this as handled
+        if (!applied.exists) return j(res, 200, { ok: true, deferred: true, flushed: applied.changed, summary: { derived: 0, configured: client.configured, empty: true } });
+        const root = await withDeadline(rootRef.get(), 8000, 'wf-sms');
+        const state = (root.exists && root.data()) || {};
+        const has = hasSmsRecords(applied.user);
+        await rootRef.set({ lastKickAt: now }, { merge: true });
+        if (!has && !state.hadRecords) return j(res, 200, { ok: true, flushed: applied.changed, summary: { derived: 0, configured: client.configured, idle: true } });
+        await rootRef.set({ active: true, email: who.email, registeredAt: state.registeredAt || now, hadRecords: has }, { merge: true });
+        const summary = await sweepUser({ db, uid: who.uid, user: applied.user, client, now, env: deps.env, deps: deps.engine || {} });
+        return j(res, 200, { ok: true, flushed: applied.changed, summary });
+    } catch (e) {
+        console.error('[WF-SMS] flush failed:', String((e && e.message) || e).slice(0, 200));
+        return j(res, 500, { ok: false, error: 'sms flush failed' });
+    }
+}
+
 export async function handleNotify(req, res, deps) {
     const method = String(req.method || 'GET').toUpperCase();
     if (!['GET', 'POST'].includes(method)) return j(res, 405, { ok: false, error: 'method not allowed' });
@@ -123,6 +154,7 @@ export async function handleNotify(req, res, deps) {
     const now = deps.now();
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     if (body.action === 'owner-otp-send' || body.action === 'owner-otp-verify') return handleOwnerOtp({ res, body, db, uid: who.uid, client, deps, now });
+    if (body.action === 'flush') return handleFlush({ res, body, db, who, client, deps, now });
     const rootRef = db.collection(ROOT).doc(who.uid);
     try {
         const root = await withDeadline(rootRef.get(), 8000, 'wf-sms');

@@ -9124,6 +9124,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 if (!isSyncingFromCloud && !silent) {
                     setDirty(true);
                     debouncedSync();
+                    /* A text is derived on the server from the books, so what changed must reach it even if this page is closed a second later. The
+                     * notifier sends the changed records in one request that does not need the page (wealthflow-sms.js, sms-flush.mjs); the upload
+                     * above still happens and finds them already there. */
+                    if (k === 'debtors' || k === 'income' || k === 'incomeReceived') { try { if (window.WFSms) window.WFSms.onLocalChange(); } catch (_) { } }
                 }
                 /* EVERY SCREEN THAT READS THIS KEY, ONCE, NEXT FRAME.
                  *
@@ -9791,6 +9795,25 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
          * FALSE otherwise, and never rejects, so the many fire-and-forget callers
          * are unaffected. */
         let _lastCloudPushError = '';
+        /* The newest stamp, among the records and receipts a text is derived from, that an acknowledged upload covers. A page that is closing sends the
+         * server everything stamped after it (wealthflow-sms.js pendingFlush), so what the upload already carried is not sent twice. Per account. */
+        function _wfAckMark() {
+            let m = 0;
+            try {
+                ['debtors', 'income'].forEach(k => (Array.isArray(appData[k]) ? appData[k] : []).forEach(r => { if (r && typeof r._ut === 'number' && r._ut > m) m = r._ut; }));
+                const kf = appData._kuf && appData._kuf.incomeReceived;
+                if (kf && typeof kf === 'object') Object.keys(kf).forEach(p => { const t = kf[p]; if (typeof t === 'number' && t > m) m = t; });
+                ['debtors', 'income'].forEach(k => { const tk = appData._tomb && appData._tomb[k]; if (tk && typeof tk === 'object') Object.keys(tk).forEach(id => { const t = tk[id]; if (typeof t === 'number' && t > m) m = t; }); });
+            } catch (_) { }
+            return m;
+        }
+        function _wfSetAcked(mark) {
+            try {
+                if (!(mark > 0) || !currentUser || !currentUser.uid) return;
+                const key = 'wf_acked_ut_' + currentUser.uid;
+                if (mark > (Number(localStorage.getItem(key)) || 0)) _persistRaw(key, String(mark));
+            } catch (_) { }
+        }
         // Firestore rejects `undefined` ANYWHERE in a document: one stray field fails this push and every later one until reload.
         function _wfCloudSafe(v, d = 0) {
             if (v === undefined || typeof v === 'function' || d > 40) return undefined;
@@ -9799,18 +9822,19 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (Object.getPrototypeOf(v) !== Object.prototype) return v;
             const o = {}; for (const k in v) { const c = _wfCloudSafe(v[k], d + 1); if (c !== undefined) o[k] = c; } return o;
         }
+        /* WHAT A CHANGE FROM ANOTHER DEVICE REPAINTS: EVERYTHING. It used to repaint the page in front and two badges, so a record another device
+         * added was on the page you were on and missing from the dashboard, the balance, the DSCR figures and the notifications until something else
+         * happened to redraw them ("when it syncs, everything has to refresh"). refreshAllSurfaces() is the repaint every write already uses. */
+        function _wfPaintAfterCloud() {
+            try { refreshAllSurfaces(); } catch (e) { console.error('[SYNC] repaint after a change from the account failed (data is safe):', e && e.message); }
+            try { if (window.WFNotif && window.WFNotif.refresh) window.WFNotif.refresh(); } catch (_) { }
+            try { if (typeof window.__wfSmsRedraw === 'function') window.__wfSmsRedraw(); } catch (_) { }
+        }
         // Paint what a merge changed — the same repaint the live listener does, for the paths that merge outside it.
         function _wfPaintCloudChange(applied) {
             if (!applied) return;
             if (applied.nonSessionChanged) {
-                if ($('app') && $('app').classList.contains('show')) {
-                    _wfAfterScrollIdle('cloud-snapshot-paint', () => {
-                        const active = document.querySelector('.page.active');
-                        if (active) renderPage(active.id.replace('page-', ''));
-                        try { updateCCOTBadge(); } catch (e) { }
-                        try { updateChequeBadge(); } catch (e) { }
-                    });
-                }
+                if ($('app') && $('app').classList.contains('show')) _wfAfterScrollIdle('cloud-snapshot-paint', _wfPaintAfterCloud);
             } else if (applied.sessionsChanged) {
                 if ($('app') && $('app').classList.contains('show') && document.getElementById('page-sessions')?.classList.contains('active')) { try { _renderSessionsDebounced(); } catch (e) { } }
             }
@@ -9850,6 +9874,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             try { _flushCloudDeletes(); } catch (_) { }
 
             const gen = _dirtyGen;   // anything changed after this is NOT covered by this push
+            const ackMark = typeof _wfAckMark === 'function' ? _wfAckMark() : 0;   // the newest text-bearing stamp this push covers (see _wfAckMark)
             let seen = null, _push;
             try {
                 _push = userDocRef.firestore.runTransaction(async tx => {
@@ -9874,6 +9899,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 if (_dirtyGen === gen) setDirty(false); else setTimeout(debouncedSync, 50);   // changed while in flight: still dirty
                 lastSyncTime = Date.now();
                 _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
+                try { if (ackMark > 0 && typeof _wfSetAcked === 'function') _wfSetAcked(ackMark); } catch (_) { }
                 console.log('[SYNC] @checkCircle@ Pushed to cloud at', new Date().toLocaleTimeString());
                 setTimeout(() => setSyncStatus('online'), 300);
                 try { _wfPaintCloudChange(seen); } catch (_) { }
@@ -13528,7 +13554,10 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         if (!window._wfPillGlobalBound) {
             window._wfPillGlobalBound = true;
             document.addEventListener('click', function (ev) {
-                const btn = ev.target.closest && ev.target.closest('.ai-suggestion-pill, [data-q]');
+                /* ONLY THE ADVISOR'S OWN QUESTIONS. This used to match ANY element carrying data-q, and the More sheet's quick buttons (Search, Sync now,
+                 * Light mode, Sign out) carried one too: tapping Sync now sent "sync" to the AI Financial Advisor and opened it, and the sync the button
+                 * was for was lost behind the AI page. The pills are .ai-suggestion-pill; the briefing's asks live in #aiBriefing. Nothing else is a question. */
+                const btn = ev.target.closest && ev.target.closest('.ai-suggestion-pill, #aiBriefing [data-q]');
                 if (!btn) return;
                 const q = btn.getAttribute('data-q');
                 if (!q) return;
@@ -17650,14 +17679,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
                                                     if (nonSessionChanged) {
                                                         console.log('[SYNC] @refresh@ Core data changed — re-rendering global UI');
-                                                        if ($('app') && $('app').classList.contains('show')) {
-                                                            _wfAfterScrollIdle('cloud-snapshot-paint', () => {
-                                                                const active = document.querySelector('.page.active');
-                                                                if (active) renderPage(active.id.replace('page-', ''));
-                                                                try { updateCCOTBadge(); } catch (e) { }
-                                                                try { updateChequeBadge(); } catch (e) { }
-                                                            });
-                                                        }
+                                                        if ($('app') && $('app').classList.contains('show')) _wfAfterScrollIdle('cloud-snapshot-paint', _wfPaintAfterCloud);
                                                     } else if (sessionsChanged) {
                                                         console.log('[SYNC] @refresh@ Sessions updated — localized render');
                                                         if ($('app') && $('app').classList.contains('show') && document.getElementById('page-sessions')?.classList.contains('active')) {
@@ -18204,6 +18226,47 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
          * and the spin comes off in a finally so a failure cannot leave the
          * icon turning forever.
          */
+        /* EVERYTHING THAT CAN BE OUT OF DATE, IN THE ORDER IT HAS TO HAPPEN (the runner and the reasons are wealthflow-sync-health.js runRefresh).
+         * Reported 2026-10-29: "when it syncs, everything in the whole system has to refresh". The account is pulled (and what waits is pushed) first,
+         * because what the rest read and write is its merged result; then what comes from outside the page; then every screen. */
+        const _wfOnlineNow = () => navigator.onLine !== false;
+        const _wfActivePageId = () => { const a = document.querySelector('.page.active'); return a ? a.id.replace('page-', '') : ''; };
+        function _wfRefreshSteps() {
+            return [
+                { id: 'cloud', label: 'your account', phase: 'data', first: true, run: async () => {
+                    if (_wfOnlineNow() && userDocRef) { const r = await forceSyncFromCloud(); return r && r.ok === false ? { ok: false, detail: 'not reached' } : r; }
+                    notify('Offline. Showing what is on this device. It will sync when you reconnect.', 'warn');
+                    return { ok: true, detail: 'offline' };
+                } },
+                { id: 'phone', label: 'transactions sent from your phone', phase: 'data', when: () => _wfOnlineNow() && typeof window.wfDrainServerInbox === 'function', run: async () => {
+                    const r = await window.wfDrainServerInbox();
+                    if (r && r.error) {
+                        /* A refusal (401, 403, 404...) means the phone forwarding is not set up for this account, which is not something Sync now failed to do;
+                         * only an answer that did not come (network, 408, 429, 5xx) is reported, so the notice is never a permanent nag. */
+                        const code = Number((String(r.error).match(/(\d{3})\s*$/) || [])[1]) || 0;
+                        if (code >= 400 && code < 500 && code !== 408 && code !== 429) return { ok: true, detail: 'not set up' };
+                        return { ok: false, detail: String(r.error) };
+                    }
+                    return { ok: true, detail: (r && r.drained) ? r.drained + ' added' : '' };
+                } },
+                { id: 'texts', label: 'text messages', phase: 'data', when: () => _wfOnlineNow() && !!(window.WFSms && window.WFSms.kickNow && window.WFSms.signatureOf(appData) !== ''), run: async () => {
+                    const r = await window.WFSms.kickNow();
+                    return r && r.failed ? { ok: false, detail: 'the server did not answer' } : { ok: true };
+                } },
+                { id: 'devices', label: 'your signed-in devices', phase: 'data', when: () => _wfOnlineNow() && typeof _pulseSessionHeartbeat === 'function', run: () => _pulseSessionHeartbeat() },
+                /* What the phone inbox and the devices list brought in is only on this device until it is pushed, and their own writes start the upload without
+                 * waiting for it: Sync now ends with a push it waits for, so closing the page straight after it cannot lose them. */
+                { id: 'save', label: 'saving what was just brought in', phase: 'data', last: true, when: () => _wfOnlineNow() && !!userDocRef && isDirty === true, run: async () => ((await _wfUploadNow()) ? { ok: true } : { ok: false, detail: 'not saved to your account yet' }) },
+                { id: 'screens', label: 'the screens', phase: 'paint', run: () => refreshAllSurfaces() },
+                { id: 'notifications', label: 'notifications', phase: 'paint', when: () => !!(window.WFNotif && window.WFNotif.refresh), run: () => window.WFNotif.refresh() },
+                { id: 'advisor', label: 'the advisor page', phase: 'paint', when: () => _wfActivePageId() === 'ai', run: () => { _wfRenderAdvisorBriefing(); initAISuggestionPills(); _updateAIContextPills(); } },
+                { id: 'texts-log', label: 'the text message log', phase: 'paint', when: () => typeof window.__wfSmsRedraw === 'function', run: () => window.__wfSmsRedraw() },
+                { id: 'update-card', label: 'the app update card', phase: 'paint', when: () => _wfActivePageId() === 'settings' && !!(window.wfUpdate && window.wfUpdate.refresh), run: () => window.wfUpdate.refresh() },
+                { id: 'sync-notice', label: 'the save notice', phase: 'paint', when: () => typeof _wfSyncTick === 'function', run: () => _wfSyncTick() },
+            ];
+        }
+        window._wfRefreshSteps = _wfRefreshSteps;
+
         async function refreshApp(btn) {
             if (_refreshInFlight) return;
             _refreshInFlight = true;
@@ -18213,18 +18276,22 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 btn.setAttribute('aria-busy', 'true');
                 btn.disabled = true;
             }
+            /* On a phone the top bar's Sync button is not drawn at all (the More sheet and the palette are the ways in), so its spinner is seen by nobody: say that
+             * it has started, or the first thing the owner sees is a pause. */
+            try { if (!btn || !btn.getClientRects().length) notify('Syncing…', 'info'); } catch (_) { }
             try {
-                if (navigator.onLine && userDocRef) {
-                    /* AWAITED. This one word is most of the bug. */
-                    await forceSyncFromCloud();
+                const H = window.WFSyncHealth;
+                if (H && typeof H.runRefresh === 'function') {
+                    /* AWAITED, ALL OF IT, AND REPAINTED WHETHER OR NOT ANYTHING NEW CAME. A refresh that only repaints when the cloud differs is a refresh
+                     * that does nothing on the day the owner most wants reassurance that the screen is current. */
+                    const result = await H.runRefresh(_wfRefreshSteps());
+                    const note = H.refreshNote(result);
+                    if (note) notify(note, 'warn');
                 } else {
-                    notify('Offline. Showing what is on this device. It will sync when you reconnect.', 'warn');
+                    if (_wfOnlineNow() && userDocRef) await forceSyncFromCloud();     // the page's module has not arrived yet: the two steps that never needed it
+                    else notify('Offline. Showing what is on this device. It will sync when you reconnect.', 'warn');
+                    refreshAllSurfaces();
                 }
-                /* REPAINTED WHETHER OR NOT THE PULL FOUND ANYTHING NEW. A
-                 * refresh that only repaints when the cloud differs is a
-                 * refresh that does nothing on the day the owner most wants
-                 * reassurance that the screen is current. */
-                refreshAllSurfaces();
             } catch (e) {
                 console.error('[REFRESH] failed:', e);
                 notify('Could not refresh. Your data is safe on this device.', 'error');
@@ -19209,6 +19276,17 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
         /* Search box over the investments and the debtors: the cards stay as they are and are only hidden, so every button keeps
          * the position it had and typing never rebuilds the list (and never loses the caret). */
+        /* Where a record's texts go, shown on the card itself: the first number and the second one when there is one. Reported 2026-10-29: a second
+         * number added to a contact was nowhere on the loan it belonged to, so there was no way to tell whether it had arrived. */
+        function _wfTextsToHtml(rec, lead) {
+            const r = rec || {};
+            const nums = [r.phone, r.phone2].map((v) => String(v == null ? '' : v).trim()).filter(Boolean);
+            if (!nums.length) return '';
+            const show = (n) => (window.WFPeople && WFPeople.showPhone ? WFPeople.showPhone(n) : n);
+            const links = nums.map((n) => '<a href="tel:' + _wfEsc(n.replace(/[^0-9+]/g, '')) + '" style="color:var(--accent);">' + _wfEsc(show(n)) + '</a>').join(' and ');
+            return (lead ? lead : '') + links;
+        }
+        window._wfTextsToHtml = _wfTextsToHtml;
         const _wfListQuery = { income: '', debtor: '' };
         function _wfApplyListSearch(key) {
             const isDebt = key === 'debtor';
@@ -19831,6 +19909,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     </button>
                 </div>
             </div>` : ''}
+            ${source.sms_notifications_enabled === true && (source.phone || source.phone2) ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);">Texts go to ${_wfTextsToHtml(source)}</div>` : ''}
             ${source.notes ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${_wfEsc(source.notes)}</div>` : ''}
         </div>`;
             };
@@ -24443,6 +24522,27 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + _wfEsc(text) + '</span>';
         }
 
+        /* A person's whole history is theirs to read. Reported 2026-10-29: a debtor with 830,000 lent and 580,000 repaid showed nothing before
+         * 2026-09-17, because the timeline drew only the newest six rows and had no way to see the rest, so the first advance and the older
+         * repayments could not be checked or undone. The newest rows still come first; the rest sit behind "Show N earlier" and stay open
+         * across a repaint (a confirmation redraws the list) until the owner folds them away. */
+        const _WF_TL_FIRST = 6;
+        const _wfTlOpen = new Set();
+        function _wfTimeline(rows, key) {
+            const open = _wfTlOpen.has(key);
+            const hidden = open ? 0 : Math.max(0, rows.length - _WF_TL_FIRST);
+            const shown = open ? rows : rows.slice(0, _WF_TL_FIRST);
+            const more = rows.length <= _WF_TL_FIRST ? ''
+                : '<button type="button" class="btn btn-ghost btn-sm" style="margin:4px 0 0 6px;" data-wf-tl="' + _wfEsc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '">'
+                + (open ? 'Show fewer' : 'Show ' + hidden + ' earlier ' + (hidden === 1 ? 'entry' : 'entries')) + '</button>';
+            return { shown, more, hidden };
+        }
+        function _wfTlWire(host) {
+            host.querySelectorAll('[data-wf-tl]').forEach((b) => {
+                b.onclick = () => { const k = b.getAttribute('data-wf-tl'); if (_wfTlOpen.has(k)) _wfTlOpen.delete(k); else _wfTlOpen.add(k); renderLiquidity(); };
+            });
+        }
+
         function renderLiquidity() {
             const host = $('liqBody');
             const stats = $('liqStats');
@@ -24483,7 +24583,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     /* The payment history, newest first. Every row can be
                      * confirmed, un-confirmed, edited or removed — the undo
                      * that did not exist anywhere on this screen. */
-                    const tl = st.payments.slice(-6).reverse().map((e) => {
+                    const _tlp = _wfTimeline(st.payments.slice().reverse(), 'pawn:' + (p.id || i));
+                    const tl = _tlp.shown.map((e) => {
                         const rolled = e.kind === 'capitalise';
                         const what = rolled ? 'rolled into the advance'
                             : e.kind === 'interest' ? 'against interest'
@@ -24533,7 +24634,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         </div>
                         ${redeemed ? '' : worth}
                         ${st.pending ? `<div class="liq-sub" style="margin-top:2px;color:var(--amber,#f59e0b);"><b>${st.pending} payment${st.pending === 1 ? '' : 's'} not counted above.</b> Confirmed, you would owe ${fmtS(st.payableIfConfirmed)}.</div>` : ''}
-                        ${tl ? '<div class="liq-tl">' + tl + '</div>' : ''}
+                        ${tl ? '<div class="liq-tl">' + tl + '</div>' + _tlp.more : ''}
                         <div class="liq-acts">
                             ${redeemed
                                 ? `<button class="btn btn-secondary btn-sm" data-liq-unredeem="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('undo') : '')} Not redeemed after all</button>`
@@ -24589,6 +24690,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 byPair('data-pw-unconf', (p, id) => _pawnPaymentAction(p, id, 'unconfirm'));
                 byPair('data-pw-prm', (p, id) => _pawnPaymentAction(p, id, 'remove'));
                 byPair('data-pw-pedit', (p, id) => _pawnPay(p, id));
+                _wfTlWire(host);
             } else {
                 const t = L.debtorTotals(debtors, now);
                 stats.innerHTML = `
@@ -24607,7 +24709,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * "Debtors feature එකේ undo නෑ. Edit නෑ." A repayment
                      * logged twice, or confirmed on the wrong person, used to
                      * be permanent unless the whole debtor was deleted. */
-                    const tl = su.events.slice(-6).reverse().map((e) => {
+                    const _tld = _wfTimeline(su.events.slice().reverse(), 'debtor:' + (d.id || i));
+                    const tl = _tld.shown.map((e) => {
                         const isIn = e.kind === L.EVENT.REPAYMENT;
                         return `<div class="liq-tl-item ${isIn ? 'is-in' : 'is-out'}">
                             <b style="color:${isIn ? 'var(--green)' : 'var(--red)'};">${isIn ? '+' : '-'}${fmtS(e.amount)}</b>
@@ -24631,8 +24734,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const dueLine = d.dueISO && open ? `
                         <div class="liq-sub" style="margin-top:2px;color:${lateBy > L.LATE_AFTER_DAYS ? 'var(--red)' : 'var(--text3)'};">
                             Expected by ${_wfEsc(d.dueISO)}${lateBy > 0 ? ' — <b>' + lateBy + ' day' + (lateBy === 1 ? '' : 's') + ' ago</b>' : ''}
-                            ${d.phone ? ' · <a href="tel:' + _wfEsc(String(d.phone).replace(/[^0-9+]/g, '')) + '" style="color:var(--accent);">' + _wfEsc(window.WFPeople ? WFPeople.showPhone(d.phone) : d.phone) + '</a>' : ''}
-                        </div>` : (d.phone ? `<div class="liq-sub" style="margin-top:2px;"><a href="tel:${_wfEsc(String(d.phone).replace(/[^0-9+]/g, ''))}" style="color:var(--accent);">${_wfEsc(window.WFPeople ? WFPeople.showPhone(d.phone) : d.phone)}</a></div>` : '');
+                            ${(d.phone || d.phone2) ? ' · ' + window._wfTextsToHtml(d) : ''}
+                        </div>` : ((d.phone || d.phone2) ? `<div class="liq-sub" style="margin-top:2px;">${window._wfTextsToHtml(d)}</div>` : '');
                     return `
                     <div class="liq-row${open ? '' : ' liq-done'}" data-wf-id="${_wfEsc(d.id || '')}">
                         <div class="liq-head">
@@ -24645,7 +24748,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             ${su.pending ? ' · <b style="color:var(--amber,#f59e0b);">' + su.pending + ' unconfirmed, not counted above</b>' : ''}
                         </div>
                         ${dueLine}
-                        ${tl ? '<div class="liq-tl">' + tl + '</div>' : ''}
+                        ${tl ? '<div class="liq-tl">' + tl + '</div>' + _tld.more : ''}
                         <div class="liq-acts">
                             <button class="btn btn-primary btn-sm" data-liq-pay="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('coins') : '')} Log repayment</button>
                             ${(d.sms_notifications_enabled === true && su.outstanding > 0) ? `<button class="btn btn-secondary btn-sm" data-liq-bal="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('send') : '')} Send balance</button>` : ''}
@@ -24683,6 +24786,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     </div>`;
 
                 _wfApplyListSearch('debtor');
+                _wfTlWire(host);
                 const add = host.querySelector('#_liq_addd');
                 if (add) add.onclick = () => openDebtorModal(null);
                 const smsBtn = host.querySelector('#_liq_sms');

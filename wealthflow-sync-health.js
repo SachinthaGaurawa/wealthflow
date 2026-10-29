@@ -297,6 +297,66 @@ export async function runChecks(checks, { timeoutMs = SYNC.CHECK_TIMEOUT_MS, onS
     return out;
 }
 
+/* ── SYNC NOW, END TO END ─────────────────────────────────────────────────────────────────────────────────────────────────────
+ * "Sync now" is one button for everything that can be out of date: the account (push what waits, pull what the other devices did), what came in
+ * from outside the page (the transactions the phone forwarded, the text messages the server owes), and then EVERY screen that shows any of it.
+ * Reported 2026-10-29: tapping it in the More sheet opened the AI Financial Advisor instead (the sheet's buttons carried an attribute the advisor
+ * treats as a question), and even when it ran it repainted the page in front plus a few figures, not the rest.
+ *
+ * Each step is { id, label, phase:'data'|'paint', run, when?, first? }:
+ *   data  steps fetch or push. A step marked `first` (the account) runs alone first, because what the others read and write is its merged result;
+ *         the rest then run together, each with its own deadline, so one that hangs delays nothing else; a step marked `last` (the final save) runs
+ *         alone after them, because what they brought in (transactions from the phone, a device record) is only on this device until it is pushed.
+ *   paint steps redraw, in order, after every data step has finished, whether or not anything new arrived (a screen that is current on the
+ *         day the owner wants to be sure it is current is the point). One that throws does not stop the next.
+ * `when()` false (a step that has nothing to do here: no text messages in use, the advisor not in front) is skipped, not failed.
+ * Nothing here knows what the steps are: the page lists them.
+ */
+export const REFRESH = Object.freeze({ STEP_TIMEOUT_MS: 15000 });
+
+/**
+ * @returns {Promise<{ok:boolean, rows:{id:string,label:string,phase:string,ok:boolean,skipped:boolean,detail:string,ms:number}[], failed:string[]}>}
+ */
+export async function runRefresh(steps, { timeoutMs = REFRESH.STEP_TIMEOUT_MS, clock = Date.now, onStep } = {}) {
+    const list = (Array.isArray(steps) ? steps : []).filter((x) => x && typeof x.run === 'function');
+    const rows = [];
+    const one = async (st) => {
+        const row = { id: s(st.id), label: s(st.label || st.id), phase: st.phase === 'paint' ? 'paint' : 'data', ok: true, skipped: false, detail: '', ms: 0 };
+        const started = clock();
+        try {
+            if (typeof st.when === 'function' && !st.when()) { row.skipped = true; }
+            else {
+                const run = Promise.resolve().then(() => st.run());
+                const r = await (row.phase === 'paint' ? run : withTimeout(run, timeoutMs, row.label));
+                const soft = r && typeof r === 'object' && 'ok' in r;
+                if (soft && r.ok === false) { row.ok = false; row.detail = s(r.detail).slice(0, 200); }
+                else if (soft && r.detail) row.detail = s(r.detail).slice(0, 200);
+            }
+        } catch (e) { row.ok = false; row.detail = s(e && e.message).slice(0, 200); }
+        row.ms = Math.max(0, clock() - started);
+        rows.push(row);
+        if (typeof onStep === 'function') { try { onStep(row, rows.length); } catch (_) { /* a repaint is not the refresh */ } }
+        return row;
+    };
+    const data = list.filter((x) => x.phase !== 'paint');
+    const first = data.filter((x) => x.first === true);
+    const last = data.filter((x) => x.last === true && x.first !== true);
+    const rest = data.filter((x) => x.first !== true && x.last !== true);
+    for (const st of first) await one(st);
+    await Promise.all(rest.map(one));
+    for (const st of last) await one(st);                                                   // after everything that can change the books, before anything is redrawn
+    for (const st of list.filter((x) => x.phase === 'paint')) await one(st);
+    const failed = rows.filter((r) => !r.ok).map((r) => r.label);
+    return { ok: failed.length === 0, rows, failed };
+}
+
+/** The words for steps that could not finish ('' when all did): the sync itself reports its own result, so this is only for the rest. */
+export function refreshNote(result) {
+    const bad = ((result && result.rows) || []).filter((r) => !r.ok && r.id !== 'cloud');
+    if (!bad.length) return '';
+    return 'Synced, but this could not be refreshed just now: ' + bad.map((r) => r.label).join(', ') + '. It will be tried again on its own.';
+}
+
 const VERDICTS = Object.freeze({
     server: 'This device cannot reach the WealthFlow server, the one that sends the text messages. Check the connection and try again.',
     google: 'This device cannot reach Google\'s cloud database, where your account is kept. A filtered or unsteady connection is the usual cause. Try Check Connection again in steady mode, or try Wi-Fi.',
@@ -345,7 +405,7 @@ export function reportText(rows, { build = '', online = true, when = new Date(),
     return lines.join('\n');
 }
 
-const api = { SYNC, TRANSPORT_KEY, PERSIST_KEY, choosePersistence, persistText, shouldAutoRepair, STEADY_SETTINGS, isWebKitFamily, chooseTransport, transportText, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText };
+const api = { SYNC, REFRESH, runRefresh, refreshNote, TRANSPORT_KEY, PERSIST_KEY, choosePersistence, persistText, shouldAutoRepair, STEADY_SETTINGS, isWebKitFamily, chooseTransport, transportText, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText };
 if (typeof window !== 'undefined') { try { window.WFSyncHealth = api; } catch (_) { /* a frozen window is not an error */ } }
 
 export default api;
