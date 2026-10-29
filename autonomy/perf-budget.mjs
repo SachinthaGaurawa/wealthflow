@@ -353,7 +353,8 @@ export const BUDGETS = {
     // 2026-10-29 (the Debtors and Pawn timelines open past the newest six rows, the cards show both numbers a text goes to, and every change to a record a text is derived from is handed to the server by the notifier; measured 2,359,071 + ~0.03% headroom): 2_355_200 -> 2_359_800. About a third is the comments recording why. No new script or request at load.
     // 2026-10-29 (Sync now: the list of steps it runs and what a change from another device repaints, and the advisor's handler narrowed to the advisor's own questions; measured 2,363,010 + ~0.03% headroom): 2_359_800 -> 2_363_800. Mostly comments recording why. No new script or request.
     // 2026-10-29 (Sync now says "Syncing…" at once on a phone, where the top bar button is not drawn, and a refusal from the phone inbox is not a failure; measured 2,364,203 + ~0.01% headroom): 2_363_800 -> 2_364_500.
-    htmlBytes: 2_364_500,
+    // 2026-10-29 (Sync now ends with a save it waits for, so what the phone inbox brought in is pushed before it reports; measured 2,364,785 + ~0.01% headroom): 2_364_500 -> 2_365_100.
+    htmlBytes: 2_365_100,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -728,7 +729,8 @@ export const BUDGETS = {
     // 2026-10-29 (wealthflow-sync-health.js: the runner behind Sync now, about 3 KB; index.html as above; measured 2,709,371 + ~0.03% headroom): 2_705_600 -> 2_710_200.
     // 2026-10-29 (wealthflow-sms.js: a flush also carries the page's own tombstones for debtors and investments, and a closing page sends the same state once; measured 2,710,444 + ~0.03% headroom): 2_710_200 -> 2_711_300.
     // 2026-10-29 (wealthflow-people.js: a loan that names a name two people share is nobody's, and an edit that will claim a loan asks first; measured 2,711,916 + ~0.01% headroom): 2_711_300 -> 2_712_300.
-    totalJsBytes: 2_712_300,
+    // 2026-10-29 (the final save step of Sync now, in index.html and the runner; measured 2,712,366 + ~0.01% headroom): 2_712_300 -> 2_712_900.
+    totalJsBytes: 2_712_900,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

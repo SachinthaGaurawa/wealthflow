@@ -18254,6 +18254,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     return r && r.failed ? { ok: false, detail: 'the server did not answer' } : { ok: true };
                 } },
                 { id: 'devices', label: 'your signed-in devices', phase: 'data', when: () => _wfOnlineNow() && typeof _pulseSessionHeartbeat === 'function', run: () => _pulseSessionHeartbeat() },
+                /* What the phone inbox and the devices list brought in is only on this device until it is pushed, and their own writes start the upload without
+                 * waiting for it: Sync now ends with a push it waits for, so closing the page straight after it cannot lose them. */
+                { id: 'save', label: 'saving what was just brought in', phase: 'data', last: true, when: () => _wfOnlineNow() && !!userDocRef && isDirty === true, run: async () => ((await _wfUploadNow()) ? { ok: true } : { ok: false, detail: 'not saved to your account yet' }) },
                 { id: 'screens', label: 'the screens', phase: 'paint', run: () => refreshAllSurfaces() },
                 { id: 'notifications', label: 'notifications', phase: 'paint', when: () => !!(window.WFNotif && window.WFNotif.refresh), run: () => window.WFNotif.refresh() },
                 { id: 'advisor', label: 'the advisor page', phase: 'paint', when: () => _wfActivePageId() === 'ai', run: () => { _wfRenderAdvisorBriefing(); initAISuggestionPills(); _updateAIContextPills(); } },

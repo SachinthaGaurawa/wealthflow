@@ -305,7 +305,8 @@ export async function runChecks(checks, { timeoutMs = SYNC.CHECK_TIMEOUT_MS, onS
  *
  * Each step is { id, label, phase:'data'|'paint', run, when?, first? }:
  *   data  steps fetch or push. A step marked `first` (the account) runs alone first, because what the others read and write is its merged result;
- *         the rest then run together, each with its own deadline, so one that hangs delays nothing else.
+ *         the rest then run together, each with its own deadline, so one that hangs delays nothing else; a step marked `last` (the final save) runs
+ *         alone after them, because what they brought in (transactions from the phone, a device record) is only on this device until it is pushed.
  *   paint steps redraw, in order, after every data step has finished, whether or not anything new arrived (a screen that is current on the
  *         day the owner wants to be sure it is current is the point). One that throws does not stop the next.
  * `when()` false (a step that has nothing to do here: no text messages in use, the advisor not in front) is skipped, not failed.
@@ -339,9 +340,11 @@ export async function runRefresh(steps, { timeoutMs = REFRESH.STEP_TIMEOUT_MS, c
     };
     const data = list.filter((x) => x.phase !== 'paint');
     const first = data.filter((x) => x.first === true);
-    const rest = data.filter((x) => x.first !== true);
+    const last = data.filter((x) => x.last === true && x.first !== true);
+    const rest = data.filter((x) => x.first !== true && x.last !== true);
     for (const st of first) await one(st);
     await Promise.all(rest.map(one));
+    for (const st of last) await one(st);                                                   // after everything that can change the books, before anything is redrawn
     for (const st of list.filter((x) => x.phase === 'paint')) await one(st);
     const failed = rows.filter((r) => !r.ok).map((r) => r.label);
     return { ok: failed.length === 0, rows, failed };

@@ -84,6 +84,17 @@ describe('what Sync now runs', () => {
         expect(out.rows.map((r) => r.id)).toContain('screens');
     });
 
+    it('a step marked last runs alone after the others have finished, and before any repaint', async () => {
+        const log = [];
+        await runRefresh([
+            { id: 'screens', label: 'screens', phase: 'paint', run: () => { log.push('screens'); } },
+            { id: 'save', label: 'save', phase: 'data', last: true, run: async () => { log.push('save:start'); await new Promise((r) => setTimeout(r, 5)); log.push('save:end'); } },
+            { id: 'phone', label: 'phone', phase: 'data', run: async () => { await new Promise((r) => setTimeout(r, 15)); log.push('phone'); } },
+            { id: 'cloud', label: 'account', phase: 'data', first: true, run: async () => { log.push('cloud'); } },
+        ]);
+        expect(log).toEqual(['cloud', 'phone', 'save:start', 'save:end', 'screens']);       // what the phone brought in is saved before the screens are drawn and before Sync now reports
+    });
+
     it('a step that never answers is timed out on its own and delays nothing else', async () => {
         const log = [];
         const out = await runRefresh([
@@ -155,7 +166,7 @@ describe('the page wires it', () => {
     it('lists every step, the account first, then data, then repaints', () => {
         expect(fn.length).toBeGreaterThan(1000);
         const ids = [...fn.matchAll(/\{ id: '([a-z-]+)', label: '[^']+', phase: '(data|paint)'/g)].map((m) => m[1] + ':' + m[2]);
-        expect(ids).toEqual(['cloud:data', 'phone:data', 'texts:data', 'devices:data', 'screens:paint', 'notifications:paint', 'advisor:paint', 'texts-log:paint', 'update-card:paint', 'sync-notice:paint']);
+        expect(ids).toEqual(['cloud:data', 'phone:data', 'texts:data', 'devices:data', 'save:data', 'screens:paint', 'notifications:paint', 'advisor:paint', 'texts-log:paint', 'update-card:paint', 'sync-notice:paint']);
         expect(fn).toMatch(/id: 'cloud'[^]*first: true/);
         expect(fn).toContain('forceSyncFromCloud()');
         expect(fn).toContain('window.wfDrainServerInbox()');
@@ -167,6 +178,10 @@ describe('the page wires it', () => {
         expect(fn).toContain('H.runRefresh(_wfRefreshSteps())');
         expect(fn).toContain('H.refreshNote(result)');
         expect(fn).toContain('_refreshInFlight');                                           // still one at a time
+    });
+
+    it('ends with a save it waits for, so what the phone inbox brought in cannot be lost to a page closed straight after', () => {
+        expect(fn).toMatch(/id: 'save'[^]*last: true[^]*isDirty === true[^]*_wfUploadNow\(\)/);
     });
 
     it('a refusal from the phone inbox (401, 403, 404...) is "not set up", never a notice at every sync; only an answer that did not come is reported', () => {

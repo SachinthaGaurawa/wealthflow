@@ -83,8 +83,9 @@ assert.equal(await active(), 'expenses', 'Sync now does not leave the page you a
 assert.equal(await page.evaluate(() => document.querySelector('#page-ai').classList.contains('active')), false, 'and does not open the advisor');
 assert.deepEqual(await page.evaluate(() => window.__asked), [], 'and sends nothing to it: "sync" is not a question');
 const ids = run.rows.map((r) => r.id);
-assert.deepEqual(ids.filter((i) => ['cloud', 'phone', 'texts', 'devices', 'screens', 'notifications', 'advisor', 'texts-log', 'update-card', 'sync-notice'].includes(i)).sort(),
-    ['cloud', 'devices', 'notifications', 'phone', 'screens', 'sync-notice', 'texts', 'texts-log', 'update-card', 'advisor'].sort(), 'every step is accounted for');
+assert.deepEqual(ids.filter((i) => ['cloud', 'phone', 'texts', 'devices', 'save', 'screens', 'notifications', 'advisor', 'texts-log', 'update-card', 'sync-notice'].includes(i)).sort(),
+    ['cloud', 'devices', 'notifications', 'phone', 'save', 'screens', 'sync-notice', 'texts', 'texts-log', 'update-card', 'advisor'].sort(), 'every step is accounted for');
+assert.ok(ids.indexOf('save') > Math.max(ids.indexOf('phone'), ids.indexOf('devices')) && ids.indexOf('save') < ids.indexOf('screens'), 'the final save comes after what was brought in and before the screens');
 assert.equal(ids[0], 'cloud', 'the account is first');
 assert.ok(ids.indexOf('screens') > Math.max(ids.indexOf('phone'), ids.indexOf('devices')), 'the screens are repainted after every data step');
 assert.deepEqual(run.failed, [], 'nothing failed: ' + JSON.stringify(run.rows.filter((r) => !r.ok)));
@@ -112,6 +113,18 @@ assert.equal(by2['update-card'].skipped, true);
 assert.deepEqual(run2.failed, [], 'nothing failed: ' + JSON.stringify(run2.rows.filter((r) => !r.ok)));
 assert.equal(await active(), 'ai');
 console.log('3. texts on, advisor   -> text server asked, advisor page repainted');
+
+// what the phone inbox brings in is saved before Sync now reports: the inbox step writes (as applying a forwarded transaction does) and the final save waits for the push
+await page.evaluate(() => { window.__runs.length = 0; window.wfDrainServerInbox = async () => { window.DB.set('expenses', (window.DB.get('expenses') || []).concat([{ id: 'zz-inbox-1', desc: 'ZZ FROM PHONE', cat: 'Food', amount: 5, month: '2026-10', createdAt: new Date().toISOString() }])); return { drained: 1 }; }; });
+await page.waitForTimeout(1100);
+await page.evaluate(() => window.refreshApp(document.getElementById('topRefreshBtn')));
+await page.waitForFunction(() => window.__runs.length === 1, null, { timeout: 15000 });
+const run3 = await page.evaluate(() => window.__runs[0]);
+const save = run3.rows.find((r) => r.id === 'save');
+assert.equal(save.skipped, false, 'a change brought in during Sync now is pushed by Sync now');
+assert.equal(save.ok, true);
+assert.equal(await page.evaluate(() => localStorage.getItem('wf2_isDirty')), 'false', 'and nothing is left waiting when Sync now reports');
+console.log('3b. phone inbox wrote  -> the final save ran and waited; nothing left unsaved');
 
 // the advisor's own suggestion pills still send their question
 await page.waitForSelector('.ai-suggestion-pill');
