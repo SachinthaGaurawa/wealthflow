@@ -47,9 +47,11 @@ export const CLIENT = Object.freeze({
     OPEN_DELAY_MS: 6000,                     // after the page opens, once the cloud copy has had time to land
     DRAIN_MS: 10 * 60000,                    // while the page is open and something is waiting
     MAX_DRAINS: 12,
-    FETCH_TIMEOUT_MS: 25000,
-    FLUSH_DELAY_MS: 1200,                    // a change is handed to the server this soon, not after the upload and the wait above
-    FLUSH_MAX_WAIT_MS: 4000,                 // ... and never later than this, however steadily something else keeps writing
+    FETCH_TIMEOUT_MS: 50000,                 // the server's own budget for one look is 40 s (sms-engine DEFAULT_BUDGET_MS) and Vercel stops it at 60 s: a shorter wait here reported
+                                             // "could not reach the server" for a request that was still being served, and a text that then went out
+    FLUSH_DELAY_MS: 150,                     // a change is handed to the server this soon (just long enough for the writes of one tap to become one request), not after the upload
+    FLUSH_MAX_WAIT_MS: 1000,                 // ... and never later than this, however steadily something else keeps writing
+    OUTBOX_DELAY_MS: 1500,                   // a change the server never acknowledged (the page closed, no network) is handed over this soon after the page is next open
     FLUSH_MAX_BYTES: 56000,                  // a request that must outlive the page may not exceed 64 KB (fetch keepalive)
     FLUSH_MAX_RECORDS: 400,                  // what the server takes in one request, per list (sms-flush.mjs FLUSH): over it the whole request is refused,
     FLUSH_MAX_MARKS: 600,                    // so none of it would be applied. test/sms_flush_test.js keeps these equal to the server's.
@@ -409,6 +411,13 @@ export function createNotifier(deps) {
     };
     /** Has the server already looked at exactly this state? */
     const looked = (uid, sig) => readSig(uid) === (sig || '-');
+    /* The OUTBOX: a change the server has not yet acknowledged, kept on the device. It is set the moment a change is handed over and cleared only when the server
+     * says it holds it (a flush it answered), and only up to the moment that request left, so a newer change made while it was in flight stays owed. A page that
+     * is closed, offline or killed before the answer therefore hands the change over again the next time it is open, whether or not its own upload ever worked. */
+    const outKey = (uid) => 'wf_sms_outbox_' + uid;
+    const owe = (uid) => safeStorage(deps.storage, (x) => { if (x) x.setItem(outKey(uid), String(now())); });
+    const owedSince = (uid) => num(safeStorage(deps.storage, (x) => (x ? x.getItem(outKey(uid)) : '')));
+    const settle = (uid, upTo) => safeStorage(deps.storage, (x) => { if (x && owedSince(uid) <= upTo) x.setItem(outKey(uid), '0'); });   // 0 = nothing owed
 
     function schedule(ms, ctx) {
         if (st.timer) clearTimer(st.timer);
@@ -442,6 +451,7 @@ export function createNotifier(deps) {
         if (!uid) return { skipped: 'no-user' };
         if (st.inFlight) { schedule(CLIENT.DEBOUNCE_MS, ctx); return { skipped: 'busy' }; }
         const sig = ctx.sig !== undefined ? ctx.sig : signatureOf(deps.getUser());
+        const startedAt = now();
         st.inFlight = true; emit();
         try {
             let res = null;
@@ -456,18 +466,21 @@ export function createNotifier(deps) {
             if (!res) { backoff(ctx, sig); return { failed: 'no-token' }; }
             if (res.status === 403) { st.disabled = true; st.lastError = 'This account is not enabled for SMS notifications.'; return { disabled: true }; }
             if (res.status === 200 && res.body && res.body.throttled) {
-                if (st.throttled < 2) { st.throttled += 1; schedule(CLIENT.THROTTLE_RETRY_MS, { ...ctx, sig }); }
+                st.lastError = null;                                    // "too soon" is an answer: the server is there, and a failure shown a moment ago is over
+                if (st.throttled < 2) { st.throttled += 1; schedule(CLIENT.THROTTLE_RETRY_MS, { ...ctx, sig, force: true }); }
                 return { throttled: true };
             }
             if (res.status === 200 && res.body && res.body.ok && res.body.deferred) {
                 // the account has no document yet (this raced its first upload): nothing was looked at, so this state is NOT remembered as handled, and
                 // the nudge that follows the upload still goes
+                st.lastError = null;
                 st.lastSummary = res.body.summary || null;
                 return { deferred: true };
             }
             if (res.status === 200 && res.body && res.body.ok) {
                 st.retries = 0; st.throttled = 0; st.lastError = null;
                 st.lastSummary = res.body.summary || null;
+                if (ctx.flush) settle(uid, startedAt);                  // the server holds the changed records themselves, not only a look at an upload
                 // the server has now looked at exactly this state: a nudge still waiting for the upload to finish has nothing left to say
                 if (st.timer && st.pending && st.pending.sig === sig && st.pending.reason === 'save') { clearTimer(st.timer); st.timer = null; st.pending = null; }
                 writeSig(uid, sig);
@@ -480,9 +493,11 @@ export function createNotifier(deps) {
             backoff(ctx, sig);
             return { failed: res.status };
         } catch (e) {
-            st.lastError = 'Could not reach the server.';
+            // A request that was aborted at the time limit may well have been served (the text went out): say that it was slow, not that nothing was reached.
+            const slow = !!(e && e.name === 'AbortError');
+            st.lastError = slow ? 'The server was slow to answer. Your change is kept, and it is sent again by itself.' : 'Could not reach the server. Your change is kept, and it is sent again by itself.';
             backoff(ctx, sig);
-            return { failed: 'network' };
+            return { failed: slow ? 'timeout' : 'network' };
         } finally { st.inFlight = false; emit(); }
     }
 
@@ -490,7 +505,7 @@ export function createNotifier(deps) {
         if (st.retries >= CLIENT.RETRY_MS.length) return;                 // the daily sweep is the net from here
         const wait = CLIENT.RETRY_MS[st.retries];
         st.retries += 1;
-        schedule(wait, { ...ctx, sig });
+        schedule(wait, { ...ctx, sig, force: true });                   // a retry is never held back by the server's "too soon": the first try may have reached it
     }
 
     return {
@@ -520,6 +535,7 @@ export function createNotifier(deps) {
                 if (!uid) return false;
                 const sig = signatureOf(deps.getUser());
                 if (!everUsed(uid, sig) || looked(uid, sig)) return false;
+                owe(uid);
                 if (st.flushTimer) clearTimer(st.flushTimer);
                 const t = now();
                 if (!st.flushFirst) st.flushFirst = t;
@@ -547,10 +563,12 @@ export function createNotifier(deps) {
                 if (st.flushTimer) { clearTimer(st.flushTimer); st.flushTimer = null; }
                 st.flushFirst = 0;
                 st.leftSig = sig; st.leftAt = now();
+                const leftAt = st.leftAt;
+                owe(uid);
                 const body = flushBody({ reason });
                 const sent = deps.fetchImpl(CLIENT.ENDPOINT, { method: 'POST', keepalive: true, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 Promise.resolve(sent).then((r) => r.json().then((j) => ({ status: r.status, j }), () => ({ status: r.status, j: null })))
-                    .then(({ status, j }) => { if (status === 200 && j && j.ok && !j.deferred) writeSig(uid, sig); else st.leftSig = ''; })
+                    .then(({ status, j }) => { if (status === 200 && j && j.ok && !j.deferred) { writeSig(uid, sig); settle(uid, leftAt); } else st.leftSig = ''; })
                     .catch(() => { st.leftSig = ''; /* the page may be gone: the cron and the next open are the net */ });
                 return true;
             } catch (_) { return false; }
@@ -563,11 +581,14 @@ export function createNotifier(deps) {
                 if (!uid) return false;
                 const sig = signatureOf(deps.getUser());
                 if (!everUsed(uid, sig)) return false;                        // this account has never used SMS: no request at all
+                if (owedSince(uid)) { schedule(CLIENT.OUTBOX_DELAY_MS, { sig, reason: 'outbox', flush: true }); return true; }   // a change the server never acknowledged goes first, as itself
                 if (st.timer) return false;
                 schedule(reason === 'open' ? CLIENT.OPEN_DELAY_MS : CLIENT.DEBOUNCE_MS, { sig, reason });
                 return true;
             } catch (_) { return false; }
         },
+        /** Is a change waiting that the server has not acknowledged? */
+        owes() { try { const uid = deps.getUid(); return !!uid && owedSince(uid) > 0; } catch (_) { return false; } },
         cancel() { if (st.timer) clearTimer(st.timer); st.timer = null; st.pending = null; if (st.flushTimer) clearTimer(st.flushTimer); st.flushTimer = null; st.flushFirst = 0; },
         resetFor() { st.disabled = false; st.retries = 0; st.throttled = 0; st.drains = 0; st.lastSummary = null; st.lastError = null; },
     };
@@ -1100,7 +1121,7 @@ export function boot(win) {
             const away = () => { if (live.notifier) live.notifier.leave('hidden'); };
             win.document.addEventListener('visibilitychange', () => { if (win.document.visibilityState === 'hidden') away(); else if (live.notifier && win.currentUser) { try { win.currentUser.getIdToken().then((t) => { live.token = t; live.tokenExp = tokenExpiry(t); }, () => { }); } catch (_) { /* the listener above keeps it fresh */ } } });
             win.addEventListener('pagehide', away);
-            const again = () => { if (live.notifier && win.document.visibilityState !== 'hidden' && now() - (live.notifier.state.lastKickAt || 0) > CLIENT.DRAIN_MS) live.notifier.onOpen('resume'); };
+            const again = () => { if (live.notifier && win.document.visibilityState !== 'hidden' && (live.notifier.owes() || now() - (live.notifier.state.lastKickAt || 0) > CLIENT.DRAIN_MS)) live.notifier.onOpen('resume'); };
             win.document.addEventListener('visibilitychange', again);
             win.addEventListener('online', again);
         }

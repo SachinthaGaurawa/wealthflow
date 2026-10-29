@@ -474,10 +474,11 @@ describe('the notifier hands the server the change', () => {
         });
         n.onLocalChange();
         expect(timers.map((t) => t.ms)).toEqual([CLIENT.FLUSH_DELAY_MS]);
-        clock += 1000; n.onLocalChange();                                                    // a second write, one second later: the wait starts over
+        clock += CLIENT.FLUSH_DELAY_MS + 10; n.onLocalChange();                              // a second write just after: the wait starts over
         expect(timers.map((t) => t.ms)).toEqual([CLIENT.FLUSH_DELAY_MS]);
-        clock += 2800; n.onLocalChange();                                                    // 3.8 s after the first: only 200 ms left of the cap
-        expect(timers.map((t) => t.ms)).toEqual([CLIENT.FLUSH_MAX_WAIT_MS - 3800]);
+        const left = 60;
+        clock = T0 + CLIENT.FLUSH_MAX_WAIT_MS - left; n.onLocalChange();                     // only `left` ms of the cap remain
+        expect(timers.map((t) => t.ms)).toEqual([left]);
         clock += 500; n.onLocalChange();                                                     // past the cap: now
         expect(timers.map((t) => t.ms)).toEqual([0]);
     });
@@ -633,5 +634,122 @@ describe('the page is wired to it', () => {
         const wiring = fs.readFileSync(path.join(ROOT, 'wealthflow-sms.js'), 'utf8');
         expect(wiring).toMatch(/visibilityState === 'hidden'\) away\(\)/);
         expect(wiring).toMatch(/addEventListener\('pagehide', away\)/);
+    });
+});
+
+
+describe('a change the server never acknowledged is not forgotten (the outbox), and a slow answer is not reported as an unreachable server', () => {
+    const T0 = Date.parse('2026-10-29T21:00:00Z');
+    const mk = ({ store = new Map(), fetchImpl, clock = { t: T0 }, timers = [] } = {}) => {
+        let id = 0;
+        const user = { debtors: [{ id: 'd1', _ut: 500, [FIELDS.ENABLED]: true, [FIELDS.ENABLED_AT]: 1, phone: '0771234567', events: [] }] };
+        const n = createNotifier({
+            getUser: () => user, getUid: () => 'u1', getIdToken: async () => 'tok', peekIdToken: () => 'tok', sinceUt: () => 0,
+            fetchImpl, now: () => clock.t,
+            storage: { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
+            setTimer: (fn, ms) => { id += 1; timers.push({ id, fn, ms }); return id; },
+            clearTimer: (t) => { const i = timers.findIndex((x) => x.id === t); if (i > -1) timers.splice(i, 1); },
+        });
+        const fire = async () => { const t = timers.shift(); if (!t) return null; await t.fn(); await new Promise((r) => setTimeout(r, 0)); return t; };
+        return { n, store, timers, fire, clock, user };
+    };
+    const ok = async () => ({ status: 200, json: async () => ({ ok: true, summary: { sent: 1 } }) });
+
+    it('the page waits longer for the server than the server works, so a text that was served is not reported as a server that was not reached', async () => {
+        const { DEFAULT_BUDGET_MS } = await import('../sms-engine.mjs');
+        expect(CLIENT.FETCH_TIMEOUT_MS).toBeGreaterThan(DEFAULT_BUDGET_MS);
+        expect(CLIENT.FETCH_TIMEOUT_MS).toBeLessThan(60000);                                  // Vercel stops the function at 60 s
+    });
+
+    it('a change is owed from the moment it is made until the server says it holds it', async () => {
+        const r = mk({ fetchImpl: ok });
+        expect(r.n.owes()).toBe(false);
+        r.n.onLocalChange();
+        expect(r.n.owes()).toBe(true);                                                         // owed before anything has been sent
+        await r.fire();
+        expect(r.n.owes()).toBe(false);                                                        // acknowledged
+    });
+
+    it('a request that fails leaves it owed, and a page that is opened again hands it over first, as itself (the records), after a short wait', async () => {
+        const store = new Map();
+        const a = mk({ store, fetchImpl: async () => { throw new TypeError('Load failed'); } });
+        a.n.onLocalChange();
+        await a.fire();                                                                        // the page is closed before anything better happens
+        expect(a.n.owes()).toBe(true);
+        // a new page load: same storage, nothing in memory
+        const calls = [];
+        const b = mk({ store, fetchImpl: async (u, init) => { calls.push({ init, body: JSON.parse(init.body) }); return ok(); } });
+        expect(b.n.owes()).toBe(true);
+        expect(b.n.onOpen('open')).toBe(true);
+        expect(b.timers.map((t) => t.ms)).toEqual([CLIENT.OUTBOX_DELAY_MS]);                   // not the six seconds of an ordinary look
+        await b.fire();
+        expect(calls).toHaveLength(1);
+        expect(calls[0].init.keepalive).toBe(true);
+        expect(calls[0].body).toMatchObject({ action: 'flush', reason: 'outbox' });
+        expect(calls[0].body.records.debtors.map((x) => x.id)).toEqual(['d1']);
+        expect(b.n.owes()).toBe(false);
+    });
+
+    it('while a change is owed the page hands it over on coming back to the front, even a moment after the server was last asked', async () => {
+        const r = mk({ fetchImpl: async () => { throw new TypeError('offline'); } });
+        r.n.onLocalChange();
+        await r.fire();                                                                        // it failed: the page's own retry is minutes away
+        r.timers.length = 0;
+        expect(r.n.owes()).toBe(true);                                                         // the page's resume handler asks exactly this before the ten-minute rule
+        expect(r.n.onOpen('resume')).toBe(true);
+        expect(r.timers.map((t) => t.ms)).toEqual([CLIENT.OUTBOX_DELAY_MS]);
+    });
+
+    it('a change made while an earlier request is in flight stays owed when that request is answered', async () => {
+        const clock = { t: T0 }; let release;
+        const r = mk({ clock, fetchImpl: () => new Promise((res) => { release = () => res({ status: 200, json: async () => ({ ok: true }) }); }) });
+        r.n.onLocalChange();
+        const t = r.timers.shift();
+        const running = t.fn();                                                                // the request leaves at T0
+        await new Promise((x) => setTimeout(x, 0));
+        clock.t = T0 + 500; r.n.onLocalChange();                                               // a newer change, still before the answer
+        release(); await running; await new Promise((x) => setTimeout(x, 0));
+        expect(r.n.owes()).toBe(true);
+    });
+
+    it('a closing page owes the change until its request is acknowledged, and a failed one stays owed', async () => {
+        let fail = true;
+        const r = mk({ fetchImpl: async () => { if (fail) throw new Error('gone'); return { status: 200, json: async () => ({ ok: true }) }; } });
+        expect(r.n.leave('hidden')).toBe(true);
+        expect(r.n.owes()).toBe(true);
+        await new Promise((x) => setTimeout(x, 0)); await new Promise((x) => setTimeout(x, 0));
+        expect(r.n.owes()).toBe(true);                                                         // failed: still owed
+        fail = false; r.clock.t += CLIENT.LEAVE_GAP_MS + 1;
+        expect(r.n.leave('hidden')).toBe(true);
+        await new Promise((x) => setTimeout(x, 0)); await new Promise((x) => setTimeout(x, 0));
+        expect(r.n.owes()).toBe(false);
+    });
+
+    it('a request aborted at the time limit says the server was slow, a failed one says it was not reached, and both say the change is kept', async () => {
+        const slow = mk({ fetchImpl: async () => { const e = new Error('aborted'); e.name = 'AbortError'; throw e; } });
+        await slow.n.run({ force: true });
+        expect(slow.n.state.lastError).toMatch(/slow to answer/);
+        expect(slow.n.state.lastError).toMatch(/kept/);
+        const down = mk({ fetchImpl: async () => { throw new TypeError('Load failed'); } });
+        await down.n.run({ force: true });
+        expect(down.n.state.lastError).toMatch(/^Could not reach the server\./);
+        expect(down.n.state.lastError).toMatch(/kept/);
+    });
+
+    it('the retry after a failure is never answered "too soon": it carries force, and an answer of any kind clears the error that was shown', async () => {
+        const bodies = []; let step = 0;
+        const r = mk({ fetchImpl: async (u, init) => {
+            bodies.push(JSON.parse(init.body)); step += 1;
+            if (step === 1) throw new TypeError('Load failed');
+            if (step === 2) return { status: 200, json: async () => ({ ok: true, throttled: true }) };
+            return { status: 200, json: async () => ({ ok: true, summary: { sent: 0 } }) };
+        } });
+        await r.n.run({ reason: 'save' });
+        expect(r.n.state.lastError).toMatch(/Could not reach/);
+        const retry = r.timers[0];
+        expect(retry.ms).toBe(CLIENT.RETRY_MS[0]);
+        await r.fire();                                                                        // the retry: forced, so a server that remembers the first try does not hold it back
+        expect(bodies[1].force).toBe(true);
+        expect(r.n.state.lastError).toBe(null);                                                // "too soon" is an answer: the stale error is gone
     });
 });
