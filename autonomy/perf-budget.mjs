@@ -350,7 +350,8 @@ export const BUDGETS = {
     // 2026-10-23 (the live listener that cannot die quietly: _wfListen with its error callback and resubscribe, the 20 s read plus the focus read, the revoked-session listener that restarts, the Check Connection live step, the account guard and the push deadline; measured 2,339,214 with the account guard (another account's books are removed before the new account reads) and the push deadline + ~0.1% headroom): 2_336_000 -> 2_341_600. About a third is comments. No new script or request at load.
     // 2026-10-23 (index.html: the connection mode chosen before Firestore is used, its switch in Check Connection, and the Settled debtors section; measured 2,344,295 + ~0.03% headroom): 2_341_600 -> 2_345_000.
     // 2026-10-23 (index.html: Repair connection, the direct-save / browser-storage / queue probes and the offline-cache choice; measured 2,354,480 + ~0.03% headroom): 2_345_000 -> 2_355_200.
-    htmlBytes: 2_355_200,
+    // 2026-10-29 (the Debtors and Pawn timelines open past the newest six rows, the cards show both numbers a text goes to, and every change to a record a text is derived from is handed to the server by the notifier; measured 2,359,071 + ~0.03% headroom): 2_355_200 -> 2_359_800. About a third is the comments recording why. No new script or request at load.
+    htmlBytes: 2_359_800,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -721,7 +722,8 @@ export const BUDGETS = {
     // 2026-10-23 (wealthflow-people.js: one contact-selection service with explicit outcomes for the app's own picker and Chrome's; measured 2,678,324 + ~0.02% headroom): 2_672_500 -> 2_679_000.
     // 2026-10-23 (wealthflow-sms.js: a verified own number is locked behind Change number; wealthflow-sync-health.js: the connection mode; measured 2,684,598 + ~0.02% headroom): 2_679_000 -> 2_685_200.
     // 2026-10-23 (wealthflow-sync-health.js + index.html: Repair connection; measured 2,689,262 + ~0.02% headroom): 2_685_200 -> 2_689_800.
-    totalJsBytes: 2_689_800,
+    // 2026-10-29 (sms-flush.mjs is server-only and is not counted; wealthflow-sms.js: the flush request a closing page can still send, the token it holds for it and the pending-records picker; wealthflow-people.js: a person claims the loans that name them and a loan that fell behind is caught up; index.html as above; measured 2,704,822 + ~0.03% headroom): 2_689_800 -> 2_705_600.
+    totalJsBytes: 2_705_600,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

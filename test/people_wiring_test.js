@@ -94,7 +94,8 @@ describe('the page', () => {
     });
 
     it('shows a stored number as a number (and still dials it)', () => {
-        expect(HTML).toContain('WFPeople.showPhone(d.phone)');
+        expect(HTML).toContain('WFPeople.showPhone(n)');                                                 // one helper draws every number a card shows ...
+        expect(HTML).toContain('window._wfTextsToHtml(d)');                                              // ... and the debtor card uses it for both numbers
         expect(HTML).toContain('href="tel:');
     });
 });

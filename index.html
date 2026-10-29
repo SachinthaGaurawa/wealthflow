@@ -9124,6 +9124,10 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 if (!isSyncingFromCloud && !silent) {
                     setDirty(true);
                     debouncedSync();
+                    /* A text is derived on the server from the books, so what changed must reach it even if this page is closed a second later. The
+                     * notifier sends the changed records in one request that does not need the page (wealthflow-sms.js, sms-flush.mjs); the upload
+                     * above still happens and finds them already there. */
+                    if (k === 'debtors' || k === 'income' || k === 'incomeReceived') { try { if (window.WFSms) window.WFSms.onLocalChange(); } catch (_) { } }
                 }
                 /* EVERY SCREEN THAT READS THIS KEY, ONCE, NEXT FRAME.
                  *
@@ -9791,6 +9795,24 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
          * FALSE otherwise, and never rejects, so the many fire-and-forget callers
          * are unaffected. */
         let _lastCloudPushError = '';
+        /* The newest stamp, among the records and receipts a text is derived from, that an acknowledged upload covers. A page that is closing sends the
+         * server everything stamped after it (wealthflow-sms.js pendingFlush), so what the upload already carried is not sent twice. Per account. */
+        function _wfAckMark() {
+            let m = 0;
+            try {
+                ['debtors', 'income'].forEach(k => (Array.isArray(appData[k]) ? appData[k] : []).forEach(r => { if (r && typeof r._ut === 'number' && r._ut > m) m = r._ut; }));
+                const kf = appData._kuf && appData._kuf.incomeReceived;
+                if (kf && typeof kf === 'object') Object.keys(kf).forEach(p => { const t = kf[p]; if (typeof t === 'number' && t > m) m = t; });
+            } catch (_) { }
+            return m;
+        }
+        function _wfSetAcked(mark) {
+            try {
+                if (!(mark > 0) || !currentUser || !currentUser.uid) return;
+                const key = 'wf_acked_ut_' + currentUser.uid;
+                if (mark > (Number(localStorage.getItem(key)) || 0)) _persistRaw(key, String(mark));
+            } catch (_) { }
+        }
         // Firestore rejects `undefined` ANYWHERE in a document: one stray field fails this push and every later one until reload.
         function _wfCloudSafe(v, d = 0) {
             if (v === undefined || typeof v === 'function' || d > 40) return undefined;
@@ -9850,6 +9872,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             try { _flushCloudDeletes(); } catch (_) { }
 
             const gen = _dirtyGen;   // anything changed after this is NOT covered by this push
+            const ackMark = typeof _wfAckMark === 'function' ? _wfAckMark() : 0;   // the newest text-bearing stamp this push covers (see _wfAckMark)
             let seen = null, _push;
             try {
                 _push = userDocRef.firestore.runTransaction(async tx => {
@@ -9874,6 +9897,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 if (_dirtyGen === gen) setDirty(false); else setTimeout(debouncedSync, 50);   // changed while in flight: still dirty
                 lastSyncTime = Date.now();
                 _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
+                try { if (ackMark > 0 && typeof _wfSetAcked === 'function') _wfSetAcked(ackMark); } catch (_) { }
                 console.log('[SYNC] @checkCircle@ Pushed to cloud at', new Date().toLocaleTimeString());
                 setTimeout(() => setSyncStatus('online'), 300);
                 try { _wfPaintCloudChange(seen); } catch (_) { }
@@ -19209,6 +19233,17 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
         /* Search box over the investments and the debtors: the cards stay as they are and are only hidden, so every button keeps
          * the position it had and typing never rebuilds the list (and never loses the caret). */
+        /* Where a record's texts go, shown on the card itself: the first number and the second one when there is one. Reported 2026-10-29: a second
+         * number added to a contact was nowhere on the loan it belonged to, so there was no way to tell whether it had arrived. */
+        function _wfTextsToHtml(rec, lead) {
+            const r = rec || {};
+            const nums = [r.phone, r.phone2].map((v) => String(v == null ? '' : v).trim()).filter(Boolean);
+            if (!nums.length) return '';
+            const show = (n) => (window.WFPeople && WFPeople.showPhone ? WFPeople.showPhone(n) : n);
+            const links = nums.map((n) => '<a href="tel:' + _wfEsc(n.replace(/[^0-9+]/g, '')) + '" style="color:var(--accent);">' + _wfEsc(show(n)) + '</a>').join(' and ');
+            return (lead ? lead : '') + links;
+        }
+        window._wfTextsToHtml = _wfTextsToHtml;
         const _wfListQuery = { income: '', debtor: '' };
         function _wfApplyListSearch(key) {
             const isDebt = key === 'debtor';
@@ -19831,6 +19866,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     </button>
                 </div>
             </div>` : ''}
+            ${source.sms_notifications_enabled === true && (source.phone || source.phone2) ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);">Texts go to ${_wfTextsToHtml(source)}</div>` : ''}
             ${source.notes ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${_wfEsc(source.notes)}</div>` : ''}
         </div>`;
             };
@@ -24443,6 +24479,27 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + _wfEsc(text) + '</span>';
         }
 
+        /* A person's whole history is theirs to read. Reported 2026-10-29: a debtor with 830,000 lent and 580,000 repaid showed nothing before
+         * 2026-09-17, because the timeline drew only the newest six rows and had no way to see the rest, so the first advance and the older
+         * repayments could not be checked or undone. The newest rows still come first; the rest sit behind "Show N earlier" and stay open
+         * across a repaint (a confirmation redraws the list) until the owner folds them away. */
+        const _WF_TL_FIRST = 6;
+        const _wfTlOpen = new Set();
+        function _wfTimeline(rows, key) {
+            const open = _wfTlOpen.has(key);
+            const hidden = open ? 0 : Math.max(0, rows.length - _WF_TL_FIRST);
+            const shown = open ? rows : rows.slice(0, _WF_TL_FIRST);
+            const more = rows.length <= _WF_TL_FIRST ? ''
+                : '<button type="button" class="btn btn-ghost btn-sm" style="margin:4px 0 0 6px;" data-wf-tl="' + _wfEsc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '">'
+                + (open ? 'Show fewer' : 'Show ' + hidden + ' earlier ' + (hidden === 1 ? 'entry' : 'entries')) + '</button>';
+            return { shown, more, hidden };
+        }
+        function _wfTlWire(host) {
+            host.querySelectorAll('[data-wf-tl]').forEach((b) => {
+                b.onclick = () => { const k = b.getAttribute('data-wf-tl'); if (_wfTlOpen.has(k)) _wfTlOpen.delete(k); else _wfTlOpen.add(k); renderLiquidity(); };
+            });
+        }
+
         function renderLiquidity() {
             const host = $('liqBody');
             const stats = $('liqStats');
@@ -24483,7 +24540,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     /* The payment history, newest first. Every row can be
                      * confirmed, un-confirmed, edited or removed — the undo
                      * that did not exist anywhere on this screen. */
-                    const tl = st.payments.slice(-6).reverse().map((e) => {
+                    const _tlp = _wfTimeline(st.payments.slice().reverse(), 'pawn:' + (p.id || i));
+                    const tl = _tlp.shown.map((e) => {
                         const rolled = e.kind === 'capitalise';
                         const what = rolled ? 'rolled into the advance'
                             : e.kind === 'interest' ? 'against interest'
@@ -24533,7 +24591,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         </div>
                         ${redeemed ? '' : worth}
                         ${st.pending ? `<div class="liq-sub" style="margin-top:2px;color:var(--amber,#f59e0b);"><b>${st.pending} payment${st.pending === 1 ? '' : 's'} not counted above.</b> Confirmed, you would owe ${fmtS(st.payableIfConfirmed)}.</div>` : ''}
-                        ${tl ? '<div class="liq-tl">' + tl + '</div>' : ''}
+                        ${tl ? '<div class="liq-tl">' + tl + '</div>' + _tlp.more : ''}
                         <div class="liq-acts">
                             ${redeemed
                                 ? `<button class="btn btn-secondary btn-sm" data-liq-unredeem="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('undo') : '')} Not redeemed after all</button>`
@@ -24589,6 +24647,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 byPair('data-pw-unconf', (p, id) => _pawnPaymentAction(p, id, 'unconfirm'));
                 byPair('data-pw-prm', (p, id) => _pawnPaymentAction(p, id, 'remove'));
                 byPair('data-pw-pedit', (p, id) => _pawnPay(p, id));
+                _wfTlWire(host);
             } else {
                 const t = L.debtorTotals(debtors, now);
                 stats.innerHTML = `
@@ -24607,7 +24666,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * "Debtors feature එකේ undo නෑ. Edit නෑ." A repayment
                      * logged twice, or confirmed on the wrong person, used to
                      * be permanent unless the whole debtor was deleted. */
-                    const tl = su.events.slice(-6).reverse().map((e) => {
+                    const _tld = _wfTimeline(su.events.slice().reverse(), 'debtor:' + (d.id || i));
+                    const tl = _tld.shown.map((e) => {
                         const isIn = e.kind === L.EVENT.REPAYMENT;
                         return `<div class="liq-tl-item ${isIn ? 'is-in' : 'is-out'}">
                             <b style="color:${isIn ? 'var(--green)' : 'var(--red)'};">${isIn ? '+' : '-'}${fmtS(e.amount)}</b>
@@ -24631,8 +24691,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const dueLine = d.dueISO && open ? `
                         <div class="liq-sub" style="margin-top:2px;color:${lateBy > L.LATE_AFTER_DAYS ? 'var(--red)' : 'var(--text3)'};">
                             Expected by ${_wfEsc(d.dueISO)}${lateBy > 0 ? ' — <b>' + lateBy + ' day' + (lateBy === 1 ? '' : 's') + ' ago</b>' : ''}
-                            ${d.phone ? ' · <a href="tel:' + _wfEsc(String(d.phone).replace(/[^0-9+]/g, '')) + '" style="color:var(--accent);">' + _wfEsc(window.WFPeople ? WFPeople.showPhone(d.phone) : d.phone) + '</a>' : ''}
-                        </div>` : (d.phone ? `<div class="liq-sub" style="margin-top:2px;"><a href="tel:${_wfEsc(String(d.phone).replace(/[^0-9+]/g, ''))}" style="color:var(--accent);">${_wfEsc(window.WFPeople ? WFPeople.showPhone(d.phone) : d.phone)}</a></div>` : '');
+                            ${(d.phone || d.phone2) ? ' · ' + window._wfTextsToHtml(d) : ''}
+                        </div>` : ((d.phone || d.phone2) ? `<div class="liq-sub" style="margin-top:2px;">${window._wfTextsToHtml(d)}</div>` : '');
                     return `
                     <div class="liq-row${open ? '' : ' liq-done'}" data-wf-id="${_wfEsc(d.id || '')}">
                         <div class="liq-head">
@@ -24645,7 +24705,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             ${su.pending ? ' · <b style="color:var(--amber,#f59e0b);">' + su.pending + ' unconfirmed, not counted above</b>' : ''}
                         </div>
                         ${dueLine}
-                        ${tl ? '<div class="liq-tl">' + tl + '</div>' : ''}
+                        ${tl ? '<div class="liq-tl">' + tl + '</div>' + _tld.more : ''}
                         <div class="liq-acts">
                             <button class="btn btn-primary btn-sm" data-liq-pay="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('coins') : '')} Log repayment</button>
                             ${(d.sms_notifications_enabled === true && su.outstanding > 0) ? `<button class="btn btn-secondary btn-sm" data-liq-bal="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('send') : '')} Send balance</button>` : ''}
@@ -24683,6 +24743,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     </div>`;
 
                 _wfApplyListSearch('debtor');
+                _wfTlWire(host);
                 const add = host.querySelector('#_liq_addd');
                 if (add) add.onclick = () => openDebtorModal(null);
                 const smsBtn = host.querySelector('#_liq_sms');

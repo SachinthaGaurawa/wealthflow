@@ -90,8 +90,14 @@ the tick without one). While it is ticked and money is still confirmed as owed:
   investments for one investor are one investor), and two devices that do this before they sync end up with the same people.
 * Edit or delete a saved person from the list. Changing a person's name, phone or NIC asks once: update it on every loan and investment
   they are linked to, on this record only, or cancel. Every save of a person also puts right a linked record that had fallen out of step
-  (a number or ID it lacked), and a number a record already holds is never blanked by an unrelated edit. **Deleting a saved person never
-  touches a loan or an investment**: they keep their own copy of the details and are simply unlinked.
+  (a number or ID it lacked), and a number a record already holds is never blanked by an unrelated edit. **A loan or an investment that
+  was never linked to the person** (made before the book existed, saved with *Save to my people list* off, or left behind when a person was
+  deleted and added again) **is claimed by who it names** when the person is added or edited: the same NIC, or the same number under the
+  same name (a number alone is never enough, because a family shares a phone). The confirmation before the edit counts those loans too, so
+  it never says nothing else changes when something will. When the app opens or comes back to the front, a linked loan that is behind its
+  person (a second number the person has and the loan lacks, with the person saved after the loan was last touched) is caught up, filling
+  blanks only. The loan and investment cards show where the texts go (both numbers, each one dials).
+  **Deleting a saved person never touches a loan or an investment**: they keep their own copy of the details and are simply unlinked.
 * **Contacts** (the button beside every mobile-number box, and **Import contacts** in the book). Only Chrome on Android lets a web page open the
   address book, and there the button opens it at once. On every other device (iPhone, iPad, Mac, Windows, Linux, other browsers) it opens a
   sheet with the ways that do work there, and says which steps fit the device it is on:
@@ -133,6 +139,19 @@ transaction, renders the words once, and sends it. The page nudges `/api/sms-not
 times are there for the window below: 04:00 UTC is 09:30 in Colombo (Asia and the Pacific), 12:00 the Gulf, Europe and the
 eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends nothing and costs nothing.
 
+* **The page closing is not a reason to lose a text.** A text is derived from the UPLOADED books, and the upload is a Firestore transaction on the
+  page's own connection, which a closed, locked or swiped-away page abandons; the nudge after it waits a few seconds more. Reported 2026-10-29:
+  update a debtor or an investment, close the app at once, and the text never went (the cron would only know what had been uploaded). So the page
+  hands the server the change itself (`sms-flush.mjs`, `action: 'flush'` on `/api/sms-notify`): the records a text is derived from that changed since
+  the account last acknowledged an upload (`debtors`, `income`, and the months an investment was marked received), in ONE request. A `fetch` with
+  `keepalive` is finished by the browser even after the page is gone, and it needs a token read from memory, so the page keeps the current Firebase ID
+  token as it is issued. It is sent about 1.2 s after a change (never later than 4 s however steadily something else writes), and **at once when the
+  page is hidden or closed** (`visibilitychange`, `pagehide`). The server merges the records into the caller's own document the way the page's upload would
+  (the newest `_ut` wins, a deletion recorded after the edit stays deleted, nothing is removed, no account is created; the merge is a copy of the page's and
+  `test/sms_flush_test.js` runs both on the same inputs), then sweeps. Sending it twice, or after the page has uploaded, changes nothing, and a request the
+  server has already answered cancels the nudge that was waiting. A request is at most 56 KB (the browser allows 64 KB to a closing page); what does not fit
+  still goes with the page's own upload. Not covered, honestly: a page that is closed while OFFLINE cannot reach the server by any means, so that text goes
+  when the app is next opened (the unsent change is kept on the device and uploaded then), or at the next cron run once it has been uploaded.
 * **Who is swept.** An account is on the cron's list because it registered, but that is not a licence for ever: before an account's
   texts are sent the sweep asks Firebase Auth again whether the sign-in may still use SMS (not disabled, a verified email, on
   `SMS_ALLOWED_EMAILS` or carrying the `admin` claim). One that may not is switched off (`active: false` on its `wf-sms/{uid}` document,
@@ -180,8 +199,11 @@ eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends 
 
 ## Security
 
-* A request can only say "look again". The recipient, amount and wording are read from the caller's own document on the
-  server, so the endpoint cannot be used to text anyone the books do not already name.
+* A request can only say "look again", or hand over the caller's own changed records (`flush`). The recipient, amount and wording are read from the
+  caller's own document on the server, so the endpoint cannot be used to text anyone the books do not already name. A flush writes only the caller's
+  own document (the account is the one the token names, never one in the body), only `debtors`, `income` and the received months, only well-formed
+  records not stamped in the future, up to 400 records and 256 KB, and never removes or revives anything. It can do nothing the caller could not already
+  do to their own document through Firestore.
 * `wf-sms`, `wf-tenants` and `wf-tenant-subjects` are sealed to every client in `firestore.rules`. This only protects
   anything once the rules are published: `firebase deploy --only firestore:rules`.
 * NIC numbers are never stored in the tenant index (only an HMAC) and never appear in a message.

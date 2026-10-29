@@ -387,6 +387,85 @@ export function propagate(store, personId, prev, next, skipId = '', now = Date.n
 }
 
 /**
+ * Loans and investments that ARE this person but point at nobody in the book: made before the book existed, saved with "remember" off, or left
+ * behind by a person who was deleted and added again. Found the way the book finds a duplicate (the same NIC, or the same number under the same
+ * name, or the same name alone when there is no number or NIC to go by), never by a number alone: one phone is often shared by a family.
+ * Reported 2026-10-29: a second number added to a saved person never reached the loan it was for, because that loan had never been linked, so
+ * nothing the person said was carried to it and its texts kept going to the first number only.
+ * @returns {{key:'debtors'|'income', kind:'debtor'|'investment', id:string}[]}
+ */
+export function strayRecords(store, person) {
+    const out = [];
+    if (!store || !person || !person.id) return out;
+    const people = listPeople(store);
+    const me = person;                                                              // exactly the identity given: an edit looks for the loans by what they were saved under
+    for (const [key, kind] of [['debtors', 'debtor'], ['income', 'investment']]) {
+        for (const r of (store.get(key)) || []) {
+            if (!r || typeof r !== 'object' || !r.id) continue;
+            if (personById(people, r[LINK_FIELD])) continue;                       // already somebody's
+            const shared = readShared(kind, r);
+            if (!shared.name) continue;
+            const hit = findDuplicate([me], { name: shared.name, phone: shared.phone, nic: shared.nic, country: isoOfPhone(shared.phone) })
+                || (!shared.phone && !shared.nic ? sameNameOnly([me], shared.name) : null);
+            if (hit) out.push({ key, kind, id: r.id });
+        }
+    }
+    return out;
+}
+
+/** Link those records to the person. Only `personId` is written here; what they lack of the person, and what the person changed, comes from `propagate`. */
+export function adoptStrays(store, person) {
+    const out = { loans: 0, investments: 0, smsOn: 0 };
+    const strays = strayRecords(store, person);
+    if (!strays.length) return out;
+    for (const [key, counter] of [['debtors', 'loans'], ['income', 'investments']]) {
+        const ids = new Set(strays.filter((x) => x.key === key).map((x) => x.id));
+        if (!ids.size) continue;
+        store.set(key, (store.get(key) || []).map((r) => {
+            if (!r || !ids.has(r.id)) return r;
+            out[counter] += 1;
+            if (r.sms_notifications_enabled === true) out.smsOn += 1;
+            return { ...r, [LINK_FIELD]: person.id };
+        }));
+    }
+    return out;
+}
+
+/**
+ * Put right a linked record that fell out of step with its person AFTER the person was last saved: a number the person has and the record lacks
+ * (the second number, usually) is filled in. Only blanks, and only when the person is the newer of the two, so a number the owner deliberately
+ * kept on one loan, or typed on the loan after the person was saved, is never replaced. Runs when the app opens or comes back to the front, so an
+ * edit that reached the person but not the loan (the page closed between the two writes, the loan was edited on another phone at the time) is
+ * healed before the next text is owed rather than at the next save of the person.
+ * @returns {{loans:number, investments:number, smsOn:number}}
+ */
+export function reconcileLinked(store, now = Date.now()) {
+    const out = { loans: 0, investments: 0, smsOn: 0 };
+    const people = listPeople(store);
+    if (!people.length) return out;
+    const byId = new Map(people.map((p) => [p.id, p]));
+    for (const [key, kind, counter] of [['debtors', 'debtor', 'loans'], ['income', 'investment', 'investments']]) {
+        const list = store.get(key) || [];
+        let touched = false;
+        const updated = list.map((r) => {
+            const person = r && byId.get(r[LINK_FIELD]);
+            if (!person) return r;
+            const stamp = Date.parse(person.updatedAt || person.createdAt || '');
+            const own = Number(r._ut) > 0 ? Number(r._ut) : (Date.parse(r.createdAt || '') || 0);
+            if (!(stamp > own)) return r;
+            const copy = { ...r };
+            if (!fillBlanks(kind, copy, person, now)) return r;
+            touched = true;
+            out[counter] += 1;
+            if (r.sms_notifications_enabled === true) out.smsOn += 1;
+            return copy;
+        });
+        if (touched) store.set(key, updated);
+    }
+    return out;
+}
+
+/**
  * The form on a loan or an investment has been saved: file the person, link the record, keep everybody in step.
  *
  *   kind: 'debtor' | 'investment'      rec: the record about to be saved (its name / phone / NIC already set from the form)
@@ -483,7 +562,10 @@ export function updatePerson(store, id, input, { now = Date.now() } = {}) {
     if (!clean.ok) return { ok: false, errors: clean.errors };
     const next = { ...prev, ...clean.fields, id: prev.id, createdAt: prev.createdAt, updatedAt: new Date(now).toISOString() };
     store.set(PEOPLE_KEY, people.map((p) => (p.id === id ? next : p)));
-    return { ok: true, person: next, siblings: propagate(store, id, prev, next, '', now) };
+    // loans of this person that were never linked to them are claimed by their OLD identity (the number they were saved with), then carried along with the rest
+    const adopted = adoptStrays(store, prev);
+    const siblings = propagate(store, id, prev, next, '', now);
+    return { ok: true, person: next, siblings: { loans: siblings.loans, investments: siblings.investments, smsOn: siblings.smsOn }, adopted };
 }
 
 /** What editing a person would change elsewhere, for the confirmation that precedes it. */
@@ -494,7 +576,15 @@ export function previewUpdate(store, id, input) {
     const next = { ...prev, ...clean.fields };
     const diff = SHARED.filter((f) => personValue(prev, f) !== personValue(next, f));
     if (!diff.length) return { loans: 0, investments: 0, smsOn: 0 };
-    return usageOf(prev, booksOf(store));
+    const linked = usageOf(prev, booksOf(store));
+    const stray = strayRecords(store, prev);
+    const books = booksOf(store);
+    const byKey = { debtors: new Map(books.debtors.map((r) => [r && r.id, r])), income: new Map(books.income.map((r) => [r && r.id, r])) };
+    return {
+        loans: linked.loans + stray.filter((x) => x.key === 'debtors').length,
+        investments: linked.investments + stray.filter((x) => x.key === 'income').length,
+        smsOn: linked.smsOn + stray.filter((x) => (byKey[x.key].get(x.id) || {}).sms_notifications_enabled === true).length,
+    };
 }
 
 export function addPerson(store, input, { now = Date.now(), newId = defaultId } = {}) {
@@ -506,7 +596,10 @@ export function addPerson(store, input, { now = Date.now(), newId = defaultId } 
     if (dup) return { ok: false, errors: { name: `${dup.name} is already in the list with the same ${str(dup.nic).trim() && str(clean.fields.nic).trim() ? 'NIC / ID' : 'number'}.` }, duplicate: dup };
     const person = newPerson(clean.fields, { now, newId });
     store.set(PEOPLE_KEY, [...people, person]);
-    return { ok: true, person };
+    // a loan or an investment that already names this person is theirs from now on, and gets the second number and anything else it lacked
+    const adopted = adoptStrays(store, person);
+    const siblings = (adopted.loans + adopted.investments) ? propagate(store, person.id, person, person, '', now) : { loans: 0, investments: 0, smsOn: 0 };
+    return { ok: true, person, adopted, siblings };
 }
 
 /**
@@ -966,6 +1059,6 @@ export function draftFromContact(contact, iso = DEFAULT_REGION) {
 
 export default {
     PEOPLE_KEY, LINK_FIELD, LIMITS, SHARED, phoneProblem, idProblem, resolvePhone, isoOfPhone, secondNumberOf, storedId, idKindOf, cleanPerson, newPerson, defaultId,
-    personById, listPeople, findDuplicate, sameNameOnly, searchPeople, recordMatches, readShared, writeShared, usageOf, booksOf, sharedDiff, propagate, linkRecord, updatePerson, previewUpdate, addPerson, addPeople, removePerson,
+    personById, listPeople, findDuplicate, sameNameOnly, searchPeople, recordMatches, readShared, writeShared, usageOf, booksOf, sharedDiff, propagate, strayRecords, adoptStrays, reconcileLinked, linkRecord, updatePerson, previewUpdate, addPerson, addPeople, removePerson,
     unfiledRecords, harvestPeople, contactPickerSupported, contactPickerKind, pickContactResult, pickContacts, parseVCards, parseContactsCsv, parseContactsText, parseContacts, platformOf, draftFromContact,
 };

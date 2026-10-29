@@ -48,6 +48,10 @@ export const CLIENT = Object.freeze({
     DRAIN_MS: 10 * 60000,                    // while the page is open and something is waiting
     MAX_DRAINS: 12,
     FETCH_TIMEOUT_MS: 25000,
+    FLUSH_DELAY_MS: 1200,                    // a change is handed to the server this soon, not after the upload and the wait above
+    FLUSH_MAX_WAIT_MS: 4000,                 // ... and never later than this, however steadily something else keeps writing
+    FLUSH_MAX_BYTES: 56000,                  // a request that must outlive the page may not exceed 64 KB (fetch keepalive)
+    TOKEN_SLACK_MS: 30000,
     LOG_LIMIT: 40,
     MAX_TOASTS: 3,
 });
@@ -305,14 +309,72 @@ export function countOn(user) {
 }
 
 /**
+ * What to hand the server when the page cannot wait for its own upload: the records a text is derived from that changed since the account last
+ * acknowledged an upload (`since`: the newest stamp that upload covered), and the months of an investment the owner marked received. Newest first,
+ * and no more than fits in one request that is allowed to outlive the page (`maxBytes`, counted in UTF-8 bytes: a Sinhala name takes three per letter); what does not fit is counted in `trimmed` and still goes
+ * with the page's own upload. Sending a record the server already has is harmless: the merge keeps the newer and changes nothing else.
+ * @returns {{records:{debtors:object[], income:object[]}, incomeReceived:object, kuf:object, trimmed:number}}
+ */
+const bytesOf = (text) => {
+    try { if (typeof TextEncoder === 'function') return new TextEncoder().encode(text).length; } catch (_) { /* counted below */ }
+    return text.length * 3;                                                                    // the most UTF-8 can take per character
+};
+
+export function pendingFlush(user, since = 0, maxBytes = CLIENT.FLUSH_MAX_BYTES) {
+    const u = user && typeof user === 'object' ? user : {};
+    const after = num(since);
+    const records = { debtors: [], income: [] };
+    const cand = [];
+    for (const key of ['debtors', 'income']) {
+        for (const r of Array.isArray(u[key]) ? u[key] : []) {
+            if (!r || typeof r !== 'object' || r[SMS_FIELDS.ENABLED] === undefined) continue;     // a record the switch never touched owes no text
+            if (!(num(r._ut) > after)) continue;
+            cand.push({ key, r, ut: num(r._ut) });
+        }
+    }
+    cand.sort((a, b) => b.ut - a.ut);
+    let bytes = 96;
+    let trimmed = 0;
+    const room = (n) => { if (bytes + n > maxBytes) { trimmed += 1; return false; } bytes += n; return true; };
+    for (const c of cand) if (room(bytesOf(JSON.stringify(c.r)) + 2)) records[c.key].push(c.r);
+
+    const incomeReceived = {};
+    const kuf = {};
+    const marks = u.incomeReceived && typeof u.incomeReceived === 'object' ? u.incomeReceived : {};
+    const clocks = u._kuf && u._kuf.incomeReceived && typeof u._kuf.incomeReceived === 'object' ? u._kuf.incomeReceived : {};
+    const clockOf = {};
+    for (const path of Object.keys(clocks)) { const base = path.split('~')[0]; const t = num(clocks[path]); if (t > (clockOf[base] || 0)) clockOf[base] = t; }
+    const prefixes = (Array.isArray(u.income) ? u.income : []).filter((r) => r && r.id != null && r[SMS_FIELDS.ENABLED] === true).map((r) => s(r.id) + '_');
+    for (const k of Object.keys(marks).sort()) {
+        if (!(clockOf[k] > after) || !marks[k] || !prefixes.some((p) => k.startsWith(p))) continue;
+        if (room(bytesOf(k) + bytesOf(JSON.stringify(marks[k])) + 24)) { incomeReceived[k] = marks[k]; kuf[k] = clockOf[k]; }
+    }
+    return { records, incomeReceived, kuf, trimmed };
+}
+
+/** When a Firebase ID token stops being good, in ms since 1970, or 0 when it cannot be read. */
+export function tokenExpiry(token) {
+    try {
+        const part = s(token).split('.')[1];
+        if (!part) return 0;
+        const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+        const json = typeof atob === 'function' ? atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)) : Buffer.from(b64, 'base64').toString('utf8');
+        const exp = Number(JSON.parse(json).exp);
+        return Number.isFinite(exp) ? exp * 1000 : 0;
+    } catch (_) { return 0; }
+}
+
+/**
  * The page's notifier. Everything it touches is injected, so every branch runs without a browser.
- *   deps: { getUser, getUid, getIdToken(forceRefresh), fetchImpl, now, storage, setTimer, clearTimer, onState, abort }
+ *   deps: { getUser, getUid, getIdToken(forceRefresh), peekIdToken(), sinceUt(), fetchImpl, now, storage, setTimer, clearTimer, onState, abort }
+ *   peekIdToken answers at once with a token that is still good (or ''), and sinceUt with the newest stamp the last acknowledged upload covered:
+ *   a page that is closing has no time to ask for either.
  */
 export function createNotifier(deps) {
     const now = deps.now || (() => Date.now());
     const setTimer = deps.setTimer || ((fn, ms) => setTimeout(fn, ms));
     const clearTimer = deps.clearTimer || ((t) => clearTimeout(t));
-    const st = { timer: null, inFlight: false, disabled: false, retries: 0, throttled: 0, drains: 0, lastKickAt: 0, lastSummary: null, lastError: null, pending: null };
+    const st = { timer: null, flushTimer: null, flushFirst: 0, inFlight: false, disabled: false, retries: 0, throttled: 0, drains: 0, lastKickAt: 0, lastSummary: null, lastError: null, pending: null };
     const emit = () => { try { if (deps.onState) deps.onState({ disabled: st.disabled, lastSummary: st.lastSummary, lastError: st.lastError, busy: st.inFlight }); } catch (_) { /* a listener must not break the notifier */ } };
     const sigKey = (uid) => 'wf_sms_sig_' + uid;
     const readSig = (uid) => safeStorage(deps.storage, (x) => (x ? x.getItem(sigKey(uid)) : '') || '') || '';
@@ -324,7 +386,9 @@ export function createNotifier(deps) {
         st.timer = setTimer(() => { st.timer = null; const c = st.pending; st.pending = null; run(c); }, ms);
     }
 
-    async function post(token, body) {
+    const flushBody = (ctx) => ({ action: 'flush', force: true, reason: s(ctx && ctx.reason).slice(0, 20), ...pendingFlush(deps.getUser(), deps.sinceUt ? deps.sinceUt() : 0, CLIENT.FLUSH_MAX_BYTES) });
+
+    async function post(token, body, keepalive = false) {
         const ctl = typeof AbortController === 'function' ? new AbortController() : null;
         const timer = ctl ? setTimeout(() => ctl.abort(), CLIENT.FETCH_TIMEOUT_MS) : null;
         try {
@@ -332,6 +396,7 @@ export function createNotifier(deps) {
                 method: 'POST',
                 headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
+                ...(keepalive ? { keepalive: true } : {}),
                 ...(ctl ? { signal: ctl.signal } : {}),
             });
             let json = null;
@@ -354,7 +419,7 @@ export function createNotifier(deps) {
                 let token = null;
                 try { token = await deps.getIdToken(attempt > 0); } catch (_) { token = null; }
                 if (!token) { st.lastError = 'not signed in'; res = null; break; }
-                res = await post(token, { force: !!ctx.force, reason: s(ctx.reason).slice(0, 20) });
+                res = ctx.flush ? await post(token, flushBody(ctx), true) : await post(token, { force: !!ctx.force, reason: s(ctx.reason).slice(0, 20) });
                 if (res.status !== 401) break;                          // a stale token gets one forced refresh
             }
             st.lastKickAt = now();
@@ -367,6 +432,8 @@ export function createNotifier(deps) {
             if (res.status === 200 && res.body && res.body.ok) {
                 st.retries = 0; st.throttled = 0; st.lastError = null;
                 st.lastSummary = res.body.summary || null;
+                // the server has now looked at exactly this state: a nudge still waiting for the upload to finish has nothing left to say
+                if (st.timer && st.pending && st.pending.sig === sig && st.pending.reason === 'save') { clearTimer(st.timer); st.timer = null; st.pending = null; }
                 writeSig(uid, sig);
                 const sm = st.lastSummary || {};
                 const waiting = num(sm.held) + num(sm.retry) + num(sm.remaining);
@@ -406,6 +473,52 @@ export function createNotifier(deps) {
                 return true;
             } catch (_) { return false; }
         },
+        /**
+         * The owner changed something a text is derived from (a repayment confirmed, a month marked received, a number added). Do not wait for the
+         * upload and the pause after it: a moment's quiet, then the changed records go to the server, which merges them and looks. Cheap and silent
+         * when the server has already looked at exactly this state.
+         */
+        onLocalChange() {
+            try {
+                if (st.disabled) return false;
+                const uid = deps.getUid();
+                if (!uid) return false;
+                const sig = signatureOf(deps.getUser());
+                if (!sig && !readSig(uid)) return false;
+                if (sig === readSig(uid)) return false;
+                if (st.flushTimer) clearTimer(st.flushTimer);
+                const t = now();
+                if (!st.flushFirst) st.flushFirst = t;
+                const wait = Math.max(0, Math.min(CLIENT.FLUSH_DELAY_MS, st.flushFirst + CLIENT.FLUSH_MAX_WAIT_MS - t));
+                st.flushTimer = setTimer(() => { st.flushTimer = null; st.flushFirst = 0; run({ flush: true, reason: 'change' }); }, wait);
+                return true;
+            } catch (_) { return false; }
+        },
+        /**
+         * The page is going away (hidden, closed, swiped off). One request, sent now and not awaited, that the browser finishes without the page:
+         * `keepalive`, and a token read from memory, because nothing asynchronous is guaranteed to run once the page is frozen. Returns whether a
+         * request was sent. A page that survives records that the server has looked; one that does not leaves the server to the cron and the next open.
+         */
+        leave(reason = 'leave') {
+            try {
+                if (st.disabled) return false;
+                const uid = deps.getUid();
+                if (!uid) return false;
+                const sig = signatureOf(deps.getUser());
+                if (!sig && !readSig(uid)) return false;
+                if (sig === readSig(uid)) return false;
+                const token = deps.peekIdToken ? deps.peekIdToken() : '';
+                if (!token) return false;
+                if (st.flushTimer) { clearTimer(st.flushTimer); st.flushTimer = null; }
+                st.flushFirst = 0;
+                const body = flushBody({ reason });
+                const sent = deps.fetchImpl(CLIENT.ENDPOINT, { method: 'POST', keepalive: true, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                Promise.resolve(sent).then((r) => r.json().then((j) => ({ status: r.status, j }), () => ({ status: r.status, j: null })))
+                    .then(({ status, j }) => { if (status === 200 && j && j.ok) writeSig(uid, sig); })
+                    .catch(() => { /* the page may be gone: the cron and the next open are the net */ });
+                return true;
+            } catch (_) { return false; }
+        },
         /** Once when the page opens, and when it comes back to the front after a while: drain anything held. */
         onOpen(reason = 'open') {
             try {
@@ -419,7 +532,7 @@ export function createNotifier(deps) {
                 return true;
             } catch (_) { return false; }
         },
-        cancel() { if (st.timer) clearTimer(st.timer); st.timer = null; st.pending = null; },
+        cancel() { if (st.timer) clearTimer(st.timer); st.timer = null; st.pending = null; if (st.flushTimer) clearTimer(st.flushTimer); st.flushTimer = null; st.flushFirst = 0; },
         resetFor() { st.disabled = false; st.retries = 0; st.throttled = 0; st.drains = 0; st.lastSummary = null; st.lastError = null; },
     };
 }
@@ -771,7 +884,7 @@ export async function ownerCodeCall(deps, body) {
 /** Wire the notifier and the listener to the running app. Safe to call more than once; never throws. */
 export function boot(win) {
     const now = () => Date.now();
-    const live = { uid: null, unsub: null, notifier: null, rows: [], status: null, timer: null, bound: false, told: false, verifiedLocal: '', tick: null };
+    const live = { uid: null, unsub: null, tokOff: null, token: '', tokenExp: 0, notifier: null, rows: [], status: null, timer: null, bound: false, told: false, verifiedLocal: '', tick: null };
     const decoy = () => win._isDecoyMode === true;
     const storage = (() => { try { return win.localStorage; } catch (_) { return null; } })();
     const toast = (t) => { try { if (typeof win.notify === 'function') win.notify(t.text + (t.detail ? ' (' + t.detail + ')' : ''), t.tone === 'error' ? 'error' : (t.tone === 'info' ? 'info' : 'success')); } catch (_) { /* a toast is a courtesy */ } };
@@ -923,6 +1036,8 @@ export function boot(win) {
             getUser: () => (decoy() ? null : win.appData),
             getUid: () => (decoy() ? '' : (win.currentUser && win.currentUser.uid) || ''),
             getIdToken: (force) => win.currentUser.getIdToken(!!force),
+            peekIdToken: () => (live.token && live.tokenExp - now() > CLIENT.TOKEN_SLACK_MS ? live.token : ''),
+            sinceUt: () => { try { return num(storage && storage.getItem('wf_acked_ut_' + uid)); } catch (_) { return 0; } },
             fetchImpl: (...a) => win.fetch(...a),
             storage,
             onState: (state) => {
@@ -938,8 +1053,17 @@ export function boot(win) {
             });
         } catch (_) { live.unsub = null; }
         live.notifier.onOpen('open');
+        /* A token to hand the closing page: kept from the moment it is issued, because the page cannot ask for one while it is being closed. */
+        try {
+            const keep = (u) => { if (u && typeof u.getIdToken === 'function') u.getIdToken().then((t) => { live.token = t; live.tokenExp = tokenExpiry(t); }, () => { /* the next change asks again */ }); };
+            keep(win.currentUser);
+            live.tokOff = win.firebase.auth().onIdTokenChanged(keep);
+        } catch (_) { live.tokOff = null; }
         if (!live.bound) {
             live.bound = true;
+            const away = () => { if (live.notifier) live.notifier.leave('hidden'); };
+            win.document.addEventListener('visibilitychange', () => { if (win.document.visibilityState === 'hidden') away(); else if (live.notifier && win.currentUser) { try { win.currentUser.getIdToken().then((t) => { live.token = t; live.tokenExp = tokenExpiry(t); }, () => { }); } catch (_) { /* the listener above keeps it fresh */ } } });
+            win.addEventListener('pagehide', away);
             const again = () => { if (live.notifier && win.document.visibilityState !== 'hidden' && now() - (live.notifier.state.lastKickAt || 0) > CLIENT.DRAIN_MS) live.notifier.onOpen('resume'); };
             win.document.addEventListener('visibilitychange', again);
             win.addEventListener('online', again);
@@ -948,13 +1072,19 @@ export function boot(win) {
     }
     function stop() {
         try { if (live.unsub) live.unsub(); } catch (_) { /* already gone */ }
+        try { if (live.tokOff) live.tokOff(); } catch (_) { /* already gone */ }
+        live.tokOff = null; live.token = ''; live.tokenExp = 0;
         if (live.notifier) live.notifier.cancel();
         live.unsub = null; live.notifier = null; live.uid = null; live.rows = []; live.status = null; live.verifiedLocal = ''; form.value = null;
     }
     const api = {
-        applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, SMS_FIELDS, BALANCE, balanceWaitMs, requestBalance,
+        applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, pendingFlush, SMS_FIELDS, BALANCE, balanceWaitMs, requestBalance,
         start, setOwnerAlerts,
         afterPush() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.afterPush(); } catch (_) { /* never into the sync path */ } },
+        /** Something a text is derived from just changed on this page: see createNotifier().onLocalChange. Never into the save path. */
+        onLocalChange() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.onLocalChange(); } catch (_) { /* the upload and the cron still carry it */ } },
+        /** The page is going away: see createNotifier().leave. */
+        leave(reason) { try { return live.notifier ? live.notifier.leave(reason) : false; } catch (_) { return false; } },
         kickNow() { if (live.notifier) return live.notifier.run({ force: true, reason: 'manual' }); return Promise.resolve({ skipped: 'not-started' }); },
         /** The log, drawn into an element the page owns (the people screens carry it as a tab). Returns the function that stops redrawing it. */
         panelInto(host) {
@@ -981,4 +1111,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFSms = boot(window); } catch (e) { console.warn('[WF-SMS] page side did not start:', e && e.message); }
 }
 
-export default { ownerCodeCall, SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, ownerAlertsHtml, describeIssue };
+export default { ownerCodeCall, SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, pendingFlush, tokenExpiry, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, ownerAlertsHtml, describeIssue };
