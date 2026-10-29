@@ -7,6 +7,8 @@ on:
       - wf-tokens.css
       - wf-ui.css
       - wealthflow-shell.js
+      - wealthflow-sync-health.js
+      - test/e2e/sync-now.mjs
       - wealthflow-new-badge.js
       - test/e2e/new-badge.mjs
       - wealthflow-insights.js
@@ -52,6 +54,8 @@ jobs:
         run: node test/e2e/ui-shell.mjs
         env:
           WF_SHELL_ARTIFACTS: shell-artifacts
+      - name: Verify Sync now syncs (it does not open the advisor) and every screen is current afterwards
+        run: node test/e2e/sync-now.mjs
       - name: Verify the dashboard order, summary bar, capped feeds and axis units
         run: node test/e2e/ui-dashboard.mjs
         env:

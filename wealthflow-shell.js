@@ -351,9 +351,9 @@
             '<div class="wf-grab" id="wfGrab"></div>' +
             '<div class="wf-sheet-body">' + profileHtml() +
             '<div class="wf-quick">' +
-            '<button type="button" data-q="search">' + icon('search') + 'Search</button>' +
-            '<button type="button" data-q="sync">' + icon('refresh') + 'Sync now</button>' +
-            '<button type="button" data-q="theme">' + icon(themeNow === 'dark' ? 'sun' : 'moon') + (themeNow === 'dark' ? 'Light mode' : 'Dark mode') + '</button>' +
+            '<button type="button" data-wf-act="search">' + icon('search') + 'Search</button>' +
+            '<button type="button" data-wf-act="sync">' + icon('refresh') + 'Sync now</button>' +
+            '<button type="button" data-wf-act="theme">' + icon(themeNow === 'dark' ? 'sun' : 'moon') + (themeNow === 'dark' ? 'Light mode' : 'Dark mode') + '</button>' +
             '</div>' +
             groups.map(function (g) {
                 return '<div class="wf-grp">' + esc(g.name) + '</div><div class="wf-grid">' + g.items.map(function (p) {
@@ -361,16 +361,16 @@
                         '<span class="wf-ic">' + p.icon + '</span>' + esc(p.label) + (p.badge ? '<i class="wf-badge">' + esc(p.badge) + '</i>' : (p.isNew ? '<i class="wf-badge wf-badge-new">NEW</i>' : '')) + '</button>';
                 }).join('') + '</div>';
             }).join('') +
-            (idx.signOut ? '<button type="button" class="wf-signout" data-q="signout">' + icon('logOut') + 'Sign out</button>' : '') +
+            (idx.signOut ? '<button type="button" class="wf-signout" data-wf-act="signout">' + icon('logOut') + 'Sign out</button>' : '') +
             '</div>';
         if (!sheetOv) {
             sheetOv = makeOverlay('wfSheetOv', '<div class="wf-sheet"></div>', 'More');
             sheetOv.addEventListener('click', function (e) {
-                var q = e.target.closest ? e.target.closest('[data-q]') : null;
+                var q = e.target.closest ? e.target.closest('[data-wf-act]') : null;
                 var it = e.target.closest ? e.target.closest('.wf-item') : null;
                 if (it) { var id = it.getAttribute('data-page'); closeAll(); go(id); return; }
                 if (!q) return;
-                var k = q.getAttribute('data-q');
+                var k = q.getAttribute('data-wf-act');
                 closeAll();
                 if (k === 'search') setTimeout(function () { openPalette(); }, 120);
                 else if (k === 'sync') { try { window.refreshApp && window.refreshApp($('topRefreshBtn')); } catch (_) { /* ignore */ } }

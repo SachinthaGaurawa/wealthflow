@@ -100,6 +100,14 @@ describe('what a flush may carry', () => {
         expect(r.note).toBe('ok');
     });
 
+    it('keeps the page\'s own tombstones for debtors and investments, and nothing else', () => {
+        const out = cleanFlush({ tombs: { debtors: { d1: NOW - 10, '': 5, 'a/b': 5, bad: 'x', neg: -1, future: NOW + 3 * 864e5 }, income: { i1: NOW - 20 }, people: { p1: NOW } } }, NOW);
+        expect(out.tombs).toEqual({ debtors: { d1: NOW - 10 }, income: { i1: NOW - 20 } });
+        expect(out.dropped).toBe(5);
+        const many = {}; for (let i = 0; i <= FLUSH.MAX_TOMBS; i += 1) many['x' + i] = NOW - 1;
+        expect(cleanFlush({ tombs: { debtors: many } }, NOW)).toMatchObject({ ok: false, reason: 'too-many' });
+    });
+
     it('refuses a request that is too large or names too many records, and accepts an empty one (a plain nudge)', () => {
         expect(cleanFlush({ records: { debtors: Array.from({ length: FLUSH.MAX_RECORDS + 1 }, (_, i) => rec({ id: 'x' + i })) } }, NOW)).toMatchObject({ ok: false, reason: 'too-many' });
         expect(cleanFlush({ records: { debtors: [rec({ note: 'x'.repeat(FLUSH.MAX_BYTES) })] } }, NOW)).toMatchObject({ ok: false, reason: 'too-large' });
@@ -133,6 +141,23 @@ describe('merging a flush into the account document', () => {
         const doc = { debtors: [], _tomb: { debtors: { gone: 500 } } };
         expect(mergeFlush(doc, clean({ debtors: [{ id: 'gone', _ut: 400 }] })).patch).toEqual({});
         expect(mergeFlush(doc, clean({ debtors: [{ id: 'gone', _ut: 600 }] })).patch.debtors).toEqual([{ id: 'gone', _ut: 600 }]);
+    });
+
+    it('a deletion carried by the flush removes the record from the document, by the page\'s rule, and is remembered', () => {
+        const doc = { debtors: [{ id: 'd1', _ut: 100 }, { id: 'd2', _ut: 100 }, { id: 'd3', _ut: 900 }], _tomb: { debtors: { old: 5 }, income: { i0: 7 } } };
+        const m = mergeFlush(doc, cleanFlush({ tombs: { debtors: { d1: 500, d3: 500, d9: 500 } } }, NOW));
+        expect(m.patch.debtors.map((r) => r.id).sort()).toEqual(['d2', 'd3']);               // d1 was last edited before the deletion; d3 was edited after it, so it stays
+        expect(m.changed.deleted).toBe(1);
+        expect(m.patch._tomb).toEqual({ debtors: { old: 5, d1: 500, d3: 500, d9: 500 }, income: { i0: 7 } });   // remembered, so a stale copy cannot bring it back; other keys kept
+        expect(mergeFlush(m.user, cleanFlush({ tombs: { debtors: { d1: 500, d3: 500, d9: 500 } } }, NOW)).patch).toEqual({});   // idempotent
+    });
+
+    it('a deletion of something the document never held is still remembered, and an older deletion never replaces a newer one', () => {
+        const doc = { income: [], _tomb: { income: { i1: 900 } } };
+        const fresh = mergeFlush(doc, cleanFlush({ tombs: { income: { i2: 300 } } }, NOW));
+        expect(fresh.patch._tomb.income).toEqual({ i1: 900, i2: 300 });
+        expect(fresh.patch.income).toBeUndefined();
+        expect(mergeFlush(doc, cleanFlush({ tombs: { income: { i1: 400 } } }, NOW)).patch).toEqual({});
     });
 
     it('is idempotent: the merged document merged with the same flush again changes nothing', () => {
@@ -227,8 +252,24 @@ describe('/api/sms-notify, action flush', () => {
         expect(new Set(w.client.sent.map((m) => m.to))).toEqual(new Set(['+94771234567', '+94715561957']));
         const b = res(); await handleNotify(flushReq(body), b, w.deps);
         expect(b.statusCode).toBe(200);
-        expect(b.body.flushed).toEqual({ debtors: 0, income: 0, incomeReceived: 0 });
+        expect(b.body.flushed).toEqual({ debtors: 0, income: 0, incomeReceived: 0, deleted: 0 });
         expect(w.client.sent.length).toBe(first);
+    });
+
+    it('a deletion that is still on its way is not texted about from the stale copy', async () => {
+        // the document still holds a debtor with a confirmed repayment nobody has been told about; the owner has just deleted that debtor
+        const w = world({ user: { settings: { currency: 'LKR' }, debtors: [debtor({ _ut: NOW - 5000 })] } });
+        const r = res();
+        await handleNotify(flushReq({ tombs: { debtors: { d1: NOW - 500 } } }), r, w.deps);
+        expect(r.statusCode).toBe(200);
+        expect(r.body.flushed.deleted).toBe(1);
+        expect(w.fs.data.get('users/' + OWNER.uid).debtors).toEqual([]);
+        expect(w.fs.data.get('users/' + OWNER.uid)._tomb.debtors.d1).toBe(NOW - 500);
+        expect(w.client.sent).toHaveLength(0);                                                    // nothing is sent for a record that is gone
+        // for contrast: the same document without the tombstone does send it
+        const w2 = world({ user: { settings: { currency: 'LKR' }, debtors: [debtor({ _ut: NOW - 5000 })] } });
+        await handleNotify(flushReq({}), res(), w2.deps);
+        expect(w2.client.sent.length).toBeGreaterThan(0);
     });
 
     it('is not throttled like a nudge: two flushes a second apart are both merged', async () => {
@@ -288,6 +329,14 @@ describe('what the page sends', () => {
         expect(out.records.income.map((r) => r.id)).toEqual(['inv']);
         expect(pendingFlush(user, 0).records.debtors.map((r) => r.id)).toEqual(['fresh', 'old']);   // newest first
         expect(pendingFlush(user, 900).records).toEqual({ debtors: [], income: [] });
+    });
+
+    it('sends the deletions made since the last acknowledged upload, so the server never texts about a record that is gone', () => {
+        const user = { debtors: [], income: [], _tomb: { debtors: { gone1: 300, old: 100 }, income: { gone2: 400 }, people: { p: 900 }, expenses: { e: 900 } } };
+        const out = pendingFlush(user, 200);
+        expect(out.tombs).toEqual({ debtors: { gone1: 300 }, income: { gone2: 400 } });          // not the ones the account has, not the people book, not other ledgers
+        expect(pendingFlush(user, 0).tombs.debtors).toEqual({ gone1: 300, old: 100 });
+        expect(pendingFlush({}, 0).tombs).toEqual({ debtors: {}, income: {} });
     });
 
     it('sends months marked received for an investment that texts, with the clock of each, and not the rest', () => {
@@ -430,6 +479,40 @@ describe('the notifier hands the server the change', () => {
         expect(r.n.leave()).toBe(false);                                                    // the same state is not sent twice
     });
 
+    it('a page that is closing says it once: hidden and pagehide arrive together, and the same state is not sent twice', async () => {
+        const r = rig();
+        expect(r.n.leave('hidden')).toBe(true);
+        expect(r.n.leave('pagehide')).toBe(false);                                           // before the answer has even arrived
+        expect(r.calls).toHaveLength(1);
+    });
+
+    it('but a request that failed is sent again, and so is the same state after a while', async () => {
+        let clock = T0; let fail = true;
+        const calls = [];
+        const user = { debtors: [on('d1', 500)] };
+        const n = createNotifier({
+            getUser: () => user, getUid: () => 'u1', getIdToken: async () => 't', peekIdToken: () => 't', sinceUt: () => 0,
+            fetchImpl: async (url, init) => { calls.push(1); if (fail) throw new Error('offline'); return { status: 200, json: async () => ({ ok: true }) }; },
+            now: () => clock, storage: { getItem: () => null, setItem: () => {} }, setTimer: () => 1, clearTimer: () => {},
+        });
+        expect(n.leave()).toBe(true);
+        await new Promise((res2) => setTimeout(res2, 0)); await new Promise((res2) => setTimeout(res2, 0));
+        expect(n.leave()).toBe(true);                                                         // the first failed: try again
+        await new Promise((res2) => setTimeout(res2, 0)); await new Promise((res2) => setTimeout(res2, 0));
+        fail = false;
+        expect(n.leave()).toBe(true);                                                         // and again: still not acknowledged
+        await new Promise((res2) => setTimeout(res2, 0)); await new Promise((res2) => setTimeout(res2, 0));
+        expect(calls).toHaveLength(3);
+        const quiet = createNotifier({
+            getUser: () => user, getUid: () => 'u1', getIdToken: async () => 't', peekIdToken: () => 't', sinceUt: () => 0,
+            fetchImpl: () => new Promise(() => {}), now: () => clock, storage: { getItem: () => null, setItem: () => {} }, setTimer: () => 1, clearTimer: () => {},
+        });
+        expect(quiet.leave()).toBe(true);
+        expect(quiet.leave()).toBe(false);
+        clock += CLIENT.LEAVE_GAP_MS + 1;
+        expect(quiet.leave()).toBe(true);                                                     // an answer that never came is not waited for for ever
+    });
+
     it('leave without a good token sends nothing (a stale token would only be refused) and never throws', () => {
         const r = rig({ token: '' });
         expect(r.n.leave()).toBe(false);
@@ -455,6 +538,8 @@ describe('the page is wired to it', () => {
         expect(sync).toContain('_wfAckMark()');
         expect(sync).toContain('_wfSetAcked(ackMark)');
         expect(HTML).toContain("'wf_acked_ut_' + currentUser.uid");
+        const mark = HTML.slice(HTML.indexOf('function _wfAckMark() {'), HTML.indexOf('function _wfSetAcked(mark) {'));
+        expect(mark).toContain('appData._tomb');                                            // a deletion counts as something the upload carried
         const wiring = fs.readFileSync(path.join(ROOT, 'wealthflow-sms.js'), 'utf8');
         expect(wiring).toContain("'wf_acked_ut_' + uid");                                   // the notifier reads what the page wrote
     });

@@ -52,6 +52,7 @@ export const CLIENT = Object.freeze({
     FLUSH_MAX_WAIT_MS: 4000,                 // ... and never later than this, however steadily something else keeps writing
     FLUSH_MAX_BYTES: 56000,                  // a request that must outlive the page may not exceed 64 KB (fetch keepalive)
     TOKEN_SLACK_MS: 30000,
+    LEAVE_GAP_MS: 10000,                     // the same state is not sent twice by a page that is closing (hidden, then pagehide)
     LOG_LIMIT: 40,
     MAX_TOASTS: 3,
 });
@@ -308,18 +309,18 @@ export function countOn(user) {
     return (Array.isArray(u.income) ? u.income.filter(on).length : 0) + (Array.isArray(u.debtors) ? u.debtors.filter(on).length : 0);
 }
 
-/**
- * What to hand the server when the page cannot wait for its own upload: the records a text is derived from that changed since the account last
- * acknowledged an upload (`since`: the newest stamp that upload covered), and the months of an investment the owner marked received. Newest first,
- * and no more than fits in one request that is allowed to outlive the page (`maxBytes`, counted in UTF-8 bytes: a Sinhala name takes three per letter); what does not fit is counted in `trimmed` and still goes
- * with the page's own upload. Sending a record the server already has is harmless: the merge keeps the newer and changes nothing else.
- * @returns {{records:{debtors:object[], income:object[]}, incomeReceived:object, kuf:object, trimmed:number}}
- */
 const bytesOf = (text) => {
     try { if (typeof TextEncoder === 'function') return new TextEncoder().encode(text).length; } catch (_) { /* counted below */ }
     return text.length * 3;                                                                    // the most UTF-8 can take per character
 };
 
+/**
+ * What to hand the server when the page cannot wait for its own upload: the records a text is derived from that changed since the account last
+ * acknowledged an upload (`since`: the newest stamp that upload covered), and the months of an investment the owner marked received. Newest first,
+ * and no more than fits in one request that is allowed to outlive the page (`maxBytes`, counted in UTF-8 bytes: a Sinhala name takes three per letter); what does not fit is counted in `trimmed` and still goes
+ * with the page's own upload. Sending a record the server already has is harmless: the merge keeps the newer and changes nothing else.
+ * @returns {{records:{debtors:object[], income:object[]}, incomeReceived:object, kuf:object, tombs:{debtors:object, income:object}, trimmed:number}}
+ */
 export function pendingFlush(user, since = 0, maxBytes = CLIENT.FLUSH_MAX_BYTES) {
     const u = user && typeof user === 'object' ? user : {};
     const after = num(since);
@@ -338,6 +339,17 @@ export function pendingFlush(user, since = 0, maxBytes = CLIENT.FLUSH_MAX_BYTES)
     const room = (n) => { if (bytes + n > maxBytes) { trimmed += 1; return false; } bytes += n; return true; };
     for (const c of cand) if (room(bytesOf(JSON.stringify(c.r)) + 2)) records[c.key].push(c.r);
 
+    // a debtor or an investment deleted since: the server must not text about it from the copy it still holds
+    const tombs = { debtors: {}, income: {} };
+    const dead = u._tomb && typeof u._tomb === 'object' ? u._tomb : {};
+    for (const key of ['debtors', 'income']) {
+        const m = dead[key] && typeof dead[key] === 'object' ? dead[key] : {};
+        for (const id of Object.keys(m).sort()) {
+            const t = num(m[id]);
+            if (t > after && room(bytesOf(id) + 24)) tombs[key][id] = t;
+        }
+    }
+
     const incomeReceived = {};
     const kuf = {};
     const marks = u.incomeReceived && typeof u.incomeReceived === 'object' ? u.incomeReceived : {};
@@ -349,7 +361,7 @@ export function pendingFlush(user, since = 0, maxBytes = CLIENT.FLUSH_MAX_BYTES)
         if (!(clockOf[k] > after) || !marks[k] || !prefixes.some((p) => k.startsWith(p))) continue;
         if (room(bytesOf(k) + bytesOf(JSON.stringify(marks[k])) + 24)) { incomeReceived[k] = marks[k]; kuf[k] = clockOf[k]; }
     }
-    return { records, incomeReceived, kuf, trimmed };
+    return { records, incomeReceived, kuf, tombs, trimmed };
 }
 
 /** When a Firebase ID token stops being good, in ms since 1970, or 0 when it cannot be read. */
@@ -374,7 +386,7 @@ export function createNotifier(deps) {
     const now = deps.now || (() => Date.now());
     const setTimer = deps.setTimer || ((fn, ms) => setTimeout(fn, ms));
     const clearTimer = deps.clearTimer || ((t) => clearTimeout(t));
-    const st = { timer: null, flushTimer: null, flushFirst: 0, inFlight: false, disabled: false, retries: 0, throttled: 0, drains: 0, lastKickAt: 0, lastSummary: null, lastError: null, pending: null };
+    const st = { timer: null, flushTimer: null, flushFirst: 0, leftSig: '', leftAt: 0, inFlight: false, disabled: false, retries: 0, throttled: 0, drains: 0, lastKickAt: 0, lastSummary: null, lastError: null, pending: null };
     const emit = () => { try { if (deps.onState) deps.onState({ disabled: st.disabled, lastSummary: st.lastSummary, lastError: st.lastError, busy: st.inFlight }); } catch (_) { /* a listener must not break the notifier */ } };
     const sigKey = (uid) => 'wf_sms_sig_' + uid;
     const readSig = (uid) => safeStorage(deps.storage, (x) => (x ? x.getItem(sigKey(uid)) : '') || '') || '';
@@ -509,13 +521,16 @@ export function createNotifier(deps) {
                 if (sig === readSig(uid)) return false;
                 const token = deps.peekIdToken ? deps.peekIdToken() : '';
                 if (!token) return false;
+                // hidden and pagehide arrive together on a page that is closing: the same state is sent once, and again only after a while or a failure
+                if (st.leftSig === sig && now() - st.leftAt < CLIENT.LEAVE_GAP_MS) return false;
                 if (st.flushTimer) { clearTimer(st.flushTimer); st.flushTimer = null; }
                 st.flushFirst = 0;
+                st.leftSig = sig; st.leftAt = now();
                 const body = flushBody({ reason });
                 const sent = deps.fetchImpl(CLIENT.ENDPOINT, { method: 'POST', keepalive: true, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 Promise.resolve(sent).then((r) => r.json().then((j) => ({ status: r.status, j }), () => ({ status: r.status, j: null })))
-                    .then(({ status, j }) => { if (status === 200 && j && j.ok) writeSig(uid, sig); })
-                    .catch(() => { /* the page may be gone: the cron and the next open are the net */ });
+                    .then(({ status, j }) => { if (status === 200 && j && j.ok) writeSig(uid, sig); else st.leftSig = ''; })
+                    .catch(() => { st.leftSig = ''; /* the page may be gone: the cron and the next open are the net */ });
                 return true;
             } catch (_) { return false; }
         },

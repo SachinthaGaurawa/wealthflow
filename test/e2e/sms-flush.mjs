@@ -199,11 +199,23 @@ assert.deepEqual(hidden.calls[0], { keepalive: true, reason: 'hidden', ms: hidde
 assert.ok(hidden.calls[0].ms < 50, 'in the same moment (' + hidden.calls[0].ms + ' ms), nothing asynchronous in the way');
 console.log('3b. page hidden        -> sent in the same moment (' + hidden.calls[0].ms + ' ms) with the second repayment');
 
-// 3c. a page that closes with nothing new to say sends nothing
+// 3c. a page that closes with nothing new to say sends nothing (the answer to the request above has had time to arrive, as it does on a real phone)
+await page.waitForTimeout(400);
 await page.evaluate(() => { window.__calls.length = 0; document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('pagehide')); });
 await page.waitForTimeout(200);
 assert.equal(await page.evaluate(() => window.__calls.filter((c) => c.body.action === 'flush').length), 0, 'the server has already looked at this state: the same request is not sent again');
 console.log('3c. nothing new        -> nothing sent on hide or close');
+
+// 3c2. a debtor deleted at once: the server is told, so it does not text about the copy it still holds
+// (the server has looked at the debtor already: the page remembers that, and deleting the last record that texts is still a change it must report)
+assert.ok(await page.evaluate(() => localStorage.getItem('wf_sms_sig_e2e-sweep-user')), 'the page remembers the server has looked');
+await page.evaluate(() => { window.__vis = 'visible'; window.__calls.length = 0; });
+await page.evaluate(() => { DB.set('debtors', []); });
+await page.waitForFunction(() => window.__calls.some((c) => c.body.action === 'flush'), null, { timeout: 6000 });
+const del = await page.evaluate(() => window.__calls.find((c) => c.body.action === 'flush').body);
+assert.ok(del.tombs.debtors.dK > 0, 'the deletion of the debtor travels with the flush');
+assert.deepEqual(del.records.debtors, [], 'and carries no record of it');
+console.log('3c2. debtor deleted    -> the flush carries its tombstone');
 
 // 3d. a book that never used texts costs no request at all
 await page.evaluate(() => { window.__vis = 'visible'; window.__calls.length = 0; localStorage.removeItem('wf_sms_sig_e2e-sweep-user'); });

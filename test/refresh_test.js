@@ -111,9 +111,13 @@ describe('the click owns the whole cycle', () => {
     });
 
     it('offline says so and still repaints from what is on the device', () => {
-        const body = fn('refreshApp');
-        expect(body).toContain('navigator.onLine');
+        /* The decision moved with the steps: refreshApp runs the list (wealthflow-sync-health.js runRefresh) and the account step is where offline is
+         * said. The fallback inside refreshApp, for a page whose module has not arrived, still says it too. */
+        const body = fn('refreshApp') + fn('_wfRefreshSteps');
+        expect(HTML).toContain('const _wfOnlineNow = () => navigator.onLine !== false;');
+        expect(body).toContain('_wfOnlineNow()');
         expect(body).toMatch(/Offline[^']*/);
+        expect(body, 'the screens are repainted from what is on the device even when offline').toMatch(/id: 'screens'[^]*refreshAllSurfaces\(\)/);
     });
 });
 

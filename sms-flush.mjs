@@ -16,8 +16,14 @@
  * twice, or after the page has uploaded, changes nothing.
  *
  * WHAT IS ACCEPTED. Only the three things a text is derived from: `debtors`, `income` (the investments) and the months of an investment the
- * owner marked received (`incomeReceived`, with the field clocks the page keeps for it). Only what is well formed, only what is not stamped in
- * the future, and only up to a size. Nothing is ever removed by a flush (a deletion travels by the page's own upload).
+ * owner marked received (`incomeReceived`, with the field clocks the page keeps for it), and the page's own tombstones for the first two. Only
+ * what is well formed, only what is not stamped in the future, and only up to a size.
+ *
+ * A DELETION TRAVELS TOO. A debtor or an investment the owner has just deleted must not be texted about from the cloud's stale copy of it while its
+ * deletion is still on the way (reported in review of the first version of this file: a flush that carried only the edits swept the old document).
+ * The page sends the tombstone it wrote ({ id: time of deletion }), and the server applies it under the page's rule: a record is removed only when
+ * the tombstone is at or after the record's own stamp, so a later edit of the same record (from another device) survives. Nothing else is ever
+ * removed, and a mark for a month is never taken away.
  *
  * The merge below is a copy of the page's (index.html `_wfMergeRecordArray`); test/sms_flush_test.js runs the page's own functions against
  * this one on the same inputs, so the two cannot drift.
@@ -32,6 +38,7 @@ export const FLUSH = Object.freeze({
     FUTURE_SLACK_MS: 864e5,                  // the page never stamps further ahead than a day (index.html _wfObserveStamps)
     KEY_MAX: 200,
     DEPTH: 6,
+    MAX_TOMBS: 400,
 });
 
 /* ── the page's merge, unchanged ──────────────────────────────────────────── */
@@ -108,7 +115,7 @@ function plainCopy(v, depth = 0) {
  */
 export function cleanFlush(body, now = Date.now()) {
     const b = isPlain(body) ? body : {};
-    const out = { ok: true, records: { debtors: [], income: [] }, received: {}, kuf: {}, dropped: 0 };
+    const out = { ok: true, records: { debtors: [], income: [] }, received: {}, kuf: {}, tombs: { debtors: {}, income: {} }, dropped: 0 };
     if (sizeOf(b) > FLUSH.MAX_BYTES) return { ...out, ok: false, reason: 'too-large' };
     const ceiling = now + FLUSH.FUTURE_SLACK_MS;
     const recs = isPlain(b.records) ? b.records : {};
@@ -121,6 +128,17 @@ export function cleanFlush(body, now = Date.now()) {
             if (!isPlain(r) || !okId || typeof r._ut !== 'number' || !Number.isFinite(r._ut) || r._ut <= 0 || r._ut > ceiling) { out.dropped += 1; continue; }
             const c = plainCopy(r);
             if (c) out.records[key].push(c); else out.dropped += 1;
+        }
+    }
+    const dead = isPlain(b.tombs) ? b.tombs : {};
+    for (const key of FLUSH.RECORD_KEYS) {
+        const m = isPlain(dead[key]) ? dead[key] : {};
+        const ids = Object.keys(m);
+        if (ids.length > FLUSH.MAX_TOMBS) return { ...out, ok: false, reason: 'too-many' };
+        for (const id of ids) {
+            const t = m[id];
+            if (!id || id.length > FLUSH.KEY_MAX || /^__.*__$/.test(id) || id.includes('/') || typeof t !== 'number' || !Number.isFinite(t) || t <= 0 || t > ceiling) { out.dropped += 1; continue; }
+            out.tombs[key][id] = t;
         }
     }
     const got = isPlain(b[FLUSH.MAP_KEY]) ? b[FLUSH.MAP_KEY] : {};
@@ -160,13 +178,18 @@ export function mergeFlush(cloud, clean) {
     const doc = isPlain(cloud) ? cloud : {};
     const tomb = isPlain(doc._tomb) ? doc._tomb : {};
     const patch = {};
-    const changed = { debtors: 0, income: 0, incomeReceived: 0 };
+    const changed = { debtors: 0, income: 0, incomeReceived: 0, deleted: 0 };
+    let tombPatch = null;
 
     for (const key of FLUSH.RECORD_KEYS) {
         const incoming = clean.records[key];
-        if (!incoming.length) continue;
+        const theirs = clean.tombs[key] || {};
         const have = new Map((Array.isArray(doc[key]) ? doc[key] : []).filter((r) => r && r.id != null).map((r) => [r.id, r]));
-        const dead = isPlain(tomb[key]) ? tomb[key] : {};
+        const held = isPlain(tomb[key]) ? tomb[key] : {};
+        // the page's merge of two tombstone maps: the newer deletion time per id
+        const dead = { ...held };
+        let newTomb = false;
+        for (const id of Object.keys(theirs)) if (dead[id] == null || theirs[id] > dead[id]) { dead[id] = theirs[id]; newTomb = true; }
         let n = 0;
         for (const r of incoming) {
             const ex = have.get(r.id);
@@ -174,10 +197,16 @@ export function mergeFlush(cloud, clean) {
             if (typeof del === 'number' && del >= utOf(r)) continue;                         // deleted after this edit
             if (!ex || (recPreferred(r, ex) === r && recSig(r) !== recSig(ex))) n += 1;
         }
-        if (!n) continue;
+        // a record the document holds that a (new) tombstone now covers goes, by the same rule: deleted at or after its last edit
+        let gone = 0;
+        if (newTomb) for (const [id, r] of have) { const del = dead[id]; if (typeof del === 'number' && del >= utOf(r)) gone += 1; }
+        if (newTomb) { tombPatch = { ...(tombPatch || tomb), [key]: dead }; }
+        if (!n && !gone) continue;
         patch[key] = mergeRecordArray(incoming, doc[key], dead);
         changed[key] = n;
+        changed.deleted += gone;
     }
+    if (tombPatch) patch._tomb = { ...tomb, ...tombPatch };
 
     const marks = Object.keys(clean.received);
     if (marks.length) {
@@ -212,7 +241,7 @@ export async function applyFlush({ db, uid, clean, now = Date.now() }) {
     const ref = db.collection('users').doc(uid);
     return db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
-        if (!snap.exists) return { exists: false, changed: { debtors: 0, income: 0, incomeReceived: 0 }, user: null };
+        if (!snap.exists) return { exists: false, changed: { debtors: 0, income: 0, incomeReceived: 0, deleted: 0 }, user: null };
         const cloud = snap.data() || {};
         const { patch, changed, user } = mergeFlush(cloud, clean);
         if (!Object.keys(patch).length) return { exists: true, changed, user: cloud };

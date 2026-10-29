@@ -152,6 +152,7 @@ eastern Americas, 18:00 the rest of the Americas. A run with nothing owed sends 
   server has already answered cancels the nudge that was waiting. A request is at most 56 KB (the browser allows 64 KB to a closing page); what does not fit
   still goes with the page's own upload. Not covered, honestly: a page that is closed while OFFLINE cannot reach the server by any means, so that text goes
   when the app is next opened (the unsent change is kept on the device and uploaded then), or at the next cron run once it has been uploaded.
+  **Sync now** (More sheet, Settings, command palette) also pushes what waits and then asks the server to look, for an account that uses texts.
 * **Who is swept.** An account is on the cron's list because it registered, but that is not a licence for ever: before an account's
   texts are sent the sweep asks Firebase Auth again whether the sign-in may still use SMS (not disabled, a verified email, on
   `SMS_ALLOWED_EMAILS` or carrying the `admin` claim). One that may not is switched off (`active: false` on its `wf-sms/{uid}` document,
