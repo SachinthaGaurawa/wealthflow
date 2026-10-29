@@ -545,6 +545,82 @@ describe('who a code goes to', () => {
     });
 });
 
+describe('a person with two numbers on file', () => {
+    const twoNumbers = (over = {}) => lenderDoc({
+        income: [{ id: 'inv1', name: 'x', amount: 1, rate: 1, freq: 'monthly', start: '2026-01-05', sms_notifications_enabled: true, sms_enabled_at: T0 - 86400e3 * 30, nic: NIC, phone: PHONE, phone2: '0712345678', ...over }],
+    });
+
+    it('is sent ONE code, to both numbers, and either phone can type it', async () => {
+        const { fs, db, token } = await ready({ user: twoNumbers() });
+        const gw = gateway();
+        const out = await ask(db, gw, token);
+        expect(out.status).toBe(200);
+        expect(gw.sent.map((x) => x.to).sort()).toEqual(['+94712345678', '+94771234567']);
+        expect(codeIn(gw.sent[0].message)).toBe('123456');
+        expect(gw.sent[0].message).toBe(gw.sent[1].message);                  // the very same text, not two codes
+        expect(out.body.phones).toEqual(['+94*****4567', '+94*****5678']);
+        expect(out.body.phone).toBe('+94*****4567');                           // the first number, as before
+        const stored = fs.data.get(`wf-tenants/${token}/otp/current`);
+        expect(stored.phoneHashes).toEqual([phoneHashOf('+94771234567', SECRET), phoneHashOf('+94712345678', SECRET)]);
+        expect(JSON.stringify([...fs.data.entries()].filter(([k]) => !k.startsWith('users/owner1') || k.includes('smsLog')))).not.toContain('712345678');   // the portal keeps no number, only hashes and masks
+        const ok = await check(db, token, '123456');
+        expect(ok.status).toBe(200);
+        expect(ok.ctx.session.phoneHashes).toHaveLength(2);
+    });
+
+    it('still gets the code on the second number when the first one is refused', async () => {
+        const { fs, db, token } = await ready({ user: twoNumbers() });
+        const gw = gateway(({ to }) => (to === '+94771234567' ? { ok: false, kind: KIND.INVALID_RECIPIENT, possiblySent: false, message: 'bad' } : { ok: true, gatewayId: 'g', cost: 1, segments: 1 }));
+        await ask(db, gw, token);
+        expect(gw.sent.map((x) => x.to)).toEqual(['+94712345678']);
+        expect((await check(db, token, '123456')).status).toBe(200);            // the code was not killed by the other number's failure
+        expect(fs.data.get(`wf-tenants/${token}/otp/current`).status).toBe('used');
+    });
+
+    it('kills the code only when it certainly reached nobody', async () => {
+        const { fs, db, token } = await ready({ user: twoNumbers() });
+        const gw = gateway(() => ({ ok: false, kind: KIND.INVALID_RECIPIENT, possiblySent: false, message: 'bad' }));
+        await ask(db, gw, token);
+        expect(fs.data.get(`wf-tenants/${token}/otp/current`).status).toBe('failed');
+    });
+
+    it('sends one text when the second number is the first again, and ignores a second number that cannot receive', async () => {
+        for (const phone2 of [PHONE, '0771234567', 'garbage', '12']) {
+            const { db, token } = await ready({ user: twoNumbers({ phone2 }) });
+            const gw = gateway();
+            await ask(db, gw, token);
+            expect(gw.sent.map((x) => x.to)).toEqual(['+94771234567']);
+        }
+    });
+
+    it('uses the second number when the first is not a number at all', async () => {
+        const { db, token } = await ready({ user: twoNumbers({ phone: 'garbage' }) });
+        const gw = gateway();
+        const out = await ask(db, gw, token);
+        expect(out.body.ok).toBe(true);
+        expect(gw.sent.map((x) => x.to)).toEqual(['+94712345678']);
+    });
+
+    it('lists both numbers for the code, never a number the record does not carry', () => {
+        const user = twoNumbers();
+        const r = pickRecipient(user, normalizeNic(NIC).canonical, SECRET);
+        expect(r.to.map((x) => x.e164)).toEqual(['+94771234567', '+94712345678']);
+        expect(r.phoneHashes).toEqual(r.to.map((x) => x.phoneHash));
+    });
+
+    it('shows the statement of another lender whose record carries either number', async () => {
+        const { buildStatement } = await import('../tenant-statement.mjs');
+        const other = (phone, phone2) => ({ settings: { currency: 'LKR' }, income: [], debtors: [{ id: 'd9', name: 'z', phone, phone2, nic: NIC, sms_notifications_enabled: true, sms_enabled_at: 1, events: [{ id: 'e', kind: 'lent', amount: 10, date: '2026-09-01', confirmed: true }] }] });
+        const held = [phoneHashOf('+94771234567', SECRET), phoneHashOf('+94712345678', SECRET)];
+        const nicHash = (await import('../tenant-links.mjs')).nicHashOf(CANON, SECRET);
+        const rows = (user) => buildStatement({ ledgers: [{ uid: 'o2', user, own: false }], nicHash, phoneHash: held, secret: SECRET, now: T0 }).groups.length;
+        expect(rows(other('0712345678', ''))).toBe(1);                          // their record has the second number
+        expect(rows(other('0779999999', '0771234567'))).toBe(1);                // or has it as ITS second number
+        expect(rows(other('0779999999', ''))).toBe(0);                          // a number the code never went to
+        expect(buildStatement({ ledgers: [{ uid: 'o2', user: other('0712345678', ''), own: false }], nicHash, phoneHash: held[0], secret: SECRET, now: T0 }).groups).toHaveLength(0);   // one hash still works as it did
+    });
+});
+
 describe('small helpers', () => {
     it('hit() counts a window and lets it slide', async () => {
         const { db } = makeDb();

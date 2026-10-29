@@ -53,7 +53,14 @@ function holderOf(candidates) {
 
 const isOn = (rec) => !!rec && rec[FIELDS.ENABLED] === true;
 const nicMatches = (rec, nicHash, secret) => { const n = normalizeIdentity(rec && rec[FIELDS.NIC]); return n.ok && nicHashOf(n.canonical, secret) === nicHash; };
-const phoneMatches = (rec, phoneHash, secret) => { const p = normalizePhone(rec && rec[FIELDS.PHONE]); return p.ok && !!phoneHash && phoneHashOf(p.e164, secret) === phoneHash; };
+/** The proofs the session holds: one hash, or a list (a record with two numbers sends its one code to both, and whoever types it holds one of them). */
+const hashList = (v) => (Array.isArray(v) ? v : [v]).map(str).filter(Boolean);
+/** A record is the same person's when any number it carries (the first or the second) is one the code went to. */
+const phoneMatches = (rec, phoneHash, secret) => {
+    const held = hashList(phoneHash);
+    if (!held.length) return false;
+    return [rec && rec[FIELDS.PHONE], rec && rec[FIELDS.PHONE2]].some((raw) => { const p = normalizePhone(raw); return p.ok && held.includes(phoneHashOf(p.e164, secret)); });
+};
 
 /** The records of one lender's document this tenant may see. */
 export function recordsFor(user, { nicHash, phoneHash, secret, own }) {
