@@ -18240,7 +18240,14 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 } },
                 { id: 'phone', label: 'transactions sent from your phone', phase: 'data', when: () => _wfOnlineNow() && typeof window.wfDrainServerInbox === 'function', run: async () => {
                     const r = await window.wfDrainServerInbox();
-                    return r && r.error ? { ok: false, detail: String(r.error) } : { ok: true, detail: (r && r.drained) ? r.drained + ' added' : '' };
+                    if (r && r.error) {
+                        /* A refusal (401, 403, 404...) means the phone forwarding is not set up for this account, which is not something Sync now failed to do;
+                         * only an answer that did not come (network, 408, 429, 5xx) is reported, so the notice is never a permanent nag. */
+                        const code = Number((String(r.error).match(/(\d{3})\s*$/) || [])[1]) || 0;
+                        if (code >= 400 && code < 500 && code !== 408 && code !== 429) return { ok: true, detail: 'not set up' };
+                        return { ok: false, detail: String(r.error) };
+                    }
+                    return { ok: true, detail: (r && r.drained) ? r.drained + ' added' : '' };
                 } },
                 { id: 'texts', label: 'text messages', phase: 'data', when: () => _wfOnlineNow() && !!(window.WFSms && window.WFSms.kickNow && window.WFSms.countOn(appData) > 0), run: async () => {
                     const r = await window.WFSms.kickNow();
@@ -18266,6 +18273,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 btn.setAttribute('aria-busy', 'true');
                 btn.disabled = true;
             }
+            /* On a phone the top bar's Sync button is not drawn at all (the More sheet and the palette are the ways in), so its spinner is seen by nobody: say that
+             * it has started, or the first thing the owner sees is a pause. */
+            try { if (!btn || !btn.getClientRects().length) notify('Syncing…', 'info'); } catch (_) { }
             try {
                 const H = window.WFSyncHealth;
                 if (H && typeof H.runRefresh === 'function') {

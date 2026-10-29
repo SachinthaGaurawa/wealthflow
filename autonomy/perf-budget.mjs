@@ -352,7 +352,8 @@ export const BUDGETS = {
     // 2026-10-23 (index.html: Repair connection, the direct-save / browser-storage / queue probes and the offline-cache choice; measured 2,354,480 + ~0.03% headroom): 2_345_000 -> 2_355_200.
     // 2026-10-29 (the Debtors and Pawn timelines open past the newest six rows, the cards show both numbers a text goes to, and every change to a record a text is derived from is handed to the server by the notifier; measured 2,359,071 + ~0.03% headroom): 2_355_200 -> 2_359_800. About a third is the comments recording why. No new script or request at load.
     // 2026-10-29 (Sync now: the list of steps it runs and what a change from another device repaints, and the advisor's handler narrowed to the advisor's own questions; measured 2,363,010 + ~0.03% headroom): 2_359_800 -> 2_363_800. Mostly comments recording why. No new script or request.
-    htmlBytes: 2_363_800,
+    // 2026-10-29 (Sync now says "Syncing…" at once on a phone, where the top bar button is not drawn, and a refusal from the phone inbox is not a failure; measured 2,364,203 + ~0.01% headroom): 2_363_800 -> 2_364_500.
+    htmlBytes: 2_364_500,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

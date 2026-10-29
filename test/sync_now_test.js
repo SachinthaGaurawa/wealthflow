@@ -169,6 +169,15 @@ describe('the page wires it', () => {
         expect(fn).toContain('_refreshInFlight');                                           // still one at a time
     });
 
+    it('a refusal from the phone inbox (401, 403, 404...) is "not set up", never a notice at every sync; only an answer that did not come is reported', () => {
+        expect(fn).toContain("code >= 400 && code < 500 && code !== 408 && code !== 429");
+        expect(fn).toContain("detail: 'not set up'");
+    });
+
+    it('says it has started when the top bar button, which is not drawn on a phone, is the one that was pressed', () => {
+        expect(fn).toContain("if (!btn || !btn.getClientRects().length) notify('Syncing…', 'info');");
+    });
+
     it('the text-message nudge is only made for an account that uses text messages', () => {
         expect(fn).toMatch(/id: 'texts'[^]*WFSms\.countOn\(appData\) > 0/);
     });

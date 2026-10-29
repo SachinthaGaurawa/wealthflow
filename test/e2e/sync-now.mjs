@@ -73,9 +73,11 @@ await page.evaluate(() => { window.appData.expenses.push({ id: 'zz-sync-1', desc
 assert.doesNotMatch(await page.textContent('#page-expenses'), /ZZ SYNC TEST/, 'the page in front is stale until Sync now');
 assert.doesNotMatch(await page.evaluate(() => document.getElementById('dashRecent').textContent), /ZZ SYNC TEST/, 'and so is the dashboard behind it');
 
+await page.evaluate(() => { window.__toasts = []; const o = window.notify; window.notify = (m, t) => { window.__toasts.push(String(m)); try { return o(m, t); } catch (_) { return undefined; } }; });
 await openMore();
 await page.click('.wf-sheet [data-wf-act="sync"]');
 await page.waitForFunction(() => window.__runs.length === 1, null, { timeout: 15000 });
+assert.ok((await page.evaluate(() => window.__toasts)).includes('Syncing…'), 'the top bar button is not drawn on a phone, so the tap is acknowledged at once in words');
 const run = await page.evaluate(() => window.__runs[0]);
 assert.equal(await active(), 'expenses', 'Sync now does not leave the page you are on');
 assert.equal(await page.evaluate(() => document.querySelector('#page-ai').classList.contains('active')), false, 'and does not open the advisor');
