@@ -727,7 +727,8 @@ export const BUDGETS = {
     // 2026-10-29 (sms-flush.mjs is server-only and is not counted; wealthflow-sms.js: the flush request a closing page can still send, the token it holds for it and the pending-records picker; wealthflow-people.js: a person claims the loans that name them and a loan that fell behind is caught up; index.html as above; measured 2,704,822 + ~0.03% headroom): 2_689_800 -> 2_705_600.
     // 2026-10-29 (wealthflow-sync-health.js: the runner behind Sync now, about 3 KB; index.html as above; measured 2,709,371 + ~0.03% headroom): 2_705_600 -> 2_710_200.
     // 2026-10-29 (wealthflow-sms.js: a flush also carries the page's own tombstones for debtors and investments, and a closing page sends the same state once; measured 2,710,444 + ~0.03% headroom): 2_710_200 -> 2_711_300.
-    totalJsBytes: 2_711_300,
+    // 2026-10-29 (wealthflow-people.js: a loan that names a name two people share is nobody's, and an edit that will claim a loan asks first; measured 2,711,916 + ~0.01% headroom): 2_711_300 -> 2_712_300.
+    totalJsBytes: 2_712_300,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

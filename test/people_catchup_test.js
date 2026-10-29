@@ -68,7 +68,38 @@ describe('a person saved after their loans were made', () => {
     it('the confirmation before an edit counts the loans that will be claimed, so it never says "nothing else changes"', () => {
         const s = mk({ debtors: [debtor()], income: [investment()], people: [{ id: 'p1', name: "Kaushi's Mother", phone: '+94715561957', phone2: '', country: 'LK' }] });
         expect(P.previewUpdate(s, 'p1', { name: "Kaushi's Mother", phone: '0715561957', phone2: '0777654321' })).toEqual({ loans: 1, investments: 1, smsOn: 2 });
-        expect(P.previewUpdate(s, 'p1', { name: "Kaushi's Mother", phone: '0715561957', phone2: '' })).toEqual({ loans: 0, investments: 0, smsOn: 0 });
+        // nothing shared changes, but the loan and the investment would still be claimed by saving: they are counted
+        expect(P.previewUpdate(s, 'p1', { name: "Kaushi's Mother", phone: '0715561957', phone2: '' })).toEqual({ loans: 1, investments: 1, smsOn: 2 });
+        // nobody left to claim and nothing shared changed: nothing to ask
+        const linked = mk({ debtors: [debtor({ personId: 'p1' })], income: [], people: [{ id: 'p1', name: "Kaushi's Mother", phone: '+94715561957', phone2: '', country: 'LK' }] });
+        expect(P.previewUpdate(linked, 'p1', { name: "Kaushi's Mother", phone: '0715561957', phone2: '' })).toEqual({ loans: 0, investments: 0, smsOn: 0 });
+    });
+
+    it('a loan that names only a name two people share is nobody\'s: it is not claimed by whichever of them is edited, nor given their number', () => {
+        const nameOnly = { id: 'dN', name: 'Nimal', sms_notifications_enabled: true, _ut: 1 };
+        const s = mk({ debtors: [nameOnly], income: [], people: [
+            { id: 'p1', name: 'Nimal', phone: '+94771111111', country: 'LK' },
+            { id: 'p2', name: 'Nimal', phone: '+94772222222', country: 'LK' },
+        ] });
+        expect(P.strayRecords(s, s.data.people[0])).toEqual([]);
+        P.updatePerson(s, 'p1', { name: 'Nimal', phone: '0771111111', phone2: '0773333333' }, { now: NOW });
+        expect(s.data.debtors[0].personId).toBeUndefined();
+        expect(s.data.debtors[0].phone).toBeUndefined();                                    // nobody\'s number was put on a loan that is nobody\'s
+        // with only one Nimal in the book the same loan is his
+        const one = mk({ debtors: [{ ...nameOnly }], income: [], people: [{ id: 'p1', name: 'Nimal', phone: '+94771111111', country: 'LK' }] });
+        expect(P.strayRecords(one, one.data.people[0])).toHaveLength(1);
+        // and a name edited in the same save is still found by the name it had
+        const renamed = mk({ debtors: [{ ...nameOnly }], income: [], people: [{ id: 'p1', name: 'Nimal', phone: '+94771111111', country: 'LK' }] });
+        P.updatePerson(renamed, 'p1', { name: 'Nimal Perera', phone: '0771111111' }, { now: NOW });
+        expect(renamed.data.debtors[0].personId).toBe('p1');
+    });
+
+    it('an edit that changes no shared field still asks first when it will claim a loan, because claiming gives the loan the person\'s second number', () => {
+        const s = mk({ debtors: [debtor()], income: [], people: [{ id: 'p1', name: "Kaushi's Mother", phone: '+94715561957', phone2: '+94777654321', email: '', country: 'LK' }] });
+        expect(P.previewUpdate(s, 'p1', { name: "Kaushi's Mother", phone: '0715561957', phone2: '0777654321', email: 'a@b.lk' })).toEqual({ loans: 1, investments: 0, smsOn: 1 });
+        P.updatePerson(s, 'p1', { name: "Kaushi's Mother", phone: '0715561957', phone2: '0777654321', email: 'a@b.lk' }, { now: NOW });
+        // once claimed, the next email edit has nothing left to ask about
+        expect(P.previewUpdate(s, 'p1', { name: "Kaushi's Mother", phone: '0715561957', phone2: '0777654321', email: 'c@d.lk' })).toEqual({ loans: 0, investments: 0, smsOn: 0 });
     });
 
     it('a person with an NIC claims the loans with the same NIC whatever name they were saved under', () => {

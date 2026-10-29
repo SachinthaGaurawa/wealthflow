@@ -18249,7 +18249,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     }
                     return { ok: true, detail: (r && r.drained) ? r.drained + ' added' : '' };
                 } },
-                { id: 'texts', label: 'text messages', phase: 'data', when: () => _wfOnlineNow() && !!(window.WFSms && window.WFSms.kickNow && window.WFSms.countOn(appData) > 0), run: async () => {
+                { id: 'texts', label: 'text messages', phase: 'data', when: () => _wfOnlineNow() && !!(window.WFSms && window.WFSms.kickNow && window.WFSms.signatureOf(appData) !== ''), run: async () => {
                     const r = await window.WFSms.kickNow();
                     return r && r.failed ? { ok: false, detail: 'the server did not answer' } : { ok: true };
                 } },

@@ -399,15 +399,18 @@ export function strayRecords(store, person) {
     if (!store || !person || !person.id) return out;
     const people = listPeople(store);
     const me = person;                                                              // exactly the identity given: an edit looks for the loans by what they were saved under
+    /* A match is judged against EVERYBODY in the book, with this person in the identity given: a name that two people share is nobody's, so a loan that
+     * names only that name is not claimed by whichever of them happens to be edited (it would be given that person's number, and texted there). */
+    const roster = people.some((p) => p.id === me.id) ? people.map((p) => (p.id === me.id ? me : p)) : [...people, me];
     for (const [key, kind] of [['debtors', 'debtor'], ['income', 'investment']]) {
         for (const r of (store.get(key)) || []) {
             if (!r || typeof r !== 'object' || !r.id) continue;
             if (personById(people, r[LINK_FIELD])) continue;                       // already somebody's
             const shared = readShared(kind, r);
             if (!shared.name) continue;
-            const hit = findDuplicate([me], { name: shared.name, phone: shared.phone, nic: shared.nic, country: isoOfPhone(shared.phone) })
-                || (!shared.phone && !shared.nic ? sameNameOnly([me], shared.name) : null);
-            if (hit) out.push({ key, kind, id: r.id });
+            const hit = findDuplicate(roster, { name: shared.name, phone: shared.phone, nic: shared.nic, country: isoOfPhone(shared.phone) })
+                || (!shared.phone && !shared.nic ? sameNameOnly(roster, shared.name) : null);
+            if (hit && hit.id === me.id) out.push({ key, kind, id: r.id });
         }
     }
     return out;
@@ -575,9 +578,11 @@ export function previewUpdate(store, id, input) {
     if (!prev || !clean.ok) return { loans: 0, investments: 0, smsOn: 0 };
     const next = { ...prev, ...clean.fields };
     const diff = SHARED.filter((f) => personValue(prev, f) !== personValue(next, f));
-    if (!diff.length) return { loans: 0, investments: 0, smsOn: 0 };
-    const linked = usageOf(prev, booksOf(store));
+    // A loan that is not linked to this person yet is claimed by saving them, WHATEVER was edited (an email alone still gives it the person's second
+    // number), so it is counted even when no shared field changed and the owner is asked first.
     const stray = strayRecords(store, prev);
+    if (!diff.length && !stray.length) return { loans: 0, investments: 0, smsOn: 0 };
+    const linked = diff.length ? usageOf(prev, booksOf(store)) : { loans: 0, investments: 0, smsOn: 0 };
     const books = booksOf(store);
     const byKey = { debtors: new Map(books.debtors.map((r) => [r && r.id, r])), income: new Map(books.income.map((r) => [r && r.id, r])) };
     return {

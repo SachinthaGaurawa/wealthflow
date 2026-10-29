@@ -179,6 +179,8 @@ describe('the page wires it', () => {
     });
 
     it('the text-message nudge is only made for an account that uses text messages', () => {
-        expect(fn).toMatch(/id: 'texts'[^]*WFSms\.countOn\(appData\) > 0/);
+        // the signature covers the records with the switch (on or off) AND the owner's own due-date alerts: an account with only those is still asked
+        expect(fn).toMatch(/id: 'texts'[^]*WFSms\.signatureOf\(appData\) !== ''/);
+        expect(fn).not.toMatch(/id: 'texts'[^]*countOn/);
     });
 });
