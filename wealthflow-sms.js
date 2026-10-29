@@ -450,6 +450,12 @@ export function createNotifier(deps) {
                 if (st.throttled < 2) { st.throttled += 1; schedule(CLIENT.THROTTLE_RETRY_MS, { ...ctx, sig }); }
                 return { throttled: true };
             }
+            if (res.status === 200 && res.body && res.body.ok && res.body.deferred) {
+                // the account has no document yet (this raced its first upload): nothing was looked at, so this state is NOT remembered as handled, and
+                // the nudge that follows the upload still goes
+                st.lastSummary = res.body.summary || null;
+                return { deferred: true };
+            }
             if (res.status === 200 && res.body && res.body.ok) {
                 st.retries = 0; st.throttled = 0; st.lastError = null;
                 st.lastSummary = res.body.summary || null;
@@ -535,7 +541,7 @@ export function createNotifier(deps) {
                 const body = flushBody({ reason });
                 const sent = deps.fetchImpl(CLIENT.ENDPOINT, { method: 'POST', keepalive: true, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 Promise.resolve(sent).then((r) => r.json().then((j) => ({ status: r.status, j }), () => ({ status: r.status, j: null })))
-                    .then(({ status, j }) => { if (status === 200 && j && j.ok) writeSig(uid, sig); else st.leftSig = ''; })
+                    .then(({ status, j }) => { if (status === 200 && j && j.ok && !j.deferred) writeSig(uid, sig); else st.leftSig = ''; })
                     .catch(() => { st.leftSig = ''; /* the page may be gone: the cron and the next open are the net */ });
                 return true;
             } catch (_) { return false; }

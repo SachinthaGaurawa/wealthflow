@@ -116,7 +116,8 @@ async function handleFlush({ res, body, db, who, client, deps, now }) {
     const rootRef = db.collection(ROOT).doc(who.uid);
     try {
         const applied = await withDeadline(applyFlush({ db, uid: who.uid, clean, now }), 12000, 'wf-flush');
-        if (!applied.exists) return j(res, 200, { ok: true, flushed: applied.changed, summary: { derived: 0, configured: client.configured, empty: true } });
+        // no account document yet (a flush that raced the first upload): nothing was merged and nothing looked at, so the page must not count this as handled
+        if (!applied.exists) return j(res, 200, { ok: true, deferred: true, flushed: applied.changed, summary: { derived: 0, configured: client.configured, empty: true } });
         const root = await withDeadline(rootRef.get(), 8000, 'wf-sms');
         const state = (root.exists && root.data()) || {};
         const has = hasSmsRecords(applied.user);

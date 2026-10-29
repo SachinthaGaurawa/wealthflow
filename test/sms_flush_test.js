@@ -313,6 +313,7 @@ describe('/api/sms-notify, action flush', () => {
         const w2 = world({});
         const ghost = res(); await handleNotify(flushReq({ records: { debtors: [debtor()] } }), ghost, w2.deps);
         expect(ghost.statusCode).toBe(200);
+        expect(ghost.body.deferred).toBe(true);                                                   // not "handled": the page must not remember this state as looked at
         expect(w2.fs.data.has('users/' + OWNER.uid)).toBe(false);
     });
 
@@ -551,6 +552,26 @@ describe('the notifier hands the server the change', () => {
         expect(quiet.leave()).toBe(false);
         clock += CLIENT.LEAVE_GAP_MS + 1;
         expect(quiet.leave()).toBe(true);                                                     // an answer that never came is not waited for for ever
+    });
+
+    it('an answer that says the account has no document yet is not remembered as handled, so the nudge after the first upload still goes', async () => {
+        const timers = []; let id = 0; const calls = []; const store = new Map();
+        const user = { debtors: [on('d1', 500)] };
+        const n = createNotifier({
+            getUser: () => user, getUid: () => 'u1', getIdToken: async () => 't', peekIdToken: () => 't', sinceUt: () => 0,
+            fetchImpl: async (url, init) => { calls.push(JSON.parse(init.body)); return { status: 200, json: async () => ({ ok: true, deferred: true, summary: { empty: true } }) }; },
+            now: () => T0, storage: { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
+            setTimer: (fn, ms) => { id += 1; timers.push({ id, fn, ms }); return id; }, clearTimer: (t) => { const i = timers.findIndex((x) => x.id === t); if (i > -1) timers.splice(i, 1); },
+        });
+        n.onLocalChange();
+        await timers.shift().fn(); await new Promise((r) => setTimeout(r, 0));
+        expect(calls).toHaveLength(1);
+        expect(store.has('wf_sms_sig_u1')).toBe(false);                                        // not remembered as looked at
+        expect(n.afterPush()).toBe(true);                                                       // the upload that follows still nudges the server
+        // and a closing page that got the same answer does not remember it either
+        n.leave('hidden');
+        await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
+        expect(store.has('wf_sms_sig_u1')).toBe(false);
     });
 
     it('leave without a good token sends nothing (a stale token would only be refused) and never throws', () => {
