@@ -55,7 +55,7 @@ On the debtor's card:
 Every person, loan and investment can carry a second mobile number (`phone2`). Every text then goes to **both** numbers: the ledger holds one entry per
 number (the second keyed `<key>:2`), so a failure on one never blocks or repeats the other, and the receipt always leaves before the closing text. The second
 number has to be a real mobile number and not the first one again (the form says so). It is saved as +94... like the first, shared with the saved person
-like the first, and shown in the message log as "(second number)". The tenant statement's one-time code goes to the **first** number only. Because each text
+like the first, and shown in the message log as "(second number)". The tenant statement's one-time code goes to **both** numbers (2026-10-29): one code, the same text on each phone, and either phone can type it. A number that cannot receive is skipped, the same number twice is one text, and the code is cancelled only when it certainly reached neither. Because each text
 is sent per number, a second number doubles the units a record uses.
 
 ### Late-payment reminders (optional, per debtor)
@@ -234,7 +234,7 @@ same for one lender and one NIC in every message; it only lets the page *ask* fo
    spreadsheet), **Share PDF** where the phone can share a file (else it saves it), **Refresh** (the same session, no new text) and
    "Show all N" on a table of more than eight rows (print always has every row).
 4. If the same NIC is also a tenant of another WealthFlow lender who texts with links, that lender's records appear too, but only
-   those whose recorded phone is the number this code went to (an NIC is not a secret; the phone is the second proof).
+   those whose recorded phone (first or second) is one of the numbers this code went to (an NIC is not a secret; the phone is the second proof).
 
 ### The PDF
 

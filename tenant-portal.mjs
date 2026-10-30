@@ -164,7 +164,7 @@ export const clearCookie = () => `${COOKIE}=; HttpOnly; Secure; SameSite=Strict;
 
 const result = (status, body, extra = {}) => ({ status, body, ...extra });
 /** The code is on its way: `to` is the recipient, whose masked number (last four digits only) tells the person where to look. */
-const accepted = (to) => result(200, { ok: true, message: MSG.ACCEPTED, phone: to && to.masked ? to.masked : '', resendAfterSec: RESEND_GAP_MS / 1000, expiresInSec: OTP_TTL_MS / 1000 });
+const accepted = (to) => result(200, { ok: true, message: MSG.ACCEPTED, phone: to && to.masked ? to.masked : '', phones: to && Array.isArray(to.to) ? to.to.map((x) => x.masked) : [], resendAfterSec: RESEND_GAP_MS / 1000, expiresInSec: OTP_TTL_MS / 1000 });
 /** An unknown link, a dead link and a wrong NIC are this one answer, so it never says which. */
 const noMatch = () => result(401, { ok: false, error: MSG.NO_MATCH });
 /** The NIC is right but no text can go out (no number on file, the lender stopped the portal): said plainly, because the person has proved who they are. */
@@ -223,7 +223,12 @@ export function matchIdentity(candidates, storedHash, secret) {
 
 /* ── who the code goes to ─────────────────────────────────────────────────── */
 
-/** The number on the record the lender most recently switched on for this NIC. Server-side only: the caller never names it. */
+/**
+ * Who the code goes to: the numbers on the record the lender most recently switched on for this NIC. Server-side only: the caller never names them.
+ * A record may carry a second number (`phone2`); then the SAME code is texted to both, so whichever phone the person picks up, the one they have is the
+ * one the page accepts. A number that cannot receive is skipped (the other still gets the code), and the same number twice is one text.
+ * The first fields (`e164`, `masked`, `phoneHash`) are the first number's, as before; `to` lists every number.
+ */
 export function pickRecipient(user, canonicalNic, secret) {
     const u = user && typeof user === 'object' ? user : {};
     let best = null;
@@ -231,26 +236,32 @@ export function pickRecipient(user, canonicalNic, secret) {
         if (!rec || rec[FIELDS.ENABLED] !== true) continue;
         const n = normalizeIdentity(rec[FIELDS.NIC]);
         if (!n.ok || n.canonical !== canonicalNic) continue;
-        const p = normalizePhone(rec[FIELDS.PHONE]);
-        if (!p.ok) continue;
+        const numbers = [];
+        for (const raw of [rec[FIELDS.PHONE], rec[FIELDS.PHONE2]]) {
+            const p = normalizePhone(raw);
+            if (p.ok && !numbers.includes(p.e164)) numbers.push(p.e164);
+        }
+        if (!numbers.length) continue;
         const at = num(rec[FIELDS.ENABLED_AT]);
-        if (!best || at > best.at) best = { e164: p.e164, at };
+        if (!best || at > best.at) best = { numbers, at };
     }
-    return best ? { e164: best.e164, masked: maskPhone(best.e164), phoneHash: phoneHashOf(best.e164, secret) } : null;
+    if (!best) return null;
+    const to = best.numbers.map((e164) => ({ e164, masked: maskPhone(e164), phoneHash: phoneHashOf(e164, secret) }));
+    return { ...to[0], to, phoneHashes: to.map((x) => x.phoneHash) };
 }
 
 /** The owner's log shows the portal's texts too, without the code: a code that is never stored cannot be read from a log. */
-async function mirrorOtp(db, uid, { ok, masked, kind, message, at }) {
+async function mirrorOtp(db, uid, { ok, masked, kind, message, at, n = 0 }) {
     try {
         const doc = {
-            key: `otp:${at}`, kind: 'otp', layer: 'portal', ref: 'PORTAL', recordKind: 'portal', recordId: '',
+            key: `otp:${at}${n ? `:${n + 1}` : ''}`, kind: 'otp', layer: 'portal', ref: 'PORTAL', recordKind: 'portal', recordId: '',
             status: ok ? 'sent' : 'failed', to: masked, segments: 1, attempts: 1, nextAttemptAt: null, possiblyDuplicated: false,
             body: ok ? 'Statement portal: a verification code was sent (the code itself is never kept).' : 'Statement portal: a verification code could not be sent.',
             error: ok ? null : { kind: s(kind), message: s(message).slice(0, 160) },
             sentAt: ok ? at : null, occurredAt: at, updatedAt: at,
             ...(ok ? { alert: ADMIN_ALERT } : {}),
         };
-        await db.collection('users').doc(uid).collection('smsLog').doc(`otp-${at}`).set(doc, { merge: true });
+        await db.collection('users').doc(uid).collection('smsLog').doc(`otp-${at}${n ? `-${n + 1}` : ''}`).set(doc, { merge: true });
     } catch (e) { console.warn('[WF-PORTAL] mirror failed:', s(e && e.message).slice(0, 120)); }
 }
 
@@ -308,7 +319,7 @@ export async function requestCode({ db, client, token, nic, ip, secret, now, ran
         const code = newCode(random);
         tx.set(otpRef, {
             status: 'active', hash: codeProof(secret, token, now, code), issuedAt: now, expiresAt: now + OTP_TTL_MS, attemptsLeft: OTP_ATTEMPTS,
-            lastSentAt: now, hourStart, hourCount: hourCount + 1, dayKey: utcDay(now), dayCount: dayCount + 1, phoneHash: to.phoneHash, toMasked: to.masked,
+            lastSentAt: now, hourStart, hourCount: hourCount + 1, dayKey: utcDay(now), dayCount: dayCount + 1, phoneHash: to.phoneHash, phoneHashes: to.phoneHashes || [to.phoneHash], toMasked: to.masked,
         });
         tx.set(dayRef, { count: total + 1, day: utcDay(now), expiresAt: nextUtcDay(now) });
         return { gate: 'ok', code };
@@ -320,24 +331,28 @@ export async function requestCode({ db, client, token, nic, ip, secret, now, ran
     // The answer is the same whether or not a text goes out, so it does not have to wait for the gateway: where the platform can keep the
     // invocation alive after the response (`defer`) the text is sent then, and the person is not held for the gateway's own round trip.
     const deliver = async () => {
-        let sent;
-        try { sent = await client.send({ to: to.e164, message: otpMessage(slot.code, OTP_TTL_MS / 60000, host || undefined) }); }
-        catch (_) { sent = { ok: false, kind: KIND.UNKNOWN, possiblySent: true, message: 'the gateway call threw' }; }
-
-        if (sent && sent.ok) {
-            await mirrorOtp(db, s(tenant.uid), { ok: true, masked: to.masked, at: now });
-        } else {
-            // A code that certainly never left is dead, so it cannot be guessed at; one that may have left stays valid, because it may be in the tenant's hand.
-            if (!(sent && sent.possiblySent)) {
-                try {
-                    await db.runTransaction(async (tx) => {
-                        const o = await tx.get(otpRef);
-                        if (o.exists && num((o.data() || {}).issuedAt) === now) tx.set(otpRef, { status: 'failed', hash: '', attemptsLeft: 0 }, { merge: true });
-                    });
-                } catch (_) { /* the code dies by itself in 3 minutes */ }
-            }
+        // ONE code, every number: the texts go out side by side, each judged on its own. The code is cancelled only when NONE of them certainly left.
+        const targets = Array.isArray(to.to) && to.to.length ? to.to : [to];
+        const message = otpMessage(slot.code, OTP_TTL_MS / 60000, host || undefined);
+        const outcomes = await Promise.all(targets.map(async (target) => {
+            try { return await client.send({ to: target.e164, message }); }
+            catch (_) { return { ok: false, kind: KIND.UNKNOWN, possiblySent: true, message: 'the gateway call threw' }; }
+        }));
+        const reached = outcomes.some((sent) => sent && (sent.ok || sent.possiblySent));
+        for (let i = 0; i < targets.length; i += 1) {
+            const sent = outcomes[i];
+            if (sent && sent.ok) { await mirrorOtp(db, s(tenant.uid), { ok: true, masked: targets[i].masked, at: now, n: i }); continue; }
             console.warn('[WF-PORTAL] code not sent:', s(sent && sent.kind));
-            await mirrorOtp(db, s(tenant.uid), { ok: false, masked: to.masked, kind: sent && sent.kind, message: sent && sent.message, at: now });
+            await mirrorOtp(db, s(tenant.uid), { ok: false, masked: targets[i].masked, kind: sent && sent.kind, message: sent && sent.message, at: now, n: i });
+        }
+        // A code that certainly never left (to any number) is dead, so it cannot be guessed at; one that may have left stays valid, because it may be in the tenant's hand.
+        if (!reached) {
+            try {
+                await db.runTransaction(async (tx) => {
+                    const o = await tx.get(otpRef);
+                    if (o.exists && num((o.data() || {}).issuedAt) === now) tx.set(otpRef, { status: 'failed', hash: '', attemptsLeft: 0 }, { merge: true });
+                });
+            } catch (_) { /* the code dies by itself in 3 minutes */ }
         }
     };
     if (defer) defer(deliver().catch((e) => console.warn('[WF-PORTAL] delivery failed:', s(e && e.message).slice(0, 120))));
@@ -380,9 +395,10 @@ export async function verifyCode({ db, token, nic, code, ip, secret, now, random
             const sid = randomBytes(24).toString('base64url');
             const expiresAt = now + SESSION_TTL_MS;
             tx.set(otpRef, { status: 'used', hash: '', usedAt: now }, { merge: true });
-            tx.set(tenantRef.collection('sessions').doc(sessionHash(sid)), { createdAt: now, expiresAt, phoneHash: s(otp.phoneHash) });
+            const phoneHashes = Array.isArray(otp.phoneHashes) && otp.phoneHashes.length ? otp.phoneHashes.map(s).filter(Boolean) : (s(otp.phoneHash) ? [s(otp.phoneHash)] : []);
+            tx.set(tenantRef.collection('sessions').doc(sessionHash(sid)), { createdAt: now, expiresAt, phoneHash: s(otp.phoneHash), phoneHashes });
             tx.set(tenantRef, { fails: 0, failStart: 0, lockCount: 0, lockedUntil: 0, lastLoginAt: now }, { merge: true });
-            return { kind: 'ok', sid, expiresAt, tenant, phoneHash: s(otp.phoneHash) };
+            return { kind: 'ok', sid, expiresAt, tenant, phoneHash: s(otp.phoneHash), phoneHashes };
         }
 
         const f = failState(tenant, now);
@@ -408,7 +424,7 @@ export async function verifyCode({ db, token, nic, code, ip, secret, now, random
     if (defer) defer(sweep); else await sweep;
 
     // `ctx` is for the server only (the endpoint reads the statement with it so the page needs no second trip); it is never part of the body
-    return { ...result(200, { ok: true, expiresAt: out.expiresAt, expiresInSec: SESSION_TTL_MS / 1000 }, { cookie: sessionCookie(token, out.sid) }), ctx: { token, sid: out.sid, tenant: out.tenant, session: { phoneHash: out.phoneHash, expiresAt: out.expiresAt } } };
+    return { ...result(200, { ok: true, expiresAt: out.expiresAt, expiresInSec: SESSION_TTL_MS / 1000 }, { cookie: sessionCookie(token, out.sid) }), ctx: { token, sid: out.sid, tenant: out.tenant, session: { phoneHash: out.phoneHash, phoneHashes: out.phoneHashes, expiresAt: out.expiresAt } } };
 }
 
 /* ── the session, and what it may read ────────────────────────────────────── */
@@ -433,6 +449,8 @@ export async function readSession({ db, cookieHeader, now }) {
 /** The lender's own document, and the other lenders' that hold records for this NIC. */
 export async function loadStatement({ db, live, secret, now }) {
     const { tenant, session } = live;
+    // every number the code went to (an older session holds the one hash only)
+    const held = Array.isArray(session.phoneHashes) && session.phoneHashes.length ? session.phoneHashes : (session.phoneHash ? [session.phoneHash] : []);
     const read = async (uid) => {
         const snap = await withDeadline(db.collection('users').doc(s(uid)).get(), 8000, 'users');
         return snap.exists ? (snap.data() || {}) : {};
@@ -440,7 +458,7 @@ export async function loadStatement({ db, live, secret, now }) {
     // the lender's own document and the list of other lenders for this NIC are independent reads: asked together
     // Other lenders who texted this NIC. Their records are only shown for the phone this session's code went to.
     const lookOthers = async () => {
-        if (!session.phoneHash) return [];
+        if (!held.length) return [];
         try {
             const subs = await withDeadline(db.collection(SUBJECTS).where('nicHash', '==', s(tenant.nicHash)).limit(MAX_OTHER_LENDERS + 1).get(), 8000, 'subjects');
             const others = subs.docs.map((d) => d.data() || {}).filter((d) => d.uid && d.uid !== tenant.uid && d.nicHash === tenant.nicHash).slice(0, MAX_OTHER_LENDERS);
@@ -450,7 +468,7 @@ export async function loadStatement({ db, live, secret, now }) {
     };
     const [own, others] = await Promise.all([read(tenant.uid), lookOthers()]);
     const ledgers = [{ uid: s(tenant.uid), user: own, own: true }, ...others];
-    return buildStatement({ ledgers, nicHash: s(tenant.nicHash), phoneHash: s(session.phoneHash), secret, now });
+    return buildStatement({ ledgers, nicHash: s(tenant.nicHash), phoneHash: held.map(s), secret, now });
 }
 
 export async function endSession({ db, live }) {

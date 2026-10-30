@@ -923,7 +923,7 @@ export function createPage(env) {
         if (value) input.value = value;
         const verify = h(doc, 'button', { class: 'tp-btn', type: 'submit', id: 'tp-verify', text: t('Verify code') });
         const resend = h(doc, 'button', { class: 'tp-btn tp-ghost tp-quiet', type: 'button', id: 'tp-resend', disabled: true, onclick: onResend });
-        const back = h(doc, 'button', { class: 'tp-btn tp-ghost tp-quiet', type: 'button', id: 'tp-back', text: t('Change details'), onclick: () => { st.nic = ''; st.phone = ''; screenNic(); } });
+        const back = h(doc, 'button', { class: 'tp-btn tp-ghost tp-quiet', type: 'button', id: 'tp-back', text: t('Change details'), onclick: () => { st.nic = ''; st.phone = ''; st.phone2 = ''; screenNic(); } });
         const expiry = h(doc, 'p', { class: 'tp-small', id: 'tp-expiry' });
         st.els.input = input; st.els.button = verify; st.els.resend = resend; st.els.expiry = expiry;
         const infoBox = h(doc, 'p', { class: 'tp-info', id: 'tp-info', role: 'status' });
@@ -935,7 +935,9 @@ export function createPage(env) {
             h(doc, 'p', { class: 'tp-sent-body' },
                 h(doc, 'span', { class: 'tp-sent-label', text: t('We sent a 6-digit code by text message to') }),
                 h(doc, 'span', { class: 'tp-sent-num', 'aria-hidden': 'true', text: st.phone }),
-                h(doc, 'span', { class: 'tp-sr', text: t('your mobile number ending in {digits}', { digits: st.phone.slice(-3).split('').join(' ') }) }))) : null;
+                st.phone2 ? h(doc, 'span', { class: 'tp-sent-num', 'aria-hidden': 'true', text: st.phone2 }) : null,
+                h(doc, 'span', { class: 'tp-sr', text: t('your mobile number ending in {digits}', { digits: st.phone.slice(-3).split('').join(' ') }) }),
+                st.phone2 ? h(doc, 'span', { class: 'tp-sr', text: t('your mobile number ending in {digits}', { digits: st.phone2.slice(-3).split('').join(' ') }) }) : null)) : null;
         mount('Enter verification code', [h(doc, 'section', { class: 'tp-card tp-auth' },
             h(doc, 'span', { class: 'tp-badge', 'aria-hidden': 'true' }, icon(doc, 'message')),
             steps(2),
@@ -1133,6 +1135,8 @@ export function createPage(env) {
             st.misses = 0;
             st.nicError = '';
             st.phone = phoneLabel(res.body.phone);
+            // a person with two numbers on file gets the one code on both: say so, so they know either phone will do
+            st.phone2 = Array.isArray(res.body.phones) && res.body.phones.length > 1 ? phoneLabel(res.body.phones[1]) : '';
             st.resendAt = now() + (Number(res.body.resendAfterSec) || 60) * 1000;
             st.codeExpiresAt = now() + (Number(res.body.expiresInSec) || 180) * 1000;
             screenCode({ message: res.body.message || '' });
@@ -1221,7 +1225,7 @@ export function createPage(env) {
         st.codeMessage = '';
         st.misses = 0;
         st.nicError = '';
-        st.phone = '';
+        st.phone = ''; st.phone2 = '';
         st.hide = false;
         if (st.unwatch) { st.unwatch(); st.unwatch = null; }
         if (root.classList) root.classList.remove('tp-hide');
