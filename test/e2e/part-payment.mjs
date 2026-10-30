@@ -94,7 +94,7 @@ const repText = (() => {
     return buildMessage(ev.kind, { ...ev, link: 'https://wealthflow-personal.vercel.app/t/AbCdEfGhIjKlMnOp' });
 })();
 console.log('   the text           ->', repText);
-assert.match(repText, /^Repayment LKR 20,000\.00 received.*Balance LKR 30,000\.00\./, 'the part payment and the balance that is left, in one text');
+assert.match(repText, /^REPAYMENT RECEIVED\nLKR 20,000\.00 on .*\nBalance: LKR 30,000\.00\n/, 'the part payment and the balance that is left, in one text');
 assert.equal(analyzeSms(repText).segments, 1);
 
 /* ── 4. logged but not yet counted: nothing is texted, nothing is promised ─ */
@@ -117,7 +117,7 @@ assert.ok((await toasts()).some((m) => /^Confirmed · a text with the new balanc
 const confirmedAll = await page.evaluate(() => (DB.get('debtors') || [])[0]);
 const texts = serverView(confirmedAll, Date.now()).events.filter((e) => e.kind === KINDS.B_REPAYMENT).map((e) => buildMessage(e.kind, { ...e, link: '' }));
 assert.equal(texts.length, 2);
-assert.match(texts[1], /Repayment LKR 5,000\.00.*Balance LKR 25,000\.00\./, 'the second part payment says what is left after both');
+assert.match(texts[1], /REPAYMENT RECEIVED\nLKR 5,000\.00.*\nBalance: LKR 25,000\.00\n?/, 'the second part payment says what is left after both');
 console.log('4. logged then counted ->', texts.join(' / '));
 
 /* ── 5. Send balance: one question, one request, a pause before the next ──── */
@@ -140,7 +140,7 @@ const bal = serverView(asked, Date.now()).events.find((e) => e.kind === KINDS.B_
 assert.ok(bal, 'the server derives the balance text from that request');
 const balText = buildMessage(bal.kind, { ...bal, link: 'https://wealthflow-personal.vercel.app/t/AbCdEfGhIjKlMnOp' });
 console.log('5. send balance       ->', balText);
-assert.match(balText, /^Balance LKR 25,000\.00 as at \d{2} \w{3} \d{4}, ref DEB-[0-9A-F]{6}\. Statement: https:/);
+assert.match(balText, /^YOUR BALANCE\nLKR 25,000\.00 as at \d{2} \w{3} \d{4}\nRef: DEB-[0-9A-F]{6}\nStatement: https:/);
 assert.equal(analyzeSms(balText).segments, 1);
 
 await page.click('[data-liq-bal]');                                // refused before any question is asked: the pause is checked first
@@ -205,7 +205,7 @@ const reminders = serverView(chased, Date.parse(`${due}T00:00:00Z`) + 8 * 864e5 
 assert.equal(reminders.length, 1, 'a week after the date, one reminder is owed');
 const lateText = buildMessage(reminders[0].kind, { ...reminders[0], link: 'https://wealthflow-personal.vercel.app/t/AbCdEfGhIjKlMnOp' });
 console.log('8. late reminder      ->', lateText);
-assert.match(lateText, /^Reminder: LKR 50,000\.00 is still outstanding, due \d{2} \w{3} \d{4}, ref DEB-[0-9A-F]{6}\. Statement: https:/);
+assert.match(lateText, /^PAYMENT REMINDER\nOutstanding: LKR 50,000\.00\nDue: \d{2} \w{3} \d{4}\nRef: DEB-[0-9A-F]{6}\nStatement: https:/);
 assert.equal(analyzeSms(lateText).segments, 1);
 
 /* editing it again keeps the stamp, and unticking stops them for good */

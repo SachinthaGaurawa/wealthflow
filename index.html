@@ -31026,6 +31026,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
         </div>
 
+        ${(!window._isDecoyMode && window.WFSms && window.WFSms.categoriesHtml) ? window.WFSms.categoriesHtml() : ''}
+
         <!-- ====== SOFTWARE UPDATE (filled by wealthflow-update-system.js) ======
              This placeholder is PART of the settings template, so it survives
              every renderSettings() rebuild. The update system fills #wfUpdateCard

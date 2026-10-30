@@ -56,7 +56,7 @@ describe('one-time payments', () => {
     });
     it('is worded as a one-time payment and goes out inside the sending hours, never after the due day', () => {
         const e = events(on({ subscriptions: [once({ dueDate: iso(1) })] }))[0];
-        expect(buildMessage(e.kind, e)).toBe('One-time payment Lifetime licence LKR 45,000.00 is due tomorrow.');
+        expect(buildMessage(e.kind, e)).toMatch(/^ONE-TIME PAYMENT DUE TOMORROW\nLifetime licence\nAmount: LKR 45,000\.00\nDue: \d\d \w{3} 2026$/);
         expect(e.kind).toBe(KINDS.O_DUE);
         expect(e.scheduled).toBe(true);
         expect(Number.isFinite(e.notBefore)).toBe(true);
@@ -86,7 +86,7 @@ describe('recurring bills', () => {
         expect(keys(on({ subscriptions: [bill({ history: [{ month: mk, amount: 6000, date: iso(1) }] })] }))).toEqual([]);
         expect(keys(on({ subscriptions: [bill({ monthOverrides: { [mk]: 6400 } })] }))).toEqual([]);
         const e = events(on({ subscriptions: [bill()] }))[0];
-        expect(buildMessage(e.kind, e)).toMatch(/^Bill Internet LKR 6,000\.00 is due in 2 days \(\d\d \w{3} 2026\)\.$/);
+        expect(buildMessage(e.kind, e)).toMatch(/^BILL DUE IN 2 DAYS\nInternet\nAmount: LKR 6,000\.00\nDue: \d\d \w{3} 2026$/);
     });
     it('a quarterly bill is texted only in its own months, a day past the end of a short month is clamped, an old record with no start month is monthly only', () => {
         const anchor = `${iso(2).slice(0, 7)}-01`;
@@ -158,7 +158,7 @@ describe('through the real sweep, with nobody signed in', () => {
         await run(user);
         expect(sent).toHaveLength(1);
         expect(sent[0].to).toMatch(/94771234567$/);
-        expect(sent[0].message).toBe('One-time payment Lifetime licence LKR 45,000.00 is due tomorrow.');
+        expect(sent[0].message).toMatch(/^ONE-TIME PAYMENT DUE TOMORROW\nLifetime licence\nAmount: LKR 45,000\.00\nDue: \d\d \w{3} 2026$/);
         await run(user);
         await run(user, NOW + 3600e3);
         expect(sent).toHaveLength(1);

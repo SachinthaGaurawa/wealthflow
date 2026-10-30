@@ -144,7 +144,7 @@ describe('what a caller can and cannot choose', () => {
         expect(r.statusCode).toBe(200);
         expect(w.client.sent).toHaveLength(1);
         expect(w.client.sent[0].to).toBe('+94771234567');
-        expect(w.client.sent[0].message).toMatch(/^Loan LKR 50,000\.00 disbursed on 05 Oct 2026, ref DEB-[0-9A-F]{6}\. Balance LKR 50,000\.00\. Statement: https:\/\/wealthflow-personal\.vercel\.app\/t\/[A-Za-z0-9_-]{16}$/);
+        expect(w.client.sent[0].message).toMatch(/^LOAN PAID OUT\nLKR 50,000\.00 on 05 Oct 2026\nBalance: LKR 50,000\.00\nRef: DEB-[0-9A-F]{6}\nStatement: https:\/\/wealthflow-personal\.vercel\.app\/t\/[A-Za-z0-9_-]{16}$/);
         expect(w.client.sent[0].message).not.toContain('evil');
         expect(wfDocs(w.fs).some((p) => p.includes('victim'))).toBe(false);          // the uid is the token's, never the body's
     });

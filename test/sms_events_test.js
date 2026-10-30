@@ -528,11 +528,11 @@ describe('closing: a separate text when a loan is fully settled or an investment
     it('the final receipt no longer says "settled": that is the closing text\'s job', async () => {
         const { buildMessage } = await import('../sms-templates.mjs');
         const msg = buildMessage(KINDS.B_REPAYMENT, { amount: 30000, currency: 'LKR', ref: 'DEB-1A2B3C', dateISO: '2026-10-07', balance: 0, settled: true });
-        expect(msg).toBe('Repayment LKR 30,000.00 received on 07 Oct 2026, ref DEB-1A2B3C. Balance LKR 0.00.');
+        expect(msg).toBe('REPAYMENT RECEIVED\nLKR 30,000.00 on 07 Oct 2026\nBalance: LKR 0.00\nRef: DEB-1A2B3C');
         expect(buildMessage(KINDS.B_CLOSED, { currency: 'LKR', ref: 'DEB-1A2B3C', dateISO: '2026-10-07', link: 'https://wealthflow-personal.vercel.app/t/AbCdEfGhIjKlMnOp' }))
-            .toBe('Loan ref DEB-1A2B3C is fully settled and closed on 07 Oct 2026. Thank you. Statement: https://wealthflow-personal.vercel.app/t/AbCdEfGhIjKlMnOp');
+            .toBe('LOAN FULLY SETTLED\nClosed on 07 Oct 2026. Thank you.\nRef: DEB-1A2B3C\nStatement: https://wealthflow-personal.vercel.app/t/AbCdEfGhIjKlMnOp');
         expect(buildMessage(KINDS.A_CLOSED, { currency: 'LKR', ref: 'INV-3F9A2B', dateISO: '2026-10-07' }))
-            .toBe('Investment ref INV-3F9A2B is fully settled and closed on 07 Oct 2026. Thank you.');
+            .toBe('INVESTMENT CLOSED\nFully settled on 07 Oct 2026. Thank you.\nRef: INV-3F9A2B');
     });
 
     describe('an investment', () => {

@@ -27,7 +27,7 @@ one that is un-confirmed before its text goes, sends nothing.
 ### A debtor who pays in parts
 
 Every confirmed repayment text carries the balance that is left, so a part payment says how much remains:
-`Repayment LKR 20,000.00 received on 05 Oct 2026, ref DEB-8E4EF6. Balance LKR 30,000.00. Statement: <link>`. The payment that settles the loan is acknowledged the same way (`Balance LKR 0.00`); that the loan is closed is a text of its own, below.
+`REPAYMENT RECEIVED` / `LKR 20,000.00 on 05 Oct 2026` / `Balance: LKR 30,000.00` / `Ref: DEB-8E4EF6` / `Statement: <link>`, one fact per line. The payment that settles the loan is acknowledged the same way (`Balance LKR 0.00`); that the loan is closed is a text of its own, below.
 
 On the debtor's card:
 
@@ -48,7 +48,7 @@ On the debtor's card:
 * **An investment** is closed by the owner: **Settle & close** on its card (it asks first). That stamps `closedAt`, brings the end date to today when it
   was empty or ahead (the date it had is kept for **Re-open**) and moves the investment to Ended. The server sends one text keyed by that stamp
   (`A:<investment>:closed:<closedAt>`) and announces no interest for a day after it. Re-opening and closing again is a new stamp, so a new text.
-* Both read `Loan ref … is fully settled and closed on <date>. Thank you.` (or `Investment ref …`). Each costs one text unit, like any other.
+* Both read `LOAN FULLY SETTLED` / `Closed on <date>. Thank you.` / `Ref: …` (or `INVESTMENT CLOSED`). Each costs one text unit, like any other.
 
 ### A second number (optional)
 
@@ -65,7 +65,7 @@ the tick without one). While it is ticked and money is still confirmed as owed:
 
 * One text the day after the date (the debtor's own calendar day, Sri Lanka time), then one a week later, then 15 and 22 days
   after: at most four. Each is sent between 08:00 and 20:00 where the debtor is, never overnight.
-  `Reminder: LKR 50,000.00 is still outstanding, due 02 Oct 2026, ref DEB-7E1E60. Statement: <link>`
+  `PAYMENT REMINDER` / `Outstanding: LKR 50,000.00` / `Due: 02 Oct 2026` / `Ref: DEB-7E1E60` / `Statement: <link>`
 * No interest, no penalty and no demand: the figure is the confirmed balance and the date is the one the owner set.
 * **A reminder is owed from its day until the next one's (a week).** One that could not go out on its day (no credit, a sender not yet
   approved, the debtor's night) goes on a later sweep inside those seven days, worded with what is owed at that moment (a part payment
@@ -263,3 +263,19 @@ be (out of credit, for instance), never the code. A tenant who cannot get a code
 may have no number for them, the account may be out of credit, or the lender may no longer be allowed to send texts.
 
 `wf-tenant-limits` joins the sealed collections: publish the rules with `firebase deploy --only firestore:rules`.
+
+## How a text is laid out, and which kinds can be switched off (2026-10-29)
+
+**Layout.** A text message has no bold, so the layout does what bold would: a headline in capitals (`REPAYMENT RECEIVED`), one fact per line, a label before
+each figure (`Balance:`, `Ref:`, `Due:`), and `** ... **` around the one thing that is due today in the alerts to the owner's own number
+(`** LOAN INSTALMENT DUE TODAY **`). A line break is one character, like the space it replaces, so the layout costs nothing; the text is still plain GSM-7 and
+still one part wherever it was before (the date line is the one dropped when a long amount would push a text over). `sms-templates.mjs` builds every line with
+`asciiLines`, which keeps each line to printable ASCII and drops a line that would be empty. The message log shows the lines as written.
+
+**Switches.** Settings > Text messages has one switch per kind (`wealthflow-sms-categories.js`, stored as `settings.sms_cats = { loan: { on, at }, ... }`, a kind
+nobody touched is ON): *to the owner's own number* loan instalments, credit card payments, cheque release dates, one-time payments, subscriptions and bills
+(these also need "Alerts to my own number" on and the number verified); *to people* investments, money lent (debtors), late-payment reminders (each record keeps
+its own "Send SMS notifications" box as well; both must be on). The server applies the switches when it derives the notices (`sms-events.mjs`), so a kind that is
+off is never queued and one already waiting is cancelled by the same sweep that cancels any notice the books no longer owe. Switched back on, a "people" kind
+resumes with what happens from then on (what was confirmed while it was off is history, like before a record's own switch); the owner's own kinds and late-payment
+reminders resume with whatever is due or owing now.
