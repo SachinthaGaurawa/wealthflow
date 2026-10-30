@@ -732,7 +732,8 @@ export const BUDGETS = {
     // 2026-10-29 (the final save step of Sync now, in index.html and the runner; measured 2,712,366 + ~0.01% headroom): 2_712_300 -> 2_712_900.
     // 2026-10-29 (wealthflow-sms.js: a flush never carries more records, marks or deletions than the server takes in one request; measured 2,713,538 + ~0.01% headroom): 2_712_900 -> 2_713_900.
     // 2026-10-29 (wealthflow-sms.js: the outbox, a longer wait for the server and honest error wording; measured 2,716,408 + ~0.02% headroom): 2_713_900 -> 2_717_000.
-    totalJsBytes: 2_717_000,
+    // 2026-10-30 (wealthflow-sms-categories.js, the Settings section and flip handler in wealthflow-sms.js, the line layout of every text in sms-templates.mjs; measured 2,727,293 + ~0.03% headroom): 2_717_000 -> 2_728_000.
+    totalJsBytes: 2_728_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
@@ -834,7 +835,8 @@ export const BUDGETS = {
     // 2026-10-20: 89 -> 90 for wealthflow-backup.js (when the schedule fires and what a backup is; shared by the page and the nightly server run; see totalJsBytes).
     // 2026-10-21: 90 -> 91 for wealthflow-new-badge.js (the NEW tag that puts itself on a new screen or option and takes itself off after 7 days; see totalJsBytes).
     // 2026-10-23: 91 -> 92 for wealthflow-sync-health.js (the upload that failed is counted, explained and retried; see totalJsBytes).
-    moduleCount: 92,   // measured 92
+    // 2026-10-30: 92 -> 93 for wealthflow-sms-categories.js (which kinds of text the owner wants; shared by the Settings screen and the server; see totalJsBytes).
+    moduleCount: 93,   // measured 93
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained

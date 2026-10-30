@@ -94,8 +94,8 @@ function books() {
 }
 const run = (db, client, over = {}) => sweepUser({ db, uid: UID, user: books(), client, now: NOW, env, deps: { random: () => 0.5, ...(over.deps || {}) }, ...over, ...(over.deps ? { deps: { random: () => 0.5, ...over.deps } } : {}) });
 const reminders = (fs) => ledger(fs).filter((d) => d.kind === 'B.late');
-const sentReminders = (gw) => gw.sent.filter((m) => m.message.startsWith('Reminder'));
-const sentReceipts = (gw) => gw.sent.filter((m) => m.message.startsWith('Repayment'));
+const sentReminders = (gw) => gw.sent.filter((m) => m.message.startsWith('PAYMENT REMINDER'));
+const sentReceipts = (gw) => gw.sent.filter((m) => m.message.startsWith('REPAYMENT RECEIVED'));
 
 describe('under the reserve, through the engine', () => {
     it('the reminder is not queued or sent, the receipt is, and the books still owe the reminder', async () => {

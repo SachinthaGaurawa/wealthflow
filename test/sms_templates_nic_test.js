@@ -7,7 +7,7 @@
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
-import { KINDS, fmtMoney, fmtDay, fmtMonth, refCode, buildMessage, otpMessage, asciiOnly, currencyOf } from '../sms-templates.mjs';
+import { KINDS, fmtMoney, fmtDay, fmtMonth, refCode, buildMessage, otpMessage, asciiOnly, asciiLines, currencyOf } from '../sms-templates.mjs';
 import { analyzeSms } from '../textlk.mjs';
 import { normalizeNic, maskNic } from '../wealthflow-nic.js';
 
@@ -47,25 +47,25 @@ describe('money, dates and references', () => {
 describe('every notice, word for word', () => {
     const base = { amount: 500000, currency: 'LKR', ref: 'INV-3F9A2B', dateISO: '2026-10-05', link: LINK };
     const cases = [
-        [KINDS.A_CAPITAL, { ...base, ratePct: 24 }, `Capital LKR 500,000.00 recorded, ref INV-3F9A2B (24% p.a.). Statement: ${LINK}`],
-        [KINDS.A_CAPITAL, { ...base }, `Capital LKR 500,000.00 recorded, ref INV-3F9A2B. Statement: ${LINK}`],
-        [KINDS.A_INTEREST, { ...base, amount: 10000, month: '2026-10' }, `Interest LKR 10,000.00 applied to ref INV-3F9A2B for Oct 2026. Statement: ${LINK}`],
-        [KINDS.A_RECEIPT, { ...base, amount: 10000 }, `Receipt: LKR 10,000.00 received on 05 Oct 2026, ref INV-3F9A2B. Statement: ${LINK}`],
-        [KINDS.B_DISBURSED, { ...base, amount: 50000, ref: 'DEB-1A2B3C', balance: 50000 }, `Loan LKR 50,000.00 disbursed on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 50,000.00. Statement: ${LINK}`],
-        [KINDS.B_DISBURSED, { ...base, amount: 20000, ref: 'DEB-1A2B3C', balance: 70000, further: true }, `Further loan LKR 20,000.00 disbursed on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 70,000.00. Statement: ${LINK}`],
-        [KINDS.B_REPAYMENT, { ...base, amount: 20000, ref: 'DEB-1A2B3C', balance: 30000 }, `Repayment LKR 20,000.00 received on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 30,000.00. Statement: ${LINK}`],
-        [KINDS.B_REPAYMENT, { ...base, amount: 30000, ref: 'DEB-1A2B3C', balance: 0, settled: true }, `Repayment LKR 30,000.00 received on 05 Oct 2026, ref DEB-1A2B3C. Balance LKR 0.00. Statement: ${LINK}`],      // the final receipt is a receipt: that the loan is closed is the next text
-        [KINDS.B_CLOSED, { ...base, ref: 'DEB-1A2B3C', balance: 0 }, `Loan ref DEB-1A2B3C is fully settled and closed on 05 Oct 2026. Thank you. Statement: ${LINK}`],
-        [KINDS.A_CLOSED, { ...base }, `Investment ref INV-3F9A2B is fully settled and closed on 05 Oct 2026. Thank you. Statement: ${LINK}`],
+        [KINDS.A_CAPITAL, { ...base, ratePct: 24 }, `CAPITAL RECORDED\nLKR 500,000.00 at 24% p.a.\nRef: INV-3F9A2B\nStatement: ${LINK}`],
+        [KINDS.A_CAPITAL, { ...base }, `CAPITAL RECORDED\nLKR 500,000.00\nRef: INV-3F9A2B\nStatement: ${LINK}`],
+        [KINDS.A_INTEREST, { ...base, amount: 10000, month: '2026-10' }, `INTEREST APPLIED\nLKR 10,000.00 for Oct 2026\nRef: INV-3F9A2B\nStatement: ${LINK}`],
+        [KINDS.A_RECEIPT, { ...base, amount: 10000 }, `PAYMENT RECEIVED\nLKR 10,000.00 on 05 Oct 2026\nRef: INV-3F9A2B\nStatement: ${LINK}`],
+        [KINDS.B_DISBURSED, { ...base, amount: 50000, ref: 'DEB-1A2B3C', balance: 50000 }, `LOAN PAID OUT\nLKR 50,000.00 on 05 Oct 2026\nBalance: LKR 50,000.00\nRef: DEB-1A2B3C\nStatement: ${LINK}`],
+        [KINDS.B_DISBURSED, { ...base, amount: 20000, ref: 'DEB-1A2B3C', balance: 70000, further: true }, `FURTHER LOAN PAID OUT\nLKR 20,000.00 on 05 Oct 2026\nBalance: LKR 70,000.00\nRef: DEB-1A2B3C\nStatement: ${LINK}`],
+        [KINDS.B_REPAYMENT, { ...base, amount: 20000, ref: 'DEB-1A2B3C', balance: 30000 }, `REPAYMENT RECEIVED\nLKR 20,000.00 on 05 Oct 2026\nBalance: LKR 30,000.00\nRef: DEB-1A2B3C\nStatement: ${LINK}`],
+        [KINDS.B_REPAYMENT, { ...base, amount: 30000, ref: 'DEB-1A2B3C', balance: 0, settled: true }, `REPAYMENT RECEIVED\nLKR 30,000.00 on 05 Oct 2026\nBalance: LKR 0.00\nRef: DEB-1A2B3C\nStatement: ${LINK}`],      // the final receipt is a receipt: that the loan is closed is the next text
+        [KINDS.B_CLOSED, { ...base, ref: 'DEB-1A2B3C', balance: 0 }, `LOAN FULLY SETTLED\nClosed on 05 Oct 2026. Thank you.\nRef: DEB-1A2B3C\nStatement: ${LINK}`],
+        [KINDS.A_CLOSED, { ...base }, `INVESTMENT CLOSED\nFully settled on 05 Oct 2026. Thank you.\nRef: INV-3F9A2B\nStatement: ${LINK}`],
     ];
     cases.push(
-        [KINDS.B_BALANCE, { ...base, ref: 'DEB-1A2B3C', balance: 30000 }, `Balance LKR 30,000.00 as at 05 Oct 2026, ref DEB-1A2B3C. Statement: ${LINK}`],
-        [KINDS.B_BALANCE, { ...base, ref: 'DEB-1A2B3C', balance: 0 }, `No balance outstanding on ref DEB-1A2B3C as at 05 Oct 2026, thank you. Statement: ${LINK}`],
-        [KINDS.B_BALANCE, { ...base, ref: 'DEB-1A2B3C', balance: 12750000.5, dateISO: '' }, `Balance LKR 12,750,000.50, ref DEB-1A2B3C. Statement: ${LINK}`],
+        [KINDS.B_BALANCE, { ...base, ref: 'DEB-1A2B3C', balance: 30000 }, `YOUR BALANCE\nLKR 30,000.00 as at 05 Oct 2026\nRef: DEB-1A2B3C\nStatement: ${LINK}`],
+        [KINDS.B_BALANCE, { ...base, ref: 'DEB-1A2B3C', balance: 0 }, `NOTHING OUTSTANDING\nNo balance due as at 05 Oct 2026. Thank you.\nRef: DEB-1A2B3C\nStatement: ${LINK}`],
+        [KINDS.B_BALANCE, { ...base, ref: 'DEB-1A2B3C', balance: 12750000.5, dateISO: '' }, `YOUR BALANCE\nLKR 12,750,000.50\nRef: DEB-1A2B3C\nStatement: ${LINK}`],
     );
     cases.push(
-        [KINDS.B_LATE, { ...base, ref: 'DEB-1A2B3C', balance: 25000, dateISO: '2026-10-10' }, `Reminder: LKR 25,000.00 is still outstanding, due 10 Oct 2026, ref DEB-1A2B3C. Statement: ${LINK}`],
-        [KINDS.B_LATE, { ...base, ref: 'DEB-1A2B3C', balance: 987654321.99, dateISO: '2026-10-10' }, `Reminder: LKR 987,654,321.99 is still outstanding, due 10 Oct 2026, ref DEB-1A2B3C. Statement: ${LINK}`],
+        [KINDS.B_LATE, { ...base, ref: 'DEB-1A2B3C', balance: 25000, dateISO: '2026-10-10' }, `PAYMENT REMINDER\nOutstanding: LKR 25,000.00\nDue: 10 Oct 2026\nRef: DEB-1A2B3C\nStatement: ${LINK}`],
+        [KINDS.B_LATE, { ...base, ref: 'DEB-1A2B3C', balance: 987654321.99, dateISO: '2026-10-10' }, `PAYMENT REMINDER\nOutstanding: LKR 987,654,321.99\nDue: 10 Oct 2026\nRef: DEB-1A2B3C\nStatement: ${LINK}`],
     );
     for (const [kind, ctx, expected] of cases) {
         it(`${kind}${ctx.further ? ' (further)' : ''}${ctx.settled ? ' (settled)' : ''}`, () => {
@@ -85,7 +85,7 @@ describe('every notice, word for word', () => {
     });
 
     it('leaves the link out cleanly when there is none', () => {
-        expect(buildMessage(KINDS.A_INTEREST, { ...base, link: '', month: '2026-10' })).toBe('Interest LKR 500,000.00 applied to ref INV-3F9A2B for Oct 2026.');
+        expect(buildMessage(KINDS.A_INTEREST, { ...base, link: '', month: '2026-10' })).toBe('INTEREST APPLIED\nLKR 500,000.00 for Oct 2026\nRef: INV-3F9A2B');
     });
 
     it('returns nothing for a kind it does not know', () => {
@@ -94,8 +94,9 @@ describe('every notice, word for word', () => {
 
     it('puts nothing but ASCII on the air, whatever it was given', () => {
         expect(asciiOnly('Café සිංහල \u{1F600}\ttab\nnew')).toBe('Caf tab new');
+        expect(asciiLines('ONE', 'සිංහල', '', 'Caf\u00e9 two')).toBe('ONE\nCaf two');          // a line that is nothing but the wrong alphabet is dropped, never sent
         const t = buildMessage(KINDS.A_RECEIPT, { ...base, ref: 'INV-සAAA' });
-        expect(/^[\x20-\x7E]+$/.test(t)).toBe(true);
+        expect(/^[\x20-\x7E\n]+$/.test(t)).toBe(true);
     });
 
     it('never contains an NIC-shaped number or a name field', () => {

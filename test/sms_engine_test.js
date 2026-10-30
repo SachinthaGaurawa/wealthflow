@@ -98,11 +98,11 @@ describe('exactly once', () => {
         ];
         await Promise.all([run(db, user, gw), run(db, user, gw)]);
         const bodies = gw.sent.map((s) => s.message);
-        expect(bodies.filter((b) => b.startsWith('Repayment'))).toHaveLength(2);
+        expect(bodies.filter((b) => b.startsWith('REPAYMENT RECEIVED'))).toHaveLength(2);
         expect(gw.sent).toHaveLength(3);
         expect(new Set(ledger(fs).map((d) => d.key)).size).toBe(3);
         // the balances are each message's own: 40,000 after the first, 30,000 after the second
-        expect(bodies.filter((b) => b.startsWith('Repayment')).map((b) => /Balance (LKR [\d,]+\.\d{2})/.exec(b)[1]).sort()).toEqual(['LKR 30,000.00', 'LKR 40,000.00']);
+        expect(bodies.filter((b) => b.startsWith('REPAYMENT RECEIVED')).map((b) => /Balance: (LKR [\d,]+\.\d{2})/.exec(b)[1]).sort()).toEqual(['LKR 30,000.00', 'LKR 40,000.00']);
     });
 
     it('the body is rendered once, at queue time: a retry sends the same words', async () => {
@@ -333,7 +333,7 @@ describe('no longer owed', () => {
         const gw = gateway();
         await run(db, user, gw, { now: NOW + HOLD_MS + 1000 });
         expect(gw.sent).toHaveLength(1);
-        expect(gw.sent[0].message.startsWith('Loan')).toBe(true);
+        expect(gw.sent[0].message.startsWith('LOAN PAID OUT')).toBe(true);
         expect(ledger(fs).find((d) => d.key === 'B:d1:e2:in').status).toBe(STATUS.CANCELLED);
     });
 
@@ -360,8 +360,8 @@ describe('owed again, owed many, owed oddly', () => {
         // and confirms it again, with a corrected amount
         const r = await run(db, withRepayment({ amount: 7000, confirmedAt: NOW - 100e3 }), open, { now: NOW + 1000 });
         expect(r.enqueued.reopened).toBe(1);
-        const sent = open.sent.filter((m) => m.message.startsWith('Repayment'));
-        expect(sent.map((m) => /Repayment (LKR [\d,.]+?) received/.exec(m.message)[1])).toEqual(expect.arrayContaining(['LKR 7,000.00']));   // the new amount, not the cancelled one
+        const sent = open.sent.filter((m) => m.message.startsWith('REPAYMENT RECEIVED'));
+        expect(sent.map((m) => /REPAYMENT RECEIVED\n(LKR [\d,.]+?) on /.exec(m.message)[1])).toEqual(expect.arrayContaining(['LKR 7,000.00']));   // the new amount, not the cancelled one
         expect(sent.some((m) => m.message.includes('LKR 5,000.00'))).toBe(false);
         expect(ledger(fs).find((d) => d.key === 'B:d1:e3:in').status).toBe(STATUS.SENT);
         const again = await run(db, withRepayment({ amount: 7000, confirmedAt: NOW - 100e3 }), open, { now: NOW + 2000 });
@@ -495,7 +495,7 @@ describe('the quiet hours for scheduled notices', () => {
         expect(ledger(fs)[0].nextAttemptAt).toBe(T('2026-10-16T02:30:00Z'));
         const morning = await run(db, { income: [inv()] }, gw, { now: T('2026-10-16T02:31:00Z') });
         expect(morning.sent).toBe(1);
-        expect(gw.sent[0].message).toContain('Interest LKR 10,000.00 applied');
+        expect(gw.sent[0].message).toContain('INTEREST APPLIED\nLKR 10,000.00');
     });
     it('a repayment acknowledgement is not held back at night', async () => {
         const { db } = makeDb(); const gw = gateway();
@@ -628,16 +628,16 @@ describe('the balance the owner asked for', () => {
         expect(a.sent).toBeGreaterThanOrEqual(1);
         const doc = ledger(fs).find((d) => d.key === 'B:d1:bal:req-0001');
         expect(doc).toMatchObject({ status: STATUS.SENT, kind: 'B.balance', maxAgeMs: 30 * 60 * 1000, scheduled: false });
-        expect(doc.body).toMatch(/^Balance LKR 30,000\.00 as at 06 Oct 2026, ref DEB-[0-9A-F]{6}\. Statement: https:/);
+        expect(doc.body).toMatch(/^YOUR BALANCE\nLKR 30,000\.00 as at 06 Oct 2026\nRef: DEB-[0-9A-F]{6}\nStatement: https:/);
         const again = await run(db, user, gw, { now: night + 5 * 60e3 });
         expect(again.sent).toBe(0);
-        expect(gw.sent.filter((m) => m.message.startsWith('Balance'))).toHaveLength(1);
+        expect(gw.sent.filter((m) => m.message.startsWith('YOUR BALANCE'))).toHaveLength(1);
     });
 
     it('five sweeps racing for it still send one text', async () => {
         const { fs, db } = makeDb(); const gw = gateway();
         await Promise.all([1, 2, 3, 4, 5].map(() => run(db, asking(), gw)));
-        expect(gw.sent.filter((m) => m.message.startsWith('Balance'))).toHaveLength(1);
+        expect(gw.sent.filter((m) => m.message.startsWith('YOUR BALANCE'))).toHaveLength(1);
         expect(ledger(fs).filter((d) => d.kind === 'B.balance')).toHaveLength(1);
     });
 
@@ -649,7 +649,7 @@ describe('the balance the owner asked for', () => {
         // the owner tops up an hour later: the repayment texts go, the stale balance does not
         const gw = gateway();
         const later = await run(db, asking(), gw, { now: NOW + 3600e3 });
-        expect(gw.sent.some((m) => m.message.startsWith('Balance'))).toBe(false);
+        expect(gw.sent.some((m) => m.message.startsWith('YOUR BALANCE'))).toBe(false);
         expect(ledger(fs).find((d) => d.key === 'B:d1:bal:req-0001').status).toBe(STATUS.CANCELLED);
         expect(later.cancelled).toBeGreaterThanOrEqual(1);
     });
@@ -680,7 +680,7 @@ describe('the balance the owner asked for', () => {
         user.debtors[0][FIELDS.REQUESTS] = [{ id: 'req-0001', at: ASKED }, { id: 'req-0002', at: ASKED + 1000 }, { id: 'req-0003', at: ASKED + 2000 }];
         await run(db, user, gw, { limits: { ...LIMITS, perRecipientPerDay: 3 } });        // the loan text and the repayment text are two of the three
         expect(gw.sent.length).toBe(3);
-        expect(gw.sent.filter((m) => m.message.startsWith('Balance'))).toHaveLength(1);
+        expect(gw.sent.filter((m) => m.message.startsWith('YOUR BALANCE'))).toHaveLength(1);
     });
 });
 
@@ -693,7 +693,7 @@ describe('a scheduled text never goes out outside the recipient\'s 08:00-20:00, 
         return u;
     };
     const docs = (fs) => ledger(fs).filter((d) => d.kind === 'B.late');
-    const reminders = (gw) => gw.sent.filter((m) => m.message.startsWith('Reminder'));
+    const reminders = (gw) => gw.sent.filter((m) => m.message.startsWith('PAYMENT REMINDER'));
 
     it('a sweep that runs late at night leaves it queued for the next morning instead of sending it then', async () => {
         const { fs, db } = makeDb(); const gw = gateway();
@@ -724,7 +724,7 @@ describe('a scheduled text never goes out outside the recipient\'s 08:00-20:00, 
         u.debtors[0].events[0].at = T('2026-10-04T10:00:00Z');
         u.debtors[0].events[1].at = T('2026-10-05T01:00:00Z');                       // 06:30 in Colombo: before the window, but a receipt is not scheduled
         await run(db, u, gw, { now: T('2026-10-05T01:05:00Z') });
-        expect(gw.sent.some((m) => m.message.startsWith('Repayment'))).toBe(true);
+        expect(gw.sent.some((m) => m.message.startsWith('REPAYMENT RECEIVED'))).toBe(true);
     });
 });
 
@@ -744,14 +744,14 @@ describe('late-payment reminders through the queue', () => {
         expect(lateDocs(fs)).toHaveLength(1);
         expect(lateDocs(fs)[0]).toMatchObject({ status: STATUS.QUEUED, scheduled: true });
         expect(lateDocs(fs)[0].nextAttemptAt).toBe(T('2026-10-05T02:30:00Z'));      // 08:00 Colombo
-        expect(gw.sent.some((m) => m.message.startsWith('Reminder'))).toBe(false);
+        expect(gw.sent.some((m) => m.message.startsWith('PAYMENT REMINDER'))).toBe(false);
 
         await run(db, due(), gw, { now: T('2026-10-05T03:00:00Z') });
-        const sent = gw.sent.filter((m) => m.message.startsWith('Reminder'));
+        const sent = gw.sent.filter((m) => m.message.startsWith('PAYMENT REMINDER'));
         expect(sent).toHaveLength(1);
-        expect(sent[0].message).toMatch(/^Reminder: LKR 50,000\.00 is still outstanding, due 04 Oct 2026, ref DEB-[0-9A-F]{6}\. Statement: https:/);
+        expect(sent[0].message).toMatch(/^PAYMENT REMINDER\nOutstanding: LKR 50,000\.00\nDue: 04 Oct 2026\nRef: DEB-[0-9A-F]{6}\nStatement: https:/);
         await run(db, due(), gw, { now: T('2026-10-05T09:00:00Z') });
-        expect(gw.sent.filter((m) => m.message.startsWith('Reminder'))).toHaveLength(1);
+        expect(gw.sent.filter((m) => m.message.startsWith('PAYMENT REMINDER'))).toHaveLength(1);
     });
 
     it('is cancelled before it goes if the money arrives first (the morning\'s payment, confirmed before 08:00)', async () => {
@@ -763,7 +763,7 @@ describe('late-payment reminders through the queue', () => {
         const r = await run(db, paid, gw, { now: T('2026-10-05T03:00:00Z') });
         expect(r.cancelled).toBeGreaterThanOrEqual(1);
         expect(lateDocs(fs)[0].status).toBe(STATUS.CANCELLED);
-        expect(gw.sent.some((m) => m.message.startsWith('Reminder'))).toBe(false);
+        expect(gw.sent.some((m) => m.message.startsWith('PAYMENT REMINDER'))).toBe(false);
     });
 
     it('held for credit it is still owed for a week: the top-up three days later sends it, with the words as they were', async () => {
@@ -773,7 +773,7 @@ describe('late-payment reminders through the queue', () => {
         expect(lateDocs(fs)[0]).toMatchObject({ status: STATUS.QUEUED, lastError: { kind: KIND.CREDIT } });
         const gw = gateway();
         await run(db, due(), gw, { now: T('2026-10-08T03:00:00Z') });
-        expect(gw.sent.filter((m) => m.message.startsWith('Reminder'))).toHaveLength(1);
+        expect(gw.sent.filter((m) => m.message.startsWith('PAYMENT REMINDER'))).toHaveLength(1);
         expect(lateDocs(fs)[0].status).toBe(STATUS.SENT);
     });
 
@@ -786,7 +786,7 @@ describe('late-payment reminders through the queue', () => {
         const docs = lateDocs(fs);
         expect(['cancelled', 'expired']).toContain(docs.find((d) => /:1$/.test(d.key)).status);      // its week is over: no longer owed
         expect(docs.find((d) => /:2$/.test(d.key)).status).toBe(STATUS.SENT);
-        expect(gw.sent.filter((m) => m.message.startsWith('Reminder'))).toHaveLength(1);
+        expect(gw.sent.filter((m) => m.message.startsWith('PAYMENT REMINDER'))).toHaveLength(1);
     });
 
     it('a reminder that waited while the debtor paid part of it is worded with what is owed now, and one that expired under the old one-day shelf is owed again', async () => {
@@ -822,7 +822,7 @@ describe('late-payment reminders through the queue', () => {
     it('five sweeps racing for the same reminder send one text', async () => {
         const { db } = makeDb(); const gw = gateway();
         await Promise.all([1, 2, 3, 4, 5].map(() => run(db, due(), gw, { now: T('2026-10-05T03:00:00Z') })));
-        expect(gw.sent.filter((m) => m.message.startsWith('Reminder'))).toHaveLength(1);
+        expect(gw.sent.filter((m) => m.message.startsWith('PAYMENT REMINDER'))).toHaveLength(1);
     });
 
     it('with the box unticked nothing is queued, however late they are', async () => {
@@ -921,7 +921,7 @@ describe('a second number: every text goes to both, each tracked on its own', ()
         u.debtors[0].events[1].confirmed = false;
         await run(db, u, gw);
         expect(gw.sent.filter((m) => m.to === '+94712345678').map((m) => m.message)).toEqual(gw.sent.filter((m) => m.to === '+94771234567').map((m) => m.message));
-        expect(gw.sent.every((m) => !/^Repayment/.test(m.message))).toBe(true);
+        expect(gw.sent.every((m) => !/^REPAYMENT RECEIVED/.test(m.message))).toBe(true);
     });
 
     it('the receipt reaches each number before the "loan closed" text, even when the receipt is the slow one', async () => {
@@ -930,8 +930,8 @@ describe('a second number: every text goes to both, each tracked on its own', ()
         const gw = {
             configured: true, senderId: 'WealthFlow',
             async send({ to, message }) {
-                await new Promise((r) => setTimeout(r, /^Repayment/.test(message) ? 25 : 1));        // the receipt is the slow one
-                arrived.push({ to, kind: /^Repayment/.test(message) ? 'receipt' : /settled and closed/.test(message) ? 'closed' : 'other' });
+                await new Promise((r) => setTimeout(r, /^REPAYMENT RECEIVED/.test(message) ? 25 : 1));        // the receipt is the slow one
+                arrived.push({ to, kind: /^REPAYMENT RECEIVED/.test(message) ? 'receipt' : /FULLY SETTLED/.test(message) ? 'closed' : 'other' });
                 return { ok: true, gatewayId: 'g', cost: 1, segments: 1 };
             },
         };
@@ -946,7 +946,7 @@ describe('a second number: every text goes to both, each tracked on its own', ()
         const { fs, db } = makeDb(); const gw = gateway();
         await run(db, settled(), gw);
         await run(db, settled(), gw, { now: NOW + 3600e3 });
-        const closing = gw.sent.filter((m) => /settled and closed/.test(m.message));
+        const closing = gw.sent.filter((m) => /FULLY SETTLED/.test(m.message));
         expect(closing.map((m) => m.to).sort()).toEqual(['+94712345678', '+94771234567']);
         expect(ledger(fs).filter((d) => d.kind === 'B.closed')).toHaveLength(2);
     });

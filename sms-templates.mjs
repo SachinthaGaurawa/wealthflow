@@ -11,6 +11,10 @@
  *     times the units on an account that has very few. So there is no name in the
  *     text (names are often Sinhala or Tamil), no currency symbol, nothing but
  *     ASCII. A reference code identifies the ledger instead.
+ *   - LAID OUT AS LINES (owner, 2026-10-29: "make the reminders easy on the eye; bold or whatever suits"). A text message has no bold, so the layout does
+ *     what bold would: a headline in capitals, one fact per line, a label before each figure, and "** ... **" around the one thing that is due TODAY. A line
+ *     break costs one character, the same as the space it replaces, so the layout is free. Plain GSM-7 still: a line of the layout is dropped, never
+ *     translated, if it would need a character outside it.
  *   - ONE PART WHEN IT CAN BE. The statement link is the longest piece, so the
  *     words around it are as short as they can be and still be unambiguous.
  *   - THE FIGURES COME FROM THE LEDGER, rendered ONCE, when the message is queued.
@@ -89,7 +93,6 @@ export function refCode(kind, recordId) {
     return `${prefix}-${h}`;
 }
 
-const tail = (link) => (link ? ` Statement: ${link}` : '');
 const pct = (v) => {
     const n = Number(v);
     if (!Number.isFinite(n) || n <= 0) return '';
@@ -99,6 +102,11 @@ const pct = (v) => {
 /** Anything that is not printable ASCII is dropped; newlines become spaces. A last line of defence for the one-part promise. */
 export function asciiOnly(text) {
     return s(text).replace(/[\r\n\t]+/g, ' ').replace(/[^\x20-\x7E]/g, '').replace(/ {2,}/g, ' ').trim();
+}
+
+/** Several lines of text, each held to printable ASCII, empty ones dropped: the layout of a notice. */
+export function asciiLines(...lines) {
+    return lines.flat().map((l) => asciiOnly(l)).filter(Boolean).join('\n');
 }
 
 /**
@@ -111,56 +119,61 @@ function render(kind, ctx) {
     const ref = s(ctx.ref);
     const link = s(ctx.link);
     let text;
+    const stmt = link ? `Statement: ${link}` : '';
+    const on = ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : '';
     switch (kind) {
     case KINDS.A_CAPITAL: {
         const r = pct(ctx.ratePct);
-        text = `Capital ${amt} recorded, ref ${ref}${r ? ` (${r}% p.a.)` : ''}.${tail(link)}`;
+        text = asciiLines('CAPITAL RECORDED', `${amt}${r ? ` at ${r}% p.a.` : ''}`, `Ref: ${ref}`, stmt);
         break;
     }
     case KINDS.A_INTEREST:
-        text = `Interest ${amt} applied to ref ${ref}${ctx.month ? ` for ${fmtMonth(ctx.month)}` : ''}.${tail(link)}`;
+        text = asciiLines('INTEREST APPLIED', `${amt}${ctx.month ? ` for ${fmtMonth(ctx.month)}` : ''}`, `Ref: ${ref}`, stmt);
         break;
     case KINDS.A_RECEIPT:
-        text = `Receipt: ${amt} received${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}, ref ${ref}.${tail(link)}`;
+        text = asciiLines('PAYMENT RECEIVED', `${amt}${on}`, `Ref: ${ref}`, stmt);
         break;
     case KINDS.B_DISBURSED:
-        text = `${ctx.further ? 'Further loan' : 'Loan'} ${amt} disbursed${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}, ref ${ref}. Balance ${fmtMoney(ctx.balance, cur)}.${tail(link)}`;
+        text = asciiLines(ctx.further ? 'FURTHER LOAN PAID OUT' : 'LOAN PAID OUT', `${amt}${on}`, `Balance: ${fmtMoney(ctx.balance, cur)}`, `Ref: ${ref}`, stmt);
         break;
     case KINDS.B_REPAYMENT:
         // The payment that settles a loan is acknowledged like any other (the balance is simply nothing); that the loan is closed is the
         // next text's news (B_CLOSED), so the person is not told the same thing twice.
-        text = `Repayment ${amt} received${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}, ref ${ref}. Balance ${fmtMoney(ctx.balance, cur)}.${tail(link)}`;
+        text = asciiLines('REPAYMENT RECEIVED', `${amt}${on}`, `Balance: ${fmtMoney(ctx.balance, cur)}`, `Ref: ${ref}`, stmt);
         break;
     case KINDS.B_CLOSED:
-        text = `Loan ref ${ref} is fully settled and closed${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}. Thank you.${tail(link)}`;
+        text = asciiLines('LOAN FULLY SETTLED', `Closed${on}. Thank you.`, `Ref: ${ref}`, stmt);
         break;
     case KINDS.A_CLOSED:
-        text = `Investment ref ${ref} is fully settled and closed${ctx.dateISO ? ` on ${fmtDay(ctx.dateISO)}` : ''}. Thank you.${tail(link)}`;
+        text = asciiLines('INVESTMENT CLOSED', `Fully settled${on}. Thank you.`, `Ref: ${ref}`, stmt);
         break;
     case KINDS.B_LATE:
-        text = `Reminder: ${fmtMoney(ctx.balance, cur)} is still outstanding, due ${fmtDay(ctx.dateISO) || 'earlier'}, ref ${ref}.${tail(link)}`;
+        text = asciiLines('PAYMENT REMINDER', `Outstanding: ${fmtMoney(ctx.balance, cur)}`, ctx.dateISO ? `Due: ${fmtDay(ctx.dateISO)}` : 'Past its due date.', `Ref: ${ref}`, stmt);
         break;
     case KINDS.B_BALANCE: {
-        const on = ctx.dateISO ? ` as at ${fmtDay(ctx.dateISO)}` : '';
+        const asAt = ctx.dateISO ? ` as at ${fmtDay(ctx.dateISO)}` : '';
         text = Number(ctx.balance) > 0
-            ? `Balance ${fmtMoney(ctx.balance, cur)}${on}, ref ${ref}.${tail(link)}`
-            : `No balance outstanding on ref ${ref}${on}, thank you.${tail(link)}`;
+            ? asciiLines('YOUR BALANCE', `${fmtMoney(ctx.balance, cur)}${asAt}`, `Ref: ${ref}`, stmt)
+            : asciiLines('NOTHING OUTSTANDING', `No balance due${asAt}. Thank you.`, `Ref: ${ref}`, stmt);
         break;
     }
     case KINDS.O_DUE: {
-        const when = Number(ctx.days) <= 0 ? 'today' : Number(ctx.days) === 1 ? 'tomorrow' : `in ${Number(ctx.days)} days${ctx.dateISO ? ` (${fmtDay(ctx.dateISO)})` : ''}`;
+        // To the owner's own phone: no link, no names of other people, so there is room for the whole layout.
+        const days = Number(ctx.days);
         const name = s(ctx.label);
-        text = ctx.what === 'once' ? `One-time payment${name ? ` ${name}` : ''} ${amt} is due ${when}.`
-            : ctx.what === 'bill' ? `Bill${name ? ` ${name}` : ''} ${amt} is due ${when}.`
-            : ctx.what === 'cheque' ? `Cheque ${name ? `${name} ` : ''}${amt} clears ${when}. Keep funds ready.`
-            : ctx.what === 'card' ? `Card payment${name ? ` ${name}` : ''} ${amt} is due ${when}.`
-                : `Loan${name ? ` ${name}` : ''} instalment ${amt} is due ${when}.`;
+        const what = ctx.what === 'once' ? 'ONE-TIME PAYMENT' : ctx.what === 'bill' ? 'BILL' : ctx.what === 'cheque' ? 'CHEQUE' : ctx.what === 'card' ? 'CARD PAYMENT' : 'LOAN INSTALMENT';
+        const verb = ctx.what === 'cheque' ? 'CLEARS' : 'DUE';
+        const when = days <= 0 ? 'TODAY' : days === 1 ? 'TOMORROW' : `IN ${days} DAYS`;
+        const head = `${what} ${verb} ${when}`;
+        text = asciiLines(days <= 0 ? `** ${head} **` : head, name,
+            `Amount: ${amt}`, ctx.dateISO ? `${ctx.what === 'cheque' ? 'Clears' : 'Due'}: ${fmtDay(ctx.dateISO)}` : '',
+            ctx.what === 'cheque' ? 'Keep funds ready.' : days <= 0 ? 'Please pay today.' : '');
         break;
     }
     default:
         return '';
     }
-    return asciiOnly(text);
+    return text;
 }
 
 /**
@@ -189,4 +202,4 @@ export function otpMessage(code, minutes = 3, host = OFFICIAL_HOST) {
     return /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(h) && c ? `${text}\n\n@${h} #${c}` : text;
 }
 
-export default { KINDS, currencyOf, fmtMoney, fmtDay, fmtMonth, refCode, buildMessage, otpMessage, asciiOnly };
+export default { KINDS, currencyOf, fmtMoney, fmtDay, fmtMonth, refCode, buildMessage, otpMessage, asciiOnly, asciiLines };

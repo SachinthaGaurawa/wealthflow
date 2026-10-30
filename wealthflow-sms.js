@@ -23,6 +23,7 @@
  * ===========================================================================*/
 
 import { normalizePhone, formatPhone } from './wealthflow-phone.js';
+import { categoryList, categoryOn, withCategory, CATEGORY_KEYS, CATS_FIELD } from './wealthflow-sms-categories.js';
 import { phoneProblem as phoneText, idProblem, storedId, idKindOf } from './wealthflow-people.js';
 
 /** The record fields. The server reads the same ten; a test pins that they agree (sms-events.mjs FIELDS). */
@@ -302,6 +303,8 @@ export function signatureOf(user) {
         }
     }
     if (!parts.length) return '';
+    // which kinds of text are switched off decides what the server derives, so a change to a switch is a change
+    if (u.settings && u.settings[CATS_FIELD]) parts.push('S' + stable(u.settings[CATS_FIELD]));
     parts.push('C' + s(u.settings && u.settings.currency));
     const text = parts.join('\n');
     return fnv(text, 2166136261) + fnv(text, 0x9747b28c) + '-' + text.length.toString(36);
@@ -855,6 +858,31 @@ export function ownerAlertsHtml(owner) {
         + '<div id="_wf_own_msg" style="font-size:12px;margin-top:6px;min-height:14px;' + (f.msg ? 'color:' + tone + ';' : '') + '">' + esc(f.msg || '') + '</div></div>';
 }
 
+/**
+ * The Settings section "Text messages": one switch per kind of text. Everything is escaped.
+ *   settings  the synced settings object
+ *   owner     { enabled, verified } of "Alerts to my own number", so the section can say plainly why the owner's own kinds are quiet
+ */
+export function categoriesHtml(settings, owner = {}) {
+    const list = categoryList(settings);
+    const row = (c) => '<div class="setting-row"><div class="setting-info"><div class="setting-label">' + esc(c.label) + '</div><div class="setting-desc">' + esc(c.hint) + '</div></div>'
+        + '<div class="toggle' + (c.on ? ' on' : '') + '" data-sms-cat="' + esc(c.key) + '" role="switch" tabindex="0" aria-checked="' + (c.on ? 'true' : 'false') + '" aria-label="' + esc(c.label) + '"'
+        + ' onclick="if (window.WFSms) WFSms.flipCategory(\'' + esc(c.key) + '\', this)" onkeydown="if (event.key === \' \' || event.key === \'Enter\') { event.preventDefault(); this.click(); }"></div></div>';
+    const ownOk = owner && owner.enabled === true && !!s(owner.verified);
+    const ownNote = ownOk
+        ? '<div class="setting-desc" style="margin:2px 0 6px;">Alerts to your own number are on (' + esc(formatPhone(s(owner.verified))) + ').</div>'
+        : '<div class="setting-desc" style="margin:2px 0 6px;color:var(--amber,#f5a623);">These five reach you only when "Alerts to my own number" is on and the number is verified. Open Text messages to set it up.</div>';
+    return '<div class="settings-section" id="_wf_sms_cats">'
+        + '<div class="settings-title">Text messages (SMS)</div>'
+        + '<div class="setting-desc" style="margin-bottom:8px;">Choose which kinds of text WealthFlow may send. A kind that is switched off is never sent, and anything of that kind still waiting to go is cancelled.</div>'
+        + '<div style="font-weight:700;font-size:12px;margin:8px 0 2px;">Reminders to you</div>' + ownNote
+        + list.filter((c) => c.group === 'own').map(row).join('')
+        + '<div style="font-weight:700;font-size:12px;margin:12px 0 2px;">Texts to your people</div>'
+        + '<div class="setting-desc" style="margin:2px 0 6px;">Each investment and each person also keeps its own "Send SMS notifications" box; both must be on.</div>'
+        + list.filter((c) => c.group === 'people').map(row).join('')
+        + '<div style="margin-top:10px;"><button class="btn btn-secondary btn-sm" onclick="if (window.WFSms) WFSms.openPanel()">Open Text messages</button></div></div>';
+}
+
 export function panelHtml({ rows = [], status = null, disabled = false, lastError = '', nameOf = null, fmtWhen = null, now = Date.now(), owner = null, showOwner = false } = {}) {
     const when = (ms) => { if (!ms) return ''; try { return fmtWhen ? fmtWhen(ms) : new Date(ms).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
     const colour = { sent: 'var(--green,#30a46c)', failed: 'var(--red,#e5484d)', queued: 'var(--amber,#f5a623)', sending: 'var(--amber,#f5a623)' };
@@ -880,7 +908,7 @@ export function panelHtml({ rows = [], status = null, disabled = false, lastErro
             + '<span style="font-weight:700;color:' + (colour[r.status] || 'inherit') + ';">' + esc(r.label) + '</span>'
             + '<span style="color:var(--text3);">' + esc(when(r.at)) + '</span></div>'
             + '<div style="font-size:12px;color:var(--text3);margin-top:2px;">' + esc([r.to && 'to ' + r.to + (r.second ? ' (second number)' : ''), r.ref].filter(Boolean).join('  ')) + '</div>'
-            + '<div style="font-size:12.5px;margin-top:4px;word-break:break-word;">' + esc(r.body) + '</div>'
+            + '<div style="font-size:12.5px;margin-top:4px;word-break:break-word;white-space:pre-line;">' + esc(r.body) + '</div>'
             + (r.note ? '<div style="font-size:11.5px;color:var(--text3);margin-top:4px;">' + esc(r.note) + '</div>' : '')
             + '</div>').join('')
         : '<div style="padding:18px 0;text-align:center;color:var(--text3);font-size:13px;">No text messages yet. Switch "Send SMS notifications" on for an investment or a debtor and the notices appear here.</div>';
@@ -1137,6 +1165,20 @@ export function boot(win) {
     const api = {
         applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, showBlockErrors, signatureOf, countOn, pendingFlush, SMS_FIELDS, BALANCE, balanceWaitMs, requestBalance,
         start, setOwnerAlerts,
+        categoriesHtml: () => { try { return categoriesHtml(win.appData && win.appData.settings, ownerNow()); } catch (_) { return ''; } },
+        /** A switch in Settings was pressed: save it into the synced settings (the server reads it from there) and ask the server to look. */
+        flipCategory(key, el) {
+            try {
+                if (!CATEGORY_KEYS.includes(key)) return false;
+                const cur = win.DB.getObj('settings', {});
+                const on = el && el.classList ? !el.classList.contains('on') : !categoryOn(cur, key);
+                win.DB.set('settings', withCategory(cur, key, on, now()));
+                if (el && el.classList) { el.classList.toggle('on', on); el.setAttribute('aria-checked', on ? 'true' : 'false'); }
+                try { const c = categoryList(win.DB.getObj('settings', {})).find((x) => x.key === key); toast({ tone: 'info', text: (c ? c.label : 'These texts') + (on ? ' are on.' : ' are off. Nothing of this kind will be sent.'), detail: '' }); } catch (_) { /* a toast is a courtesy */ }
+                try { if (!live.notifier) start(); if (live.notifier) live.notifier.afterPush(); } catch (_) { /* the daily check still picks it up */ }
+                return on;
+            } catch (_) { return false; }
+        },
         afterPush() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.afterPush(); } catch (_) { /* never into the sync path */ } },
         /** Something a text is derived from just changed on this page: see createNotifier().onLocalChange. Never into the save path. */
         onLocalChange() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.onLocalChange(); } catch (_) { /* the upload and the cron still carry it */ } },
@@ -1168,4 +1210,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFSms = boot(window); } catch (e) { console.warn('[WF-SMS] page side did not start:', e && e.message); }
 }
 
-export default { ownerCodeCall, SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, pendingFlush, tokenExpiry, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, ownerAlertsHtml, describeIssue };
+export default { ownerCodeCall, SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, pendingFlush, tokenExpiry, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, ownerAlertsHtml, categoriesHtml, describeIssue };

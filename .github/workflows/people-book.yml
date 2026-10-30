@@ -25,6 +25,8 @@ on:
       - sms-notify.js
       - sms-flush.mjs
       - test/e2e/sms-flush.mjs
+      - test/e2e/sms-categories.mjs
+      - wealthflow-sms-categories.js
       - test/e2e/harness.mjs
       - test/e2e/firebase-stub.mjs
       - .github/workflows/people-book.yml
@@ -63,3 +65,5 @@ jobs:
       # An older entry can be read (the timeline no longer stops at the newest six), a second number reaches a loan that was never linked, and a change made
       # and the page closed at once is handed to the server in one keepalive request.
       - run: node test/e2e/sms-flush.mjs
+      # Settings > Text messages: a switch per kind of text, all on to begin with, saved into the synced settings when pressed and drawn from them again.
+      - run: node test/e2e/sms-categories.mjs
