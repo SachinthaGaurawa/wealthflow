@@ -41,6 +41,8 @@ const plain = (extra = {}) => ({ id: 'dB', name: 'Kamal', phone: '', nic: '', no
 /** Record every toast the page shows, so a message that is promised is a message that was shown. */
 await page.evaluate(() => { window.__toasts = []; const o = window.notify; window.notify = (m, t) => { window.__toasts.push(String(m)); try { return o(m, t); } catch (_) { return undefined; } }; });
 const toasts = () => page.evaluate(() => window.__toasts.slice());
+// a toast that promises a text waits for the upload before it says so (the page's save is a request now, not an instant stub), so wait for it
+const toastSeen = (re) => page.waitForFunction((src) => window.__toasts.some((m) => new RegExp(src).test(m)), re.source, { timeout: 10000 }).catch(() => { });
 
 const showDebtors = async (list) => {
     await page.evaluate((l) => { DB.set('debtors', l); window.showPage('liquidity'); window.setLiquidityTab('debt'); }, list);
@@ -83,6 +85,7 @@ assert.equal(rep.kind, 'repayment');
 assert.equal(rep.amount, 20000);
 assert.equal(rep.confirmed, true, 'ticking "I can already see this" counts it now');
 assert.ok(rep.at > 0, 'and it carries the moment it was written, which is when the debtor is texted about it');
+await toastSeen(/Repayment counted.*text with the new balance is queued/);
 assert.ok((await toasts()).some((m) => /Repayment counted.*text with the new balance is queued/.test(m)), 'the owner is told: ' + (await toasts()).join(' | '));
 console.log('3. counted now        ->', JSON.stringify({ confirmed: rep.confirmed, toast: (await toasts()).slice(-1)[0] }));
 
@@ -106,6 +109,7 @@ await page.click('#_ev_save');
 await page.waitForFunction(() => (DB.get('debtors') || [])[0].events.length === 3);
 const logged = await page.evaluate(() => (DB.get('debtors') || [])[0]);
 assert.equal(logged.events[2].confirmed, false);
+await toastSeen(/Logged — confirm it on the dashboard/);
 assert.ok((await toasts()).some((m) => /Logged — confirm it on the dashboard/.test(m)));
 assert.equal(serverView(logged, Date.now()).events.filter((e) => e.kind === KINDS.B_REPAYMENT).length, 1, 'no text for money nobody has confirmed');
 
@@ -113,6 +117,7 @@ assert.equal(serverView(logged, Date.now()).events.filter((e) => e.kind === KIND
 await page.waitForSelector('[data-db-conf]');
 await page.click('[data-db-conf]');
 await page.waitForFunction(() => (DB.get('debtors') || [])[0].events[2].confirmed === true);
+await toastSeen(/^Confirmed · a text with the new balance is queued/);
 assert.ok((await toasts()).some((m) => /^Confirmed · a text with the new balance is queued/.test(m)), (await toasts()).join(' | '));
 const confirmedAll = await page.evaluate(() => (DB.get('debtors') || [])[0]);
 const texts = serverView(confirmedAll, Date.now()).events.filter((e) => e.kind === KINDS.B_REPAYMENT).map((e) => buildMessage(e.kind, { ...e, link: '' }));
@@ -133,6 +138,7 @@ const asked = await page.evaluate(() => (DB.get('debtors') || [])[0]);
 assert.match(asked.sms_requests[0].id, /^[A-Za-z0-9_-]{4,40}$/);
 assert.ok(Math.abs(asked.sms_requests[0].at - Date.now()) < 15000);
 assert.deepEqual(Object.keys(asked.sms_requests[0]).sort(), ['at', 'id'], 'the request names no amount and no recipient: the server writes the text from the books');
+await toastSeen(/Balance text queued/);
 assert.ok((await toasts()).some((m) => /Balance text queued/.test(m)));
 assert.equal(asked.events.length, 3, 'the ledger is untouched');
 
