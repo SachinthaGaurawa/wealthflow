@@ -255,7 +255,9 @@ try {
     });
 
     await check('notifPayday', async () => {
-        const run = async () => { await resetSeen(); await page.evaluate(() => checkActionableReminders()); return page.evaluate(() => window.__ban.length); };
+        // Only the income banners answer to this switch. In the first five days of a month the probe loan's instalment banner also appears (it has
+        // its own switch, notifLoan), so counting every banner made this check fail on the 1st-5th of every month.
+        const run = async () => { await resetSeen(); await page.evaluate(() => checkActionableReminders()); return page.evaluate(() => window.__ban.filter((t) => /Income Day/.test(t)).length); };
         await setOn('notifPayday', true); const on = await run(); await setOn('notifPayday', false); const off = await run(); await setOn('notifPayday', true);
         return { ok: on > 0 && off === 0, detail: `on=${on} off=${off}` };
     });
