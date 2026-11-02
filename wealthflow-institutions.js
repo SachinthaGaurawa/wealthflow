@@ -291,12 +291,18 @@ export function bankAgrees(a, b) {
     if (!x || !y || WILD.has(x) || WILD.has(y)) return true;
     return sameInstitution(a, b);
 }
-/** Does this document's opening text name the institution `bank` stands for? (for a statement whose mailbox label says something else) */
+/** Does this document's opening text name the institution `bank` stands for - and no other? (for a statement whose mailbox label says something else)
+ *  Only the header region is read, and a head that names two institutions answers no: a transaction line that mentions another bank must not turn one bank's statement into another's. */
 export function textNamesBank(text, bank) {
     const key = institutionKey(bank);
-    if (!key || key.startsWith('x:')) return key.startsWith('x:') && ` ${plain(String(text || '').slice(0, 6000))} `.includes(` ${key.slice(2)} `);
-    const head = ` ${plain(String(text || '').slice(0, 6000))} `;
-    return INSTITUTIONS.filter((i) => (i.lockId || i.id) === key).some((i) => [i.name, i.mailName, ...i.tokens].some((raw) => { const p = raw ? plain(raw) : ''; return !!p && head.includes(` ${p} `); }));
+    if (!key) return false;
+    const head = ` ${plain(String(text || '').slice(0, 1500))} `;
+    if (key.startsWith('x:')) return head.includes(` ${key.slice(2)} `);
+    const named = new Set();
+    for (const i of INSTITUTIONS) {
+        if ([i.name, i.mailName, ...i.tokens].some((raw) => { const p = raw ? plain(raw) : ''; return !!p && head.includes(` ${p} `); })) named.add(i.lockId || i.id);
+    }
+    return named.size === 1 && named.has(key);
 }
 
 const API = { INSTITUTIONS, PICKER, BANK_DOMAINS, institutionFor, tokensFor, domainsFor, institutionForSender, canonicalBank, displayBank, sameBank, institutionKey, sameInstitution, bankAgrees, textNamesBank };

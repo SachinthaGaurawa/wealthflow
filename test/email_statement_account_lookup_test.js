@@ -136,3 +136,11 @@ describe('the "need review" banner counts only what there is something to open',
         expect(banner).not.toMatch(/\bst\.reviewStatements\) \|\| 0, Number\(window\.WFStatementCloud/);   // the old sum of the two lists, the locked statement counted in both
     });
 });
+
+describe('the statement text can name the registered bank only when it names that bank alone, in its header', () => {
+    it('a transaction line that mentions another bank does not make the statement that bank\'s', () => {
+        expect(textNamesBank('DFCC BANK credit card statement\n12 OCT TRANSFER TO HNB 5,000.00', 'HNB')).toBe(false);
+        expect(textNamesBank('DFCC BANK credit card statement', 'DFCC')).toBe(true);
+        expect(textNamesBank('x'.repeat(3000) + ' HATTON NATIONAL BANK', 'HNB')).toBe(false);   // far from the header
+    });
+});
