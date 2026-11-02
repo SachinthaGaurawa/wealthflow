@@ -164,6 +164,44 @@ describe('an unclear empty month is one question with one answer', () => {
     });
 });
 
+describe('a statement locked by a password is asked about as a password, not as a layout', () => {
+    // production 2026-11-02: "1 statement processed and need review" over a list with nothing to open
+    it('says so in plain words, offers "Add a password" (the vault), and is counted apart from the questions about rows', async () => {
+        const buttons = [], texts = [];
+        const element = () => ({ ...fakeElement(), _t: '', set textContent(v) { this._t = v; texts.push(v); }, get textContent() { return this._t; } });
+        vi.stubGlobal('document', { createElement: tag => { const e = element(); if (tag === 'button') buttons.push(e); return e; }, body: { appendChild: () => {} } });
+        await authChanged(null);
+        const docs = [{ id: 'locked', data: () => ({ index: -1, reason: 'PASSWORD_FAILED', bank: 'HNB Credit Card', filename: 'card.pdf', status: 'pending' }) },
+            { id: 'row', data: () => ({ index: 3, reason: 'invalid-transaction', row: { date: '2026-10-02', amount: 10, description: 'X' }, bank: 'HNB', status: 'pending' }) }];
+        window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => ({ onSnapshot: ok => { ok({ docs }); return () => {}; } }) }) }) }) }) };
+        window.openBankVault = vi.fn();
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0 }));
+        await authChanged(active);
+        expect(getState()).toMatchObject({ reviews: 2, passwordReviews: 1 });
+        await openReview();
+        expect(texts.some(x => x.startsWith('This statement is password-protected, and none of your saved passwords opened it.'))).toBe(true);
+        expect(buttons.filter(b => b._t === 'Map statement layout')).toHaveLength(0);
+        const add = buttons.find(b => b._t === 'Add a password');
+        await add.onclick();
+        expect(window.openBankVault).toHaveBeenCalledTimes(1);
+        expect(window.openBankVault.mock.calls[0][0]).toMatchObject({ closeOnUnlock: true });
+        await authChanged(null);
+        expect(getState().passwordReviews).toBe(0);
+    });
+    it('a statement with no vault at all is told to save a password first, in its own words', async () => {
+        const texts = [];
+        const element = () => ({ ...fakeElement(), _t: '', set textContent(v) { this._t = v; texts.push(v); }, get textContent() { return this._t; } });
+        vi.stubGlobal('document', { createElement: () => element(), body: { appendChild: () => {} } });
+        await authChanged(null);
+        window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => ({ onSnapshot: ok => { ok({ docs: [{ id: 'n', data: () => ({ index: -1, reason: 'NO_VAULT_KEYS', bank: 'HNB', filename: 'a.pdf', status: 'pending' }) }] }); return () => {}; } }) }) }) }) }) };
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 0 })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0 }));
+        await authChanged(active);
+        await openReview();
+        expect(texts.some(x => x.startsWith('This statement is password-protected and you have not saved any statement passwords yet.'))).toBe(true);
+        await authChanged(null);
+    });
+});
+
 describe('the review list is one of the app\'s own dialogs and never a bare dark layer', () => {
     // A recording stand-in: which element is the dialog layer, what is put in it and when it joins the page.
     const recorder = () => {

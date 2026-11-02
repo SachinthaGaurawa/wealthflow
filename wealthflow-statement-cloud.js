@@ -1,5 +1,5 @@
 let coverage=null,user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null,retrying=[],autoTimer=null,autoRunning=false;
-const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,queued:0,parked:0};
+const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,passwordReviews:0,queued:0,parked:0};
 
 export const getState=()=>({...state});
 export const retryAttemptsSummary=()=>retrying.map(r=>({bank:r.bank||'',filename:r.filename||'',retryCount:r.retryCount||0,lastRetryReason:r.lastRetryReason||''}));
@@ -53,9 +53,9 @@ async function refreshFinancialData(){
 
 function adoptUser(next){
     if(!next||user?.uid===next.uid)return user;
-    user=next;unsubscribe?.();unsubscribe=null;pending=[];state.reviews=0;
+    user=next;unsubscribe?.();unsubscribe=null;pending=[];state.reviews=0;state.passwordReviews=0;
     const db=window.db||window.firebase?.firestore?.();
-    if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(500).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;change();if(overlay)drawReview();scheduleAutoRender()},()=>{state.error='statement-review-unavailable';change()});
+    if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(500).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;state.passwordReviews=pending.filter(isPasswordReview).length;change();if(overlay)drawReview();scheduleAutoRender()},()=>{state.error='statement-review-unavailable';change()});
     return next
 }
 
@@ -130,7 +130,7 @@ export async function sync(){
 
 export async function authChanged(next){
     if(user?.uid===next?.uid&&next)return;
-    unsubscribe?.();unsubscribe=user=null;pending=[];coverage=null;state.reviews=0;
+    unsubscribe?.();unsubscribe=user=null;pending=[];coverage=null;state.reviews=0;state.passwordReviews=0;
     Object.assign(state,{configured:null,saved:false,count:0,savedAt:null,error:'',queued:0});change();
     if(!next){clearTimeout(continuationTimer);continuationTimer=null;clearTimeout(autoTimer);autoTimer=null;closeReview();return}
     adoptUser(next);try{await status();await reconcileLogin();await sync()}catch(_){}
@@ -392,7 +392,13 @@ async function mapLayout(entry) {
 }
 
 // Why a WHOLE statement is waiting, in words (the row-level reasons are below).
+/* A statement the vault could not open is waiting for a PASSWORD, not for a decision about its rows: it says so, and the one thing to do is to add the password the bank uses. */
+const PASSWORD_REASON_CODES = new Set(['PASSWORD_FAILED', 'NO_VAULT_KEYS']);
+const isPasswordReview = entry => Boolean(entry) && entry.index === -1 && PASSWORD_REASON_CODES.has(entry.reason);
 const WHOLE_TEXT = {
+    'PASSWORD_FAILED': 'This statement is password-protected, and none of your saved passwords opened it. Add the password this bank uses under Bank Statement Passwords; it is read again automatically once you save it.',
+    'NO_VAULT_KEYS': 'This statement is password-protected and you have not saved any statement passwords yet. Add the password this bank uses under Bank Statement Passwords; it is read again automatically once you save it.',
+    'PDF_UNREADABLE': 'This PDF could not be opened or read. Download the original to check it; if it is damaged, ask the bank to send it again.',
     'statement-empty-needs-confirmation': 'This month looks like it had no transactions, but the statement does not say so clearly. Check the original and confirm.',
     'statement-layout-or-reconciliation-needs-review': "The rows could not be proven to add up to this statement's balances, so nothing was filed from it.",
     'statement-layout-identity-needs-review': 'WealthFlow could not confirm this document is a bank statement.',
@@ -548,7 +554,12 @@ function buildReview() {
         item.appendChild(text);
         const rowLevel = Boolean(entry.row) && entry.index >= 0;
         const why = document.createElement('p'); why.textContent = rowLevel ? reviewReasonText(entry.reason) : (WHOLE_TEXT[entry.reason] || String(entry.reason || 'Verification required')); item.appendChild(why);
-        const button = document.createElement('button'); button.className = entry.reason === 'statement-empty-needs-confirmation' ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'; button.textContent = !entry.row || entry.index < 0 ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } catch { say('This review could not be opened. It remains pending.', 'error'); } finally { button.disabled = false; } }; item.appendChild(button);
+        const locked = isPasswordReview(entry);
+        const button = document.createElement('button'); button.className = entry.reason === 'statement-empty-needs-confirmation' ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'; button.textContent = locked ? 'Add a password' : !entry.row || entry.index < 0 ? 'Map statement layout' : 'Review';
+        button.onclick = async () => {
+            if (locked) { if (typeof window.openBankVault === 'function') { closeReview(); window.openBankVault({ closeOnUnlock: true, onClose: () => { try { sync().catch(() => {}); } catch (_) {} } }); } else say('Open Settings > Bank Statement Passwords to add it.', 'info'); return; }
+            button.disabled = true; try { await review(entry); } catch { say('This review could not be opened. It remains pending.', 'error'); } finally { button.disabled = false; }
+        }; item.appendChild(button);
         const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw); box.appendChild(item);
         if (entry.index === -1 && entry.reason === 'statement-empty-needs-confirmation') {
             const empty = document.createElement('button'); empty.className = 'btn btn-primary btn-sm'; empty.textContent = 'Yes, nothing happened that month'; empty.style.marginLeft = '8px';

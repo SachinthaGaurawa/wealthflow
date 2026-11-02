@@ -1,4 +1,4 @@
-import { sameBank } from './wealthflow-institutions.js';
+import { bankAgrees } from './wealthflow-institutions.js';
 
 // ── detection vocab (Sri Lanka–aware) ──────────────────────────────────────
 const RE = {
@@ -159,8 +159,9 @@ export function isCreditCardRow(row, ctx) {
   const last4 = row.card_last4 || ctx.card_last4;
   const entry = last4 && ctx.cardRegistry ? ctx.cardRegistry[last4] : null;
   if (!entry) return false;
-  // Last-4 alone is not unique across the owner's banks: when both banks are known they must agree.
-  if (entry.bank && ctx.bank && !sameBank(entry.bank, ctx.bank) && norm(entry.bank) !== norm(ctx.bank)) return false;
+  // Last-4 alone is not unique across the owner's banks: when both banks are known they must agree — as institutions, not as spellings
+  // ("HNB" in Cards and accounts, "Hnb Cards" on the mailbox the owner approved, "Hatton National Bank PLC" on the statement are one bank).
+  if (!bankAgrees(entry.bank, ctx.bank)) return false;
   return entry.type === 'credit_card';
 }
 

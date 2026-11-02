@@ -225,6 +225,8 @@ describe('limit/offset page through the backlog instead of returning it all at o
         expect(seen.body.pending).toBe(1);
         expect(seen.body.needsReviewStatements).toBe(2);
         expect(seen.body.passwordFailures).toBe(1);
+        // a statement locked by a password is counted once, in its own strip; "needs review" is only what there is a question to open for
+        expect(seen.body.reviewQuestions).toBe(1);
     });
 
     it('returns one exact review source for Download original without re-queueing it', async () => {

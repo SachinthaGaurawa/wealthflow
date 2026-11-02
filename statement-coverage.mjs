@@ -81,7 +81,7 @@ const stateOf = item => {
     const status = String(item?.status || '');
     if (item?.emptyStatement === true) return 'empty';
     if (item?.filed === true || status === 'filed') return 'filed';
-    if (status === 'needs_review') return 'review';
+    if (status === 'needs_review') return item?.reviewReason === 'PASSWORD_FAILED' || item?.reviewReason === 'NO_VAULT_KEYS' ? 'locked' : 'review';   // locked: waiting for a password, not for a decision
     if (status === 'dead_letter') return 'pending';       // parked after repeated failures and re-driven on a schedule: still queued, never dropped
     if (status === 'pending' || status === 'processing') return 'pending';
     if (status === 'dismissed') return 'dismissed';
@@ -92,7 +92,7 @@ const stateOf = item => {
 // A month is DUE once it is over and the bank has had `graceDays` to send it.
 const dueThrough = (now, graceDays) => { const t = new Date(now - graceDays * 86400000); let key = ym(t.getUTCFullYear(), t.getUTCMonth() + 1); if (monthEnd(key) + graceDays * 86400000 > now) key = addMonths(key, -1); return key; };
 
-const BETTER = { filed: 6, empty: 5, review: 4, pending: 3, dismissed: 2, rejected: 1 };
+const BETTER = { filed: 6, empty: 5, review: 4, locked: 4, pending: 3, dismissed: 2, rejected: 1 };
 
 /**
  * @param items  stored statements: { bank, filename, receivedMs, status, filed, from }
@@ -153,7 +153,7 @@ export function auditLogOf(items, { limit = 60 } = {}) {
         if (state === 'filed' || state === 'empty') {
             status = added ? 'Missing-Added' : 'Synced';
             math = item.proof?.math === 'passed' ? 'PASSED' : item.proof?.math === 'owner-confirmed' ? 'OWNER-CONFIRMED' : item.proof?.math === 'duplicate-of' ? 'DUPLICATE' : state === 'empty' ? 'PASSED' : 'NOT-RECORDED';
-        } else if (state === 'review') {
+        } else if (state === 'review' || state === 'locked') {
             status = 'Needs-Review';
             math = /reconcil|balance|chain|proof/i.test(String(item.reviewReason || '')) ? 'FAILED' : 'NOT-CHECKED';
         } else if (state === 'pending') {
@@ -192,7 +192,7 @@ export function gridOf(items, { months = 18, banks = 12 } = {}) {
 }
 
 /** The grid as the lines the overlay shows, one per bank — formatted here so the browser carries a loop and nothing else: "DFCC Bank: 2026-08 filed (77 rows) · 2026-07 in review · 3 earlier". */
-const STATE_WORDS = { filed: 'filed', empty: 'nothing moved', review: 'in review', pending: 'being read', dismissed: 'dismissed', rejected: 'not a statement' };
+const STATE_WORDS = { filed: 'filed', empty: 'nothing moved', review: 'in review', locked: 'needs its password', pending: 'being read', dismissed: 'dismissed', rejected: 'not a statement' };
 export const gridLines = grid => (Array.isArray(grid) ? grid : []).map(g => {
     const all = Object.entries(g.months), moved = all.filter(([, v]) => v[0] !== 'empty'), quiet = all.filter(([, v]) => v[0] === 'empty').map(([m]) => m);
     const parts = moved.map(([m, v]) => `${m} ${STATE_WORDS[v[0]] || v[0]}${v[1] ? ` (${v[1]} rows)` : ''}`);
