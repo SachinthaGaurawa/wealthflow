@@ -277,7 +277,7 @@ export function institutionKey(label) {
     if (hits.size) return hits.size === 1 ? [...hits][0] : '';
     const extra = EXTRA.find(([, names]) => names.some((w) => padded.includes(` ${w} `)));
     if (extra) return extra[0];
-    const rest = n.split(' ').filter((w) => w.length > 1 && !KIND.has(w)).join('').replace(/(?<=.{3})bank$/, '');
+    const rest = n.split(' ').filter((w) => w.length > 1 && !KIND.has(w)).join('').replace(/^(.{3,})bank$/, '$1');   // no lookbehind: older iPhones cannot parse one, and one bad regex would take the whole module down
     return rest.length >= 3 ? `x:${rest}` : '';
 }
 export function sameInstitution(a, b) {
