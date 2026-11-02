@@ -53,41 +53,41 @@ const LAST12 = run(2025, 10, 2026, 9);
 describe('a typical month comes from the books, not from the Investments list', () => {
     it('income is what was received on the Income page / statements, averaged over the complete months that have income', () => {
         const c = household({ incomeRecv: run(2026, 1, 2026, 8).map(k => salary(k)), income: [{ id: 'inv', name: 'FD', monthly: 5000, start: '2025-01-01' }] });
-        const p = c._wfBooksProfile(new Date());
+        const p = c._wfBooksProfile(new Date(TODAY));
         expect(p.avgIncome).toBe(800000);                                  // not the 5,000 an investment is expected to pay
         expect(p.basis).toMatchObject({ kind: 'average', incomeMonths: 8, from: '2026-01', to: '2026-08' });
     });
     it('the month in progress is not a month: this month\'s rows change nothing', () => {
         const c = household({ incomeRecv: [...run(2026, 1, 2026, 8).map(k => salary(k)), salary('2026-10', 1)], expenses: [spend('2026-10', 999999)] });
-        const p = c._wfBooksProfile(new Date());
+        const p = c._wfBooksProfile(new Date(TODAY));
         expect(p.avgIncome).toBe(800000);
         expect(p.avgOutgo).toBe(0);
         expect(p.thisMonth).toMatchObject({ key: '2026-10', outgo: 999999 });
     });
     it('money that has not arrived is not income', () => {
         const c = household({ incomeRecv: [salary('2026-08'), salary('2026-09', 800000, { received: false })] });
-        expect(c._wfBooksProfile(new Date()).avgIncome).toBe(800000);
-        expect(c._wfBooksProfile(new Date()).basis.incomeMonths).toBe(1);
+        expect(c._wfBooksProfile(new Date(TODAY)).avgIncome).toBe(800000);
+        expect(c._wfBooksProfile(new Date(TODAY)).basis.incomeMonths).toBe(1);
     });
     it('a month whose statement has not arrived does not drag the other side down: income and outgoings are averaged over their own months', () => {
         const c = household({ incomeRecv: [salary('2026-06'), salary('2026-07'), salary('2026-08')], expenses: [spend('2026-07', 60000), spend('2026-08', 80000)] });
-        const p = c._wfBooksProfile(new Date());
+        const p = c._wfBooksProfile(new Date(TODAY));
         expect(p.avgIncome).toBe(800000);
         expect(p.avgOutgo).toBe(70000);
         expect(p.basis).toMatchObject({ incomeMonths: 3, outgoMonths: 2 });
     });
     it('with no complete month at all, this month so far is used and says so; with nothing, it says that', () => {
         const c = household({ incomeRecv: [salary('2026-10')], expenses: [spend('2026-10', 5000)] });
-        const p = c._wfBooksProfile(new Date());
+        const p = c._wfBooksProfile(new Date(TODAY));
         expect(p).toMatchObject({ avgIncome: 800000, avgOutgo: 5000, basis: { kind: 'this-month' } });
         expect(c._wfBasisLine(p)).toMatch(/this month so far/i);
-        const none = household()._wfBooksProfile(new Date());
+        const none = household()._wfBooksProfile(new Date(TODAY));
         expect(none.basis.kind).toBe('none');
         expect(household()._wfBasisLine(none)).toMatch(/No income or spending is recorded/);
     });
     it('each kind of income that arrived is a stream (Salary, Rental…)', () => {
         const c = household({ incomeRecv: [salary('2026-08'), salary('2026-09'), salary('2026-08', 120000, { type: 'Rental' })] });
-        const p = c._wfBooksProfile(new Date());
+        const p = c._wfBooksProfile(new Date(TODAY));
         expect(Object.keys(p.incomeTypes).sort()).toEqual(['Rental', 'Salary']);
         expect(p.incomeTypes.Salary).toBe(800000);
     });
@@ -121,28 +121,28 @@ describe('debt service is kept apart from living costs, so nothing is taken off 
 describe('what is really left each month', () => {
     it('is the income less living costs less what the debts ask — the larger of what was paid and what is scheduled, never both', () => {
         const c = household({ incomeRecv: [salary('2026-08')], expenses: [spend('2026-08', 100000)], loans: [loan({ payments: [paid('2026-08')] })] });
-        const p = c._wfBooksProfile(new Date()), pos = c._wfPosition(new Date());
+        const p = c._wfBooksProfile(new Date(TODAY)), pos = c._wfPosition(new Date(TODAY));
         expect(pos.minimums).toBe(100000);
         expect(c._wfFreeCash(p, pos)).toBe(800000 - 100000 - 100000);
     });
     it('an installment nobody has paid is still owed: it is not free money', () => {
         const c = household({ incomeRecv: [salary('2026-08')], expenses: [spend('2026-08', 100000)], loans: [loan()] });     // scheduled 100,000, paid nothing
-        const p = c._wfBooksProfile(new Date()), pos = c._wfPosition(new Date());
+        const p = c._wfBooksProfile(new Date(TODAY)), pos = c._wfPosition(new Date(TODAY));
         expect(p.avgDebtService).toBe(0);
         expect(c._wfFreeCash(p, pos)).toBe(800000 - 100000 - 100000);
     });
     it('a reducing-balance loan asks what its schedule works out for this month, not its first payment', () => {
         const reducing = loan({ id: 'R1', amount: 1200000, duration: 12, start: '2026-01-01', rate: 12, monthly: 120000, paymentMethod: 'reducing', payments: [] });
         const c = household({ loans: [reducing] });
-        const emi = c._wfLoanEmiNow(reducing, new Date());
+        const emi = c._wfLoanEmiNow(reducing, new Date(TODAY));
         expect(emi).toBeCloseTo(103000, 0);                                // October is the 10th month: 100,000 of principal and 1% on the 300,000 the schedule has left
-        expect(c._wfPosition(new Date()).minimums).toBe(emi);
-        expect(c._wfLoanEmiNow(loan({ monthly: 55555 }), new Date())).toBe(55555);       // an EMI loan: the monthly figure
+        expect(c._wfPosition(new Date(TODAY)).minimums).toBe(emi);
+        expect(c._wfLoanEmiNow(loan({ monthly: 55555 }), new Date(TODAY))).toBe(55555);       // an EMI loan: the monthly figure
     });
     it('what the debts ask is the loans still running and the card plans with months left', () => {
         const done = loan({ id: 'old', start: '2020-01-01', duration: 12, monthly: 77777 });
         const plan = { id: 'C1', product: 'Laptop', bank: 'Sampath', total: 240000, rate: 0, duration: 12, monthly: 20000, date: '2026-05-05', completed: false };
-        expect(household({ loans: [loan(), done], ccinstall: [plan] })._wfPosition(new Date()).minimums).toBe(120000);
+        expect(household({ loans: [loan(), done], ccinstall: [plan] })._wfPosition(new Date(TODAY)).minimums).toBe(120000);
     });
 });
 
@@ -164,7 +164,7 @@ describe('the WealthFlow Score is made of the books', () => {
     });
     it('debt-to-income counts what is still owed: loans, what is left of card plans, and card charges not yet paid', () => {
         const c = owner({ loans: [loan({ amount: 1200000, duration: 12, start: '2026-01-01', monthly: 100000, payments: [] })], cconetime: [{ id: 'K', desc: 'KEELLS', amount: 50000, combinedTotal: 50000, date: '2026-09-01', paid: false }] });
-        const pos = c._wfPosition(new Date());
+        const pos = c._wfPosition(new Date(TODAY));
         expect(pos.cardOwed).toBe(50000);
         expect(pos.loansLeft).toBeGreaterThan(0);
         expect(c.calculateWFScore().dti.value).toBeCloseTo(pos.debt / (800000 * 12), 5);
@@ -302,7 +302,7 @@ describe('a month counts only when something real happened in it', () => {
     });
     it('months before the first record are not averaged in as months of spending, however old the subscription or plan', () => {
         const c = household({ subscriptions: [sub], ccinstall: [plan], incomeRecv: [salary('2026-08'), salary('2026-09')], expenses: [spend('2026-08', 100000), spend('2026-09', 100000)] });
-        const p = c._wfBooksProfile(new Date());
+        const p = c._wfBooksProfile(new Date(TODAY));
         expect(p.basis.outgoMonths).toBe(2);                               // August and September, not the nineteen months of schedule before them
         expect(p.avgOutgo).toBe(100000 + 1500 + 20000);
     });
@@ -340,34 +340,34 @@ describe('the 3D picture shows the latest month that has anything, and says so',
 describe('the profile is remembered until the books change', () => {
     it('the same books give the same object without recomputing; an edit, a new record or a paid installment gives a new one', () => {
         const c = household({ incomeRecv: [salary('2026-09')], expenses: [spend('2026-09', 1000)] });
-        const a = c._wfBooksProfile(new Date());
-        expect(c._wfBooksProfile(new Date())).toBe(a);
+        const a = c._wfBooksProfile(new Date(TODAY));
+        expect(c._wfBooksProfile(new Date(TODAY))).toBe(a);
         c.DB.set('expenses', [spend('2026-09', 1000), spend('2026-09', 2000)]);
-        const b = c._wfBooksProfile(new Date());
+        const b = c._wfBooksProfile(new Date(TODAY));
         expect(b).not.toBe(a);
         expect(b.avgOutgo).toBe(3000);
         c.DB.set('loans', [loan({ payments: [paid('2026-09')] })]);
-        expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(103000);
+        expect(c._wfBooksProfile(new Date(TODAY)).avgOutgo).toBe(103000);
         c.DB.set('loans', [loan({ payments: [paid('2026-09', 250000)] })]);
-        expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(253000);
+        expect(c._wfBooksProfile(new Date(TODAY)).avgOutgo).toBe(253000);
     });
     it('a change that touches no amount or date (a subscription\'s cycle, a plan\'s length) still gives a new profile', () => {
         const sub = { id: 'S1', name: 'Netflix', amount: 12000, cycle: 'monthly', category: 'Entertainment', createdAt: '2026-01-05T00:00:00Z' };
         const c = household({ incomeRecv: [salary('2026-09')], expenses: [spend('2026-09', 1000)], subscriptions: [sub] });
-        expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(1000 + 12000);
+        expect(c._wfBooksProfile(new Date(TODAY)).avgOutgo).toBe(1000 + 12000);
         c.DB.set('subscriptions', [{ ...sub, cycle: 'yearly' }]);          // yearly: only the anniversary month (January) counts
-        expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(1000);
+        expect(c._wfBooksProfile(new Date(TODAY)).avgOutgo).toBe(1000);
         const plan = { id: 'C1', product: 'Laptop', bank: 'Sampath', total: 240000, rate: 0, duration: 12, monthly: 20000, date: '2026-01-05', completed: false };
         c.DB.set('ccinstall', [plan]);
-        expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(21000);
+        expect(c._wfBooksProfile(new Date(TODAY)).avgOutgo).toBe(21000);
         c.DB.set('ccinstall', [{ ...plan, duration: 6 }]);                 // a 6-month plan from January has ended by September
-        expect(c._wfBooksProfile(new Date()).avgOutgo).toBe(1000);
+        expect(c._wfBooksProfile(new Date(TODAY)).avgOutgo).toBe(1000);
     });
     it('the position follows the same rule (a balance typed, a card charge paid)', () => {
         const c = household({ balance: { total: 100, flows: [] }, cconetime: [{ id: 'K', desc: 'KEELLS', amount: 900, combinedTotal: 900, date: '2026-09-04', paid: false }] });
-        expect(c._wfPosition(new Date())).toMatchObject({ cash: 100, cardOwed: 900 });
+        expect(c._wfPosition(new Date(TODAY))).toMatchObject({ cash: 100, cardOwed: 900 });
         c.DB.set('balance', { total: 500, flows: [] });
         c.DB.set('cconetime', [{ id: 'K', desc: 'KEELLS', amount: 900, combinedTotal: 900, date: '2026-09-04', paid: true }]);
-        expect(c._wfPosition(new Date())).toMatchObject({ cash: 500, cardOwed: 0 });
+        expect(c._wfPosition(new Date(TODAY))).toMatchObject({ cash: 500, cardOwed: 0 });
     });
 });
