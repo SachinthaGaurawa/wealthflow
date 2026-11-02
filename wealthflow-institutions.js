@@ -249,7 +249,63 @@ export function sameBank(a, b) {
     return !!x && x === y;
 }
 
-const API = { INSTITUTIONS, PICKER, BANK_DOMAINS, institutionFor, tokensFor, domainsFor, institutionForSender, canonicalBank, displayBank, sameBank };
+/* THE SAME BANK, WHATEVER THE LABEL SAYS. sameBank() above is deliberately exact (it guards the registry lock). Cards and accounts is not: the owner picks "HNB", the mailbox
+ * they approved is called "Hnb Cards", the statement says "Hatton National Bank PLC" — one bank, four spellings, and the exact comparison called them four. An institution is
+ * recognised by any of its names or tokens as whole words (or the same letters once spaces and a trailing "bank" are gone: "Dfccbank"); a bank the app does not list is the
+ * letters left when the words that only say what KIND of thing it is (bank, card, plc…) are taken out. "" when it cannot be said. */
+const KIND = new Set(['bank', 'banks', 'plc', 'ltd', 'limited', 'pvt', 'private', 'the', 'of', 'credit', 'card', 'cards', 'debit', 'visa', 'mastercard', 'master', 'savings', 'current', 'account', 'accounts', 'sri', 'lanka']);
+const plain = (v) => norm(s(v).replace(/['\u2019`]/g, ''));
+const WILD = new Set(['other', 'others', 'unknown', 'na', 'none']);
+// banks the owner can pick in Cards and accounts that the mail pipeline does not list, with the other names they go by
+const EXTRA = [['x:nsb', ['nsb', 'national savings']], ['x:hsbc', ['hsbc', 'hongkong shanghai', 'hong kong shanghai']]];
+export function institutionKey(label) {
+    const n = plain(label);
+    if (!n || WILD.has(n)) return '';
+    const padded = ` ${n} `, run = n.replace(/ /g, '');
+    const hits = new Set();
+    for (const i of INSTITUTIONS) {
+        const id = i.lockId || i.id;
+        for (const raw of [i.name, i.mailName, ...i.tokens]) {
+            const p = raw ? plain(raw) : '';
+            if (!p) continue;
+            const squash = p.replace(/ /g, '');
+            if (padded.includes(` ${p} `) || (run.length >= 3 && stemOf(run) === stemOf(squash) && stemOf(squash).length >= 3)) hits.add(id);
+        }
+    }
+    // "Nations Trust Bank (NTB) — AMEX" names a product of one bank, not two banks; any other pair of banks in one label is not guessed at
+    if (hits.has('amex') && hits.has('ntb-amex')) hits.delete('amex');
+    if (hits.size) return hits.size === 1 ? [...hits][0] : '';
+    const extra = EXTRA.find(([, names]) => names.some((w) => padded.includes(` ${w} `)));
+    if (extra) return extra[0];
+    const rest = n.split(' ').filter((w) => w.length > 1 && !KIND.has(w)).join('').replace(/^(.{3,})bank$/, '$1');   // no lookbehind: older iPhones cannot parse one, and one bad regex would take the whole module down
+    return rest.length >= 3 ? `x:${rest}` : '';
+}
+export function sameInstitution(a, b) {
+    if (sameBank(a, b)) return true;
+    const x = institutionKey(a);
+    return !!x && x === institutionKey(b);
+}
+/** May a registered card/account of bank `a` be the one a statement labelled `b` belongs to? Yes when either is unnamed or "Other"; otherwise they must be one institution. */
+export function bankAgrees(a, b) {
+    const x = plain(a), y = plain(b);
+    if (!x || !y || WILD.has(x) || WILD.has(y)) return true;
+    return sameInstitution(a, b);
+}
+/** Does this document's opening text name the institution `bank` stands for - and no other? (for a statement whose mailbox label says something else)
+ *  Only the header region is read, and a head that names two institutions answers no: a transaction line that mentions another bank must not turn one bank's statement into another's. */
+export function textNamesBank(text, bank) {
+    const key = institutionKey(bank);
+    if (!key) return false;
+    const head = ` ${plain(String(text || '').slice(0, 1500))} `;
+    if (key.startsWith('x:')) return head.includes(` ${key.slice(2)} `);
+    const named = new Set();
+    for (const i of INSTITUTIONS) {
+        if ([i.name, i.mailName, ...i.tokens].some((raw) => { const p = raw ? plain(raw) : ''; return !!p && head.includes(` ${p} `); })) named.add(i.lockId || i.id);
+    }
+    return named.size === 1 && named.has(key);
+}
+
+const API = { INSTITUTIONS, PICKER, BANK_DOMAINS, institutionFor, tokensFor, domainsFor, institutionForSender, canonicalBank, displayBank, sameBank, institutionKey, sameInstitution, bankAgrees, textNamesBank };
 
 if (typeof window !== 'undefined') window.WFInstitutions = API;
 

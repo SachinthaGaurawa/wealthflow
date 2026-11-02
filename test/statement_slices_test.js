@@ -575,9 +575,34 @@ describe('a statement stopped for a question nobody is asking', () => {
         expect(w.data.get(`${mailPath}/items/dfcc`)).toMatchObject({ status: 'pending', hasReview: false, orphanHeals: 1, retryCount: 0 });
         expect(JSON.parse(lines[0])).toMatchObject({ evt: 'statement-heal', filed: 2, requeued: 1, banks: { NTB: { filed: 2 }, Dfccbank: { requeued: 1 } } });
         expect(lines[0]).not.toMatch(/\d{4,}/);                                    // counts and bank names only
-        // stopped again, three times: left alone (the worker raises a proper review when it is truly unreadable)
+        // stopped again, three times: it is not read a fourth time for nothing — the question is put back where the owner can see it, in the statement's own reason
         w.data.set(`${mailPath}/items/dfcc`, { ...w.data.get(`${mailPath}/items/dfcc`), status: 'needs_review', hasReview: true, orphanHeals: 3 });
-        expect(await healOrphanedStatements({ db: w.db, mailRef: mailRef(w), uid: 'u', log: () => {} })).toMatchObject({ filed: 0, requeued: 0 });
+        expect(await healOrphanedStatements({ db: w.db, mailRef: mailRef(w), uid: 'u', log: () => {} })).toMatchObject({ filed: 0, requeued: 0, restored: 1 });
+        const id = createHash('sha256').update(`${mailPath}/items/dfcc`).digest('hex');
+        expect(w.data.get('users/u/statementReview/' + id)).toMatchObject({ uid: 'u', index: -1, status: 'pending', reason: 'statement-layout-or-reconciliation-needs-review', bank: 'Dfccbank' });
+        expect(w.data.get(`${mailPath}/items/dfcc`)).toMatchObject({ status: 'needs_review', hasReview: true, orphanHeals: 3 });
+        // and once it is there, it is a question like any other: the next pass leaves it alone
+        expect(await healOrphanedStatements({ db: w.db, mailRef: mailRef(w), uid: 'u', log: () => {} })).toMatchObject({ filed: 0, requeued: 0, restored: 0 });
+    });
+    it('production 2026-11-02: a locked statement counted as "needs review" with nothing to open gets its question back, without spending a try on it', async () => {
+        const w = world({ rows: 3 });
+        put(w, 'hnb', { bank: 'HNB Credit Card', filename: 'card.pdf', cursor: 0, totalRows: null, reviewReason: 'PASSWORD_FAILED', receivedMs: 1700000000000, from: 'cards@hnb.lk' });
+        const lines = [];
+        const out = await healOrphanedStatements({ db: w.db, mailRef: mailRef(w), uid: 'u', log: line => lines.push(line) });
+        expect(out).toMatchObject({ filed: 0, requeued: 0, restored: 1 });
+        const id = createHash('sha256').update(`${mailPath}/items/hnb`).digest('hex');
+        expect(w.data.get('users/u/statementReview/' + id)).toMatchObject({ uid: 'u', sourcePath: `${mailPath}/items/hnb`, index: -1, status: 'pending', reason: 'PASSWORD_FAILED', bank: 'HNB Credit Card', filename: 'card.pdf', receivedMs: 1700000000000, from: 'cards@hnb.lk' });
+        expect(w.data.get(`${mailPath}/items/hnb`)).toMatchObject({ status: 'needs_review', hasReview: true });
+        expect(w.data.get(`${mailPath}/items/hnb`).orphanHeals || 0).toBe(0);
+        expect(JSON.parse(lines[0])).toMatchObject({ evt: 'statement-heal', restored: 1, banks: { 'HNB Credit Card': { restored: 1 } } });
+    });
+    it('a statement whose question the owner already dismissed is dismissed, not asked again', async () => {
+        const w = world({ rows: 3 });
+        put(w, 'gone', { cursor: 0, totalRows: null, reviewReason: 'PASSWORD_FAILED' });
+        w.data.set('users/u/statementReview/' + createHash('sha256').update(`${mailPath}/items/gone`).digest('hex'), { uid: 'u', sourcePath: `${mailPath}/items/gone`, index: -1, status: 'dismissed', reason: 'PASSWORD_FAILED' });
+        expect(await healOrphanedStatements({ db: w.db, mailRef: mailRef(w), uid: 'u', log: () => {} })).toMatchObject({ restored: 0, dismissed: 1 });
+        expect(w.data.get(`${mailPath}/items/gone`)).toMatchObject({ status: 'dismissed', hasReview: false });
+        expect(w.data.get('users/u/statementReview/' + createHash('sha256').update(`${mailPath}/items/gone`).digest('hex')).status).toBe('dismissed');
     });
     it('a statement with a question open, one being worked on, and another owner\'s are never touched', async () => {
         const w = world({ rows: 3 });
