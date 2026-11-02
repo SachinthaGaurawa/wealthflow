@@ -16,6 +16,11 @@
  *   cardpay  a bank statement's line that names the owner's own card by its masked number ("Outward Ceft Transfer 376657Xxxxx0276"), filed by the manual upload as a Card Payment on that card (its old rule), and the card
  *          statement's own "payment received" for the same amount to the cent, on the same card, from a day before to four days after it. Two records of one payment would settle the card's charges twice: the
  *          bank-side line goes (the manual upload no longer files it), the card statement's payment stays.
+ *   bankline a line of a BANK account that names one of the owner's registered credit cards by its masked number and sits in Card payments (or CC One-Time) under the BANK's name — the five "Outward Ceft Transfer
+ *          376657Xxxxx0276" lines of a DFCC statement that the old page rule filed as card payments (a shape-only guess) and that opened a "DFCC Bank carried forward 150,850.45" group under the American Express card.
+ *          Owner's rule (2026-11-02): such a line never belongs in CC One-Time / Card payments, whichever card it is; Settings > Cards and accounts says which number is a card (an entry that says bank account is never
+ *          one). No twin is needed: the card's own statement is where the payment is counted. The test is the registry plus the bank on the record: the line's bank must be known and not the card's own bank (the
+ *          card's own statement names its own number too, and its lines stay). Needs only `source: 'statement'` (the manual upload files no statementKey).
  * Fees are not part of the pair: a bank's transfer fee is its own line on its own statement (a real cost, kept as an expense), so the principal on one side is the principal on the other, to the cent.
  * Never on a coincidence: a debit or credit that more than one record could be the other leg of is left alone (the log counts them), a refund / reversal on a card is not a payment, one tied to a
  * loan or a subscription, one the owner wrote a note on, and one that did not come from a statement are never taken out, and two legs on one bank (the same consolidated statement is
@@ -27,7 +32,7 @@
  * ===========================================================================*/
 
 import { transferEvidence } from './statement-ledger.mjs';
-import { ownMoney } from './wealthflow-own-money.js';
+import { ownMoney, ownCardIn, unregisteredCardIn } from './wealthflow-own-money.js';
 import { bankKeyOf } from './statement-coverage.mjs';
 import { createHash } from 'node:crypto';
 
@@ -65,7 +70,7 @@ export const ownTransferHash = (kind, debit, credit) => `ot_${createHash('sha256
 
 /**
  * @param {object} user the owner's document
- * @returns {{remove: {store:string, record:object, partner:object, kind:'card'|'bank'|'cardpay', hash:string, label:string}[], pairs:number, left:number, unworded:number}} `left`: debits with more than one possible other leg, or a leg two debits claim; `unworded`: lines of the right amount and days that neither says transfer
+ * @returns {{remove: {store:string, record:object, partner:object, kind:'card'|'bank'|'cardpay'|'bankline', hash:string, label:string}[], pairs:number, left:number, unworded:number, unregistered:number}} `left`: debits with more than one possible other leg, or a leg two debits claim; `unworded`: lines of the right amount and days that neither says transfer; `unregistered`: card-payment / card-charge records naming a card-shaped number Settings > Cards and accounts does not list (counted, never removed)
  */
 export function ownMoneyLegs(user) {
     const list = key => (Array.isArray(user && user[key]) ? user[key] : []);
@@ -125,6 +130,25 @@ export function ownMoneyLegs(user) {
         pairs += 1;
         remove.push({ store: 'ccPayments', record: line, partner: credit, kind: 'cardpay', hash, label: OWN_TRANSFER_LABEL });
     }
+    // bankline: see the header. Decided per line from the registry and the line's own bank; cardpay (with its twin) is read first, so a line it takes is not taken twice.
+    const taken = new Set(remove.map(entry => entry.record));
+    const cardBankOf = last4 => { const entry = registry[last4]; return entry && entry.type === 'credit_card' ? bankKeyOf(entry.bank) : ''; };
+    const MOVEMENT_WORDS = /\b(?:ceft|cefts|slips|transfer|inward|outward|fund)\b/i;
+    let unregistered = 0;
+    for (const store of ['ccPayments', 'cconetime']) for (const record of list(store)) {
+        if (!record || record.source !== 'statement' || !(Number(record.amount) > 0) || taken.has(record)) continue;
+        const text = textOf(record);
+        const unlisted = unregisteredCardIn(text, { registry });
+        if (unlisted) unregistered += 1;                                                  // counted only: neither a card nor an account until the owner registers it
+        if (record.loanLink || record.subscriptionLink || ownerWrote(record)) continue;
+        const named = ownCardIn(text, { registry, tails: Object.keys(registry) });
+        if (!named || named.evidence !== 'registered-card') continue;
+        const cardBank = cardBankOf(named.last4), lineBank = bankKeyOf(record.bank);
+        if (!cardBank || !lineBank || cardBank === lineBank) continue;                   // the card's own statement, or a bank we cannot tell: stays
+        if (store === 'cconetime' && !MOVEMENT_WORDS.test(text)) continue;               // a charge on a card is only the bank's line when it is worded as a movement of money
+        pairs += 1; taken.add(record);
+        remove.push({ store, record, partner: { id: `card-${named.last4}` }, kind: 'bankline', hash: ownTransferHash('bankline', record, { id: named.last4 }), label: OWN_TRANSFER_LABEL });
+    }
     for (const [debit, mine] of byDebit) {
         if (mine.length !== 1 || byCredit.get(mine[0].credit).length !== 1) { left += 1; continue; }
         const { credit, kind, store } = mine[0], hash = ownTransferHash(kind, debit, credit);
@@ -132,7 +156,7 @@ export function ownMoneyLegs(user) {
         remove.push({ store: 'expenses', record: debit, partner: credit, kind, hash, label: OWN_TRANSFER_LABEL });
         if (kind === 'bank') remove.push({ store, record: credit, partner: debit, kind, hash, label: OWN_TRANSFER_LABEL });
     }
-    return { remove, pairs, left, unworded };
+    return { remove, pairs, left, unworded, unregistered };
 }
 
 /**

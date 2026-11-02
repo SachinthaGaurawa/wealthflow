@@ -99,16 +99,17 @@ describe('what is STORED does not change', () => {
     it('the screens that read a bank print its name, through the one helper; the keys they filter and group by are the stored ones', () => {
         const html = read('index.html');
         expect(html).toMatch(/function _bankShown\(n\)[^\n]*displayBank/);
-        /* the card filter chip: label by name, filter by key */
-        expect(html).toMatch(/banks\.map\(b => chip\(b, _wfEsc\(_bankShown\(b\)\)\)\)/);
-        expect(html).toMatch(/setCCOTBankFilter\('\$\{_wfJsAttr\(String\(key\)\)\}'\)/);
+        /* the card tabs: label by name (the page hands the module _bankShown), filter by the key (the canonical bank + last four) */
+        expect(html).toMatch(/canonBank: _canonBank, shown: _bankShown, registry/);
+        expect(html).toMatch(/WFCardTabs\.wire\(fbar, setCCOTBankFilter\)/);
         expect(html).toMatch(/_wfEsc\(_bankShown\(it\.bank\) \|\| 'Statement'\)/);
         expect(html).toMatch(/wf-cover-chip">' \+ _wfEsc\(_bankShown\(b\)\)/);
         expect(html).toMatch(/_wfEsc\(_bankShown\(p\.bank\) \|\| '—'\)/);
         expect(html).toMatch(/<b>\$\{_wfEsc\(_bankShown\(w\.bank\) \|\| 'Card'\)\}<\/b>/);
         /* the walk and the filter still key on the stored label */
         expect(html).toMatch(/function _ccKey\(r\) \{ return String\(_canonBank\(r && r\.bank\)/);
-        expect(html).toMatch(/charges\.filter\(c => _canonBank\(c\.bank\) === _ccotBankFilter\)/);
+        expect(html).toMatch(/charges\.filter\(inTab\)/);
+        expect(html).toMatch(/model\.keyOf\(r\) === _ccotBankFilter : _canonBank\(r\.bank\) === _ccotBankFilter/);
         expect(read('wealthflow-statement-cloud.js')).toMatch(/shownBank\(entry\.bank\)/);
         expect(read('wealthflow-notifications.js')).toMatch(/esc\(shownBank\(x\.bank\)\)/);
     });

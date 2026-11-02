@@ -57,7 +57,7 @@ function legacyOwnMoneyLegs(user) {
         remove.push({ store: 'expenses', record: debit, partner: credit, kind, hash, label: OWN_TRANSFER_LABEL });
         if (kind === 'bank') remove.push({ store, record: credit, partner: debit, kind, hash, label: OWN_TRANSFER_LABEL });
     }
-    return { remove, pairs, left, unworded };
+    return { remove, pairs, left, unworded, unregistered: 0 };      // `unregistered` (2026-11-02) only counts records that name a card-shaped number Cards and accounts does not list: none of these random books do
 }
 
 function legacyLooseLegsWhy(user) {
