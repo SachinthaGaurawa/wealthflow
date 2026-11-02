@@ -255,7 +255,8 @@ try {
     });
 
     await check('notifPayday', async () => {
-        const run = async () => { await resetSeen(); await page.evaluate(() => checkActionableReminders()); return page.evaluate(() => window.__ban.length); };
+        // only the income banner answers to this switch: the loan instalment banner is shown on days 1 to 5 of every month whatever it says, so counting every banner failed on those days
+        const run = async () => { await resetSeen(); await page.evaluate(() => checkActionableReminders()); return page.evaluate(() => window.__ban.filter((t) => /Income Day/.test(t)).length); };
         await setOn('notifPayday', true); const on = await run(); await setOn('notifPayday', false); const off = await run(); await setOn('notifPayday', true);
         return { ok: on > 0 && off === 0, detail: `on=${on} off=${off}` };
     });
