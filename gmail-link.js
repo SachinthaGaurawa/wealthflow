@@ -600,6 +600,9 @@ export default async function handler(req, res) {
                 retiredNonStatements: retiredNonStatements.length,
                 retiredUnapproved: retiredUnapproved.length,
                 needsReviewStatements: reviewStatements.length,
+                /* The ones among them that ask the owner something to open in the review list. A statement locked by a password is counted in `passwordFailures` (its own strip says "add the password");
+                 * counting it again as a review made the banner say "1 statement needs review" over a list with nothing to open. */
+                reviewQuestions: Math.max(0, reviewStatements.length - passwordFailures),
                 passwordFailures,
                 approvedPending,
                 /* Pagination: how many pending statements exist beyond this

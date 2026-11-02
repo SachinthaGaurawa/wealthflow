@@ -273,6 +273,20 @@ describe('private source inspection and durable layout replay', () => {
         expect(args.data.get('users/u/statementReview/' + reviewId).status).toBe('retried');
         expect(await recoverPasswordFailures({ ...request, vaultSavedAt: 200 })).toBe(0);
     });
+    it('production 2026-11-02: a locked statement whose review item is gone is still read again once the owner saves a newer vault', async () => {
+        const args = setup();
+        args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), reviewReason: 'PASSWORD_FAILED', vaultSavedAt: 100, hasReview: true });
+        const request = { db: args.db, mailRef: args.db.doc('wf-mail/owner_example_com'), uid: 'u', vaultSavedAt: 100 };
+        expect(await recoverPasswordFailures(request)).toBe(0);                                  // the same vault: nothing new to try
+        expect(await recoverPasswordFailures({ ...request, vaultSavedAt: 200 })).toBe(1);        // a newer one, and no review item at all
+        expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', hasReview: false, cursor: 0 });
+        // an item that belongs to someone else is never closed by it
+        const again = setup(), id = createHash('sha256').update(again.sourcePath).digest('hex');
+        again.data.set(again.sourcePath, { ...again.data.get(again.sourcePath), reviewReason: 'PASSWORD_FAILED', vaultSavedAt: 100 });
+        again.data.set('users/u/statementReview/' + id, { uid: 'someone-else', sourcePath: again.sourcePath, index: -1, status: 'pending' });
+        expect(await recoverPasswordFailures({ db: again.db, mailRef: again.db.doc('wf-mail/owner_example_com'), uid: 'u', vaultSavedAt: 200 })).toBe(0);
+        expect(again.data.get('users/u/statementReview/' + id).status).toBe('pending');
+    });
     it('also recovers a legacy no-vault quarantine after the owner saves a vault', async () => {
         const args = setup(), reviewId = createHash('sha256').update(args.sourcePath).digest('hex');
         args.data.set('users/u/statementReview/' + reviewId, { uid: 'u', sourcePath: args.sourcePath, index: -1, status: 'pending' });

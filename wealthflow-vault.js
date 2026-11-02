@@ -89,6 +89,7 @@
  * and until this module existed only the exact string typed was ever tried —
  * the owner's complaint, in one sentence. */
 import { expand as expandShape } from './wealthflow-password-shapes.js';
+import { sameInstitution } from './wealthflow-institutions.js';
 
 /* The store. Separate key from `wf_vault_enc` on purpose — different secret,
  * different key derivation, different lifetime. */
@@ -333,7 +334,9 @@ export function candidatesFor(bank, entries, derived = []) {
         const b = s(e.bank).toLowerCase();
         // Substring either way: the registry may say "HNB" where the statement
         // says "Hatton National Bank", and the owner may have typed either.
-        const hit = want && b && (b === want || b.includes(want) || want.includes(b));
+        /* …and as the same INSTITUTION, not only the same letters: the vault says "HNB", the approved mailbox is called "Hnb Cards", the statement "Hatton National Bank PLC" — one bank,
+         * and its password belongs at the front of the list, not wherever the order of saving happened to put it. It is only an ORDER; every saved password is still tried. */
+        const hit = want && b && (b === want || b.includes(want) || want.includes(b) || sameInstitution(e.bank, bank));
         /* EVERY SPELLING OF IT, not just the one that was typed. The owner
          * asked why a date of birth with slashes was never tried; the answer
          * was that a password could only ever be an opaque string here, so

@@ -47,11 +47,15 @@ import { planChequeBackfill } from './statement-cheque-backfill.mjs';
 import { isolateMerchant } from './statement-merchant-name.mjs';
 import { totalsAgree } from './statement-totals.mjs';
 import { repairInstallmentRecords } from './statement-links.mjs';
+import { identifyAccount } from './statement-card-identity.mjs';
 
 export const config = { maxDuration: 60 };
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const RETRY_MAX_MS = 180000;
-const PASSWORD_BATCH = 6;
+/* HOW MANY SAVED PASSWORDS ONE READING OF A LOCKED STATEMENT TRIES. Every password in the owner's vault is offered, the bank's own first (wealthflow-vault.js candidatesFor), and a wrong one costs one quick
+ * refusal from the PDF library. Six per reading meant that a vault of ten or twelve passwords (each may stand for several spellings of a date) needed two or three readings, minutes apart, each counted as a failed
+ * attempt — and a statement of a bank the vault labels differently waited on every one of them. A reading now tries up to this many; a longer list continues from where it stopped, as before. */
+const PASSWORD_BATCH = 24;
 /* Bumped when the reader or the AI behind it has changed so that a statement it could not read earlier deserves another look. Version 4: the
  * AI roster was repaired (reasoning-model empties, retired models) and the model-free reader added — thirty-four HNB statements had used up
  * their three adaptive tries (and the six-hour wait between them) during the outage and sat in review as "not waiting to be processed again". */
@@ -74,6 +78,8 @@ const SAFE_WHOLE_REPLAY = new Set([
     // re-read once per version: the rule that held a statement back as "another currency" was made stricter (a code beside amounts, or a currency label)
     'statement-currency-differs',
 ]);
+/* A statement the vault could not open: waiting for a password, not for a decision. It is asked about in its own words ("add the password the bank uses") and is read again when the vault changes. */
+export const PASSWORD_REASONS = new Set(['PASSWORD_FAILED', 'NO_VAULT_KEYS']);
 const PUBLIC_SYNC_REASONS = new Set([
     'autonomous-mailbox-not-enabled', 'gmail-profile-unavailable', 'gmail-profile-owner-mismatch',
     'gmail-intake-unavailable', 'verified-owner-required', 'statement-worker-retry-required', 'gmail-reconnect-required'
@@ -619,16 +625,18 @@ export async function recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt }
     let recovered = 0;
     for (const doc of page.docs) {
         const previous = doc.data();
-        if (!['PASSWORD_FAILED', 'NO_VAULT_KEYS'].includes(previous.reviewReason) || previous.uid !== uid || (previous.cursor || 0) !== 0 || vaultSavedAt <= (previous.vaultSavedAt || 0)) continue;
+        if (!PASSWORD_REASONS.has(previous.reviewReason) || previous.uid !== uid || (previous.cursor || 0) !== 0 || vaultSavedAt <= (previous.vaultSavedAt || 0)) continue;
         const reviewId = createHash('sha256').update(doc.ref.path).digest('hex');
         const userRef = db.collection('users').doc(uid), reviewRef = userRef.collection('statementReview').doc(reviewId);
         recovered += await db.runTransaction(async tx => {
             const snap = await tx.get(doc.ref), source = snap.data();
             const review = await tx.get(reviewRef);
             const ledger = await tx.get(userRef.collection('statementLedger').where('sourcePath', '==', doc.ref.path));
-            if (!snap.exists || source.uid !== uid || source.status !== 'needs_review' || !['PASSWORD_FAILED', 'NO_VAULT_KEYS'].includes(source.reviewReason) || source.filed === true || (source.cursor || 0) !== 0 || vaultSavedAt <= (source.vaultSavedAt || 0) || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(entry => ['filed', 'duplicate'].includes(entry.data().status))) return 0;
-            if (!review.exists || review.data().uid !== uid || review.data().status !== 'pending' || review.data().index !== -1) return 0;
-            tx.set(reviewRef, { status: 'retried', retriedAt: Date.now() }, { merge: true });
+            if (!snap.exists || source.uid !== uid || source.status !== 'needs_review' || !PASSWORD_REASONS.has(source.reviewReason) || source.filed === true || (source.cursor || 0) !== 0 || vaultSavedAt <= (source.vaultSavedAt || 0) || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(entry => ['filed', 'duplicate'].includes(entry.data().status))) return 0;
+            /* THE QUESTION BEING THERE IS NOT A CONDITION OF READING THE STATEMENT AGAIN. This used to need the statement's review item to be pending; a locked statement whose item was gone (production,
+             * 2026-11-02: one HNB card statement counted as "needs review" with nothing to open) could therefore never be tried with a password the owner had since saved. The item, when there is one, is closed. */
+            if (review.exists && review.data().uid !== uid) return 0;
+            if (review.exists && review.data().status === 'pending' && review.data().index === -1) tx.set(reviewRef, { status: 'retried', retriedAt: Date.now() }, { merge: true });
             tx.set(doc.ref, { status: 'pending', hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: Date.now() }, { merge: true });
             return 1;
         });
@@ -750,11 +758,11 @@ const MAX_ORPHAN_HEALS = 3;
 export async function healOrphanedStatements({ db, mailRef, uid, limit = 10, now = Date.now(), log = console.info }) {
     const found = await mailRef.collection('items').where('status', '==', 'needs_review').limit(100).get();
     const userRef = db.collection('users').doc(uid);
-    let filed = 0, requeued = 0, more = false;
+    let filed = 0, requeued = 0, restored = 0, dismissed = 0, more = false;
     const banks = {};
     for (const doc of found.docs) {
         if ((doc.data() || {}).uid !== uid) continue;
-        if (filed + requeued >= limit) { more = true; break; }
+        if (filed + requeued + restored + dismissed >= limit) { more = true; break; }
         const result = await db.runTransaction(async tx => {
             const snap = await tx.get(doc.ref), source = snap.data();
             if (!snap.exists || source.uid !== uid || source.status !== 'needs_review' || (Number(source.leaseUntil) || 0) > now) return '';
@@ -763,17 +771,30 @@ export async function healOrphanedStatements({ db, mailRef, uid, limit = 10, now
             const rows = Number(source.totalRows) || 0, cursor = Number(source.cursor) || 0;
             if (rows > 0 && cursor === rows) { tx.set(doc.ref, { status: 'filed', filed: true, hasReview: false, healedAt: now, updatedAt: now }, { merge: true }); return 'filed'; }
             const heals = Number(source.orphanHeals) || 0;
-            if (heals >= MAX_ORPHAN_HEALS) return '';
+            const reason = String(source.reviewReason || '');
+            /* A STATEMENT COUNTED AS WAITING FOR THE OWNER WITH NOTHING FOR THE OWNER TO OPEN. Reading it again cannot help a statement that is locked (it needs a password, not another try — each try only used up
+             * one of the three), and a statement that has used up its tries was left exactly as it was: "1 statement needs review" and an empty list. Either way the question is put back where the owner can see it,
+             * in the statement's own reason, and the statement is read again when the reason is mended (the vault changes, the version moves on). An owner who dismissed it already has their answer. */
+            if ((PASSWORD_REASONS.has(reason) && cursor === 0) || heals >= MAX_ORPHAN_HEALS) {
+                const mine = reviews.docs.filter(entry => entry.data().index === -1 && entry.data().uid === uid);
+                if (mine.some(entry => entry.data().status === 'dismissed')) { tx.set(doc.ref, { status: 'dismissed', filed: false, hasReview: false, healedAt: now, updatedAt: now }, { merge: true }); return 'dismissed'; }
+                const reviewRef = userRef.collection('statementReview').doc(createHash('sha256').update(doc.ref.path).digest('hex'));
+                tx.set(reviewRef, { uid, sourcePath: doc.ref.path, index: -1, status: 'pending', reason: reason || 'statement-retries-exhausted',
+                    bank: String(source.bank || ''), filename: String(source.filename || ''), subject: String(source.subject || ''), receivedMs: Number(source.receivedMs) || 0, from: String(source.from || ''), last4: String(source.last4 || ''),
+                    restoredAt: now, createdAt: now }, { merge: true });
+                tx.set(doc.ref, { hasReview: true, healedAt: now, updatedAt: now }, { merge: true });
+                return 'restored';
+            }
             tx.set(doc.ref, { status: 'pending', hasReview: false, leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0, orphanHeals: heals + 1, healedAt: now, updatedAt: now }, { merge: true });
             return 'requeued';
         });
         if (!result) continue;
-        if (result === 'filed') filed += 1; else requeued += 1;
+        if (result === 'filed') filed += 1; else if (result === 'requeued') requeued += 1; else if (result === 'restored') restored += 1; else dismissed += 1;
         const bank = String((doc.data() || {}).bank || '?').slice(0, 24);
-        banks[bank] = banks[bank] || { filed: 0, requeued: 0 }; banks[bank][result] += 1;
+        banks[bank] = banks[bank] || { filed: 0, requeued: 0, restored: 0, dismissed: 0 }; banks[bank][result] += 1;
     }
-    if (filed || requeued) log(JSON.stringify({ evt: 'statement-heal', filed, requeued, banks }));
-    return { filed, requeued, more };
+    if (filed || requeued || restored || dismissed) log(JSON.stringify({ evt: 'statement-heal', filed, requeued, restored, dismissed, banks }));
+    return { filed, requeued, restored, dismissed, more };
 }
 
 /* THE LOAN INSTALLMENTS ALREADY IN THE BOOKS. A bank debit that is a loan's installment is linked to it as it is filed (statement-ledger.mjs); the ones
@@ -2099,7 +2120,10 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
              * ledger. It goes to the owner with the reason named. */
             const baseCurrency = user.settings?.currency || 'LKR', statementCurrency = String(parsed.layout?.currency || '');
             if (statementCurrency ? !sameCurrency(statementCurrency, baseCurrency) : currencyConflict(text, baseCurrency)) throw new Error('statement-currency-differs');
-            const statementType = parsed.layout?.statementType || '';
+            /* THE STATEMENT'S ACCOUNT IS LOOKED UP IN SETTINGS > CARDS AND ACCOUNTS before a row is read (statement-card-identity.mjs): the digits it names, the bank it came from (compared as an institution, not as a
+             * spelling), and what the registry says that account is. A card statement whose header the reader did not recognise is a card statement all the same when the owner registered the card. */
+            const account = identifyAccount({ registry: user.settings?.cardRegistry, last4: parsed.layout?.accountLast4 || '', bank: claimed.bank || '', text, parsedType: parsed.layout?.statementType || '' });
+            const statementType = account.statementType;
             // --- Determine precise Tab Routing Identity Matrix ---
             const allocations = { statementType, card_last4: parsed.layout?.accountLast4 || '', bank: claimed.bank || '', cardRegistry: user.settings?.cardRegistry || {},
                 subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
@@ -2151,7 +2175,8 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             }
             outcome = { ...outcome, ...total };
             logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules', ...(diag.directions ? { directions: diag.directions } : {}), ...(diag.repaired ? { repaired: diag.repaired } : {}),
-                ...(replayed?.healed ? { healed: replayed.healed } : {}), ...(total.dateShifted ? { dateShifted: total.dateShifted } : {}) });
+                ...(replayed?.healed ? { healed: replayed.healed } : {}), ...(total.dateShifted ? { dateShifted: total.dateShifted } : {}),
+                account: account.state, ...(account.via ? { accountVia: account.via } : {}), ...(account.conflict ? { accountConflict: true } : {}) });
         }
     } catch (error) {
         if (error?.defer) {
