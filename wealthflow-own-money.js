@@ -10,8 +10,9 @@
  *   "CEFTS/6454/KULASOORIYAGE S/Transfer"   a transfer that names the owner (their surname, or a house name made from it): their own money from another account of theirs.
  *
  * A payment to the owner's own card is left out of the books on the bank side too, by BOTH doors: the card's own statement says "payment received" and that line is the one that settles the card's
- * charges. Filing the bank's line as well counts the same payment twice (the manual upload used to, as a Card Payment). Where only the bank's statement is uploaded, the owner can still choose
- * Card Payment for the row in the review list; it is then filed against the right card.
+ * charges. Filing the bank's line as well counts the same payment twice AND opens a second "card" under the bank's name (the "DFCC Bank carried forward" group in Card payments), so a BANK line that
+ * names one of the owner's own cards never reaches CC One-Time or Card payments, whichever way it came in (2026-11-02, owner's rule). Settings > Cards and accounts is what says which number is a card
+ * and which is an account: `ownCardIn` / `unregisteredCardIn` below read it, and a number the registry does not list is neither assumed to be a card nor an account (the row is held for a look).
  *
  * Two doors read bank statements — the email worker (statement-sync.js, through the router) and the owner's manual upload (index.html, through wealthflow-route.js) — and each
  * had its own idea of this: the worker's own-account rule fired only on rows worded as transfers, the page's only on the OUTWARD card payment, and neither looked at the Cards &
@@ -94,7 +95,7 @@ export function ownMoney({ description = '', direction = '', isCard = false, reg
         return byName(text, dir, names, local, initials);
     }
     if (owned && !advance && !FEE.test(text)) return { kind: 'card-payment-out', last4: owned.number.last4, brand: owned.number.brand, evidence: owned.evidence,
-        reason: 'payment to your own card ••' + owned.number.last4 + ' — the card\'s own statement carries it (choose Card Payment for this row if you do not file that statement)' };
+        reason: 'payment to your own card ••' + owned.number.last4 + ' — the card\'s own statement carries it, so this bank line is not filed under the card (CC One-Time or Card payments)' };
     return owned ? null : byName(text, dir, names, local, initials);
 }
 
@@ -109,6 +110,39 @@ function byName(text, dir, names, local, initials) {
 
 /** True when the bank-side row is left out of the books: the other side of the money (the card's statement, the owner's other account) carries it. Every kind this file knows. */
 export const leavesTheBooks = (own) => !!own && typeof own.kind === 'string';
+
+/**
+ * Does a narration name one of the owner's OWN credit cards (Settings > Cards and accounts), in either direction? Used where a line from a BANK account must never be filed as a card's charge
+ * or payment: "Outward Ceft Transfer 376657Xxxxx0276" is the bank account paying the American Express, and the card's own statement ("CASH PAYMENT-FINACLE") is the line that settles the
+ * card. A bank line filed as a card payment as well counts the same money twice and opens a second "card" under the bank's name (the "DFCC Bank carried forward" group).
+ * The registry is the truth: a number the registry calls a bank account is never a card, and a number it does not list is not assumed to be one.
+ * @param {string} text the narration
+ * @param {{registry?:object, tails?:Set<string>|string[]}} own
+ * @returns {null|{last4:string, brand:string, evidence:'registered-card'|'known-tail'}}
+ */
+export function ownCardIn(text, { registry = {}, tails = [] } = {}) {
+    for (const number of numbersIn(text)) {
+        const evidence = ownCardOf(number, registry, tails);
+        if (evidence) return { last4: number.last4, brand: number.brand, evidence };
+    }
+    return null;
+}
+
+/**
+ * A card-shaped number (a six-digit BIN of a card network, then the mask) that the owner's Cards and accounts does not list at all, or null. Nothing is assumed about it: it is neither a card
+ * nor an account until the owner registers it, so the row is held for a look instead of being filed as a card payment.
+ * @param {string} text the narration
+ * @param {{registry?:object}} own
+ * @returns {null|{last4:string, brand:string}}
+ */
+export function unregisteredCardIn(text, { registry = {} } = {}) {
+    for (const number of numbersIn(text)) {
+        if (!number.cardShaped) continue;
+        const entry = registry && typeof registry === 'object' ? registry[number.last4] : null;
+        if (!entry) return { last4: number.last4, brand: number.brand };
+    }
+    return null;
+}
 
 /**
  * The first word of a narration that is the owner's own name, or ''. Whole words of five letters or more only (an initial is not a name), the way the server has always read the owner's name. Plus the Sri Lankan
@@ -149,7 +183,7 @@ export function holderName(holders) {
     return { words, initials };
 }
 
-const API = { ownMoney, numbersIn, leavesTheBooks, nameOfOwnerIn, holderName };
+const API = { ownMoney, numbersIn, leavesTheBooks, nameOfOwnerIn, holderName, ownCardIn, unregisteredCardIn };
 
 if (typeof window !== 'undefined') window.WFOwnMoney = API;
 

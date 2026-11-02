@@ -952,7 +952,7 @@ export async function healStatementCopies({ db, mailRef, uid, now = Date.now(), 
  * removed line is kept in its ledger row (amount, date, words, bank) so it can be put back by hand if the owner ever says the pair was a coincidence. A line the owner wrote a note on, one tied to a loan or a subscription,
  * one a hand typed, and any debit that two credits (or a credit that two debits) could pair with are never taken out. The plan is recomputed from the document inside the transaction. Counts only are logged. */
 export async function healOwnTransfers({ db, uid, now = Date.now(), log = console.info, limit = 40 }) {
-    const userRef = db.collection('users').doc(uid), STORES = ['expenses', 'incomeRecv', 'ccPayments'];
+    const userRef = db.collection('users').doc(uid), STORES = ['expenses', 'incomeRecv', 'ccPayments', 'cconetime'];
     const peek = (await userRef.get()).data() || {};
     if (!ownMoneyLegs(peek).remove.length) return { pairs: 0, removed: 0, more: false };
     const result = await db.runTransaction(async tx => {
@@ -983,9 +983,9 @@ export async function healOwnTransfers({ db, uid, now = Date.now(), log = consol
         const changes = {};
         for (const store of STORES) if (Array.isArray(user[store]) && (chosen.some(entry => entry.store === store) || kept.some(item => user[store].includes(item.record)))) changes[store] = user[store].filter(record => !gone.has(record));
         tx.set(userRef, { ...changes, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
-        return { pairs: hashes.length, removed: chosen.length, kinds, more: plan.pairs > hashes.length, left: plan.left, unworded: plan.unworded };
+        return { pairs: hashes.length, removed: chosen.length, kinds, more: plan.pairs > hashes.length, left: plan.left, unworded: plan.unworded, unregistered: plan.unregistered };
     });
-    if (result.removed || result.left || result.unworded) log(JSON.stringify({ evt: 'own-transfer-heal', pairs: result.pairs, removed: result.removed, kinds: result.kinds || {}, left: result.left || 0, unworded: result.unworded || 0, ...(result.more ? { more: true } : {}) }));
+    if (result.removed || result.left || result.unworded || result.unregistered) log(JSON.stringify({ evt: 'own-transfer-heal', pairs: result.pairs, removed: result.removed, kinds: result.kinds || {}, left: result.left || 0, unworded: result.unworded || 0, ...(result.unregistered ? { unregistered: result.unregistered } : {}), ...(result.more ? { more: true } : {}) }));
     return result;
 }
 

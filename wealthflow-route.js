@@ -18,7 +18,7 @@
  *  Pure, dependency-free, and unit-tested. Browser-safe (attaches to window) AND
  *  importable in Node for tests (module.exports).
  *
- *  window.WFRoute = { routeTransaction, accountTypeForLast4, inferAccountType, expenseCategory, incomeKind }
+ *  window.WFRoute = { routeTransaction, accountTypeForLast4, ownCardNamed, inferAccountType, expenseCategory, incomeKind }
  */
 (function (root) {
     'use strict';
@@ -171,6 +171,28 @@
         try { if (root.wfCardRegistry && typeof root.wfCardRegistry.get === 'function') reg = root.wfCardRegistry.get() || {}; } catch (_) { reg = {}; }
         var who = ownerWordsOnPage();
         try { return W.ownMoney({ description: desc, direction: dir, registry: reg, tails: Object.keys(reg), names: who.names, initials: who.initials, local: who.local }); } catch (_) { return null; }
+    }
+
+    /* The owner's Cards and accounts (Settings), as the page holds it. {} when the module is not loaded yet. */
+    function registryOnPage() {
+        try { if (root.wfCardRegistry && typeof root.wfCardRegistry.get === 'function') return root.wfCardRegistry.get() || {}; } catch (_) { /* fall through */ }
+        return {};
+    }
+
+    /* A card-shaped masked number a BANK row names that Cards and accounts does not list at all: nothing may be assumed about it (neither a card nor an account), so it is held for a look and
+     * never filed as a card payment. null when the row names none, or only numbers the registry knows. */
+    function unregisteredCardOf(desc) {
+        var W = root.WFOwnMoney;
+        if (!W || typeof W.unregisteredCardIn !== 'function') return null;
+        try { return W.unregisteredCardIn(desc, { registry: registryOnPage() }); } catch (_) { return null; }
+    }
+
+    /* Does a narration name one of the owner's registered credit cards? A BANK line that does is the other half of that card's own statement line and is never filed as a card's charge or payment. */
+    function ownCardNamed(desc) {
+        var W = root.WFOwnMoney;
+        if (!W || typeof W.ownCardIn !== 'function') return null;
+        var reg = registryOnPage();
+        try { return W.ownCardIn(desc, { registry: reg, tails: Object.keys(reg) }); } catch (_) { return null; }
     }
 
     /* THE OWNER'S OWN NAME, as the page knows it (the email worker reads the statement's client name and the mailbox; statement-transfers.mjs `ownerWords`): the name on the payment accounts the owner saved and the
@@ -360,10 +382,12 @@
             // GENUINE own-account / internal movements are neither income nor an
             // expense. They are confidently identified (narrow pattern), so they
             // are skipped WITHOUT nagging the user for Review.
+            var unknownCard = dir === 'debit' ? unregisteredCardOf(desc) : null;
+            var unknownWhy = unknownCard ? ' · names a card-shaped number ••' + unknownCard.last4 + ' that is not in Settings > Cards and accounts — add it there so it is told apart (card or account)' : '';
             if (isTransfer) {
                 out.tab = 'skip';
-                out.needsReview = false;
-                out.reason = 'own-account / internal movement — not income or expense';
+                out.needsReview = !!unknownCard;
+                out.reason = 'own-account / internal movement — not income or expense' + unknownWhy;
                 return out;
             }
             if (dir === 'debit') {
@@ -389,11 +413,13 @@
                 }
                 out.tab = 'expenses';
                 out.category = expenseCategory(desc);
+                if (unknownCard) out.needsReview = true;      // never a Card Payment on a guess; the owner decides after registering the number
                 // 'Other' is a valid catch-all bucket — we FILE it as an expense
                 // rather than dumping it to Review. Review is reserved ONLY for rows
                 // whose direction itself is a pure guess (truly unidentifiable).
                 if (lowConf) { out.needsReview = true; out.reason = 'bank debit → expense (direction inferred — confirm)'; }
                 else out.reason = 'bank debit → expense (' + out.category + ')';
+                out.reason += unknownWhy;
             } else { // credit on a bank account = money IN = income
                 out.tab = 'income';
                 out.incomeType = incomeKind(desc); // salary/interest/dividend/deposit/transfer/... or 'other' — NEVER 'investment'
@@ -602,6 +628,7 @@
     var API = {
         routeTransaction: routeTransaction,
         accountTypeForLast4: accountTypeForLast4,
+        ownCardNamed: ownCardNamed,
         inferAccountType: inferAccountType,
         expenseCategory: expenseCategory,
         subscriptionInfo: subscriptionInfo,
