@@ -472,6 +472,9 @@ export function writeTimeoutMs(bytes) {
 /* Firestore's JSON value format: {"stringValue": ...}, {"integerValue": "12"} ... It is what the library itself sends over this endpoint. */
 const isPlainObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
 
+/** Set an own property even when the name is "__proto__" (a plain assignment would change the object's prototype and silently drop the key from what is saved or read). */
+function setOwn(obj, key, value) { Object.defineProperty(obj, key, { value, enumerable: true, writable: true, configurable: true }); }
+
 export function toValue(v, depth = 0) {
     if (depth > 60) throw new TypeError('nested too deeply to store');
     if (v === null || v === undefined) return { nullValue: 'NULL_VALUE' };
@@ -501,7 +504,7 @@ export function toFields(obj, depth = 0) {
     for (const k of Object.keys(obj || {})) {
         const x = obj[k];
         if (x === undefined || typeof x === 'function') continue;
-        out[k] = toValue(x, depth + 1);
+        setOwn(out, k, toValue(x, depth + 1));
     }
     return out;
 }
@@ -533,7 +536,7 @@ export function fromValue(x) {
 
 export function fromFields(fields) {
     const out = {};
-    if (fields && typeof fields === 'object') for (const k of Object.keys(fields)) out[k] = fromValue(fields[k]);
+    if (fields && typeof fields === 'object') for (const k of Object.keys(fields)) setOwn(out, k, fromValue(fields[k]));
     return out;
 }
 
@@ -574,7 +577,7 @@ export function hashOf(v) {
 
 export function hashesOf(obj) {
     const out = {};
-    for (const k of Object.keys(obj || {})) if (obj[k] !== undefined && typeof obj[k] !== 'function') out[k] = hashOf(obj[k]);
+    for (const k of Object.keys(obj || {})) if (obj[k] !== undefined && typeof obj[k] !== 'function') setOwn(out, k, hashOf(obj[k]));
     return out;
 }
 
@@ -623,6 +626,13 @@ function noAnswer(e, timedOut, what, ms) {
  *   readDoc(path, { maskPaths? })            -> { exists, data, updateTime, bytes, ms }      (maskPaths: only those top-level fields come back; updateTime always does)
  *   commit(path, { fields, meta, serverTime, precondition, timeoutMs? }) -> { updateTime, bytes, ms }   (fields: written, every other field left as it is)
  */
+/** The size of a text as it travels: UTF-8 bytes, not UTF-16 code units (Sinhala is three bytes a letter, so a character count would give a save far too little time). */
+export function utf8Len(str) {
+    const t = String(str);
+    if (typeof TextEncoder === 'function') return new TextEncoder().encode(t).length;
+    try { return unescape(encodeURIComponent(t)).length; } catch (_) { return t.length; }
+}
+
 export function createRestClient({ projectId, getToken, fetchImpl, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now } = {}) {
     if (!projectId) throw new Error('the project is not known');
     const base = REST.HOST + '/v1/projects/' + encodeURIComponent(projectId) + '/databases/(default)/documents';
@@ -647,7 +657,7 @@ export function createRestClient({ projectId, getToken, fetchImpl, setTimer = se
                 const text = await Promise.race([resp.text(), deadline]);
                 let json = null; try { json = text ? JSON.parse(text) : null; } catch (_) { /* an unreadable body is reported below */ }
                 if (!resp.ok) { if (resp.status === 401 && pass === 0) continue; throw restError(resp.status, json); }
-                return { json, bytes: bodyText.length, received: text.length, ms: Math.max(0, now() - t0) };
+                return { json, bytes: utf8Len(bodyText), received: utf8Len(text), ms: Math.max(0, now() - t0) };
             } catch (e) {
                 if (e && e.code) throw e;
                 throw noAnswer(e, timedOut, what, timeoutMs);
@@ -671,7 +681,7 @@ export function createRestClient({ projectId, getToken, fetchImpl, setTimer = se
             if (serverTime.length) write.updateTransforms = serverTime.map((f) => ({ fieldPath: fieldPath([f]), setToServerValue: 'REQUEST_TIME' }));
             if (precondition) write.currentDocument = precondition;
             const text = JSON.stringify({ writes: [write] });
-            const r = await call(':commit', text, timeoutMs || writeTimeoutMs(text.length), 'save');
+            const r = await call(':commit', text, timeoutMs || writeTimeoutMs(utf8Len(text)), 'save');
             const wr = r.json && Array.isArray(r.json.writeResults) ? r.json.writeResults[0] : null;
             return { updateTime: (wr && wr.updateTime) || null, bytes: r.bytes, ms: r.ms };
         },
@@ -757,7 +767,7 @@ export function createCloudSync({ client, path, now = Date.now } = {}) {
                     const keys = diffKeys(local, st.hashes);
                     if (!keys.length) return { keys: [], bytes: 0, ms: Math.max(0, now() - t0), attempts: attempt, upToDate: true };
                     const fields = {}; let size = 0;
-                    keys.forEach((k) => { fields[k] = local[k]; size += canonical(local[k]).length; });
+                    keys.forEach((k) => { setOwn(fields, k, local[k]); size += utf8Len(canonical(local[k])); });
                     if (size > REST.PRECHECK_BYTES) {
                         // A big save first confirms the account is still the copy that was merged: a few hundred bytes now, instead of a megabyte sent and refused.
                         const p = await probe();
@@ -771,7 +781,7 @@ export function createCloudSync({ client, path, now = Date.now } = {}) {
                         if (isConflict(e)) { st.ver = null; continue; }
                         throw e;
                     }
-                    keys.forEach((k) => { st.hashes[k] = hashOf(local[k]); });
+                    keys.forEach((k) => { setOwn(st.hashes, k, hashOf(local[k])); });
                     st.ver = res.updateTime || null;
                     st.last.write = { at: now(), ms: res.ms, bytes: res.bytes, keys: keys.slice(0, 12) };
                     return { keys, bytes: res.bytes, ms: Math.max(0, now() - t0), attempts: attempt, upToDate: false };
@@ -783,13 +793,13 @@ export function createCloudSync({ client, path, now = Date.now } = {}) {
         plan(local) {
             if (!st.ver) return { known: false, keys: [], bytes: 0 };
             const keys = diffKeys(local, st.hashes);
-            let bytes = 0; keys.forEach((k) => { bytes += canonical(local[k]).length; });
+            let bytes = 0; keys.forEach((k) => { bytes += utf8Len(canonical(local[k])); });
             return { known: true, keys, bytes };
         },
     };
 }
 
-const api = { SYNC, REFRESH, REST, runRefresh, refreshNote, TRANSPORT_KEY, PERSIST_KEY, choosePersistence, persistText, shouldAutoRepair, STEADY_SETTINGS, isWebKitFamily, chooseTransport, transportText, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText, savesText, writeTimeoutMs, toValue, toFields, fromValue, fromFields, fieldPath, canonical, hashOf, hashesOf, diffKeys, restError, sameTime, createRestClient, isConflict, createCloudSync };
+const api = { SYNC, REFRESH, REST, utf8Len, runRefresh, refreshNote, TRANSPORT_KEY, PERSIST_KEY, choosePersistence, persistText, shouldAutoRepair, STEADY_SETTINGS, isWebKitFamily, chooseTransport, transportText, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText, savesText, writeTimeoutMs, toValue, toFields, fromValue, fromFields, fieldPath, canonical, hashOf, hashesOf, diffKeys, restError, sameTime, createRestClient, isConflict, createCloudSync };
 if (typeof window !== 'undefined') { try { window.WFSyncHealth = api; } catch (_) { /* a frozen window is not an error */ } }
 
 export default api;

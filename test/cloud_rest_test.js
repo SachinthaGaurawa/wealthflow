@@ -192,6 +192,34 @@ describe('every request has its own deadline', () => {
         expect(t.timers.size).toBe(0);
     });
 
+    it('a field named __proto__ is kept on the way out and on the way in (a plain assignment would drop it)', () => {
+        const mine = JSON.parse('{"settings":{"__proto__":[1,2],"a":1}}');
+        expect(Object.keys(mine.settings)).toEqual(['__proto__', 'a']);
+        const wire = H.toFields(mine);
+        expect(JSON.stringify(wire)).toContain('"__proto__"');
+        const back = H.fromFields(JSON.parse(JSON.stringify(wire)));
+        expect(Object.keys(back.settings)).toEqual(['__proto__', 'a']);
+        expect(H.hashOf(back.settings)).toBe(H.hashOf(mine.settings));
+        expect(Object.keys(H.hashesOf(mine))).toEqual(['settings']);
+        expect(Object.keys(H.hashesOf(JSON.parse('{"__proto__":1}')))).toEqual(['__proto__']);
+    });
+
+    it('the time a save gets follows the bytes that travel (Sinhala is three bytes a letter), and the reported size is in bytes too', async () => {
+        const t = manualTimers();
+        const client = H.createRestClient({ projectId: 'p', getToken: async () => 'tok', fetchImpl: () => never, setTimer: t.setTimer, clearTimer: t.clearTimer });
+        const letters = 'ශ්‍රී'.repeat(10000);                                   // 50,000 code units, 150,000 bytes
+        const p = client.commit('users/u1', { fields: { note: letters } });
+        await new Promise((r) => setTimeout(r, 0));
+        const ms = [...t.timers.values()].map((x) => x.ms)[0];
+        const body = JSON.stringify({ writes: [{ update: { name: 'projects/p/databases/(default)/documents/users/u1', fields: H.toFields({ note: letters }) }, updateMask: { fieldPaths: ['note'] } }] });
+        expect(H.utf8Len(body)).toBeGreaterThan(body.length * 2);
+        expect(ms).toBe(H.writeTimeoutMs(H.utf8Len(body)));
+        expect(ms).toBeGreaterThan(H.writeTimeoutMs(body.length));
+        t.fireAll(); await p.then(() => null, () => null);
+        expect(H.utf8Len('abc')).toBe(3);
+        expect(H.utf8Len('ශ')).toBe(3);
+    });
+
     it('a body that stops half-way ends the same way, not never', async () => {
         const t = manualTimers();
         const client = H.createRestClient({ projectId: 'p', getToken: async () => 'tok', fetchImpl: async () => ({ ok: true, status: 200, text: () => never }), setTimer: t.setTimer, clearTimer: t.clearTimer });

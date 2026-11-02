@@ -742,8 +742,8 @@ export const BUDGETS = {
     // 2026-11-02 (merged with the card-tabs change: wealthflow-institutions.js, the locked-statement item in wealthflow-statement-cloud.js, the vault's order by institution; measured 2,749,543 + ~0.04% headroom): 2_744_000 -> 2_750_600.
     // 2026-11-02 (wealthflow-sync-health.js: the account over plain HTTPS, about 27 KB, a third of it the comments recording why: the Firestore REST client, the per-field fingerprints, the save that sends only what changed, the conflict merge and retry; measured 2,755,657 incl. index.html above + ~0.03% headroom): 2_728_000 -> 2_756_500.
     // (#489 and this change together measure 2,772,107: 2_744_000 -> 2_772_500.)
-    // (with #490 as well: 2,778,139, so 2_772_500 -> 2_778_600.)
-    totalJsBytes: 2_778_600,
+    // (with #490 as well: 2,778,139, so 2_772_500 -> 2_778_600; then the save deadline counts UTF-8 bytes and a field named __proto__ survives the codec, measured 2,778,909: -> 2_779_200.)
+    totalJsBytes: 2_779_200,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
