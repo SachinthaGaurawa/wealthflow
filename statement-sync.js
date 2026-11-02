@@ -637,7 +637,8 @@ export async function recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt }
              * 2026-11-02: one HNB card statement counted as "needs review" with nothing to open) could therefore never be tried with a password the owner had since saved. The item, when there is one, is closed. */
             if (review.exists && review.data().uid !== uid) return 0;
             if (review.exists && review.data().status === 'pending' && review.data().index === -1) tx.set(reviewRef, { status: 'retried', retriedAt: Date.now() }, { merge: true });
-            tx.set(doc.ref, { status: 'pending', hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: Date.now() }, { merge: true });
+            /* A NEWER VAULT STARTS THE PASSWORD LIST OVER: a stale offset would skip the password that was just saved (it can sit in the first batch now that same-institution passwords are tried first). */
+            tx.set(doc.ref, { status: 'pending', hasReview: false, leaseToken: '', leaseUntil: 0, passwordOffset: 0, updatedAt: Date.now() }, { merge: true });
             return 1;
         });
     }

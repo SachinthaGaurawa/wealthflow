@@ -275,11 +275,11 @@ describe('private source inspection and durable layout replay', () => {
     });
     it('production 2026-11-02: a locked statement whose review item is gone is still read again once the owner saves a newer vault', async () => {
         const args = setup();
-        args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), reviewReason: 'PASSWORD_FAILED', vaultSavedAt: 100, hasReview: true });
+        args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), reviewReason: 'PASSWORD_FAILED', vaultSavedAt: 100, hasReview: true, passwordOffset: 24 });
         const request = { db: args.db, mailRef: args.db.doc('wf-mail/owner_example_com'), uid: 'u', vaultSavedAt: 100 };
         expect(await recoverPasswordFailures(request)).toBe(0);                                  // the same vault: nothing new to try
         expect(await recoverPasswordFailures({ ...request, vaultSavedAt: 200 })).toBe(1);        // a newer one, and no review item at all
-        expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', hasReview: false, cursor: 0 });
+        expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', hasReview: false, cursor: 0, passwordOffset: 0 });   // a newer vault starts the password list over
         // an item that belongs to someone else is never closed by it
         const again = setup(), id = createHash('sha256').update(again.sourcePath).digest('hex');
         again.data.set(again.sourcePath, { ...again.data.get(again.sourcePath), reviewReason: 'PASSWORD_FAILED', vaultSavedAt: 100 });
