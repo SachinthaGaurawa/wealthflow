@@ -678,6 +678,8 @@
     <script src="wealthflow-pdf-unlock.js" defer></script>
     <!-- Transaction routing brain: decides CC One-Time vs Expense vs Income per row, by account type -->
     <script src="wealthflow-route.js" defer></script>
+    <!-- One tab per credit card (CC One-Time, CC Instalments) once there is more than one card: the bank, the last four digits, the rows and what is due. window.WFCardTabs -->
+    <script src="wealthflow-card-tabs.js" defer></script>
     <!-- Encrypted HTML e-statements (e.g. Nations Trust): unlock with DOB password, import directly -->
     <script src="wealthflow-html-statement.js" defer></script>
     <!-- CRIB credit-report intelligence: Cloud Vision OCR + AI analysis in the
@@ -6211,6 +6213,8 @@
                                 Instalment</button>
                         </div>
                     </div>
+                    <!-- One tab per credit card (wealthflow-card-tabs.js), shown by renderCCI only when the owner holds more than one card. -->
+                    <div id="cciFilterBar" style="display:none;"></div>
                     <div class="g4" id="cciStats" style="margin-bottom:16px;"></div>
                     <div class="tbl-wrap">
                         <table>
@@ -6254,7 +6258,7 @@
                     </div>
                     <!-- Per-card / per-bank filter (shown by renderCCOT only when the
                          user has cards from more than one bank). -->
-                    <div id="ccotFilterBar" style="display:none;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
+                    <div id="ccotFilterBar" style="display:none;"></div>
                     <!-- v7.27.0 — Card payments / credits + auto-@checkCircle@ reconciliation summary.
                          Populated by renderCCOT(): lists every payment made TO the card and
                          shows how the running credit pool auto-settles charges oldest-first. -->
@@ -23076,7 +23080,22 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         function renderCCI() {
             let arr = DB.get('ccinstall');
-            const s = sortState['ccot'];
+            /* One tab per credit card when there is more than one (wealthflow-card-tabs.js). A plan is "owed" until its last month has passed or the owner marks it done; what a card owes is its monthly figure. */
+            const _cciDone = (x) => { if (x.completed) return true; const e = new Date((x.date || '') + 'T00:00:00'); e.setMonth(e.getMonth() + (Number(x.duration) || 0)); return e <= new Date(); };
+            const model = _cardTabModel(arr, { open: x => !_cciDone(x), value: x => x.monthly || 0 });
+            if (_cciCardFilter !== 'all' && !(model && model.tabs.length > 1 && model.tabs.some(t => t.key === _cciCardFilter))) _cciCardFilter = 'all';
+            const fbar = $('cciFilterBar');
+            if (fbar) {
+                if (model && model.tabs.length > 1) {
+                    fbar.innerHTML = window.WFCardTabs.render(model, _cciCardFilter, { fmt, noun: 'plan', dueLabel: 'Monthly', name: 'Credit cards' });
+                    window.WFCardTabs.wire(fbar, setCCICardFilter);
+                    fbar.style.display = 'block';
+                    window.WFCardTabs.reveal(fbar);
+                } else { fbar.style.display = 'none'; fbar.innerHTML = ''; }
+            }
+            const allPlans = arr;
+            if (_cciCardFilter !== 'all') arr = arr.filter(x => model.keyOf(x) === _cciCardFilter);
+            const s = sortState['cci'];
             if (s?.field) arr.sort((a, b) => {
                 if (s.field === 'product') return s.dir * a.product.localeCompare(b.product);
                 if (s.field === 'monthly') return s.dir * (b.monthly - a.monthly);
@@ -23091,9 +23110,9 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="stat-card sc-blue"><div class="stat-label">Active Plans</div><div class="stat-val">${active.length}</div></div>
         <div class="stat-card sc-purple" style="opacity:.7;"><div class="stat-label">Completed</div><div class="stat-val">${arr.length - active.length}</div></div>
     `;
-            $('skip_plan').innerHTML = '<option value="">Select plan...</option>' + active.map(x => `<option value="${_wfEsc(x.id)}">${_wfEsc(x.product)} (${_wfEsc(x.bank)})</option>`).join('');
+            $('skip_plan').innerHTML = '<option value="">Select plan...</option>' + allPlans.filter(x => !x.completed).map(x => `<option value="${_wfEsc(x.id)}">${_wfEsc(x.product)} (${_wfEsc(x.bank)})</option>`).join('');
             const tbody = $('cciBody');
-            if (!arr.length) { tbody.innerHTML = `<tr><td colspan="11">${emptyState('@card@', 'No instalment plans yet', 'Add a credit card instalment plan to track its payments.')}</td></tr>`; return; }
+            if (!arr.length) { tbody.innerHTML = `<tr><td colspan="11">${emptyState('@card@', _cciCardFilter === 'all' ? 'No instalment plans yet' : 'No instalment plans on ' + ((model.tabs.find(t => t.key === _cciCardFilter) || {}).label || 'this card'), 'Add a credit card instalment plan to track its payments.')}</td></tr>`; return; }
             const _cap = _wfSplitCap('ccinstall', arr, 'ccinstall');
             tbody.innerHTML = _cap.rows.map(item => {
                 const prog = cciProgress(item);
@@ -23253,9 +23272,25 @@ table.amort tbody tr { page-break-inside: avoid; }
             const nb = $('nb-ccot');
             if (nb) { nb.style.display = urgent > 0 ? '' : 'none'; nb.textContent = urgent; }
         }
-        var _ccotBankFilter = 'all';
-        function setCCOTBankFilter(bank) { _ccotBankFilter = bank || 'all'; renderCCOT(); }
+        var _ccotBankFilter = 'all';          // 'all', or the key of one card's tab ("bank|last4", wealthflow-card-tabs.js): the same key the card walk settles by (_ccKey)
+        function setCCOTBankFilter(key) { _ccotBankFilter = key || 'all'; renderCCOT(); }
         window.setCCOTBankFilter = setCCOTBankFilter;
+        var _cciCardFilter = 'all';           // the same for the Credit Card Instalments screen
+        function setCCICardFilter(key) { _cciCardFilter = key || 'all'; renderCCI(); }
+        window.setCCICardFilter = setCCICardFilter;
+        /* The tabs of a screen: one per credit card, built from the rows the screen lists. The bank is folded to its one canonical name (_canonBank) and printed by name (_bankShown); a row with no card
+           number joins the bank's only numbered card, one in Settings > Cards and accounts counting too. null when the tab module did not load: the screen then lists every card together, as before. */
+        function _cardTabModel(records, extra) {
+            try {
+                if (!window.WFCardTabs) return null;
+                let registry = {};
+                try { registry = (window.wfCardRegistry && window.wfCardRegistry.get && window.wfCardRegistry.get()) || {}; } catch (_) { registry = {}; }
+                return window.WFCardTabs.build(records || [], Object.assign({ canonBank: _canonBank, shown: _bankShown, registry }, extra || {}));
+            } catch (_) { return null; }
+        }
+        function _ccotModel() {
+            return _cardTabModel(DB.get('cconetime'), { open: x => !x.paid, value: x => x.combinedTotal || x.amount || 0, late: x => !x.paid && dLeft(x.deadline) < 0 });
+        }
 
         // ── v7.27.0 — Credit-card auto-@checkCircle@ reconciliation ──────────────────────────
         //  Charges (debits) and payments (credits) on the SAME card are matched by
@@ -23350,6 +23385,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (!window.WFReconcile || typeof window.WFReconcile.parseCardSms !== 'function') return null;
                 const p = window.WFReconcile.parseCardSms(text);
                 if (!p || !p.amount) return null;
+                // Settings > Cards and accounts decides what a number is: a message about a number the owner registered as a BANK ACCOUNT is not a card's charge or payment.
+                try {
+                    const _reg = (window.wfCardRegistry && window.wfCardRegistry.get && window.wfCardRegistry.get()) || {};
+                    if (p.cardLast4 && _reg[p.cardLast4] && _reg[p.cardLast4].type === 'bank_account') return null;
+                } catch (_) { /* no registry, as before */ }
                 const bank = (opts && opts.bank) || (p.cardLast4 ? ('Card ••' + p.cardLast4) : 'Card');
                 const date = p.date ? _smsDateToISO(p.date) : ((opts && opts.date) || today());
                 if (p.type === 'credit') {
@@ -23379,14 +23419,15 @@ table.amort tbody tr { page-break-inside: avoid; }
         function openCCPaymentModal(presetBank) {
             const banks = [...new Set((DB.get('cconetime') || []).map(x => _canonBank(x.bank)).filter(Boolean))];
             const _escB = v => String(v == null ? '' : v).replace(/"/g, '&quot;');
+            const _tabNow = (_ccotBankFilter !== 'all' && !(presetBank && presetBank !== 'all')) ? (((_ccotModel() || {}).tabs || []).find(t => t.key === _ccotBankFilter) || null) : null;   // the card tab the owner is on
             // v7.29.0 — lock Card/Bank to the card in context (active filter chip / preset /
             // the only card). The user shouldn't type or change it. If several cards exist
             // and none is in context, offer a clean dropdown (never free-text).
             const _ctx = (presetBank && presetBank !== 'all') ? presetBank
-                : ((typeof _ccotBankFilter !== 'undefined' && _ccotBankFilter && _ccotBankFilter !== 'all') ? _ccotBankFilter
+                : (_tabNow ? _tabNow.bank
                 : (banks.length === 1 ? banks[0] : ''));
             const bankField = _ctx
-                ? `<input id="_ccpay_bank" class="fi" value="${_escB(_ctx)}" readonly title="Payment for ${_escB(_ctx)}" style="opacity:.92;cursor:not-allowed;background:var(--bg2);"><div style="font-size:10.5px;color:var(--text3);margin-top:5px;">@lock@ Locked to this card — use the filter chips to switch cards.</div>`
+                ? `<input id="_ccpay_bank" class="fi" value="${_escB(_ctx)}" readonly title="Payment for ${_escB(_ctx)}" style="opacity:.92;cursor:not-allowed;background:var(--bg2);"><div style="font-size:10.5px;color:var(--text3);margin-top:5px;">@lock@ Locked to this card — use the card tabs to switch cards.</div>`
                 : (banks.length
                     ? `<select id="_ccpay_bank" class="fs">${banks.map(b => `<option value="${_escB(b)}">${b}</option>`).join('')}</select>`
                     : `<input id="_ccpay_bank" class="fi" placeholder="e.g. NTB AMEX">`);
@@ -23423,20 +23464,22 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const date = overlay.querySelector('#_ccpay_date').value || today();
                 const desc = (overlay.querySelector('#_ccpay_desc').value || 'Payment').trim();
                 if (!amount) { notify('Enter the payment amount.', 'warn'); return; }
-                addCCPayment({ bank, amount, date, desc, source: 'manual' });
+                addCCPayment({ bank, card_last4: _tabNow ? _tabNow.last4 : '', amount, date, desc, source: 'manual' });   // recorded under the card tab the owner is on, so two cards of one bank are settled apart
                 notify('Payment recorded. Matching charges were cleared.', 'success'); close();
             };
         }
         window.openCCPaymentModal = openCCPaymentModal;
 
         // Per-card payments + auto-match summary panel (shown above the charges table).
-        function _renderCCReconcilePanel() {
+        function _renderCCReconcilePanel(model) {
             const host = $('ccotReconcilePanel');
             if (!host) return;
             const charges = DB.get('cconetime') || [];
             let pays = DB.get('ccPayments') || [];
-            if (_ccotBankFilter !== 'all') pays = pays.filter(p => _canonBank(p.bank) === _ccotBankFilter);
-            const scoped = _ccotBankFilter === 'all' ? charges : charges.filter(c => _canonBank(c.bank) === _ccotBankFilter);
+            /* the chosen card's rows: the tab key names a card (bank + last four) the same way for a charge, a payment and the walk's own line */
+            const inTab = (r) => _ccotBankFilter === 'all' || (model ? model.keyOf(r) === _ccotBankFilter : _canonBank(r.bank) === _ccotBankFilter);
+            if (_ccotBankFilter !== 'all') pays = pays.filter(inTab);
+            const scoped = _ccotBankFilter === 'all' ? charges : charges.filter(inTab);
             // the three figures are summed in whole cents (never as floats) and turned back to rupees once, so they agree with the walk to the cent
             const _WR = window.WFReconcile, _c = v => (_WR && _WR.toCents ? _WR.toCents(v) : Math.round((parseFloat(v) || 0) * 100));
             const totalPaid = pays.reduce((s, p) => s + _c(p.amount), 0) / 100;
@@ -23460,7 +23503,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <td><button class="ib d" onclick="deleteCCPayment('${_wfJsAttr(p.id)}')" title="Delete payment"><i data-wfi="trash"></i></button></td></tr>`).join('') + _capP.row;
             const surplus = (Math.round(totalPaid * 100) - Math.round(totalCharged * 100)) / 100;
             // the walk's own memory: what each card's payments have left over after the charges they cleared, and what the first charge they could not clear still needs
-            const walkLines = Object.keys(_ccWalk.cards || {}).map(k => ({ k, w: _ccWalk.cards[k] })).filter(x => (_ccotBankFilter === 'all' || x.w.bank === _ccotBankFilter) && (x.w.carry > 0 || x.w.blocked)).map(({ w }) => {
+            const walkLines = Object.keys(_ccWalk.cards || {}).map(k => ({ k, w: _ccWalk.cards[k] })).filter(x => (_ccotBankFilter === 'all' || inTab({ bank: x.w.bank, card_last4: String(x.k).split('|')[1] || '' })) && (x.w.carry > 0 || x.w.blocked)).map(({ w }) => {
                 const first = w.blocked ? (DB.get('cconetime') || []).find(c => c.id === w.blocked.id) : null;
                 return `<div style="font-size:11.5px;color:var(--text2);line-height:1.6;"><b>${_wfEsc(_bankShown(w.bank) || 'Card')}</b>: ${w.carry > 0 ? 'carried forward <b style="font-family:var(--mono);">' + fmt(w.carry) + '</b>' : 'nothing carried'}${w.blocked ? ' · next unpaid charge <b>' + _wfEsc(first ? first.desc : '') + '</b> needs <b style="font-family:var(--mono);color:var(--red);">' + fmt(w.blocked.needs) + '</b> more' : ''}</div>`;
             }).join('');
@@ -23482,49 +23525,26 @@ table.amort tbody tr { page-break-inside: avoid; }
             _migrateBankNames();
             reconcileCC();
             let arr = DB.get('cconetime');
-            _renderCCReconcilePanel();
+            const model = _ccotModel();
+            if (_ccotBankFilter !== 'all' && !(model && model.tabs.length > 1 && model.tabs.some(t => t.key === _ccotBankFilter))) _ccotBankFilter = 'all';   // a card that is gone, or the only card left
+            _renderCCReconcilePanel(model);
 
-            // ── Per-card / per-bank filter ─────────────────────────────────────
-            // A user may hold several credit cards from different banks. Group the
-            // one-time payments by bank so each card can be viewed on its own, with
-            // a live count + outstanding balance per card.
+            // ── One tab per credit card ────────────────────────────────────────
+            // A person may hold several cards, of different banks or of one. With more than one, a tab per card (bank, last four digits, rows, what is due) lists each on its own;
+            // "All cards" lists them together. The tab row, the charges, the payments and the walk's "carried forward" lines all use the same card key.
             const fbar = $('ccotFilterBar');
-            const banks = [...new Set(arr.map(x => _canonBank(x.bank)).filter(Boolean))].sort();
             if (fbar) {
-                if (banks.length > 1) {
-                    const outstanding = (b) => arr
-                        .filter(x => !x.paid && (b === 'all' || _canonBank(x.bank) === b))
-                        .reduce((s, x) => s + (x.combinedTotal || x.amount || 0), 0);
-                    const count = (b) => arr.filter(x => b === 'all' || _canonBank(x.bank) === b).length;
-                    if (_ccotBankFilter !== 'all' && !banks.includes(_ccotBankFilter)) _ccotBankFilter = 'all';
-                    const _bankHue = (str) => { let h = 0; const t = String(str || ''); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0; return h % 360; };
-                    const chip = (key, label) => {
-                        const active = _ccotBankFilter === key;
-                        const due = outstanding(key);
-                        const isAll = key === 'all';
-                        const hue = isAll ? 45 : _bankHue(key);
-                        const accent = isAll ? 'var(--accent)' : `hsl(${hue} 72% 62%)`;
-                        const bg = active ? (isAll ? 'rgba(212,175,55,.16)' : `hsla(${hue},72%,55%,.16)`) : (isAll ? 'var(--card)' : `hsla(${hue},60%,50%,.07)`);
-                        const fg = active ? (isAll ? 'var(--accent)' : `hsl(${hue} 85% 74%)`) : 'var(--text2)';
-                        const dot = isAll ? '' : `<span style="width:9px;height:9px;border-radius:50%;background:${accent};display:inline-block;flex:0 0 auto;"></span>`;
-                        return `<button onclick="setCCOTBankFilter('${_wfJsAttr(String(key))}')"
-                            style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 14px 8px 13px;border-radius:var(--r2);cursor:pointer;
-                            border:1px solid ${active ? accent : 'var(--border2)'};border-left:4px solid ${accent};
-                            background:${bg};box-shadow:${active ? `0 0 0 1px ${accent}` : 'none'};
-                            color:${fg};transition:all .15s;">
-                            <span style="font-weight:700;font-size:12px;display:flex;align-items:center;gap:7px;">${dot}<span>${label} <span style="opacity:.7;font-weight:600;">· ${count(key)}</span></span></span>
-                            <span style="font-size:10px;font-family:var(--mono);color:${due > 0 ? 'var(--red)' : 'var(--text3)'};">Due: ${fmt(due)}</span>
-                        </button>`;
-                    };
-                    fbar.innerHTML = chip('all', '@info@ All cards') + banks.map(b => chip(b, _wfEsc(_bankShown(b)))).join('');
-                    fbar.style.display = 'flex';
+                if (model && model.tabs.length > 1) {
+                    fbar.innerHTML = window.WFCardTabs.render(model, _ccotBankFilter, { fmt, noun: 'charge', dueLabel: 'Due', name: 'Credit cards' });
+                    window.WFCardTabs.wire(fbar, setCCOTBankFilter);
+                    fbar.style.display = 'block';
+                    window.WFCardTabs.reveal(fbar);
                 } else {
-                    _ccotBankFilter = 'all';
                     fbar.style.display = 'none';
                     fbar.innerHTML = '';
                 }
             }
-            if (_ccotBankFilter !== 'all') arr = arr.filter(x => _canonBank(x.bank) === _ccotBankFilter);
+            if (_ccotBankFilter !== 'all') arr = arr.filter(x => model.keyOf(x) === _ccotBankFilter);
 
             const s = sortState['ccot'];
             // v7.29.0 — DEFAULT order = newest statement/charge date on top, so importing the
@@ -23538,7 +23558,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (s && s.field === 'oldest') arr.sort((a, b) => _cmpNewest(b, a)); // ↑ Oldest
             else arr.sort(_cmpNewest); // ↓ Newest (default)
             const tbody = $('ccotBody');
-            if (!arr.length) { tbody.innerHTML = `<tr><td colspan="9">${emptyState('@clock@', _ccotBankFilter === 'all' ? 'No one-time payments' : 'No payments for ' + _ccotBankFilter, 'Track CC purchases with the 50-day repayment rule')}</td></tr>`; return; }
+            if (!arr.length) { tbody.innerHTML = `<tr><td colspan="9">${emptyState('@clock@', _ccotBankFilter === 'all' ? 'No one-time payments' : 'No payments for ' + ((model.tabs.find(t => t.key === _ccotBankFilter) || {}).label || 'this card'), 'Track CC purchases with the 50-day repayment rule')}</td></tr>`; return; }
             const _cap = _wfSplitCap('cconetime', arr, 'ccot');
             tbody.innerHTML = _cap.rows.map(item => {
                 const dl = dLeft(item.deadline);
@@ -36802,7 +36822,21 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             // never an investment); transfers/refunds → skip. The user can override
             // any row's destination in the "Goes to" column.
             const _last4 = (parsed && (parsed.card_last4 || parsed.last4)) || '';
-            let _acctType = (window.WFRoute && (window.WFRoute.accountTypeForLast4(_last4) || window.WFRoute.inferAccountType(parsed.transactions))) || 'credit_card';
+            const _regType = (window.WFRoute && _last4) ? window.WFRoute.accountTypeForLast4(_last4) : null;   // what Settings > Cards and accounts says this statement's own number is
+            let _acctType = (window.WFRoute && (_regType || window.WFRoute.inferAccountType(parsed.transactions))) || 'credit_card';
+            /* Settings > Cards and accounts is the truth about what a number is. A statement whose own number the registry does not list is read from its rows, and a page of a bank statement that holds only
+             * withdrawals reads as "a card" (all debits). A row worded as a transfer that names one of the owner's registered credit cards (another card than this statement's own) can only be a bank
+             * account paying that card, so such a statement is a bank statement, whatever the row mix said. */
+            if (!_regType && _acctType === 'credit_card' && window.WFRoute && window.WFRoute.ownCardNamed) {
+                try {
+                    if (txns.some((t) => { const c = /\b(?:ceft|slips|transfer|inward|outward)\b/i.test(t.description || '') && window.WFRoute.ownCardNamed(t.description); return c && c.last4 !== _last4; })) _acctType = 'bank_account';
+                } catch (_) { /* the row mix decided, as before */ }
+            }
+            /* A line of a BANK account that names one of the owner's own credit cards is never filed as that card's charge or payment (CC One-Time, Card payments): the card's own statement carries the
+             * payment ("CASH PAYMENT-FINACLE" settles the charges), and filing the bank's line as well counts the same money twice and opens a second "card" under the bank's name. */
+            const _bankSideOwnCard = (text) => {
+                try { return (_acctType === 'bank_account' || _regType === 'bank_account') && !!(window.WFRoute && window.WFRoute.ownCardNamed && window.WFRoute.ownCardNamed(text)); } catch (_) { return false; }
+            };
             const _routeAll = () => {
                 txns.forEach((t) => {
                     let routed = { tab: 'cconetime', ccType: t.type || 'purchase' };
@@ -36901,6 +36935,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             }
                         } catch (_) {}
                     }
+                    if ((t._dest === 'cc_payment' || t._dest === 'cconetime') && _bankSideOwnCard(t.description)) {
+                        const _named = window.WFRoute.ownCardNamed(t.description);
+                        t._dest = 'skip'; t._ownMoney = t._ownMoney || 'card-payment-out'; t._ownCard = t._ownCard || (_named ? _named.last4 : '');
+                    }
                 });
             };
             _routeAll();
@@ -36929,7 +36967,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const overlay = document.createElement('div');
             overlay.className = 'mo';
 
-            const _destOpts = (sel) => [
+            const _destOpts = (sel, row) => [
                 ['cconetime', 'CC One-Time'],
                 ['expenses', 'Expense'],
                 ['subscription', 'Subscription'],
@@ -36938,7 +36976,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 ['loan', 'Loan Payment'],
                 ['cheque', 'Cheque'],
                 ['skip', 'Skip']
-            ].filter(([v]) => !parsed.cloudReview || !['loan', 'cheque'].includes(v)).map(([v, l]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${l}</option>`).join('');
+            ].filter(([v]) => !parsed.cloudReview || !['loan', 'cheque'].includes(v)).filter(([v]) => !(row && (v === 'cc_payment' || v === 'cconetime') && _bankSideOwnCard(row.description))).map(([v, l]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${l}</option>`).join('');
             /* A statement can contain hundreds of transactions. Each review row
              * owns at least five native form controls (and cloud review owns
              * eight), so putting the whole statement in one tbody still gives
@@ -36983,7 +37021,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     <td style="padding:6px 6px;"><input type="checkbox" class="_ccr_keep" ${t._keep ? 'checked' : ''}></td>
                     <td style="padding:6px 6px;"><input class="fi _ccr_date" type="date" value="${_wfEsc(t.date || '')}" style="width:130px;font-size:12px;"></td>
                     <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${_wfEsc(t.description || '')}" style="font-size:12px;min-width:150px;">${t._have ? '<div style="font-size:10px;color:var(--green);margin-top:3px;">Already in your books</div>' : ''}${t._review ? '<div style="font-size:10px;color:var(--accent,#f5a623);margin-top:3px;font-weight:600;">@alert@ Please review — ' + _wfEsc(t._reviewWhy || 'AI wasn\'t sure') + '</div>' : ''}</td>
-                    <td style="padding:6px 6px;"><select class="fs _ccr_dest" style="font-size:11px;">${_destOpts(t._dest)}</select>${parsed.cloudReview ? `<label>Category<input class="fi _ccr_cloud_category" value="${_wfEsc(t._cloudCategory || t._cat || 'Other')}" maxlength="100"></label><label>Direction<select class="fs _ccr_cloud_direction"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></label><label>Subscription allocation<select class="fs _ccr_cloud_allocation"><option value="">Choose an existing subscription when routing to Subscription</option>${(DB.get('subscriptions') || []).map(s => `<option value="${_wfEsc(s.id)}" ${t._cloudAllocation === s.id ? 'selected' : ''}>${_wfEsc(s.name || s.id)}</option>`).join('')}</select></label>` : ''}</td>
+                    <td style="padding:6px 6px;"><select class="fs _ccr_dest" style="font-size:11px;">${_destOpts(t._dest, t)}</select>${parsed.cloudReview ? `<label>Category<input class="fi _ccr_cloud_category" value="${_wfEsc(t._cloudCategory || t._cat || 'Other')}" maxlength="100"></label><label>Direction<select class="fs _ccr_cloud_direction"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></label><label>Subscription allocation<select class="fs _ccr_cloud_allocation"><option value="">Choose an existing subscription when routing to Subscription</option>${(DB.get('subscriptions') || []).map(s => `<option value="${_wfEsc(s.id)}" ${t._cloudAllocation === s.id ? 'selected' : ''}>${_wfEsc(s.name || s.id)}</option>`).join('')}</select></label>` : ''}</td>
                     <td style="padding:6px 6px;">
                         ${_acctType === 'bank_account'
                             ? `<select class="fs _ccr_type" style="font-size:11px;">
@@ -37176,13 +37214,15 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const dd = $ovl('#_ccr_bulkDest');
                 const dest = dd ? dd.value : '';
                 if (!dest) { notify('Pick a destination first (e.g. Expenses), then tap Apply.', 'warn'); return; }
-                let n = 0;
+                let n = 0, held = 0;
                 txns.forEach(t => {
                     if (!t._keep) return;
+                    if ((dest === 'cc_payment' || dest === 'cconetime') && _bankSideOwnCard(t.description)) { held++; return; }   // a bank line naming one of your cards is carried by the card's own statement
                     t._dest = dest;
                     n++;
                 });
                 _reRenderBody();
+                if (held) notify(held + ' row' + (held > 1 ? 's' : '') + ' name one of your own credit cards and stay out of the card tabs: the card\'s own statement carries that money.', 'info');
                 const lbl = { expenses: 'Expenses', cconetime: 'CC One-Time', income: 'Income', subscription: 'Subscription', cc_payment: 'Card Payment', loan: 'Loan Payment', cheque: 'Cheque', skip: 'Skip' }[dest] || dest;
                 notify(n ? ('Routed ' + n + ' row' + (n > 1 ? 's' : '') + ' → ' + lbl) : 'No ticked rows to route.', n ? 'success' : 'warn');
                 try { triggerHaptic(n ? 'success' : 'warn'); } catch (_) {}
@@ -37420,6 +37460,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     _curNth = t._nth || 1;
                     const date = t.date || today();
                     const desc = String(t.description || '').trim();
+                    if ((t._dest === 'cc_payment' || t._dest === 'cconetime') && _bankSideOwnCard(desc)) { skipped++; return; }   // last line of defence: whatever chose this destination, a bank line naming your own card never reaches the card tabs
                     const dest = t._dest || 'skip';
                     const type = t.type || '';
                     const amount = Number(t.amount) || 0;

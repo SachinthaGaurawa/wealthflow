@@ -1225,3 +1225,51 @@ input.fi, input[type="search"], input[type="text"] { text-overflow: ellipsis; }
 @keyframes wfNewIn { from { opacity: 0; transform: scale(.85); } }
 @media (prefers-reduced-motion: reduce) { .wf-new { animation: none; } }
 @media (forced-colors: active) { .wf-new, .wf-item .wf-badge.wf-badge-new { forced-color-adjust: none; } }
+
+/* ==========================================================================
+   31. CARD TABS (wealthflow-card-tabs.js)
+   CC One-Time and CC Instalments show one tab per credit card once the owner holds more than one: the bank's name, the card's last four digits, the rows and what is due. It replaces the row of
+   hand-coloured bank chips (every bank its own hue, no card number, two cards of one bank merged). The same restraint as the rest of the app: one gold accent for the chosen card, red only for
+   money that is overdue, figures in tabular numerals, a quiet monogram instead of a decoration. On a phone the row scrolls sideways and each tab snaps into place.
+   ========================================================================== */
+.wf-ctabs {
+    display: grid; grid-auto-flow: column; grid-auto-columns: minmax(232px, 1fr); gap: var(--wf-s2);
+    margin: 0 0 var(--wf-s4); padding: 2px 2px var(--wf-s2);
+    overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: thin;
+}
+.wf-ctab {
+    position: relative; scroll-snap-align: start; min-height: 44px; min-width: 0;
+    display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: var(--wf-s3); row-gap: 1px; align-items: center; text-align: left;
+    padding: var(--wf-s3) var(--wf-s4) var(--wf-s3) var(--wf-s3); border: 1px solid var(--wf-line-2); border-radius: var(--wf-r-md);
+    background: var(--wf-card); color: var(--wf-text-2); font: inherit; cursor: pointer;
+    transition: background var(--wf-dur-1) var(--wf-ease), border-color var(--wf-dur-1) var(--wf-ease), transform var(--wf-dur-1) var(--wf-ease);
+}
+.wf-ctab:hover { background: var(--wf-card-2); color: var(--wf-text); }
+.wf-ctab:active { transform: translateY(1px); }
+.wf-ctab:focus-visible { outline: 2px solid var(--wf-accent); outline-offset: 2px; }
+.wf-ctab.is-on { background: var(--wf-accent-soft); border-color: var(--wf-accent-line); color: var(--wf-text); }
+.wf-ctab.is-on::after { content: ''; position: absolute; left: var(--wf-s4); right: var(--wf-s4); bottom: -1px; height: 2px; border-radius: 2px; background: var(--wf-accent); }
+.wf-ctab-mark {
+    grid-row: 1 / span 3; width: 36px; height: 36px; display: grid; place-items: center; border-radius: var(--wf-r-sm);
+    background: var(--wf-card-3); color: var(--wf-text); font: 700 11px/1 var(--wf-font); letter-spacing: .04em;
+}
+.wf-ctab.is-on .wf-ctab-mark { background: var(--wf-accent-fill); color: var(--wf-accent-ink); }
+.wf-ctab-name { grid-column: 2; font: 600 13px/1.3 var(--wf-font); color: var(--wf-text); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
+.wf-ctab-meta { grid-column: 2; font: 500 11.5px/1.3 var(--wf-font); color: var(--wf-text-2); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wf-ctab-due { grid-column: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.wf-ctab-duelbl { font: 500 11px/1.3 var(--wf-font); color: var(--wf-text-3); }
+.wf-ctab-amt { font: 700 13px/1.3 var(--wf-font); color: var(--wf-text); }
+.wf-ctab-due.is-none .wf-ctab-amt { font-weight: 500; color: var(--wf-text-3); }
+.wf-ctab.is-late .wf-ctab-amt { color: var(--wf-neg); }
+.wf-ctab-late { font: 600 10.5px/1.3 var(--wf-font); padding: 1px 6px; border-radius: var(--wf-r-pill); color: var(--wf-neg); background: var(--wf-neg-soft); white-space: nowrap; }
+@media (max-width: 640px) {
+    .wf-ctabs { grid-auto-columns: minmax(236px, 84%); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .wf-ctab { transition: none; }
+    .wf-ctab:active { transform: none; }
+}
+@media (forced-colors: active) {
+    .wf-ctab.is-on { border-color: Highlight; outline: 1px solid Highlight; }
+    .wf-ctab.is-on::after { background: Highlight; }
+}

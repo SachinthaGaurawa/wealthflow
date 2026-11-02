@@ -136,6 +136,17 @@ describe('routeRow: business rules (the original misrouting bug)', () => {
     expect(r.module).toBe('cc_payment');
   });
 
+  it('a BANK account\'s credit is never a card payment on its narration alone ("settlement", "online payment" are common on a bank account); only a card statement settles a card', () => {
+    const credit = (description) => ({ description, amount: 50000, direction: 'credit' });
+    expect(routeRow(credit('ONLINE PAYMENT SETTLEMENT'), { statementType: 'bank_account' }).module).not.toBe('cc_payment');
+    expect(routeRow(credit('PAYMENT RECEIVED'), { statementType: 'savings' }).module).not.toBe('cc_payment');
+    // the registry says the statement's own number is a bank account, with no type given
+    expect(routeRow({ ...credit('ONLINE PAYMENT SETTLEMENT'), card_last4: '0018' }, { cardRegistry: { '0018': { type: 'bank_account', bank: 'DFCC' } } }).module).not.toBe('cc_payment');
+    // and the same words on a card statement still settle the card
+    expect(routeRow(credit('PAYMENT RECEIVED'), { statementType: 'credit_card' }).module).toBe('cc_payment');
+    expect(routeRow(credit('PAYMENT RECEIVED'), {}).module).toBe('cc_payment');                         // type unknown: as it always was
+  });
+
   it('a card-side interest credit settles the card rather than becoming income', () => {
     const r = routeRow({ description: 'INTEREST CREDIT', amount: 125, direction: 'credit' }, { statementType: 'credit_card' });
     expect(r.module).toBe('cc_payment');

@@ -164,6 +164,16 @@ export function isCreditCardRow(row, ctx) {
   return entry.type === 'credit_card';
 }
 
+/** The mirror of isCreditCardRow: the statement is a BANK account's (stated by its type, or its number is a bank account in Settings > Cards and accounts). */
+export function isBankAccountRow(row, ctx) {
+  const statementType = norm(ctx.statementType).replace(/\s+/g, '_');
+  if (statementType === 'bank_account' || statementType === 'savings') return true;
+  if (statementType === 'credit_card') return false;
+  const last4 = row.card_last4 || ctx.card_last4;
+  const entry = last4 && ctx.cardRegistry ? ctx.cardRegistry[last4] : null;
+  return !!entry && entry.type === 'bank_account';
+}
+
 // ── the core router for ONE row ─────────────────────────────────────────────
 export function routeRow(row, ctx = {}) {
   const rawDesc = descOf(row);
@@ -179,7 +189,8 @@ export function routeRow(row, ctx = {}) {
   if (dir === 'credit') {
     // The account type is stronger evidence than narration. A card-side credit
     // (including an "interest credit") settles the card; it is not cash income.
-    if (onCard || RE.ccPayment.test(desc)) {
+    // Narration alone never makes a BANK account's credit a card payment ("settlement", "online payment" are common on a bank account): the card's own statement carries card payments.
+    if (onCard || (RE.ccPayment.test(desc) && !isBankAccountRow(row, ctx))) {
       module = 'cc_payment'; tabLabel = 'CC Payment → FIFO reconcile'; confidence = 0.92;
     } else if (RE.salary.test(desc)) {
       module = 'income'; tabLabel = 'Income & Investments'; confidence = 0.9; category = incomeCategoryFor(row);
