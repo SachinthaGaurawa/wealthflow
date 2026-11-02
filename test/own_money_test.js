@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import OwnMoney, { ownMoney, numbersIn, leavesTheBooks, nameOfOwnerIn } from '../wealthflow-own-money.js';
+import OwnMoney, { ownMoney, numbersIn, leavesTheBooks, nameOfOwnerIn, ownCardIn, unregisteredCardIn } from '../wealthflow-own-money.js';
 import { deterministicDecision, classifySlice } from '../statement-sync.js';
 import { validateSettlementRow, settleStatement } from '../statement-ledger.mjs';
 
@@ -143,13 +143,36 @@ describe('both doors read the same rows the same way', () => {
         expect(workerModule('Outward Ceft Transfer 376657Xxxxx0276', 'debit')).toMatchObject({ module: 'skip', ownTransfer: expect.any(String) });
         const routed = page.WFRoute.routeTransaction({ description: 'Outward Ceft Transfer 376657Xxxxx0276', amount: 30000, direction: 'debit' }, 'bank_account');
         expect(routed).toMatchObject({ tab: 'skip', ownMoney: 'card-payment-out', ccLast4: '0276' });
-        // the owner can still choose Card Payment in the review list: the row names the card it is filed against
-        expect(routed.reason).toMatch(/Card Payment/);
+        // the owner's rule (2026-11-02): a bank line that names a card is never filed under that card, so the reason no longer offers Card Payment
+        expect(routed.reason).toMatch(/not filed under the card/);
     });
 
-    it('a number that is no card of the owner\'s is not "the owner\'s own card": the rule leaves it alone (the page still reads a card-shaped number as a card bill, the worker as money paid out)', () => {
-        expect(pageDest('Outward Ceft Transfer 411111Xxxxx9999', 'debit')).toBe('cc_payment');
+    it('a number that is no card of the owner\'s is not "the owner\'s own card": the rule leaves it alone, neither door files it as a card payment (the page used to, from the shape of the digits), and the page holds it for a look', () => {
+        expect(pageDest('Outward Ceft Transfer 411111Xxxxx9999', 'debit')).toBe('expenses');
         expect(workerModule('Outward Ceft Transfer 411111Xxxxx9999', 'debit')).toMatchObject({ module: 'expenses', autoDecided: 'transfer-to-others' });
+        const routed = page.WFRoute.routeTransaction({ description: 'Outward Ceft Transfer 411111Xxxxx9999', amount: 1000, direction: 'debit' }, 'bank_account');
+        expect(routed).toMatchObject({ tab: 'expenses', needsReview: true });
+        expect(routed.reason).toMatch(/9999.*Cards and accounts/);
+    });
+
+    it('Settings > Cards and accounts decides: a number it calls a BANK ACCOUNT is not a card and is not held, one it does not list is held, one it lists as a card is the other half of the card statement', () => {
+        expect(ownCardIn('Outward Ceft Transfer 376657Xxxxx0276', { registry })).toMatchObject({ last4: '0276', evidence: 'registered-card' });
+        expect(ownCardIn('Outward Ceft Transfer 411111Xxxxx9999', { registry })).toBeNull();
+        expect(ownCardIn('Outward Ceft Transfer XXXXXX1861', { registry })).toBeNull();
+        expect(ownCardIn('Outward Ceft Transfer 411111Xxxxx0276', { registry })).toBeNull();                       // a Visa BIN at the AMEX's tail
+        expect(unregisteredCardIn('Outward Ceft Transfer 411111Xxxxx9999', { registry })).toMatchObject({ last4: '9999' });
+        expect(unregisteredCardIn('Outward Ceft Transfer 376657Xxxxx0276', { registry })).toBeNull();               // listed
+        expect(unregisteredCardIn('Outward Ceft Transfer 435555Xxxxx1861', { registry })).toBeNull();               // listed (as an account): the owner already said what it is
+        expect(unregisteredCardIn('Outward Ceft Transfer XXXXXX9999', { registry })).toBeNull();                    // not shaped like a card
+        expect(unregisteredCardIn('Outward Ceft Transfer Car', { registry })).toBeNull();
+    });
+
+    it('the merchant rules no longer read a card-shaped number as a card payment on their own (the root of the DFCC rows filed as card payments)', () => {
+        for (const text of ['Outward Ceft Transfer 376657Xxxxx0276', 'Outward Ceft Transfer 411111Xxxxx9999', 'Online Transfer 520000******4444']) {
+            const c = page.WFMerchants.classify(text, 'debit');
+            expect(c.goesTo).not.toBe('cc_payment');
+            expect(page.WFMerchants.refine(text, 'debit', { tab: 'expenses' })).toBeNull();
+        }
     });
 
     describe('a transfer that names the owner (the family name, or the house name made from it)', () => {
@@ -200,11 +223,16 @@ describe('both doors read the same rows the same way', () => {
         } finally { page.WFOwnMoney = saved; }
     });
 
-    it('the review list keeps the rule\'s answer: refine is told the row is the owner\'s own money, and a row switched to Card Payment is filed on the card it names', () => {
+    it('the review list keeps the rule\'s answer: refine is told the row is the owner\'s own money, and a bank line naming a registered card can reach neither CC One-Time nor Card payments by any way (route, per-row choice, bulk apply, Save)', () => {
         const html = read('index.html');
         expect(html).toMatch(/refine\(t\.description, t\.direction, \{[^}]*ownMoney: t\._ownMoney \}\)/);
         expect(html).toMatch(/t\._ownCard = routed\.ccLast4 \|\| ''/);
-        expect(html).toMatch(/card_last4: _payT\._ccLast4 \|\| _payT\._ownCard \|\| _source\.card_last4/);
+        // every way a row can get a card destination asks the one guard, which reads Cards and accounts through WFRoute.ownCardNamed
+        expect(html).toMatch(/const _bankSideOwnCard = \(text\) =>/);
+        expect(html).toMatch(/if \(\(t\._dest === 'cc_payment' \|\| t\._dest === 'cconetime'\) && _bankSideOwnCard\(t\.description\)\)/);          // routing (and the Credit Card / Bank toggle)
+        expect(html).toMatch(/!\(row && \(v === 'cc_payment' \|\| v === 'cconetime'\) && _bankSideOwnCard\(row\.description\)\)/);                 // the per-row "Goes to" list does not offer them
+        expect(html).toMatch(/\(dest === 'cc_payment' \|\| dest === 'cconetime'\) && _bankSideOwnCard\(t\.description\)\) \{ held\+\+; return; \}/);        // bulk apply
+        expect(html).toMatch(/\(t\._dest === 'cc_payment' \|\| t\._dest === 'cconetime'\) && _bankSideOwnCard\(desc\)\) \{ skipped\+\+; return; \}/);     // Save
     });
 
     it('the AI auto-sort hands the queue each row\'s real direction (it used to hand every credit over as a debit)', () => {

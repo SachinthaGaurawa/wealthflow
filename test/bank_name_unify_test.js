@@ -84,9 +84,11 @@ describe('the card pages bring old records under the one name', () => {
     });
     it('the card page groups, filters and settles by the canonical name', () => {
         const html = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
-        const page = html.slice(html.indexOf('function _ccKey(r)'), html.indexOf('function renderCCOT()') + 6000);
+        const page = html.slice(html.indexOf('var _ccotBankFilter'), html.indexOf('function renderCCOT()') + 6000);
         expect(page).not.toMatch(/\.map\(x => x\.bank\)/);
         expect(page).not.toMatch(/x\.bank === b\b|x\.bank === _ccotBankFilter|c\.bank === _ccotBankFilter|p\.bank === _ccotBankFilter/);
-        expect(page).toMatch(/_canonBank\(x\.bank\) === _ccotBankFilter/);
+        // the filter is a card key (canonical bank + last four, wealthflow-card-tabs.js), built from the canonical name; the module itself folds the bank before it keys on it
+        expect(page).toMatch(/canonBank: _canonBank/);
+        expect(page).toMatch(/model\.keyOf\(x\) === _ccotBankFilter/);
     });
 });

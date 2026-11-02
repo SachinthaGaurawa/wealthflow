@@ -354,8 +354,9 @@ export const BUDGETS = {
     // 2026-10-29 (Sync now: the list of steps it runs and what a change from another device repaints, and the advisor's handler narrowed to the advisor's own questions; measured 2,363,010 + ~0.03% headroom): 2_359_800 -> 2_363_800. Mostly comments recording why. No new script or request.
     // 2026-10-29 (Sync now says "Syncing…" at once on a phone, where the top bar button is not drawn, and a refusal from the phone inbox is not a failure; measured 2,364,203 + ~0.01% headroom): 2_363_800 -> 2_364_500.
     // 2026-10-29 (Sync now ends with a save it waits for, so what the phone inbox brought in is pushed before it reports; measured 2,364,785 + ~0.01% headroom): 2_364_500 -> 2_365_100.
-    // 2026-11-02 (the "need review" banner counts only what there is something to open for, and says why; measured 2,365,524 + ~0.01% headroom): 2_365_100 -> 2_365_800.
-    htmlBytes: 2_365_800,
+    // 2026-11-02 (index.html: a bank line that names one of the owner's own credit cards can reach neither CC One-Time nor Card payments by any way in the review list - route, per-row choice, bulk apply, Save - and the Credit Card / Bank type is read against Cards and accounts; the card tabs of CC One-Time and CC Instalments; measured 2,370,189 + ~0.01% headroom): 2_365_100 -> 2_370_400. About a third is the comments recording why. No new request at load beyond the tab module.
+    // 2026-11-02 (merged with the card-tabs change: the "need review" banner counts only what there is something to open for; measured 2,370,913 + ~0.01% headroom): 2_370_400 -> 2_371_200.
+    htmlBytes: 2_371_200,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -734,8 +735,9 @@ export const BUDGETS = {
     // 2026-10-29 (wealthflow-sms.js: a flush never carries more records, marks or deletions than the server takes in one request; measured 2,713,538 + ~0.01% headroom): 2_712_900 -> 2_713_900.
     // 2026-10-29 (wealthflow-sms.js: the outbox, a longer wait for the server and honest error wording; measured 2,716,408 + ~0.02% headroom): 2_713_900 -> 2_717_000.
     // 2026-10-30 (wealthflow-sms-categories.js, the Settings section and flip handler in wealthflow-sms.js, the line layout of every text in sms-templates.mjs; measured 2,727,293 + ~0.03% headroom): 2_717_000 -> 2_728_000.
-    // 2026-11-02 (wealthflow-institutions.js: one bank however it is written; the locked-statement item in wealthflow-statement-cloud.js; the vault's order by institution; measured 2,732,989 + ~0.04% headroom): 2_728_000 -> 2_734_000.
-    totalJsBytes: 2_734_000,
+    // 2026-11-02 (wealthflow-card-tabs.js, the one-tab-per-card row, about 11 KB; wealthflow-own-money.js: which numbers Cards and accounts calls a card; wealthflow-route.js: an unlisted card-shaped number is held for a look; wealthflow-merchants.js: the shape-only card rule is gone; wealthflow-statement-router.js: a bank account's credit is never a card payment on its words; measured 2,743,743 after the chosen-tab reveal() for the phone row + ~0.01% headroom): 2_728_000 -> 2_744_000.
+    // 2026-11-02 (merged with the card-tabs change: wealthflow-institutions.js, the locked-statement item in wealthflow-statement-cloud.js, the vault's order by institution; measured 2,749,543 + ~0.04% headroom): 2_744_000 -> 2_750_600.
+    totalJsBytes: 2_750_600,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
@@ -838,7 +840,8 @@ export const BUDGETS = {
     // 2026-10-21: 90 -> 91 for wealthflow-new-badge.js (the NEW tag that puts itself on a new screen or option and takes itself off after 7 days; see totalJsBytes).
     // 2026-10-23: 91 -> 92 for wealthflow-sync-health.js (the upload that failed is counted, explained and retried; see totalJsBytes).
     // 2026-10-30: 92 -> 93 for wealthflow-sms-categories.js (which kinds of text the owner wants; shared by the Settings screen and the server; see totalJsBytes).
-    moduleCount: 93,   // measured 93
+    // 2026-11-02: 93 -> 94 for wealthflow-card-tabs.js (one tab per credit card on CC One-Time and CC Instalments; a plain deferred script; see totalJsBytes).
+    moduleCount: 94,   // measured 94
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -912,7 +915,8 @@ export const BUDGETS = {
     // 2026-10-20: 82 -> 83 for wealthflow-backup.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-21: 83 -> 84 for wealthflow-new-badge.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-23: 84 -> 85 for wealthflow-sync-health.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
-    scriptTags: 85,              // measured 84; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
+    // 2026-11-02: 85 -> 86 for wealthflow-card-tabs.js — a plain deferred script, so renderBlockingScripts below is unchanged at 2.
+    scriptTags: 86,              // measured 84; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

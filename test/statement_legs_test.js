@@ -195,23 +195,23 @@ describe('a payment to the owner\'s own card filed twice: by the bank line (the 
         expect(out.remove[0]).toMatchObject({ store: 'ccPayments', kind: 'cardpay', partner: { id: 'c' } });
         expect(out).toMatchObject({ pairs: 1, left: 0 });
     });
-    it('needs the owner\'s own card in Cards & Accounts: no registry, a bank account\'s number, or another card, nothing is taken out', () => {
+    it('needs the owner\'s own card in Cards & Accounts: no registry or a bank account\'s number, nothing is taken out; another card on the card side leaves the pair to the bank-line rule', () => {
         expect(ownMoneyLegs({ ccPayments: [bankLine(), cardSide()] }).remove).toEqual([]);
         expect(ownMoneyLegs(user({ settings: { cardRegistry: { '0276': { type: 'bank_account' } } } })).remove).toEqual([]);
-        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ card_last4: '9999' })] })).remove).toEqual([]);
-        expect(ownMoneyLegs(user({ ccPayments: [bankLine({ card_last4: '9999' }), cardSide()] })).remove).toEqual([]);   // the record says another card than the words do
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ card_last4: '9999' })] })).remove.map(entry => entry.kind)).toEqual(['bankline']);   // no twin on this card, but the words name the owner's registered card
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine({ card_last4: '9999' }), cardSide()] })).remove.map(entry => entry.kind)).toEqual(['bankline']);   // the record says another card than the words do: the words and the registry decide
     });
-    it('the same day window as a card paid by a transfer, the same amount to the cent, another statement', () => {
-        for (const [posted, found] of [['2026-07-15', true], ['2026-07-14', false], ['2026-07-16', true], ['2026-07-20', true], ['2026-07-21', false]]) {
-            expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ date: posted })] })).remove.length === 1, posted).toBe(found);
+    it('the same day window as a card paid by a transfer, the same amount to the cent, another statement: the twin makes it a cardpay; outside it the bank line goes as a bankline all the same', () => {
+        for (const [posted, kind] of [['2026-07-15', 'cardpay'], ['2026-07-14', 'bankline'], ['2026-07-16', 'cardpay'], ['2026-07-20', 'cardpay'], ['2026-07-21', 'bankline']]) {
+            expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ date: posted })] })).remove.map(entry => entry.kind), posted).toEqual([kind]);
         }
-        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ amount: 30000.01 })] })).remove).toEqual([]);
-        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ k: 'dfccjuly' })] })).remove).toEqual([]);                  // one statement is not two
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ amount: 30000.01 })] })).remove.map(entry => entry.kind)).toEqual(['bankline']);
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ k: 'dfccjuly' })] })).remove.map(entry => entry.kind)).toEqual(['bankline']);   // one statement is not two
     });
-    it('never on a coincidence: two payments of the same amount to the same card, a refund, a note the owner wrote, a loan tie', () => {
+    it('two payments of the same amount to the same card are both bank lines (no twin is needed to know they are the bank\'s); a note the owner wrote, a loan tie and a typed record are never taken out', () => {
         const two = ownMoneyLegs(user({ ccPayments: [bankLine(), bankLine({ id: 'b2', k: 'dfccjuly2', date: '2026-07-17' }), cardSide()] }));
-        expect(two.remove).toEqual([]); expect(two.left).toBe(2);
-        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ desc: 'REFUND - MERCHANT REVERSAL' })] })).remove).toEqual([]);
+        expect(two.remove.map(entry => `${entry.record.id}:${entry.kind}`).sort()).toEqual(['b2:bankline', 'b:bankline']); expect(two.left).toBe(2);
+        expect(ownMoneyLegs(user({ ccPayments: [bankLine(), cardSide({ desc: 'REFUND - MERCHANT REVERSAL' })] })).remove.map(entry => entry.kind)).toEqual(['bankline']);   // a refund is not the card's payment, the bank line is still the bank's
         expect(ownMoneyLegs(user({ ccPayments: [bankLine({ notes: 'paid for Nuwan' }), cardSide()] })).remove).toEqual([]);
         expect(ownMoneyLegs(user({ ccPayments: [bankLine({ loanLink: { loanId: 'L', month: '2026-07' } }), cardSide()] })).remove).toEqual([]);
         expect(ownMoneyLegs(user({ ccPayments: [bankLine({ source: 'manual' }), cardSide()] })).remove).toEqual([]);                // typed by hand, not a statement's line
@@ -229,6 +229,53 @@ describe('a payment to the owner\'s own card filed twice: by the bank line (the 
         expect(w.data.get('users/u/statementTrash/ccPayments_b')).toMatchObject({ uid: 'u', store: 'ccPayments', reason: 'own-account-pair', kind: 'cardpay', pairedWith: 'c', record: { id: 'b', amount: 30000, desc: 'Outward Ceft Transfer 376657Xxxxx0276', card_last4: '0276', bank: 'DFCC' } });
         expect(await healOwnTransfers({ db: w.db, uid: 'u', now: 9500, log: () => {} })).toEqual({ pairs: 0, removed: 0, more: false });
         expect(lines.join('')).not.toMatch(/0276|Outward|30000|dfccjuly/i);
+    });
+});
+
+describe('a bank line that names one of the owner\'s credit cards never sits in CC One-Time / Card payments (owner, 2026-11-02: the DFCC rows under the American Express card)', () => {
+    /* the screenshot: five "Outward Ceft Transfer 376657Xxxxx0276" lines of a DFCC statement filed as Card payments under the bank's name (carried forward 150,850.45), AMEX's own
+     * "CASH PAYMENT-FINACLE" lines, and a PAYKOKO line. Settings > Cards and accounts: the AMEX 0276 is a credit card, the DFCC 0018 is a bank account. */
+    const registry = { '0276': { type: 'credit_card', bank: 'American Express (AMEX)', network: 'Amex', last4: '0276' }, '0018': { type: 'bank_account', bank: 'DFCC Bank', last4: '0018' } };
+    const dfcc = [['d1', '2026-09-03', 30000], ['d2', '2026-09-15', 25000.45], ['d3', '2026-09-28', 40000], ['d4', '2026-10-09', 35850], ['d5', '2026-10-21', 20000]];
+    // the manual upload files no statementKey: the records say where they came from ('statement') and whose bank they are
+    const manual = (id, date, amount, extra = {}) => ({ id, source: 'statement', date, month: date.slice(0, 7), amount, desc: 'Outward Ceft Transfer 376657Xxxxx0276', bank: 'DFCC Bank', card_last4: '0276', createdAt: '2026-10-22T10:00:00.000Z', ...extra });
+    const amexOwn = (id, date, amount) => sys(id, 'ccPayments', date, amount, 'CASH PAYMENT-FINACLE', { bank: 'American Express (AMEX)', card_last4: '0276', k: 'amex-' + id });
+    const books = (extra = {}) => ({ settings: { cardRegistry: registry }, ccPayments: [...dfcc.map(([id, date, amount]) => manual(id, date, amount)), amexOwn('a1', '2026-09-04', 30000), amexOwn('a2', '2026-10-10', 35850)], cconetime: [], ...extra });
+
+    it('the five DFCC lines go, the sum is the exact "DFCC Bank carried forward" amount, and the AMEX statement\'s own payments stay', () => {
+        const out = ownMoneyLegs(books());
+        expect(out.remove.map(entry => entry.record.id).sort()).toEqual(['d1', 'd2', 'd3', 'd4', 'd5']);
+        expect(new Set(out.remove.map(entry => entry.kind))).toEqual(new Set(['bankline']));      // no statementKey on a manual upload's record, so no twin was ever needed (or possible)
+        expect(out.remove.reduce((sum, entry) => sum + entry.record.amount, 0)).toBeCloseTo(150850.45, 2);
+        expect(out.remove.every(entry => entry.store === 'ccPayments' && entry.record.bank === 'DFCC Bank')).toBe(true);
+    });
+    it('the heal takes them out whole into statementTrash (nothing is lost), tombstones them, leaves the AMEX lines, and a second pass finds nothing', async () => {
+        const w = createFirestore({ 'users/u': books() });
+        const lines = [];
+        const res = await healOwnTransfers({ db: w.db, uid: 'u', now: 9000, log: line => lines.push(line) });
+        expect(res.removed).toBe(5);
+        const after = w.data.get('users/u');
+        expect(after.ccPayments.map(r => r.id).sort()).toEqual(['a1', 'a2']);
+        expect(Object.keys(after._tomb.ccPayments).sort()).toEqual(['d1', 'd2', 'd3', 'd4', 'd5']);
+        for (const [id, , amount] of dfcc) expect(w.data.get(`users/u/statementTrash/ccPayments_${id}`)).toMatchObject({ reason: 'own-account-pair', record: { id, amount, bank: 'DFCC Bank', desc: 'Outward Ceft Transfer 376657Xxxxx0276' } });
+        expect(await healOwnTransfers({ db: w.db, uid: 'u', now: 9500, log: () => {} })).toEqual({ pairs: 0, removed: 0, more: false });
+        expect(lines.join('')).not.toMatch(/0276|Outward|150850|d1/i);
+    });
+    it('the card\'s own statement is never touched, even when its lines name the card\'s own number', () => {
+        const own = manual('own', '2026-09-04', 30000, { bank: 'American Express (AMEX)', desc: 'PAYMENT RECEIVED 376657******0276', k: 'amex-own' });
+        expect(ownMoneyLegs({ settings: { cardRegistry: registry }, ccPayments: [own] }).remove).toEqual([]);
+        expect(ownMoneyLegs({ settings: { cardRegistry: registry }, ccPayments: [{ ...own, bank: '' }] }).remove).toEqual([]);              // a bank we cannot tell: stays
+    });
+    it('Cards and accounts decides: a number it calls a bank account, one it does not list, and no registry at all are never taken as a card (the unlisted one is counted for a look)', () => {
+        expect(ownMoneyLegs({ ...books(), settings: { cardRegistry: { ...registry, '0276': { type: 'bank_account', bank: 'DFCC Bank' } } } }).remove).toEqual([]);
+        expect(ownMoneyLegs({ ...books(), settings: {} }).remove).toEqual([]);
+        const odd = ownMoneyLegs({ settings: { cardRegistry: registry }, ccPayments: [manual('x', '2026-09-03', 5000, { desc: 'Outward Ceft Transfer 411111Xxxxx9999' })] });
+        expect(odd.remove).toEqual([]); expect(odd.unregistered).toBe(1);
+    });
+    it('a bank line in CC One-Time goes too when it is worded as a movement of money; a purchase that happens to carry digits does not', () => {
+        const charge = (id, desc) => ({ id, source: 'statement', date: '2026-09-03', month: '2026-09', amount: 1000, desc, bank: 'DFCC Bank', card_last4: '0276', type: 'purchase' });
+        const out = ownMoneyLegs({ settings: { cardRegistry: registry }, cconetime: [charge('t1', 'Outward Ceft Transfer 376657Xxxxx0276'), charge('t2', 'KEELLS 376657Xxxxx0276 COLOMBO')] });
+        expect(out.remove.map(entry => `${entry.store}:${entry.record.id}:${entry.kind}`)).toEqual(['cconetime:t1:bankline']);
     });
 });
 

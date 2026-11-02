@@ -163,17 +163,11 @@
         return false;
     }
 
-    // ── masked credit-card number  ("376657Xxxxx0276" = an AMEX bill payment) ──
-    // Paying your CARD from your BANK is NOT an expense — the card's purchases are
-    // already expenses. Filing the payment as one counts the same money TWICE.
-    var RE_CARD_MASK = /(\d{4,6})[x*\s]{3,}(\d{4})(?!\d)/;
-    function cardOf(nd) {
-        var m = String(nd || '').match(RE_CARD_MASK);
-        if (!m) return null;
-        var bin = m[1], last4 = m[2];
-        var brand = /^3[47]/.test(bin) ? 'AMEX' : bin.charAt(0) === '4' ? 'Visa' : bin.charAt(0) === '5' ? 'Mastercard' : bin.charAt(0) === '6' ? 'Discover' : 'Card';
-        return { bin: bin, last4: last4, brand: brand };
-    }
+    // ── masked credit-card number  ("376657Xxxxx0276") ──
+    // This module used to read a card-shaped number in a BANK narration as "a bill payment to a card" from its SHAPE alone and file the row under Card Payments. A shape cannot say whether
+    // the owner holds that card, and the bank line is the other half of the card statement's own "payment received" line: filing it too counts the same money twice and opened a second
+    // "card" under the bank's name (the "DFCC Bank carried forward" group). Which numbers are cards and which are accounts is the owner's Settings > Cards and accounts, and the
+    // page and the email worker read it through wealthflow-own-money.js (one rule, both doors). No card rule lives here any more: such a row falls through to WFRoute.
 
     // ── generic industry tokens ──────────────────────────────────────────────
     // These GENERALISE to merchants nobody has ever listed: any "... Pharmacy",
@@ -553,19 +547,6 @@
         // 2) bank fee / levy → Expenses · Bank Charges (wins over merchant words)
         if (isFee(nd, gd) && !/dialog|mobitel|insurance|netflix|spotify/.test(nd)) {
             out.goesTo = 'expenses'; out.category = 'Bank Charges'; out.type = 'service_fee'; out.confidence = 0.95; out.matched = 'fee'; out.reason = 'bank charge/levy → Bank Charges'; return out;
-        }
-
-        // 2b) paying a CREDIT CARD from this bank account → the Card Payments tab.
-        //     "Outward Ceft Transfer 376657Xxxxx0276" is an AMEX bill payment, NOT an
-        //     expense: the card's purchases are already expenses, so filing the payment
-        //     as one counts the same money TWICE. Deterministic → confidence 1.00.
-        var _card = cardOf(nd);
-        if (_card && dir !== 'credit') {
-            out.goesTo = 'cc_payment'; out.category = 'Card Payment'; out.type = 're_payment';
-            out.ccLast4 = _card.last4; out.ccBrand = _card.brand;
-            out.confidence = 1; out.matched = 'card:' + _card.brand + '****' + _card.last4;
-            out.reason = 'masked card number → ' + _card.brand + ' bill payment (Card Payments, not an expense)';
-            return out;
         }
 
         /* 2c) CASH ADVANCE drawn against the card. Deliberately AFTER the fee
