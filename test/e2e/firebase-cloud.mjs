@@ -26,7 +26,7 @@
  * the plain stub: empty reads, discarded writes, an already-signed-in user.
  * ===========================================================================*/
 
-import { TEST_USER } from './firebase-stub.mjs';
+import { TEST_USER, installRestStub, restStubSource } from './firebase-stub.mjs';
 
 const isPlain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
@@ -61,11 +61,22 @@ export function createCloud(initial = null) {
         }
     };
 
+    // the account document as Firestore's REST endpoint sees it (see test/helpers/fake-firestore-rest.js): the same document, version and listeners
+    const rest = {
+        get data() { return doc || {}; }, set data(v) { doc = v; },
+        get exists() { return doc !== null; }, set exists(v) { if (v && doc === null) doc = {}; },
+        get version() { return version; }, set version(v) { version = v; },
+        onCommit(keys) { log.push({ op: 'commit', keys }); setTimeout(deliver, 5); },
+        failCommit: null,
+    };
+
     return {
         get doc() { return doc ? clone(doc) : null; },
         log,
+        /** Make every save over plain HTTPS answer with this error ({ status, code, message }); null lets saves through again. */
+        failSaves(spec) { rest.failCommit = spec || null; },
         /** Replace the document outright (a test fixture, not an app write). */
-        seed(data) { doc = clone(data); },
+        seed(data) { doc = clone(data); version++; },
         cutOff(page) { cut.add(page); },
         reconnect(page) { cut.delete(page); },
         isCut: (page) => cut.has(page),
@@ -101,6 +112,8 @@ export function createCloud(initial = null) {
                 setTimeout(deliver, 5);
                 return { ok: true };
             });
+            // the page also saves and reads this document over plain HTTPS requests (documents:batchGet / :commit); they land on the same document
+            await installRestStub(page, rest, (p) => cut.has(p));
             await page.addInitScript(cloudStubSource(user));
             await page.route('https://www.gstatic.com/firebasejs/**', (route) =>
                 route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: cloudStubSource(user) }));
@@ -114,6 +127,7 @@ export function cloudStubSource(user = TEST_USER) {
 (function () {
   if (window.firebase && window.firebase.__stub) return;
   var USER = ${JSON.stringify(user)};
+${restStubSource()}
   var DEL = { __fv: 'delete' }, TS = { __fv: 'ts' };
   var snapListeners = [];
 

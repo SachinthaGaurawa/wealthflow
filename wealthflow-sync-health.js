@@ -18,6 +18,10 @@
  *   3. FIND IT.  runChecks() / verdict() run the steps an upload needs one by one (our own server, Google's database, the sign-in, a read, a write,
  *                the data itself) and name the first one that fails; inspectPayload() looks at what would be uploaded for what the cloud refuses.
  *
+ *   4. SEND LESS, OVER A PATH THAT CANNOT STALL.  Section "THE ACCOUNT, OVER PLAIN HTTPS" below. The saves, the reads and the "has anything changed?" check
+ *                no longer go through the Firestore library's transaction runner and saving queue (see that section for what was proven wrong with them);
+ *                they are plain requests with their own deadlines, and a save sends only the fields that differ from the copy the account holds.
+ *
  * Pure: the clock, the timers and the network are passed in. No storage. ESM; window.WFSyncHealth.
  * ===========================================================================*/
 
@@ -63,8 +67,8 @@ export function explainPushError(err) {
     if (has(/aborted|failed-precondition|already-exists|too much contention|all retries/)) {
         return { kind: 'busy', retry: true, text: 'Another device was saving at the same moment. WealthFlow tries again on its own.' };
     }
-    if (has(/unavailable|deadline-exceeded|cancelled|network|offline|failed to fetch|timeout|timed out/)) {
-        return { kind: 'network', retry: true, text: 'This device could not reach your cloud account. That is usually a weak or filtered connection, or the connection cache inside this browser being stuck. WealthFlow keeps trying. Check Connection finds which step is stuck and can repair it.' };
+    if (has(/unavailable|deadline-exceeded|cancelled|network|offline|failed to fetch|load failed|timeout|timed out|did not finish/)) {
+        return { kind: 'network', retry: true, text: 'This device could not reach your cloud account in time. That is usually a weak or filtered connection. WealthFlow keeps trying, and sends only what changed. Check Connection finds which step is slow.' };
     }
     return { kind: 'other', retry: true, text: 'The cloud account did not accept the save. WealthFlow keeps trying.' };
 }
@@ -283,13 +287,14 @@ export async function runChecks(checks, { timeoutMs = SYNC.CHECK_TIMEOUT_MS, onS
         const started = clock();
         let row;
         try {
-            const r = await withTimeout(Promise.resolve().then(() => c.run()), timeoutMs, c.label);
+            const r = await withTimeout(Promise.resolve().then(() => c.run()), c.timeoutMs || timeoutMs, c.label);      // a step that sends or receives a lot says how long it may take
             const soft = r && typeof r === 'object' && 'ok' in r;
             row = { id: c.id, label: c.label, ok: soft ? r.ok !== false : true, detail: s(soft ? r.detail : r).slice(0, 300) };
         } catch (e) {
             const code = codeOf(e);
             row = { id: c.id, label: c.label, ok: false, detail: (code ? code + ': ' : '') + s(e && e.message).slice(0, 240) };
         }
+        if (c.via) row.via = c.via;
         row.ms = Math.max(0, clock() - started);
         out.push(row);
         if (typeof onStep === 'function') { try { onStep(row, out.length); } catch (_) { /* a repaint is not the check */ } }
@@ -367,6 +372,8 @@ const VERDICTS = Object.freeze({
     stuck: 'A save sent directly to your account went through, but the same save sent through this browser\'s own connection did not. So your account and the network are fine, and what is stuck is the saving queue inside this browser (its offline cache). Press Repair connection below: it clears that cache only, and nothing on this device or in your account is deleted.',
     blocked: 'A save sent directly to your account did not go through either, although sign-in and reading did. Something on the network is holding saves back (a filter, VPN, relay or a very weak signal). Try another network, for example mobile data instead of Wi-Fi, then check again.',
     storage: 'This browser\'s own storage did not answer in time, so its saving queue cannot move. Press Repair connection below: it clears the connection cache and, if the browser still will not answer, close every other WealthFlow tab and window and open it once. Nothing on this device or in your account is deleted.',
+    httpsRead: 'This device reached Google but reading your account did not finish. The read is one plain secure request, so something on the way is holding it up: a very weak signal, or a filter. Try another network, for example mobile data instead of Wi-Fi, then check again. Nothing on this device is lost, and it keeps trying on its own.',
+    httpsWrite: 'This device reached Google and read your account, but saving to it did not finish. A save sends only what changed, as one plain secure request, so something on the way is holding it up: a very weak signal, or a filter. Try another network, for example mobile data instead of Wi-Fi, then check again. Nothing on this device is lost, and it keeps trying on its own.',
     data: 'The data on this device cannot be stored as it is. This is the reason changes made here never reach your other devices.',
 });
 
@@ -377,7 +384,11 @@ export function verdict(rows) {
     const bad = list.find((r) => !r.ok);
     if (!bad) return { ok: true, text: 'Everything an upload needs is working on this device. If a change still does not show elsewhere, choose Try Again and check again in a minute.' };
     let key = bad.id, repair = false;
-    if (bad.id === 'write') {
+    if (bad.via === 'https') {
+        // Saves and reads no longer pass through this browser's own connection library, so there is no stuck queue of it to repair.
+        const refused = /permission-denied|unauthenticated|not allowed|insufficient/i.test(bad.detail || '');
+        key = bad.id === 'read' ? (refused ? 'signin' : 'httpsRead') : (refused ? 'write' : 'httpsWrite');
+    } else if (bad.id === 'write') {
         const refused = /permission-denied|unauthenticated|not allowed|insufficient/i.test(bad.detail || '');
         const direct = by('direct'), storage = by('storage');
         if (refused) key = 'write';
@@ -391,10 +402,18 @@ export function verdict(rows) {
 }
 
 /** A plain-text report the person can copy and send. No account id, no token, no data from the books. */
-export function reportText(rows, { build = '', online = true, when = new Date(), payload = null, transport = null, persist = null } = {}) {
+/** One line for the report: what the last save, read and "has anything changed?" check took, from createCloudSync().state.last. */
+export function savesText(last) {
+    const l = last || {};
+    const part = (x, name) => x ? name + ' ' + Math.round((x.bytes || 0) / 1024) + ' KB in ' + (x.ms || 0) + ' ms' : name + ' none yet';
+    return 'plain secure requests; ' + [part(l.write, 'last save'), part(l.read, 'last read'), part(l.probe, 'last check')].join('; ');
+}
+
+export function reportText(rows, { build = '', online = true, when = new Date(), payload = null, transport = null, persist = null, saves = null } = {}) {
     const lines = ['WealthFlow connection report', 'Time: ' + when.toISOString(), 'Build: ' + (build || 'n/a'), 'Browser says online: ' + (online ? 'yes' : 'no')];
     if (transport) lines.push('Connection mode: ' + transportText(transport));
     if (persist) lines.push('Offline cache: ' + persistText(persist));
+    if (saves) lines.push('Saves: ' + savesText(saves));
     for (const r of rows || []) lines.push((r.ok ? 'OK     ' : 'FAILED ') + r.label + ' (' + r.ms + ' ms) - ' + r.detail);
     if (payload) {
         lines.push('Data size: ' + payload.bytes + ' bytes' + (payload.nearLimit ? ' (close to the account limit)' : ''));
@@ -405,7 +424,372 @@ export function reportText(rows, { build = '', online = true, when = new Date(),
     return lines.join('\n');
 }
 
-const api = { SYNC, REFRESH, runRefresh, refreshNote, TRANSPORT_KEY, PERSIST_KEY, choosePersistence, persistText, shouldAutoRepair, STEADY_SETTINGS, isWebKitFamily, chooseTransport, transportText, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText };
+/* ── 4. THE ACCOUNT, OVER PLAIN HTTPS ─────────────────────────────────────────────────────────────────────────────────────────
+ * Reported again 2026-11-02, after #475, #476, #480 and #482 had each treated a symptom: on the owner's Mac (Safari 17.6) "Reading your account" and "Saving
+ * to your account" both ended at 12 seconds with deadline-exceeded, in the fast and the steady mode, with the offline cache already off, while a save sent
+ * straight to the account with the sign-in token went through in 1.2 seconds. The account, the network and the sign-in were fine; what failed was the way
+ * the page used the Firestore library, and the size of what it sent through it. Two things are proven, one is a strong inference:
+ *
+ *   PROVEN (read in the library's own source, firebase 10.8.0, and matched to the stack in the owner's diagnostics: "INTERNAL ASSERTION FAILED: Unexpected state"
+ *   twice, at transaction_runner.ts line 124 through isPermanentError):
+ *     a. runTransaction treats an error as retryable only if its code is a Firestore code; any other code (every sign-in library error, "auth/network-request-failed"
+ *        and the like, passes through with the name FirebaseError) makes the library's own error handler THROW, and the transaction's promise is then never settled.
+ *        That is why the page needed a 30 s stopwatch around it. When the throw happens in the commit step it also fails the library's single work queue for good
+ *        (async_queue_impl.ts: the queue's tail becomes a rejected promise), so every later read, save and listener restart of that page waits forever.
+ *     b. Every save was a transaction that read the WHOLE account document and wrote the WHOLE document back (the owner's is 786 KB, about 1.5 MB in Firestore's wire
+ *        format, and uploads are not compressed), even to record that a session was still open. The heartbeat alone did that every five minutes.
+ *   INFERRED (not provable without the device): on a slow or high-latency uplink the whole-document upload is what runs past any deadline, and everything else the
+ *        page asks of the library in the meantime queues behind it. The small direct save in the owner's report is the one thing that was fast.
+ *
+ * So the page now talks to the account the way that probe did: ordinary requests (documents:batchGet and documents:commit) with the sign-in token, each with its
+ * own deadline sized to what it sends, and nothing in between that can hang. A save sends ONLY the top-level fields that differ from the copy the account held when
+ * this device last read it, guarded by that copy's version, so two devices saving at once cannot overwrite each other: the second is refused, reads the newer copy,
+ * merges it with the same function as always and tries again. A "has anything changed?" check asks for the version only (a few hundred bytes), so the full document
+ * is read when it has changed, not every twenty seconds. The live stream stays as the quick way to hear about changes; nothing depends on it.
+ *
+ * The data model is untouched: the same document, the same fields, the same merge (index.html _wfApplyCloudData), so the server code that reads and writes it
+ * (statement worker, text messages, backups) needs no change.
+ */
+export const REST = Object.freeze({
+    HOST: 'https://firestore.googleapis.com',
+    PROBE_TIMEOUT_MS: 15000,      // "has anything changed?" (the version only, a few hundred bytes back)
+    READ_TIMEOUT_MS: 45000,       // the whole account document coming down
+    WRITE_BASE_MS: 20000,         // a save gets this long ...
+    WRITE_MS_PER_KB: 1000,        // ... plus a second per KB it sends (a floor of 1 KB/s, which a very weak link still beats)
+    WRITE_MAX_MS: 120000,
+    MAX_ATTEMPTS: 5,              // a save whose base copy moved is read again and redone this many times
+    TOKEN_TIMEOUT_MS: 20000,      // renewing the sign-in token (it is a request of its own and can hang like any other)
+    PRECHECK_BYTES: 40000,        // a save bigger than this first asks "is the account still the copy I merged?" (a few hundred bytes), so a megabyte is never sent to be refused
+    META_KEYS: Object.freeze(['_lastModified', '_lastModifiedBy', '_writeDeviceId', '_writeTs']),   // written by every save, never compared
+});
+
+/** How long a save of `bytes` may take before it is given up on and retried. */
+export function writeTimeoutMs(bytes) {
+    const kb = Math.max(0, Number(bytes) || 0) / 1024;
+    return Math.min(REST.WRITE_MAX_MS, Math.round(REST.WRITE_BASE_MS + kb * REST.WRITE_MS_PER_KB));
+}
+
+/* Firestore's JSON value format: {"stringValue": ...}, {"integerValue": "12"} ... It is what the library itself sends over this endpoint. */
+const isPlainObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
+
+export function toValue(v, depth = 0) {
+    if (depth > 60) throw new TypeError('nested too deeply to store');
+    if (v === null || v === undefined) return { nullValue: 'NULL_VALUE' };
+    switch (typeof v) {
+        case 'boolean': return { booleanValue: v };
+        case 'string': return { stringValue: v };
+        case 'number':
+            if (Number.isSafeInteger(v) && !Object.is(v, -0)) return { integerValue: String(v) };
+            if (Number.isNaN(v)) return { doubleValue: 'NaN' };
+            if (v === Infinity) return { doubleValue: 'Infinity' };
+            if (v === -Infinity) return { doubleValue: '-Infinity' };
+            return { doubleValue: v };
+        case 'object': break;
+        default: throw new TypeError('a ' + typeof v + ' cannot be stored');
+    }
+    if (v instanceof Date) { if (Number.isNaN(v.getTime())) throw new TypeError('an invalid date cannot be stored'); return { timestampValue: v.toISOString() }; }
+    if (Array.isArray(v)) return { arrayValue: v.length ? { values: v.map((x) => toValue(x, depth + 1)) } : {} };
+    if (typeof v.toDate === 'function') { const d = v.toDate(); if (d instanceof Date && !Number.isNaN(d.getTime())) return { timestampValue: d.toISOString() }; }
+    if (!isPlainObj(v)) throw new TypeError('this kind of object cannot be stored');
+    const fields = toFields(v, depth + 1);
+    return { mapValue: Object.keys(fields).length ? { fields } : {} };
+}
+
+/** An object's own fields as Firestore fields. A field whose value is undefined or a function is left out, as the library leaves it out. */
+export function toFields(obj, depth = 0) {
+    const out = {};
+    for (const k of Object.keys(obj || {})) {
+        const x = obj[k];
+        if (x === undefined || typeof x === 'function') continue;
+        out[k] = toValue(x, depth + 1);
+    }
+    return out;
+}
+
+function parseTimestamp(t) {
+    const d = new Date(String(t).replace(/(\.\d{3})\d+/, '$1'));   // Safari is not guaranteed to read more than milliseconds
+    return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export function fromValue(x) {
+    if (x == null || typeof x !== 'object') return null;
+    if ('stringValue' in x) return String(x.stringValue);
+    if ('integerValue' in x) return Number(x.integerValue);
+    if ('doubleValue' in x) {
+        const d = x.doubleValue;
+        if (typeof d === 'string') return d === 'NaN' ? NaN : d === 'Infinity' ? Infinity : d === '-Infinity' ? -Infinity : Number(d);
+        return d;
+    }
+    if ('booleanValue' in x) return !!x.booleanValue;
+    if ('nullValue' in x) return null;
+    if ('timestampValue' in x) return parseTimestamp(x.timestampValue);
+    if ('arrayValue' in x) return ((x.arrayValue && x.arrayValue.values) || []).map(fromValue);
+    if ('mapValue' in x) return fromFields(x.mapValue && x.mapValue.fields);
+    if ('referenceValue' in x) return String(x.referenceValue);
+    if ('bytesValue' in x) return String(x.bytesValue);
+    if ('geoPointValue' in x) return { latitude: Number(x.geoPointValue && x.geoPointValue.latitude) || 0, longitude: Number(x.geoPointValue && x.geoPointValue.longitude) || 0 };
+    return null;
+}
+
+export function fromFields(fields) {
+    const out = {};
+    if (fields && typeof fields === 'object') for (const k of Object.keys(fields)) out[k] = fromValue(fields[k]);
+    return out;
+}
+
+/** A field path for the update mask: plain names as they are, anything else in backticks (Firestore's own rule). */
+export function fieldPath(segments) {
+    return (Array.isArray(segments) ? segments : [segments]).map((p) => {
+        const t = String(p);
+        return /^[A-Za-z_][A-Za-z_0-9]*$/.test(t) ? t : '`' + t.replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`';
+    }).join('.');
+}
+
+/* What "the same value" means, for deciding what to send: the same content whatever the order of a map's keys (Firestore hands maps back sorted). */
+export function canonical(v) {
+    if (v === null || v === undefined) return 'null';
+    switch (typeof v) {
+        case 'boolean': return v ? 'true' : 'false';
+        case 'number': return Number.isFinite(v) ? String(v) : '"' + String(v) + '"';
+        case 'string': return JSON.stringify(v);
+        case 'object': break;
+        default: return 'null';
+    }
+    if (v instanceof Date) return '"@' + v.getTime() + '"';
+    if (Array.isArray(v)) { let o = '['; for (let i = 0; i < v.length; i++) o += (i ? ',' : '') + canonical(v[i]); return o + ']'; }
+    const ks = Object.keys(v).filter((k) => v[k] !== undefined && typeof v[k] !== 'function').sort();
+    let o = '{'; for (let i = 0; i < ks.length; i++) o += (i ? ',' : '') + JSON.stringify(ks[i]) + ':' + canonical(v[ks[i]]);
+    return o + '}';
+}
+
+/** A short fingerprint of a value (53-bit cyrb53 over its canonical text, plus its length). Equal values give equal fingerprints; collisions are ~1 in 10^15. */
+export function hashOf(v) {
+    const str = canonical(v);
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return str.length.toString(36) + ':' + (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+export function hashesOf(obj) {
+    const out = {};
+    for (const k of Object.keys(obj || {})) if (obj[k] !== undefined && typeof obj[k] !== 'function') out[k] = hashOf(obj[k]);
+    return out;
+}
+
+/** The top-level fields of `local` whose content differs from what the account holds (`hashes`, from hashesOf the account's copy). Fields only the account has are left alone. */
+export function diffKeys(local, hashes) {
+    const h = hashes || {};
+    return Object.keys(local || {}).filter((k) => local[k] !== undefined && typeof local[k] !== 'function' && REST.META_KEYS.indexOf(k) === -1 && hashOf(local[k]) !== h[k]);
+}
+
+/** Two update times from the account are the same moment even if one is written with trailing zeros the other leaves off. */
+export function sameTime(a, b) {
+    if (!a || !b) return false;
+    const n = (t) => String(t).replace(/(\.\d*?)0+Z$/, '$1Z').replace(/\.Z$/, 'Z');
+    return n(a) === n(b);
+}
+
+const HTTP_CODES = { 400: 'invalid-argument', 401: 'unauthenticated', 403: 'permission-denied', 404: 'not-found', 409: 'aborted', 412: 'failed-precondition', 429: 'resource-exhausted', 499: 'cancelled', 500: 'internal', 501: 'unimplemented', 502: 'unavailable', 503: 'unavailable', 504: 'deadline-exceeded' };
+const STATUS_CODES = { INVALID_ARGUMENT: 'invalid-argument', FAILED_PRECONDITION: 'failed-precondition', NOT_FOUND: 'not-found', ALREADY_EXISTS: 'already-exists', PERMISSION_DENIED: 'permission-denied', UNAUTHENTICATED: 'unauthenticated', RESOURCE_EXHAUSTED: 'resource-exhausted', ABORTED: 'aborted', UNAVAILABLE: 'unavailable', DEADLINE_EXCEEDED: 'deadline-exceeded', INTERNAL: 'internal', CANCELLED: 'cancelled', OUT_OF_RANGE: 'out-of-range', UNIMPLEMENTED: 'unimplemented', DATA_LOSS: 'data-loss', UNKNOWN: 'unknown' };
+
+/** An error answer from the account as an Error with a Firestore-style `code`, so explainPushError reads it like any other. */
+export function restError(status, body) {
+    const first = Array.isArray(body) ? body.find((x) => x && x.error) : body;
+    const e = (first && first.error) || {};
+    const err = new Error(String(e.message || ('the account answered ' + status)).slice(0, 300));
+    err.code = STATUS_CODES[e.status] || HTTP_CODES[status] || 'unknown';
+    err.status = status;
+    return err;
+}
+
+/** `p`, or a deadline-exceeded error (network:true) if it is not settled in `ms`. Never leaves a timer behind. */
+function withinMs(p, ms, what, setT = setTimeout, clearT = clearTimeout) {
+    let t;
+    const stop = new Promise((_, rej) => { t = setT(() => rej(Object.assign(new Error('The ' + what + ' did not finish in ' + Math.round(ms / 1000) + ' seconds.'), { code: 'deadline-exceeded', network: true })), ms); });
+    return Promise.race([p, stop]).finally(() => clearT(t));
+}
+
+/** A request that never got an answer: a dropped connection, a blocked request, or the deadline. */
+function noAnswer(e, timedOut, what, ms) {
+    if (timedOut) return Object.assign(new Error('The ' + what + ' did not finish in ' + Math.round(ms / 1000) + ' seconds.'), { code: 'deadline-exceeded', network: true });
+    return Object.assign(new Error(s(e && e.message) || 'Failed to fetch'), { code: 'unavailable', network: true });
+}
+
+/**
+ * The account over plain requests. `getToken(force)` resolves the sign-in token (force = renew it); `fetchImpl` is fetch. Every request has its own deadline; a
+ * 401 renews the token once and asks again. Nothing here keeps state, a queue or a connection.
+ *   readDoc(path, { maskPaths? })            -> { exists, data, updateTime, bytes, ms }      (maskPaths: only those top-level fields come back; updateTime always does)
+ *   commit(path, { fields, meta, serverTime, precondition, timeoutMs? }) -> { updateTime, bytes, ms }   (fields: written, every other field left as it is)
+ */
+export function createRestClient({ projectId, getToken, fetchImpl, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now } = {}) {
+    if (!projectId) throw new Error('the project is not known');
+    const base = REST.HOST + '/v1/projects/' + encodeURIComponent(projectId) + '/databases/(default)/documents';
+    const nameOf = (path) => 'projects/' + projectId + '/databases/(default)/documents/' + path;
+    async function call(suffix, bodyText, timeoutMs, what) {
+        for (let pass = 0; pass < 2; pass++) {
+            let token;
+            try { token = await withinMs(Promise.resolve().then(() => getToken(pass > 0)), REST.TOKEN_TIMEOUT_MS, 'sign-in', setTimer, clearTimer); }
+            catch (e) {
+                if (e && e.network) throw e;
+                // the sign-in library reports a dead network as an auth error; it is the network, not the sign-in
+                if (/network|timeout|timed out|unavailable|failed to fetch|load failed/i.test(String((e && e.code) || '') + ' ' + String((e && e.message) || ''))) throw noAnswer(e, false, 'sign-in', 0);
+                throw e;
+            }
+            const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+            let timedOut = false, timer = null;
+            const deadline = new Promise((_, rej) => { timer = setTimer(() => { timedOut = true; try { if (ctl) ctl.abort(); } catch (_) { /* already over */ } rej(new Error('deadline')); }, timeoutMs); });
+            const t0 = now();
+            try {
+                // text/plain keeps this a request the browser sends without a separate permission round trip for the body; the sign-in token is in the header.
+                const resp = await Promise.race([fetchImpl(base + suffix + '?prettyPrint=false', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'text/plain' }, body: bodyText, cache: 'no-store', signal: ctl ? ctl.signal : undefined }), deadline]);
+                const text = await Promise.race([resp.text(), deadline]);
+                let json = null; try { json = text ? JSON.parse(text) : null; } catch (_) { /* an unreadable body is reported below */ }
+                if (!resp.ok) { if (resp.status === 401 && pass === 0) continue; throw restError(resp.status, json); }
+                return { json, bytes: bodyText.length, received: text.length, ms: Math.max(0, now() - t0) };
+            } catch (e) {
+                if (e && e.code) throw e;
+                throw noAnswer(e, timedOut, what, timeoutMs);
+            } finally { if (timer !== null) clearTimer(timer); }
+        }
+        throw Object.assign(new Error('the sign-in was refused twice'), { code: 'unauthenticated' });
+    }
+    return {
+        async readDoc(path, { maskPaths = null, timeoutMs = 0 } = {}) {
+            const body = { documents: [nameOf(path)] };
+            if (maskPaths) body.mask = { fieldPaths: maskPaths.map((p) => fieldPath([p])) };
+            const r = await call(':batchGet', JSON.stringify(body), timeoutMs || (maskPaths ? REST.PROBE_TIMEOUT_MS : REST.READ_TIMEOUT_MS), 'read');
+            const hit = (Array.isArray(r.json) ? r.json : [r.json]).find((x) => x && (x.found || x.missing));
+            if (!hit) throw Object.assign(new Error('the account answered with something that could not be read'), { code: 'unavailable', network: true });
+            if (hit.missing) return { exists: false, data: null, updateTime: null, bytes: r.received, ms: r.ms };
+            return { exists: true, data: fromFields(hit.found.fields), updateTime: hit.found.updateTime || null, bytes: r.received, ms: r.ms };
+        },
+        async commit(path, { fields = {}, meta = {}, serverTime = [], precondition = null, timeoutMs = 0 } = {}) {
+            const all = Object.assign({}, fields, meta);
+            const write = { update: { name: nameOf(path), fields: toFields(all) }, updateMask: { fieldPaths: Object.keys(all).filter((k) => all[k] !== undefined).map((k) => fieldPath([k])) } };
+            if (serverTime.length) write.updateTransforms = serverTime.map((f) => ({ fieldPath: fieldPath([f]), setToServerValue: 'REQUEST_TIME' }));
+            if (precondition) write.currentDocument = precondition;
+            const text = JSON.stringify({ writes: [write] });
+            const r = await call(':commit', text, timeoutMs || writeTimeoutMs(text.length), 'save');
+            const wr = r.json && Array.isArray(r.json.writeResults) ? r.json.writeResults[0] : null;
+            return { updateTime: (wr && wr.updateTime) || null, bytes: r.bytes, ms: r.ms };
+        },
+    };
+}
+
+/** A save that lost to another writer: the base copy moved (or appeared, or vanished) between this device's read and its save. Not a failure; read again and redo. */
+export function isConflict(err) {
+    const c = codeOf(err);
+    return c === 'failed-precondition' || c === 'aborted' || c === 'already-exists' || c === 'not-found';
+}
+
+/**
+ * One account document, kept in step. Holds, in memory only, which version of the document this device last merged and a fingerprint of each field as the
+ * account holds it. Everything runs one at a time (a save and a read never interleave), so that state cannot be torn.
+ *
+ *   pull({ apply, force })   Has the account changed since this device last merged it? (a version-only request) If so, read it all and hand it to apply(data),
+ *                            the page's merge. force skips the question. -> { changed, exists, bytes, ms, probeMs }
+ *   push({ apply, getLocal, meta, onPlan })
+ *                            Make the account hold what this device holds, sending only the fields that differ. apply(data) merges a newer copy into this
+ *                            device (it is called whenever a copy is read); getLocal() is this device's whole data, taken AFTER that merge; meta() is the stamp
+ *                            fields written with every save. -> { keys, bytes, ms, attempts, upToDate }
+ *   read()                   Read the whole document without merging it (the first read at sign-in, which the page merges itself, then adopt()s).
+ *                            -> { exists, data, updateTime, hashes, bytes, ms }
+ *   adopt({ hashes, updateTime })  The page read the document itself (at sign-in) and merged it; remember that.
+ *   forget()                 The account may have moved: the next pull or push reads it first.
+ *
+ * Why this cannot lose another device's work: a save is accepted only if the document is still exactly the version this device merged (`currentDocument.updateTime`).
+ * If anything wrote in between (another device, the statement worker, the text-message service) the account refuses, this device reads the newer copy, merges it
+ * with the page's one convergent function and saves again. The fields it sends are whole top-level fields (a list or a map is replaced as a whole, which is also
+ * what makes a deleted key really disappear from the account), and every one of them was merged with the exact version being replaced.
+ */
+export function createCloudSync({ client, path, now = Date.now } = {}) {
+    const st = { ver: null, hashes: {}, last: { read: null, probe: null, write: null } };
+    let tail = Promise.resolve();
+    const locked = (fn) => { const run = tail.then(fn); tail = run.then(() => { }, () => { }); return run; };
+    const probe = async () => {
+        const p = await client.readDoc(path, { maskPaths: ['_writeTs'] });
+        st.last.probe = { at: now(), ms: p.ms, bytes: p.bytes };
+        return p;
+    };
+
+    async function readAndApply(apply) {
+        const r = await client.readDoc(path);
+        st.last.read = { at: now(), ms: r.ms, bytes: r.bytes, exists: r.exists };
+        if (r.exists) {
+            const hashes = hashesOf(r.data);          // before apply: the merge may hand parts of this object to the page
+            apply(r.data);
+            st.hashes = hashes; st.ver = r.updateTime || null;
+        } else { st.hashes = {}; st.ver = 'missing'; }
+        return r;
+    }
+
+    return {
+        state: st,
+        forget() { st.ver = null; st.hashes = {}; },
+        adopt({ hashes, updateTime } = {}) { st.hashes = hashes || {}; st.ver = updateTime || null; },
+        read() {
+            return locked(async () => {
+                const r = await client.readDoc(path);
+                st.last.read = { at: now(), ms: r.ms, bytes: r.bytes, exists: r.exists };
+                return { exists: r.exists, data: r.data, updateTime: r.updateTime, hashes: r.exists ? hashesOf(r.data) : {}, bytes: r.bytes, ms: r.ms };
+            });
+        },
+        pull({ apply, force = false } = {}) {
+            return locked(async () => {
+                let probeMs = 0;
+                if (!force && st.ver && st.ver !== 'missing') {
+                    const p = await probe();
+                    probeMs = p.ms;
+                    if (p.exists && sameTime(p.updateTime, st.ver)) return { changed: false, exists: true, bytes: p.bytes, ms: p.ms, probeMs };
+                }
+                const r = await readAndApply(apply);
+                return { changed: true, exists: r.exists, bytes: r.bytes, ms: r.ms, probeMs };
+            });
+        },
+        push({ apply, getLocal, meta = () => ({}) } = {}) {
+            return locked(async () => {
+                const t0 = now();
+                for (let attempt = 1; attempt <= REST.MAX_ATTEMPTS; attempt++) {
+                    if (!st.ver) await readAndApply(apply);
+                    const local = getLocal();
+                    const keys = diffKeys(local, st.hashes);
+                    if (!keys.length) return { keys: [], bytes: 0, ms: Math.max(0, now() - t0), attempts: attempt, upToDate: true };
+                    const fields = {}; let size = 0;
+                    keys.forEach((k) => { fields[k] = local[k]; size += canonical(local[k]).length; });
+                    if (size > REST.PRECHECK_BYTES) {
+                        // A big save first confirms the account is still the copy that was merged: a few hundred bytes now, instead of a megabyte sent and refused.
+                        const p = await probe();
+                        const moved = st.ver === 'missing' ? p.exists : (!p.exists || !sameTime(p.updateTime, st.ver));
+                        if (moved) { st.ver = null; continue; }
+                    }
+                    let res;
+                    try {
+                        res = await client.commit(path, { fields, meta: meta(), serverTime: ['_lastModified'], precondition: st.ver === 'missing' ? { exists: false } : { updateTime: st.ver } });
+                    } catch (e) {
+                        if (isConflict(e)) { st.ver = null; continue; }
+                        throw e;
+                    }
+                    keys.forEach((k) => { st.hashes[k] = hashOf(local[k]); });
+                    st.ver = res.updateTime || null;
+                    st.last.write = { at: now(), ms: res.ms, bytes: res.bytes, keys: keys.slice(0, 12) };
+                    return { keys, bytes: res.bytes, ms: Math.max(0, now() - t0), attempts: attempt, upToDate: false };
+                }
+                throw Object.assign(new Error('Another device kept saving at the same moment, so this save was tried again several times.'), { code: 'aborted' });
+            });
+        },
+        /** What a save would send right now, for the connection report: { known, keys, bytes }. */
+        plan(local) {
+            if (!st.ver) return { known: false, keys: [], bytes: 0 };
+            const keys = diffKeys(local, st.hashes);
+            let bytes = 0; keys.forEach((k) => { bytes += canonical(local[k]).length; });
+            return { known: true, keys, bytes };
+        },
+    };
+}
+
+const api = { SYNC, REFRESH, REST, runRefresh, refreshNote, TRANSPORT_KEY, PERSIST_KEY, choosePersistence, persistText, shouldAutoRepair, STEADY_SETTINGS, isWebKitFamily, chooseTransport, transportText, codeOf, explainPushError, retryDelayMs, bannerView, createTracker, createRetryLoop, inspectPayload, runChecks, verdict, reportText, savesText, writeTimeoutMs, toValue, toFields, fromValue, fromFields, fieldPath, canonical, hashOf, hashesOf, diffKeys, restError, sameTime, createRestClient, isConflict, createCloudSync };
 if (typeof window !== 'undefined') { try { window.WFSyncHealth = api; } catch (_) { /* a frozen window is not an error */ } }
 
 export default api;

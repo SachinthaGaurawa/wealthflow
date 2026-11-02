@@ -341,7 +341,7 @@ describe('the page: a failed upload is counted, explained and retried', () => {
     it('the connection check tests the server, Google, the sign-in, a read, a write and the data, and the write goes to a path the rules already allow', () => {
         const checks = fnBody('_wfSyncChecks');
         for (const id of ['server', 'google', 'signin', 'read', 'write', 'data']) expect(checks).toContain(`id: '${id}'`);
-        expect(checks).toContain("collection('syncProbe').doc('ping')");
+        expect(checks).toContain("'/syncProbe/ping'");
         const rules = fs.readFileSync(path.join(ROOT, 'firestore.rules'), 'utf8');
         expect(rules).toMatch(/match \/users\/\{uid\}\/\{collection\}\/\{document=\*\*\}/);
         expect(rules).not.toMatch(/'syncProbe'/);                       // not in the server-owned list, so the owner may write it
@@ -454,7 +454,7 @@ describe('the connection mode', () => {
     it('no longer tells the person to switch their private relay off: the app works with it', () => {
         const all = [explainPushError({ code: 'deadline-exceeded' }).text, verdict([{ id: 'server', label: 'x', ok: false, detail: '' }]).text, verdict([{ id: 'google', label: 'x', ok: false, detail: '' }]).text, verdict([{ id: 'read', label: 'x', ok: false, detail: '' }]).text].join('\n');
         expect(all).not.toMatch(/switch off|private relay|VPN/i);
-        expect(explainPushError({ code: 'deadline-exceeded' }).text).toMatch(/Check Connection finds which step is stuck and can repair it/);
+        expect(explainPushError({ code: 'deadline-exceeded' }).text).toMatch(/keeps trying, and sends only what changed\. Check Connection finds which step is slow/);
     });
 });
 

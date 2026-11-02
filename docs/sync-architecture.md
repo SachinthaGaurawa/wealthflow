@@ -22,8 +22,10 @@ here is a plan.
 
 ```
 tap -> DB.set(key, value) -> stamp (record _ut / field _kuf / key _kut, HLC) -> localStorage -> setDirty -> debouncedSync (300 ms)
-    -> syncToCloud: runTransaction { tx.get(users/uid); merge the cloud copy in; tx.set(users/uid, merged, {merge:true}) }
-    -> success: setDirty(false)      failure or no answer in 30 s: stays dirty, is explained, is retried
+    -> syncToCloud (plain HTTPS, `_wfCloudSync`): compare each top-level field's fingerprint with the copy the account held when this device last merged it;
+       send ONLY the fields that differ in one documents:commit that carries the version it was based on (currentDocument.updateTime)
+       refused because someone saved in between -> read the newer copy, merge it in (the same merge), send again (up to 5 times)
+    -> success: setDirty(false)      failure or no answer within its own deadline: stays dirty, is explained, is retried
 other device: onSnapshot (live) | reconcile read (every 20 s, on focus, on return to the foreground, on regaining the network)
     -> _wfApplyCloudData (the same merge) -> localStorage -> repaint
 ```
@@ -45,7 +47,9 @@ commutative and idempotent, so the order and the number of deliveries do not mat
 
 - The live listener has an error callback and starts again after 2, 5, 15 s, then every minute (`_wfListen`, `_wfLive`).
 - The read every 20 s (and on focus, resume, online) finds what the listener missed, applies it, and starts the listener again.
-- A push that never answers is cut off after 30 s (`window._wfPushDeadlineMs`) and treated as a network failure.
+- Every request to the account has its own deadline and is cut off by it: a save 20 s plus 1 s per KB sent (at most 2 min), a read 45 s, the "has anything
+  changed?" check 15 s, the sign-in token 20 s. A request that never answers is a failure like any other: counted, explained, retried. (The old library
+  path, kept only for a page whose connection module did not load, is cut off after 30 s, `window._wfPushDeadlineMs`.)
 - A failed push shows "Not saved to your account yet" with the reason in plain words, retries by itself with a growing pause, is retried by a watchdog
   when a change has waited with no push running, is flushed when the page is hidden, and can be diagnosed with Check Connection (server, Google, sign-in,
   read, write, live listener, the data itself). Refresh, Sync now and the text-message toasts say when the account does not have the change yet.
@@ -73,6 +77,8 @@ one not declared is `aiMLModel`), so none of the shared books is device-local.
 | --- | --- |
 | Merge, stamps, tombstones | `test/settings_sync_revert_test.js`, `test/refresh_test.js`, `test/backup_honesty_test.js` |
 | Failure words, retry loop, checks | `test/sync_health_test.js` |
+| The account over plain HTTPS: value codec, fingerprints, only-what-changed saves, version precondition, conflict merge, deadlines | `test/cloud_rest_test.js` (against `test/helpers/fake-firestore-rest.js`) |
+| The same engine against Google's own Firestore emulator (skipped in CI: needs Java) | `test/cloud_rest_emulator_test.js` |
 | Account guard, push deadline, rules text | `test/cross_device_guards_test.js` |
 | Two devices, switches that must not revert | `test/e2e/settings-sync.mjs` |
 | Notice, auto-retry, Check Connection | `test/e2e/sync-banner.mjs` |
@@ -80,11 +86,26 @@ one not declared is `aiMLModel`), so none of the shared books is device-local.
 | Three devices: rapid flips, simultaneous records, duplicates, missed event, hung upload, account switch, latency | `test/e2e/convergence.mjs` |
 
 The e2e tests run in real Chromium against a stateful stand-in for Firestore (`test/e2e/firebase-cloud.mjs`: optimistic transactions, listeners, cut-off and
-reconnect). They prove the app's logic, not Google's network; latency measured there (median about 350 ms, 95th percentile about 410 ms over 24 flips,
+reconnect, and the account's REST endpoint on the same document). They prove the app's logic, not Google's network; latency measured there (median about 350 ms, 95th percentile about 410 ms over 24 flips,
 including the 300 ms upload debounce) excludes the real round trip to Firestore.
+
+## The account over plain HTTPS (2026-11-02)
+
+Reported by the owner (Mac, Safari 17.6): "Reading your account" and "Saving to your account" both ended at 12 s with `deadline-exceeded`, in the fast and the
+steady mode, while a save sent straight to the account with the sign-in token took 1.2 s. The library's transaction runner (firebase 10.8.0) can hang for ever
+on an error whose code is not a Firestore code (and can poison its single work queue, after which every read and save of that page waits), and every save
+read and rewrote the whole document (786 KB on that device). Saves, the 20 s "has anything changed?" check and reads of the account now go through
+`documents:batchGet` / `documents:commit` (`wealthflow-sync-health.js`, "THE ACCOUNT, OVER PLAIN HTTPS"). The data model, the merge, the rules and the
+server are unchanged; the live listener stays as a hint. What is proven, what is inferred and what is not done is written at the top of that section. Run
+the emulator check with
+`npx firebase-tools emulators:exec --only firestore --project demo-wf "npx vitest run test/cloud_rest_emulator_test.js"`.
 
 ## Known limits
 
+- The document is still one Firestore document of up to 1 MiB (the owner's is about 75% of it). A save sends only what changed, but an edit to the largest
+  field (expenses, 513 KB on that device) still sends that whole field. Splitting the big lists into their own documents is the next step and needs a
+  backed-up migration; it was not done here.
+- The restore points written by Back up now still use the library's batch write.
 - The cause on the owner's phone is not proven, because no phone was available. When it happens again the notice names the reason; "Copy Report" in Check
   Connection carries the exact step.
 - Real-device behaviours (iOS suspending a page mid-upload, a VPN or private relay blocking Firestore) are covered by the deadline, the retry and the
