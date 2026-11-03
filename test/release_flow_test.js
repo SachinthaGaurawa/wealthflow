@@ -14,6 +14,28 @@ const base = (over = {}) => ({
 });
 const by = (r, id) => r.checks.find((c) => c.id === id);
 
+describe('a production probe that does not answer is a finding (Codex review on #493)', () => {
+    it('/api/version missing while everything else answers is BROKEN, not healthy', () => {
+        const r = evaluateReleaseFlow(base({ deployed: { version: null, manifest: '7.69.35', shell: '7.69.35', sw: '7.69.35', sha: null } }));
+        expect(by(r, 'live-probes').status).toBe('broken');
+        expect(by(r, 'live-probes').summary).toMatch(/\/api\/version/);
+        expect(r.overall).toBe('broken');
+    });
+    it('names every probe that failed', () => {
+        const r = evaluateReleaseFlow(base({ deployed: { version: '7.69.35', manifest: null, shell: null, sw: '7.69.35', sha: 'abc1234def' } }));
+        expect(by(r, 'live-probes').summary).toMatch(/version\.json/);
+        expect(by(r, 'live-probes').summary).toMatch(/app shell/);
+    });
+    it('all four answering is fine', () => {
+        expect(by(evaluateReleaseFlow(base()), 'live-probes').status).toBe('ok');
+    });
+    it('nothing answering at all stays "could not be reached" (a warning), not four false failures', () => {
+        const r = evaluateReleaseFlow(base({ deployed: null }));
+        expect(by(r, 'live-probes')).toBeUndefined();
+        expect(by(r, 'release-live').status).toBe('warn');
+    });
+});
+
 describe('release stall', () => {
     it('THE REAL CASE: 72 real commits waiting 24 days is BROKEN', () => {
         const r = evaluateReleaseFlow(base({ unreleasedCount: 72, oldestUnreleased: { sha: 'x', at: now - 24 * 24 * H, subject: 'Portal: faster code request' } }));

@@ -87,6 +87,18 @@ export function evaluateReleaseFlow(f) {
             add('release-live', OK, `Production serves v${dv}, matching the repo.`);
         }
 
+        // 2b. a probe that does not answer is a finding, not a gap to ignore: the live-update
+        //     client relies on /api/version, the install relies on the shell and sw.js. (If
+        //     NOTHING answers, `deployed` is null above and the check says "unreachable".)
+        const required = { '/api/version': f.deployed.version, '/version.json': f.deployed.manifest, 'app shell (/app)': f.deployed.shell, 'service worker (/sw.js)': f.deployed.sw };
+        const missing = Object.entries(required).filter(([, v]) => !v).map(([k]) => k);
+        if (missing.length) {
+            add('live-probes', BROKEN, `Production did not return a version from: ${missing.join(', ')}.`,
+                'Something answers but not everything: a half-applied deploy, an endpoint that now errors, or a response that no longer carries its version. Devices cannot be told about an update they cannot read.');
+        } else {
+            add('live-probes', OK, 'All four production version probes answered.');
+        }
+
         // 3. drift between the places a device reads
         const seen = { '/api/version': f.deployed.version, '/version.json': f.deployed.manifest, 'app shell': f.deployed.shell, 'service worker': f.deployed.sw };
         const vals = Object.entries(seen).filter(([, v]) => v);
@@ -183,11 +195,17 @@ export function gitFacts(now = Date.now(), repo = REPO) {
     };
 }
 
-async function getText(url, ms = 20_000) {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), ms);
-    try { const r = await fetch(url, { signal: ctl.signal, headers: { 'cache-control': 'no-cache' } }); return r.ok ? await r.text() : null; }
-    catch { return null; } finally { clearTimeout(t); }
+async function getText(url, ms = 20_000, tries = 2) {
+    // Two tries: one dropped packet must not file a "broken release" issue.
+    for (let i = 0; i < tries; i++) {
+        const ctl = new AbortController();
+        const t = setTimeout(() => ctl.abort(), ms);
+        try {
+            const r = await fetch(url, { signal: ctl.signal, headers: { 'cache-control': 'no-cache' } });
+            if (r.ok) return await r.text();
+        } catch { /* try again */ } finally { clearTimeout(t); }
+    }
+    return null;
 }
 
 export async function deployedFacts(base) {

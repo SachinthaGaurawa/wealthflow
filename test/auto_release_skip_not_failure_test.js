@@ -70,7 +70,7 @@ function stepScript(stepName) {
 
 /** Runs the real "Release" step script with fake `node` (=> a controlled
  *  release.cjs exit code) and `git` (=> always a no-op success) on PATH. */
-function runReleaseStep({ fakeExitCode = 0 } = {}) {
+function runReleaseStep({ fakeExitCode = 0, tested = '', head = '' } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-release-'));
     try {
         // Stands in for `node release.cjs "${ARGS[@]}"` — the only `node`
@@ -85,7 +85,12 @@ function runReleaseStep({ fakeExitCode = 0 } = {}) {
         // git call would need a real repo and a real remote; this step's
         // logic under test starts after that line runs, so it only needs to
         // succeed, not do anything.
-        fs.writeFileSync(path.join(dir, 'git'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+        // `git rev-parse [--short] HEAD` answers with `head` (when given); everything else is a no-op.
+        fs.writeFileSync(path.join(dir, 'git'),
+            '#!/usr/bin/env bash\n'
+            + `if [ "$1" = "rev-parse" ]; then echo "${head}"; fi\n`
+            + 'exit 0\n',
+            { mode: 0o755 });
         const summaryFile = path.join(dir, 'summary.md');
         fs.writeFileSync(summaryFile, '');
         const outFile = path.join(dir, 'output.txt');
@@ -101,6 +106,7 @@ function runReleaseStep({ fakeExitCode = 0 } = {}) {
                 GITHUB_STEP_SUMMARY: summaryFile,
                 GITHUB_OUTPUT: outFile,
                 IN_VERSION: '', IN_BUMP: '', IN_URGENT: '', IN_NOTE: '',
+                TESTED: tested,
             },
         });
         return { code: 0, stdout, summary: fs.readFileSync(summaryFile, 'utf8'), output: fs.readFileSync(outFile, 'utf8') };
@@ -168,5 +174,58 @@ describe('release.cjs\'s own documented contract is what this relies on', () => 
         const APPROVAL = fs.readFileSync(path.join(ROOT, 'autonomy/release-approval.cjs'), 'utf8');
         expect(APPROVAL).toMatch(/awaits approval[\s\S]{0,80}exit: 2|exit: 2[\s\S]{0,200}awaits approval/);
         expect(RELEASE).toMatch(/process\.exit\(d\.exit \|\| 2\)/);
+    });
+});
+
+
+describe('the approval belongs to the commit the tests ran on (Codex review on #493)', () => {
+    it('if main moved after the tests, the Release step stands down and runs nothing', () => {
+        const r = runReleaseStep({ fakeExitCode: 0, tested: 'aaaaaaaa1111', head: 'bbbbbbbb2222' });
+        expect(r.code).toBe(0);                                   // a deliberate no-op, not a failure
+        expect(r.output).toMatch(/moved=yes/);
+        expect(r.stdout).toMatch(/not releasing code the gates have not seen/);
+        expect(r.stdout).not.toMatch(/fake release\.cjs invoked/);   // release.cjs was never run
+        expect(r.summary).toMatch(/Release deferred/);
+    });
+
+    it('if main did not move, the release goes ahead as before', () => {
+        const r = runReleaseStep({ fakeExitCode: 0, tested: 'aaaaaaaa1111', head: 'aaaaaaaa1111' });
+        expect(r.code).toBe(0);
+        expect(r.stdout).toMatch(/fake release\.cjs invoked/);
+        expect(r.output).not.toMatch(/moved=yes/);
+    });
+
+    it('the tag and live-confirmation steps are skipped when the release stood down', () => {
+        const tag = WF.slice(WF.indexOf('- name: Tag the release'), WF.indexOf('- name: Confirm the new version is LIVE'));
+        const confirm = WF.slice(WF.indexOf('- name: Confirm the new version is LIVE'), WF.indexOf('- name: Fail loudly if the gates approved'));
+        expect(tag).toMatch(/steps\.release\.outputs\.moved != 'yes'/);
+        expect(confirm).toMatch(/steps\.release\.outputs\.moved != 'yes'/);
+    });
+});
+
+describe('a blocked gate is a red run with its own issue label', () => {
+    it('a final step fails the run when the gates blocked the release', () => {
+        const at = WF.indexOf('- name: Fail loudly if a gate blocked the release');
+        expect(at).toBeGreaterThan(-1);
+        const block = WF.slice(at);
+        expect(block).toMatch(/if: steps\.gates\.outputs\.ok == 'no'/);
+        expect(block).toMatch(/exit 1/);
+    });
+
+    it('release-blocker issues use release-blocked + ai-stuck, never the shared pipeline-health label', () => {
+        const code = WF.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+        expect(code).not.toMatch(/--label pipeline-health/);
+        expect(code).toMatch(/--label release-blocked --label ai-stuck/);
+    });
+});
+
+describe('the live-confirmation loop fits inside the job timeout', () => {
+    it('is bounded by the clock, and install + suite + release + that window + one slow lap fit in timeout-minutes', () => {
+        const timeout = Number(/timeout-minutes:\s*(\d+)/.exec(WF)[1]);
+        const window = Number(/DEADLINE=\$\(\(SECONDS \+ (\d+)\)\)/.exec(WF)[1]) / 60;
+        expect(WF).toMatch(/while \[ "\$SECONDS" -lt "\$DEADLINE" \]/);
+        expect(WF).not.toMatch(/seq 1 \d+/);                          // no iteration count to multiply by a slow network
+        const slowLap = (20 + 15 + 15 + 20) / 60;                      // sleep + the three curl --max-time ceilings
+        expect(timeout).toBeGreaterThan(10 + window + slowLap);        // 10 min for install, tests and the release itself
     });
 });
