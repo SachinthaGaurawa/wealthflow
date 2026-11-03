@@ -150,6 +150,29 @@ function writeState(number, state) {
 }
 
 /**
+ * What the proving test did when it was run, for the "no change made" comment.
+ *
+ * A proof failure used to say only "the test still fails" and the Vitest output that explained why was
+ * thrown away, so the same failure could be re-read on every attempt without anyone seeing its cause.
+ * Plain text only, trimmed, in a code fence: it is test output (messages and stack frames), never data.
+ */
+export function proofEvidence(result = {}) {
+    const rounds = Array.isArray(result.testRounds) ? result.testRounds : [];
+    const out = String(result.testProof?.output || '').trim();
+    if (!rounds.length && !out) return '';
+    const lines = [];
+    if (rounds.length) {
+        lines.push('', `**Proving test:** ${rounds.length} ${rounds.length === 1 ? 'try' : 'tries'}, none went from failing to passing:`);
+        for (const r of rounds) lines.push(`- try ${r.round}: ${String(r.reason).slice(0, 200)}`);
+    }
+    if (out) {
+        const tail = out.split('\n').slice(-12).join('\n').replace(/`{3,}/g, "'''").slice(-900);
+        lines.push('', '**Last Vitest output:**', '```', tail, '```');
+    }
+    return lines.join('\n') + '\n';
+}
+
+/**
  * The PR description the agent writes for a drafted fix.
  *
  * Exported and pure so its central claim can be tested rather than eyeballed.
@@ -343,6 +366,7 @@ async function main() {
                     `**Why:** ${result.reason}\n` +
                     (result.file ? `**File considered:** \`${result.file}\`\n` : '') +
                     (result.review?.findings?.length ? `\n**Reviewer findings:**\n${result.review.findings.map((f) => `- ${f}`).join('\n')}\n` : '') +
+                    proofEvidence(result) +
                     `\nNothing was committed. I will try again on the next scheduled run.\n` +
                     FOOTER
                 ).catch(() => {});
