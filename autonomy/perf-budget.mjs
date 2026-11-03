@@ -748,7 +748,8 @@ export const BUDGETS = {
     // (the first read ends at its own 12 s deadline and a top-level __proto__ field is written, measured 2,780,011: -> 2_780_600.)
     // 2026-11-03: 2_780_600 -> 2_783_400 for one statement shown once in Open reviews (its transactions inside it) and the count of statements, not transactions (wealthflow-statement-cloud.js).
     // 2026-11-03: 2_783_400 -> 2_812_300 for wealthflow-diagnosis.js (the update system's ten-link chain, judged on the device and added to Copy diagnostics; measured 2,811,998 + ~0.01% headroom).
-    totalJsBytes: 2_812_300,
+    // 2026-11-03: 2_812_300 -> 2_813_000 (wealthflow-diagnosis.js measured again after its last edit: 2,812,802 + ~0.01% headroom; the first figure was taken before that edit).
+    totalJsBytes: 2_813_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
