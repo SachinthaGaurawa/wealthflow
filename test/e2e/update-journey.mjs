@@ -15,6 +15,7 @@
  */
 import { bootDevices } from './devices.mjs';
 import { completeOnboarding } from './harness.mjs';
+import { healer } from './heal.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
@@ -24,6 +25,9 @@ const w = await bootDevices(['d']);
 const dev = w.devices.d;
 let page = dev.page;
 const PIN = '123456';
+const heal = healer(page);
+/** The Dashboard notice: its id first, then what a person would call it (a button that says the update is available). */
+const PILL = { css: '#wfUpdatePill', role: 'button', name: /Update available/i, text: /Update available/i };
 /** Reload the page the way a restart does, then sign in with the PIN like a person would. */
 const reloadAndLogin = async () => { await page.reload({ waitUntil: 'domcontentloaded' }); await completeOnboarding(page, { pin: PIN }); };
 
@@ -49,13 +53,30 @@ try {
         await sleep(300);
         await page.evaluate(() => { showPage('dashboard'); window.scrollTo(0, 0); });
         await sleep(600);
-        await page.waitForSelector('#wfUpdatePill', { timeout: 8000 });
-        const pillText = await page.$eval('#wfUpdatePill', (e) => e.textContent.replace(/\s+/g, ' ').trim());
+        const pillText = await heal.text('Dashboard update notice', PILL, { timeout: 8000 });
         note(`4. ${tag} the Dashboard shows "Update available — ${target}"`, pillText.includes('Update available') && pillText.includes(target), pillText);
-        const pillBox = await page.$eval('#wfUpdatePill', (e) => { const r = e.getBoundingClientRect(); return { x: r.x, w: r.width, vw: innerWidth }; });
+        const pillEl = await heal.find('Dashboard update notice', PILL, { timeout: 8000 });
+        const pillBox = await pillEl.evaluate((e) => { const r = e.getBoundingClientRect(); return { x: r.x, w: r.width, vw: innerWidth }; });
+        await pillEl.dispose();
         note(`4. ${tag} the Dashboard notice fits the screen`, pillBox.x >= 0 && pillBox.x + pillBox.w <= pillBox.vw + 1, JSON.stringify(pillBox));
 
-        await page.click('#wfUpdatePill');
+        // Agentic QA drill, on the real app: a UI refactor gives the notice another id. The person still sees the same notice, so the
+        // test must still find it, say that it had to look another way, and name the selector to use. (Then the id is put back.)
+        if (width === 390) {
+            const before = heal.report().length;
+            await page.evaluate(() => { document.getElementById('wfUpdatePill').id = 'wfUpdatePillRenamedByRefactor'; });
+            const healedEl = await heal.find('Dashboard update notice (after a refactor)', PILL, { timeout: 6000, graceMs: 300 });
+            const healedId = await healedEl.evaluate((e) => e.id);
+            await healedEl.dispose();
+            const rec = heal.report()[before];
+            note(`QA. ${tag} a renamed notice is still found, by what a person sees, and the heal is recorded with the selector to use`, healedId === 'wfUpdatePillRenamedByRefactor' && !!rec && rec.healedBy.kind === 'role' && rec.suggest === '#wfUpdatePillRenamedByRefactor', JSON.stringify(rec));
+            const absent = await heal.find('a control that does not exist', { css: '#wfNoSuchControl', text: /No such control anywhere/ }, { timeout: 900, graceMs: 100 }).then(() => 'found', (e) => (/could not find/.test(e.message) ? 'threw' : 'other'));
+            note(`QA. ${tag} a control that is really gone is still a failure (healing never turns an absent control into a pass)`, absent === 'threw', absent);
+            // put things back; the app re-draws a missing notice by itself, so keep exactly one
+            await page.evaluate(() => { const r = document.getElementById('wfUpdatePillRenamedByRefactor'); if (document.getElementById('wfUpdatePill')) r.remove(); else r.id = 'wfUpdatePill'; });
+        }
+
+        await heal.click('Dashboard update notice', PILL);
         await page.waitForFunction(() => document.getElementById('page-settings')?.classList.contains('active'), null, { timeout: 8000 });
         await sleep(2600);
         await page.evaluate(() => { const c = document.querySelector('#wfWhatsNew button.btn-primary'); if (c) c.click(); });
@@ -142,6 +163,7 @@ try {
         })());
     }
     note('no uncaught page errors', dev.errors.length === 0, dev.errors.join(' | ').slice(0, 300));
+    heal.summary();
 } catch (e) {
     note('the journey ran to the end without an exception', false, String((e && e.stack) || e).slice(0, 500));
 } finally {
