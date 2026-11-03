@@ -15,6 +15,8 @@ on:
       - test/e2e/settings-stability.mjs
       - test/e2e/settings-runtime.mjs
       - test/e2e/update-journey.mjs
+      - test/e2e/diagnosis.mjs
+      - wealthflow-diagnosis.js
       - version.json
       - test/e2e/sync-banner.mjs
       - test/e2e/live-sync.mjs
@@ -69,3 +71,6 @@ jobs:
       # The whole in-app update journey: the Dashboard and Settings notices, the agreement, the PIN, the backup, the real progress bar and
       # countdown, and the centred "what changed" popup after the restart. A brand-new install is not shown that popup.
       - run: node test/e2e/update-journey.mjs
+      # Copy diagnostics in a real browser: the ten-link update-system chain, the first break named, a crash on an old build shown as history,
+      # nothing the owner wrote copied, and the copy never waiting for the network.
+      - run: node test/e2e/diagnosis.mjs

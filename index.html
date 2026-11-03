@@ -433,6 +433,9 @@
     <script src="wealthflow-feedback-ai.js" defer></script>
     <!-- v7.12.0 — In-app Update System. -->
     <script src="wealthflow-update-system.js" defer></script>
+    <!-- Update-system diagnosis: walks the chain from "you file a report" to "it runs on this device", names the first
+         link that is not healthy, and says how old its evidence is. Read-only; window.WFDiagnosis -->
+    <script src="wealthflow-diagnosis.js" defer></script>
     <!-- v7.11.0 — Multi-signal duplicate defence. Detects the same transaction
          arriving twice (statement + SMS, or a re-paste) using amount + day +
          merchant + card, and never deletes on a weak signal.
@@ -9519,7 +9522,11 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                                     + _topPageN + '/' + _cr.length + ').';
                             }
                             if (_crTotal > _cr.length) hint += ' (' + _crTotal + ' total over this device\'s lifetime; only the most recent ' + _cr.length + ' are kept in detail.)';
-                            add('error', 'stability', _crTotal + ' crash(es) detected — the app was killed without a clean exit.', hint);
+                            // A crash on a build that is no longer running is history, not a fault of the code in front of you: say
+                            // so, instead of flagging a red error that no change to THIS build can have caused.
+                            var _onBuild = _cr.filter(function (c) { return c && c.build === WF_APP_VERSION; }).length;
+                            if (_cr.length && !_onBuild) add('info', 'stability', _crTotal + ' earlier crash(es) recorded; none on this build (' + WF_APP_VERSION + ').', hint);
+                            else add('error', 'stability', _crTotal + ' crash(es) detected — the app was killed without a clean exit.', hint);
                         }
                         var _ig = (window.WFStability && window.WFStability.integrity()) || null;
                         if (_ig && _ig.unstamped > 0) {
@@ -9552,7 +9559,19 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 const uniqueMsgs = [...new Set(log.map(e => (e && e.msg) || '').filter(Boolean))];
                 const _summary = { totalErrors: log.length, fromThisBuild: fromThis, staleFromOlderBuilds: log.length - fromThis, uniqueMessages: uniqueMsgs };
                 const _health = _wfCollectHealth();
-                const _issues = _wfDetectIssues(_health, _summary);
+                let _issues = _wfDetectIssues(_health, _summary);
+                // The update system's own chain (feedback → agent → release → deploy → notes → offer → install → worker →
+                // welcome → stability), judged from this device's records and the last server answers. Synchronous: a
+                // clipboard write has to stay inside the tap that asked for it, so the fetching happens ahead of time.
+                let _upd = null;
+                try {
+                    if (window.WFDiagnosis) {
+                        _upd = window.WFDiagnosis.collect();
+                        const _rank = { error: 0, warn: 1, info: 2 };
+                        _issues = _issues.concat(_upd.issues || []).sort((a, b) => (_rank[a.severity] - _rank[b.severity]));
+                        window.WFDiagnosis.refresh();      // so the NEXT copy is fresher
+                    }
+                } catch (_) { _upd = null; }
                 // Statement processing: aggregate reason counts + the last few
                 // "Map statement layout" attempts' structural breakdown (date
                 // shapes found, how many produced rows, how many reconciled).
@@ -9575,7 +9594,9 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 payload = JSON.stringify({
                     build: _WF_BUILD,
                     when: new Date().toISOString(),
+                    updateSystemVerdict: _upd ? (_upd.verdict + ' — ' + _upd.summary) : 'unavailable (the diagnosis module did not load)',
                     detectedIssues: _issues.length ? _issues : 'none — all checks passed',
+                    updateSystem: _upd,
                     ua: navigator.userAgent,
                     screen: (window.innerWidth + 'x' + window.innerHeight),
                     dpr: window.devicePixelRatio || 1,

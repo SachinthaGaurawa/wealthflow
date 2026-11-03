@@ -722,6 +722,20 @@ export function diagnosticsSection(d) {
         L.push('');
     }
 
+    // The update system's own chain, judged on the device: which link of "report → fix → release → install" is the first that is
+    // not healthy. A fix agent (or a person) reads this before anything else when the report is about updates.
+    if (d.updateSystem && typeof d.updateSystem === 'object' && Array.isArray(d.updateSystem.chain)) {
+        const u = d.updateSystem;
+        const cell = (x, n) => String(x == null ? '' : x).replace(/[\r\n|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
+        L.push('**Update system on this device: `' + cell(u.verdict, 20) + '`** — ' + cell(u.summary, 400), '');
+        const bad = u.chain.filter((l) => l && l.state && l.state !== 'ok').slice(0, 10);
+        if (bad.length) {
+            L.push('| Link | State | Evidence |', '|---|---|---|');
+            for (const l of bad) L.push('| ' + cell(l.id, 30) + ' | ' + cell(l.state, 10) + ' | ' + cell(l.detail, 260) + ' |');
+            L.push('');
+        }
+    }
+
     if (d.errorSummary) {
         const es = d.errorSummary;
         L.push('**Error log:** ' + (es.total || 0) + ' total, ' + (es.fromThisBuild || 0) + ' on this build.', '');

@@ -1163,6 +1163,7 @@
                 d.detectedIssues = issues.slice(0, 12);
             }
         } catch (_) {}
+        try { if (window.WFDiagnosis) d.updateSystem = window.WFDiagnosis.collect({ compact: true }); } catch (_) {}
         // Statement processing: why entries in "Statements needing review" are
         // actually stuck, in aggregate (reason codes + bank names only — no
         // date, amount, narration or description; the same two fields the

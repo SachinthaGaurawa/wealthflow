@@ -359,7 +359,8 @@ export const BUDGETS = {
     // 2026-11-02 (the account over plain HTTPS: the page saves, reads and checks its account through _wfCloudSync instead of the Firestore transaction, the Check Connection rows for it, and the comments recording why; measured 2,370,334 + ~0.03% headroom): 2_365_100 -> 2_371_000. No new script or request at load.
     // (the two 2026-11-02 changes above were each measured alone; #489 and this one together measure 2,375,723, so the ceiling is set on the combined tree: 2_370_400 -> 2_376_000.)
     // (with #490 as well: 2,376,343, so 2_376_000 -> 2_376_700.)
-    htmlBytes: 2_376_700,
+    // 2026-11-03 (index.html: the update-system diagnosis joins Copy diagnostics, one script tag, and a crash on an older build is history rather than an error; measured 2,378,515 + ~0.01% headroom): 2_376_700 -> 2_378_800.
+    htmlBytes: 2_378_800,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -746,7 +747,8 @@ export const BUDGETS = {
     // (the Check Connection verdict keeps the account's own reason for a usage limit or refused data, measured 2,779,743: -> 2_779_900.)
     // (the first read ends at its own 12 s deadline and a top-level __proto__ field is written, measured 2,780,011: -> 2_780_600.)
     // 2026-11-03: 2_780_600 -> 2_783_400 for one statement shown once in Open reviews (its transactions inside it) and the count of statements, not transactions (wealthflow-statement-cloud.js).
-    totalJsBytes: 2_783_400,
+    // 2026-11-03: 2_783_400 -> 2_812_300 for wealthflow-diagnosis.js (the update system's ten-link chain, judged on the device and added to Copy diagnostics; measured 2,811,998 + ~0.01% headroom).
+    totalJsBytes: 2_812_300,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
@@ -850,7 +852,8 @@ export const BUDGETS = {
     // 2026-10-23: 91 -> 92 for wealthflow-sync-health.js (the upload that failed is counted, explained and retried; see totalJsBytes).
     // 2026-10-30: 92 -> 93 for wealthflow-sms-categories.js (which kinds of text the owner wants; shared by the Settings screen and the server; see totalJsBytes).
     // 2026-11-02: 93 -> 94 for wealthflow-card-tabs.js (one tab per credit card on CC One-Time and CC Instalments; a plain deferred script; see totalJsBytes).
-    moduleCount: 94,   // measured 94
+    // 2026-11-03: 94 -> 95 for wealthflow-diagnosis.js (the update-system diagnosis; see totalJsBytes).
+    moduleCount: 95,   // measured 95
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -925,7 +928,8 @@ export const BUDGETS = {
     // 2026-10-21: 83 -> 84 for wealthflow-new-badge.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-10-23: 84 -> 85 for wealthflow-sync-health.js — type="module", so deferred; renderBlockingScripts below is unchanged at 2.
     // 2026-11-02: 85 -> 86 for wealthflow-card-tabs.js — a plain deferred script, so renderBlockingScripts below is unchanged at 2.
-    scriptTags: 86,              // measured 84; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
+    // 2026-11-03: 86 -> 87 for wealthflow-diagnosis.js — a plain deferred script, so renderBlockingScripts below is unchanged at 2.
+    scriptTags: 87,              // measured 84; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
