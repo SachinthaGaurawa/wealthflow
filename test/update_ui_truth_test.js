@@ -117,8 +117,10 @@ describe('the hardcoded release history is gone', () => {
         // be on screen instead of appearing over the sign-in form. One compact poll.
         // Raised from 117_000 (measured 117,6xx): the welcome note now says how many changes a
         // release had, groups them under one heading each, and opens the full list ("See all N").
+        // Raised from 118_000 (measured 118,547, 2026-11-03): the restore point taken before an update now has its result
+        // recorded and said (one small function), and the unused copy of every wf2_ key it also wrote is gone.
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(118_000);
+        expect(bytes).toBeLessThan(118_700);
     });
 });
 

@@ -13,6 +13,7 @@
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
     const LS_CLAIM = 'wf_update_claimed';     // a CLAIM to have updated, settled against reality on the next boot
+    const LS_PREBACKUP = 'wf_preupdate_backup'; // what the restore point taken before the last update came to: saved | not-saved
     const LS_ANOMALY = 'wf_version_anomaly';  // stored version was ahead of the running code — kept as evidence
     const LS_AUTOSEC = 'wf_auto_security';    // user opted in to auto-install security updates
     const LS_FAILED_TARGET = 'wf_update_failed_target';  // a target that just demonstrably failed to land
@@ -713,11 +714,23 @@
 'devices update independently when you choose.\n' +
 '\n' +
 '8. ROLLBACK SAFETY. If the update cannot complete, the previous version ' +
-'remains active and your data is restored from the pre-update backup.\n' +
+'remains active. An update replaces app files, never your data. A restore point is ' +
+'saved first when you are signed in; restoring from it is done in Settings.\n' +
 '\n' +
 'By continuing, you acknowledge you have read and agree to this Agreement for ' +
 'WealthFlow v' + version + '.\n'
         );
+    }
+
+    /* The restore point before an update. Its RESULT is recorded: it used to be dropped, and a "pre-update snapshot" of every
+     * wf2_ key was copied into localStorage that nothing ever restored. backupNow() is true only when a copy exists afterwards,
+     * so false means signed out, offline or nothing to back up yet. An update swaps app files and never changes your data, so
+     * a missing restore point is shown and recorded, not a reason to stop. */
+    async function _preUpdateBackup(target) {
+        let result = 'not-saved';
+        try { if (typeof window.backupNow === 'function' && (await window.backupNow(true, 'pre-update')) === true) result = 'saved'; } catch (_) {}
+        try { localStorage.setItem(LS_PREBACKUP, JSON.stringify({ at: Date.now(), result: result, target: target })); localStorage.removeItem('wf_preupdate_snapshot'); } catch (_) {}
+        return result;
     }
 
     // Real progress: each step does actual work, then advances the bar.
@@ -756,22 +769,10 @@
         // What the download step actually achieved. The steps below report into
         // this, and the end of the flow refuses to claim an update that did not
         // fetch enough of the app to possibly be one.
-        const _dl = { fetched: 0, total: 0, failed: [] };
+        const _dl = { fetched: 0, total: 0, failed: [], backup: '' };
 
         const steps = [
-            { pct: 12, eta: 9, label: 'Backing up your data…', run: async () => {
-                try { if (typeof window.backupNow === 'function') await window.backupNow(true, 'pre-update'); } catch (_) {}
-                // Local pre-update snapshot so self-heal can roll data back if the
-                // new version crash-loops. Stores the wf2_* keys only (the app's data).
-                try {
-                    const snap = {};
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const k = localStorage.key(i);
-                        if (k && k.indexOf('wf2_') === 0) snap[k] = localStorage.getItem(k);
-                    }
-                    localStorage.setItem('wf_preupdate_snapshot', JSON.stringify({ at: Date.now(), data: snap }));
-                } catch (_) {}
-            }},
+            { pct: 12, eta: 9, label: 'Backing up your data…', run: async () => { _dl.backup = await _preUpdateBackup(version); }},
             // THE STEP THAT USED TO LIE. It called reg.update() — which refetches
             // sw.js and nothing else — then slept 700ms while a bar labelled
             // "Downloading new version files" advanced to 40%. No version file was
@@ -858,10 +859,10 @@
         _claimUpdate(version, _dl);
         try { localStorage.setItem(LS_SEEN_POPUP, ''); } catch (_) {}
         setBar(100); setEta(0);
-        setStep('Update complete. Restarting…');
+        setStep('Update complete. Restarting…' + (_dl.backup === 'saved' ? '' : ' No restore point was saved first; an update never changes your data.'));
 
         // One owner, after backup/download/claim: no competing controller reload.
-        await _sleep(700);
+        await _sleep(_dl.backup === 'saved' ? 700 : 2400);
         try { localStorage.removeItem(LS_PENDING); } catch (_) {}
         if (!_updateReloaded) {
             _updateReloaded = true;
@@ -1898,7 +1899,7 @@
         // never verified is the defect these exist to remove, so a test has to be
         // able to drive both halves: write a claim, then settle it against the
         // version actually running.
-        _claimUpdate, _settleClaim, _recentlyFailedTarget, _autoApplyIfSecurity,
+        _claimUpdate, _settleClaim, _recentlyFailedTarget, _autoApplyIfSecurity, _preUpdateBackup,
         // Exposed so the test harness can prove which words a given server
         // response produces. The bug these replace was invisible to every test
         // that only read the source, because the logic was inline in an async

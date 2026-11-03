@@ -106,7 +106,8 @@ try {
         note(`6. ${tag} the files are really downloaded, counted as n/total`, steps.some((s) => /Downloading new version files.*\(\d+\/\d+\)/.test(s)), JSON.stringify(steps.filter((s) => /Downloading/.test(s)).slice(-1)));
         note(`6. ${tag} the percentage only moves forward, from the start to 100`, pcts.length > 3 && pcts.every((n, i) => i === 0 || n >= pcts[i - 1]) && pcts[pcts.length - 1] === 100, `${pcts.length} samples, ${pcts[0]}..${pcts[pcts.length - 1]}`);
         note(`6. ${tag} a countdown is shown ("about Ns remaining")`, etas.some((e) => /about \d+s remaining/.test(e)), JSON.stringify(etas.slice(0, 5)));
-        note(`6. ${tag} the backup was made before the swap (a pre-update snapshot exists)`, await page.evaluate(() => !!localStorage.getItem('wf_preupdate_snapshot')));
+        const pre = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem('wf_preupdate_backup') || 'null'); } catch (_) { return null; } });
+        note(`6. ${tag} the restore point's result before the swap is recorded as it was (saved | not-saved), and no unused copy of every wf2_ key is made`, !!pre && (pre.result === 'saved' || pre.result === 'not-saved') && !(await page.evaluate(() => localStorage.getItem('wf_preupdate_snapshot'))), JSON.stringify(pre));
 
         // ── the page has reloaded with the new code. The claim is settled against what really loaded.
         await sleep(2500);
