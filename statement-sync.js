@@ -27,6 +27,7 @@ import { VIA, identityOf, lookup, releaseStatement, registryDuplicatePatch } fro
 import { runSteps } from './statement-budget.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
+import { bankAgrees } from './wealthflow-institutions.js';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow, installmentInfo } from './wealthflow-statement-router.js';
 import { PROPOSAL, REVIEW, decisionProblem, agreedRows, approvedRows, reviewPrompt, proposalPrompt, inVocabulary } from './statement-board.mjs';
 import { healLoanLinks } from './loan-link.mjs';
@@ -1151,7 +1152,7 @@ export async function reopenRegistryCopies({ db, mailRef, uid, limit = 25, until
 /* WHERE EVERY STATEMENT IS, IN ONE LINE OF THE PLATFORM LOG: per bank, how many are waiting, stopped or part-way, and why. It exists because
  * "the owner has to tap Map statement layout on NTB and AMEX" could only be guessed at from outside: the reason codes are the evidence. Bank
  * names, status words, reason codes and counts only — no amount, no merchant, no account number, no file name. Every few hours, never more. */
-const CENSUS_EVERY_MS = 30 * 60 * 1000, REVIVE_EVERY_MS = 10 * 60 * 1000;
+const CENSUS_EVERY_MS = 30 * 60 * 1000, REVIVE_EVERY_MS = 10 * 60 * 1000, CARD_PROOF_EVERY_MS = 60 * 1000;
 export async function statementCensus({ db, mailRef, uid = '', log = console.info }) {
     const found = await mailRef.collection('items').where('status', 'in', ['needs_review', 'dead_letter', 'pending', 'processing']).limit(300).get();
     const byBank = {}, reasons = {}, partial = [];
@@ -1403,38 +1404,55 @@ export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {
 /* THE ROWS OF A CARD STATEMENT THAT WAITED BEFORE THE CARD LAYOUT PROOF EXISTED (statement-direction.mjs, PR #494) are put right here, without the owner: a pending row-level review whose only doubt is
  * "unproven-direction", whose direction the parser ASSUMED (a plain amount, no marks), on a statement that is a registered or self-declared CREDIT CARD's, whose words say nothing of money coming back, and
  * whose statement has no whole-statement question open. It is filed as the rules would file it (resolveReview, proof 'layout' written on the record), never by guessing a category: a merchant the rules
- * cannot place goes in as a Card Purchase for the merchant review. A row that does not qualify, or that the books would refuse (a matching entry already there), is left exactly as it was. */
+ * cannot place goes in as a Card Purchase for the merchant review. A row that does not qualify, or that the books would refuse (a matching entry already there), is left exactly as it was.
+ * It returns COUNTS of why rows were left (never an amount or a description), so a sweep that files nothing can say why. `more` is true only when rows were not even looked at (the limit, the deadline or the
+ * statement cap came first): a row turned away on its merits is not "more". */
 export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, maxSources = 12 }) {
     const userRef = db.collection('users').doc(uid);
     const page = await userRef.collection('statementReview').where('status', '==', 'pending').limit(500).get();
-    const waiting = page.docs.filter(doc => { const r = doc.data(); return r.uid === uid && r.reason === 'unproven-direction' && Number.isSafeInteger(r.index) && r.index >= 0 && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && /^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(r.sourcePath || ''); });
-    if (!waiting.length) return { proved: 0, left: 0 };
+    const why = { unproven: 0, shape: 0, statementQuestion: 0, noSource: 0, notCard: 0, moneyBack: 0, rules: 0, refused: 0, unreached: 0 }, notCardView = {};
+    const waiting = [];
+    for (const doc of page.docs) {
+        const r = doc.data();
+        if (r.uid !== uid || r.reason !== 'unproven-direction' || !Number.isSafeInteger(r.index) || r.index < 0) continue;
+        why.unproven += 1;
+        if (r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && /^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(r.sourcePath || '')) waiting.push(doc); else why.shape += 1;
+    }
+    if (!waiting.length) return { proved: 0, left: why.unproven, more: false, why };
     const registry = (((await userRef.get()).data() || {}).settings || {}).cardRegistry || {};
     const sources = new Map(), asked = new Map();
-    let proved = 0, left = 0;
+    let proved = 0, left = 0, more = false;
     for (const doc of waiting) {
-        /* THE SCAN IS BOUNDED, NOT ONLY THE FILING: `limit` counts rows filed, but every statement looked at costs two reads (its own pending reviews, its document), and rows turned away cost reads too. The scan stops at `until` (the front pass's own deadline,
+        /* THE SCAN IS BOUNDED, NOT ONLY THE FILING: `limit` counts rows filed, but every statement looked at costs two reads (its own pending reviews, its document), and rows turned away cost reads too. The scan stops at `until` (the run's own deadline,
          * so it can never eat the time the statements themselves need) and looks at no more than `maxSources` statements a run; what it did not reach waits for the next run. */
-        if (proved >= limit || Date.now() > until) { left += 1; continue; }
+        if (proved >= limit || Date.now() > until) { left += 1; why.unreached += 1; more = true; continue; }
         const review = doc.data();
-        if (!asked.has(review.sourcePath) && asked.size >= maxSources) { left += 1; continue; }
+        if (!asked.has(review.sourcePath) && asked.size >= maxSources) { left += 1; why.unreached += 1; more = true; continue; }
         /* the statement's OWN pending reviews are asked for, not taken from the page above (which holds at most 500 of every statement's): a layout or reconciliation question still open on it keeps every row of it for the owner */
-        if (!asked.has(review.sourcePath)) asked.set(review.sourcePath,(await userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath).get()).docs.some(entry => { const r = entry.data(); return r.status === 'pending' && Number(r.index) < 0; }));
-        if (asked.get(review.sourcePath)) { left += 1; continue; }
+        if (!asked.has(review.sourcePath)) asked.set(review.sourcePath, (await userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath).get()).docs.some(entry => { const r = entry.data(); return r.status === 'pending' && Number(r.index) < 0; }));
+        if (asked.get(review.sourcePath)) { left += 1; why.statementQuestion += 1; continue; }
         if (!sources.has(review.sourcePath)) sources.set(review.sourcePath, (await db.doc(review.sourcePath).get()).data() || null);
         const source = sources.get(review.sourcePath);
-        if (!source || source.uid !== uid) { left += 1; continue; }
+        if (!source || source.uid !== uid) { left += 1; why.noSource += 1; continue; }
         const row = { ...review.row, directionSource: 'layout', needsReview: false, valid: true };
         const ctx = { statementType: source.statementType || '', card_last4: source.last4 || review.row.card_last4 || '', bank: source.bank || review.bank || '', cardRegistry: registry, subscriptions: [], loans: [] };
-        if (!isCreditCardRow(row, ctx) || cardCreditWords(row) || semanticDirection(row) === 'credit') { left += 1; continue; }
+        if (!isCreditCardRow(row, ctx)) {
+            left += 1; why.notCard += 1;
+            /* WHAT THE STATEMENT KNEW OF ITSELF when it was turned away as "not a card", as yes/no letters only: type given (t), digits given (l), digits in Cards and accounts (r), bank agrees with that entry (b) */
+            const entry = ctx.card_last4 && registry[ctx.card_last4] && typeof registry[ctx.card_last4] === 'object' ? registry[ctx.card_last4] : null;
+            const key = `t${ctx.statementType ? 1 : 0}l${ctx.card_last4 ? 1 : 0}r${entry ? 1 : 0}b${entry ? (bankAgrees(entry.bank, ctx.bank) ? 1 : 0) : '-'}`;
+            notCardView[key] = (notCardView[key] || 0) + 1; why.notCardView = notCardView;
+            continue;
+        }
+        if (cardCreditWords(row) || semanticDirection(row) === 'credit') { left += 1; why.moneyBack += 1; continue; }
         const decision = deterministicDecision(row, ctx);
         /* a decision the rules DID make and that is not a card line (an own-account transfer they leave out of the books, an income, a subscription) is theirs to keep: it is never turned into a Card Purchase here, and goes on waiting for the owner */
         const filing = decision && decision.verified === true ? decision : fallbackDecision(row, ctx);
-        if (!filing || filing.verified !== true || !['cconetime', 'ccinstall'].includes(filing.module)) { left += 1; continue; }
+        if (!filing || filing.verified !== true || !['cconetime', 'ccinstall'].includes(filing.module)) { left += 1; why.rules += 1; continue; }
         try { await resolveReview({ db, uid, id: doc.id, decision: { ...filing, autoDecided: filing.autoDecided || 'layout-sweep' }, row: {}, directionSource: 'layout' }); proved += 1; }
-        catch (_) { left += 1; /* the books refused it (a matching entry is there, a lock): it stays for the owner, untouched */ }
+        catch (_) { left += 1; why.refused += 1; /* the books refused it (a matching entry is there, a lock): it stays for the owner, untouched */ }
     }
-    return { proved, left };
+    return { proved, left: left + why.shape, more, why };
 }
 
 // A statement row the ledger says was filed but the owner's data no longer holds, and nobody deleted: a device
@@ -2623,7 +2641,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     if (extract === invokeExtractor) extract = tieredAsk({ call: (prompt, options) => invokeExtractor(prompt, aiHandler, options), accept: reply => Array.isArray(jsonOf(reply)?.accounts), deadlineAt: start + INVOCATION_MS });
     board = breaker.guard('board', board, { minRoomMs: BOARD_ROOM_MS, unavailable: 'ai-consensus-unavailable' });
     extract = breaker.guard('extract', extract, { minRoomMs: 18000, unavailable: 'ai-extractor-unavailable' });
-    let ranWhole = false, ranResume = false, ranConsensus = false, ranHeal = false, orphansHealed = 0, frontIncomplete = false, migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, cardRowsProved = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
+    let ranWhole = false, ranResume = false, ranConsensus = false, ranHeal = false, orphansHealed = 0, frontIncomplete = false, migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, cardRowsProved = 0, cardMore = false, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
     /* The housekeeping in front of the queue (find new mail, audit the mailbox, recover and repair) is a full pass over the
      * mailbox; run once for every statement an interactive caller asks for, it left almost none of the 60 seconds for the
      * statements. An interactive call repeats it at most every minute and a half — unless a collection is part-way, when
@@ -2679,7 +2697,6 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (frontRoom()) { const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit }); revokedRecovered = revoked.recovered; revokedMore = revoked.more; }
         if (frontRoom()) reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
         if (frontRoom()) zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
-        if (frontRoom()) { try { cardRowsProved = (await proveCardReviews({ db, uid, limit: heavy ? 20 : 10, until: start + frontBudgetMs })).proved; } catch (_) { /* advice only: the next run tries again */ } }
         if (frontRoom()) { const phantom = await recheckPhantomStatements({ db, uid, limit: heavy ? 10 : 3 }); phantomRequeued = phantom.requeued; phantomMore = phantom.more; }
         if (frontRoom()) { const healed = await healMissingRows({ db, uid, limit: heavy ? 5 : 2, mailRef }); rowsHealed = healed.rows; healMore = healed.more; }
         if (frontSkipped) { wholeMore = true; frontIncomplete = true; }
@@ -2718,6 +2735,18 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
      * checked before EACH one, not once before all of them; the place a pass stopped at is kept on the mailbox, and the pass is "done" (its time stamped) only when it got to the end. */
     const tail = {};
     const tailUntil = start + budgetMs - 8000;
+    /* THE WAITING CARD ROWS ARE FILED HERE, NOT IN FRONT OF THE QUEUE. Production, 2026-11-03 18:00 UTC: an interactive run spent its twelve front seconds on the mailbox (`frontIncomplete`), so every step after the vault check was skipped and the 22 rows of the HNB card
+     * statement that waited since the morning stayed in Open reviews for hours after the fix that files them had been deployed. This step costs one query when nothing waits, files up to 25 rows (40 on a heavy run) and stops at the run's own deadline; `more` brings the chain
+     * straight back, and a pass that had nothing left to do is not repeated for a minute. What it left, and why, is said in `statement-card-proof` (counts only). */
+    if (Date.now() < tailUntil - 3000 && start - Number(mail.lastCardProofMs || 0) >= CARD_PROOF_EVERY_MS) {
+        const began = Date.now();
+        try {
+            const swept = await proveCardReviews({ db, uid, limit: heavy ? 40 : 25, until: tailUntil - 3000 });
+            cardRowsProved = swept.proved; cardMore = swept.more;
+            if (swept.proved || swept.left) { tail.cardProofMs = Date.now() - began; console.info(JSON.stringify({ evt: 'statement-card-proof', proved: swept.proved, left: swept.left, more: swept.more, why: swept.why, ms: tail.cardProofMs })); }
+            if (!swept.more) await mailRef.set({ lastCardProofMs: Date.now() }, { merge: true });
+        } catch (_) { /* advice only: the next run tries again */ }
+    }
     if (Date.now() < tailUntil && (!mail.lastCensusMs || start - Number(mail.lastCensusMs) >= CENSUS_EVERY_MS)) {
         const began = Date.now();
         try { await statementCensus({ db, mailRef, uid }); await mailRef.set({ lastCensusMs: Date.now() }, { merge: true }); } catch (_) { /* advice only */ }
@@ -2745,10 +2774,10 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const hasReadyPending = pendingTimes.some(at => at <= now);
     const earliestRetry = pendingTimes.filter(at => at > now).reduce((min, at) => Math.min(min, at), Infinity);
     const wakeAt = Math.min(earliestLease, earliestRetry);
-    const retryAfterMs = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || phantomMore || healMore || hasReadyPending
+    const retryAfterMs = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || phantomMore || healMore || cardMore || hasReadyPending
         ? 750
         : Number.isFinite(wakeAt) ? Math.max(750, Math.min(180250, wakeAt - now + 250)) : 750;
-    const morePending = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || pending.docs.length > 0 || processing.docs.length > 0;
+    const morePending = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || cardMore || pending.docs.length > 0 || processing.docs.length > 0;
     const retrying = pending.docs
         .map(doc => doc.data())
         .filter(data => Number(data?.retryCount) > 0)
