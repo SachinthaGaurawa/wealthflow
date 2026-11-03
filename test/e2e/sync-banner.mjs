@@ -79,17 +79,19 @@ try {
         await waitFor(() => phone.page.evaluate(() => /Everything an upload needs is working/.test(document.getElementById('_sc_v').innerText)), 15000);
         const clear = await phone.page.evaluate(() => document.getElementById('_sc_v').innerText);
         await phone.page.screenshot({ path: artifacts + '/3-check-clear.png' });
-        const ok = /Reading your account: failed/.test(cut.rows) && /could not read your account|cannot reach/.test(cut.verdict) && /Everything an upload needs is working/.test(clear);
+        const ok = /Reading your account: failed/.test(cut.rows) && /reading your account did not finish|could not read your account|cannot reach/.test(cut.verdict) && /Everything an upload needs is working/.test(clear);
         return { ok, detail: cut.verdict.slice(0, 160) + ' || ' + clear.slice(0, 80) };
     });
 
     await check('4. a sign-in the account rejects is called a sign-in problem, and the retry renews the token first', async () => {
-        await phone.page.evaluate(() => { const real = window.firebase.firestore; window.__renewals = 0; currentUser.getIdToken = async () => { window.__renewals += 1; return 't'; }; window.__origTx = userDocRef.firestore.runTransaction; userDocRef.firestore.runTransaction = () => Promise.reject(Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' })); });
+        // the account refuses every save as the real one does for a token it no longer accepts (HTTP 403 PERMISSION_DENIED); only a FORCED renewal counts, the page asks for the token on every request
+        await phone.page.evaluate(() => { window.__renewals = 0; currentUser.getIdToken = async (force) => { if (force) window.__renewals += 1; return 't'; }; });
+        w.cloud.failSaves({ status: 403, code: 'PERMISSION_DENIED', message: 'Missing or insufficient permissions.' });
         await phone.page.evaluate((t) => { DB.set('targets', [t]); }, target('t2'));
         const shown = await waitFor(async () => { const b = await banner(phone.page); return !!b && /sign out and sign in again/i.test(b.text); }, 25000);
         const renewed = await waitFor(() => phone.page.evaluate(() => window.__renewals > 0), 20000);
         await phone.page.screenshot({ path: artifacts + '/4-signin.png' });
-        await phone.page.evaluate(() => { userDocRef.firestore.runTransaction = window.__origTx; });
+        w.cloud.failSaves(null);
         const up = await waitFor(() => ((w.cloud.doc || {}).targets || []).some((x) => x.id === 't2'), 70000);
         return { ok: shown && renewed && up, detail: `signinNotice=${shown} tokenRenewed=${renewed} uploadedAfterFix=${up}` };
     });

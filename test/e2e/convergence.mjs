@@ -89,19 +89,23 @@ try {
     });
 
     await check('5. an upload that never answers is cut off by the deadline, shown, and retried until it lands', async () => {
+        // the save goes over plain HTTPS now: the request for the commit is held for ever (the deadline for a small save is 20 s)
         await phone.page.evaluate(() => {
-            window._wfPushDeadlineMs = 1500;
-            window.__origTx2 = userDocRef.firestore.runTransaction;
+            window.__origFetch = window.fetch;
             window.__hangs = 0;
-            userDocRef.firestore.runTransaction = function () { window.__hangs += 1; return new Promise(() => {}); };
+            window.fetch = function (u, o) {
+                if (/:commit/.test(String(u))) { window.__hangs += 1; return new Promise(() => {}); }
+                return window.__origFetch(u, o);
+            };
         });
         await phone.page.evaluate((t) => { DB.set('targets', [...DB.get('targets'), t]); }, { id: 'hung1', name: 'Hung', amount: 10, saved: 0, savings: [], deadline: '2027-01-01' });
-        const failed = await waitFor(() => phone.page.evaluate(() => window.__hangs >= 1), 6000);
-        await sleep(2500);
+        const failed = await waitFor(() => phone.page.evaluate(() => window.__hangs >= 1), 8000);
+        await sleep(23000);
         const dirty = await phone.page.evaluate(() => isDirty === true);
-        await phone.page.evaluate(() => { userDocRef.firestore.runTransaction = window.__origTx2; });
+        const code = await phone.page.evaluate(() => (window._wfLastPushError || (typeof _lastCloudPushError !== 'undefined' ? _lastCloudPushError : '')) || '');
+        await phone.page.evaluate(() => { window.fetch = window.__origFetch; });
         const landed = await waitFor(() => ((w.cloud.doc || {}).targets || []).some((t) => t.id === 'hung1'), 70000);
-        return { ok: failed && dirty && landed, detail: `hungOnce=${failed} stillUnsavedAfterDeadline=${dirty} landedAfterwards=${landed}` };
+        return { ok: failed && dirty && landed, detail: `hungOnce=${failed} stillUnsavedAfterDeadline=${dirty} error=${code} landedAfterwards=${landed}` };
     });
 
     await check('6. books left by another account are removed, never uploaded, and the new account is read clean', async () => {

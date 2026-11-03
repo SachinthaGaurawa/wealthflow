@@ -8,6 +8,10 @@
  * past anything a device has seen, a dirty counter so an edit made while a push is in flight is not marked "saved", and
  * a loop that re-reads the server instead of trusting the live stream to arrive.
  *
+ * The page saves over plain HTTPS requests (wealthflow-sync-health.js, "THE ACCOUNT, OVER PLAIN HTTPS"): every scenario below runs twice, once through that path
+ * (the real createRestClient and createCloudSync against a stand-in for Firestore's REST endpoint, test/helpers/fake-firestore-rest.js) and once through the
+ * library's transaction, which is what the page falls back to when the connection module has not loaded.
+ *
  * Here the REAL functions from index.html (syncToCloud, _wfApplyCloudData, _wfStampAndTomb, _wfReconcileWithCloud,
  * setDirty, _wfPaintCloudChange …) run inside N "devices", each with its own localStorage and clock, against a fake
  * Firestore document that behaves like the real one where it matters: a merge-set replaces arrays and merges maps,
@@ -17,6 +21,8 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRestClient, createCloudSync } from '../wealthflow-sync-health.js';
+import { makeRestFetch } from './helpers/fake-firestore-rest.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
@@ -55,7 +61,7 @@ const isPlain = (v) => v && typeof v === 'object' && !Array.isArray(v) && Object
 
 /* ── the cloud: one document, Firestore's merge semantics, optimistic transactions ─────────────────────────────────── */
 class ServerTs { }
-function makeCloud(initial = {}) {
+function makeCloudBase(initial = {}) {
     const cloud = { data: clone(initial), version: 1, offline: false, beforeCommit: null, commits: 0, transactionRuns: 0 };
     const assertNoUndefined = (v) => {
         if (v === undefined) throw new Error('Unsupported field value: undefined');
@@ -159,7 +165,10 @@ function makeDevice(name, cloud, { skewMs = 0 } = {}) {
         blockAt('function _wfApplyCloudData(cloudData)'),
         blockAt('function _wfCloudSafe(v, d = 0)'),
         'let isDirty = false, _dirtyGen = 0, isSyncingFromCloud = false, lastSyncTime = 0, _lastLocalWriteTs = 0, _lastCloudPushError = "", isInitialised = true, _wfLocalWriteBlocked = false, syncDebounceTimer = 0;',
+        'let _pendingCloudDeletes = []; function _persistPendingDeletes() {}',
         blockAt('function setDirty(state)'),
+        blockAt('function _wfMergeSeen(a, b)'),
+        blockAt('function _wfMergeFromAccount(data)'),
         blockAt('function _wfPaintAfterCloud()'),
         blockAt('function _wfPaintCloudChange(applied)'),
         blockAt('function syncToCloud()'),
@@ -167,20 +176,23 @@ function makeDevice(name, cloud, { skewMs = 0 } = {}) {
         blockAt('async function _wfReconcileWithCloud(why)'),
     ].join('\n');
     const factory = new Function('localStorage', 'appData', 'notify', 'console', 'window', 'navigator', 'Date', 'userDocRef', 'firebase', 'currentUser',
-        '_getDeviceId', 'setSyncStatus', '_flushCloudDeletes', '_wfApplyPendingDeletesLocally', 'debouncedSync', '$', 'document', '_wfAfterScrollIdle', 'renderPage', 'updateCCOTBadge', 'updateChequeBadge', '_renderSessionsDebounced', 'refreshAllSurfaces',
+        '_wfCloudSync', '_getDeviceId', 'setSyncStatus', '_flushCloudDeletes', '_wfApplyPendingDeletesLocally', 'debouncedSync', '$', 'document', '_wfAfterScrollIdle', 'renderPage', 'updateCCOTBadge', 'updateChequeBadge', '_renderSessionsDebounced', 'refreshAllSurfaces',
         src + '\nreturn {'
         + ' edit: (key, fn) => { const next = fn(JSON.parse(JSON.stringify(appData[key] || []))); appData[key] = _wfStampAndTomb(key, next); _persistLocal("wf2_" + key, appData[key]); setDirty(true); },'
         + ' setDirty, syncToCloud, reconcile: _wfReconcileWithCloud, applyCloud: _wfApplyCloudData, stampNow: _wfStampNow,'
         + ' get isDirty() { return isDirty; }, get dirtyGen() { return _dirtyGen; }, get lastReconcile() { return _wfLastReconcile; }, get lastError() { return _lastCloudPushError; },'
         + ' adoptInitialised: (v) => { isInitialised = v; } };');
+    // the page's one connection to the account for this device: plain requests (the real engine over a stand-in for the REST endpoint), or none (the library)
+    const cs = createCloudSync({ client: createRestClient({ projectId: 'wf-test', getToken: async () => 'token', fetchImpl: makeRestFetch(cloud) }), path: 'users/u1' });
     const api = factory(localStorage, appData, (m, t) => notes.push([t, m]), { log() {}, warn() {}, error() {} }, win, nav, SkewDate, cloud.ref,
         { firestore: { FieldValue: { serverTimestamp: () => new ServerTs() } } }, { uid: 'u1' },
+        cloud.mode === 'https' ? () => cs : () => null,
         () => name, (s) => syncStatus.push(s), () => {}, () => {}, () => { pending.debounced++; },
         (id) => (id === 'app' ? { classList: { contains: (c) => c === 'show' } } : null),
         { querySelector: () => ({ id: 'page-expenses' }), getElementById: () => null },
         (_why, fn) => fn(), (p) => renders.push(p), () => {}, () => {}, () => {}, () => renders.push('everything'));
     return Object.assign(api, {
-        name, appData, store, notes, renders, syncStatus, pending, win, nav, clock,
+        name, appData, store, notes, renders, syncStatus, pending, win, nav, clock, cs,
         ids: (key) => (appData[key] || []).map(r => r.id).sort(),
         rec: (key, id) => (appData[key] || []).find(r => r.id === id),
         // what the live listener does with a snapshot
@@ -194,6 +206,9 @@ const cloudIds = (cloud, key) => (cloud.data[key] || []).map(r => r.id).sort();
 const settle = async (devs, cloud, rounds = 3) => {
     for (let i = 0; i < rounds; i++) for (const d of devs) { await d.reconcile('test'); if (d.isDirty) await d.syncToCloud(); }
 };
+
+for (const MODE of ['https', 'library']) describe(MODE === 'https' ? 'saving over plain HTTPS requests (how the page saves)' : 'saving through the library transaction (the fallback)', () => {
+const makeCloud = (initial) => Object.assign(makeCloudBase(initial), { mode: MODE });
 
 /* ── 1. the lost update ───────────────────────────────────────────────────────────────────────────────────────────── */
 describe('a push cannot overwrite what the cloud got first', () => {
@@ -234,7 +249,7 @@ describe('a push cannot overwrite what the cloud got first', () => {
         let fired = false;
         cloud.beforeCommit = async () => { if (!fired) { fired = true; cloud.beforeCommit = null; expect(await laptop.syncToCloud()).toBe(true); } };
         expect(await phone.syncToCloud()).toBe(true);
-        expect(cloud.transactionRuns, 'the phone\'s transaction was not re-run after the document moved').toBeGreaterThanOrEqual(3);
+        expect(cloud.transactionRuns + (cloud.commitAttempts || 0), 'the phone\'s save was not run again after the document moved').toBeGreaterThanOrEqual(3);
         expect(cloudIds(cloud, 'expenses')).toEqual(['e1', 'l1', 'p1']);
         await settle([phone, laptop], cloud);
         expect(phone.ids('expenses')).toEqual(['e1', 'l1', 'p1']);
@@ -447,6 +462,8 @@ describe('random interleavings of three devices and the statement worker always 
         }
         for (const d of devs) expect(d.isDirty, `${d.name} still has unsent changes (seed ${seed})`).toBe(false);
     });
+});
+
 });
 
 /* ── the places that used to bypass all of this ───────────────────────────────────────────────────────────────────── */

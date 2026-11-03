@@ -9626,6 +9626,9 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         function _flushCloudDeletes() {
             if (!_pendingCloudDeletes.length) return;
             if (window._isDecoyMode === true) return;
+            /* Over HTTPS a deleted key leaves the account when the field it was in is saved (the whole field is replaced), so all this has to do is make sure a save
+             * happens. The queue is cleared by that save (syncToCloud). */
+            if (_wfCloudSync()) { if (!isDirty) setDirty(true); if (!window._wfSyncRun) debouncedSync(); return; }
             if (_deleteFlushInFlight) return;
             if (!userDocRef || !navigator.onLine) return;
             if (!(window.firebase && firebase.firestore && firebase.firestore.FieldPath && firebase.firestore.FieldValue)) return;
@@ -9872,34 +9875,52 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
 
             setSyncStatus('syncing');
 
-            // Replay any queued map-key deletions FIRST. merge:true (below) can only
-            // add/update keys — it can never remove one — so deletions must go through
-            // explicit field deletes or they silently come back on the next load.
-            try { _flushCloudDeletes(); } catch (_) { }
+            const cs = _wfCloudSync();
+            // Over the library, queued map-key deletions are replayed FIRST (merge:true can only add or change keys). Over HTTPS a deleted key is simply absent from the
+            // field that is saved, and the field is replaced as a whole, so there is nothing to replay.
+            if (!cs) { try { _flushCloudDeletes(); } catch (_) { } }
 
             const gen = _dirtyGen;   // anything changed after this is NOT covered by this push
             const ackMark = typeof _wfAckMark === 'function' ? _wfAckMark() : 0;   // the newest text-bearing stamp this push covers (see _wfAckMark)
-            let seen = null, _push;
-            try {
-                _push = userDocRef.firestore.runTransaction(async tx => {
-                    const snap = await tx.get(userDocRef);
-                    if (snap.exists) { isSyncingFromCloud = true; try { seen = _wfApplyCloudData(snap.data()); } finally { isSyncingFromCloud = false; } }
-                    // sync metadata — a device-level write stamp identifies our own echoes; the payload is what is on this device AFTER the merge above
-                    tx.set(userDocRef, Object.assign({}, _wfCloudSafe(appData), {
-                        _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
-                        _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
-                        _writeDeviceId: _getDeviceId(),
-                        _writeTs: Date.now()
-                    }), { merge: true });
-                });
-            } catch (err) { _push = Promise.reject(err); }
-            /* A transaction that never answers (a half-open connection, a browser that suspended the page mid-save, an IndexedDB that stalls on a phone) used to
-             * leave this promise pending for good: the push counted as "running", so no retry, no watchdog and no Check Connection could start another. A
-             * deadline turns the silence into an ordinary failure, which is counted, explained and retried like any other. */
-            let _deadline;
-            _push = Promise.race([_push, new Promise((_, rej) => { _deadline = setTimeout(() => rej(Object.assign(new Error('The upload did not finish in time.'), { code: 'deadline-exceeded' })), window._wfPushDeadlineMs || 30000); })]);
-            _push.then(() => clearTimeout(_deadline), () => clearTimeout(_deadline));
+            let seen = null, _push, delBatch = [], sent = null;
+            if (cs) {
+                /* THE ACCOUNT OVER PLAIN HTTPS (see _wfCloudSync). One request carries only the top-level fields that differ from the copy the account held when this
+                 * device last merged it, and the account accepts it only if nobody wrote in between; otherwise the newer copy is read, merged here and the save redone. */
+                _push = cs.push({
+                    apply: (data) => {
+                        isSyncingFromCloud = true;
+                        try { seen = _wfMergeSeen(seen, _wfApplyCloudData(data)); _wfApplyPendingDeletesLocally(); } finally { isSyncingFromCloud = false; }
+                    },
+                    getLocal: () => { delBatch = _pendingCloudDeletes.slice(); try { _wfApplyPendingDeletesLocally(); } catch (_) { } return _wfCloudSafe(appData); },
+                    meta: () => ({ _lastModifiedBy: currentUser ? currentUser.uid : 'unknown', _writeDeviceId: _getDeviceId(), _writeTs: Date.now() }),
+                }).then((res) => { sent = res; });
+            } else {
+                /* The page's module has not loaded (or there is no sign-in token source): the original read-merge-write inside one library transaction. */
+                try {
+                    _push = userDocRef.firestore.runTransaction(async tx => {
+                        const snap = await tx.get(userDocRef);
+                        if (snap.exists) { isSyncingFromCloud = true; try { seen = _wfApplyCloudData(snap.data()); } finally { isSyncingFromCloud = false; } }
+                        // sync metadata — a device-level write stamp identifies our own echoes; the payload is what is on this device AFTER the merge above
+                        tx.set(userDocRef, Object.assign({}, _wfCloudSafe(appData), {
+                            _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
+                            _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
+                            _writeDeviceId: _getDeviceId(),
+                            _writeTs: Date.now()
+                        }), { merge: true });
+                    });
+                } catch (err) { _push = Promise.reject(err); }
+                /* A transaction that never answers used to leave this promise pending for good: the push counted as "running", so no retry, no watchdog and no Check
+                 * Connection could start another. A deadline turns the silence into an ordinary failure, which is counted, explained and retried like any other. */
+                let _deadline;
+                _push = Promise.race([_push, new Promise((_, rej) => { _deadline = setTimeout(() => rej(Object.assign(new Error('The upload did not finish in time.'), { code: 'deadline-exceeded' })), window._wfPushDeadlineMs || 30000); })]);
+                _push.then(() => clearTimeout(_deadline), () => clearTimeout(_deadline));
+            }
             const run = _push.then(() => {
+                if (sent) {
+                    // the deletes this save carried are in the fields it replaced (or the account already lacked them)
+                    if (delBatch.length) { _pendingCloudDeletes = _pendingCloudDeletes.filter(d => !delBatch.some(b => b[0] === d[0] && b[1] === d[1] && (sent.upToDate || sent.keys.indexOf(b[0]) !== -1))); _persistPendingDeletes(); }
+                    window._wfLastPush = { at: Date.now(), via: 'https', keys: sent.keys.length, bytes: sent.bytes, ms: sent.ms, attempts: sent.attempts, upToDate: !!sent.upToDate };
+                }
                 if (_dirtyGen === gen) setDirty(false); else setTimeout(debouncedSync, 50);   // changed while in flight: still dirty
                 lastSyncTime = Date.now();
                 _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
@@ -9924,6 +9945,36 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             return run;
         }
 
+        /* THE ACCOUNT OVER PLAIN HTTPS. Reported again 2026-11-02 (Mac, Safari 17.6): "Reading your account" and "Saving to your account" both ended at 12 s with
+         * deadline-exceeded, in the fast and the steady mode, while a save sent straight to the account with the sign-in token took 1.2 s. The Firestore library's
+         * transaction runner can hang for ever on an error it does not know (two "INTERNAL ASSERTION FAILED: Unexpected state" in that device's log) and every save
+         * sent the whole account document. So the page's saves, its regular "has anything changed?" check and its reads of the account now go through ordinary
+         * requests with their own deadlines, and a save sends only the fields that differ. The reasons, the proof and the limits are in wealthflow-sync-health.js
+         * ("THE ACCOUNT, OVER PLAIN HTTPS"). The live listener (_wfListen) stays as the quick way to hear about changes; nothing depends on it. */
+        let _wfCS = null;
+        function _wfCloudSync() {
+            try {
+                const H = window.WFSyncHealth;
+                if (!H || typeof H.createCloudSync !== 'function' || !currentUser || !userDocRef) return null;
+                const pid = window.firebaseConfig && window.firebaseConfig.projectId; if (!pid) return null;
+                if (_wfCS && _wfCS.uid === currentUser.uid) return _wfCS.cs;
+                const user = currentUser;
+                const client = H.createRestClient({ projectId: pid, getToken: (force) => user.getIdToken(!!force), fetchImpl: (u, o) => window.fetch(u, o) });
+                _wfCS = { uid: user.uid, client, cs: H.createCloudSync({ client, path: 'users/' + user.uid }) };
+                return _wfCS.cs;
+            } catch (_) { return null; }
+        }
+        window._wfCloudSync = _wfCloudSync;
+        function _wfAccountClient() { return _wfCloudSync() ? _wfCS.client : null; }
+        function _wfMergeSeen(a, b) {
+            if (!a) return b; if (!b) return a;
+            return { nonSessionChanged: !!(a.nonSessionChanged || b.nonSessionChanged), sessionsChanged: !!(a.sessionsChanged || b.sessionsChanged), needPush: !!(a.needPush || b.needPush) };
+        }
+        /* Merge a copy of the account document into this device (the one convergent function) and say what it changed, so the caller can repaint. */
+        function _wfMergeFromAccount(data) {
+            isSyncingFromCloud = true;
+            try { return _wfApplyCloudData(data); } finally { isSyncingFromCloud = false; }
+        }
         /* THE UPLOAD, WATCHED (wealthflow-sync-health.js says why and when; this wires it to the page).
          *
          * Reported 2026-10-23: Settle in full and Confirm on the phone sent no text; the same two taps on the laptop did. A text goes out only after the
@@ -9954,7 +10005,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
              * cause that no retry can clear. */
             try {
                 let last = 0; try { last = Number(localStorage.getItem('wf_fs_repaired_at')) || 0; } catch (_) { }
-                if (H.shouldAutoRepair({ failures: tr.state.failures, kind: H.explainPushError(err).kind, lastRepairAt: last, now: Date.now(), persist: window._wfPersist })) _wfRepairConnection('auto after ' + tr.state.failures + ' failed saves');
+                if (!_wfCloudSync() && H.shouldAutoRepair({ failures: tr.state.failures, kind: H.explainPushError(err).kind, lastRepairAt: last, now: Date.now(), persist: window._wfPersist })) _wfRepairConnection('auto after ' + tr.state.failures + ' failed saves');
             } catch (_) { }
             _wfSyncTick();
         };
@@ -9998,8 +10049,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             el.innerHTML = '<div class="sb-t">' + _wfEsc(v.title) + '</div><div class="sb-r">' + _wfEsc(v.reason) + '</div><div class="sb-n">' + _wfEsc(v.note) + '</div>'
                 + (v.code ? '<div class="sb-c">Code: ' + _wfEsc(v.code) + '</div>' : '')
                 + '<div class="sb-b"><button class="btn btn-sm btn-primary" onclick="_wfSyncTryAgain(this)">Try Again</button><button class="btn btn-sm btn-secondary" onclick="_wfOpenSyncCheck()">Check Connection</button>'
-                + (v.repairable && window._wfPersist !== 'off' ? '<button class="btn btn-sm btn-secondary" onclick="_wfRepairConnection(\'banner\')">Repair connection</button>' : '')
-                + (v.kind === 'network' && !(window._wfTransport && window._wfTransport.steady) ? '<button class="btn btn-sm btn-secondary" onclick="_wfSetTransport(\'steady\')">Use steady mode</button>' : '') + '</div>';
+                + (!_wfCloudSync() && v.repairable && window._wfPersist !== 'off' ? '<button class="btn btn-sm btn-secondary" onclick="_wfRepairConnection(\'banner\')">Repair connection</button>' : '')
+                + (!_wfCloudSync() && v.kind === 'network' && !(window._wfTransport && window._wfTransport.steady) ? '<button class="btn btn-sm btn-secondary" onclick="_wfSetTransport(\'steady\')">Use steady mode</button>' : '') + '</div>';
         }
         /* Every few seconds: keep the tracker in step with isDirty, start a retry if a change has waited without any upload running, redraw the notice. */
         function _wfSyncTick() {
@@ -10056,58 +10107,30 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 } },
                 { id: 'google', label: 'Google cloud database', run: async () => { await fetch('https://firestore.googleapis.com/', { method: 'HEAD', mode: 'no-cors', cache: 'no-store' }); return 'reachable'; } },
                 { id: 'signin', label: 'Sign-in', run: async () => { if (!currentUser) throw new Error('you are signed out'); await currentUser.getIdToken(true); return 'renewed'; } },
-                { id: 'read', label: 'Reading your account', run: async () => {
-                    if (!userDocRef) throw new Error('no account is open');
-                    const d = await userDocRef.get({ source: 'server' });
-                    return d.exists ? 'read, ' + kb(JSON.stringify(d.data()).length) + ' stored' : 'nothing is saved there yet';
+                /* Reading, saving and "has anything changed?" are plain secure requests with their own deadlines (see _wfCloudSync), so these steps time the real
+                 * thing: how many KB came down or went up and how long it took. The library's connection (its stream, its saving queue, its offline cache) no longer
+                 * carries a save, so it is not a step an upload needs. */
+                { id: 'read', label: 'Reading your account', via: 'https', timeoutMs: 50000, run: async () => {
+                    const c = _wfAccountClient(); if (!c) throw new Error(currentUser ? 'the connection module has not loaded. Reload the page.' : 'you are signed out');
+                    const r = await c.readDoc('users/' + currentUser.uid);
+                    return r.exists ? 'read, ' + kb(r.bytes) + ' came down in ' + r.ms + ' ms' : 'nothing is saved there yet';
                 } },
-                { id: 'write', label: 'Saving to your account', run: async () => {
-                    if (!userDocRef) throw new Error('no account is open');
-                    await userDocRef.collection('syncProbe').doc('ping').set({ at: Date.now(), device: _getDeviceId() });
-                    return 'saved';
+                { id: 'write', label: 'Saving to your account', via: 'https', timeoutMs: 30000, run: async () => {
+                    const c = _wfAccountClient(); if (!c) throw new Error(currentUser ? 'the connection module has not loaded. Reload the page.' : 'you are signed out');
+                    const r = await c.commit('users/' + currentUser.uid + '/syncProbe/ping', { fields: { at: Date.now(), device: _getDeviceId() } });
+                    return 'saved in ' + r.ms + ' ms';
                 } },
-                /* The same kind of save, sent straight to the account with the sign-in token and nothing of this browser's connection library or database
-                 * in between. It tells "the network or the account refuses saves" apart from "the saving queue inside this browser is stuck". */
-                { id: 'direct', label: 'Saving directly, bypassing this browser\'s queue', run: async () => {
-                    if (!currentUser) throw new Error('you are signed out');
-                    const pid = window.firebaseConfig && window.firebaseConfig.projectId; if (!pid) throw new Error('the project is not known');
-                    const tok = await currentUser.getIdToken();
-                    const ac = typeof AbortController === 'function' ? new AbortController() : null, stop = setTimeout(() => { try { if (ac) ac.abort(); } catch (_) { } }, 11000);
-                    try {
-                        const doc = 'projects/' + pid + '/databases/(default)/documents/users/' + currentUser.uid + '/syncProbe/direct';
-                        const r = await fetch('https://firestore.googleapis.com/v1/projects/' + pid + '/databases/(default)/documents:commit', {
-                            method: 'POST', cache: 'no-store', signal: ac ? ac.signal : undefined,
-                            headers: { 'Authorization': 'Bearer ' + tok, 'Content-Type': 'text/plain' },
-                            body: JSON.stringify({ writes: [{ update: { name: doc, fields: { at: { integerValue: String(Date.now()) }, device: { stringValue: String(_getDeviceId()) } } } }] })
-                        });
-                        if (!r.ok) { let e = ''; try { const j = await r.json(); e = (j && j.error && j.error.status) || ''; } catch (_) { } throw Object.assign(new Error('the account answered ' + r.status + (e ? ' ' + e : '')), { code: /PERMISSION|UNAUTH/i.test(e) || r.status === 401 || r.status === 403 ? 'permission-denied' : '' }); }
-                        return 'saved';
-                    } catch (e) { if (e && e.name === 'AbortError') throw new Error('it did not answer in 11 seconds'); throw e; } finally { clearTimeout(stop); }
+                { id: 'size', label: 'What one save sends', run: async () => {
+                    const cs = _wfCloudSync(); if (!cs) return { ok: true, detail: 'not known yet' };
+                    const local = _wfCloudSafe(appData), pl = cs.plan(local);
+                    const whole = window.WFSyncHealth.inspectPayload(local).bytes;
+                    if (!pl.known) return 'the first save after opening reads your account, then sends only what changed (your data is ' + kb(whole) + ' in all)';
+                    return (pl.keys.length ? pl.keys.length + ' changed field(s), about ' + kb(pl.bytes) + ' of the ' + kb(whole) + ' you hold: ' + pl.keys.slice(0, 4).join(', ') : 'nothing is waiting; a save would send only what changes, not the ' + kb(whole) + ' in all');
                 } },
-                /* The browser's own database, which the connection library keeps its saving queue in. */
-                { id: 'storage', label: 'This browser\'s storage', run: () => new Promise((res, rej) => {
-                    if (!window.indexedDB) return rej(new Error('this browser has no IndexedDB'));
-                    const name = 'wf_probe_' + Date.now(); let done = false;
-                    const fin = (f, v) => { if (done) return; done = true; clearTimeout(t); try { indexedDB.deleteDatabase(name); } catch (_) { } f(v); };
-                    const t = setTimeout(() => fin(rej, new Error('it did not answer in 8 seconds')), 8000);
-                    let rq; try { rq = indexedDB.open(name, 1); } catch (e) { return fin(rej, e); }
-                    rq.onupgradeneeded = () => { try { rq.result.createObjectStore('p'); } catch (_) { } };
-                    rq.onerror = () => fin(rej, rq.error || new Error('it refused to open'));
-                    rq.onsuccess = () => {
-                        try {
-                            const d2 = rq.result, tx = d2.transaction('p', 'readwrite'); tx.objectStore('p').put(1, 'k');
-                            tx.oncomplete = () => { try { d2.close(); } catch (_) { } fin(res, 'answers'); };
-                            tx.onerror = tx.onabort = () => { try { d2.close(); } catch (_) { } fin(rej, tx.error || new Error('a write was refused')); };
-                        } catch (e) { fin(rej, e); }
-                    };
-                }) },
-                { id: 'queue', label: 'Saves waiting in this browser', run: async () => {
-                    const d = window.db; if (!d || typeof d.waitForPendingWrites !== 'function') return 'not applicable';
-                    const r = await Promise.race([d.waitForPendingWrites().then(() => 'clear'), new Promise((res) => setTimeout(() => res('late'), 4000))]);
-                    return r === 'late' ? { ok: false, detail: 'saves are still waiting behind each other in this browser' } : 'none waiting';
-                } },
+                /* Informational: live updates are a convenience on top (the regular check finds any change within 20 seconds without them), so a listener that is not
+                 * running is reported but never makes the connection check fail. */
                 { id: 'live', label: 'Live updates from other devices', run: async () => {
-                    if (!_wfLive.unsub) throw new Error(_wfLive.lastErr ? 'the listener ended (' + _wfLive.lastErr + ') and is starting again' : 'the listener is not running');
+                    if (!_wfLive.unsub) return { ok: true, detail: (_wfLive.lastErr ? 'the live stream ended (' + _wfLive.lastErr + ') and is starting again' : 'the live stream is not running') + '; the regular check still finds changes within 20 seconds' };
                     return 'listening' + (_wfLive.restarts || _wfLive.errors ? ', restarted ' + (_wfLive.restarts + _wfLive.errors) + ' time(s) so far' : '');
                 } },
                 { id: 'data', label: 'Data on this device', run: async () => {
@@ -10174,15 +10197,15 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                         const v = H.verdict(rows);
                         vEl.textContent = v.text; vEl.style.color = v.ok ? 'var(--green)' : 'var(--red)';
                         const rb = ov.querySelector('#_sc_repairBtn'); if (rb) { rb.classList.toggle('btn-primary', !!v.repair); rb.classList.toggle('btn-secondary', !v.repair); }
-                        report = H.reportText(rows, { build: window.WF_APP_VERSION, online: navigator.onLine, payload: payload(), transport: window._wfTransport, persist: window._wfPersist });
+                        report = H.reportText(rows, { build: window.WF_APP_VERSION, online: navigator.onLine, payload: payload(), transport: window._wfTransport, persist: window._wfPersist, saves: _wfCS ? _wfCS.cs.state.last : null });
                         runBtn.disabled = false; copyBtn.disabled = false;
                     };
                     const modeBtn = ov.querySelector('#_sc_modeBtn'), modeNote = ov.querySelector('#_sc_modeNote');
                     const steadyNow = !!(window._wfTransport && window._wfTransport.steady);
                     modeBtn.textContent = steadyNow ? 'Use the fast connection mode' : 'Use the steady connection mode';
                     modeNote.textContent = steadyNow
-                        ? 'Steady mode talks to your account with plain request-and-answer calls, which iCloud Private Relay, VPNs and filtered networks let through. It stays live across your devices.'
-                        : 'If reading or saving your account does not answer, steady mode talks to it with plain request-and-answer calls, which iCloud Private Relay, VPNs and filtered networks let through. The page reloads; nothing is lost.';
+                        ? 'Steady mode brings changes from your other devices with plain request-and-answer calls, which iCloud Private Relay, VPNs and filtered networks let through. Saving and reading your account do not depend on this setting.'
+                        : 'If changes from your other devices arrive late, steady mode brings them with plain request-and-answer calls, which iCloud Private Relay, VPNs and filtered networks let through. Saving and reading your account do not depend on this setting. The page reloads; nothing is lost.';
                     modeBtn.onclick = () => _wfSetTransport(steadyNow ? 'fast' : 'steady');
                     const repairBtn = ov.querySelector('#_sc_repairBtn');
                     repairBtn.onclick = () => { repairBtn.disabled = true; repairBtn.textContent = 'Repairing...'; _wfRepairConnection('check connection'); };
@@ -10205,12 +10228,27 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (_wfReconciling || !userDocRef || !isInitialised || window._isDecoyMode === true || !navigator.onLine) return false;
             _wfReconciling = true;
             try {
-                const doc = await Promise.race([userDocRef.get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('reconcile-timeout')), 8000))]);
-                if (!doc.exists) return false;
-                isSyncingFromCloud = true;
-                let applied; try { applied = _wfApplyCloudData(doc.data()); } finally { isSyncingFromCloud = false; }
+                const cs = _wfCloudSync();
+                let applied = null;
+                if (cs) {
+                    /* Ask for the document's version only (a few hundred bytes); the whole document is read when it has changed, not every twenty seconds. */
+                    const r = await cs.pull({ apply: (data) => { applied = _wfMergeSeen(applied, _wfMergeFromAccount(data)); } });
+                    if (!r.exists) return false;
+                    lastSyncTime = Date.now();
+                    if (!r.changed) {
+                        _wfLastReconcile = { at: lastSyncTime, why: why, changed: false, push: false, via: 'https', ms: r.probeMs };
+                        if (isDirty) debouncedSync();
+                        return true;
+                    }
+                    applied = applied || { nonSessionChanged: false, sessionsChanged: false, needPush: false };
+                } else {
+                    const doc = await Promise.race([userDocRef.get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('reconcile-timeout')), 8000))]);
+                    if (!doc.exists) return false;
+                    applied = _wfMergeFromAccount(doc.data());
+                    lastSyncTime = Date.now();
+                }
                 lastSyncTime = Date.now();
-                _wfLastReconcile = { at: lastSyncTime, why: why, changed: !!(applied.nonSessionChanged || applied.sessionsChanged), push: !!applied.needPush };
+                _wfLastReconcile = { at: lastSyncTime, why: why, changed: !!(applied.nonSessionChanged || applied.sessionsChanged), push: !!applied.needPush, via: cs ? 'https' : 'library' };
                 // The server had something this device had not been told: the listener is not delivering, so it is started again.
                 if (_wfLastReconcile.changed && why !== 'start') { try { _wfLive.missed++; _wfListen(); } catch (_) { } }
                 try { _wfApplyPendingDeletesLocally(); _flushCloudDeletes(); } catch (_) { }
@@ -10249,15 +10287,15 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             setSyncStatus('syncing');
             let pulled = false;
             try {
-                const doc = await userDocRef.get({ source: 'server' });
-                if (doc.exists) {
-                    isSyncingFromCloud = true;
-                    const cloudData = doc.data();
+                // Over HTTPS when the page can (see _wfCloudSync); the library's own read otherwise.
+                let _applied = null, _exists, _cs = _wfCloudSync();
+                if (_cs) { const r = await _cs.pull({ force: true, apply: (data) => { _applied = _wfMergeSeen(_applied, _wfMergeFromAccount(data)); } }); _exists = r.exists; }
+                else { const doc = await userDocRef.get({ source: 'server' }); _exists = doc.exists; if (_exists) _applied = _wfMergeFromAccount(doc.data()); }
+                if (_exists) {
                     // v7.52.0 — same convergent applier as the live listener: per-record
                     // newest-wins with tombstoned deletes. A manual pull can no longer
                     // wipe newer local records or resurrect deleted ones.
-                    const _applied = _wfApplyCloudData(cloudData);
-                    isSyncingFromCloud = false;
+                    _applied = _applied || { nonSessionChanged: false, sessionsChanged: false, needPush: false };
                     lastSyncTime = Date.now();
 
                     // v7.41.0 — re-strip any keys the user already deleted that a stale
@@ -15804,7 +15842,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         // ═══ RESTORE (v7.70) ══════════════════════════════════════════════════
         // One list for every copy: restore points in the account and files in the user's own Drive. A restore REPLACES data, so: read the copy, prove it intact, prove it a WealthFlow backup, save a way back, only then replace; the first failing step stops it with nothing changed.
         // Every wait on the way to a restore, a reset or a nightly copy has a deadline: a stalled call would hold the operation, and every later backup run, for ever.
-        function _wfServerGet() { return Promise.race([userDocRef.get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('pull-timeout')), 8000))]); }
+        // The account document from the SERVER: over HTTPS (its own deadline) when the page can, the library's read otherwise. Same shape as the library's snapshot.
+        function _wfServerGet() {
+            const cs = _wfCloudSync();
+            if (cs) return cs.read().then((r) => ({ exists: r.exists, data: () => r.data }));
+            return Promise.race([userDocRef.get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('pull-timeout')), 8000))]);
+        }
         function _wfDriveFetch(u, i) { const c = new AbortController(); setTimeout(() => c.abort(), 20000); return window.fetch(u, Object.assign({}, i, { signal: c.signal })); }
         let _wfRestoreItems = [], _wfRestoreSeq = 0, _wfDeleting = false;
         let _wfRestoring = false;
@@ -17465,8 +17508,18 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                     // Force server fetch to always get latest data
                                     let doc;
                                     try {
-                                        doc = await _withTimeout(userDocRef.get({ source: 'server' }), 6000);
-                                        console.log('[SYNC] @checkCircle@ Got data from SERVER');
+                                        /* Over HTTPS first (see _wfCloudSync): the whole document comes down in one plain request with its own deadline, and what this device
+                                         * merged from it is remembered so the first save sends only what differs. If it cannot be read that way the library's read is not
+                                         * tried (it hangs on the same networks); the copy this browser already holds is used, as before. */
+                                        const _cs = _wfCloudSync();
+                                        if (_cs) {
+                                            const rr = await _withTimeout(_cs.read({ timeoutMs: 12000 }), 14000);   // the request itself ends at 12 s, which also frees the sync queue for the saves that follow
+                                            doc = { exists: rr.exists, data: () => rr.data, _rest: rr, _cs };
+                                            console.log('[SYNC] @checkCircle@ Got data from SERVER over HTTPS', rr.bytes, 'bytes', rr.ms, 'ms');
+                                        } else {
+                                            doc = await _withTimeout(userDocRef.get({ source: 'server' }), 6000);
+                                            console.log('[SYNC] @checkCircle@ Got data from SERVER');
+                                        }
                                     } catch (serverErr) {
                                         console.warn('[SYNC] @alert@ Server slow/unreachable, trying cache:', serverErr.message);
                                         try {
@@ -17522,6 +17575,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                         // recency with tombstoned deletes, so login always yields the union of
                                         // the newest data across every device — no reset ever required.
                                         const _initApplied = _wfApplyCloudData(cloudData);
+                                        try { if (doc._rest && doc._cs) doc._cs.adopt({ hashes: doc._rest.hashes, updateTime: doc._rest.updateTime }); } catch (_) { }   // merged: remember which version of the account this device holds
                                         if (_initApplied.needPush) _localOnlyCount = Math.max(_localOnlyCount, 1);
                                         console.log('[SYNC] @checkCircle@ Loaded', Object.keys(cloudData).length, 'keys from cloud (convergent merge)');
                                         // v7.41.0 — strip any keys the user already deleted (from the

@@ -23,6 +23,7 @@ on:
       - test/e2e/devices.mjs
       - test/e2e/firebase-cloud.mjs
       - test/e2e/firebase-stub.mjs
+      - test/helpers/fake-firestore-rest.js
       - test/e2e/harness.mjs
       - .github/workflows/settings-stability.yml
   workflow_dispatch:
@@ -60,6 +61,6 @@ jobs:
       # The connection mode: Safari and every iPhone / iPad browser talk to the account in steady mode (plain request-and-answer, which iCloud Private Relay lets through),
       # others keep the fast default, a saved choice wins, and Check Connection shows and switches it.
       - run: node test/e2e/transport-mode.mjs
-      # Repair connection: a save that times out is not called a refusal, the direct-save / browser-storage / queue steps appear, the repair turns the offline cache off
+      # Repair connection: a save that never answers is not called a refusal and does not send the person to sign out, the repair turns the offline cache off
       # and it stays off after the reload, and the connection choices survive sign-out.
       - run: node test/e2e/connection-repair.mjs

@@ -175,8 +175,9 @@ describe('the pull itself', () => {
          * settings are fields of one Firestore document, so one server read is
          * a complete re-read of all of them. Pinned so that a future "fetch
          * each collection" rewrite has to justify the extra round trips. */
-        expect(body).toMatch(/userDocRef\.get/);
-        expect(body).toContain('_wfApplyCloudData(cloudData)');
+        expect(body).toMatch(/_cs\.pull\(\{ force: true/);                      // over plain HTTPS: one request for the whole document
+        expect(body).toMatch(/userDocRef\.get\(\{ source: 'server' \}\)/);       // the library's one read, when the connection module has not loaded
+        expect(body).toContain('_wfMergeFromAccount(');                          // merged by the same convergent function either way
     });
 
     it('it no longer paints — one owner for that', () => {

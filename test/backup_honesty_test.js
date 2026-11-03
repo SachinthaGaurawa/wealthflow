@@ -76,11 +76,12 @@ function between(from, to) {
 const SYNC_DEPS = [
     'userDocRef', 'navigator', 'setSyncStatus', 'isDirty', '_flushCloudDeletes', 'appData',
     'firebase', 'currentUser', '_getDeviceId', 'setDirty', 'console', 'notify', 'triggerHaptic',
-    'DB', 'localStorage', 'window', '_wfCloudSafe', '_wfApplyCloudData', 'debouncedSync', '_wfPaintCloudChange',
+    'DB', 'localStorage', 'window', '_wfCloudSafe', '_wfApplyCloudData', 'debouncedSync', '_wfPaintCloudChange', '_wfCloudSync',
 ];
 
-/* The page pushes through a Firestore transaction (read the newest cloud document, merge it, write), so the fake document reference
- * offers one. `set` is what the test wants the WRITE to do; a rejection fails the transaction, as it does in Firestore. */
+/* This part runs the page's LIBRARY path (`_wfCloudSync` answers null, as it does until the connection module has loaded): a Firestore transaction (read the
+ * newest cloud document, merge it, write), so the fake document reference offers one. The same contract over plain HTTPS requests, which is how the page
+ * normally saves, is in test/cloud_rest_test.js.  `set` is what the test wants the WRITE to do; a rejection fails the transaction, as it does in Firestore. */
 const docWith = (set) => {
     const ref = { set };
     ref.firestore = {
@@ -117,9 +118,10 @@ function loadSync(over = {}) {
         _wfApplyCloudData: () => ({ nonSessionChanged: false, sessionsChanged: false, needPush: false }),
         debouncedSync: () => {},
         _wfPaintCloudChange: () => {},
+        _wfCloudSync: () => null,
     };
     const body = fnSource('_persistLocal') + '\n' + fnSource('_persistRaw') + '\n' + fnSource('syncToCloud') + '\nreturn { syncToCloud: syncToCloud, setHold: (v) => { window._wfHoldSync = v; }, getRun: () => window._wfSyncRun };';
-    return new Function(...SYNC_DEPS, 'let _lastCloudPushError = ""; let _wfLocalWriteBlocked = false; let _dirtyGen = 0; let isSyncingFromCloud = false;\n' + body)(...SYNC_DEPS.map((d) => env[d]));
+    return new Function(...SYNC_DEPS, 'let _lastCloudPushError = ""; let _wfLocalWriteBlocked = false; let _dirtyGen = 0; let isSyncingFromCloud = false; let _pendingCloudDeletes = []; function _persistPendingDeletes() {}\n' + body)(...SYNC_DEPS.map((d) => env[d]));
 }
 
 describe('syncToCloud reports what it actually did', () => {
@@ -183,7 +185,7 @@ const SRC_WEEKSTART = fnSource('_weekStartDay');
 const SRC_NEXT_TIME = fnSource('getNextBackupTime');
 
 const ENV_NAMES = ['window', 'navigator', 'localStorage', 'document', 'notify', 'triggerHaptic', 'console', 'firebase', 'userDocRef', 'user', 'showConfirm',
-    'closeModal', 'openModal', '$', 'setTimeout', 'setInterval', 'clearInterval', 'setDirty', 'sendSmartNotification', 'renderSettings', 'sha256', 'env'];
+    'closeModal', 'openModal', '$', 'setTimeout', 'setInterval', 'clearInterval', 'setDirty', 'sendSmartNotification', 'renderSettings', 'sha256', 'env', '_wfCloudSync'];
 
 const BODY = `
 let appData = env.appData;
@@ -306,6 +308,7 @@ function loadPage(over = {}) {
         renderSettings: () => { calls.push('renderSettings'); },
         sha256: async (s) => 'HASH(' + s + ')',
         env,
+        _wfCloudSync: () => null,   // these tests run the library's read; the same restore over plain requests is in test/cloud_rest_test.js
     };
     const api = new Function(...ENV_NAMES, BODY)(...ENV_NAMES.map((n) => fake[n]));
     return { ...api, db, drive, calls, notes, confirms, store, win, appData, env, elements, timers, pullTimers, smart, snapshotsAtSet, user };

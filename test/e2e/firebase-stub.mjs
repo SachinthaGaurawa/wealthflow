@@ -30,6 +30,8 @@
  *   that invented plausible data would be testing the fixture, not the app.
  * ===========================================================================*/
 
+import { restHandle } from '../helpers/fake-firestore-rest.js';
+
 /** The signed-in identity every sweep runs as. Obviously fake, on purpose. */
 export const TEST_USER = {
     uid: 'e2e-sweep-user',
@@ -39,6 +41,42 @@ export const TEST_USER = {
     emailVerified: true,
     providerData: [{ providerId: 'google.com' }],
 };
+
+/**
+ * Page side of the account over plain HTTPS (the page saves and reads through documents:batchGet and documents:commit, see wealthflow-sync-health.js): a sign-in
+ * token for the stub user, and a fetch() that hands requests for firestore.googleapis.com to the node side (installRestStub) instead of the network. Nothing
+ * else goes through it.
+ */
+export function restStubSource() {
+    return `
+  USER.getIdToken = function () { return Promise.resolve('e2e-id-token'); };
+  if (!window.__restFetchInstalled) {
+    window.__restFetchInstalled = true;
+    var realFetch = window.fetch ? window.fetch.bind(window) : null;
+    window.fetch = function (u, o) {
+      var url = typeof u === 'string' ? u : (u && u.url) || '';
+      if (url.indexOf('https://firestore.googleapis.com/v1/projects/') === 0 && window.__restOp) {
+        o = o || {};
+        return window.__restOp(url, { headers: o.headers || {}, body: typeof o.body === 'string' ? o.body : '' }).then(function (r) {
+          return new Response(JSON.stringify(r.json), { status: r.status, headers: { 'Content-Type': 'application/json' } });
+        }, function () { throw new TypeError('Failed to fetch'); });
+      }
+      return realFetch ? realFetch(u, o) : Promise.reject(new TypeError('Failed to fetch'));
+    };
+  }
+`;
+}
+
+/**
+ * Node side: answers the page's requests for the account document from `cloud` (anything with data, version and exists, see
+ * test/helpers/fake-firestore-rest.js). `offlineFor(page)` says whether that page is cut off from the network.
+ */
+export async function installRestStub(page, cloud, offlineFor = () => false) {
+    await page.exposeBinding('__restOp', async (src, url, init) => {
+        const view = Object.create(cloud, { offline: { value: offlineFor(src.page) || cloud.offline === true, writable: true } });
+        return restHandle(view, url, init);
+    });
+}
 
 /**
  * The script served in place of the real firebase-*-compat bundles.
@@ -53,7 +91,7 @@ export function firebaseStubSource(user = TEST_USER) {
   if (window.firebase && window.firebase.__stub) return;   // the app loads 4 scripts; install once
 
   var USER = ${JSON.stringify(user)};
-
+${restStubSource()}
   // ── Firestore: chainable, and always empty ────────────────────────────────
   // Every terminal read resolves to "nothing there", which is a real state the
   // app must handle (a brand-new account). Writes succeed and are discarded.
@@ -184,6 +222,8 @@ export const FIREBASE_CDN_GLOB = 'https://www.gstatic.com/firebasejs/**';
  * the interception is in place when the page requests the SDK.
  */
 export async function installFirebaseStub(page, user = TEST_USER) {
+    // this device's own account document: starts absent, takes what the page saves (the plain stub's Firestore reads stay empty, as before)
+    await installRestStub(page, { data: {}, version: 1, exists: false });
     const body = firebaseStubSource(user);
     await page.route(FIREBASE_CDN_GLOB, (route) =>
         route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body }));

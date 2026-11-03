@@ -25,7 +25,7 @@ describe('the page', () => {
         const around = HTML.slice(at - 200, at + 80);
         expect(around).toMatch(/try \{ if \(window\.WFSms\) window\.WFSms\.afterPush\(\); \} catch \(_\) \{ \}/);
         expect(HTML.lastIndexOf('function syncToCloud', at)).toBeGreaterThan(0);
-        expect(HTML.lastIndexOf('function syncToCloud', at)).toBeGreaterThan(at - 6000);
+        expect(HTML.lastIndexOf('function syncToCloud', at)).toBeGreaterThan(at - 9000);   // the success handler of the same function
         expect(HTML.slice(HTML.lastIndexOf('function syncToCloud', at), at)).toContain('.then(() => {');
     });
 

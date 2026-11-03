@@ -2,9 +2,10 @@
  * test/e2e/connection-repair.mjs — "Repair connection": probes, honest verdict, the repair itself, and the choices that survive sign-out
  * -----------------------------------------------------------------------------
  * Reported 2026-10-23 17:47 UTC, Mac Safari: "Not saved to your account yet / deadline-exceeded" kept coming back whichever connection mode was chosen. Reading
- * looked fine (the live stream answered it), the tiny test save timed out after 12 s, and the verdict wrongly said "sign out and sign in again". This drives the
- * real page, with Firestore stood in for, and proves:
- *   1. a save that times out is not called a refusal; Check Connection shows the extra steps (direct save, browser storage, queue) and offers Repair
+ * looked fine (the live stream answered it), the tiny test save timed out after 12 s, and the verdict wrongly said "sign out and sign in again". Since
+ * 2026-11-02 saves and reads are plain secure requests (wealthflow-sync-health.js, "THE ACCOUNT, OVER PLAIN HTTPS"), so a stuck library queue is no longer what a
+ * save depends on. This drives the real page, with Firestore stood in for, and proves:
+ *   1. a save that never answers is not called a refusal; Check Connection names the step, does not tell the person to sign out, and does not push Repair
  *   2. Repair connection sets the offline cache off, stops the client, clears the cache, remembers it did so, and reloads
  *   3. after that reload the page never turns the offline cache on, and says so in Check Connection and in the copied report
  *   4. the connection mode and the cache choice survive sign-out's localStorage.clear()
@@ -33,24 +34,22 @@ const rowsText = (page) => page.evaluate(() => document.getElementById('_sc_rows
     await page.route('https://firestore.googleapis.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
     await page.evaluate(() => {
         window.currentUser.getIdToken = async () => 'test-token';
-        window._wfPushDeadlineMs = 500;
-        // the SDK-routed save never answers (the owner's case); reads answer
-        userDocRef = {
-            get: async () => ({ exists: false, data: () => ({}) }),
-            collection: () => ({ doc: () => ({ set: () => new Promise(() => { }) }) }),
-        };
+        // the save request never answers (the owner's case); reads answer
+        const real = window.fetch;
+        window.fetch = function (u, o) { return /:commit/.test(String(u)) ? new Promise(() => { }) : real.call(window, u, o); };
     });
     await page.evaluate(() => { _wfOpenSyncCheck(); });
     await page.waitForSelector('#_sc_repairBtn');
     await page.waitForFunction(() => document.getElementById('_sc_v').textContent.length > 0, null, { timeout: 90000 });
     const txt = await rowsText(page);
-    assert.match(txt, /Saving directly, bypassing this browser's queue/);
-    assert.match(txt, /This browser's storage/);
+    assert.match(txt, /Reading your account: OK/);
+    assert.match(txt, /Saving to your account: FAILED|Saving to your account:\s*(FAILED|did not)/i);
     assert.match(txt, /Offline cache/);
     const verdict = await page.evaluate(() => document.getElementById('_sc_v').textContent);
     assert.doesNotMatch(verdict, /sign out and sign in again/i, 'a timeout is not a refusal');
-    assert.match(verdict, /Repair connection/);
-    console.log('1. save times out     -> honest verdict, direct/storage/queue steps shown, Repair offered');
+    assert.match(verdict, /saving to it did not finish/);
+    assert.equal(await page.evaluate(() => document.getElementById('_sc_repairBtn').classList.contains('btn-primary')), false, 'Repair is not pushed when the library is not what saves');
+    console.log('1. save never answers -> honest verdict, the step named, no sign-out advice, Repair not pushed');
 
     await Promise.all([page.waitForEvent('load', { timeout: 20000 }), page.click('#_sc_repairBtn')]);
     const after = await page.evaluate(() => ({ persist: localStorage.getItem('wf_fs_persist'), at: Number(localStorage.getItem('wf_fs_repaired_at')) }));
