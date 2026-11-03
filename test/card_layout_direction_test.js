@@ -139,4 +139,19 @@ describe('the rows that waited before the card layout proof existed', () => {
         expect(await run(db)).toMatchObject({ proved: 0, left: 3 });
         expect(store(db).cconetime).toBeUndefined();
     });
+    it('keeps a decision the rules made that is not a card line: an outward transfer is never turned into a Card Purchase', async () => {
+        const db = world(['OUTWARD CEFT TRANSFER 123456', 'KEELLS SUPER COLOMBO', 'UBER RIDE']);
+        const out = await run(db);
+        expect(out.proved).toBe(2);
+        expect(reviews(db).map(r => r.status)).toEqual(['pending', 'resolved', 'resolved']);
+        expect(store(db).cconetime.map(r => r.desc)).not.toContain('OUTWARD CEFT TRANSFER 123456');
+    });
+    it('a question of the statement\'s own keeps its rows even when it is not on the first page of pending reviews', async () => {
+        const db = world(['KEELLS SUPER COLOMBO', 'UBER RIDE', 'POS PURCHASE'], {}, undefined, [[`users/u/statementReview/${sourceOccurrenceId(sourcePath, -1)}`, { uid: 'u', sourcePath, index: -1, status: 'pending', reason: 'layout' }]]);
+        // the page the sweep reads holds only the row reviews (as it would past 500 of them): the question is found by asking for the statement's own reviews
+        const real = db.db.collection.bind(db.db);
+        db.db.collection = (path) => { const c = real(path); if (!/statementReview$/.test(path)) return c; return { ...c, where: (f, op, v) => { const q = c.where(f, op, v); return f === 'status' ? { ...q, get: async () => { const r = await q.get(); return { ...r, docs: r.docs.filter(d => d.data().index >= 0) }; } } : q; } }; };
+        expect(await run(db)).toMatchObject({ proved: 0 });
+        expect(reviews(db).every(r => r.status === 'pending')).toBe(true);
+    });
 });

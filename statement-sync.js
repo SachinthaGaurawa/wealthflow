@@ -1409,14 +1409,15 @@ export async function proveCardReviews({ db, uid, limit = 10 }) {
     const page = await userRef.collection('statementReview').where('status', '==', 'pending').limit(500).get();
     const waiting = page.docs.filter(doc => { const r = doc.data(); return r.uid === uid && r.reason === 'unproven-direction' && Number.isSafeInteger(r.index) && r.index >= 0 && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && /^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(r.sourcePath || ''); });
     if (!waiting.length) return { proved: 0, left: 0 };
-    const whole = new Set(page.docs.map(doc => doc.data()).filter(r => r.uid === uid && r.index < 0).map(r => r.sourcePath));
     const registry = (((await userRef.get()).data() || {}).settings || {}).cardRegistry || {};
-    const sources = new Map();
+    const sources = new Map(), asked = new Map();
     let proved = 0, left = 0;
     for (const doc of waiting) {
         if (proved >= limit) { left += 1; continue; }
         const review = doc.data();
-        if (whole.has(review.sourcePath)) { left += 1; continue; }
+        /* the statement's OWN pending reviews are asked for, not taken from the page above (which holds at most 500 of every statement's): a layout or reconciliation question still open on it keeps every row of it for the owner */
+        if (!asked.has(review.sourcePath)) asked.set(review.sourcePath, (await userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath).get()).docs.some(entry => { const r = entry.data(); return r.status === 'pending' && Number(r.index) < 0; }));
+        if (asked.get(review.sourcePath)) { left += 1; continue; }
         if (!sources.has(review.sourcePath)) sources.set(review.sourcePath, (await db.doc(review.sourcePath).get()).data() || null);
         const source = sources.get(review.sourcePath);
         if (!source || source.uid !== uid) { left += 1; continue; }
@@ -1424,7 +1425,8 @@ export async function proveCardReviews({ db, uid, limit = 10 }) {
         const ctx = { statementType: source.statementType || '', card_last4: source.last4 || review.row.card_last4 || '', bank: source.bank || review.bank || '', cardRegistry: registry, subscriptions: [], loans: [] };
         if (!isCreditCardRow(row, ctx) || cardCreditWords(row) || semanticDirection(row) === 'credit') { left += 1; continue; }
         const decision = deterministicDecision(row, ctx);
-        const filing = decision && decision.verified === true && ['cconetime', 'ccinstall'].includes(decision.module) ? decision : fallbackDecision(row, ctx);
+        /* a decision the rules DID make and that is not a card line (an own-account transfer they leave out of the books, an income, a subscription) is theirs to keep: it is never turned into a Card Purchase here, and goes on waiting for the owner */
+        const filing = decision && decision.verified === true ? decision : fallbackDecision(row, ctx);
         if (!filing || filing.verified !== true || !['cconetime', 'ccinstall'].includes(filing.module)) { left += 1; continue; }
         try { await resolveReview({ db, uid, id: doc.id, decision: { ...filing, autoDecided: filing.autoDecided || 'layout-sweep' }, row: {}, directionSource: 'layout' }); proved += 1; }
         catch (_) { left += 1; /* the books refused it (a matching entry is there, a lock): it stays for the owner, untouched */ }
