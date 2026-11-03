@@ -96,3 +96,60 @@ describe('the test gate applies to every trigger, manual dispatch included', () 
         expect(gates).not.toMatch(/if \[ "\$GITHUB_EVENT_NAME"/);
     });
 });
+
+// ── what a release SAYS must come from what it contains ─────────────────────────
+// The first release made without a human tap (v7.69.36, 2026-11-03) was announced as
+// {"headline":"Urgent security update", ... "Addressed: ..."} — the brain's feedback tally,
+// serialised to JSON, over a range of 77 ordinary changes and no security fix at all.
+const { brainNoteForRelease } = require('../autonomy/release-approval.cjs');
+const RELEASE_SRC = fs.readFileSync(path.join(ROOT, 'release.cjs'), 'utf8');
+
+describe('brainNoteForRelease — the brain\'s tally is not a record of what shipped', () => {
+    const tally = { headline: 'Urgent security update', sections: [{ title: 'Fixed', items: ['Addressed: something nobody fixed'] }] };
+    it('under --auto-approve nothing from the brain is ever shipped as notes', () => {
+        expect(brainNoteForRelease({ brainNotes: tally, autoApprove: true })).toBe('');
+        expect(brainNoteForRelease({ brainNotes: 'Anything', autoApprove: true })).toBe('');
+        expect(brainNoteForRelease({ brainNotes: { summary: 'Anything' }, autoApprove: true })).toBe('');
+    });
+    it('a proposal a human approved may still use its plain text or summary', () => {
+        expect(brainNoteForRelease({ brainNotes: '  Fixed the bill reminder.  ' })).toBe('Fixed the bill reminder.');
+        expect(brainNoteForRelease({ brainNotes: { summary: 'Fixed the bill reminder.' } })).toBe('Fixed the bill reminder.');
+    });
+    it('an object is never serialised into the notes', () => {
+        expect(brainNoteForRelease({ brainNotes: tally })).toBe('');
+        expect(brainNoteForRelease({ brainNotes: null })).toBe('');
+        expect(brainNoteForRelease({})).toBe('');
+    });
+    it('release.cjs goes through it and no longer stringifies the brain\'s notes', () => {
+        expect(RELEASE_SRC).toMatch(/brainNoteForRelease\(\{ brainNotes: bd\.notes, autoApprove: AUTO_APPROVE \}\)/);
+        expect(RELEASE_SRC).not.toMatch(/JSON\.stringify\(bd\.notes\)/);
+    });
+    it('an approved-by-the-gates release is not labelled with the brain\'s feedback reason', () => {
+        expect(RELEASE_SRC).toMatch(/\(AUTO_APPROVE && !URGENT\) \? 'automatic release'/);
+    });
+    it('the announcement carries the same itemised notes as version.json, and repairs unreadable ones', () => {
+        expect(RELEASE_SRC).toMatch(/man\.notes\[next\] = \(RELEASE_NOTES && RELEASE_NOTES\.structured\) \? RELEASE_NOTES\.structured : NOTE/);
+        expect(RELEASE_SRC).toMatch(/repairManifestNotes\(man\.notes, vj\.notes\)/);
+    });
+});
+
+describe('the notes already published for v7.69.36 are the real ones', () => {
+    const vj = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
+    const n = vj.notes['7.69.36'];
+    it('version.json holds a structured list of real changes, not serialised JSON', () => {
+        expect(typeof n).toBe('object');
+        expect(Array.isArray(n.sections) && n.sections.length).toBeGreaterThan(0);
+        const text = JSON.stringify(n);
+        expect(text).not.toMatch(/Urgent security update/);
+        expect(text).not.toMatch(/Addressed:/);
+        expect(text).toMatch(/\(#4\d\d\)/);               // the changes carry their pull request numbers
+    });
+    it('the changelog entry is readable text under that version', () => {
+        const log = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
+        const at = log.indexOf('## v7.69.36');
+        const body = log.slice(at, log.indexOf('## v7.69.35'));
+        expect(body).not.toMatch(/\{"date"/);
+        expect(body).not.toMatch(/Urgent security update/);
+        expect(body).toMatch(/What changed for you/);
+    });
+});

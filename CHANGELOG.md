@@ -2,11 +2,101 @@
 
 ## v7.69.37 — 2026-11-03
 
-{"date":"2026-11-03","type":"security","headline":"Urgent security update","sections":[{"title":"Security","security":true,"items":["Urgent security hardening based on user reports."]},{"title":"Fixed","items":["Addressed: When released a new update, app versions not yet updated. Have an issue of that. In WealthFlow system Some places have another app versions, some places different. Whats that???? Please fix that. What are you doing in autonomous system in w","Addressed: System crashes have.fix that"]},{"title":"Improved","items":["UI: Please check is that  has “Add your income” button is working? Currently bot working","UI: Currently system UI as a kid. Not professional and smart. Make that most professional and smart and interesting vibe."]}]}
+**What changed for you**
+
+- Open reviews: one statement is one entry; file the waiting HNB card rows (#495)
 
 ## v7.69.36 — 2026-11-03
 
-{"date":"2026-11-03","type":"security","headline":"Urgent security update","sections":[{"title":"Security","security":true,"items":["Urgent security hardening based on user reports."]},{"title":"Fixed","items":["Addressed: When released a new update, app versions not yet updated. Have an issue of that. In WealthFlow system Some places have another app versions, some places different. Whats that???? Please fix that. What are you doing in autonomous system in w","Addressed: System crashes have.fix that"]},{"title":"Improved","items":["UI: Please check is that  has “Add your income” button is working? Currently bot working","UI: Currently system UI as a kid. Not professional and smart. Make that most professional and smart and interesting vibe."]}]}
+**What changed for you**
+
+- HNB card statements: prove purchases by the card layout, keep the rules' category (#494)
+- Save, read and check the account over plain HTTPS, sending only what changed (#491)
+- Email statements: look the account up in Cards and accounts; locked statements get a visible question (#490)
+- Keep registered-card bank lines out of CC One-Time; add per-card tabs (#489)
+- Switch each kind of text on or off in Settings, and lay every text out as lines (#487)
+- Customer portal: one verification code goes to both of a person's numbers (#486)
+- Keep a change the server never acknowledged, hand it over again; a slow answer is no longer "could not reach the server" (#485)
+- Debtors history, second numbers, texts that survive a closing app, and Sync now that syncs (#484)
+- Portal chart: pick either of two same-day movements with a pointer (#483)
+- Interactive "Balance over time" chart on a real date axis (#481)
+- Saving to the account: name the stuck part, Repair connection, keep connection choices across sign-out (#482)
+- Locked own number, steady connection mode for Private Relay, Settled debtors section (#480)
+- One contact-selection service, plus an unreleased native shell source (#479)
+- Contacts button: say plainly when a browser cannot open the device contacts, lead with paste or drag, never a file dialog (#478)
+- Alerts to my own number: a number is added only after the code texted to it is entered (#477)
+- Same account, every device: live updates that do not die, no leaking between accounts, uploads that cannot hang (#476)
+- Changes that never reach the account are seen and retried; Settle in full explains itself; SMS pipeline fixes (#475)
+- Wording audit 4: reports, share dialogs, manifest, public pages and server errors in one calm voice (#474)
+- Wording audit 3: statements, AI advisor, scanner and tools in one calm voice (#473)
+- Wording audit 2: money pages say what happened and what is removed (#472)
+- Wording audit 1: one calm voice for sign-in, security, Settings, backup and alerts (#470)
+- Customer portal: code text names the page's real host, in the format's own layout, and the phone is asked from the start (#471)
+- Customer portal: a pressed section tab lands below the bar and stays chosen (#469)
+- Customer portal wording: say only what the page keeps, name WealthFlow, plainer "cannot send a code" (#468)
+- Customer portal: security hardening, and the earlier loading screen back (#467)
+- Customer portal: code screen names the phone's last three digits, white loading screen, bounded npm audit (#466)
+- Customer portal: code texts name their site, phones fill the code, readable contrast, keyboard-scrollable tables (#465)
+- Customer portal: wrong NIC refused openly, professional wording, new loading screen (#464)
+- Customer portal: calmer sign-in, readable dark theme, Light and Dark only (#463)
+- Dashboard "Awaiting your confirmation": dates read as a day, 1 DAY LATE (#462)
+- Read cheque numbers from wrapped lines, after the balance and number columns (#461)
+- Installments tab shows finished plans as Done and counts paid months; no raw @icon@ text; table dates stay on one line (#460)
+- Cheques the Tracker missed reach the Cheques tab (also those filed earlier); card installments read in more wordings (#459)
+- The NEW tag puts itself on new screens and options and comes off after 7 days (#458)
+- Calmer scroll reveals on the public pages, reload starts at the top (#457)
+- Bigger tap area for small controls on touch screens (#456)
+- Calmer warnings, one press feel, more-contrast and forced-colors support (#455)
+- Smooth back-to-top, darker sign-in brand panel, loading screen matches sign-in (#454)
+- Delete all restore points also moves Google Drive backup files to the Drive trash (#452)
+- Backup buttons: real step-by-step progress, Delete all restore points that stays deleted, a restore list that cannot hang (#451)
+- Auto-Backup Schedule: a backup is a copy that exists; closed-app nights covered by a server run; restore and wipe keep a way back (#450)
+- Public pages and sign-in: smooth back-to-top button, motion layer, landing palette on /app (#449)
+- Signing out can no longer end in a downloaded file called "app" (#448)
+- Open reviews shows its list instead of a dark screen, and no dialog can be left as an empty dark layer (#447)
+- Connect Gmail with Google: an in-app consent flow beside the pasted token (#446)
+- Privacy policy: describe the opt-in Drive file browser accurately (#445)
+- Public home page, privacy policy and terms at the official domain, with the app behind /app (#444)
+- Main passes the size budget again, push runs on main are not cancelled by the next merge, and an undone rename stays undone on every device (#442)
+- A payment to the owner's own card and a transfer from the owner's own name are read the same by email and by hand (#440)
+- Older statement expenses use your category names, and the old word is kept so it can be undone (#439)
+- Owner SMS alerts: stop texting card purchases the bank already texted about (#438)
+- Read the Text.lk balance whatever shape it comes in, and show credits left in the panel (#437)
+- Check a pasted refresh token with Google before saving it, and say why it was refused (#436)
+- Google sign-in: show why it failed on the sign-in screen, and add /api/auth-health (#435)
+- Gmail refused sign-in is seen and shown; statement sync and SMS sweep keep to their time and resume (#434)
+- Receipt scan: an engine whose run rejects counts as failed instead of hanging the scan (#433)
+- Receipt scan: stop waiting for a stalled reader once two have answered (#432)
+- Cheque Tracker: read cheque rows from every statement door and settle each exactly once (#423)
+- Receipt scanner asks models its providers still serve; vision canary measures who can read a receipt (#426)
+- The AI services row keeps one height and the last reading survives a rebuild
+- Bypass stale PWA cache during Firebase redirects
+- Fix Firebase OAuth on the custom domain (#427)
+- Delete google4e0cce8aaef7389a.html
+- Add files via upload
+- Delete google4e0cce8aaef7389a.html
+- Add files via upload
+- Stop the page jumping when a switch is flipped, and prove every switch in a browser
+- CRIB analysis and advisor re-check ask for words, not a decision; board log names the door (#425)
+- AI consumers: cards that ask what they mean, plain failures, honest AI status, working AI switches (#422)
+- Stop toggled values reverting, make every switch really act
+- UI audit 4: Quick Capture page, 404 notice and PWA colours on the design tokens (#424)
+- UI audit 3: Settings drop-downs, Last Backup card, AI Advisor header, orphan stat cards (#421)
+- SMS due-date alerts to the owner's own number (works when the app is closed) (#420)
+- Debtors contact-number search and One-Time bill status and reminders (#419)
+- UI audit 2: toasts clear of dialogs, phone insight cap, palette focus fix (#417)
+- Show whether the automatic daily check really runs (#418)
+- Faster code request and sign-in (#416)
+
+**Under the hood**
+
+- Make autonomous releases real: gate-earned approval, live confirmation, stall detector, patch-mode fix agent, security updates (#493)
+- Fix Pipeline liveness: pin analysis-tools test to its fixed clock (#488)
+- Backup restore tests no longer fail on a loaded machine (#453)
+- Seed the probe cheque with the field the app really stores (no)
+- Pin the clock in the statement coverage sync test
+- Delete policy/google4e0cce8aaef7389a.html
+- Add files via upload
 
 ## v7.69.35 — 2026-10-09
 

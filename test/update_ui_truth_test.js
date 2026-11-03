@@ -115,8 +115,10 @@ describe('the hardcoded release history is gone', () => {
         // prohibited by the structural assertions immediately above.
         // Raised from 116_500 (measured 116,770): the welcome note now waits for the app to
         // be on screen instead of appearing over the sign-in form. One compact poll.
+        // Raised from 117_000 (measured 117,6xx): the welcome note now says how many changes a
+        // release had, groups them under one heading each, and opens the full list ("See all N").
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(117_000);
+        expect(bytes).toBeLessThan(118_000);
     });
 });
 

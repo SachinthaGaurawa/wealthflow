@@ -234,6 +234,26 @@ by trusting this document:
 | **Merged work could wait for a cron.** | daily cron only | Triggers: every 6 h, on every push to `main`, and manually. |
 | **Nothing noticed a stall.** | — | `autonomy/release-flow.mjs` (run by Pipeline liveness) measures merged-but-unreleased work, tag-vs-`version.json` drift and deploy drift, and files an issue when substantive changes wait longer than 8 h. |
 
+A second finding, from the first release this chain really shipped (v7.69.36, 2026-11-03):
+the **code was real** (204 non-test files changed since v7.69.35; the live `/app` is
+byte-identical to a fresh build of the tag, the 35 of 81 modules that changed have new
+content-hashed names) but the **announcement was false** — `release.cjs` preferred the
+release brain's feedback-tally notes ("Urgent security update") over the commits, and
+stored an object as `JSON.stringify` text, so What's New showed raw JSON. That made a real
+release look like a number change.
+
+| Fault | Fix |
+|---|---|
+| Brain notes described the feedback queue, not what shipped. | The notes for a release are now **only** derived from its commits (`autonomy/release-notes.cjs`). The brain's text is kept as a log line, never as the announcement. |
+| An object was written to `version.json` as a JSON string. | Structured notes are written as structured notes; `autonomy/manifest-notes.cjs` repairs an earlier string-encoded entry in the Firestore manifest. |
+| The Settings card asked the owner to "approve" a release that is already earned by gates. | Settings > Software release now shows what is live, what the version changed, and how a release happens — no approve button. |
+| The post-update screen showed 8 items with no count. | It shows the real count ("See all 77 changes") and opens the full list. |
+
+**How to check any release is real, without trusting this document:**
+`git diff --stat vA..vB` for the code; build both tags (`node build.mjs --write`) and compare
+the module file names in `index.html` with those in the live `/app` — the names are content
+hashes, so an identical name is an identical file.
+
 What is still **not** automatic, honestly: edits to `sw.js`, `index.html`, auth, rules,
 `package.json`, `.github/**` and `autonomy/**` need the `human-approved` label by
 design (section 5), and rollback needs `VERCEL_TOKEN` + `HEALTH_URL` set.

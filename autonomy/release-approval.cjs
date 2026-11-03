@@ -54,4 +54,25 @@ function decideApproval({ brain = null, autoApprove = false, force = false } = {
     };
 }
 
-module.exports = { decideApproval };
+/**
+ * Which brain text, if any, may be shipped as the release's notes?
+ *
+ * The brain's `notes` are a tally of FEEDBACK ("Addressed: ...", "Urgent security update"),
+ * written when a proposal is drafted — before any fix exists. The first release that went out
+ * without a human tap (v7.69.36) published exactly that: a raw JSON string headed "Urgent
+ * security update" over feedback items marked "Addressed", though nothing security-related
+ * had shipped. What a release says must come from what it contains (the commits in its range,
+ * autonomy/release-notes.cjs), so under --auto-approve the brain's text is never used. Without
+ * it (a human approved that proposal) a plain string or `summary` is still honoured, and an
+ * object is never serialised into the notes.
+ *
+ * @returns {string} '' when nothing from the brain may be shipped
+ */
+function brainNoteForRelease({ brainNotes = null, autoApprove = false } = {}) {
+    if (autoApprove) return '';
+    if (typeof brainNotes === 'string') return brainNotes.trim();
+    if (brainNotes && typeof brainNotes.summary === 'string') return brainNotes.summary.trim();
+    return '';
+}
+
+module.exports = { decideApproval, brainNoteForRelease };

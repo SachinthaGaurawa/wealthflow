@@ -171,7 +171,9 @@ function gitPush(next, reason) {
         if (!d.go) { log(d.reason + ' — skipping. Approve via /api/approve-release, or let auto-release approve it once its gates pass (--auto-approve).'); process.exit(d.exit || 2); }
         if (d.autoApproved) log(d.reason + ' — no human tap needed.');
         if (d.urgentFromBrain) URGENT = true;
-        if (!NOTE && bd.notes) NOTE = typeof bd.notes === 'string' ? bd.notes : (bd.notes.summary || JSON.stringify(bd.notes));
+        // Shipped notes describe what the release CONTAINS. The brain's feedback tally may not stand in for that
+        // under --auto-approve, and an object is never serialised into the notes (see brainNoteForRelease).
+        if (!NOTE) NOTE = require('./autonomy/release-approval.cjs').brainNoteForRelease({ brainNotes: bd.notes, autoApprove: AUTO_APPROVE });
     }
 
     let next = decideNext(bd);
@@ -179,7 +181,9 @@ function gitPush(next, reason) {
         if (FORCE) { log('version', next, 'is not greater than', CURRENT, '(allowed by --force)'); }
         else { log('computed version', next, 'is not greater than current', CURRENT, '— bumping patch instead.'); next = bump(CURRENT, 'patch'); }
     }
-    const reason = (bd && bd.reason) || (URGENT ? 'security' : KIND);
+    // The brain's reason names the feedback tally that happened to arm it ("critical-feedback"); a release the gates approved is
+    // made because real changes were merged, so it says so.
+    const reason = (AUTO_APPROVE && !URGENT) ? 'automatic release' : ((bd && bd.reason) || (URGENT ? 'security' : KIND));
 
     // ── SAY WHAT ACTUALLY SHIPPED ────────────────────────────────────────────
     // This line used to read:
@@ -225,7 +229,14 @@ function gitPush(next, reason) {
             }, { merge: true });
             const manRef = db.collection('system').doc('manifest');
             const cur = await manRef.get(); const man = cur.exists ? cur.data() : { latest: CURRENT, mandatory: [], notes: {} };
-            man.latest = next; man.notes = man.notes || {}; man.notes[next] = NOTE;
+            man.latest = next; man.notes = man.notes || {};
+            // The same notes version.json carries: the app lets the manifest win per version, so a one-line summary here
+            // would hide the itemised list that version.json holds.
+            man.notes[next] = (RELEASE_NOTES && RELEASE_NOTES.structured) ? RELEASE_NOTES.structured : NOTE;
+            // A note that is raw serialised JSON is an accident, not an announcement: replace it with what version.json says.
+            const fixed = require('./autonomy/manifest-notes.cjs').repairManifestNotes(man.notes, vj.notes);
+            man.notes = fixed.notes;
+            if (fixed.repaired.length) log('  [INFO] repaired unreadable manifest notes for', fixed.repaired.join(', '));
             if (URGENT) man.mandatory = Array.from(new Set([...(man.mandatory || []), next]));
             await manRef.set(man, { merge: true });
             log('  [INFO] Firestore manifest updated + proposal consumed');
