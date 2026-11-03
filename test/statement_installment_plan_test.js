@@ -60,14 +60,17 @@ async function file(user) {
 }
 
 describe('end to end: a card statement with an installment line', () => {
-    it('no plan on the books: the charge is a one-month plan in the plan shape, and September counts it', async () => {
+    it('no plan on the books: the line says "08/12", so it is a twelve-month plan that began seven months earlier, and every month of it counts', async () => {
         const { user, item } = await file({});
         expect(item.status).toBe('filed');
         expect(user.ccinstall).toHaveLength(1);
-        expect(user.ccinstall[0]).toMatchObject({ product: expect.stringMatching(/ABANS TV/), duration: 1, date: '2026-09-01', startDate: '2026-09-12', monthly: 5000, completed: false });
+        expect(user.ccinstall[0]).toMatchObject({ product: expect.stringMatching(/ABANS TV/), duration: 12, months: 12, date: '2026-02-01', startDate: '2026-09-12', monthly: 5000, total: 60000, totalEstimated: true, rateUnknown: true,
+            installmentNo: 8, installmentOf: 12, paid: 8, remaining: 4, completed: false, payments: [expect.objectContaining({ month: '2026-09', paid: true, amount: 5000, source: 'statement' })] });
+        expect(user.ccinstall[0].durationUnknown).toBeUndefined();
         const september = monthly(user);
         expect(september.ccTotal).toBe(5000);                                // before: the record had no date and was never counted
         expect(september.ccotTotal).toBe(2000);                              // the grocery charge, as always
+        for (const [ym, counted] of [['2026-02', true], ['2026-08', true], ['2026-12', true], ['2027-01', true], ['2027-02', false], ['2026-01', false]]) expect(planCountedIn(user.ccinstall[0], ym), ym).toBe(counted);      // the twelve months of the plan (the months to come were missing when each month was a plan of its own)
     });
     it('the owner already has the plan: the plan counts the month once, the statement row is not a second record', async () => {
         const { user, data } = await file({ ccinstall: [plan()] });
@@ -110,7 +113,7 @@ describe('records filed in the old shape are repaired once', () => {
     it('with no plan to match it gets the plan shape and counts', () => {
         const user = { ccinstall: [old()] };
         expect(repairInstallmentRecords(user, 1)).toEqual([{ id: 'R1', kind: 'shape' }]);
-        expect(user.ccinstall[0]).toMatchObject({ date: '2026-09-01', duration: 1, product: expect.any(String), completed: false });
+        expect(user.ccinstall[0]).toMatchObject({ date: '2026-02-01', duration: 12, installmentNo: 8, installmentOf: 12, product: expect.any(String), completed: false });
         expect(monthly(user).ccTotal).toBe(5000);
         expect(repairInstallmentRecords(user, 2)).toEqual([]);
     });
@@ -127,7 +130,7 @@ describe('records filed in the old shape are repaired once', () => {
         const lines = [];
         expect((await repairCardInstallments({ db, uid: owner.uid, log: l => lines.push(l) })).repaired).toBe(1);
         expect(JSON.parse(lines[0])).toMatchObject({ evt: 'card-installment-repair', repaired: 1, kinds: { shape: 1 } });
-        expect(data.get('users/u').ccinstall[0].date).toBe('2026-09-01');
+        expect(data.get('users/u').ccinstall[0].date).toBe('2026-02-01');
         expect((await repairCardInstallments({ db, uid: owner.uid, log: () => {} })).repaired).toBe(0);
     });
 });

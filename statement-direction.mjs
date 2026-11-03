@@ -85,4 +85,41 @@ export function proveDirections(parsed, ctx = {}) {
     return { rows: out, byStatement, byWords, byLayout };
 }
 
-export default { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName };
+/**
+ * THE STATEMENT'S OWN ARITHMETIC DECIDES A FEW LINES THE WORDS CANNOT. The reader assumed every unmarked line is a debit and added up its rows: credits (what it could read as money in) and debits (the rest). The statement prints
+ * its opening and closing balance. If some of the lines kept as debits are really credits, the balances miss by exactly twice their sum (an account: closing = opening + credits - debits; a card, which prints what is
+ * OWED: closing = opening - credits + debits). So the sum of the lines that are really credits is half the miss, to the cent. Given the few lines that LOOK like money coming back (the candidates, by their words), this
+ * finds the ones whose sum is that half: when exactly one choice of them does it, on the layout asked for, every candidate is proven, the chosen ones as credits and the rest as debits. No choice, or more than one:
+ * nothing is proven and the owner is asked as before. At most 16 candidates (the choices are counted, not guessed); sums are in cents. `models` is the layout(s) the statement can be in ('card' for a statement
+ * known to be a card's: asking both lets the sign of the miss pick the layout, which a card statement must never have done for it). A `none` says only WHY, in a fixed word (never an amount): the balances miss the wrong
+ * way (sign), by an odd cent (odd), by more than all the candidates together (range), or by an amount no choice of them makes (subset).
+ * @param {{opening:number, closing:number, credits:number, debits:number, candidates:{id:string, amount:number}[], models?:('bank'|'card')[]}} input
+ * @returns {{fit:'unique'|'none'|'ambiguous'|'unusable', credit?:string[], debit?:string[], model?:'bank'|'card', reason?:'sign'|'odd'|'range'|'subset'}}
+ */
+export function proveByTotals({ opening, closing, credits, debits, candidates, models = ['bank', 'card'] }) {
+    const money = (v) => (v === null || v === undefined || v === '' || typeof v === 'boolean' ? NaN : Math.round(Number(v) * 100));
+    const o = money(opening), c = money(closing), cr = money(credits), db = money(debits);
+    const list = Array.isArray(candidates) ? candidates.filter((x) => x && Number.isFinite(money(x.amount)) && money(x.amount) > 0) : [];
+    if (![o, c, cr, db].every(Number.isFinite) || !list.length || list.length > 16 || list.length !== candidates.length) return { fit: 'unusable' };
+    const amounts = list.map((x) => money(x.amount)), count = 1 << amounts.length, sums = new Float64Array(count), total = amounts.reduce((a, b) => a + b, 0);
+    for (let mask = 1; mask < count; mask++) { const low = mask & -mask; sums[mask] = sums[mask ^ low] + amounts[31 - Math.clz32(low)]; }
+    const found = new Map();           // mask -> model
+    const rank = { sign: 0, odd: 1, range: 2, subset: 3 };
+    let reason = 'sign';
+    const worse = (next) => { if (rank[next] > rank[reason]) reason = next; };
+    for (const [model, miss] of [['bank', c - (o + cr - db)], ['card', (o - cr + db) - c]]) {
+        if (!models.includes(model)) continue;
+        if (miss < 0) continue;
+        if (miss % 2) { worse('odd'); continue; }
+        const half = miss / 2;
+        if (half > total) { worse('range'); continue; }
+        worse('subset');
+        for (let mask = 0; mask < count; mask++) if (sums[mask] === half && !found.has(mask)) found.set(mask, model);
+    }
+    if (!found.size) return { fit: 'none', reason };
+    if (found.size > 1) return { fit: 'ambiguous' };
+    const [[mask, model]] = [...found];
+    return { fit: 'unique', model, credit: list.filter((_, i) => mask & (1 << i)).map((x) => x.id), debit: list.filter((_, i) => !(mask & (1 << i))).map((x) => x.id) };
+}
+
+export default { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals };

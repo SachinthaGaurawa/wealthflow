@@ -13,7 +13,7 @@ import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped,
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
-import { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName } from './statement-direction.mjs';
+import { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT, intentVerdict } from './wealthflow-statement-identity.js';
@@ -47,7 +47,7 @@ import { readCheque, unsettleCheque } from './wealthflow-cheques.js';
 import { planChequeBackfill } from './statement-cheque-backfill.mjs';
 import { isolateMerchant } from './statement-merchant-name.mjs';
 import { totalsAgree } from './statement-totals.mjs';
-import { repairInstallmentRecords } from './statement-links.mjs';
+import { repairInstallmentRecords, mergeInstalmentSeries } from './statement-links.mjs';
 import { identifyAccount } from './statement-card-identity.mjs';
 
 export const config = { maxDuration: 60 };
@@ -1035,15 +1035,16 @@ export async function healCardSettlement({ db, uid, now = Date.now(), log = cons
     return result;
 }
 
-/* CARD INSTALLMENT CHARGES FILED IN THE WORKER'S OLD SHAPE (no product, date or duration) were invisible to the monthly totals. They are given the plan shape so they
+/* CARD INSTALLMENT CHARGES FILED IN THE WORKER'S OLD SHAPE (no product, date or duration) were invisible to the monthly totals, and the months of one plan filed one by one are put together as one plan. They are given the plan shape so they
  * count — unless a plan the owner already has is that very charge, in which case the plan's month says it was paid and the record stays out. One log line. */
 export async function repairCardInstallments({ db, uid, now = Date.now(), log = console.info }) {
     const userRef = db.collection('users').doc(uid);
     const result = await db.runTransaction(async tx => {
         const snap = await tx.get(userRef), data = snap.data() || {};
-        if (!Array.isArray(data.ccinstall) || !data.ccinstall.some(r => r && !r.date && r.startDate && r.source === 'statement')) return { repaired: 0 };
+        if (!Array.isArray(data.ccinstall) || !data.ccinstall.length) return { repaired: 0 };
         const user = structuredClone({ ccinstall: data.ccinstall });
-        const done = repairInstallmentRecords(user, now);
+        /* then ONE PLAN, ONE ROW (statement-links.mjs): the months of a plan that were each filed as a plan of their own become one plan of the length the statements print */
+        const done = [...repairInstallmentRecords(user, now), ...mergeInstalmentSeries(user, now)];
         if (!done.length) return { repaired: 0 };
         tx.set(userRef, { ccinstall: user.ccinstall, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
         const kinds = {}; for (const entry of done) kinds[entry.kind] = (kinds[entry.kind] || 0) + 1;
@@ -1420,22 +1421,24 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
     }
     if (!waiting.length) return { proved: 0, left: why.unproven, more: false, why };
     const registry = (((await userRef.get()).data() || {}).settings || {}).cardRegistry || {};
-    const sources = new Map(), asked = new Map(), kept = new Map();
+    const contextOf = (review, source) => ({ statementType: source.statementType || '', card_last4: source.last4 || review.row.card_last4 || '', bank: source.bank || review.bank || '', cardRegistry: registry, subscriptions: [], loans: [] });
+    const sources = new Map(), asked = new Map(), held = new Map(), cut = new Set(), ownDocs = new Map();
+    const moneyBackLine = (review) => { const line = { ...review.row, directionSource: 'layout', needsReview: false, valid: true }; return Boolean(cardCreditWords(line)) || semanticDirection(line) === 'credit'; };
     let proved = 0, left = 0, more = false;
     for (const doc of waiting) {
         /* THE SCAN IS BOUNDED, NOT ONLY THE FILING: `limit` counts rows filed, but every statement looked at costs two reads (its own pending reviews, its document), and rows turned away cost reads too. The scan stops at `until` (the run's own deadline,
          * so it can never eat the time the statements themselves need) and looks at no more than `maxSources` statements a run; what it did not reach waits for the next run. */
-        if (proved >= limit || Date.now() > until) { left += 1; why.unreached += 1; more = true; continue; }
         const review = doc.data();
-        if (!asked.has(review.sourcePath) && asked.size >= maxSources) { left += 1; why.unreached += 1; more = true; continue; }
+        if (proved >= limit || Date.now() > until) { left += 1; why.unreached += 1; more = true; cut.add(review.sourcePath); continue; }
+        if (!asked.has(review.sourcePath) && asked.size >= maxSources) { left += 1; why.unreached += 1; more = true; cut.add(review.sourcePath); continue; }
         /* the statement's OWN pending reviews are asked for, not taken from the page above (which holds at most 500 of every statement's): a layout or reconciliation question still open on it keeps every row of it for the owner */
-        if (!asked.has(review.sourcePath)) asked.set(review.sourcePath, (await userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath).get()).docs.some(entry => { const r = entry.data(); return r.status === 'pending' && Number(r.index) < 0; }));
+        if (!asked.has(review.sourcePath)) { const own = (await userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath).get()).docs; ownDocs.set(review.sourcePath, own); asked.set(review.sourcePath, own.some(entry => { const r = entry.data(); return r.status === 'pending' && Number(r.index) < 0; })); }
         if (asked.get(review.sourcePath)) { left += 1; why.statementQuestion += 1; continue; }
         if (!sources.has(review.sourcePath)) sources.set(review.sourcePath, (await db.doc(review.sourcePath).get()).data() || null);
         const source = sources.get(review.sourcePath);
         if (!source || source.uid !== uid) { left += 1; why.noSource += 1; continue; }
         const row = { ...review.row, directionSource: 'layout', needsReview: false, valid: true };
-        const ctx = { statementType: source.statementType || '', card_last4: source.last4 || review.row.card_last4 || '', bank: source.bank || review.bank || '', cardRegistry: registry, subscriptions: [], loans: [] };
+        const ctx = contextOf(review, source);
         if (!isCreditCardRow(row, ctx)) {
             left += 1; why.notCard += 1;
             /* WHAT THE STATEMENT KNEW OF ITSELF when it was turned away as "not a card", as yes/no letters only: type given (t), digits given (l), digits in Cards and accounts (r), bank agrees with that entry (b) */
@@ -1444,15 +1447,13 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
             notCardView[key] = (notCardView[key] || 0) + 1; why.notCardView = notCardView;
             continue;
         }
-        if (cardCreditWords(row) || semanticDirection(row) === 'credit') {
+        if (moneyBackLine(review)) {
             left += 1; why.moneyBack += 1;
-            /* WHY THEY STAY, IN NAMES FROM A FIXED LIST AND YES/NO FLAGS (no text, no amount): which word kept each line for the owner, whether the statement printed its opening, closing, credits and debits totals, and whether the lines kept add up to the printed credits to the cent. */
+            /* WHY THEY STAY, IN NAMES FROM A FIXED LIST (no text, no amount): which word kept each line for the owner. The lines are also gathered per statement, for the arithmetic proof below the loop. */
             const name = cardCreditWordName(row) || 'other';
             why.moneyWords = why.moneyWords || {}; why.moneyWords[name] = (why.moneyWords[name] || 0) + 1;
-            const printed = source.proof && typeof source.proof === 'object' ? source.proof : {};
-            why.printed = why.printed || { opening: false, closing: false, credits: false, debits: false };
-            for (const field of ['opening', 'closing', 'credits', 'debits']) if (Number.isFinite(Number(printed[field])) && printed[field] !== null && printed[field] !== '') why.printed[field] = true;
-            kept.set(review.sourcePath, { cents: (kept.get(review.sourcePath)?.cents || 0) + Math.round(Number(row.amount || 0) * 100), credits: Number.isFinite(Number(printed.credits)) && printed.credits !== null && printed.credits !== '' ? Math.round(Number(printed.credits) * 100) : null });
+            if (!held.has(review.sourcePath)) held.set(review.sourcePath, []);
+            held.get(review.sourcePath).push({ doc, review });
             continue;
         }
         const decision = deterministicDecision(row, ctx);
@@ -1462,7 +1463,54 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
         try { await resolveReview({ db, uid, id: doc.id, decision: { ...filing, autoDecided: filing.autoDecided || 'layout-sweep' }, row: {}, directionSource: 'layout' }); proved += 1; }
         catch (_) { left += 1; why.refused += 1; /* the books refused it (a matching entry is there, a lock): it stays for the owner, untouched */ }
     }
-    if (!more) { const fits = [...kept.values()].filter(entry => entry.credits !== null); if (fits.length) why.creditsFit = fits.every(entry => entry.cents === entry.credits); }
+    /* THE LINES THAT SAY MONEY CAME BACK ARE SETTLED BY THE STATEMENT'S OWN ARITHMETIC, NOT BY THEIR WORDS (statement-direction.mjs proveByTotals): "payment" is on a payment to the card and on a purchase at a bill-pay merchant alike.
+     * The statement printed its opening and closing balance; the reader's credits and debits are the sums of its rows as it read them (every unmarked line a debit), so the balances miss by exactly twice the lines that are
+     * really credits. When ONE choice of the waiting lines of a CARD statement makes the sums add up to the cent, every one of them is proven by the statement: the chosen ones as card payments, the rest as card purchases.
+     * No choice, or several, or a statement with a row still unreached: nothing is touched and the owner is asked as before. Only a statement whose waiting lines were ALL looked at is tried (a partly read list cannot add up).
+     * The log says only HOW MANY statements fit, did not, or were ambiguous, and in a fixed word why one did not: never a line, a name or an amount. */
+    const totals = { tried: 0, unique: 0, none: 0, ambiguous: 0, unusable: 0, incomplete: 0, partial: 0, stamped: 0, filed: 0, duplicate: 0, rules: 0, refused: 0 };
+    for (const [sourcePath, items] of held) {
+        if (cut.has(sourcePath)) { totals.incomplete += 1; continue; }
+        if (Date.now() > until) { totals.incomplete += 1; more = true; continue; }
+        const source = sources.get(sourcePath), printed = source && source.proof && typeof source.proof === 'object' ? source.proof : {};
+        /* THE LIST MUST BE THE STATEMENT'S WHOLE LIST: the page of pending reviews read above holds at most 500 of all the statements' together, so the lines gathered from it are compared with the statement's OWN reviews (read without a limit)
+         * and the proof is refused for any difference. A statement already tried once is not tried again: after a line was filed, a re-run would add up a shorter list against the same printed totals. */
+        const whole = (ownDocs.get(sourcePath) || []).filter(entry => { const r = entry.data(); return r.status === 'pending' && r.reason === 'unproven-direction' && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && moneyBackLine(r); }).map(entry => entry.id).sort();
+        if (source && source.totalsProof) { totals.stamped += 1; continue; }
+        if (whole.length !== items.length || whole.some((id, at) => id !== items.map(entry => entry.doc.id).sort()[at])) { totals.partial += 1; continue; }
+        const tails = new Set(items.map(entry => String(entry.review.row.card_last4 || '')));
+        totals.tried += 1;
+        const fit = tails.size > 1 ? { fit: 'unusable' } : proveByTotals({ opening: printed.opening, closing: printed.closing, credits: printed.credits, debits: printed.debits, models: ['card'],
+            candidates: items.map(entry => ({ id: entry.doc.id, amount: entry.review.row.amount })) });
+        totals[fit.fit] += 1;
+        if (fit.reason) { totals.noneBy = totals.noneBy || {}; totals.noneBy[fit.reason] = (totals.noneBy[fit.reason] || 0) + 1; }
+        if (fit.fit !== 'unique') continue;
+        /* the one attempt is written BEFORE anything is filed: a run that stops half way leaves the rest for the owner instead of being re-added against totals it no longer matches */
+        try { await db.doc(sourcePath).set({ totalsProof: { v: 1, at: Date.now(), lines: items.length } }, { merge: true }); } catch (_) { totals.refused += items.length; continue; }
+        const credit = new Set(fit.credit);
+        for (const { doc, review } of items) {
+            const direction = credit.has(doc.id) ? 'credit' : 'debit';
+            const row = { ...review.row, direction, directionSource: 'statement', needsReview: false, valid: true };
+            const ctx = contextOf(review, sources.get(sourcePath));
+            const decision = deterministicDecision(row, ctx);
+            const own = decision && decision.verified === true ? decision : null;
+            /* the arithmetic names the DIRECTION; the words' own reading of the place only stands where it agrees with it (a card payment for a credit, a card purchase for a debit): a row the rules took out of the books (an own transfer) stays for the owner */
+            const filing = direction === 'credit'
+                ? (own ? (own.module === 'ccPayments' ? own : null) : fallbackDecision(row, ctx))
+                : (own ? (['cconetime', 'ccinstall'].includes(own.module) ? own : own.module === 'ccPayments' ? fallbackDecision(row, ctx) : null) : fallbackDecision(row, ctx));
+            if (!filing || filing.verified !== true || (direction === 'credit' ? filing.module !== 'ccPayments' : !['cconetime', 'ccinstall'].includes(filing.module))) { totals.rules += 1; continue; }
+            try { await resolveReview({ db, uid, id: doc.id, decision: { ...filing, autoDecided: 'statement-totals' }, row: { direction }, directionSource: 'statement' }); proved += 1; left -= 1; totals.filed += 1; }
+            catch (error) {
+                /* an entry for this very line (same bank, date, amount, direction) is ALREADY in the books: the statement is proven right and the money is counted once, so the waiting line is closed as the copy it is, the way the owner would
+                 * (dismissed, with its row kept on the review). Any other refusal (a lock, a schema) leaves the line for the owner, untouched. */
+                if (String(error && error.message) === 'matching-existing-entry-dismiss-or-edit') {
+                    try { await resolveReview({ db, uid, id: doc.id, decision: { module: 'skip' } }); await doc.ref.set({ dismissedBy: 'statement-totals-duplicate' }, { merge: true }); proved += 1; left -= 1; totals.duplicate += 1; }
+                    catch (_) { totals.refused += 1; }
+                } else totals.refused += 1;
+            }
+        }
+    }
+    if (held.size) why.totals = totals;
     return { proved, left: left + why.shape, more, why };
 }
 
@@ -2766,9 +2814,9 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     if (Date.now() < tailUntil && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
         // each on its own: one that fails (a document in a shape it did not expect) must not stop the others from ever running
         const pass = await runSteps({ from: mail.loanHealNext, until: tailUntil, steps: [
-            { name: 'loan-installments', run: () => healLoanInstallments({ db, uid }) }, { name: 'hand-made-twins', run: () => healHandMadeTwins({ db, uid }) },
+            { name: 'card-installments', run: () => repairCardInstallments({ db, uid }) }, { name: 'loan-installments', run: () => healLoanInstallments({ db, uid }) }, { name: 'hand-made-twins', run: () => healHandMadeTwins({ db, uid }) },
             { name: 'statement-cheques', run: () => healStatementCheques({ db, uid }) }, { name: 'cheque-twins', run: () => healChequeTwins({ db, uid }) }, { name: 'statement-copies', run: () => healStatementCopies({ db, mailRef, uid }) }, { name: 'own-transfers', run: () => healOwnTransfers({ db, uid }) },
-            { name: 'card-settlement', run: () => healCardSettlement({ db, uid }) }, { name: 'card-installments', run: () => repairCardInstallments({ db, uid }) }] });
+            { name: 'card-settlement', run: () => healCardSettlement({ db, uid }) }] });
         tail.heal = { ran: pass.ran.length, failed: pass.failed, ms: pass.ms, ...(pass.done ? {} : { skipped: pass.skipped }) };
         try { await mailRef.set(pass.done ? { lastLoanHealMs: Date.now(), loanHealNext: 0 } : { loanHealNext: pass.next }, { merge: true }); } catch (_) { /* the next run tries again */ }
     }

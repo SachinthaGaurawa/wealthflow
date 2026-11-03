@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.42 — 2026-11-03
+
+**What changed for you**
+
+- CC Instalments: one plan, one row; card sweep settles money-back lines by the statement's totals (#505)
+
 ## v7.69.41 — 2026-11-03
 
 **What changed for you**

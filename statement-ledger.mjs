@@ -8,7 +8,7 @@ import { canonicalBank } from './wealthflow-institutions.js';
 import { ownMoney } from './wealthflow-own-money.js';
 import { bankKeyOf } from './statement-coverage.mjs';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
-import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment } from './statement-links.mjs';
+import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment, planFromLine } from './statement-links.mjs';
 import { settleCheque } from './wealthflow-cheques.js';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -133,7 +133,7 @@ function findCounterpart({ row, module, user, cards, cardRegistry, bank }) {
         if (cardSettlementDebit(row, { cardRegistry, cards })) return { kind: 'card-settlement' };
     }
     // a card charge for a plan the owner already has is that plan's month, whether or not the narration says installment
-    if (module === 'ccinstall' || module === 'cconetime') { const plan = matchInstallmentPlan(row, user.ccinstall, { installment: module === 'ccinstall', bank }); if (plan) return { kind: 'plan', plan }; }
+    if (module === 'ccinstall' || module === 'cconetime') { const info = installmentInfo(String(row.description || row.narration || '')); const plan = matchInstallmentPlan(row, user.ccinstall, { installment: module === 'ccinstall', bank, of: info.of }); if (plan) return { kind: 'plan', plan, info }; }
     if (module === 'expenses' || module === 'cconetime') { const sub = matchSubscriptionForDebit(row, user.subscriptions); if (sub) return { kind: 'subscription', sub }; }
     return null;
 }
@@ -168,15 +168,17 @@ function makeRecord(row, decision, context, id, now) {
     if (module === 'incomeRecv') return { ...base, name: desc, type: decision.category, month: row.date.slice(0, 7), received: true };
     if (module === 'ccPayments') return { ...base, desc };
     const deadline = new Date(row.date + 'T00:00:00Z'); deadline.setUTCDate(deadline.getUTCDate() + 50);
-    /* A card installment charge is a one-month plan, in the plan shape the totals and the Installments tab read (product, bank, duration, date): in the worker's own
-     * shape (description, startDate) it was invisible to both, and a real card charge was missing from the month. Its `date` is the month's first day: the totals
-     * count a plan from the month after a mid-month date, which would put this charge a month late. */
+    /* A card installment charge is a plan in the shape the totals and the Installments tab read (product, bank, duration, date). Its LENGTH is what the statement line says (installmentInfo: "3/12" is a twelve-month plan,
+     * "6 MONTHS" six; one instalment is one month), never a number nobody printed: a line that says nothing is a one-month plan marked `durationUnknown`. The plan begins in the month its first instalment was due, and the
+     * charge in hand is its first paid month. Its `date` is a month's first day: the totals count a plan from the month after a mid-month date, which would put this charge a month late. */
     if (module === 'ccinstall') {
         // "INSTALLMENT 03/12 ABANS" is the 3rd of 12 of the Abans plan: the plan is named after the merchant, and the note says which month this charge is
         const plan = installmentInfo(desc);
         const ofText = plan.no && plan.of ? ` (${plan.no} of ${plan.of})` : '';
-        return { ...base, desc, product: (plan.name || desc).slice(0, 60), bank: canonicalBank(context.bank || ''), buyer: 'Self', rate: 0, duration: 1, date: `${row.date.slice(0, 7)}-01`, completed: false, skipped: [], notes: `Card installment charge of ${row.date}${ofText}`,
-            total: row.amount, monthly: row.amount, months: 1, remaining: 1, paid: 0, startDate: row.date, category: decision.category, ...(plan.no && plan.of ? { installmentNo: plan.no, installmentOf: plan.of } : {}) };
+        const shape = planFromLine({ amount: row.amount, date: row.date, no: plan.no, length: plan.length });
+        return { ...base, desc, product: (plan.name || desc).slice(0, 60), bank: canonicalBank(context.bank || ''), buyer: 'Self', rate: 0, rateUnknown: true, ...shape, completed: false, skipped: [], notes: `Card installment charge of ${row.date}${ofText}`,
+            monthly: row.amount, startDate: row.date, category: decision.category, payments: [{ month: row.date.slice(0, 7), paid: true, amount: row.amount, paidAt: Date.parse(`${row.date}T00:00:00Z`) || now, source: 'statement', statementKey: context.sourcePath, statementRow: context.index }],
+            ...(plan.no && plan.of ? { installmentNo: plan.no, installmentOf: plan.of } : {}) };
     }
     return { ...base, desc, type: row.type || 'purchase', category: decision.category, serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
 }
@@ -355,7 +357,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 outcome.duplicates++; continue;
             }
             if (counterpart && counterpart.kind === 'plan') {
-                applyPlanPayment(counterpart.plan, row, sourceRef.path, index, now); changes.ccinstall = user.ccinstall;
+                applyPlanPayment(counterpart.plan, row, sourceRef.path, index, now, counterpart.info); changes.ccinstall = user.ccinstall;
                 writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', module: 'ccinstall', reason: 'counted-by-installment-plan', fingerprint, matchedId: String(counterpart.plan.id || ''), settledAt: now }]);
                 outcome.duplicates++; continue;
             }
@@ -426,7 +428,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
     });
 }
 
-/* `directionSource`: what proves the row's direction. The owner's own decision is a 'marker'; a sweep that proves a waiting card row by the card's layout (statement-sync.js proveCardReviews) says 'layout', so the filed record says so. */
+/* `directionSource`: what proves the row's direction. The owner's own decision is a 'marker'; a sweep that proves a waiting card row by the card's layout (statement-sync.js proveCardReviews) says 'layout', and one that proves it by the statement's own totals says 'statement', so the filed record says so. */
 export async function resolveReview({ db, uid, id, decision, row, now = Date.now(), directionSource = 'marker' }) {
     if (!uid || !/^[a-f\d]{64}$/.test(id || '') || !decision || !Number.isSafeInteger(now)) throw new Error('invalid-review-request');
     const userRef = db.collection('users').doc(uid), reviewRef = userRef.collection('statementReview').doc(id), ledgerRef = userRef.collection('statementLedger').doc(id);
@@ -443,9 +445,10 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
         const siblings = await tx.get(userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath));
         const dismissed = decision.module === 'skip';
         const changes = {};
+        let countedBy = '';
         if (!dismissed) {
             if (review.index < 0 || !ledgerSnap.exists || ledgerSnap.data().status !== 'review') throw new Error('whole-statement-review-requires-layout');
-            const corrected = { ...review.row, ...row, description: row?.description || review.row?.description || review.row?.narration, directionSource: ['marker', 'layout'].includes(directionSource) ? directionSource : 'marker', needsReview: false, valid: true };
+            const corrected = { ...review.row, ...row, description: row?.description || review.row?.description || review.row?.narration, directionSource: ['marker', 'layout', 'statement'].includes(directionSource) ? directionSource : 'marker', needsReview: false, valid: true };
             const verified = { ...decision, verified: true };
             const resolvedLast4 = source.last4 || review.row?.card_last4 || review.row?._ccLast4 || '';
             const context = { bank: source.bank || review.row?.bank || '', last4: resolvedLast4, card_last4: resolvedLast4, statementType: source.statementType || '', cardRegistry: (userSnap.data() || {}).settings?.cardRegistry || {}, sourcePath: review.sourcePath, index: review.index };
@@ -470,9 +473,18 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
                 }
                 changes.subscriptions = subs;
             } else {
-                const record = makeRecord(corrected, verified, context, id, now);
-                changes[module] = [...(user[module] || []), record];
-                if (module === 'expenses' && Array.isArray(user.loans)) { const loans = structuredClone(user.loans); if (linkInstallment(loans, changes.expenses, record, now)) changes.loans = loans; }
+                /* A CARD PLAN LINE RESOLVED FROM A REVIEW IS THE SAME PLAN'S NEXT MONTH, as it is when a statement is filed (findCounterpart): the plan counts the month, and no second plan is made */
+                let plan = null;
+                if (module === 'ccinstall') {
+                    const plans = structuredClone(Array.isArray(user.ccinstall) ? user.ccinstall : []), info = installmentInfo(String(corrected.description || corrected.narration || ''));
+                    plan = matchInstallmentPlan(corrected, plans, { installment: true, bank: canonicalBank(context.bank || ''), of: info.of });
+                    if (plan) { applyPlanPayment(plan, corrected, review.sourcePath, review.index, now, info); changes.ccinstall = plans; countedBy = String(plan.id || ''); }
+                }
+                if (!plan) {
+                    const record = makeRecord(corrected, verified, context, id, now);
+                    changes[module] = [...(user[module] || []), record];
+                    if (module === 'expenses' && Array.isArray(user.loans)) { const loans = structuredClone(user.loans); if (linkInstallment(loans, changes.expenses, record, now)) changes.loans = loans; }
+                }
             }
         }
         const unresolved = siblings.docs.some(doc => doc.id !== id && doc.data().status === 'pending');
@@ -485,7 +497,7 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
             _writeTs: now,
         }, { merge: true });
         tx.set(reviewRef, { status: dismissed ? 'dismissed' : 'resolved', reason: '', resolvedAt: now, resolvedBy: uid }, { merge: true });
-        if (ledgerSnap.exists) tx.set(ledgerRef, { status: dismissed ? 'dismissed' : 'filed', resolvedAt: now, resolvedBy: uid }, { merge: true });
+        if (ledgerSnap.exists) tx.set(ledgerRef, countedBy ? { status: 'duplicate', module: 'ccinstall', reason: 'counted-by-installment-plan', matchedId: countedBy, resolvedAt: now, resolvedBy: uid } : { status: dismissed ? 'dismissed' : 'filed', resolvedAt: now, resolvedBy: uid }, { merge: true });
         if (complete && !unresolved) tx.set(sourceRef, { status: 'filed', filed: true, hasReview: false, updatedAt: now }, { merge: true });
         else if (dismissed && review.index < 0 && !unresolved) tx.set(sourceRef, { status: 'dismissed', filed: false, hasReview: false, updatedAt: now }, { merge: true });
         return { ok: true, resolved: true, dismissed, filed: complete && !unresolved };
