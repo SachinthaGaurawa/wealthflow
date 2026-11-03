@@ -18,8 +18,9 @@
  *   4. WRONG BUILD production serves a commit that is not in the recent history
  *
  * `evaluateReleaseFlow` is pure so every branch is unit-tested; `gatherFacts`
- * does the I/O; the CLI exits 1 when anything is BROKEN and writes a markdown
- * report for the liveness workflow to file as an issue.
+ * does the I/O; the CLI exits 1 when anything is BROKEN (3 when production could
+ * not be read at all) and writes a markdown report for the liveness workflow to
+ * file as an issue.
  *
  *   node autonomy/release-flow.mjs [--json] [--base https://www.wealthflow.lk]
  * ===========================================================================*/
@@ -136,6 +137,8 @@ export function evaluateReleaseFlow(f) {
     const warn = checks.filter((c) => c.status === WARN);
     return {
         overall: broken.length ? BROKEN : warn.length ? 'degraded' : 'healthy',
+        // production was never read at all, so "is it live?" is unanswered — not "fine"
+        unverified: !f.deployed,
         checks,
         verdict: broken.length
             ? `BROKEN — a real change is not reaching the app: ${broken.map((b) => b.id).join(', ')}.`
@@ -233,6 +236,21 @@ export function markdown(r) {
         ...r.checks.filter((c) => c.status !== OK && c.detail).flatMap((c) => ['', `- **${c.id}** — ${c.detail}`]), ''].join('\n');
 }
 
+/**
+ * Exit codes the liveness workflow acts on:
+ *   0  healthy (or degraded for a reason that does not hide a stall)
+ *   1  BROKEN — a real change is not reaching the app
+ *   3  UNVERIFIED — production could not be read at all, so recovery cannot be claimed:
+ *      the run turns red, but an open release-flow issue stays open and no new
+ *      "merged work is not reaching the app" claim is made without evidence.
+ */
+export const EXIT_UNVERIFIED = 3;
+export function exitCodeFor(r) {
+    if (r.overall === BROKEN) return 1;
+    if (r.unverified) return EXIT_UNVERIFIED;
+    return 0;
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
     const args = process.argv.slice(2);
@@ -245,5 +263,5 @@ if (isMain) {
     else console.log(markdown(r));
     if (process.env.GITHUB_STEP_SUMMARY) { try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown(r)); } catch { /* summary is optional */ } }
     try { fs.writeFileSync('release-flow.json', JSON.stringify({ ...r, facts }, null, 2)); } catch { /* optional */ }
-    process.exit(r.overall === BROKEN ? 1 : 0);
+    process.exit(exitCodeFor(r));
 }

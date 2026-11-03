@@ -70,6 +70,21 @@ describe('security-updates.yml is a real, scheduled, honest fixer', () => {
         expect(CODE).toMatch(/--label security-update --label ai-stuck/);
     });
 
+    // Codex review on #493: a red run alone is easy to miss; vulnerabilities that no safe fix covers
+    // need an issue a person will see, and a repeat run must not pile up duplicates.
+    it('files (or updates) an issue for serious vulnerabilities no safe fix covers, before failing the run', () => {
+        const file = CODE.indexOf('File an issue for vulnerabilities no safe fix covers');
+        const fail = CODE.indexOf('Fail if serious vulnerabilities remain');
+        expect(file).toBeGreaterThan(-1);
+        expect(fail).toBeGreaterThan(file);
+        const step = CODE.slice(file, fail);
+        expect(step).toMatch(/if: always\(\) && steps\.after\.outputs\.serious != ''/);
+        expect(step).toMatch(/gh issue create --label security-update --label ai-stuck/);
+        expect(step).toMatch(/gh issue comment/);                // a repeat run comments instead of duplicating
+        expect(step).toMatch(/cat after\.txt/);                  // the issue names the packages
+        expect(step).not.toMatch(/pipeline-health/);
+    });
+
     it('does not open a second pull request while one is waiting', () => {
         expect(CODE).toMatch(/already waiting for review/);
     });

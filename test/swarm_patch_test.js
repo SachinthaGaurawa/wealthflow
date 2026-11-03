@@ -37,9 +37,9 @@ vi.mock('../autonomy/llm-router.mjs', async () => {
 
 const {
     keywordsFrom, rankFiles, excerptFor, parsePatchBlocks, applyPatchBlocks,
-    changeExcerpt, selectPromptRanked, patchPrompt,
+    changeExcerpt, changeView, selectPromptRanked, patchPrompt,
 } = await import('../autonomy/swarm-patch.mjs');
-const { runSwarm, MAX_AUTHORABLE_BYTES, reviewPrompt } = await import('../autonomy/agent-swarm.mjs');
+const { runSwarm, MAX_AUTHORABLE_BYTES, reviewPrompt, reviewSeesWholeChange, REVIEW_DIFF_MAX } = await import('../autonomy/agent-swarm.mjs');
 
 const ISSUE = 'Show the build id (the short deploy sha) next to the version in Settings > Software update so I can see which build I run.';
 
@@ -241,6 +241,25 @@ describe('changeExcerpt — reviewers must see the CHANGE, not the top of the fi
         expect(d).toMatch(/diff truncated/);
     });
 
+    it('changeView reports truncation, so a caller can refuse a change the reviewer did not see in full', () => {
+        const a = Array.from({ length: 3000 }, (_, i) => `a${i}`).join('\n');
+        const b = Array.from({ length: 3000 }, (_, i) => `b${i}`).join('\n');
+        expect(changeView(a, b, { max: 500 }).truncated).toBe(true);
+        expect(changeView(a, b, { max: 500 }).text).toBe(changeExcerpt(a, b, { max: 500 }));
+        expect(changeView(a, b, { max: 1e6 }).truncated).toBe(false);
+        expect(changeView('x\n', 'x\ny\n').truncated).toBe(false);
+    });
+
+    it('reviewSeesWholeChange: true for small files and small diffs of big files, false past the reviewer\'s limit', () => {
+        expect(reviewSeesWholeChange('a', 'b')).toBe(true);
+        expect(reviewSeesWholeChange(before, after)).toBe(true);                       // 500-line file, one-line edit
+        const big = Array.from({ length: 6000 }, (_, i) => `line ${i} of the original module`).join('\n');
+        const rewritten = Array.from({ length: 6000 }, (_, i) => `line ${i} of the REWRITTEN module`).join('\n');
+        expect(big.length).toBeGreaterThan(REVIEW_DIFF_MAX);
+        expect(reviewSeesWholeChange(big, rewritten)).toBe(false);
+        expect(reviewSeesWholeChange(big, big + '\nonce more')).toBe(true);
+    });
+
     it('reviewPrompt switches to the diff for big files and keeps excerpts for small ones', () => {
         expect(reviewPrompt(ISSUE, 'm.js', before, after)).toMatch(/unified diff/);
         expect(reviewPrompt(ISSUE, 'm.js', 'a', 'b')).toMatch(/BEFORE \(excerpt\)/);
@@ -355,6 +374,31 @@ describe('runSwarm — large-file patch mode, end to end', () => {
         const r = await runSwarm({ issue: { title: 'Show build id', body: ISSUE, number: 11, kind: 'feature' }, repoDir: dir, env: { CI: '' }, writeTest: false, log: () => {} });
         expect(r.ok).toBe(false);
         expect(['syntax', 'structure']).toContain(r.stage);
+    });
+
+    // Codex review on #493: the reviewer was handed only the first part of a long diff, and its
+    // PASS was accepted for the whole change — edits after the cutoff skipped the veto.
+    it('FAILS CLOSED when the change is longer than the security reviewer can read — a PASS on a prefix is not accepted', async () => {
+        const bulk = Array.from({ length: 4000 }, (_, i) => `        var added${i} = ${i};`).join('\n');
+        const huge = [
+            '<<<<<<< SEARCH',
+            '        el.textContent = "Software update v" + version;',
+            '=======',
+            '        el.textContent = "Software update v" + version;',
+            bulk,
+            '>>>>>>> REPLACE',
+        ].join('\n');
+        script.replies = [
+            'wealthflow-update-system.js', huge,
+            '{"verdict":"PASS","severity":"none","findings":[],"reason":"looked fine"}',   // must never be asked for
+        ];
+        const r = await runSwarm({ issue: { title: 'Show build id', body: ISSUE, number: 13, kind: 'feature' }, repoDir: dir, env: { CI: '' }, writeTest: false, log: () => {} });
+        expect(r.ok, JSON.stringify(r).slice(0, 300)).toBe(false);
+        expect(r.stage).toBe('review_too_large');
+        expect(r.review.verdict).toBe('FAIL');
+        expect(r.reason).toMatch(/split|smaller/);
+        // the reviewer was never consulted about a change it could not read in full
+        expect(script.calls.length).toBe(2);
     });
 
     it('sensitive files are never candidates, however well they match', async () => {

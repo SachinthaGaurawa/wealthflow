@@ -36,7 +36,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chat, stripFences, extractJson } from './llm-router.mjs';
 import {
-    keywordsFrom, rankFiles, selectPromptRanked, excerptFor, patchPrompt, parsePatchBlocks, applyPatchBlocks, changeExcerpt,
+    keywordsFrom, rankFiles, selectPromptRanked, excerptFor, patchPrompt, parsePatchBlocks, applyPatchBlocks, changeExcerpt, changeView,
 } from './swarm-patch.mjs';
 
 // ── the mechanical safety gate (mirrors CODEOWNERS + rego + risk-gate) ───────
@@ -424,6 +424,20 @@ export function testPrompt(issue, filename, before, after) {
     ].join('\n');
 }
 
+/** The most diff text the security reviewer is shown. Bigger than this and the change is refused, not skimmed. */
+export const REVIEW_DIFF_MAX = 40_000;
+const REVIEW_WHOLE_FILE_MAX = 5000;
+
+/**
+ * Can the independent security reviewer see the WHOLE change? A PASS from a reviewer that
+ * saw only the first part of a diff says nothing about the rest, so `runSwarm` refuses a
+ * change this returns false for instead of accepting a verdict on a prefix.
+ */
+export function reviewSeesWholeChange(before, after) {
+    if (String(before).length <= REVIEW_WHOLE_FILE_MAX && String(after).length <= REVIEW_WHOLE_FILE_MAX) return true;
+    return !changeView(before, after, { ctx: 15, max: REVIEW_DIFF_MAX }).truncated;
+}
+
 export function reviewPrompt(issue, filename, before, after) {
     return [
         'Adversarially review this autonomous code change to a personal-finance app.',
@@ -433,9 +447,9 @@ export function reviewPrompt(issue, filename, before, after) {
         '',
         `FILE: ${filename}`,
         '',
-        ...(String(before).length > 5000 || String(after).length > 5000
-            ? ['THE CHANGE (unified diff, with context — the whole file is too large to show):', changeExcerpt(before, after, { ctx: 15, max: 9000 })]
-            : ['BEFORE (excerpt):', String(before).slice(0, 5000), '', 'AFTER (excerpt):', String(after).slice(0, 5000)]),
+        ...(String(before).length > REVIEW_WHOLE_FILE_MAX || String(after).length > REVIEW_WHOLE_FILE_MAX
+            ? ['THE CHANGE (unified diff, with context — the whole file is too large to show):', changeExcerpt(before, after, { ctx: 15, max: REVIEW_DIFF_MAX })]
+            : ['BEFORE (excerpt):', String(before).slice(0, REVIEW_WHOLE_FILE_MAX), '', 'AFTER (excerpt):', String(after).slice(0, REVIEW_WHOLE_FILE_MAX)]),
         '',
         'Reply with a single JSON object and nothing else:',
         '{"verdict":"PASS"|"FAIL","severity":"none|low|medium|high|critical","findings":["..."],"reason":"one sentence"}',
@@ -632,6 +646,15 @@ export async function runSwarm({
     log(`[swarm] mechanical gates passed (via ${authored.provider})`);
 
     // ── stage 4: Agent 5 security veto — on a DIFFERENT provider ───────────
+    // A verdict on a prefix of the change is not a verdict on the change. If the diff is
+    // longer than the reviewer is shown, refuse it (fail closed) instead of accepting a PASS.
+    if (!reviewSeesWholeChange(before, code)) {
+        return {
+            ok: false, stage: 'review_too_large', file, providers,
+            reason: `the change is larger than the independent security review can read in full (limit ${REVIEW_DIFF_MAX} characters of diff); it must be split into smaller changes`,
+            review: { verdict: 'FAIL', severity: 'high', findings: [], reason: 'change too large to review in full' },
+        };
+    }
     const reviewed = await chat({
         system: ROLES.security.system, prompt: reviewPrompt(issueText, file, before, code),
         prefer: ROLES.security.prefer,

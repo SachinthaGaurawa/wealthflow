@@ -218,7 +218,18 @@ export function applyPatchBlocks(before, blocks) {
  * have been asked to veto a change it could not see. This returns the unified diff
  * (with context) so both see exactly what moved.
  */
-export function changeExcerpt(before, after, { ctx = 12, max = 6000 } = {}) {
+export function changeExcerpt(before, after, opts = {}) {
+    return changeView(before, after, opts).text;
+}
+
+/**
+ * Same as `changeExcerpt`, but says whether the diff had to be cut. A reviewer that
+ * is shown a cut diff has not seen the change, so anything that relies on a reviewer's
+ * PASS must check `truncated` and fail closed (Codex review on #493: edits after the
+ * cutoff would otherwise bypass the independent security review).
+ * @returns {{text:string, truncated:boolean, length:number}}
+ */
+export function changeView(before, after, { ctx = 12, max = 6000 } = {}) {
     const b = String(before), a = String(after);
     let diff = '';
     try {
@@ -241,5 +252,6 @@ export function changeExcerpt(before, after, { ctx = 12, max = 6000 } = {}) {
         diff = `@@ changed lines ${i + 1}-${al.length - j} @@\n` + al.slice(Math.max(0, i - ctx), al.length - j + ctx).join('\n');
     }
     diff = diff.split('\n').filter((l) => !/^(diff --git|index |--- |\+\+\+ )/.test(l)).join('\n');
-    return diff.length > max ? diff.slice(0, max) + '\n… (diff truncated)' : diff;
+    const truncated = diff.length > max;
+    return { text: truncated ? diff.slice(0, max) + '\n… (diff truncated)' : diff, truncated, length: diff.length };
 }

@@ -36,6 +36,45 @@ describe('a production probe that does not answer is a finding (Codex review on 
     });
 });
 
+// Codex review on #493: when every probe fails, the check was only a warning and the CLI exited 0,
+// so the liveness workflow closed an open release-flow issue as "recovered" though production was
+// never read. "Unverified" is its own exit code and the workflow must not treat it as recovery.
+import { exitCodeFor, EXIT_UNVERIFIED } from '../autonomy/release-flow.mjs';
+const WF = fs.readFileSync(path.join(path.resolve(import.meta.dirname, '..'), '.github/workflows/pipeline-liveness.yml'), 'utf8');
+const FLOWSRC = fs.readFileSync(path.join(path.resolve(import.meta.dirname, '..'), 'autonomy/release-flow.mjs'), 'utf8');
+const stepOf = (name) => { const i = WF.indexOf(`- name: ${name}`); const j = WF.indexOf('\n      - ', i + 1); return WF.slice(i, j < 0 ? undefined : j); };
+
+describe('an unreadable production is "unverified", never "recovered"', () => {
+    it('every probe failing marks the result unverified and exits 3 (not 0)', () => {
+        const r = evaluateReleaseFlow(base({ deployed: null }));
+        expect(r.unverified).toBe(true);
+        expect(r.overall).toBe('degraded');
+        expect(exitCodeFor(r)).toBe(EXIT_UNVERIFIED);
+        expect(EXIT_UNVERIFIED).toBe(3);
+    });
+    it('healthy -> 0; broken -> 1; broken wins over unverified', () => {
+        expect(exitCodeFor(evaluateReleaseFlow(base()))).toBe(0);
+        expect(exitCodeFor(evaluateReleaseFlow(base({ oldestUnreleased: { sha: 'a', at: now - 30 * H, subject: 's' }, unreleasedCount: 3 })))).toBe(1);
+        expect(exitCodeFor(evaluateReleaseFlow(base({ deployed: null, oldestUnreleased: { sha: 'a', at: now - 30 * H, subject: 's' }, unreleasedCount: 3 })))).toBe(1);
+    });
+    it('a degraded result that did read production is not "unverified"', () => {
+        const r = evaluateReleaseFlow(base({ deployed: { version: '7.69.35', manifest: '7.69.35', shell: '7.69.35', sw: '7.69.35', sha: 'ffff999' } }));
+        expect(r.overall).toBe('degraded');
+        expect(r.unverified).toBe(false);
+        expect(exitCodeFor(r)).toBe(0);
+    });
+    it('the CLI exits through exitCodeFor', () => {
+        expect(FLOWSRC).toMatch(/process\.exit\(exitCodeFor\(r\)\)/);
+    });
+    it('the workflow closes the issue only on rc 0, keeps it open on rc 3, files only on real breakage, and still turns red', () => {
+        expect(stepOf('Close the release-flow issue once it recovers')).toMatch(/steps\.flow\.outputs\.rc == '0'/);
+        expect(stepOf('Keep an open release-flow issue open while production cannot be read')).toMatch(/steps\.flow\.outputs\.rc == '3'/);
+        expect(stepOf('Keep an open release-flow issue open while production cannot be read')).not.toMatch(/gh issue close/);
+        expect(stepOf('File an issue if merged work is not reaching the app')).toMatch(/rc != '0' && steps\.flow\.outputs\.rc != '3'/);
+        expect(stepOf('Fail the run if the pipeline is dead')).toMatch(/steps\.flow\.outputs\.rc != '0'/);
+    });
+});
+
 describe('release stall', () => {
     it('THE REAL CASE: 72 real commits waiting 24 days is BROKEN', () => {
         const r = evaluateReleaseFlow(base({ unreleasedCount: 72, oldestUnreleased: { sha: 'x', at: now - 24 * 24 * H, subject: 'Portal: faster code request' } }));
