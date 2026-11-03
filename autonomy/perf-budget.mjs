@@ -359,7 +359,8 @@ export const BUDGETS = {
     // 2026-11-02 (the account over plain HTTPS: the page saves, reads and checks its account through _wfCloudSync instead of the Firestore transaction, the Check Connection rows for it, and the comments recording why; measured 2,370,334 + ~0.03% headroom): 2_365_100 -> 2_371_000. No new script or request at load.
     // (the two 2026-11-02 changes above were each measured alone; #489 and this one together measure 2,375,723, so the ceiling is set on the combined tree: 2_370_400 -> 2_376_000.)
     // (with #490 as well: 2,376,343, so 2_376_000 -> 2_376_700.)
-    htmlBytes: 2_376_700,
+    // 2026-11-03 (CC Instalments page: the figures count the plans the table calls Active, the months of one plan merged into one are not listed, a length or a rate the statement never printed is not shown as a number or "0% Free", and a plan with no stated length is not "Done" while it is still charged; measured 2,377,662 + ~0.002% headroom): 2_376_700 -> 2_377_700. Under half of it is the comments recording why. No new script or request at load.
+    htmlBytes: 2_377_700,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
