@@ -1,5 +1,5 @@
 let coverage=null,user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null,retrying=[],autoTimer=null,autoRunning=false;
-const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,passwordReviews:0,queued:0,parked:0};
+const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,reviewSources:0,passwordReviews:0,queued:0,parked:0};
 
 export const getState=()=>({...state});
 export const retryAttemptsSummary=()=>retrying.map(r=>({bank:r.bank||'',filename:r.filename||'',retryCount:r.retryCount||0,lastRetryReason:r.lastRetryReason||''}));
@@ -53,9 +53,9 @@ async function refreshFinancialData(){
 
 function adoptUser(next){
     if(!next||user?.uid===next.uid)return user;
-    user=next;unsubscribe?.();unsubscribe=null;pending=[];state.reviews=0;state.passwordReviews=0;
+    user=next;unsubscribe?.();unsubscribe=null;pending=[];state.reviews=0;state.reviewSources=0;state.passwordReviews=0;
     const db=window.db||window.firebase?.firestore?.();
-    if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(500).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;state.passwordReviews=pending.filter(isPasswordReview).length;change();if(overlay)drawReview();scheduleAutoRender()},()=>{state.error='statement-review-unavailable';change()});
+    if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(500).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;state.reviewSources=new Set(pending.filter(e=>!isPasswordReview(e)).map(e=>e.sourcePath||e.id)).size;state.passwordReviews=pending.filter(isPasswordReview).length;change();if(overlay)drawReview();scheduleAutoRender()},()=>{state.error='statement-review-unavailable';change()});
     return next
 }
 
@@ -488,7 +488,7 @@ function buildReview() {
     const box = document.createElement('section'); box.className = 'md'; box.style.cssText = 'max-width:720px;';
     box.appendChild(reviewHeader(pending.length ? 'Statements needing review' : 'Your email bank statements'));
     const summary = document.createElement('p');
-    summary.textContent = `${pending.length} review item${pending.length === 1 ? '' : 's'} shown${state.queued ? ` · ${state.queued} statement${state.queued === 1 ? '' : 's'} still processing automatically` : ' · processing queue is clear'}.`;
+    summary.textContent = `${state.reviewSources} statement${state.reviewSources === 1 ? '' : 's'} · ${pending.length} item${pending.length === 1 ? '' : 's'} to look at${state.queued ? ` · ${state.queued} statement${state.queued === 1 ? '' : 's'} still processing automatically` : ' · processing queue is clear'}.`;
     summary.style.cssText = 'margin:12px 0;color:var(--text2);'; box.appendChild(summary);
     const panel = head => { const d = document.createElement('div'); d.style.cssText = 'margin:0 0 12px;padding:12px;border:1px solid var(--border);border-radius:12px;'; const h = document.createElement('strong'); h.textContent = head; d.appendChild(h); box.appendChild(d); return d; };
     const note = (parent, text) => { const p = document.createElement('p'); p.style.cssText = 'margin:6px 0 0;font-size:13px;'; p.textContent = text; parent.appendChild(p); return p; };
@@ -545,7 +545,21 @@ function buildReview() {
         box.appendChild(d);
     }
     if (!pending.length) { const p = document.createElement('p'); p.textContent = 'No transactions are awaiting review.'; box.appendChild(p); }
-    for (const entry of pending) {
+    /* ONE STATEMENT IS ONE ENTRY. A statement whose transactions each wait for a look was a list of that many "statements", one transaction at a time. The file is shown once, with its transactions inside it. */
+    const files = new Map();
+    for (const entry of pending) { const key = entry.sourcePath || entry.id; if (!files.has(key)) files.set(key, []); files.get(key).push(entry); }
+    for (const group of files.values()) {
+        const rowsOf = group.filter(entry => entry.row && entry.index >= 0);
+        let holder = box, card = null;
+        if (rowsOf.length > 1) {
+            const first = group[0], at = document.createElement('div'); at.style.cssText = 'padding:14px 0;border-bottom:1px solid var(--border);';
+            const title = document.createElement('p'); title.style.cssText = 'font-weight:600;margin:0;'; title.textContent = [shownBank(first.bank), first.filename].filter(Boolean).join(' · ') || 'Statement'; at.appendChild(title);
+            const how = document.createElement('p'); how.style.cssText = 'margin:6px 0;color:var(--text2);font-size:13px;'; how.textContent = `One statement. ${rowsOf.length} of its transactions need a look: ${reviewReasonText(rowsOf[0].reason)}`; at.appendChild(how);
+            const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.onclick = () => download(first); at.appendChild(raw);
+            const details = document.createElement('details'); details.style.cssText = 'margin-top:10px;'; const sum = document.createElement('summary'); sum.textContent = `Show the ${rowsOf.length} transactions`; details.appendChild(sum); at.appendChild(details); box.appendChild(at);
+            holder = details; card = at;
+        }
+        for (const entry of group) {
         const item = document.createElement('div'); item.style.cssText = 'padding:14px 0;border-bottom:1px solid var(--border);';
         const identity = [shownBank(entry.bank), entry.filename].filter(Boolean).join(' · ');
         const description = entry.row?.description || entry.row?.narration || '';
@@ -560,13 +574,16 @@ function buildReview() {
             if (locked) { if (typeof window.openBankVault === 'function') { closeReview(); window.openBankVault({ closeOnUnlock: true, onClose: () => { try { sync().catch(() => {}); } catch (_) {} } }); } else say('Open Settings > Bank Statement Passwords to add it.', 'info'); return; }
             button.disabled = true; try { await review(entry); } catch { say('This review could not be opened. It remains pending.', 'error'); } finally { button.disabled = false; }
         }; item.appendChild(button);
-        const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw); box.appendChild(item);
+        const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw);
+        /* a question about the WHOLE statement (its layout, its reconciliation, its password) stays on the card, above the collapsed list of transactions: it is the one that blocks the rest and must not hide inside it */
+        if (card && !(entry.row && entry.index >= 0)) card.insertBefore(item, holder); else holder.appendChild(item);
         if (entry.index === -1 && entry.reason === 'statement-empty-needs-confirmation') {
             const empty = document.createElement('button'); empty.className = 'btn btn-primary btn-sm'; empty.textContent = 'Yes, nothing happened that month'; empty.style.marginLeft = '8px';
             empty.onclick = async () => { empty.disabled = true; try { await request('/api/statement-sync', 'POST', { action: 'close-empty', id: entry.id }); say('Closed as an empty month. You can reopen it from the list of closed months.', 'info'); await sync(); } catch { empty.disabled = false; say('That month could not be closed.', 'error'); } };
             item.appendChild(empty);
         }
         if (entry.index < 0 || !entry.row?.amount) { const dismiss = document.createElement('button'); dismiss.className = 'btn btn-ghost btn-sm'; dismiss.textContent = 'Dismiss statement'; dismiss.style.marginLeft = '8px'; dismiss.onclick = () => dismissReview(entry); item.appendChild(dismiss); }
+        }
     }
     if (pending.length === 500) { const p = document.createElement('p'); p.textContent = 'Showing the first 500 pending reviews. Resolve items to reveal any older remainder.'; box.appendChild(p); }
     return box;

@@ -26239,7 +26239,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>` : '';
             /* Only what there is something to open for: a statement locked by a password has its own strip below ("add the password") and its item in the list says so, but it is not "a statement that needs review". */
             const _cloudNow = window.WFStatementCloud?.getState?.() || {};
-            const reviewTotal = Math.max(Number.isFinite(Number(st.reviewQuestions)) ? Number(st.reviewQuestions) : (Number(st.reviewStatements) || 0), Math.max(0, (Number(_cloudNow.reviews) || 0) - (Number(_cloudNow.passwordReviews) || 0)));
+            /* STATEMENTS, NOT TRANSACTIONS: the mailbox counts the statements that wait, and the review list counts the files its waiting transactions belong to (a statement of 23 transactions is one). */
+            const reviewTotal = Math.max(Number.isFinite(Number(st.reviewQuestions)) ? Number(st.reviewQuestions) : (Number(st.reviewStatements) || 0), Number(_cloudNow.reviewSources) || 0);
             const reviewStrip = reviewTotal ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:11px 13px;border-radius:10px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);color:var(--text2);font-size:12.5px;line-height:1.5;">
                     <div style="flex:1;min-width:190px;"><b>${_wfEsc(String(reviewTotal))} statement${reviewTotal === 1 ? '' : 's'} processed and need review.</b> They are not waiting to be processed again.</div>
                     <button class="btn btn-secondary btn-sm" id="_ms_reviews">Open reviews</button>

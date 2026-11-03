@@ -95,3 +95,74 @@ describe('a card purchase keeps the category the rules gave it', () => {
         expect(deterministicDecision(row('SOME UNKNOWN SHOP 77'), card)).toMatchObject({ module: 'cconetime', category: 'Card Purchase' });
     });
 });
+
+// HNB credit card e-statement, production 2026-11-03: 22 rows of ONE statement already waited in Open reviews, one transaction at a time, when the card layout proof was added. They are put right on the next
+// sync, without the owner, and a row the proof cannot cover (money-back words, a statement-level question, a bank account) is left exactly as it was.
+import { createFirestore } from './helpers/fake-firestore.js';
+import { proveCardReviews } from '../statement-sync.js';
+import { sourceOccurrenceId } from '../statement-ledger.mjs';
+
+describe('the rows that waited before the card layout proof existed', () => {
+    const sourcePath = 'wf-mail/owner/items/card1.pdf';
+    const waiting = (index, narration, extra = {}) => {
+        const id = sourceOccurrenceId(sourcePath, index);
+        return [[`users/u/statementReview/${id}`, { uid: 'u', sourcePath, index, status: 'pending', reason: 'unproven-direction', bank: 'HNB Credit Card',
+            row: { date: '2026-09-1' + index, narration, description: narration, amount: 100 + index, direction: 'debit', directionSource: 'assumed', needsReview: true, valid: true }, ...extra }],
+        [`users/u/statementLedger/${id}`, { uid: 'u', sourcePath, index, status: 'review' }]];
+    };
+    const world = (rows, source = {}, settings = { cardRegistry: { '0048': { type: 'credit_card', bank: 'HNB' } } }, more = []) => { const fs = createFirestore(Object.fromEntries([
+        ['users/u', { settings }],
+        [sourcePath, { uid: 'u', bank: 'HNB Credit Card', last4: '0048', statementType: 'credit-card', cursor: 3, totalRows: 3, status: 'needs_review', ...source }],
+        ...rows.flatMap((narration, index) => waiting(index, narration)), ...more])); return { db: fs.db, data: fs.data }; };
+    const reviews = ({ data }) => ['0', '1', '2'].map(i => data.get(`users/u/statementReview/${sourceOccurrenceId(sourcePath, Number(i))}`)).filter(Boolean);
+    const run = (w) => proveCardReviews({ db: w.db, uid: 'u', limit: 10 });
+    const store = (w) => w.data.get('users/u');
+
+    it('files the purchases of a card statement with the category the rules give, and says the layout proved them', async () => {
+        const db = world(['KEELLS SUPER COLOMBO', 'UBER RIDE', 'SOME UNKNOWN SHOP']);
+        expect(await run(db)).toMatchObject({ proved: 3, left: 0 });
+        expect(reviews(db).map(r => r.status)).toEqual(['resolved', 'resolved', 'resolved']);
+        expect(store(db).cconetime.map(r => [r.category, r.directionProof]).sort()).toEqual([['Card Purchase', 'layout'], ['Groceries', 'layout'], ['Transport', 'layout']]);
+    });
+    it('leaves a line that says money came back, and a statement that has a question of its own open', async () => {
+        const db = world(['KEELLS SUPER COLOMBO', 'REFUND AMAZON', 'UBER RIDE'], {}, undefined, [[`users/u/statementReview/${sourceOccurrenceId(sourcePath, -1)}`, { uid: 'u', sourcePath, index: -1, status: 'pending', reason: 'layout' }]]);
+        expect(await run(db)).toMatchObject({ proved: 0 });
+        expect(reviews(db).every(r => r.status === 'pending')).toBe(true);
+    });
+    it('leaves only the money-back line when the statement has no question of its own', async () => {
+        const db = world(['KEELLS SUPER COLOMBO', 'PAYMENT THANK YOU', 'UBER RIDE']);
+        expect(await run(db)).toMatchObject({ proved: 2, left: 1 });
+        expect(reviews(db).map(r => r.status)).toEqual(['resolved', 'pending', 'resolved']);
+    });
+    it('does nothing for a bank account\'s statement', async () => {
+        const db = world(['KEELLS SUPER COLOMBO', 'UBER RIDE', 'POS PURCHASE'], { statementType: 'bank_account', last4: '1234', bank: 'DFCC' }, { cardRegistry: {} });
+        expect(await run(db)).toMatchObject({ proved: 0, left: 3 });
+        expect(store(db).cconetime).toBeUndefined();
+    });
+    it('keeps a decision the rules made that is not a card line: an outward transfer is never turned into a Card Purchase', async () => {
+        const db = world(['OUTWARD CEFT TRANSFER 123456', 'KEELLS SUPER COLOMBO', 'UBER RIDE']);
+        const out = await run(db);
+        expect(out.proved).toBe(2);
+        expect(reviews(db).map(r => r.status)).toEqual(['pending', 'resolved', 'resolved']);
+        expect(store(db).cconetime.map(r => r.desc)).not.toContain('OUTWARD CEFT TRANSFER 123456');
+    });
+    it('is bounded: past its deadline it reads nothing more and files nothing, and it looks at no more statements a run than it is allowed', async () => {
+        const late = world(['KEELLS SUPER COLOMBO', 'UBER RIDE', 'POS PURCHASE']);
+        expect(await proveCardReviews({ db: late.db, uid: 'u', limit: 10, until: Date.now() - 1 })).toMatchObject({ proved: 0, left: 3 });
+        expect(reviews(late).every(r => r.status === 'pending')).toBe(true);
+        // two statements waiting, one allowed: the second is not even asked about
+        const other = 'wf-mail/owner/items/card2.pdf', otherId = sourceOccurrenceId(other, 0);
+        const two = world(['KEELLS SUPER COLOMBO'], {}, undefined, [[`users/u/statementReview/${otherId}`, { uid: 'u', sourcePath: other, index: 0, status: 'pending', reason: 'unproven-direction', bank: 'HNB Credit Card',
+            row: { date: '2026-09-15', narration: 'UBER RIDE', description: 'UBER RIDE', amount: 50, direction: 'debit', directionSource: 'assumed', needsReview: true, valid: true } }], [other, { uid: 'u', bank: 'HNB Credit Card', last4: '0048', statementType: 'credit-card', status: 'needs_review' }]]);
+        expect(await proveCardReviews({ db: two.db, uid: 'u', limit: 10, maxSources: 1 })).toMatchObject({ proved: 1, left: 1 });
+        expect(Object.values(two.data.get('users/u').cconetime || []).length).toBe(1);
+    });
+    it('a question of the statement\'s own keeps its rows even when it is not on the first page of pending reviews', async () => {
+        const db = world(['KEELLS SUPER COLOMBO', 'UBER RIDE', 'POS PURCHASE'], {}, undefined, [[`users/u/statementReview/${sourceOccurrenceId(sourcePath, -1)}`, { uid: 'u', sourcePath, index: -1, status: 'pending', reason: 'layout' }]]);
+        // the page the sweep reads holds only the row reviews (as it would past 500 of them): the question is found by asking for the statement's own reviews
+        const real = db.db.collection.bind(db.db);
+        db.db.collection = (path) => { const c = real(path); if (!/statementReview$/.test(path)) return c; return { ...c, where: (f, op, v) => { const q = c.where(f, op, v); return f === 'status' ? { ...q, get: async () => { const r = await q.get(); return { ...r, docs: r.docs.filter(d => d.data().index >= 0) }; } } : q; } }; };
+        expect(await run(db)).toMatchObject({ proved: 0 });
+        expect(reviews(db).every(r => r.status === 'pending')).toBe(true);
+    });
+});

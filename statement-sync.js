@@ -13,7 +13,7 @@ import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped,
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
-import { semanticDirection, genericBankLine, proveDirections } from './statement-direction.mjs';
+import { semanticDirection, genericBankLine, proveDirections, cardCreditWords } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT, intentVerdict } from './wealthflow-statement-identity.js';
@@ -1400,6 +1400,43 @@ export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {
     return dismissed;
 }
 
+/* THE ROWS OF A CARD STATEMENT THAT WAITED BEFORE THE CARD LAYOUT PROOF EXISTED (statement-direction.mjs, PR #494) are put right here, without the owner: a pending row-level review whose only doubt is
+ * "unproven-direction", whose direction the parser ASSUMED (a plain amount, no marks), on a statement that is a registered or self-declared CREDIT CARD's, whose words say nothing of money coming back, and
+ * whose statement has no whole-statement question open. It is filed as the rules would file it (resolveReview, proof 'layout' written on the record), never by guessing a category: a merchant the rules
+ * cannot place goes in as a Card Purchase for the merchant review. A row that does not qualify, or that the books would refuse (a matching entry already there), is left exactly as it was. */
+export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, maxSources = 12 }) {
+    const userRef = db.collection('users').doc(uid);
+    const page = await userRef.collection('statementReview').where('status', '==', 'pending').limit(500).get();
+    const waiting = page.docs.filter(doc => { const r = doc.data(); return r.uid === uid && r.reason === 'unproven-direction' && Number.isSafeInteger(r.index) && r.index >= 0 && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && /^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(r.sourcePath || ''); });
+    if (!waiting.length) return { proved: 0, left: 0 };
+    const registry = (((await userRef.get()).data() || {}).settings || {}).cardRegistry || {};
+    const sources = new Map(), asked = new Map();
+    let proved = 0, left = 0;
+    for (const doc of waiting) {
+        /* THE SCAN IS BOUNDED, NOT ONLY THE FILING: `limit` counts rows filed, but every statement looked at costs two reads (its own pending reviews, its document), and rows turned away cost reads too. The scan stops at `until` (the front pass's own deadline,
+         * so it can never eat the time the statements themselves need) and looks at no more than `maxSources` statements a run; what it did not reach waits for the next run. */
+        if (proved >= limit || Date.now() > until) { left += 1; continue; }
+        const review = doc.data();
+        if (!asked.has(review.sourcePath) && asked.size >= maxSources) { left += 1; continue; }
+        /* the statement's OWN pending reviews are asked for, not taken from the page above (which holds at most 500 of every statement's): a layout or reconciliation question still open on it keeps every row of it for the owner */
+        if (!asked.has(review.sourcePath)) asked.set(review.sourcePath,(await userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath).get()).docs.some(entry => { const r = entry.data(); return r.status === 'pending' && Number(r.index) < 0; }));
+        if (asked.get(review.sourcePath)) { left += 1; continue; }
+        if (!sources.has(review.sourcePath)) sources.set(review.sourcePath, (await db.doc(review.sourcePath).get()).data() || null);
+        const source = sources.get(review.sourcePath);
+        if (!source || source.uid !== uid) { left += 1; continue; }
+        const row = { ...review.row, directionSource: 'layout', needsReview: false, valid: true };
+        const ctx = { statementType: source.statementType || '', card_last4: source.last4 || review.row.card_last4 || '', bank: source.bank || review.bank || '', cardRegistry: registry, subscriptions: [], loans: [] };
+        if (!isCreditCardRow(row, ctx) || cardCreditWords(row) || semanticDirection(row) === 'credit') { left += 1; continue; }
+        const decision = deterministicDecision(row, ctx);
+        /* a decision the rules DID make and that is not a card line (an own-account transfer they leave out of the books, an income, a subscription) is theirs to keep: it is never turned into a Card Purchase here, and goes on waiting for the owner */
+        const filing = decision && decision.verified === true ? decision : fallbackDecision(row, ctx);
+        if (!filing || filing.verified !== true || !['cconetime', 'ccinstall'].includes(filing.module)) { left += 1; continue; }
+        try { await resolveReview({ db, uid, id: doc.id, decision: { ...filing, autoDecided: filing.autoDecided || 'layout-sweep' }, row: {}, directionSource: 'layout' }); proved += 1; }
+        catch (_) { left += 1; /* the books refused it (a matching entry is there, a lock): it stays for the owner, untouched */ }
+    }
+    return { proved, left };
+}
+
 // A statement row the ledger says was filed but the owner's data no longer holds, and nobody deleted: a device
 // that had not yet seen it pushed its own copy of the list over it. The ledger keeps the statement as FILED, so
 // without this the row would be missing for good. The statement is read again and only the rows that are missing
@@ -2586,7 +2623,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     if (extract === invokeExtractor) extract = tieredAsk({ call: (prompt, options) => invokeExtractor(prompt, aiHandler, options), accept: reply => Array.isArray(jsonOf(reply)?.accounts), deadlineAt: start + INVOCATION_MS });
     board = breaker.guard('board', board, { minRoomMs: BOARD_ROOM_MS, unavailable: 'ai-consensus-unavailable' });
     extract = breaker.guard('extract', extract, { minRoomMs: 18000, unavailable: 'ai-extractor-unavailable' });
-    let ranWhole = false, ranResume = false, ranConsensus = false, ranHeal = false, orphansHealed = 0, frontIncomplete = false, migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
+    let ranWhole = false, ranResume = false, ranConsensus = false, ranHeal = false, orphansHealed = 0, frontIncomplete = false, migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, cardRowsProved = 0, phantomRequeued = 0, phantomMore = false, rowsHealed = 0, healMore = false, coverage = null;
     /* The housekeeping in front of the queue (find new mail, audit the mailbox, recover and repair) is a full pass over the
      * mailbox; run once for every statement an interactive caller asks for, it left almost none of the 60 seconds for the
      * statements. An interactive call repeats it at most every minute and a half — unless a collection is part-way, when
@@ -2642,6 +2679,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (frontRoom()) { const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit }); revokedRecovered = revoked.recovered; revokedMore = revoked.more; }
         if (frontRoom()) reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
         if (frontRoom()) zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
+        if (frontRoom()) { try { cardRowsProved = (await proveCardReviews({ db, uid, limit: heavy ? 20 : 10, until: start + frontBudgetMs })).proved; } catch (_) { /* advice only: the next run tries again */ } }
         if (frontRoom()) { const phantom = await recheckPhantomStatements({ db, uid, limit: heavy ? 10 : 3 }); phantomRequeued = phantom.requeued; phantomMore = phantom.more; }
         if (frontRoom()) { const healed = await healMissingRows({ db, uid, limit: heavy ? 5 : 2, mailRef }); rowsHealed = healed.rows; healMore = healed.more; }
         if (frontSkipped) { wholeMore = true; frontIncomplete = true; }
@@ -2724,7 +2762,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         console.info(JSON.stringify({ evt: 'statement-sync-run', merchantList: REGISTRY_SIZE, ms: Date.now() - start, interactive, front: frontDue, processed, attempted, status: last?.status || '', ...(frontIncomplete ? { frontIncomplete: true } : {}), ...(Object.keys(tail).length ? { tail } : {}), redriven: redrive.redriven, deadLettered: redrive.waiting,
             pending: pending.docs.length, processing: processing.docs.length, byBank, collectionMore, aiDown: Object.entries(breaker.health).filter(([, v]) => Number(v?.downUntil) > Date.now()).map(([k, v]) => `${k}:${String(v.reason || '').slice(0, 40)}`) }));
     } catch (_) { /* a log line never stops a sync */ }
-    return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, orphansHealed, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, rowsHealed, /* THE LAST REPORT STANDS WHEN THIS RUN MADE NO NEW ONE. The report (statements checked in, emails refused, closed months, the audit log) was returned only by a run that did the mailbox
+    return { ok: true, processed, attempted, redriven: redrive.redriven, deadLettered: redrive.waiting, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, orphansHealed, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, cardRowsProved, phantomRequeued, rowsHealed, /* THE LAST REPORT STANDS WHEN THIS RUN MADE NO NEW ONE. The report (statements checked in, emails refused, closed months, the audit log) was returned only by a run that did the mailbox
          * housekeeping — and an interactive run repeats that at most every ninety seconds, so the owner's screen, built afresh each time the app opens, showed "0 review items" with every section gone. */
         ...((coverage || mail.coverage) ? { coverage: coverage || mail.coverage } : {}),
         pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending, retrying,
