@@ -63,7 +63,7 @@ flowchart TB
     D5["Confirm LIVE<br/>/api/version · /version.json · /app"]:::live
     D6["Browser canary<br/>real Chromium opens the live app:<br/>loads · version · files · errors ·<br/>updater present · service worker"]:::new
     D7["Red run + canary-failed issue<br/>(looked at twice before it counts)"]:::new
-    D8["Instant Rollback<br/>needs VERCEL_TOKEN +<br/>CANARY_ROLLBACK=true"]:::owner
+    D8["Instant Rollback (autonomy/rollback.mjs)<br/>needs VERCEL_TOKEN + VERCEL_PROJECT_ID +<br/>CANARY_ROLLBACK=true<br/>verified on the live site"]:::owner
     D1 --> D2 --> D3 --> D4 --> D5 --> D6
     D6 -- "failed" --> D7 -.-> D8
   end
@@ -161,6 +161,6 @@ sequenceDiagram
 | "Only 100% correct and safe is approved" | cannot be certified by an LLM; the gates are tests, fuzz, policy rules, secret scan, budgets, a real browser | stated honestly |
 | Self-healing DOM, agentic QA | `test/e2e/heal.mjs`: ordered locators, ambiguity refused, every heal logged with the selector to use, a missing control still fails | live after #506 |
 | Autonomous schema migrations with rollback | `wealthflow-migrations.js`: proved on a copy, restore point first, reverted on any failure, registry empty today | live after #506 |
-| Canary / Rolling Releases, 5% first | Rolling Releases unavailable (404); a real-browser canary opens the live release, optional Instant Rollback | canary live after #506; rollback needs `VERCEL_TOKEN` and `CANARY_ROLLBACK=true` |
-| Instant Rollback | `health-watchdog.yml` (two failed probes) and the canary | needs `VERCEL_TOKEN` and `HEALTH_URL` from the owner |
+| Canary / Rolling Releases, 5% first | Rolling Releases unavailable (404); a real-browser canary opens the live release, optional Instant Rollback | canary live after #506; rollback needs `VERCEL_TOKEN`, `VERCEL_PROJECT_ID` and `CANARY_ROLLBACK=true` |
+| Instant Rollback | `health-watchdog.yml` (two failed probes) and the canary, both through `autonomy/rollback.mjs` (a named target, success only after the live site changed) | needs `VERCEL_TOKEN`, `VERCEL_PROJECT_ID` and `HEALTH_URL` from the owner |
 | 100,000 agents, quantum snapshot, holographic DB, Pinecone, Sentry Seer, E2B | none of these is possible on a free tier | not built, said plainly |
