@@ -887,10 +887,25 @@
         ov.style.cssText = _overlayCss();
         const items = [];
         notes.sections.forEach(s => s.items.forEach(it => items.push({ t: s.title, v: it, sec: !!s.security })));
-        const list = items.slice(0, 8).map(o =>
-            '<div style="display:flex;gap:9px;margin-bottom:8px;font-size:13px;line-height:1.5;color:var(--text,#e6e7eb);">' +
-            '<span style="color:' + (o.sec ? '#f59e0b' : '#10b981') + ';font-weight:800;flex:none;">' + _esc(o.t) + '</span>' +
-            '<span>' + _esc(o.v) + '</span></div>').join('');
+        // Say how many changes there are and open the full list: a silent cap of 8
+        // made a 77-change release look tiny.
+        const SHOWN = 6;
+        const total = items.length;
+        // Section title once per group, not beside every line (it squeezed the text).
+        let _lastTitle = null;
+        const list = items.slice(0, SHOWN).map(o => {
+            const c = o.sec ? '#f59e0b' : '#10b981';
+            const head = o.t !== _lastTitle
+                ? '<div style="font-weight:800;font-size:11.5px;letter-spacing:.5px;text-transform:uppercase;color:' + c + ';margin:' + (_lastTitle === null ? '0' : '12px') + ' 0 7px;">' + _esc(o.t) + '</div>'
+                : '';
+            _lastTitle = o.t;
+            return head +
+                '<div style="display:flex;gap:9px;margin-bottom:8px;font-size:13px;line-height:1.5;color:var(--text,#e6e7eb);">' +
+                '<span style="color:' + c + ';flex:none;">•</span><span>' + _esc(o.v) + '</span></div>';
+        }).join('') +
+            (total > SHOWN
+                ? '<button class="btn btn-secondary btn-sm" style="width:100%;margin-top:6px;" onclick="wfUpdate.whatsNew(\'' + _esc(installed) + '\')">See all ' + total + ' changes</button>'
+                : '');
         ov.innerHTML = _sheet(
             'Welcome to v' + _esc(installed),
             notes.headline ? _esc(notes.headline) : 'WealthFlow has been updated',

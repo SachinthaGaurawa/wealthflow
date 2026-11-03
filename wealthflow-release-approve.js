@@ -1,13 +1,18 @@
-/*  wealthflow-release-approve.js  —  the one-tap human gate, in the UI
+/*  wealthflow-release-approve.js  —  Settings > Software release
  *
- *  The autonomous brain (release-brain.js) ranks feedback, drafts the fix list,
- *  and writes system/pendingRelease. This panel shows that proposal to the OWNER
- *  and turns it into a live release with one tap, by calling /api/approve-release
- *  (which is owner-authenticated server-side — a non-owner simply gets "not
- *  authorised"). This is the single deliberate human step in the pipeline.
+ *  Releases are published automatically: auto-release.yml makes one when real
+ *  changes have been merged, the full test suite passes on that exact commit and
+ *  the live app is healthy, then confirms the new version is being served
+ *  (/api/version, /version.json, /app). Nothing waits for a tap.
  *
- *  Public API:  window.wfReleaseApprove.showPanel()
- *  Wire it to any owner-only button, e.g. onclick="wfReleaseApprove.showPanel()".
+ *  This card used to say "Review and approve the release ... Only the owner can
+ *  approve". That was the manual gate that stopped releases for weeks (the tap
+ *  never came), and it kept inviting an approval that no longer decides anything.
+ *  The card now shows what is true: the version and build that are live, what
+ *  that version changed, and how a release happens.
+ *
+ *  Public API:  window.wfReleaseApprove.showPanel()   (name kept: index.html
+ *               calls _inject() when Settings re-renders)
  */
 // ── deadline for outbound calls ──────────────────────────────────────────────
 // `fetch` has no default timeout: an upstream that accepts the connection and
@@ -28,187 +33,158 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
     'use strict';
     if (window.wfReleaseApprove) return;
 
-    function _fbRef() { return window.firebase || (typeof firebase !== 'undefined' ? firebase : null); }
-    function _dbRef() { var fb = _fbRef(); return window.db || (fb && fb.firestore ? fb.firestore() : null); }
-    function _esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
-    function _withTimeout(p, ms, fb) { return Promise.race([p, new Promise(function (r) { setTimeout(function () { r(fb); }, ms); })]); }
-
+    var MAX_ITEMS = 6;
     var _open = false;
+    var _returnFocus = null;
 
-    /* { ok, data, reason }. `data: null, ok: true` is a CONFIRMED empty state —
-     * the read succeeded and there is genuinely nothing pending. `ok: false` is
-     * "could not check" (no Firestore handle, a timeout, a thrown error) and
-     * used to collapse into the exact same null the panel then rendered as "No
-     * pending release" — indistinguishable from the confirmed case, so a
-     * connectivity blip looked identical to "nothing to review" and the owner
-     * had no reason to retry. */
-    async function _getPending() {
-        var db = _dbRef();
-        if (!db) return { ok: false, reason: 'Firestore is not available on this page yet.', data: null };
-        var TIMEOUT = {};
+    function _esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+
+    /* ── what is live ───────────────────────────────────────────────────────
+     * { ok, version, sha } from /api/version, the same answer a device uses to
+     * learn about an update. `ok: false` means "could not read it" and is shown
+     * as such, never as an empty or healthy state. */
+    async function _getLive() {
         try {
-            var doc = await _withTimeout(db.collection('system').doc('pendingRelease').get(), 3500, TIMEOUT);
-            if (doc === TIMEOUT) return { ok: false, reason: 'Timed out reaching Firestore.', data: null };
-            return { ok: true, data: (doc && doc.exists) ? doc.data() : null };
-        } catch (e) {
-            return { ok: false, reason: (e && e.message) || 'Could not read the pending release.', data: null };
-        }
+            var r = await _wfFetchT('/api/version?_=' + Date.now(), { cache: 'no-store' }, 6000);
+            if (!r.ok) return { ok: false, reason: 'WealthFlow answered with an error (HTTP ' + r.status + ').' };
+            var b = await r.json();
+            if (!b || !b.version) return { ok: false, reason: 'The live version was missing from the answer.' };
+            return { ok: true, version: String(b.version), sha: b.sha ? String(b.sha).slice(0, 7) : '' };
+        } catch (_) { return { ok: false, reason: 'Could not reach WealthFlow to read the live version.' }; }
     }
 
-    /* Whether approving will trigger a real rebuild, or only announce the
-     * version — the exact distinction the owner used to learn only AFTER
-     * tapping Approve, from _onDecision()'s post-hoc message below. Known
-     * before the panel even renders the proposal, so the "Approve & Deploy"
-     * button never promises more than it will do. No auth required: whether
-     * the hook is configured is not sensitive, only its value would be, and
-     * this endpoint never returns that. A failed check degrades to "unknown"
-     * rather than a guess in either direction. */
-    async function _getDeployStatus() {
+    /* The notes release.cjs wrote for this version. A string is one item; the
+     * structured form is flattened. `total` counts everything so the panel can
+     * say how many more there are than it shows. */
+    function _flatten(n) {
+        if (!n) return [];
+        if (typeof n === 'string') return n.trim() ? [n.trim()] : [];
+        var out = [];
+        if (Array.isArray(n.sections)) n.sections.forEach(function (s) { (s.items || []).forEach(function (it) { if (typeof it === 'string' && it.trim()) out.push(it.trim()); }); });
+        else ['summary', 'body', 'note', 'text'].forEach(function (k) { if (typeof n[k] === 'string' && n[k].trim()) out.push(n[k].trim()); });
+        return out;
+    }
+    async function _getNotes(version) {
         try {
-            var r = await _wfFetchT('/api/approve-release', { method: 'GET' }, 5000);
-            if (!r.ok) return { known: false };
-            var body = await r.json();
-            return { known: typeof body.deployHookConfigured === 'boolean', configured: !!body.deployHookConfigured };
-        } catch (_) { return { known: false }; }
+            var r = await _wfFetchT('/version.json?_=' + Date.now(), { cache: 'no-store' }, 8000);
+            if (!r.ok) return { ok: false };
+            var j = await r.json();
+            var items = _flatten(j && j.notes && j.notes[version]);
+            return { ok: true, items: items };
+        } catch (_) { return { ok: false }; }
     }
 
-    async function _idToken() {
-        try { var fb = _fbRef(); var u = fb && fb.auth ? fb.auth().currentUser : null; if (u && u.getIdToken) return await u.getIdToken(); } catch (_) {}
-        return null;
+    function _css() {
+        if (document.getElementById('wfrlStyle')) return;
+        var st = document.createElement('style');
+        st.id = 'wfrlStyle';
+        st.textContent =
+            '.wfrl-sheet{width:100%;max-width:460px;max-height:86vh;display:flex;flex-direction:column;background:var(--card,#0f1729);border:1px solid var(--border2,#223054);border-radius:18px;overflow:hidden;box-shadow:0 24px 60px rgba(4,6,12,.55),inset 0 1px 0 rgba(255,255,255,.05);}' +
+            '.wfrl-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:12px 0;border-top:1px solid var(--border,#1f2638);}' +
+            '.wfrl-k{font-size:12.5px;color:var(--text2,#aab3c5);}' +
+            '.wfrl-v{font:600 15px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;color:var(--text,#e6e7eb);}' +
+            '.wfrl-h{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text2,#aab3c5);margin:22px 0 8px;}' +
+            '.wfrl-item{padding:6px 0 6px 12px;margin-bottom:5px;border-left:2px solid var(--border2,#2a3350);font-size:13px;line-height:1.5;color:var(--text2,#c7cdd9);overflow-wrap:anywhere;}' +
+            '.wfrl-more{font-size:12px;color:var(--text2,#aab3c5);padding:4px 0 0 14px;}' +
+            '.wfrl-step{display:grid;grid-template-columns:22px 1fr;gap:8px;padding:6px 0;font-size:13px;line-height:1.5;color:var(--text2,#c7cdd9);}' +
+            '.wfrl-num{font:600 12px/1.9 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--accent,#f5a623);}' +
+            '.wfrl-note{margin-top:14px;font-size:12.5px;line-height:1.5;color:var(--text2,#aab3c5);}' +
+            '.wfrl-btn{padding:11px 16px;border-radius:10px;border:1px solid var(--border,#1f2638);background:transparent;color:var(--text2,#c7cdd9);font-weight:700;cursor:pointer;transition:transform .16s cubic-bezier(.16,1,.3,1),background-color .16s;}' +
+            '.wfrl-btn:hover{background:rgba(255,255,255,.04);}' +
+            '.wfrl-btn:active{transform:scale(.98);}' +
+            '.wfrl-btn:focus-visible,#wfReleaseOpenBtn:focus-visible{outline:2px solid var(--accent,#f5a623);outline-offset:2px;}' +
+            '#wfReleaseOpenBtn{transition:transform .16s cubic-bezier(.16,1,.3,1);}' +
+            '#wfReleaseOpenBtn:active{transform:scale(.98);}' +
+            '.wfrl-skel{height:14px;border-radius:6px;background:var(--border,#1f2638);margin-bottom:10px;animation:wfrlPulse 1.4s ease-in-out infinite;}' +
+            '@keyframes wfrlPulse{50%{opacity:.45;}}' +
+            '@media (prefers-reduced-motion:reduce){.wfrl-skel{animation:none;}.wfrl-btn,#wfReleaseOpenBtn{transition:none;}}';
+        (document.head || document.documentElement).appendChild(st);
     }
 
-    // POST the owner's decision. Returns { ok, status, body }.
-    async function _act(action, note) {
-        var token = await _idToken();
-        if (!token) return { ok: false, status: 0, body: { error: 'Please sign in first.' } };
-        try {
-            var r = await _wfFetchT('/api/approve-release', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ idToken: token, action: action, note: note || '' })
-            });
-            var body = {}; try { body = await r.json(); } catch (_) {}
-            return { ok: r.ok, status: r.status, body: body };
-        } catch (e) {
-            return { ok: false, status: 0, body: { error: e.message } };
-        }
+    function _skeleton() {
+        return '<div aria-busy="true" aria-label="Loading">' +
+            '<div class="wfrl-skel" style="width:38%;"></div><div class="wfrl-skel" style="width:100%;"></div>' +
+            '<div class="wfrl-skel" style="width:92%;margin-top:22px;"></div><div class="wfrl-skel" style="width:84%;"></div><div class="wfrl-skel" style="width:70%;"></div></div>';
     }
 
-    function _msg(html, color) {
-        var m = document.getElementById('wfRaMsg');
-        if (m) { m.style.display = 'block'; m.style.color = color || 'var(--text2,#c7cdd9)'; m.innerHTML = html; }
-    }
+    var STEPS = [
+        'Real changes are merged to the main branch.',
+        'The full test suite runs on that exact commit, and the live app is checked for health.',
+        'The release is published, then confirmed live before it counts as done.'
+    ];
 
-    async function _onDecision(action) {
-        var btnA = document.getElementById('wfRaApprove'), btnR = document.getElementById('wfRaReject');
-        if (btnA) btnA.disabled = true; if (btnR) btnR.disabled = true;
-        _msg(action === 'approve' ? 'Approving and announcing to all clients…' : 'Recording rejection…', 'var(--accent,#f5a623)');
-        var note = (document.getElementById('wfRaNote') || {}).value || '';
-        var res = await _act(action, note);
-        if (res.ok && action === 'approve') {
-            var v = _esc(res.body.version || '');
-            var deployed = res.body.deployTriggered ? 'A new build was triggered.' : 'Announced to clients. (No deploy hook set, so the code build was not auto-triggered.)';
-            _msg('@info@ Release ' + v + ' approved. ' + _esc(deployed), '#34d399');
-        } else if (res.ok && action === 'reject') {
-            _msg('@info@ Proposal rejected. The live version is unchanged.', '#34d399');
-        } else if (res.status === 403) {
-            _msg('You are not authorised to approve releases on this account.', '#ef4444');
-            if (btnA) btnA.disabled = false; if (btnR) btnR.disabled = false;
-        } else if (res.status === 404) {
-            _msg('There is no pending release to act on right now.', '#fbbf24');
-        } else {
-            _msg('Could not complete: ' + _esc((res.body && (res.body.error || res.body.note)) || ('HTTP ' + res.status)), '#ef4444');
-            if (btnA) btnA.disabled = false; if (btnR) btnR.disabled = false;
-        }
-    }
-
-    /* One line, shown BEFORE the tap, so "Approve & Deploy" never promises
-     * more than the server will actually do. `deploy.known === false` means
-     * the status check itself failed (offline, endpoint down) — say that
-     * plainly rather than guessing either "will deploy" or "won't". */
-    function _deployBanner(deploy) {
-        if (!deploy || deploy.known !== true) {
-            return '<div style="font-size:11.5px;color:var(--text3,#8b95a8);background:var(--bg2,#0a0e1a);border:1px solid var(--border,#1f2638);border-radius:8px;padding:8px 10px;margin-bottom:12px;">Could not check whether a deploy hook is configured — the result of tapping Approve will say so explicitly.</div>';
-        }
-        return deploy.configured
-            ? '<div style="font-size:11.5px;color:#34d399;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.25);border-radius:8px;padding:8px 10px;margin-bottom:12px;">A deploy hook is configured — approving triggers an immediate rebuild.</div>'
-            : '<div style="font-size:11.5px;color:#fbbf24;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);border-radius:8px;padding:8px 10px;margin-bottom:12px;">No deploy hook configured — approving only announces this version to clients now. The code itself ships on the next scheduled release, or whenever it is otherwise pushed.</div>';
-    }
-
-    function _render(result, deploy) {
+    function _render(live, notes) {
         var body = document.getElementById('wfRaBody'); if (!body) return;
-        var p = result && result.data;
-        if (!result || !result.ok) {
-            body.innerHTML = '<div style="text-align:center;color:#fbbf24;font-size:13px;padding:24px;">Could not check for a pending release'
-                + (result && result.reason ? ' (' + _esc(result.reason) + ')' : '') + '. This is not the same as "nothing pending" — try again.'
-                + '<div style="margin-top:12px;"><button id="wfRaRetry" style="padding:8px 14px;border-radius:9px;border:1px solid var(--border,#1f2638);background:transparent;color:var(--text2,#c7cdd9);font-weight:700;cursor:pointer;">Retry</button></div></div>';
+        if (!live || !live.ok) {
+            body.innerHTML =
+                '<div role="alert" style="padding:6px 0 4px;">' +
+                    '<div style="font-size:14px;font-weight:700;color:#fbbf24;">Could not read the live version.</div>' +
+                    '<div style="font-size:13px;line-height:1.5;color:var(--text2,#aab3c5);margin-top:6px;">' + _esc((live && live.reason) || 'Try again in a moment.') + ' This does not mean a release failed.</div>' +
+                    '<div style="margin-top:14px;"><button id="wfRaRetry" class="wfrl-btn" type="button">Try Again</button></div>' +
+                '</div>';
             var retry = document.getElementById('wfRaRetry');
             if (retry) retry.onclick = function () { _load(); };
             return;
         }
-        if (!p || !p.suggestedVersion) {
-            body.innerHTML = '<div style="text-align:center;color:var(--text3,#8b95a8);font-size:13px;padding:24px;">No pending release. The system proposes one automatically when user feedback warrants it.</div>';
-            return;
+        var items = (notes && notes.ok) ? notes.items : null;
+        var changes;
+        if (items === null) changes = '<div class="wfrl-note" style="margin-top:0;">The notes for this version could not be loaded just now.</div>';
+        else if (!items.length) changes = '<div class="wfrl-note" style="margin-top:0;">No notes were published for this version.</div>';
+        else {
+            changes = items.slice(0, MAX_ITEMS).map(function (t) { return '<div class="wfrl-item">' + _esc(t) + '</div>'; }).join('');
+            if (items.length > MAX_ITEMS) changes += '<div class="wfrl-more">and ' + (items.length - MAX_ITEMS) + ' more, listed in the changelog.</div>';
         }
-        var changes = Array.isArray(p.proposedChanges) ? p.proposedChanges : [];
-        var rows = changes.map(function (c) {
-            var pc = c.priority === 'critical' ? '#ef4444' : (c.priority === 'high' ? '#f59e0b' : '#818cf8');
-            return '<div style="padding:9px 11px;border:1px solid var(--border,#1f2638);border-left:3px solid ' + pc + ';border-radius:9px;margin-bottom:7px;background:var(--bg2,#0a0e1a);">' +
-                '<div style="font-size:10.5px;font-weight:800;color:' + pc + ';text-transform:uppercase;margin-bottom:3px;">' + _esc(c.priority || '') + ' · ' + _esc(c.category || '') + ((c.reports || 1) > 1 ? ' · ' + c.reports + ' reports' : '') + '</div>' +
-                '<div style="font-size:12.5px;color:var(--text,#e6e7eb);line-height:1.45;">' + _esc(c.action || c.issue || '') + '</div></div>';
-        }).join('');
-        var head = (p.notes && p.notes.headline) ? _esc(p.notes.headline) : 'Proposed release';
         body.innerHTML =
-            _deployBanner(deploy) +
-            '<div style="margin-bottom:12px;">' +
-                '<div style="font-size:16px;font-weight:800;color:var(--text,#fff);">' + head + '</div>' +
-                '<div style="font-size:12px;color:var(--text3,#8b95a8);margin-top:2px;">Version ' + _esc(p.suggestedVersion) + ' · from ' + _esc(p.basedOn || '?') + (p.urgent ? ' · <span style="color:#ef4444;font-weight:700;">URGENT</span>' : '') + '</div>' +
-            '</div>' +
-            (rows ? ('<div style="font-size:11px;font-weight:700;color:var(--text3,#8b95a8);text-transform:uppercase;margin-bottom:6px;">Proposed changes (drafted by System AI)</div>' + rows) :
-                '<div style="color:var(--text3,#8b95a8);font-size:12.5px;margin-bottom:8px;">Routine maintenance release.</div>') +
-            '<textarea id="wfRaNote" placeholder="Optional note (e.g. why you are rejecting)…" style="width:100%;margin-top:10px;min-height:54px;background:var(--bg2,#0a0e1a);color:var(--text,#e6e7eb);border:1px solid var(--border,#1f2638);border-radius:9px;padding:9px;font-size:12.5px;resize:vertical;"></textarea>' +
-            '<div id="wfRaMsg" style="display:none;margin-top:10px;font-size:12.5px;font-weight:600;"></div>';
+            '<div class="wfrl-h" style="margin-top:0;">Live now</div>' +
+            '<div class="wfrl-row"><span class="wfrl-k">Version</span><span class="wfrl-v">' + _esc(live.version) + '</span></div>' +
+            (live.sha ? '<div class="wfrl-row"><span class="wfrl-k">Build</span><span class="wfrl-v">' + _esc(live.sha) + '</span></div>' : '') +
+            '<div class="wfrl-h">How a release happens</div>' +
+            STEPS.map(function (t, i) { return '<div class="wfrl-step"><span class="wfrl-num">' + (i + 1) + '</span><span>' + _esc(t) + '</span></div>'; }).join('') +
+            '<div class="wfrl-note">A release that fails any step stops and raises an issue instead of publishing. No approval from you is needed.</div>' +
+            '<div class="wfrl-h">What this version changed</div>' + changes;
     }
 
-    async function showPanel() {
-        if (_open) return; _open = true;
-        var ov = document.createElement('div');
-        ov.id = 'wfRaOverlay';
-        ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(3,6,14,0.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;padding:18px;';
-        ov.innerHTML =
-            '<div style="width:100%;max-width:460px;max-height:86vh;display:flex;flex-direction:column;background:var(--bg,#070b16);border:1px solid var(--border,#1f2638);border-radius:18px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.6);">' +
-                '<div style="padding:18px 20px;border-bottom:1px solid var(--border,#1f2638);">' +
-                    '<div style="font-size:18px;font-weight:800;color:var(--text,#fff);">Review and approve the release</div>' +
-                    '<div style="font-size:12px;color:var(--text3,#8b95a8);margin-top:2px;">WealthFlow proposes the release. It is published only when you approve it.</div>' +
-                '</div>' +
-                '<div id="wfRaBody" style="padding:18px 20px;overflow-y:auto;flex:1;"><div style="text-align:center;color:var(--text3,#8b95a8);font-size:13px;">Loading proposal…</div></div>' +
-                '<div style="padding:14px 20px;border-top:1px solid var(--border,#1f2638);display:flex;gap:10px;">' +
-                    '<button id="wfRaReject" style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--border,#1f2638);background:transparent;color:var(--text2,#c7cdd9);font-weight:700;cursor:pointer;">Reject</button>' +
-                    '<button id="wfRaApprove" style="flex:2;padding:11px;border-radius:10px;border:none;background:var(--accent,#f5a623);color:#1a1300;font-weight:800;cursor:pointer;">Approve and publish</button>' +
-                '</div>' +
-                '<div style="padding:0 20px 14px;"><button id="wfRaClose" style="width:100%;padding:9px;border-radius:10px;border:none;background:transparent;color:var(--text3,#8b95a8);font-size:12px;cursor:pointer;">Close</button></div>' +
-            '</div>';
-        document.body.appendChild(ov);
-        requestAnimationFrame(function () { ov.style.opacity = '1'; });
-
-        document.getElementById('wfRaClose').onclick = _close;
-        document.getElementById('wfRaApprove').onclick = function () { _onDecision('approve'); };
-        document.getElementById('wfRaReject').onclick = function () { _onDecision('reject'); };
-
-        await _load();
-    }
-
-    // Both checks are independent reads with their own failure modes (Firestore
-    // vs. the API route), so one failing must not block the other from showing
-    // what it found. Neither write, so re-running on Retry is always safe.
     async function _load() {
-        var results = await Promise.all([_getPending(), _getDeployStatus()]);
-        _render(results[0], results[1]);
+        var body = document.getElementById('wfRaBody');
+        if (body) body.innerHTML = _skeleton();
+        var live = await _getLive();
+        var notes = live.ok ? await _getNotes(live.version) : null;
+        _render(live, notes);
     }
 
     function _close() {
         _open = false;
+        document.removeEventListener('keydown', _onKey, true);
         var ov = document.getElementById('wfRaOverlay');
-        if (ov) { ov.style.opacity = '0'; setTimeout(function () { ov.remove(); }, 200); }
+        if (ov) { ov.style.opacity = '0'; setTimeout(function () { if (ov.parentNode) ov.parentNode.removeChild(ov); }, 200); }
+        try { if (_returnFocus && _returnFocus.focus) _returnFocus.focus(); } catch (_) {}
+    }
+    function _onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); _close(); } }
+
+    async function showPanel() {
+        if (_open) return; _open = true;
+        _css();
+        _returnFocus = document.activeElement || null;
+        var ov = document.createElement('div');
+        ov.id = 'wfRaOverlay';
+        ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true'); ov.setAttribute('aria-labelledby', 'wfRaTitle');
+        ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(3,6,14,0.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;padding:18px;';
+        ov.innerHTML =
+            '<div class="wfrl-sheet">' +
+                '<div style="padding:18px 20px 14px;">' +
+                    '<div id="wfRaTitle" style="font-size:18px;font-weight:800;letter-spacing:-.01em;color:var(--text,#fff);">Software release</div>' +
+                    '<div style="font-size:12.5px;color:var(--text2,#aab3c5);margin-top:3px;">Published automatically once the tests pass.</div>' +
+                '</div>' +
+                '<div id="wfRaBody" style="padding:4px 20px 18px;overflow-y:auto;flex:1;"></div>' +
+                '<div style="padding:12px 20px 16px;border-top:1px solid var(--border,#1f2638);"><button id="wfRaClose" class="wfrl-btn" type="button" style="width:100%;">Close</button></div>' +
+            '</div>';
+        document.body.appendChild(ov);
+        requestAnimationFrame(function () { ov.style.opacity = '1'; });
+        document.getElementById('wfRaClose').onclick = _close;
+        ov.addEventListener('click', function (e) { if (e.target === ov) _close(); });
+        document.addEventListener('keydown', _onKey, true);
+        try { document.getElementById('wfRaClose').focus(); } catch (_) {}
+        await _load();
     }
 
     // ── self-inject a matching card into Settings (mirrors wealthflow-intel-panel) ──
@@ -230,6 +206,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
             if (secs.length) host = secs[secs.length - 1];
         }
         if (!host || !host.parentNode) return false;
+        _css();
         var card = document.createElement('div');
         card.className = 'settings-section';
         card.id = 'wfReleasePanel';
@@ -238,10 +215,10 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
             '<div class="settings-title" style="color:#f5a623;">Software release</div>' +
             '<div class="setting-row">' +
                 '<div class="setting-info">' +
-                    '<div class="setting-label">Review and approve the release</div>' +
-                    '<div class="setting-desc">WealthFlow drafts the next release from user feedback and lists the fixes. Review the proposal here and approve it to publish. Only the owner can approve.</div>' +
+                    '<div class="setting-label">Releases publish automatically</div>' +
+                    '<div class="setting-desc">WealthFlow publishes a release by itself once real changes are merged, the tests pass and the live app is healthy. No approval from you is needed.</div>' +
                 '</div>' +
-                '<button id="wfReleaseOpenBtn" style="padding:9px 16px;border-radius:10px;border:none;background:var(--accent,#f5a623);color:#1a1300;font-weight:800;cursor:pointer;white-space:nowrap;">Review</button>' +
+                '<button id="wfReleaseOpenBtn" type="button" style="padding:9px 16px;border-radius:10px;border:none;background:var(--accent,#f5a623);color:#1a1300;font-weight:800;cursor:pointer;white-space:nowrap;">Details</button>' +
             '</div>';
         host.parentNode.insertBefore(card, host.nextSibling);
         var btn = document.getElementById('wfReleaseOpenBtn');
@@ -258,8 +235,8 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
 
     // PERSISTENCE FIX: the card used to vanish when the Settings screen re-rendered.
     // A debounced MutationObserver re-injects it whenever it goes missing WHILE THE
-    // SETTINGS PAGE IS ACTIVE — and _inject() itself now refuses to attach anywhere
-    // else, so "Autonomous Release" stays in ONE fixed spot and never wanders.
+    // SETTINGS PAGE IS ACTIVE — and _inject() itself refuses to attach anywhere
+    // else, so the card stays in ONE fixed spot and never wanders.
     try {
         var _reinjectScheduled = false;
         var _obs = new MutationObserver(function () {
@@ -274,8 +251,8 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
     } catch (_) {}
 
     window.wfReleaseApprove = {
-        showPanel: showPanel, _close: _close, _act: _act, _getPending: _getPending,
-        _getDeployStatus: _getDeployStatus, _render: _render, _inject: _inject,
+        showPanel: showPanel, _close: _close, _getLive: _getLive, _getNotes: _getNotes,
+        _render: _render, _inject: _inject,
     };
-    console.log('[wfReleaseApprove] @info@ Release approval panel loaded — autonomous proposal, one-tap owner approval');
+    console.log('[wfReleaseApprove] Software release panel loaded: releases publish automatically, this card shows what is live');
 })();
