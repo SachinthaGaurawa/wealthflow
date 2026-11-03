@@ -121,6 +121,11 @@ guardrail(f) if contains(f, "statement-view")
 # accepts `fuzz-passed` in place of review, and a fuzzer cannot tell you that a
 # version comparison silently stopped offering updates to anyone.
 guardrail(f) if contains(f, "wealthflow-update-system")
+# wealthflow-migrations.js is the runner that rewrites the SHAPE of the owner's books on their device, and the registry inside it is
+# where an AI-written migration is added. It proves each one on a copy and puts the books back if they do not check out, but a human
+# decides what may be added to it, and what the runner is allowed to accept. RULE 2, not RULE 1, for the reason given above:
+# a fuzzer cannot tell you that a migration quietly rewrote the wrong field.
+guardrail(f) if contains(f, "wealthflow-migrations")
 # api/router.js is the SINGLE function Vercel builds. Every /api request on this
 # deployment enters through it, it decides which handler runs, and it decides how
 # that handler is CALLED — Node's (req, res) or a Web Request built from it. A

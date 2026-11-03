@@ -48,6 +48,7 @@ const SENSITIVE = [
     /^sw\.js$/i,                   // a bad service worker can brick every install
     /auth/i, /oauth/i, /crypto/i,
     /fifo-reconcile/i, /allocator/i,
+    /wealthflow-migrations/i,      // rewrites the shape of the books on the owner's device; a person decides what is added
     /approve-release/i, /release-brain/i, /release\.cjs$/i,
     /send-otp/i, /verify-otp/i,
     /predict-wealth/i, /market-data/i, /fx-rate/i,

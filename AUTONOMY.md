@@ -269,3 +269,31 @@ design (section 5), and rollback needs `VERCEL_TOKEN` + `HEALTH_URL` set.
 | No version bump for days | nothing substantive changed | working as intended — see §1 fault 1 |
 | PR sits unmerged | a required check is red, or it touches a sensitive path | read the check output; sensitive paths need the `human-approved` label |
 | Agent opens no PRs | queue is empty | the run summary says so explicitly |
+
+## 9. The whole system on one page, and the four 2026 techniques
+
+The picture of the entire path (report, fix agent, gates, release, canary, the device, safety nets) is in
+[`docs/update-system-diagram.md`](docs/update-system-diagram.md) (Mermaid, so it stays in the repository and
+is reviewed like code). Rendered copies are in the project files as `update-system-diagram.png|svg` and
+`update-journey-sequence.png|svg`. Colour says how far to trust a box: green is live and exercised, blue is new
+in this change and tested, amber needs something only the owner can supply, grey is not possible on a free tier.
+
+What each of the four techniques asked for became, and where it stops:
+
+| Technique asked for | What exists | Where it stops (said plainly) |
+|---|---|---|
+| **LLM-as-a-Judge in CI/CD, with a release score** | The 3-model review board now asks every reviewer for a 0-100 score, shows it in the table, prints the lowest/average as the release score, and treats a stated PASS that carries a score under 60 as a failure (`BOARD_SCORE_FLOOR`). `consensus-review.mjs`, `test/consensus_score_test.js`. | An LLM cannot certify "100% correct". The score is an opinion, so the gate stays the unanimous stated PASS plus tests, fuzz, policy rules, secret scan and the real browser. A score only catches a reviewer contradicting itself. |
+| **Self-healing DOM / agentic QA** | `test/e2e/heal.mjs`: a locator tries css, then role and name, then text, in that order; refuses an ambiguous match; logs every heal with the selector to switch to. Adopted in `test/e2e/update-journey.mjs` with a drill that renames the control and checks it is healed and logged. | A control that is really gone still fails the test (checked by a drill). Healing is for tests, never for the app, and it never edits a test on its own. |
+| **Autonomous schema migrations with instant revert** | `wealthflow-migrations.js` runs a migration on a copy, measures records, money and a round trip, writes a restore point first, writes through `DB.set`, reads back, and reverts on any failure; `undo(id)` takes an applied one back. Details: [`docs/data-migrations.md`](docs/data-migrations.md). | The data is schemaless Firestore plus localStorage, so this is a versioned data-shape migration, not SQL DDL. The registry is empty because no shape change is pending. A migration that deletes records needs `countMayChange` and a person. The file is on the sensitive-path lists: an AI may draft a migration, a person approves it. |
+| **Canary / Vercel Rolling Releases** | After every deploy a real Chromium opens the live release and checks six things (loads, version, files, console errors, update module, service worker), twice, 30 s apart. A red canary fails the run and files a `canary-failed` issue (`autonomy/canary.mjs`, `test/canary_test.js`). Instant Rollback is wired but optional. | Vercel Rolling Releases answered 404 on both endpoints for this project, and a 5% slice of one owner's devices is one device, so it would prove nothing. Rollback runs only when `CANARY_ROLLBACK=true` and `VERCEL_TOKEN` are set; both are the owner's. |
+
+Also added in the same change: the update flow records whether the restore point really saved (`saved` or `not-saved`)
+before an update, instead of assuming it did, and the fix agent sends a change back to its author up to twice when
+before/after measurement shows no visible effect.
+
+**Owner-bound, still open** (nothing here can be done from the repository): `VERCEL_TOKEN` and `HEALTH_URL` (rollback),
+`CANARY_ROLLBACK=true` (opt in to automatic rollback), and a real update tried once on the owner's phone.
+
+**Not possible on a free tier, and not claimed:** 100,000 live agents, a quantum state snapshot, a holographic database,
+a vector database service, Sentry Seer and E2B sandboxes. The research report's own conclusion applies: the reliability
+comes from the guardrails, not from the model.
