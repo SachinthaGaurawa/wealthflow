@@ -1,0 +1,199 @@
+name: Security updates (urgent weekly + full monthly)
+
+# =============================================================================
+# WHY THIS WORKFLOW EXISTS — found on 2026-11-03 by reading the issue queue.
+#
+# The discovery detector (autonomous-discover.yml) FINDS vulnerable dependencies
+# every day and files an issue for each — and then nothing could fix them:
+#   #279 @grpc/grpc-js · #315 firebase-admin · #316 node-forge ·
+#   #346 @fastify/busboy · #382 source-map-js
+# all sat open and labelled `ai-stuck` for a month, because the fix agent is
+# (rightly) forbidden from editing package.json / package-lock.json and a model
+# has no business choosing dependency versions anyway. Detection without a fixer
+# is a smoke alarm with no sprinkler.
+#
+# This is the sprinkler, and it is deliberately NOT an AI:
+#   • Weekly (Mon 05:30 UTC)  URGENT path — if `npm audit` reports anything with a
+#     published fix, apply exactly that fix (`npm audit fix`, semver-compatible).
+#   • Monthly (1st, 06:30 UTC) FULL refresh — `npm update` inside the ranges the
+#     repository already declares, then `npm audit fix`.
+# Both run the WHOLE test suite on the result and open a pull request only if it
+# is green. A red result files an issue instead — nothing is ever pushed silently.
+#
+# WHAT IT WILL NOT DO (on purpose):
+#   • It never merges. package.json and package-lock.json are guarded paths
+#     (policy/wealthflow.rego, autonomy/agent-swarm.mjs). The pull request waits
+#     for the `human-approved` label, exactly like every other change to the
+#     dependency tree. A lockfile is a supply-chain surface; a bot that can bump
+#     it AND approve itself is a bot that can be pointed at the whole app.
+#   • It never crosses a major version (`npm audit fix` without --force). A
+#     vulnerability that needs a breaking upgrade is reported in the issue it
+#     files, with the advisory, so a person decides.
+# =============================================================================
+
+on:
+  schedule:
+    - cron: '30 5 * * 1'      # weekly — urgent path
+    - cron: '30 6 1 * *'      # monthly — full refresh
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'urgent = apply published fixes only · monthly = also refresh within declared ranges'
+        type: choice
+        options: [urgent, monthly]
+        default: urgent
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: wealthflow-security-updates
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Decide the mode
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          CRON: ${{ github.event.schedule }}
+          INPUT_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          MODE=urgent
+          if [ "$EVENT" = "workflow_dispatch" ]; then MODE="${INPUT_MODE:-urgent}"; fi
+          if [ "$EVENT" = "schedule" ] && [ "$CRON" = "30 6 1 * *" ]; then MODE=monthly; fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "mode: $MODE"
+
+      - name: Install exactly what is locked
+        run: npm ci
+
+      - name: Audit before
+        id: before
+        run: |
+          set -uo pipefail
+          npm audit --json > audit-before.json || echo "npm audit exited non-zero (1 = it found something; audit-summary rejects a real error)"
+          node autonomy/audit-summary.mjs audit-before.json > before.txt
+          cat before.txt
+          echo "total=$(node -p "require('./audit-before.json').metadata.vulnerabilities.total")" >> "$GITHUB_OUTPUT"
+
+      - name: Apply the fixes
+        id: apply
+        env:
+          MODE: ${{ steps.mode.outputs.mode }}
+          TOTAL: ${{ steps.before.outputs.total }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = "monthly" ]; then
+            npm update
+          fi
+          if [ "${TOTAL:-0}" != "0" ] || [ "$MODE" = "monthly" ]; then
+            npm audit fix
+          fi
+          if git diff --quiet -- package.json package-lock.json; then
+            echo "changed=no" >> "$GITHUB_OUTPUT"
+            echo "nothing to change"
+          else
+            echo "changed=yes" >> "$GITHUB_OUTPUT"
+            git diff --stat -- package.json package-lock.json
+          fi
+
+      - name: Audit after
+        id: after
+        run: |
+          set -uo pipefail
+          npm audit --json > audit-after.json || echo "npm audit exited non-zero (1 = it found something; audit-summary rejects a real error)"
+          node autonomy/audit-summary.mjs audit-after.json > after.txt
+          cat after.txt
+          echo "total=$(node -p "require('./audit-after.json').metadata.vulnerabilities.total")" >> "$GITHUB_OUTPUT"
+          echo "serious=$(node -p "const v=require('./audit-after.json').metadata.vulnerabilities;(v.high||0)+(v.critical||0)")" >> "$GITHUB_OUTPUT"
+
+      - name: Run the whole test suite on the result
+        id: tests
+        if: steps.apply.outputs.changed == 'yes'
+        run: npm test
+
+      - name: Open the pull request
+        id: pr
+        if: steps.apply.outputs.changed == 'yes' && steps.tests.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ steps.mode.outputs.mode }}
+          BEFORE: ${{ steps.before.outputs.total }}
+          AFTER: ${{ steps.after.outputs.total }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh pr list --state open --label security --search "Security updates in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING is already waiting for review — not opening a second one."
+            { echo "### Security update already waiting"; echo ""; echo "PR #$EXISTING has not been merged yet; it needs the \`human-approved\` label (package files are guarded)."; } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          BRANCH="security/updates-$(date -u +%Y-%m-%d)-$MODE"
+          git config user.name  'wealthflow-security'
+          git config user.email 'security@users.noreply.github.com'
+          git checkout -b "$BRANCH"
+          git add -- package.json package-lock.json
+          git commit -m "chore(security): $MODE dependency update ($BEFORE -> $AFTER known vulnerabilities)"
+          for i in 1 2 3 4; do
+            git push -u origin "$BRANCH" && break
+            echo "push failed (attempt $i) — backing off"; sleep $((2 ** i))
+          done
+          {
+            echo "## Security dependency update ($MODE)"
+            echo ""
+            echo "Known vulnerabilities: **$BEFORE → $AFTER**."
+            echo ""
+            echo "### Before"; echo '```'; cat before.txt; echo '```'
+            echo "### After"; echo '```'; cat after.txt; echo '```'
+            echo ""
+            echo "The whole test suite passed on this exact lockfile (\`npm test\`)."
+            echo ""
+            echo "**Why this is not merged by itself:** \`package.json\` and \`package-lock.json\` are guarded paths. Review the diff, then add the \`human-approved\` label **after** the last push."
+            echo ""
+            echo "---"
+            echo "🤖 Generated by the scheduled security workflow (no model involved)."
+          } > pr-body.md
+          gh label list --limit 300 --json name --jq '.[].name' | grep -qx security || gh label create security --color D93F0B --description "Security fix"
+          gh pr create --title "Security updates ($MODE): $BEFORE → $AFTER known vulnerabilities" \
+            --body-file pr-body.md --base "$GITHUB_REF_NAME" --head "$BRANCH" --label security
+          echo "pr=yes" >> "$GITHUB_OUTPUT"
+
+      - name: Report a failed update loudly
+        if: failure() && steps.apply.outputs.changed == 'yes' && steps.tests.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label list --limit 300 --json name --jq '.[].name' | grep -qx pipeline-health || gh label create pipeline-health --color B60205 --description "The autonomous pipeline itself is broken"
+          gh issue create --label pipeline-health --label security \
+            --title "Security update broke the test suite — needs a person" \
+            --body "$(printf 'The scheduled security workflow found fixable vulnerabilities, applied the published fixes, and the test suite failed on the result. Nothing was pushed.\n\nRun: %s\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_' "$RUN")"
+
+      - name: Fail if serious vulnerabilities remain
+        if: always() && steps.after.outputs.serious != '' && steps.after.outputs.serious != '0'
+        env:
+          SERIOUS: ${{ steps.after.outputs.serious }}
+        run: |
+          echo "::error::$SERIOUS high/critical vulnerabilities remain that no semver-compatible fix covers. See 'Audit after'."
+          exit 1

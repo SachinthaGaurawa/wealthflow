@@ -1,4 +1,14 @@
 /* =============================================================================
+ * UPDATE 2026-11-03 — THIS FILE ONCE ENSHRINED THE STALL.
+ *   It asserted that "awaiting approval" (exit 2) is a clean green no-op. That
+ *   made sense for ONE red X on a screenshot, but combined with a human tap that
+ *   nobody gave it hid a release chain that shipped nothing for weeks: 86 real
+ *   commits sat un-announced behind a green tick. The workflow now earns approval
+ *   from gates (tests on the exact commit + production health + a substantive
+ *   change) and passes --auto-approve, so exit 2 can only mean "the gates passed
+ *   and release.cjs still refused": that is an anomaly and must turn the run red
+ *   (through the later "Fail loudly" step), never read as "not a failure".
+ *
  * test/auto_release_skip_not_failure_test.js
  * -----------------------------------------------------------------------------
  * The owner's screenshot: the daily "Auto Release (WealthFlow)" workflow
@@ -78,6 +88,8 @@ function runReleaseStep({ fakeExitCode = 0 } = {}) {
         fs.writeFileSync(path.join(dir, 'git'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
         const summaryFile = path.join(dir, 'summary.md');
         fs.writeFileSync(summaryFile, '');
+        const outFile = path.join(dir, 'output.txt');
+        fs.writeFileSync(outFile, '');
         const script = path.join(dir, 'step.sh');
         fs.writeFileSync(script, stepScript('Release'));
         const stdout = execFileSync('bash', [script], {
@@ -87,30 +99,41 @@ function runReleaseStep({ fakeExitCode = 0 } = {}) {
                 EVENT: 'schedule',
                 GITHUB_REF_NAME: 'main',
                 GITHUB_STEP_SUMMARY: summaryFile,
+                GITHUB_OUTPUT: outFile,
                 IN_VERSION: '', IN_BUMP: '', IN_URGENT: '', IN_NOTE: '',
             },
         });
-        return { code: 0, stdout, summary: fs.readFileSync(summaryFile, 'utf8') };
+        return { code: 0, stdout, summary: fs.readFileSync(summaryFile, 'utf8'), output: fs.readFileSync(outFile, 'utf8') };
     } catch (e) {
-        let summary = '';
+        let summary = '', output = '';
         try { summary = fs.readFileSync(summaryFile, 'utf8'); } catch (_) { /* never written */ }
-        return { code: e.status ?? 1, stdout: `${e.stdout || ''}${e.stderr || ''}`, summary };
+        try { output = fs.readFileSync(outFile, 'utf8'); } catch (_) { /* never written */ }
+        return { code: e.status ?? 1, stdout: `${e.stdout || ''}${e.stderr || ''}`, summary, output };
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
 }
 
-describe('release.cjs exit 2 ("nothing to do") no longer fails the workflow', () => {
-    it('THE EXACT CASE FROM THE SCREENSHOT: awaiting-approval (exit 2) is a clean, green no-op', () => {
+describe('release.cjs exit 2 after the gates passed is an ANOMALY, not a green no-op', () => {
+    it('the step itself still exits 0 (so its outputs are written) but flags declined=yes and warns', () => {
         const r = runReleaseStep({ fakeExitCode: 2 });
-        expect(r.code, 'exit 2 — release.cjs\'s own documented "nothing to do" — still fails the step').toBe(0);
-        expect(r.stdout).toMatch(/declined to ship/);
-        expect(r.stdout).not.toMatch(/::error::/);
+        expect(r.code).toBe(0);
+        expect(r.output).toMatch(/declined=yes/);
+        expect(r.stdout).toMatch(/::warning::release\.cjs declined to ship/);
     });
 
-    it('records WHY in the job summary, so a human glancing at the run sees "skipped", not "broken"', () => {
+    it('records the decline in the job summary as something that needs a look, never "not a failure"', () => {
         const r = runReleaseStep({ fakeExitCode: 2 });
-        expect(r.summary).toMatch(/Release skipped \(not a failure\)/);
+        expect(r.summary).toMatch(/Release DECLINED/);
+        expect(r.summary).not.toMatch(/not a failure/i);
+    });
+
+    it('a LATER step turns the run red when the release declined', () => {
+        const at = WF.indexOf('- name: Fail loudly if the gates approved but the release declined');
+        expect(at).toBeGreaterThan(-1);
+        const block = WF.slice(at, at + 600);
+        expect(block).toMatch(/steps\.release\.outputs\.declined == 'yes'/);
+        expect(block).toMatch(/exit 1/);
     });
 
     it('a real hard error (exit 1) still fails the step loudly', () => {
@@ -129,7 +152,8 @@ describe('release.cjs exit 2 ("nothing to do") no longer fails the workflow', ()
         const r = runReleaseStep({ fakeExitCode: 0 });
         expect(r.code).toBe(0);
         expect(r.stdout).not.toMatch(/declined to ship/);
-        expect(r.summary).not.toMatch(/Release skipped/);
+        expect(r.summary).not.toMatch(/Release DECLINED/);
+        expect(r.output).not.toMatch(/declined=yes/);
     });
 });
 
@@ -140,9 +164,9 @@ describe('release.cjs\'s own documented contract is what this relies on', () => 
         expect(RELEASE).toMatch(/EXIT:\s*0 ok\s*·\s*2 nothing-to-do \(skipped\)\s*·\s*1 hard error/);
     });
 
-    it('the awaiting-approval path in release.cjs really does exit 2, matching the workflow\'s assumption', () => {
-        const i = RELEASE.indexOf('approval.approved');
-        expect(i, 'the approval-gate branch moved — retarget this test').toBeGreaterThan(-1);
-        expect(RELEASE.slice(i, i + 200)).toMatch(/process\.exit\(2\)/);
+    it('the awaiting-approval path really does exit 2 (now decided by autonomy/release-approval.cjs)', () => {
+        const APPROVAL = fs.readFileSync(path.join(ROOT, 'autonomy/release-approval.cjs'), 'utf8');
+        expect(APPROVAL).toMatch(/awaits approval[\s\S]{0,80}exit: 2|exit: 2[\s\S]{0,200}awaits approval/);
+        expect(RELEASE).toMatch(/process\.exit\(d\.exit \|\| 2\)/);
     });
 });

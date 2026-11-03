@@ -9,7 +9,7 @@
  *
  * USAGE
  *   node release.cjs [--patch|--minor|--major] [--version X.Y.Z]
- *                    [--from-brain] [--urgent] [--note "text"]
+ *                    [--from-brain] [--auto-approve] [--urgent] [--note "text"]
  *                    [--push] [--dry] [--force] [--repo DIR]
  *
  *   --patch|--minor|--major  bump kind (default: patch)
@@ -17,6 +17,13 @@
  *   --from-brain             read system/pendingRelease from Firestore for the
  *                            version/urgency/notes (needs FIREBASE_SERVICE_ACCOUNT;
  *                            degrades to a patch bump if unavailable)
+ *   --auto-approve           the CALLER has already verified the release gates (a real
+ *                            substantive change, the test suite green on this exact commit,
+ *                            production healthy). The brain's human-approval flag is then
+ *                            recorded as approved-by-gates instead of waiting for a tap
+ *                            that, for weeks, nobody was there to give. It NEVER makes
+ *                            a release mandatory: the brain's own `urgent` is ignored under
+ *                            this flag; only an explicit --urgent can force an update.
  *   --urgent                 mark this a security release (adds it to mandatory[])
  *   --note "text"            changelog/what's-new text for this version
  *   --push                   git add/commit/push the changed files (Vercel deploys)
@@ -39,6 +46,7 @@ const REPO = path.resolve(val('--repo', process.cwd()));
 const DRY = has('--dry');
 const PUSH = has('--push');
 const FORCE = has('--force');
+const AUTO_APPROVE = has('--auto-approve');
 let URGENT = has('--urgent');
 const FROM_BRAIN = has('--from-brain');
 const KIND = has('--major') ? 'major' : has('--minor') ? 'minor' : 'patch';
@@ -157,12 +165,12 @@ function gitPush(next, reason) {
     const b = await loadBrain();
     const bd = b && b.data;
     if (FROM_BRAIN && bd) {
-        if (!bd.shouldRelease) { log('brain says a release is NOT due (reason: ' + (bd.reason || 'none') + ') — skipping.'); process.exit(2); }
-        if (bd.consumed && !FORCE) { log('brain proposal already consumed — skipping (use --force to re-release).'); process.exit(2); }
-        if (bd.approval && bd.approval.required && !bd.approval.approved && !FORCE) {
-            log('brain proposal awaits approval (approval.approved=false) — skipping. Approve via /api/approve-release or run with --force.'); process.exit(2);
-        }
-        if (bd.urgent) URGENT = true;
+        // The approval decision lives in autonomy/release-approval.cjs (pure, unit-tested).
+        // See that file for why a human tap that nobody gave stalled releases for weeks.
+        const d = require('./autonomy/release-approval.cjs').decideApproval({ brain: bd, autoApprove: AUTO_APPROVE, force: FORCE });
+        if (!d.go) { log(d.reason + ' — skipping. Approve via /api/approve-release, or let auto-release approve it once its gates pass (--auto-approve).'); process.exit(d.exit || 2); }
+        if (d.autoApproved) log(d.reason + ' — no human tap needed.');
+        if (d.urgentFromBrain) URGENT = true;
         if (!NOTE && bd.notes) NOTE = typeof bd.notes === 'string' ? bd.notes : (bd.notes.summary || JSON.stringify(bd.notes));
     }
 
@@ -210,7 +218,11 @@ function gitPush(next, reason) {
     if (b && b.admin && !DRY) {
         try {
             const db = b.admin.firestore();
-            await db.collection('system').doc('pendingRelease').set({ consumed: true, releasedVersion: next, releasedAt: b.admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+            await db.collection('system').doc('pendingRelease').set({
+                consumed: true, releasedVersion: next, releasedAt: b.admin.firestore.FieldValue.serverTimestamp(),
+                // Record WHO approved: an audit trail is what makes removing the human tap defensible.
+                approval: Object.assign({}, bd && bd.approval || {}, AUTO_APPROVE ? { approved: true, approvedBy: 'release-gates', approvedAt: new Date().toISOString() } : {}),
+            }, { merge: true });
             const manRef = db.collection('system').doc('manifest');
             const cur = await manRef.get(); const man = cur.exists ? cur.data() : { latest: CURRENT, mandatory: [], notes: {} };
             man.latest = next; man.notes = man.notes || {}; man.notes[next] = NOTE;
