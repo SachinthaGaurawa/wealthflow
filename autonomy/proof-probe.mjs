@@ -132,16 +132,49 @@ export function describeObservation(before, after, { filename = 'the module' } =
     return L.join('\n');
 }
 
+/**
+ * True when BOTH runs were measured, something was drawn, and every element holds exactly the same text after
+ * the change as before it. Nothing drawn at all is "unknown", never "no change".
+ */
+export function observedNoChange(before, after) {
+    if (!before?.ok || !after?.ok) return false;
+    const b = before.text || {}, a = after.text || {};
+    const ids = new Set([...Object.keys(b), ...Object.keys(a)]);
+    if (!ids.size) return false;
+    for (const id of ids) if (b[id] !== a[id]) return false;
+    return true;
+}
+
+/** What `GET /api/version` returns (version.js). A test keeps this line equal to the real handler's output. */
+export const VERSION_ENDPOINT_FIELDS = ['sha', 'version', 'env', 'ts'];
+
+/**
+ * The data the module can really see, stated as facts. Run 41698322633 (issue #501): the author wrote
+ * `_manifest.build`, a field that does not exist, so the new text was never drawn. A model that is told the field
+ * list stops inventing fields.
+ */
+export function groundFacts({ repoDir = ROOT } = {}) {
+    const L = ['FACTS ABOUT THE DATA THIS MODULE CAN SEE (do not read a field that is not listed here or visibly set in the excerpts):'];
+    try {
+        const keys = Object.keys(JSON.parse(fs.readFileSync(path.join(repoDir, 'version.json'), 'utf8')));
+        L.push(`  · version.json (the release manifest this module loads) has exactly these top-level fields: ${keys.join(', ')}.`);
+    } catch { /* no manifest: say nothing about it */ }
+    L.push(`  · GET /api/version answers with JSON that has exactly: ${VERSION_ENDPOINT_FIELDS.join(', ')}. \`sha\` is the short deploy (build) hash.`);
+    return L.join('\n');
+}
+
 // ── the child-process side ──────────────────────────────────────────────────
 
 async function probe(file, sourceFile) {
     const { loadBrowserModule } = await import(pathToFileURL(path.join(ROOT, 'test', 'helpers', 'load-browser-module.js')).href);
-    const source = sourceFile ? fs.readFileSync(sourceFile, 'utf8') : fs.readFileSync(path.join(ROOT, file), 'utf8');
+    // The module under test lives in the repo being fixed (the child's cwd); the loader is the agent's own.
+    const repoFile = path.resolve(process.cwd(), file);
+    const source = sourceFile ? fs.readFileSync(sourceFile, 'utf8') : fs.readFileSync(fs.existsSync(repoFile) ? repoFile : path.join(ROOT, file), 'utf8');
     const ids = scaffoldIds(source);
     const html = ids.map((id) => `<div id="${id}"></div>`).join('') + (ids.includes('app') ? '' : '<div id="app" class="show"></div>');
 
     let manifest = { latest: '0.0.0' };
-    try { manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8')); } catch { /* the stub still answers */ }
+    try { manifest = JSON.parse(fs.readFileSync(fs.existsSync(path.resolve(process.cwd(), 'version.json')) ? path.resolve(process.cwd(), 'version.json') : path.join(ROOT, 'version.json'), 'utf8')); } catch { /* the stub still answers */ }
     const fetched = [];
     const reply = (body, ok = true, status = 200) => ({ ok, status, headers: { get: () => 'application/json' }, json: async () => body, text: async () => JSON.stringify(body) });
     const fetchImpl = async (input) => {
