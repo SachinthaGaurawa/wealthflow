@@ -1404,7 +1404,7 @@ export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {
  * "unproven-direction", whose direction the parser ASSUMED (a plain amount, no marks), on a statement that is a registered or self-declared CREDIT CARD's, whose words say nothing of money coming back, and
  * whose statement has no whole-statement question open. It is filed as the rules would file it (resolveReview, proof 'layout' written on the record), never by guessing a category: a merchant the rules
  * cannot place goes in as a Card Purchase for the merchant review. A row that does not qualify, or that the books would refuse (a matching entry already there), is left exactly as it was. */
-export async function proveCardReviews({ db, uid, limit = 10 }) {
+export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, maxSources = 12 }) {
     const userRef = db.collection('users').doc(uid);
     const page = await userRef.collection('statementReview').where('status', '==', 'pending').limit(500).get();
     const waiting = page.docs.filter(doc => { const r = doc.data(); return r.uid === uid && r.reason === 'unproven-direction' && Number.isSafeInteger(r.index) && r.index >= 0 && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && /^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(r.sourcePath || ''); });
@@ -1413,10 +1413,13 @@ export async function proveCardReviews({ db, uid, limit = 10 }) {
     const sources = new Map(), asked = new Map();
     let proved = 0, left = 0;
     for (const doc of waiting) {
-        if (proved >= limit) { left += 1; continue; }
+        /* THE SCAN IS BOUNDED, NOT ONLY THE FILING: `limit` counts rows filed, but every statement looked at costs two reads (its own pending reviews, its document), and rows turned away cost reads too. The scan stops at `until` (the front pass's own deadline,
+         * so it can never eat the time the statements themselves need) and looks at no more than `maxSources` statements a run; what it did not reach waits for the next run. */
+        if (proved >= limit || Date.now() > until) { left += 1; continue; }
         const review = doc.data();
+        if (!asked.has(review.sourcePath) && asked.size >= maxSources) { left += 1; continue; }
         /* the statement's OWN pending reviews are asked for, not taken from the page above (which holds at most 500 of every statement's): a layout or reconciliation question still open on it keeps every row of it for the owner */
-        if (!asked.has(review.sourcePath)) asked.set(review.sourcePath, (await userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath).get()).docs.some(entry => { const r = entry.data(); return r.status === 'pending' && Number(r.index) < 0; }));
+        if (!asked.has(review.sourcePath)) asked.set(review.sourcePath,(await userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath).get()).docs.some(entry => { const r = entry.data(); return r.status === 'pending' && Number(r.index) < 0; }));
         if (asked.get(review.sourcePath)) { left += 1; continue; }
         if (!sources.has(review.sourcePath)) sources.set(review.sourcePath, (await db.doc(review.sourcePath).get()).data() || null);
         const source = sources.get(review.sourcePath);
@@ -2676,7 +2679,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (frontRoom()) { const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit }); revokedRecovered = revoked.recovered; revokedMore = revoked.more; }
         if (frontRoom()) reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
         if (frontRoom()) zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
-        if (frontRoom()) { try { cardRowsProved = (await proveCardReviews({ db, uid, limit: heavy ? 20 : 10 })).proved; } catch (_) { /* advice only: the next run tries again */ } }
+        if (frontRoom()) { try { cardRowsProved = (await proveCardReviews({ db, uid, limit: heavy ? 20 : 10, until: start + frontBudgetMs })).proved; } catch (_) { /* advice only: the next run tries again */ } }
         if (frontRoom()) { const phantom = await recheckPhantomStatements({ db, uid, limit: heavy ? 10 : 3 }); phantomRequeued = phantom.requeued; phantomMore = phantom.more; }
         if (frontRoom()) { const healed = await healMissingRows({ db, uid, limit: heavy ? 5 : 2, mailRef }); rowsHealed = healed.rows; healMore = healed.more; }
         if (frontSkipped) { wholeMore = true; frontIncomplete = true; }

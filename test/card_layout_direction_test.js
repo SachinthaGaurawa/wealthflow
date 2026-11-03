@@ -146,6 +146,17 @@ describe('the rows that waited before the card layout proof existed', () => {
         expect(reviews(db).map(r => r.status)).toEqual(['pending', 'resolved', 'resolved']);
         expect(store(db).cconetime.map(r => r.desc)).not.toContain('OUTWARD CEFT TRANSFER 123456');
     });
+    it('is bounded: past its deadline it reads nothing more and files nothing, and it looks at no more statements a run than it is allowed', async () => {
+        const late = world(['KEELLS SUPER COLOMBO', 'UBER RIDE', 'POS PURCHASE']);
+        expect(await proveCardReviews({ db: late.db, uid: 'u', limit: 10, until: Date.now() - 1 })).toMatchObject({ proved: 0, left: 3 });
+        expect(reviews(late).every(r => r.status === 'pending')).toBe(true);
+        // two statements waiting, one allowed: the second is not even asked about
+        const other = 'wf-mail/owner/items/card2.pdf', otherId = sourceOccurrenceId(other, 0);
+        const two = world(['KEELLS SUPER COLOMBO'], {}, undefined, [[`users/u/statementReview/${otherId}`, { uid: 'u', sourcePath: other, index: 0, status: 'pending', reason: 'unproven-direction', bank: 'HNB Credit Card',
+            row: { date: '2026-09-15', narration: 'UBER RIDE', description: 'UBER RIDE', amount: 50, direction: 'debit', directionSource: 'assumed', needsReview: true, valid: true } }], [other, { uid: 'u', bank: 'HNB Credit Card', last4: '0048', statementType: 'credit-card', status: 'needs_review' }]]);
+        expect(await proveCardReviews({ db: two.db, uid: 'u', limit: 10, maxSources: 1 })).toMatchObject({ proved: 1, left: 1 });
+        expect(Object.values(two.data.get('users/u').cconetime || []).length).toBe(1);
+    });
     it('a question of the statement\'s own keeps its rows even when it is not on the first page of pending reviews', async () => {
         const db = world(['KEELLS SUPER COLOMBO', 'UBER RIDE', 'POS PURCHASE'], {}, undefined, [[`users/u/statementReview/${sourceOccurrenceId(sourcePath, -1)}`, { uid: 'u', sourcePath, index: -1, status: 'pending', reason: 'layout' }]]);
         // the page the sweep reads holds only the row reviews (as it would past 500 of them): the question is found by asking for the statement's own reviews

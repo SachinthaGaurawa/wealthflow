@@ -550,14 +550,14 @@ function buildReview() {
     for (const entry of pending) { const key = entry.sourcePath || entry.id; if (!files.has(key)) files.set(key, []); files.get(key).push(entry); }
     for (const group of files.values()) {
         const rowsOf = group.filter(entry => entry.row && entry.index >= 0);
-        let holder = box;
+        let holder = box, card = null;
         if (rowsOf.length > 1) {
             const first = group[0], at = document.createElement('div'); at.style.cssText = 'padding:14px 0;border-bottom:1px solid var(--border);';
             const title = document.createElement('p'); title.style.cssText = 'font-weight:600;margin:0;'; title.textContent = [shownBank(first.bank), first.filename].filter(Boolean).join(' · ') || 'Statement'; at.appendChild(title);
             const how = document.createElement('p'); how.style.cssText = 'margin:6px 0;color:var(--text2);font-size:13px;'; how.textContent = `One statement. ${rowsOf.length} of its transactions need a look: ${reviewReasonText(rowsOf[0].reason)}`; at.appendChild(how);
             const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.onclick = () => download(first); at.appendChild(raw);
             const details = document.createElement('details'); details.style.cssText = 'margin-top:10px;'; const sum = document.createElement('summary'); sum.textContent = `Show the ${rowsOf.length} transactions`; details.appendChild(sum); at.appendChild(details); box.appendChild(at);
-            holder = details;
+            holder = details; card = at;
         }
         for (const entry of group) {
         const item = document.createElement('div'); item.style.cssText = 'padding:14px 0;border-bottom:1px solid var(--border);';
@@ -574,7 +574,9 @@ function buildReview() {
             if (locked) { if (typeof window.openBankVault === 'function') { closeReview(); window.openBankVault({ closeOnUnlock: true, onClose: () => { try { sync().catch(() => {}); } catch (_) {} } }); } else say('Open Settings > Bank Statement Passwords to add it.', 'info'); return; }
             button.disabled = true; try { await review(entry); } catch { say('This review could not be opened. It remains pending.', 'error'); } finally { button.disabled = false; }
         }; item.appendChild(button);
-        const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw); holder.appendChild(item);
+        const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw);
+        /* a question about the WHOLE statement (its layout, its reconciliation, its password) stays on the card, above the collapsed list of transactions: it is the one that blocks the rest and must not hide inside it */
+        if (card && !(entry.row && entry.index >= 0)) card.insertBefore(item, holder); else holder.appendChild(item);
         if (entry.index === -1 && entry.reason === 'statement-empty-needs-confirmation') {
             const empty = document.createElement('button'); empty.className = 'btn btn-primary btn-sm'; empty.textContent = 'Yes, nothing happened that month'; empty.style.marginLeft = '8px';
             empty.onclick = async () => { empty.disabled = true; try { await request('/api/statement-sync', 'POST', { action: 'close-empty', id: entry.id }); say('Closed as an empty month. You can reopen it from the list of closed months.', 'info'); await sync(); } catch { empty.disabled = false; say('That month could not be closed.', 'error'); } };
