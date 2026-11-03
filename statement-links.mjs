@@ -264,10 +264,14 @@ export function mergeInstalmentSeries(user, now) {
     for (const r of plans) {
         if (!r || !(r.source === 'statement' || r.statementKey) || r.mergedInto || r.planLink || r.completed === true || r.durationUnknown) continue;
         if (Math.floor(num(r.duration)) !== 1 || !(num(r.monthly) > 0) || !words(r.product)) continue;
-        const note = noteOf(r), no = Math.floor(num(r.installmentNo)) || note.no, of = Math.floor(num(r.installmentOf)) || note.of, date = chargeDateOf(r);
+        /* a record filed before the length was kept still carries the line's own words (`desc`): "INSTALMENT 2/12 ..." or "EASY PAY 6 MONTHS ...". The saved numbers come first, then the note, then those words;
+         * a line that prints the length but not which instalment it is ("6 MONTHS") is a plan of that length with the instalment number unknown (no = 0), never a plan of unknown length */
+        const note = noteOf(r), said = installmentInfo(String(r.desc || r.product || '')), date = chargeDateOf(r);
+        let no = Math.floor(num(r.installmentNo)) || note.no || said.no, of = Math.floor(num(r.installmentOf)) || note.of || said.of;
+        if (!(of >= 2) && said.length >= 2) { of = said.length; no = 0; }
         if (!ymOf(date)) continue;
         const key = [words(r.bank), String(r.card_last4 || ''), words(r.product)].join('|');
-        if (of >= 2 && no >= 1 && no <= of) put(stated, `${key}|${of}`, { r, no, of, date }); else if (!(of >= 2)) put(loose, key, { r, no: 0, of: 0, date });
+        if (of >= 2 && no >= 0 && no <= of) put(stated, `${key}|${of}`, { r, no, of, date }); else if (!(of >= 2)) put(loose, key, { r, no: 0, of: 0, date });
     }
     const byDate = (a, b) => a.date.localeCompare(b.date) || a.no - b.no;
     /* plans whose lines state their length: one plan of that length */
@@ -282,7 +286,7 @@ export function mergeInstalmentSeries(user, now) {
             }
             const shape = planFromLine({ amount: num(latest.r.monthly), date: base.date, no: base.no, length: base.of });
             Object.assign(base.r, { duration: shape.duration, months: shape.months, date: shape.date, monthly: num(latest.r.monthly), total: round2(num(latest.r.monthly) * base.of), totalEstimated: true,
-                installmentNo: latest.no, installmentOf: base.of, paid: Math.min(base.of, Math.max(latest.no, months.size)), payments: [...months.values()], rateUnknown: true, notes: latest.r.notes || base.r.notes, completed: false, _ut: now });
+                ...(latest.no >= 1 ? { installmentNo: latest.no } : {}), installmentOf: base.of, paid: Math.min(base.of, Math.max(latest.no, months.size)), payments: [...months.values()], rateUnknown: true, notes: latest.r.notes || base.r.notes, completed: false, _ut: now });
             base.r.remaining = Math.max(0, base.of - base.r.paid);
             for (const e of run) if (e !== base) { e.r.completed = true; e.r.mergedInto = base.r.id; e.r._ut = now; }
             if (run.length > 1) base.r.mergedFrom = run.filter((e) => e !== base).map((e) => e.r.id);

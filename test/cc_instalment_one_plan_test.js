@@ -58,6 +58,29 @@ describe('the months of one plan, filed one by one, become one plan', () => {
         expect(mergeInstalmentSeries(user, 1).map((d) => d.kind)).toEqual(['series']);
         expect(shown(user)[0]).toMatchObject({ duration: 12, installmentNo: 2, date: '2026-08-01' });
     });
+    it('reads the length from the line\'s own words when the record carries neither numbers nor a note ("EASY PAY 6 MONTHS")', () => {
+        const easy = (id, date, extra = {}) => old(id, date, 3200, 0, { product: 'Singer', desc: 'EASY PAY 6 MONTHS SINGER', ...extra });
+        const user = { ccinstall: [easy('E1', '2026-08-20'), easy('E2', '2026-09-20')] };
+        expect(mergeInstalmentSeries(user, 1).map((d) => d.kind)).toEqual(['series']);
+        const plan = shown(user)[0];
+        expect(plan).toMatchObject({ id: 'E1', duration: 6, months: 6, date: '2026-08-01', total: 19200, totalEstimated: true, paid: 2, remaining: 4, installmentOf: 6, completed: false });
+        expect(plan.durationUnknown).toBeUndefined();
+        expect(plan.installmentNo).toBeUndefined();                                              // the line never said which instalment it was
+        for (const ym of ['2026-08', '2026-11', '2027-01']) expect(planCountedIn(plan, ym), ym).toBe(true);
+        expect(planCountedIn(plan, '2027-02')).toBe(false);
+        expect(mergeInstalmentSeries(user, 2)).toEqual([]);                                         // done once
+        const one = { ccinstall: [easy('E9', '2026-09-20')] };
+        expect(mergeInstalmentSeries(one, 1).map((d) => d.kind)).toEqual(['length']);
+        expect(one.ccinstall[0]).toMatchObject({ duration: 6, date: '2026-09-01', paid: 1, remaining: 5 });
+    });
+    it('reads "2/12" from the words too, and a line with no length at all still says its length is not on the statement', () => {
+        const user = { ccinstall: [old('A1', '2026-08-24', 5000, 0, { desc: 'INSTALMENT 1/12 ABANS' }), old('A2', '2026-09-24', 5000, 0, { desc: 'INSTALMENT 2/12 ABANS' })] };
+        expect(mergeInstalmentSeries(user, 1).map((d) => d.kind)).toEqual(['series']);
+        expect(shown(user)[0]).toMatchObject({ duration: 12, installmentNo: 2, installmentOf: 12, date: '2026-08-01', paid: 2 });
+        const bare = { ccinstall: [old('N1', '2026-09-24', 5000, 0, { desc: 'INSTALMENT ABANS' })] };
+        expect(mergeInstalmentSeries(bare, 1).map((d) => d.kind)).toEqual(['open']);
+        expect(bare.ccinstall[0].durationUnknown).toBe(true);
+    });
     it('a single record of a stated plan gets its real length too', () => {
         const user = { ccinstall: [old('A2', '2026-09-24', 14639.51, 2)] };
         expect(mergeInstalmentSeries(user, 1).map((d) => d.kind)).toEqual(['length']);
