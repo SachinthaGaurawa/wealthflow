@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.43 — 2026-11-03
+
+**What changed for you**
+
+- Update system: restore-point honesty, browser canary, verified rollback, release score, self-healing QA, data-migration runner (#506)
+
 ## v7.69.42 — 2026-11-03
 
 **What changed for you**
