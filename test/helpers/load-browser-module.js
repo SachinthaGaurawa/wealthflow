@@ -49,14 +49,16 @@ function memoryStorage(seed = {}) {
  * @param {object} [opts.globals]     extra globals (for example `{ firebase: null, currentUser: {...} }`)
  * @param {string} [opts.url]         page URL (default https://wf.app/)
  * @param {boolean} [opts.logs]       keep console output (default: silent)
- * @returns {{ window: object, document: object, localStorage: object, sessionStorage: object, sources: string[] }}
+ * @param {string} [opts.source]      run THIS code instead of reading `file` (a candidate change that is not on disk)
+ * @returns {{ window: object, document: object, localStorage: object, sessionStorage: object, sources: string[], attached: string[] }}
+ *          `attached` names what the module itself put on the window (for example ['wfUpdate'])
  */
 export function loadBrowserModule(file, opts = {}) {
     const {
         html = '', fetchImpl = null, localStorage: seed = {}, globals = {},
-        url = 'https://wf.app/', logs = false,
+        url = 'https://wf.app/', logs = false, source = null,
     } = opts;
-    const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const src = typeof source === 'string' ? source : fs.readFileSync(path.join(ROOT, file), 'utf8');
     const dom = parseHTML(`<!doctype html><html><head></head><body>${html}</body></html>`);
     const { document } = dom;
 
@@ -93,6 +95,8 @@ export function loadBrowserModule(file, opts = {}) {
     context.self = context;
     context.globalThis = context;
     vm.createContext(context);
+    const base = new Set(Object.keys(context));
     vm.runInContext(src, context, { filename: file });
-    return { window: context, document, localStorage, sessionStorage, sources: [file] };
+    const attached = Object.keys(context).filter((k) => !base.has(k));
+    return { window: context, document, localStorage, sessionStorage, sources: [file], attached };
 }

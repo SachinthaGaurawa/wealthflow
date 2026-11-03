@@ -163,3 +163,21 @@ describe('the test prompts', () => {
         expect(p).toMatch(/MUST FAIL/);   // the original red→green contract is repeated
     });
 });
+
+describe('the failure comment shows the change and the measurement, so "wrong patch" and "wrong test" can be told apart', () => {
+    it('includes the drafted change and what the module did before and after, fenced and bounded', () => {
+        const text = proofEvidence({
+            testRounds: [{ round: 1, reason: 'r' }],
+            change: '-old line\n+new line ``` with a fence',
+            observation: 'WHAT THE MODULE ACTUALLY DOES\n  BEFORE: "a"\n  AFTER: "b"',
+        });
+        expect(text).toMatch(/<summary>The change that was drafted<\/summary>/);
+        expect(text).toContain('+new line');
+        expect(text).not.toMatch(/```\s*with a fence/);        // a fence inside the diff cannot close the comment's own fence
+        expect(text).toMatch(/<summary>What the module did before and after \(measured\)<\/summary>/);
+    });
+    it('says nothing extra when there is no change or measurement to show', () => {
+        expect(proofEvidence({ testRounds: [{ round: 1, reason: 'r' }] })).not.toMatch(/<details>/);
+    });
+});
+
