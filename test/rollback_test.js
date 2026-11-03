@@ -85,6 +85,11 @@ describe('pickTarget: which deployment production goes back to', () => {
         ];
         expect(pickTarget(mixed, { badSha: 'current' }).target.id).toBe('dpl_RELEASE');
     });
+    it('a record with no target (a preview in the REST API) is never a rollback target, even if the list is not filtered', () => {
+        const noTarget = { id: 'dpl_NOTARGET', created: 1793747000000, state: 'READY', target: null, meta: {}, isRollbackCandidate: true };
+        expect(pickTarget([REAL[0], noTarget, REAL[1]], { badSha: 'current' }).target.id).toBe('dpl_RELEASE');
+        expect(pickTarget([noTarget], {}).ok).toBe(false);
+    });
     it('an unknown candidate flag (older API) is still tried rather than refused', () => {
         const p = pickTarget([{ ...REAL[0], isRollbackCandidate: undefined }, { ...REAL[1], isRollbackCandidate: undefined }], { badSha: 'current' });
         expect(p.ok).toBe(true);

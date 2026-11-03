@@ -48,7 +48,7 @@ export function normalise(d) {
  *  badSha: the commit whose deployment is bad, or 'current' (the newest production deployment is the bad one). */
 export function pickTarget(deployments, { badSha } = {}) {
     const list = (Array.isArray(deployments) ? deployments : []).map(normalise)
-        .filter((d) => d.id && d.state === 'READY' && (d.target === 'production' || d.target === null))
+        .filter((d) => d.id && d.state === 'READY' && d.target === 'production')   // a preview has target null in the REST API: never a rollback target
         .sort((a, b) => b.created - a.created);
     if (!list.length) return { ok: false, why: 'Vercel returned no READY production deployments' };
     const wantNewest = !badSha || badSha === 'current';

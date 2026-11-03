@@ -362,7 +362,7 @@ export const BUDGETS = {
     // 2026-11-03 (CC Instalments page: the figures count the plans the table calls Active, the months of one plan merged into one are not listed, a length or a rate the statement never printed is not shown as a number or "0% Free", and a plan with no stated length is not "Done" while it is still charged; measured 2,377,662 + ~0.002% headroom): 2_376_700 -> 2_377_700. Under half of it is the comments recording why. No new script or request at load.
     // 2026-11-03 (index.html: the update-system diagnosis joins Copy diagnostics, one script tag, and a crash on an older build is history rather than an error; measured 2,378,515 + ~0.01% headroom): 2_376_700 -> 2_378_800.
     // (the two 2026-11-03 changes above were each measured alone; together on one tree they measure 2,379,564, so the ceiling is set on the combined tree: 2_378_800 -> 2_380_000.)
-    // 2026-11-03 (index.html: one script tag and one launch call for the data-migration runner, on top of main's 2,379,564): 2_390_000.
+    // 2026-11-03 (index.html: one script tag and one launch call for the data-migration runner, on top of main's 2,379,564; measured 2,380,038 + ~0.007% headroom): 2_380_000 -> 2_380_200.
     htmlBytes: 2_380_200,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
@@ -754,7 +754,7 @@ export const BUDGETS = {
     // 2026-11-03: 2_812_300 -> 2_813_000 (wealthflow-diagnosis.js measured again after its last edit: 2,812,802 + ~0.01% headroom; the first figure was taken before that edit).
     // 2026-11-03: 2_813_000 -> 2_813_500 (wealthflow-diagnosis.js now keeps an autonomy status the server could not measure as "unknown": measured 2,813,399 + ~0.004% headroom).
     // 2026-11-03 (the CC Instalments overhaul, the card statement-totals proof and the update-system diagnosis merged on one tree; measured 2,814,325 + ~0.006% headroom): 2_813_500 -> 2_814_500.
-    // 2026-11-03: the restore point before an update (its result is recorded and said, and the diagnosis reads it) and wealthflow-migrations.js (the runner that proves a data-shape change on a copy, writes it only with a restore point saved, and puts the books back if they do not check out), on top of main's 2,814,325: 2_840_000.
+    // 2026-11-03: the restore point before an update (its result is recorded and said, and the diagnosis reads it) and wealthflow-migrations.js (the runner that proves a data-shape change on a copy, writes it only with a restore point saved, and puts the books back if they do not check out), on top of main's 2,814,325; measured 2,831,427 + ~0.006% headroom): 2_814_500 -> 2_831_600.
     totalJsBytes: 2_831_600,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
