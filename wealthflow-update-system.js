@@ -8,7 +8,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.69.38';
+    const CURRENT_VERSION = '7.69.39';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -878,6 +878,8 @@
         let seen = null;
         try { seen = localStorage.getItem(LS_SEEN_POPUP); } catch (_) {}
         if (seen === installed) return;            // already shown for this version
+        // No welcome ever recorded = a NEW install, already on the newest version: nothing changed for it.
+        if (seen === null) { try { localStorage.setItem(LS_SEEN_POPUP, installed); } catch (_) {} return; }
         const notes = _notesFor(installed);
         if (!notes) { try { localStorage.setItem(LS_SEEN_POPUP, installed); } catch (_) {} return; }
         // show centered welcome

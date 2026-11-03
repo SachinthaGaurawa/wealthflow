@@ -35,7 +35,13 @@ concurrency:
 jobs:
   agent:
     # ignore issues the system itself files for humans (e.g. auto-rollback alerts)
-    if: ${{ !contains(github.event.issue.labels.*.name, 'auto-rollback') }}
+    #
+    # OFF UNTIL THE ANTHROPIC ACCOUNT HAS CREDIT. Every run of this job since August ended in
+    # "Credit balance is too low" (5 of 5, the last on 2026-11-03 for issue #492): a red X on every
+    # feedback issue that did nothing and made real failures harder to see. The free-tier swarm
+    # (autonomous-fix.yml) is the agent that actually works on issues. To turn this one on, add credit
+    # to the Anthropic account, then set the repository VARIABLE CLAUDE_ACTION_ENABLED to `true`.
+    if: ${{ vars.CLAUDE_ACTION_ENABLED == 'true' && !contains(github.event.issue.labels.*.name, 'auto-rollback') }}
     runs-on: ubuntu-latest
     steps:
       # ── kernel-level egress firewall FIRST (before any untrusted input is touched) ──
