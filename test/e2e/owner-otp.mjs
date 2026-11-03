@@ -119,6 +119,8 @@ console.log('5c. the switch        -> saves at once, number untouched');
 await page.click('#_wf_own_change');
 await page.waitForSelector('#_wf_own_save');
 assert.equal(await page.locator('#_wf_own_phone').evaluate((el) => el.readOnly), false, 'the box is open after Change number');
+// the box takes focus one tick after it opens (setTimeout 0), so wait for it rather than read it in the same instant
+await page.waitForFunction(() => document.activeElement === document.getElementById('_wf_own_phone'), null, { timeout: 5000 }).catch(() => {});
 assert.equal(await page.locator('#_wf_own_phone').evaluate((el) => document.activeElement === el), true, 'and focused');
 await page.fill('#_wf_own_phone', '071 222 3344');
 assert.equal(await page.getAttribute('#_wf_own_save', 'data-mode'), 'send');
