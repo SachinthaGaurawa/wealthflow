@@ -745,7 +745,8 @@ export const BUDGETS = {
     // (with #490 as well: 2,778,139, so 2_772_500 -> 2_778_600; then the save deadline counts UTF-8 bytes and a field named __proto__ survives the codec, measured 2,778,909: -> 2_779_200.)
     // (the Check Connection verdict keeps the account's own reason for a usage limit or refused data, measured 2,779,743: -> 2_779_900.)
     // (the first read ends at its own 12 s deadline and a top-level __proto__ field is written, measured 2,780,011: -> 2_780_600.)
-    totalJsBytes: 2_780_600,
+    // 2026-11-03: 2_780_600 -> 2_783_400 for one statement shown once in Open reviews (its transactions inside it) and the count of statements, not transactions (wealthflow-statement-cloud.js).
+    totalJsBytes: 2_783_400,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

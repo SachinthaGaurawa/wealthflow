@@ -426,7 +426,8 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
     });
 }
 
-export async function resolveReview({ db, uid, id, decision, row, now = Date.now() }) {
+/* `directionSource`: what proves the row's direction. The owner's own decision is a 'marker'; a sweep that proves a waiting card row by the card's layout (statement-sync.js proveCardReviews) says 'layout', so the filed record says so. */
+export async function resolveReview({ db, uid, id, decision, row, now = Date.now(), directionSource = 'marker' }) {
     if (!uid || !/^[a-f\d]{64}$/.test(id || '') || !decision || !Number.isSafeInteger(now)) throw new Error('invalid-review-request');
     const userRef = db.collection('users').doc(uid), reviewRef = userRef.collection('statementReview').doc(id), ledgerRef = userRef.collection('statementLedger').doc(id);
     return db.runTransaction(async tx => {
@@ -444,7 +445,7 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
         const changes = {};
         if (!dismissed) {
             if (review.index < 0 || !ledgerSnap.exists || ledgerSnap.data().status !== 'review') throw new Error('whole-statement-review-requires-layout');
-            const corrected = { ...review.row, ...row, description: row?.description || review.row?.description || review.row?.narration, directionSource: 'marker', needsReview: false, valid: true };
+            const corrected = { ...review.row, ...row, description: row?.description || review.row?.description || review.row?.narration, directionSource: ['marker', 'layout'].includes(directionSource) ? directionSource : 'marker', needsReview: false, valid: true };
             const verified = { ...decision, verified: true };
             const resolvedLast4 = source.last4 || review.row?.card_last4 || review.row?._ccLast4 || '';
             const context = { bank: source.bank || review.row?.bank || '', last4: resolvedLast4, card_last4: resolvedLast4, statementType: source.statementType || '', cardRegistry: (userSnap.data() || {}).settings?.cardRegistry || {}, sourcePath: review.sourcePath, index: review.index };

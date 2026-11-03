@@ -903,3 +903,23 @@ describe('private statement cloud frontend transport', () => {
         });
     });
 });
+
+describe('one statement is one entry, however many of its transactions wait', () => {
+    it('counts the files, not the transactions, and draws the file once with its transactions inside', async () => {
+        const texts = [];
+        const element = () => ({ ...fakeElement(), _t: '', set textContent(v) { this._t = v; texts.push(v); }, get textContent() { return this._t; } });
+        vi.stubGlobal('document', { createElement: () => element(), body: { appendChild: () => {} } });
+        await authChanged(null);
+        const doc = (index, sourcePath = 'wf-mail/o/items/card.pdf') => ({ id: 'r' + sourcePath.length + index, data: () => ({ uid: 'owner', sourcePath, index, status: 'pending', reason: 'unproven-direction', bank: 'HNB Credit Card', filename: 'card.pdf', row: { date: '2026-09-1' + (index % 10), narration: 'SHOP ' + index, amount: 10, direction: 'debit' } }) });
+        const docs = [...Array.from({ length: 9 }, (_, i) => doc(i)), doc(0, 'wf-mail/o/items/other.pdf')];
+        window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => ({ onSnapshot: ok => { ok({ docs }); return () => {}; } }) }) }) }) }) };
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 })).mockResolvedValueOnce(reply(true, { ok: true, processed: 0 }));
+        await authChanged(active);
+        expect(getState()).toMatchObject({ reviews: 10, reviewSources: 2 });
+        await openReview();
+        expect(texts).toContain('2 statements · 10 items to look at · processing queue is clear.');
+        expect(texts.some(x => /^One statement\. 9 of its transactions need a look/.test(x))).toBe(true);
+        expect(texts).toContain('Show the 9 transactions');
+        await authChanged(null);
+    });
+});

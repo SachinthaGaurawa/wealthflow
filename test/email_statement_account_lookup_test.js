@@ -128,11 +128,11 @@ describe('a locked statement is "waiting for a password", in the grid as well', 
 
 describe('the "need review" banner counts only what there is something to open', () => {
     const html = fs.readFileSync(path.join(import.meta.dirname, '..', 'index.html'), 'utf8');
-    it('is built from the server\'s reviewQuestions and the list\'s own non-password items — a locked statement has its own strip', () => {
+    it('is built from the server\'s reviewQuestions and the list\'s own non-password STATEMENTS (files, not transactions) — a locked statement has its own strip', () => {
         expect(html).toContain('_mailSyncState.reviewQuestions = ');
         const banner = html.slice(html.indexOf('const reviewTotal = '), html.indexOf('const reviewStrip = '));
         expect(banner).toContain('st.reviewQuestions');
-        expect(banner).toContain('passwordReviews');
+        expect(banner).toContain('reviewSources');                            // the files the waiting transactions belong to, locked ones left out (wealthflow-statement-cloud.js)
         expect(banner).not.toMatch(/\bst\.reviewStatements\) \|\| 0, Number\(window\.WFStatementCloud/);   // the old sum of the two lists, the locked statement counted in both
     });
 });
