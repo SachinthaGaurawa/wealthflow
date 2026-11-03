@@ -1,5 +1,13 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.39 — 2026-11-03
+
+**What changed for you**
+
+- Feedback to fix chain: repair the proving test from its real error, new installs skip "what changed", update journey tested in a browser (#500)
+- HNB card rows that wait are filed from the tail of every run (#499)
+- Put the Software release card between Software Update and App and installation (#498)
+
 ## v7.69.38 — 2026-11-03
 
 **What changed for you**
