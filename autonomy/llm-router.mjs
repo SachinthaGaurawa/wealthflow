@@ -143,6 +143,7 @@ export const PROVIDERS = [
         label: 'GitHub Models',
         keys: ['GITHUB_MODELS_TOKEN'],
         url: 'https://models.github.ai/inference/chat/completions',
+        listUrl: null,                               // its catalogue lives elsewhere; not healed from a list
         model: () => process.env.GITHUB_MODELS_MODEL || 'openai/gpt-4o-mini',
         kind: 'openai',
         strengths: ['general'],
@@ -200,6 +201,7 @@ export function describeAvailability(env = process.env) {
         count: avail.length,
         providers: avail.map((p) => ({ id: p.id, label: p.label, model: p.model(), via: keyFor(p, env).name })),
         healthy: avail.length > 0,
+        healed: healedModels(),
         missing: PROVIDERS.filter((p) => !keyFor(p, env)).map((p) => p.id),
     };
 }
@@ -334,7 +336,7 @@ function buildOpenAI(provider, key, { system, prompt, maxTokens, temperature }) 
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key.value}` },
             body: JSON.stringify({
-                model: provider.model(),
+                model: modelOf(provider),
                 messages: [
                     ...(system ? [{ role: 'system', content: system }] : []),
                     { role: 'user', content: prompt },
@@ -376,7 +378,7 @@ function buildAnthropic(provider, key, { system, prompt, maxTokens, temperature 
                 'anthropic-version': '2023-06-01',
             },
             body: JSON.stringify({
-                model: provider.model(),
+                model: modelOf(provider),
                 max_tokens: maxTokens,
                 temperature,
                 ...(system ? { system } : {}),
@@ -394,7 +396,7 @@ function buildCohere(provider, key, { system, prompt, maxTokens, temperature }) 
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key.value}` },
             body: JSON.stringify({
-                model: provider.model(),
+                model: modelOf(provider),
                 messages: [
                     ...(system ? [{ role: 'system', content: system }] : []),
                     { role: 'user', content: prompt },
@@ -413,8 +415,8 @@ function buildCohere(provider, key, { system, prompt, maxTokens, temperature }) 
 
 const BUILDERS = { openai: buildOpenAI, gemini: buildGemini, anthropic: buildAnthropic, cohere: buildCohere };
 
-/** One provider, one attempt. Throws on any non-2xx or empty completion. */
-async function callProvider(provider, opts) {
+/** One provider, one attempt, one model. Throws on any non-2xx or empty completion. */
+async function callProviderOnce(provider, opts) {
     const key = keyFor(provider, opts.env || process.env);
     if (!key) throw new Error(`${provider.id}: no key`);
     // Gemini goes through the shared client: a retired model is replaced from Google's own list, a quota answer parks that model for as
@@ -464,9 +466,121 @@ async function callProvider(provider, opts) {
         try { data = JSON.parse(raw); } catch { throw new Error(`${provider.id}: non-JSON response`); }
         const text = String(extract(data) || '').trim();
         if (!text) throw new Error(`${provider.id}: empty completion`);
-        return { text, provider: provider.id, label: provider.label, model: provider.model() };
+        return { text, provider: provider.id, label: provider.label, model: modelOf(provider) };
     } finally {
         clearTimeout(timer);
+    }
+}
+
+// ── a retired model is replaced from the provider's OWN list ─────────────────
+// Run 41698322633 (2026-11-03): of thirteen configured providers, nine answered with a retired model
+// (cerebras "archived", groq "does not exist", fireworks "not deployed", nvidia "end of life", openrouter "unavailable
+// for free", huggingface "not supported"…). Each run paid for the nine failures and then worked with two providers, so the
+// "independent" reviewer and the test author had nobody to be independent of. Model names are retired by the
+// providers, not by this repository, so no edit here can keep up; the provider's own list can. Gemini already does this
+// (gemini-client.mjs); this is the same for every OpenAI-compatible provider. It never spends: OpenRouter is limited to
+// ids ending ":free", the rest to what the account's own key can list, and it acts only on "this model is gone"
+// answers (404/410, or 400 "not supported"), never on credit, rate or auth errors.
+
+const _healed = new Map();        // provider id → { from, to, at }
+const _healTried = new Set();     // provider ids already given one chance in this process
+
+/** The model a provider is asked for now: the healed one if its configured model was retired. */
+function modelOf(provider) {
+    const h = _healed.get(provider.id);
+    return h ? h.to : provider.model();
+}
+
+/** What was replaced in this process, for logs and the status endpoint. */
+export function healedModels() {
+    return [..._healed.entries()].map(([provider, v]) => ({ provider, from: v.from, to: v.to }));
+}
+
+/** Tests only. */
+export function _resetHealedModels() { _healed.clear(); _healTried.clear(); }
+
+/** True for an answer that means "this model name is gone", and for nothing else. */
+export function isRetiredModelError(status, text) {
+    const s = String(text || '');
+    if (status === 410) return true;
+    if (status === 404) return /model/i.test(s) && /(not found|does not exist|doesn't exist|archived|unavailable|not available|retired|deprecated|end of life|not deployed|no longer|inaccessible)/i.test(s);
+    if (status === 400) return /model/i.test(s) && /(not supported|unsupported|not available|decommission|deprecated)/i.test(s);
+    return false;
+}
+
+/**
+ * The best chat model in a provider's own list, or null. A model is chosen only if it scores above zero: a name
+ * that matches nothing we know is better left unused than guessed.
+ */
+export function pickReplacement(ids, { providerId = '', current = '' } = {}) {
+    const notChat = /(embed|whisper|tts|speech|audio|moderat|guard|rerank|image|dall|diffusion|sdxl|flux|ocr|transcrib|realtime|safety|classif|vision-only)/i;
+    const tiny = /(^|[-_/:.])(1b|2b|3b|4b|7b|8b|9b|mini|nano|tiny|lite|small|micro)($|[-_/:.])/i;
+    let list = (Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && id && id !== current && !notChat.test(id));
+    if (providerId === 'openrouter') list = list.filter((id) => /:free$/.test(id));      // free tier only, always
+    const score = (id) => {
+        let n = 0;
+        if (/coder/i.test(id)) n += 30;
+        if (/qwen-?3/i.test(id)) n += 20;
+        if (/gpt-oss/i.test(id)) n += 18;
+        if (/deepseek/i.test(id)) n += 16;
+        if (/llama-?(3\.3|4)|llama-3\.1-(70|405)b/i.test(id)) n += 15;
+        if (/mistral-(large|medium)|codestral|devstral/i.test(id)) n += 15;
+        if (/(70|72|120|235|405|480)b|maverick|large/i.test(id)) n += 10;
+        if (/instruct|chat|versatile|turbo/i.test(id)) n += 3;
+        if (tiny.test(id)) n -= 12;
+        if (/preview|experimental|beta/i.test(id)) n -= 2;
+        return n;
+    };
+    const ranked = list.map((id) => ({ id, n: score(id) })).sort((a, b) => (b.n - a.n) || a.id.localeCompare(b.id));
+    return ranked.length && ranked[0].n > 0 ? ranked[0].id : null;
+}
+
+/** `GET <base>/models` for an OpenAI-compatible provider; `listUrl: null` on the provider opts out. */
+function modelsUrlOf(provider) {
+    if (provider.listUrl !== undefined) return provider.listUrl;
+    return String(provider.url || '').replace(/\/chat\/completions$/, '/models') || null;
+}
+
+async function listModelIds(provider, key, timeoutMs = 10_000) {
+    const url = modelsUrlOf(provider);
+    if (!url) return [];
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${key.value}` }, signal: ac.signal });
+        if (!r.ok) return [];
+        const d = await r.json();
+        const rows = Array.isArray(d) ? d : (d && (d.data || d.models)) || [];
+        return rows.map((x) => (typeof x === 'string' ? x : x && (x.id || x.name))).filter(Boolean);
+    } catch { return []; } finally { clearTimeout(timer); }
+}
+
+/** Give a provider whose model is gone ONE replacement, per process. Returns the new model or null. */
+async function healModel(provider, opts) {
+    if (_healTried.has(provider.id)) return null;
+    _healTried.add(provider.id);
+    const key = keyFor(provider, opts.env || process.env);
+    if (!key) return null;
+    const from = modelOf(provider);
+    const to = pickReplacement(await listModelIds(provider, key), { providerId: provider.id, current: from });
+    if (!to) {
+        console.warn(`[llm-router] ${provider.id}: model ${from} is gone and its own list offered no usable replacement`);
+        return null;
+    }
+    _healed.set(provider.id, { from, to, at: Date.now() });
+    console.warn(`[llm-router] ${provider.id}: model ${from} is gone → using ${to} (picked from the provider's own list)`);
+    return to;
+}
+
+/** One provider; if its model has been retired, one replacement is found and the call is made once more. */
+async function callProvider(provider, opts) {
+    try {
+        return await callProviderOnce(provider, opts);
+    } catch (e) {
+        if (provider.kind !== 'openai' || !isRetiredModelError(e && e.status, e && e.message)) throw e;
+        const to = await healModel(provider, opts);
+        if (!to) throw e;
+        return callProviderOnce(provider, opts);
     }
 }
 

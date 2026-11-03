@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.41 — 2026-11-03
+
+**What changed for you**
+
+- Update system: judge the chain on the device, let the fix agent see what its change did, heal retired AI models (#504)
+
 ## v7.69.40 — 2026-11-03
 
 **What changed for you**

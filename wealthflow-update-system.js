@@ -8,7 +8,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.69.40';
+    const CURRENT_VERSION = '7.69.41';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -1163,6 +1163,7 @@
                 d.detectedIssues = issues.slice(0, 12);
             }
         } catch (_) {}
+        try { if (window.WFDiagnosis) d.updateSystem = window.WFDiagnosis.collect({ compact: true }); } catch (_) {}
         // Statement processing: why entries in "Statements needing review" are
         // actually stuck, in aggregate (reason codes + bank names only — no
         // date, amount, narration or description; the same two fields the

@@ -38,7 +38,7 @@ import { chat, stripFences, extractJson } from './llm-router.mjs';
 import {
     keywordsFrom, rankFiles, selectPromptRanked, excerptFor, patchPrompt, parsePatchBlocks, applyPatchBlocks, changeExcerpt, changeView,
 } from './swarm-patch.mjs';
-import { observeModule, describeObservation, safeEnv } from './proof-probe.mjs';
+import { observeModule, describeObservation, observedNoChange, groundFacts, safeEnv } from './proof-probe.mjs';
 
 // ── the mechanical safety gate (mirrors CODEOWNERS + rego + risk-gate) ───────
 const SENSITIVE = [
@@ -586,6 +586,43 @@ export function parseVerdict(text) {
  *                     code?:string, test?:string, testFile?:string,
  *                     role?:string, review?:object, providers?:object}>}
  */
+/** How many times the author may redo a change that the measurement shows had no visible effect. */
+export const MAX_REVISIONS = 2;
+
+/**
+ * The first and last line (1-based, in `before`) that a change touched, found by trimming the common prefix and
+ * suffix. Cheap, deterministic, and enough to show the author the code it was trying to change.
+ */
+export function changedRegion(before, after) {
+    const a = String(before).split('\n'), b = String(after).split('\n');
+    let top = 0;
+    while (top < a.length && top < b.length && a[top] === b[top]) top++;
+    let ta = a.length - 1, tb = b.length - 1;
+    while (ta >= top && tb >= top && a[ta] === b[tb]) { ta--; tb--; }
+    return { from: top + 1, to: Math.max(top + 1, ta + 1) };
+}
+
+/**
+ * The author is asked again, with the evidence. The measurement said the text on screen is identical before and
+ * after, i.e. the change does not do what the issue asked; the usual cause is reading data that is not there.
+ */
+export function revisionPrompt(issue, filename, excerptText, totalLines, { changeText = '', observation = '', facts = '' } = {}) {
+    return [
+        patchPrompt(issue, filename, excerptText, totalLines),
+        '',
+        'YOUR PREVIOUS CHANGE WAS MEASURED AND IT DID NOT DO WHAT THE ISSUE ASKS.',
+        'The module was run in a real DOM before and after your change, and the text on screen is IDENTICAL. Your previous change was:',
+        changeText || '(not available)',
+        '',
+        observation,
+        '',
+        facts,
+        '',
+        'Write a NEW set of edit blocks against the ORIGINAL excerpts above (not against your previous change).',
+        'The new text must really be drawn: find the code that builds the text quoted under BEFORE, and make sure the data you add to it exists (a field listed in the facts, or one the excerpts show being set, or a value you fetch yourself with a guarded fetch).',
+    ].join('\n');
+}
+
 export async function runSwarm({
     issue,                       // { title, body, number, kind }
     repoDir = process.cwd(),
@@ -696,49 +733,107 @@ export async function runSwarm({
     // ── stage 4: Agent 5 security veto — on a DIFFERENT provider ───────────
     // A verdict on a prefix of the change is not a verdict on the change. If the diff is
     // longer than the reviewer is shown, refuse it (fail closed) instead of accepting a PASS.
-    if (!reviewSeesWholeChange(before, code)) {
-        return {
-            ok: false, stage: 'review_too_large', file, providers,
-            reason: `the change is larger than the independent security review can read in full (limit ${REVIEW_DIFF_MAX} characters of diff); it must be split into smaller changes`,
-            review: { verdict: 'FAIL', severity: 'high', findings: [], reason: 'change too large to review in full' },
-        };
+    // Absence is not approval: a missing independent opinion fails the run.
+    // Written as a function because a REVISED change (below) must pass the very same gate again.
+    let reviewed = null, review = null;
+    const securityGate = async (candidate) => {
+        if (!reviewSeesWholeChange(before, candidate)) {
+            return {
+                stop: {
+                    ok: false, stage: 'review_too_large', file, providers,
+                    reason: `the change is larger than the independent security review can read in full (limit ${REVIEW_DIFF_MAX} characters of diff); it must be split into smaller changes`,
+                    review: { verdict: 'FAIL', severity: 'high', findings: [], reason: 'change too large to review in full' },
+                },
+            };
+        }
+        const r = await chat({
+            system: ROLES.security.system, prompt: reviewPrompt(issueText, file, before, candidate),
+            prefer: ROLES.security.prefer,
+            exclude: [authored.provider],        // never let the author review itself
+            maxTokens: 1500, temperature: 0, env,
+        }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
+        providers.security = r.provider;
+        // CI can add evidence later, but it cannot make a missing independent security opinion retroactively exist.
+        if (!r.text) {
+            return {
+                stop: {
+                    ok: false, stage: 'security_unavailable', file, providers,
+                    reason: 'no independent security reviewer was available',
+                    review: { verdict: 'FAIL', severity: 'high', findings: [], reason: r._error || 'reviewer unavailable' },
+                },
+            };
+        }
+        const v = parseVerdict(r.text);
+        if (v.verdict === 'FAIL') {
+            return { stop: { ok: false, stage: 'security', reason: `Agent 5 veto (${v.severity}): ${v.reason}`, review: v, file, providers } };
+        }
+        log(`[swarm] Agent 5 verdict: PASS (via ${r.provider})`);
+        return { reviewed: r, review: v };
+    };
+    {
+        const g = await securityGate(code);
+        if (g.stop) return g.stop;
+        ({ reviewed, review } = g);
     }
-    const reviewed = await chat({
-        system: ROLES.security.system, prompt: reviewPrompt(issueText, file, before, code),
-        prefer: ROLES.security.prefer,
-        exclude: [authored.provider],        // never let the author review itself
-        maxTokens: 1500, temperature: 0, env,
-    }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
-    providers.security = reviewed.provider;
-
-    // Absence is not approval. CI can add evidence later, but it cannot make a
-    // missing independent security opinion retroactively exist.
-    if (!reviewed.text) {
-        return {
-            ok: false, stage: 'security_unavailable', file, providers,
-            reason: 'no independent security reviewer was available',
-            review: { verdict: 'FAIL', severity: 'high', findings: [], reason: reviewed._error || 'reviewer unavailable' },
-        };
-    }
-    const review = parseVerdict(reviewed.text);
-
-    if (review.verdict === 'FAIL') {
-        return { ok: false, stage: 'security', reason: `Agent 5 veto (${review.severity}): ${review.reason}`, review, file, providers };
-    }
-    log(`[swarm] Agent 5 verdict: PASS (via ${reviewed.provider})`);
 
     // ── the change, and what it does, made VISIBLE ──────────────────────────
     // Run 41695559384 passed every gate and then failed at the proof, and the log could not say whether the
     // patch was right: it printed the stage names and not the patch. Now it prints the change itself, and
     // MEASURES the module before and after (see proof-probe.mjs) so the test author is given what the module
     // really renders instead of a guess.
-    const changeText = changeExcerpt(before, code, { ctx: 3, max: 3500 });
+    let changeText = changeExcerpt(before, code, { ctx: 3, max: 3500 });
     log(`[swarm] the change:\n${changeText}`);
     let observation = '';
+    let obsBefore = null, obsAfter = null;
     try {
-        observation = describeObservation(observeModule(file, { repoDir }), observeModule(file, { source: code, repoDir }), { filename: file });
+        obsBefore = observeModule(file, { repoDir });
+        obsAfter = observeModule(file, { source: code, repoDir });
+        observation = describeObservation(obsBefore, obsAfter, { filename: file });
         if (observation) log(`[swarm] observed:\n${observation.slice(0, 1800)}`);
     } catch (e) { log(`[swarm] observation skipped: ${e?.message || e}`); }
+
+    // ── the author is shown what its change really did, and may try again ───
+    // Run 41698322633 (issue #501, after #503): the change drafted for "show the build id" read
+    // `_manifest.build`, a field version.json does not have. Every gate passed, the measurement said plainly that the
+    // text on screen was IDENTICAL before and after, and then three proving-test rounds were spent on a change that
+    // could never be proven, because nothing fed the measurement back to the one who wrote the change. It does now:
+    // up to MAX_REVISIONS times, from the ORIGINAL file, with the measurement and the list of fields that really
+    // exist, and every revision goes through the same gates. (A bug fix may legitimately draw nothing new, so only
+    // the roles that add something visible are asked again.)
+    let revisions = 0;
+    while (role.id !== 'bug' && revisions < MAX_REVISIONS && observedNoChange(obsBefore, obsAfter)) {
+        revisions++;
+        log(`[swarm] revision ${revisions}/${MAX_REVISIONS}: the change had no visible effect — the author is shown what was measured`);
+        const lines = before.split('\n');
+        const region = changedRegion(before, code);
+        const a0 = Math.max(0, region.from - 1 - 40), b0 = Math.min(lines.length, region.to + 40);
+        const around = `// ----- lines ${a0 + 1}-${b0} (where your previous change was) -----\n${lines.slice(a0, b0).join('\n')}`;
+        const more = excerptFor(before, ['/api/version', 'fetch(', ...keywordsFrom(issueText).slice(0, 6)], { ctx: 12, maxChars: 6_000 }).text;
+        const r = await chat({
+            system: role.system,
+            prompt: revisionPrompt(issueText, file, `${around}\n\n${more}`, lines.length, { changeText, observation, facts: groundFacts({ repoDir }) }),
+            prefer: role.prefer, maxTokens: 6_000, temperature: 0.3, env,
+        }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
+        if (!r.text || /^CANNOT_FIX_SAFELY/i.test(r.text.trim())) { log(`[swarm] revision ${revisions}: the author gave up (${(r.text || r._error || 'no reply').trim().slice(0, 120)})`); break; }
+        const res = applyPatchBlocks(before, parsePatchBlocks(r.text));
+        if (!res.ok) { log(`[swarm] revision ${revisions}: the new patch could not be applied (${res.problems.join('; ').slice(0, 160)})`); break; }
+        const sc = structuralCheck(before, res.code);
+        if (!sc.ok || !isValidJs(res.code) || res.code.trim() === code.trim()) { log(`[swarm] revision ${revisions}: the new change failed the mechanical gates or changed nothing`); break; }
+        // the new change is vetted exactly like the first one
+        authored = r; providers.author = r.provider;
+        const g = await securityGate(res.code);
+        if (g.stop) return g.stop;
+        ({ reviewed, review } = g);
+        code = res.code;
+        changeText = changeExcerpt(before, code, { ctx: 3, max: 3500 });
+        log(`[swarm] the change (revision ${revisions}):\n${changeText}`);
+        try {
+            obsAfter = observeModule(file, { source: code, repoDir });
+            observation = describeObservation(obsBefore, obsAfter, { filename: file });
+            if (observation) log(`[swarm] observed (revision ${revisions}):\n${observation.slice(0, 1800)}`);
+        } catch (e) { log(`[swarm] observation skipped: ${e?.message || e}`); break; }
+    }
+    if (revisions && !observedNoChange(obsBefore, obsAfter)) log(`[swarm] after ${revisions} revision(s) the change is visible`);
 
     // ── stage 5: Agent 4 writes the proving test, and it is EXECUTED ────────
     // The test is run for real (red on the old file, green on the new). A test that fails is not

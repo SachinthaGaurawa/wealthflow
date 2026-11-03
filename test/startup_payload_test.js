@@ -176,6 +176,8 @@ describe('the payload is what the measurement said it was', () => {
         // Re-measured 2026-10-09 (0.9 -> 0.85): the interface shell (tab bar, More sheet,
         // command palette) is a 30 KB module. The document is still the single biggest item
         // by far; what moved is how it compares with the SUM of 88 modules.
-        expect(htmlBytes).toBeGreaterThan(modBytes * 0.85);
+        // Re-measured 2026-11-03 (0.85 -> 0.84): the update system's diagnosis (wealthflow-diagnosis.js, 30 KB) joined the 95
+        // modules. index.html is 2,378,515 bytes, still 6x larger than any single module; only the ratio to the SUM moved.
+        expect(htmlBytes).toBeGreaterThan(modBytes * 0.84);
     });
 });
