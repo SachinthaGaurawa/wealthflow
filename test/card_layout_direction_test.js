@@ -134,6 +134,21 @@ describe('the rows that waited before the card layout proof existed', () => {
         expect(await run(db)).toMatchObject({ proved: 2, left: 1 });
         expect(reviews(db).map(r => r.status)).toEqual(['resolved', 'pending', 'resolved']);
     });
+    it('says WHY a money-back line stays in names from a fixed list and yes/no flags, never in the line\'s own words or amounts', async () => {
+        const db = world(['KEELLS SUPER COLOMBO', 'PAYMENT THANK YOU', 'ONLINE PAYMENT DIALOG'], { proof: { opening: 1000, closing: 900, credits: 203, debits: 50 } });      // 101.00 + 102.00 = the printed credits
+        const out = await run(db);
+        expect(out).toMatchObject({ proved: 1, left: 2, more: false });
+        expect(out.why).toMatchObject({ moneyBack: 2, moneyWords: { payment: 2 }, printed: { opening: true, closing: true, credits: true, debits: true }, creditsFit: true });
+        expect(JSON.stringify(out.why)).not.toMatch(/THANK|DIALOG|KEELLS|101|102/i);
+    });
+    it('names the other words the same way, and says when the printed totals are missing or do not add up', async () => {
+        const db = world(['REFUND AMAZON', 'CASHBACK REWARD', 'SALARY FROM EMPLOYER'], { proof: { credits: 5 } });
+        const out = await run(db);
+        expect(out.why).toMatchObject({ moneyBack: 3, moneyWords: { refund: 1, cashback: 1, 'inbound-words': 1 }, printed: { opening: false, closing: false, credits: true, debits: false }, creditsFit: false });
+        const none = await run(world(['REFUND AMAZON']));
+        expect(none.why.printed).toEqual({ opening: false, closing: false, credits: false, debits: false });
+        expect(none.why.creditsFit).toBeUndefined();
+    });
     it('does nothing for a bank account\'s statement', async () => {
         const db = world(['KEELLS SUPER COLOMBO', 'UBER RIDE', 'POS PURCHASE'], { statementType: 'bank_account', last4: '1234', bank: 'DFCC' }, { cardRegistry: {} });
         const out = await run(db);
