@@ -63,6 +63,13 @@ describe('security-updates.yml is a real, scheduled, honest fixer', () => {
         expect(CODE).toMatch(/exit 1/);
     });
 
+    it('files its failure issue under its own label, never the shared pipeline-health one', () => {
+        // pipeline-liveness closes whichever open issue carries pipeline-health once main is
+        // green; this issue is about a PR that never touched main (Codex review on #493).
+        expect(CODE).not.toMatch(/pipeline-health/);
+        expect(CODE).toMatch(/--label security-update --label ai-stuck/);
+    });
+
     it('does not open a second pull request while one is waiting', () => {
         expect(CODE).toMatch(/already waiting for review/);
     });

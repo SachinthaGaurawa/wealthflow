@@ -82,3 +82,17 @@ describe('the workflow wires the gates before the release', () => {
         expect(WF).toMatch(/push:\s*\n\s*branches: \[main\]/);
     });
 });
+
+// Codex review on #493: a manual "Release now" used to skip the suite yet still passed
+// --auto-approve, so a red commit could be released under a gate that never ran.
+import fs from 'node:fs';
+import path from 'node:path';
+describe('the test gate applies to every trigger, manual dispatch included', () => {
+    const WF = fs.readFileSync(path.resolve(import.meta.dirname, '../.github/workflows/auto-release.yml'), 'utf8');
+    const gates = WF.slice(WF.indexOf('- name: Gates (tests on this commit'), WF.indexOf('- name: Release\n'));
+    it('npm test is not conditional on the event type', () => {
+        expect(gates).toMatch(/npm test > gate-tests\.log/);
+        expect(gates).not.toMatch(/workflow_dispatch/);
+        expect(gates).not.toMatch(/if \[ "\$GITHUB_EVENT_NAME"/);
+    });
+});

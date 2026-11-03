@@ -132,8 +132,8 @@ export function evaluateReleaseFlow(f) {
 }
 
 // ── facts ────────────────────────────────────────────────────────────────────
-function git(args, fallback = '') {
-    try { return execFileSync('git', args, { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
+function git(args, fallback = '', cwd = REPO) {
+    try { return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
     catch { return fallback; }
 }
 const read = (p) => { try { return fs.readFileSync(path.join(REPO, p), 'utf8'); } catch { return ''; } };
@@ -154,28 +154,32 @@ export function localVersions() {
     };
 }
 
-export function gitFacts(now = Date.now()) {
+export function gitFacts(now = Date.now(), repo = REPO) {
     const { classifyDiff } = require('./substantive.cjs');
-    const lastTag = git(['describe', '--tags', '--abbrev=0']) || null;
+    const lastTag = git(['describe', '--tags', '--abbrev=0'], '', repo) || null;
     let oldest = null, count = 0;
     if (lastTag) {
-        const revs = git(['rev-list', '--reverse', '--first-parent', `${lastTag}..HEAD`]).split('\n').filter(Boolean).slice(-400);
+        const revs = git(['rev-list', '--reverse', '--first-parent', `${lastTag}..HEAD`], '', repo).split('\n').filter(Boolean).slice(-400);
         for (const sha of revs) {
-            const diff = git(['show', '-U0', '--format=', sha]);
+            // `-m --first-parent`: a PR merged with a MERGE COMMIT has no patch of its own
+            // (plain `git show` prints nothing for it), so its whole change would be skipped
+            // and a stalled release would read as healthy. With these flags the merge is
+            // diffed against its first parent, which is exactly what the PR brought in.
+            const diff = git(['show', '-m', '--first-parent', '-U0', '--format=', sha], '', repo);
             if (!diff) continue;
             if (classifyDiff(diff).substantive) {
                 count++;
                 if (!oldest) {
-                    const [ct, ...subj] = git(['show', '-s', '--format=%ct|%s', sha]).split('|');
+                    const [ct, ...subj] = git(['show', '-s', '--format=%ct|%s', sha], '', repo).split('|');
                     oldest = { sha: sha.slice(0, 8), at: Number(ct) * 1000, subject: subj.join('|').slice(0, 100) };
                 }
             }
         }
     }
-    const vAt = Number(git(['log', '-1', '--format=%ct', '--', 'version.json'])) * 1000 || null;
+    const vAt = Number(git(['log', '-1', '--format=%ct', '--', 'version.json'], '', repo)) * 1000 || null;
     return {
         now, lastTag, oldestUnreleased: oldest, unreleasedCount: count, repoVersionAt: vAt,
-        recentShas: git(['log', '-60', '--format=%h']).split('\n').filter(Boolean),
+        recentShas: git(['log', '-60', '--format=%h'], '', repo).split('\n').filter(Boolean),
     };
 }
 

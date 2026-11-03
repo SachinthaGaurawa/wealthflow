@@ -259,7 +259,7 @@ jobs:
       # The owner's rule is "no human intervention", so approval is now EARNED by
       # evidence gathered here, on the exact commit being released:
       #   1. a substantive change exists since the last tag (the step above)
-      #   2. the full test suite passes on THIS commit
+      #   2. the full test suite passes on THIS commit (every trigger, manual too)
       #   3. production answers its health check right now
       # Fail any one and nothing is released AND the reason is filed as an issue.
       - name: Gates (tests on this commit + production health)
@@ -271,10 +271,11 @@ jobs:
         run: |
           set +e
           WHY=""
-          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then
-            npm test > gate-tests.log 2>&1
-            if [ $? -ne 0 ]; then WHY="the test suite is RED on $(git rev-parse --short HEAD): $(grep -E 'FAIL|failed' gate-tests.log | head -3 | tr '\n' ' ')"; fi
-          fi
+          # Every trigger runs the suite, a manual "Release now" included: the
+          # Release step passes --auto-approve, which is only honest if the tests
+          # really passed on this exact commit (Codex review on #493).
+          npm test > gate-tests.log 2>&1
+          if [ $? -ne 0 ]; then WHY="the test suite is RED on $(git rev-parse --short HEAD): $(grep -E 'FAIL|failed' gate-tests.log | head -3 | tr '\n' ' ')"; fi
           OKH=no
           for i in 1 2 3; do
             CODE=$(curl -sL --max-redirs 5 -o /dev/null -w '%{http_code}' --max-time 15 "$HEALTH_URL")
