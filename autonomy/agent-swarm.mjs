@@ -38,6 +38,7 @@ import { chat, stripFences, extractJson } from './llm-router.mjs';
 import {
     keywordsFrom, rankFiles, selectPromptRanked, excerptFor, patchPrompt, parsePatchBlocks, applyPatchBlocks, changeExcerpt, changeView,
 } from './swarm-patch.mjs';
+import { observeModule, describeObservation, safeEnv } from './proof-probe.mjs';
 
 // ── the mechanical safety gate (mirrors CODEOWNERS + rego + risk-gate) ───────
 const SENSITIVE = [
@@ -304,7 +305,9 @@ export function runVitestFile(testPath, { repoDir = process.cwd(), timeoutMs = 1
     try {
         execFileSync('npx', ['vitest', 'run', testPath, '--reporter=dot'], {
             cwd: repoDir, stdio: 'pipe', timeout: timeoutMs,
-            env: { ...process.env, CI: '1' },
+            // Model-written test AND model-written code run here. They get what Node and Vitest need and none of
+            // the secrets this process holds (provider keys, GITHUB_TOKEN, the Firebase service account).
+            env: safeEnv(),
         });
         return { passed: true, output: '' };
     } catch (e) {
@@ -379,7 +382,7 @@ export function verifyTestProves({
     }
 }
 
-export function testPrompt(issue, filename, before, after) {
+export function testPrompt(issue, filename, before, after, observation = '') {
     return [
         'A fix was just made to a vanilla-JS PWA module. Write a Vitest test proving it.',
         '',
@@ -420,6 +423,7 @@ export function testPrompt(issue, filename, before, after) {
         '  If the changed logic is pure, testing it directly is fine too — but the',
         '  assertions must be meaningful, never tautological.',
         '',
+        ...(observation ? [observation, ''] : []),
         String(after).length > 6000 ? 'THE CHANGE (unified diff of the new code; the file is large):' : 'RELEVANT PART OF THE NEW CODE:',
         '--- BEGIN ---',
         String(after).length > 6000 ? changeExcerpt(before, after, { ctx: 40, max: 6000 }) : String(after).slice(0, 6000),
@@ -441,11 +445,11 @@ export function testPrompt(issue, filename, before, after) {
  * TEST. Never the code: the fix has already been reviewed, and "change the code until my test passes" is
  * exactly how a test comes to prove nothing.
  */
-export function testRepairPrompt(issue, filename, before, after, previousTest, failure) {
+export function testRepairPrompt(issue, filename, before, after, previousTest, failure, observation = '') {
     const why = String(failure?.reason || 'it did not go from failing to passing');
     const out = String(failure?.output || '').trim();
     return [
-        testPrompt(issue, filename, before, after),
+        testPrompt(issue, filename, before, after, observation),
         '',
         '────────────────────────────────────────────────────────────',
         'YOUR PREVIOUS TEST WAS EXECUTED AND REJECTED.',
@@ -723,6 +727,19 @@ export async function runSwarm({
     }
     log(`[swarm] Agent 5 verdict: PASS (via ${reviewed.provider})`);
 
+    // ── the change, and what it does, made VISIBLE ──────────────────────────
+    // Run 41695559384 passed every gate and then failed at the proof, and the log could not say whether the
+    // patch was right: it printed the stage names and not the patch. Now it prints the change itself, and
+    // MEASURES the module before and after (see proof-probe.mjs) so the test author is given what the module
+    // really renders instead of a guess.
+    const changeText = changeExcerpt(before, code, { ctx: 3, max: 3500 });
+    log(`[swarm] the change:\n${changeText}`);
+    let observation = '';
+    try {
+        observation = describeObservation(observeModule(file, { repoDir }), observeModule(file, { source: code, repoDir }), { filename: file });
+        if (observation) log(`[swarm] observed:\n${observation.slice(0, 1800)}`);
+    } catch (e) { log(`[swarm] observation skipped: ${e?.message || e}`); }
+
     // ── stage 5: Agent 4 writes the proving test, and it is EXECUTED ────────
     // The test is run for real (red on the old file, green on the new). A test that fails is not
     // thrown away with the whole attempt any more: the actual Vitest output goes back to Agent 4
@@ -743,8 +760,8 @@ export async function runSwarm({
             const t = await chat({
                 system: ROLES.qa.system,
                 prompt: previous
-                    ? testRepairPrompt(issueText, file, before, code, candidate, previous)
-                    : testPrompt(issueText, file, before, code),
+                    ? testRepairPrompt(issueText, file, before, code, candidate, previous, observation)
+                    : testPrompt(issueText, file, before, code, observation),
                 prefer: ROLES.qa.prefer, exclude: [authored.provider, reviewed.provider],
                 maxTokens: 4000, temperature: round === 1 ? 0.1 : 0.2, env,
             }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
@@ -780,7 +797,7 @@ export async function runSwarm({
         if (!test) {
             const last = rounds[rounds.length - 1] || {};
             return {
-                ok: false, stage: 'proof', file, code, providers, review,
+                ok: false, stage: 'proof', file, code, providers, review, change: changeText, observation,
                 testProof: testProof || { ok: false, reason: last.reason, beforeFailed: null, afterPassed: null },
                 testRounds: rounds,
                 reason: `the proving test did not prove anything after ${TEST_ROUNDS} tries — ${last.reason || 'no usable test was produced'}`,
@@ -793,5 +810,5 @@ export async function runSwarm({
     // can never be read downstream as a passed one — the distinction that
     // decides whether this PR's evidence means anything.
     const verified = Boolean(testProof && testProof.ok && !testProof.skipped);
-    return { ok: true, stage: 'ready', file, code, test, testFile, testProof, verified, role: role.id, review, providers };
+    return { ok: true, stage: 'ready', file, code, test, testFile, testProof, verified, role: role.id, review, providers, change: changeText, observation };
 }

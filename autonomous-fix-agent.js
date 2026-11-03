@@ -159,7 +159,9 @@ function writeState(number, state) {
 export function proofEvidence(result = {}) {
     const rounds = Array.isArray(result.testRounds) ? result.testRounds : [];
     const out = String(result.testProof?.output || '').trim();
-    if (!rounds.length && !out) return '';
+    const change = String(result.change || '').trim();
+    const observed = String(result.observation || '').trim();
+    if (!rounds.length && !out && !change && !observed) return '';
     const lines = [];
     if (rounds.length) {
         lines.push('', `**Proving test:** ${rounds.length} ${rounds.length === 1 ? 'try' : 'tries'}, none went from failing to passing:`);
@@ -169,6 +171,11 @@ export function proofEvidence(result = {}) {
         const tail = out.split('\n').slice(-12).join('\n').replace(/`{3,}/g, "'''").slice(-900);
         lines.push('', '**Last Vitest output:**', '```', tail, '```');
     }
+    // What the model actually changed, and what the module did before and after: the two facts a reader
+    // needs to tell "the patch was wrong" from "the test was wrong" without re-running anything.
+    const fence = (t, n) => String(t).replace(/`{3,}/g, "'''").slice(0, n);
+    if (change) lines.push('', '<details><summary>The change that was drafted</summary>', '', '```diff', fence(change, 3000), '```', '</details>');
+    if (observed) lines.push('', '<details><summary>What the module did before and after (measured)</summary>', '', '```', fence(observed, 2500), '```', '</details>');
     return lines.join('\n') + '\n';
 }
 
