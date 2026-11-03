@@ -97,17 +97,22 @@ const PLAN_WORDS = /\b(?:instal+ments?|instl?mts?|easy\s*pay(?:ment)?s?|flexi[\s
 const PLAN_FEE = /\b(?:fees?|charges?|chgs?|commission|stamp|vat|nbt|penalty|late)\b/i;
 const PLAN_ORDINAL = /(?:^|[^\d/.])(\d{1,2})\s*(?:\/|of)\s*(\d{1,2})(?![\d/.]|\s*%)/i;
 const PLAN_WORDS_CLEAN = new RegExp(PLAN_WORDS.source.replace(/^\\b/, '').replace(/\\b$/, ''), 'ig');
+/* THE LENGTH OF A PLAN IS WHAT THE LINE SAYS, NEVER A GUESS: "3/12" and "3 of 12" say twelve instalments, "EASY PAY 6 MONTHS" and "6 INSTALMENTS" say six; one instalment is one month. `length` is 0 when the line says nothing,
+ * and the plan is then kept as a one-month plan whose length is marked as not on the statement (statement-ledger.mjs), instead of showing a length nobody printed. */
+const PLAN_LENGTH = /\b(\d{1,2})\s*(?:months?|mths?|mnths?|instal+ments?|instl?mts?)\b/i;
 export function installmentInfo(raw) {
   const text = String(raw || '');
-  const none = { isInstallment: false, no: 0, of: 0, name: '' };
+  const none = { isInstallment: false, no: 0, of: 0, length: 0, name: '' };
   if (!PLAN_WORDS.test(text) || PLAN_FEE.test(text)) return none;
   const m = PLAN_ORDINAL.exec(text);
   const no = m ? Number(m[1]) : 0, of = m ? Number(m[2]) : 0;
   const ordinal = m && no >= 1 && of >= 2 && no <= of ? { no, of } : { no: 0, of: 0 };
+  const said = m ? null : PLAN_LENGTH.exec(text.replace(/\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/g, ' ')), sentLength = said ? Number(said[1]) : 0;      // a line that has an "n/m" says its length there (or nowhere, when that "n/m" is not a month of a plan)
+  const length = ordinal.of || (sentLength >= 2 && sentLength <= 60 ? sentLength : 0);
   // the merchant: what is left once the plan words, the "n/m", the plan length and the punctuation are taken out
-  const name = text.replace(/\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/g, ' ').replace(PLAN_WORDS_CLEAN, ' ').replace(/(?:^|[^\d/.])\d{1,2}\s*(?:\/|of)\s*\d{1,2}(?![\d/.])/gi, ' ').replace(/\b\d{1,2}\s*(?:months?|mths?|mnths?)\b/gi, ' ').replace(/\b(?:plan|pymt|payment|for|no|number|interest|rate|at|%)\b/gi, ' ')
+  const name = text.replace(/\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/g, ' ').replace(/\b\d{1,2}\s*(?:months?|mths?|mnths?|instal+ments?|instl?mts?)\b/gi, ' ').replace(PLAN_WORDS_CLEAN, ' ').replace(/(?:^|[^\d/.])\d{1,2}\s*(?:\/|of)\s*\d{1,2}(?![\d/.])/gi, ' ').replace(/\b\d{1,2}\s*(?:months?|mths?|mnths?)\b/gi, ' ').replace(/\b(?:plan|pymt|payment|for|no|number|interest|rate|at|%)\b/gi, ' ')
     .replace(/[^A-Za-z0-9&' .-]+/g, ' ').replace(/\s+/g, ' ').replace(/^[\s.-]+|[\s.-]+$/g, '').trim();
-  return { isInstallment: true, ...ordinal, name: name.length >= 3 ? name.slice(0, 60) : '' };
+  return { isInstallment: true, ...ordinal, length, name: name.length >= 3 ? name.slice(0, 60) : '' };
 }
 
 function toNumber(a) {

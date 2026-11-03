@@ -134,20 +134,18 @@ describe('the rows that waited before the card layout proof existed', () => {
         expect(await run(db)).toMatchObject({ proved: 2, left: 1 });
         expect(reviews(db).map(r => r.status)).toEqual(['resolved', 'pending', 'resolved']);
     });
-    it('says WHY a money-back line stays in names from a fixed list and yes/no flags, never in the line\'s own words or amounts', async () => {
-        const db = world(['KEELLS SUPER COLOMBO', 'PAYMENT THANK YOU', 'ONLINE PAYMENT DIALOG'], { proof: { opening: 1000, closing: 900, credits: 203, debits: 50 } });      // 101.00 + 102.00 = the printed credits
+    it('says WHY a money-back line stays in names from a fixed list, never in the line\'s own words or amounts', async () => {
+        const db = world(['KEELLS SUPER COLOMBO', 'PAYMENT THANK YOU', 'ONLINE PAYMENT DIALOG'], { proof: { opening: 1000, closing: 900, credits: 203, debits: 50 } });
         const out = await run(db);
         expect(out).toMatchObject({ proved: 1, left: 2, more: false });
-        expect(out.why).toMatchObject({ moneyBack: 2, moneyWords: { payment: 2 }, printed: { opening: true, closing: true, credits: true, debits: true }, creditsFit: true });
+        expect(out.why).toMatchObject({ moneyBack: 2, moneyWords: { payment: 2 }, totals: { tried: 1, none: 1, noneBy: { sign: 1 }, filed: 0 } });
         expect(JSON.stringify(out.why)).not.toMatch(/THANK|DIALOG|KEELLS|101|102/i);
     });
-    it('names the other words the same way, and says when the printed totals are missing or do not add up', async () => {
-        const db = world(['REFUND AMAZON', 'CASHBACK REWARD', 'SALARY FROM EMPLOYER'], { proof: { credits: 5 } });
-        const out = await run(db);
-        expect(out.why).toMatchObject({ moneyBack: 3, moneyWords: { refund: 1, cashback: 1, 'inbound-words': 1 }, printed: { opening: false, closing: false, credits: true, debits: false }, creditsFit: false });
+    it('names the other words the same way, and says when the printed totals are missing', async () => {
+        const out = await run(world(['REFUND AMAZON', 'CASHBACK REWARD', 'SALARY FROM EMPLOYER'], { proof: { credits: 5 } }));
+        expect(out.why).toMatchObject({ moneyBack: 3, moneyWords: { refund: 1, cashback: 1, 'inbound-words': 1 }, totals: { tried: 1, unusable: 1 } });
         const none = await run(world(['REFUND AMAZON']));
-        expect(none.why.printed).toEqual({ opening: false, closing: false, credits: false, debits: false });
-        expect(none.why.creditsFit).toBeUndefined();
+        expect(none.why.totals).toMatchObject({ tried: 1, unusable: 1, filed: 0 });
     });
     it('does nothing for a bank account\'s statement', async () => {
         const db = world(['KEELLS SUPER COLOMBO', 'UBER RIDE', 'POS PURCHASE'], { statementType: 'bank_account', last4: '1234', bank: 'DFCC' }, { cardRegistry: {} });
@@ -181,6 +179,142 @@ describe('the rows that waited before the card layout proof existed', () => {
         db.db.collection = (path) => { const c = real(path); if (!/statementReview$/.test(path)) return c; return { ...c, where: (f, op, v) => { const q = c.where(f, op, v); return f === 'status' ? { ...q, get: async () => { const r = await q.get(); return { ...r, docs: r.docs.filter(d => d.data().index >= 0) }; } } : q; } }; };
         expect(await run(db)).toMatchObject({ proved: 0 });
         expect(reviews(db).every(r => r.status === 'pending')).toBe(true);
+    });
+});
+
+// Production, 2026-11-03 19:00 UTC: 8 lines of one HNB card statement stayed in Open reviews because their only word was "payment" (the log said moneyWords {payment: 8}), which is on a payment to the card AND on a purchase at a
+// bill-pay merchant. The statement printed its opening and closing balance; the reader's credits and debits are the sums of its rows with every unmarked line a debit, so the balances miss by exactly twice the lines that are
+// really credits, and one choice of the waiting lines that makes the sums add up proves them all.
+import { proveByTotals } from '../statement-direction.mjs';
+
+describe('proveByTotals: the statement\'s own balances name the lines that are credits', () => {
+    const ids = (list) => list.map(([id, amount]) => ({ id, amount }));
+    // a card that owed 1000.00, whose reader saw 425.75 of lines as debits (all of them), and that closed at 924.75 once the 250.50 line was really a payment
+    const card = { opening: 1000, credits: 0, debits: 425.75, models: ['card'], candidates: ids([['a', 100], ['b', 250.5], ['c', 75.25]]) };
+    it('finds the one choice of lines that adds up, in cents', () => {
+        expect(proveByTotals({ ...card, closing: 924.75 })).toEqual({ fit: 'unique', model: 'card', credit: ['b'], debit: ['a', 'c'] });
+    });
+    it('proves every line a debit when the balances already add up', () => {
+        expect(proveByTotals({ ...card, closing: 1425.75 })).toEqual({ fit: 'unique', model: 'card', credit: [], debit: ['a', 'b', 'c'] });
+    });
+    it('proves every line a credit when they all are', () => {
+        expect(proveByTotals({ ...card, closing: 1000 - 425.75 })).toEqual({ fit: 'unique', model: 'card', credit: ['a', 'b', 'c'], debit: [] });
+    });
+    it('proves nothing when no choice of the lines makes the balances add up, and says why in a word', () => {
+        expect(proveByTotals({ ...card, closing: 1234.56 })).toEqual({ fit: 'none', reason: 'odd' });         // an odd cent is not twice anything
+        expect(proveByTotals({ ...card, closing: 1425.75 + 10 })).toEqual({ fit: 'none', reason: 'sign' });      // the balances miss the other way
+        expect(proveByTotals({ ...card, closing: 1000 - 425.75 - 500 })).toEqual({ fit: 'none', reason: 'range' });      // more than all of the lines together
+        expect(proveByTotals({ ...card, closing: 1425.75 - 2 * 50 })).toEqual({ fit: 'none', reason: 'subset' });        // 50.00 is no sum of these lines
+    });
+    it('proves nothing when two different choices both add up: the owner is asked', () => {
+        const same = { opening: 1000, credits: 0, debits: 250, models: ['card'], candidates: ids([['x', 100], ['y', 100], ['z', 50]]) };
+        expect(proveByTotals({ ...same, closing: 1050 })).toEqual({ fit: 'ambiguous' });
+        expect(proveByTotals({ ...same, closing: 1150 })).toEqual({ fit: 'unique', model: 'card', credit: ['z'], debit: ['x', 'y'] });      // the 50.00 line alone: 1000 - 50 + 200
+    });
+    it('uses only the layout it is told: an account\'s formula never proves a card', () => {
+        // owed 924.75: the CARD formula says 250.50 is a payment; the BANK formula would say 175.25 (100.00 + 75.25) are credits
+        expect(proveByTotals({ ...card, closing: 924.75, models: ['bank'] })).toEqual({ fit: 'unique', model: 'bank', credit: ['a', 'c'], debit: ['b'] });
+        expect(proveByTotals({ ...card, closing: 924.75, models: ['bank', 'card'] })).toEqual({ fit: 'ambiguous' });
+    });
+    it('does not guess from missing or malformed figures, or from too many lines', () => {
+        expect(proveByTotals({ ...card, closing: undefined })).toEqual({ fit: 'unusable' });
+        expect(proveByTotals({ ...card, opening: null, closing: 924.75 })).toEqual({ fit: 'unusable' });
+        expect(proveByTotals({ ...card, closing: 924.75, candidates: [] })).toEqual({ fit: 'unusable' });
+        expect(proveByTotals({ ...card, closing: 924.75, candidates: ids([['a', 0]]) })).toEqual({ fit: 'unusable' });
+        expect(proveByTotals({ ...card, closing: 924.75, candidates: ids(Array.from({ length: 17 }, (_, i) => ['r' + i, 10 + i])) })).toEqual({ fit: 'unusable' });
+    });
+    it('counts in cents, so a long run of small amounts adds up exactly', () => {
+        const tenths = Array.from({ length: 10 }, (_, i) => ['t' + i, 0.1 * (i + 1)]);       // 0.1 ... 1.0, which add up to 5.5 in floating point only by luck
+        const total = tenths.reduce((n, [, amount]) => n + amount, 0);
+        // every line but the first is a credit: the balances miss by 2 x 5.4
+        const out = proveByTotals({ opening: 500, credits: 0, debits: total, closing: Math.round((500 + total - 10.8) * 100) / 100, models: ['card'], candidates: ids(tenths) });
+        expect(out).toMatchObject({ fit: 'unique', debit: ['t0'] });
+        expect(out.credit).toHaveLength(9);
+    });
+});
+
+describe('the lines that say money came back are settled by the statement\'s arithmetic', () => {
+    const sourcePath = 'wf-mail/owner/items/card1.pdf';
+    const reviewDocs = (index, narration, amount) => { const id = sourceOccurrenceId(sourcePath, index); return [[`users/u/statementReview/${id}`, { uid: 'u', sourcePath, index, status: 'pending', reason: 'unproven-direction', bank: 'HNB Credit Card',
+        row: { date: '2026-09-' + String(10 + index), narration, description: narration, amount, direction: 'debit', directionSource: 'assumed', needsReview: true, valid: true } }], [`users/u/statementLedger/${id}`, { uid: 'u', sourcePath, index, status: 'review' }]]; };
+    const world = (lines, proof, extra = [], source = {}) => { const fs = createFirestore(Object.fromEntries([
+        ['users/u', { settings: { cardRegistry: { '0048': { type: 'credit_card', bank: 'HNB' } } }, cconetime: [], ccPayments: [] }],
+        [sourcePath, { uid: 'u', bank: 'HNB Credit Card', last4: '0048', statementType: 'credit-card', cursor: lines.length, totalRows: lines.length, status: 'needs_review', ...(proof ? { proof } : {}), ...source }],
+        ...lines.flatMap(([narration, amount], index) => reviewDocs(index, narration, amount)), ...extra])); return fs; };
+    const status = (fs) => lines => lines.map((_, i) => fs.data.get(`users/u/statementReview/${sourceOccurrenceId(sourcePath, i)}`).status);
+    // the statement owed 1000.00; the reader added 100.00 + 101.00 + 102.00 + 50.00 = 353.00 as debits (every plain amount); the 101.00 line is the payment: owed = 1000 - 101 + 252 = 1151.00
+    const lines = [['KEELLS SUPER COLOMBO', 100], ['PAYMENT THANK YOU', 101], ['ONLINE PAYMENT DIALOG', 102], ['UBER RIDE', 50]];
+    const proof = { opening: 1000, closing: 1151, credits: 0, debits: 353 };
+    const run = (fs) => proveCardReviews({ db: fs.db, uid: 'u', limit: 10 });
+
+    it('files the payment as a card payment and the other "payment" line as a card purchase, both proven by the statement', async () => {
+        const fs = world(lines, proof), out = await run(fs);
+        expect(out).toMatchObject({ proved: 4, left: 0, more: false });
+        expect(status(fs)(lines)).toEqual(['resolved', 'resolved', 'resolved', 'resolved']);
+        const user = fs.data.get('users/u');
+        expect(user.ccPayments.map(r => [r.amount, r.directionProof])).toEqual([[101, 'statement']]);
+        expect(user.cconetime.map(r => [r.amount, r.directionProof]).sort((a, b) => a[0] - b[0])).toEqual([[50, 'layout'], [100, 'layout'], [102, 'statement']]);
+        expect(out.why.totals).toMatchObject({ tried: 1, unique: 1, filed: 2, rules: 0, refused: 0 });
+    });
+    it('says nothing about the lines themselves in the log: counts and fixed words only', async () => {
+        const out = await run(world(lines, proof));
+        expect(JSON.stringify(out.why)).not.toMatch(/THANK|DIALOG|KEELLS|UBER|101|102|1151|1000/i);
+    });
+    it('leaves every line for the owner when the balances do not add up to any choice', async () => {
+        const fs = world(lines, { ...proof, closing: 1160 }), out = await run(fs);
+        expect(out).toMatchObject({ proved: 2, left: 2 });                                 // the two plain purchases only (by the layout)
+        expect(status(fs)(lines)).toEqual(['resolved', 'pending', 'pending', 'resolved']);
+        expect(out.why.totals).toMatchObject({ tried: 1, none: 1, filed: 0 });
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
+    });
+    it('leaves them when two different choices add up (two lines of the same amount)', async () => {
+        const same = [['PAYMENT THANK YOU', 100], ['ONLINE PAYMENT DIALOG', 100], ['UBER RIDE', 50]];
+        const fs = world(same, { opening: 1000, closing: 1000 - 100 + 100 + 50 /* one of them is a payment */ - 0, credits: 0, debits: 250 }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 1, ambiguous: 1, filed: 0 });
+        expect(status(fs)(same)).toEqual(['pending', 'pending', 'resolved']);
+    });
+    it('does not try a statement with no printed totals, or a bank account\'s', async () => {
+        const bare = world(lines), out = await run(bare);
+        expect(out.why.totals).toMatchObject({ tried: 1, unusable: 1, filed: 0 });
+        expect(status(bare)(lines)).toEqual(['resolved', 'pending', 'pending', 'resolved']);
+        const bank = world(lines, proof, [], { statementType: 'bank_account', last4: '1234', bank: 'DFCC' });
+        bank.data.get('users/u').settings.cardRegistry = {};
+        expect((await run(bank)).why.totals).toBeUndefined();
+    });
+    it('does not try a statement whose waiting lines were not all looked at', async () => {
+        const fs = world(lines, proof), out = await proveCardReviews({ db: fs.db, uid: 'u', limit: 1 });         // one filed, then the limit: some lines are not reached
+        expect(out.more).toBe(true);
+        expect(out.why.totals?.filed ?? 0).toBe(0);
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
+    });
+    it('closes a proven line whose entry is already in the books as the copy it is, and files the others', async () => {
+        const fs = world(lines, proof);
+        fs.data.get('users/u').ccPayments.push({ id: 'old', date: '2026-09-11', amount: 101, desc: 'PAYMENT THANK YOU', category: 'Card Payment', bank: 'HNB Credit Card', direction: 'credit', card_last4: '0048' });
+        const out = await run(fs);
+        expect(out.why.totals).toMatchObject({ unique: 1, filed: 1, duplicate: 1, refused: 0 });
+        expect(status(fs)(lines)).toEqual(['resolved', 'dismissed', 'resolved', 'resolved']);          // the money is counted once, by the entry that was there
+        expect(fs.data.get(`users/u/statementReview/${sourceOccurrenceId(sourcePath, 1)}`).dismissedBy).toBe('statement-totals-duplicate');
+        expect(fs.data.get('users/u').ccPayments.map(r => r.id)).toEqual(['old']);
+        expect(out).toMatchObject({ proved: 4, left: 0 });
+    });
+    it('writes the one attempt on the statement before it files anything, and never tries the same statement again', async () => {
+        const fs = world(lines, proof), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ unique: 1, filed: 2 });
+        expect(fs.data.get(sourcePath).totalsProof).toMatchObject({ v: 1, lines: 2 });
+        const again = world(lines, proof, [], { totalsProof: { v: 1, at: 1, lines: 2 } }), second = await run(again);
+        expect(second.why.totals).toMatchObject({ tried: 0, stamped: 1, filed: 0 });
+        expect(status(again)(lines)).toEqual(['resolved', 'pending', 'pending', 'resolved']);          // only the plain purchases, by the layout
+        expect(again.data.get('users/u').ccPayments).toEqual([]);
+    });
+    it('refuses the proof when the page of pending reviews did not hold the statement\'s whole list', async () => {
+        // 600 other pending reviews come before one more waiting "payment" line of the same statement: the page of 500 never reaches it, so the sums would be added up over a shorter list than the statement has
+        const filler = Array.from({ length: 600 }, (_, i) => [`users/u/statementReview/filler-${String(i).padStart(4, '0')}`, { uid: 'u', sourcePath: 'wf-mail/owner/items/other.pdf', index: 0, status: 'pending', reason: 'duplicate-suspect', row: { amount: 1 } }]);
+        const fs = world(lines, proof, [...filler, ...reviewDocs(9, 'PAYMENT RECEIVED', 7).slice(0, 1).map(([path, data]) => [path.replace('/statementReview/', '/statementReview/zz-'), data])]);
+        const out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 0, partial: 1, filed: 0 });
+        expect(fs.data.get(sourcePath).totalsProof).toBeUndefined();
+        expect(status(fs)(lines)).toEqual(['resolved', 'pending', 'pending', 'resolved']);
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
     });
 });
 

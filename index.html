@@ -23099,10 +23099,19 @@ table.amort tbody tr { page-break-inside: avoid; }
             const paid = Math.min(Math.max(Math.floor((n - s) / 2628000000), marked), item.duration);
             return { paid, total: item.duration, pct: Math.round(paid / item.duration * 100) };
         }
+        /* a plan ends at its start plus its length; one whose length no statement printed (`durationUnknown`) ends 3 months after its last paid month */
+        function _cciEndOf(x) {
+            if (x && x.durationUnknown) {
+                const last = (Array.isArray(x.payments) ? x.payments : []).filter(p => p && p.paid && p.month).map(p => p.month).sort().pop();
+                if (last) { const l = new Date(last + '-01T00:00:00'); l.setMonth(l.getMonth() + 3); return l; }
+            }
+            const e = new Date(((x && x.date) || '') + 'T00:00:00'); e.setMonth(e.getMonth() + (Number(x && x.duration) || 0)); return e;
+        }
         function renderCCI() {
-            let arr = DB.get('ccinstall');
+            /* months merged into one plan (`mergedInto`) stay in the data, not in the list */
+            let arr = (DB.get('ccinstall') || []).filter(x => x && !x.mergedInto);
             /* One tab per credit card when there is more than one (wealthflow-card-tabs.js). A plan is "owed" until its last month has passed or the owner marks it done; what a card owes is its monthly figure. */
-            const _cciDone = (x) => { if (x.completed) return true; const e = new Date((x.date || '') + 'T00:00:00'); e.setMonth(e.getMonth() + (Number(x.duration) || 0)); return e <= new Date(); };
+            const _cciDone = (x) => x.completed ? true : _cciEndOf(x) <= new Date();
             const model = _cardTabModel(arr, { open: x => !_cciDone(x), value: x => x.monthly || 0 });
             if (_cciCardFilter !== 'all' && !(model && model.tabs.length > 1 && model.tabs.some(t => t.key === _cciCardFilter))) _cciCardFilter = 'all';
             const fbar = $('cciFilterBar');
@@ -23123,7 +23132,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (s.field === 'date') return s.dir * (new Date(a.date) - new Date(b.date));
                 return 0;
             });
-            const active = arr.filter(x => !x.completed);
+            /* the figures count what the table calls Active */
+            const active = arr.filter(x => !_cciDone(x));
             const totM = active.reduce((sum, x) => sum + x.monthly, 0), totV = active.reduce((sum, x) => sum + x.total, 0);
             $('cciStats').innerHTML = `
         <div class="stat-card sc-red"><div class="stat-label">Monthly CC Payments</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmtExact(totM) || 'due each month'}</div></div>
@@ -23137,17 +23147,17 @@ table.amort tbody tr { page-break-inside: avoid; }
             const _cap = _wfSplitCap('ccinstall', arr, 'ccinstall');
             tbody.innerHTML = _cap.rows.map(item => {
                 const prog = cciProgress(item);
-                const end = new Date(item.date + 'T00:00:00'); end.setMonth(end.getMonth() + item.duration);
+                const end = _cciEndOf(item);
                 const finished = item.completed || end <= new Date();   // a plan whose last month has passed is done: nothing is owed, nobody has to mark it
                 const skipCount = item.skipped?.length || 0;
                 return (item === _cap.firstDone ? _cap.a.row + _wfDoneRow(_cap.doneCount, 'instalments', 11) : '') + `<tr class="${finished ? 'done-row' : ''}">
             <td><div style="font-weight:600;">${_wfEsc(item.product)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
             <td>${_wfEsc(item.buyer || 'Self')}</td>
             <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
-            <td class="td-a">${fmt(item.total)}</td>
-            <td class="td-mono">${item.rate > 0 ? item.rate + '%' : '0% Free'}</td>
+            <td class="td-a">${fmt(item.total)}${item.totalEstimated ? '<div class="td-m" style="font-size:10px;">estimate</div>' : item.durationUnknown ? '<div class="td-m" style="font-size:10px;">months seen so far</div>' : ''}</td>
+            <td class="td-mono">${item.rate > 0 ? item.rate + '%' : item.rateUnknown ? '<span class="td-m" style="font-size:10px;">not stated</span>' : '0% Free'}</td>
             <td class="td-r">${fmt(item.monthly)}</td>
-            <td class="td-mono">${item.duration}M${skipCount > 0 ? `<br><span style="font-size:10px;color:var(--accent);">${skipCount} skipped</span>` : ''}</td>
+            <td class="td-mono">${item.durationUnknown ? item.duration + 'M+<div class="td-m" style="font-size:10px;">length not stated</div>' : item.duration + 'M'}${skipCount > 0 ? `<br><span style="font-size:10px;color:var(--accent);">${skipCount} skipped</span>` : ''}</td>
             <td class="td-m td-date">${item.date}</td>
             <td style="min-width:110px;"><div class="pb" style="margin-bottom:3px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${Math.min(100, prog.pct)}%"></div></div><div style="font-size:10px;color:var(--text3);">${prog.paid}/${prog.total} (${prog.pct}%)</div></td>
             <td>${finished ? '<span class="badge bg-gr">Done</span>' : '<span class="badge bg-g">Active</span>'}</td>

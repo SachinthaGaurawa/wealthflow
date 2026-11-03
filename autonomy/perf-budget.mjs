@@ -359,8 +359,10 @@ export const BUDGETS = {
     // 2026-11-02 (the account over plain HTTPS: the page saves, reads and checks its account through _wfCloudSync instead of the Firestore transaction, the Check Connection rows for it, and the comments recording why; measured 2,370,334 + ~0.03% headroom): 2_365_100 -> 2_371_000. No new script or request at load.
     // (the two 2026-11-02 changes above were each measured alone; #489 and this one together measure 2,375,723, so the ceiling is set on the combined tree: 2_370_400 -> 2_376_000.)
     // (with #490 as well: 2,376,343, so 2_376_000 -> 2_376_700.)
+    // 2026-11-03 (CC Instalments page: the figures count the plans the table calls Active, the months of one plan merged into one are not listed, a length or a rate the statement never printed is not shown as a number or "0% Free", and a plan with no stated length is not "Done" while it is still charged; measured 2,377,662 + ~0.002% headroom): 2_376_700 -> 2_377_700. Under half of it is the comments recording why. No new script or request at load.
     // 2026-11-03 (index.html: the update-system diagnosis joins Copy diagnostics, one script tag, and a crash on an older build is history rather than an error; measured 2,378,515 + ~0.01% headroom): 2_376_700 -> 2_378_800.
-    htmlBytes: 2_378_800,
+    // (the two 2026-11-03 changes above were each measured alone; together on one tree they measure 2,379,564, so the ceiling is set on the combined tree: 2_378_800 -> 2_380_000.)
+    htmlBytes: 2_380_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -750,7 +752,8 @@ export const BUDGETS = {
     // 2026-11-03: 2_783_400 -> 2_812_300 for wealthflow-diagnosis.js (the update system's ten-link chain, judged on the device and added to Copy diagnostics; measured 2,811,998 + ~0.01% headroom).
     // 2026-11-03: 2_812_300 -> 2_813_000 (wealthflow-diagnosis.js measured again after its last edit: 2,812,802 + ~0.01% headroom; the first figure was taken before that edit).
     // 2026-11-03: 2_813_000 -> 2_813_500 (wealthflow-diagnosis.js now keeps an autonomy status the server could not measure as "unknown": measured 2,813,399 + ~0.004% headroom).
-    totalJsBytes: 2_813_500,
+    // 2026-11-03 (the CC Instalments overhaul, the card statement-totals proof and the update-system diagnosis merged on one tree; measured 2,814,325 + ~0.006% headroom): 2_813_500 -> 2_814_500.
+    totalJsBytes: 2_814_500,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
