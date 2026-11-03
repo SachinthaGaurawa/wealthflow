@@ -13,6 +13,9 @@ predict-wealth.js       @OWNER
 market-data.js          @OWNER
 fx-rate.js              @OWNER
 
+# Data-shape migrations: the runner that rewrites the books on the owner's device, and the registry an AI-written migration is added to
+wealthflow-migrations.js @OWNER
+
 # Authentication & one-time-passwords
 *auth*                  @OWNER
 send-otp.js             @OWNER

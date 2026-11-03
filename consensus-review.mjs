@@ -133,6 +133,40 @@ export function tally(votes) {
     };
 }
 
+// ── the release score ────────────────────────────────────────────────────────
+/* LLM-AS-A-JUDGE, KEPT HONEST. Each reviewer states a 0-100 score next to its verdict: how sure it is that this change is correct
+ * and safe. Three things are done with it, and a fourth is deliberately not:
+ *   1. it is shown, with the lowest score as THE release score (a chain is as strong as its weakest reviewer);
+ *   2. a PASS whose own score is under the floor contradicts itself ("this is fine, 40/100") and is not an approval, so it blocks;
+ *   3. a missing or unusable score is "not reported", never a penalty and never a pass: models differ in what they return, and a
+ *      gate that blocks on a format slip would reinstate the false blocks the rest of this file exists to remove;
+ *   4. it is NOT the gate. A score is an opinion; the gate stays unanimity on a stated PASS, the executable-line evidence rules,
+ *      and the deterministic checks (tests on the exact commit, policy, secret scan). "Only 100% correct code is approved" is
+ *      not something a language model can certify, and a board that claimed it would be lying.
+ */
+export const SCORE_FLOOR = (() => {
+    const n = Number(process.env.BOARD_SCORE_FLOOR);
+    return Number.isFinite(n) && n >= 0 && n <= 100 ? n : 60;
+})();
+
+/** A usable 0-100 score from a parsed reply, or null. 0..1 is refused: it is more likely a 0-1 scale than a score of one in a hundred. */
+export function parseScore(j) {
+    if (!j || typeof j !== 'object') return null;
+    let v = j.score;
+    if (typeof v === 'string') { const m = v.trim().match(/^(\d+(?:\.\d+)?)\s*(?:\/\s*100)?\s*%?$/); v = m ? Number(m[1]) : NaN; }
+    if (typeof v !== 'number' || !Number.isFinite(v) || v <= 1 || v > 100) return null;
+    return Math.round(v);
+}
+
+/** The release score of a board: the lowest stated score among reviewers that voted. */
+export function releaseScore(votes) {
+    const voted = (votes || []).filter((v) => v && (v.vote === 'pass' || v.vote === 'fail'));
+    const scored = voted.filter((v) => Number.isFinite(v.score));
+    if (!scored.length) return { min: null, mean: null, scored: 0, of: voted.length };
+    const nums = scored.map((v) => v.score);
+    return { min: Math.min(...nums), mean: Math.round(nums.reduce((a, b) => a + b, 0) / nums.length), scored: scored.length, of: voted.length };
+}
+
 // NOTE: hasHumanApproval() already exists further down this file and is used by
 // main()'s override path. A degraded board reuses it rather than adding a second
 // reader — one definition of "a human signed this off", not two that can drift.
@@ -347,7 +381,11 @@ function prompt(reviewer, diff, truncated) {
         '    fix, not an introduction of that behaviour.',
         '',
         'Reply with ONE JSON object and nothing else:',
-        '{"verdict":"PASS"|"FAIL","reason":"one sentence","evidence":"the exact ADDED (+) executable line that causes it, or empty","concerns":["..."]}',
+        '{"verdict":"PASS"|"FAIL","score":0-100,"reason":"one sentence","evidence":"the exact ADDED (+) executable line that causes it, or empty","concerns":["..."]}',
+        '',
+        'score is a whole number from 0 to 100: how sure you are that this change is correct and safe for the user\'s money and data.',
+        '90-100 = you looked and found nothing; 70-89 = small doubts you listed in concerns; under 60 = you think it should not ship as it is.',
+        'A PASS with a score under 60 contradicts itself, so give the score you really mean.',
         '',
         'FAIL only for a real defect that would harm the user, their data, or the app\'s',
         'integrity, AND that you can point to in executable code. Style preferences,',
@@ -918,9 +956,18 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                 correctionWhy = GENERIC_REPLACEMENT;
                 console.log('      [WARNING] REASON CORRECTED — reviewer named nothing in this diff.');
             }
+            /* A PASS that rates itself under the floor is not an approval (see the block above parseScore). */
+            const score = parseScore(parsed);
+            let scoreBlock = false;
+            if (finalVote === 'pass' && score !== null && score < SCORE_FLOOR) {
+                finalVote = 'fail';
+                scoreBlock = true;
+                console.log(`      [WARNING] PASS WITH A SCORE OF ${score}/100, under the floor of ${SCORE_FLOOR}: not an approval.`);
+            }
             return {
                 name: r.name,
                 vote: finalVote,
+                score,
                 provider: res.provider,
                 // True when this lane had to borrow a provider another lane also
                 // used. The verdict still counts — a shared reviewer beats no
@@ -940,12 +987,14 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                  * rejection was added the table started reporting the wrong
                  * reason for it. `why` is already the accurate sentence; it was
                  * being computed and then discarded here. */
-                reason: rejectedFinding
+                reason: scoreBlock
+                    ? `voted pass but scored its own verdict ${score}/100, under the floor of ${SCORE_FLOOR}: ${redact(String(parsed.reason || '')).slice(0, 200)}`
+                    : rejectedFinding
                     ? `objection rejected — ${rejectedFinding.why || 'it restated the diff'}`.slice(0, 300)
                     : correctedReason
                         ? correctionWhy
                         : redact(String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : ''))).slice(0, 300),
-                evidence: rejectedFinding ? '' : redact(evidence),
+                evidence: scoreBlock ? `score ${score}/100 (floor ${SCORE_FLOOR})` : rejectedFinding ? '' : redact(evidence),
                 concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map((c) => redact(String(c))).slice(0, 6) : [],
             };
         } catch (e) {
@@ -1144,7 +1193,7 @@ async function main() {
     const rows = votes.map((v) => {
         const icon = v.rejectedFinding ? '[ERROR]' : v.vote === 'pass' ? '[OK]' : v.vote === 'unavailable' ? '[INFO]' : '[ERROR]';
         const ev = v.vote === 'fail' ? (v.evidence || '_no executable line cited_') : '';
-        return `| ${icon} ${v.name} | \`${v.provider}\` | ${v.vote} | ${v.reason || '—'} | ${ev} |`;
+        return `| ${icon} ${v.name} | \`${v.provider}\` | ${v.vote} | ${Number.isFinite(v.score) ? v.score : '—'} | ${v.reason || '—'} | ${ev} |`;
     }).join('\n');
 
     const unsubstantiated = votes.filter((v) => v.vote === 'fail' && !v.evidence);
@@ -1159,8 +1208,14 @@ async function main() {
 
     const report =
         `### ${headline}\n\n` +
-        '| Reviewer | Model | Vote | Reason | Evidence |\n|---|---|---|---|---|\n' + rows + '\n\n' +
+        '| Reviewer | Model | Vote | Score | Reason | Evidence |\n|---|---|---|---|---|---|\n' + rows + '\n\n' +
         `**Decision:** ${result.reason}\n\n` +
+        (() => {
+            const rs = releaseScore(votes);
+            return rs.scored
+                ? `**Release score: ${rs.min}/100** (lowest of ${rs.scored} stated; mean ${rs.mean}; floor ${SCORE_FLOOR}). A score is an opinion: the gate is the unanimous stated PASS plus the tests and checks that ran on this commit.\n\n`
+                : '**Release score:** not reported by the reviewers (the verdicts above still decide).\n\n';
+        })() +
         (rejected.length
             /* THE PROSE HERE USED TO DESCRIBE ONE KIND OF REJECTION AND BE
              * PRINTED AFTER ALL OF THEM. The per-objection line below has

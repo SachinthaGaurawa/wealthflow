@@ -106,6 +106,7 @@ const MUST_BE_GATED = [
     // nothing until #107 — a PR fixing a live update-suppression bug that
     // passed every gate in this repo without a human being asked.
     ['wealthflow-update-system.js',         'decides whether users are ever offered an update'],
+    ['wealthflow-migrations.js',            'rewrites the shape of the owner\'s books on their device; the registry in it is where a migration is added'],
     // api/router.js is the SINGLE function Vercel builds. Every /api request on
     // this deployment enters through it; it picks the handler AND decides how the
     // handler is called. A change here cannot break one endpoint — it breaks all

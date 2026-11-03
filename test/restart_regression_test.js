@@ -60,9 +60,12 @@ describe('active sessions survive background deployment events', () => {
         const h=harness(richProbe), a=h.ctx.wfUpdate;
         const first=a._runProgress('8.0.0'); expect(a._runProgress('8.0.0')).toBe(first);
         // Release the sole completion delay; no service-worker event can race a reload.
-        for(let i=0;i<100 && !h.timers.some(t=>t.ms===700);i++) await Promise.resolve();
-        expect(h.timers.some(t=>t.ms===700)).toBe(true);
-        for(const t of h.timers.filter(t=>t.ms===700)) t.f();
+        // It is 700 ms after a saved restore point, and 2400 ms when none was saved (this harness has no backupNow), so the
+        // sentence saying so can be read before the page restarts.
+        const done = (t) => t.ms === 700 || t.ms === 2400;
+        for(let i=0;i<100 && !h.timers.some(done);i++) await Promise.resolve();
+        expect(h.timers.some(done)).toBe(true);
+        for(const t of h.timers.filter(done)) t.f();
         await first; expect(h.counts().reloads).toBe(1); h.emit('controllerchange'); expect(h.counts().reloads).toBe(1);
     });
 });

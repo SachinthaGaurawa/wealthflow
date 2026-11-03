@@ -436,6 +436,8 @@
     <!-- Update-system diagnosis: walks the chain from "you file a report" to "it runs on this device", names the first
          link that is not healthy, and says how old its evidence is. Read-only; window.WFDiagnosis -->
     <script src="wealthflow-diagnosis.js" defer></script>
+    <!-- Data-shape migrations that cannot lose the books (docs/data-migrations.md). window.WFMigrations -->
+    <script src="wealthflow-migrations.js" defer></script>
     <!-- v7.11.0 — Multi-signal duplicate defence. Detects the same transaction
          arriving twice (statement + SMS, or a re-paste) using amount + day +
          merchant + card, and never deletes on a weak signal.
@@ -18121,6 +18123,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 try { _migrateIncomeSplit(); } catch (e) { console.error('[LAUNCH] _migrateIncomeSplit error:', e); }
                 // v7.27.0 — one-time fix for the old `paid:past` import bug + initial auto-match
                 try { _migrateCCOTPaidFix(); } catch (e) { console.error('[LAUNCH] _migrateCCOTPaidFix error:', e); }
+                // Pending data-shape migrations (none registered today); see docs/data-migrations.md.
+                try { if (window.WFMigrations) WFMigrations.run().catch(function (e) { console.error('[LAUNCH] migrations error:', e); }); } catch (e) { console.error('[LAUNCH] migrations error:', e); }
                 try { if (typeof reconcileCC === 'function') reconcileCC(); } catch (e) { }
                 try { updateCCOTBadge(); } catch (e) { }
                 try { updateChequeBadge(); } catch (e) { }

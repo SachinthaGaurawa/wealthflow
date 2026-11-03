@@ -177,7 +177,9 @@
         if (c && c.at && ev.now - c.at > LIMITS.claimMs) return link('install', 'warn', 'An update to ' + c.target + ' was started ' + ago(ev.now - c.at) + ' ago and never settled' + (c.total ? ' (' + (c.fetched || 0) + '/' + c.total + ' files fetched)' : '') + '.', 'Reopen the app: the next start settles it against the version that really loaded.');
         if (ev.anomaly) return link('install', 'warn', 'The stored version was ahead of the running code once; the app healed it to ' + ev.running + '.', 'No action needed unless it repeats.');
         if (ev.installed && ver(ev.installed) && ev.installed !== ev.running) return link('install', 'warn', 'Stored version ' + ev.installed + ' differs from the running build ' + ev.running + '.', 'Reopen the app; the update module reconciles it on start.');
-        return link('install', 'ok', 'Running ' + ev.running + '; no update is half-done.' + (ev.snapshotAt ? ' A pre-update backup exists (' + ago(ev.now - ev.snapshotAt) + ' old).' : ''));
+        var pb = ev.preBackup;
+        if (pb && pb.result === 'not-saved' && pb.target === ev.running) return link('install', 'warn', 'Running ' + ev.running + '; no update is half-done, but no restore point was saved before the last update (signed out, offline or nothing to back up). An update never changes your data.', 'Open Settings > Backup and tap Backup now, so a restore point exists before the next update.');
+        return link('install', 'ok', 'Running ' + ev.running + '; no update is half-done.' + (pb ? (pb.result === 'saved' ? ' A restore point was saved before the last update (' + ago(ev.now - pb.at) + ' ago).' : '') : ''));
     }
 
     function judgeWorker(ev) {
@@ -282,7 +284,7 @@
         var seen = read(K_SEEN, {}) || {};
         var installed = null;
         try { installed = (W.wfUpdate && W.wfUpdate._installedVersion) ? W.wfUpdate._installedVersion() : readRaw('wf_installed_version'); } catch (_) { installed = readRaw('wf_installed_version'); }
-        var snap = read('wf_preupdate_snapshot', null);
+        var pre = read('wf_preupdate_backup', null);
         var statementReview = null;
         try { if (W.WFStatementCloud && W.WFStatementCloud.reviewSummary) { var r = W.WFStatementCloud.reviewSummary(); if (r) statementReview = { total: r.total || 0, byReason: r.byReason || {} }; } } catch (_) {}
         var down = null;
@@ -292,7 +294,7 @@
             running: run, installed: installed,
             claim: read('wf_update_claimed', null), failedTarget: read('wf_update_failed_target', null), anomaly: read('wf_version_anomaly', null),
             pending: readRaw('wf_update_pending'),
-            snapshotAt: snap && snap.at ? Number(snap.at) : null,
+            preBackup: pre && pre.at ? { at: Number(pre.at), result: pre.result === 'saved' ? 'saved' : 'not-saved', target: pre.target || null } : null,
             popupSeen: readRaw('wf_update_popup_seen'),
             feedback: feedbackEvidence(), feedbackStatusDown: down,
             crashes: crashEvidence(run), statementReview: statementReview,
@@ -326,7 +328,7 @@
         if (!compact) {
             out.evidence = {
                 running: ev.running, installed: ev.installed, claim: ev.claim, failedTarget: ev.failedTarget, pending: ev.pending,
-                popupSeen: ev.popupSeen, preUpdateBackupAgeMin: ev.snapshotAt ? Math.round((ev.now - ev.snapshotAt) / MIN) : null,
+                popupSeen: ev.popupSeen, preUpdateBackup: ev.preBackup ? { result: ev.preBackup.result, ageMin: Math.round((ev.now - ev.preBackup.at) / MIN) } : null,
                 crashes: ev.crashes, feedback: ev.feedback, serviceWorker: ev.sw,
                 server: ev.server ? {
                     at: ev.server.at ? new Date(ev.server.at).toISOString() : null,

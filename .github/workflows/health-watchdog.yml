@@ -92,19 +92,26 @@ jobs:
           if [ "$OPEN" != "0" ]; then echo "open auto-rollback issue exists — skipping."; echo "go=no" >> "$GITHUB_OUTPUT";
           else echo "go=yes" >> "$GITHUB_OUTPUT"; fi
 
+      # Only a confirmed outage reaches this: the script below is read from the repository, so check it out here and nowhere
+      # earlier (a healthy probe must stay as cheap as it was).
+      - name: Check out the rollback script
+        if: steps.probe.outputs.decision == 'rollback' && steps.breaker.outputs.go == 'yes'
+        uses: actions/checkout@v7
+
       - name: Roll back to previous deployment (Vercel Instant Rollback)
         if: steps.probe.outputs.decision == 'rollback' && steps.breaker.outputs.go == 'yes'
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          HEALTH_URL: ${{ vars.HEALTH_URL }}
+        # `vercel rollback` with no deployment is the CLI's `status` sub-command: it exits 0 and moves nothing, so this step used to
+        # report a rollback that never happened. autonomy/rollback.mjs names the deployment before the bad (newest) one, asks Vercel for
+        # exactly that, and calls it done only when the health URL answers 200 afterwards. Needs VERCEL_TOKEN and VERCEL_PROJECT_ID.
         run: |
           if [ -z "$VERCEL_TOKEN" ]; then echo "VERCEL_TOKEN not set — cannot auto-rollback. The issue below will alert you to roll back manually."; exit 0; fi
-          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" || true
-          # roll the production alias back to the previous good deployment
-          npx --yes vercel@latest rollback --yes --token="$VERCEL_TOKEN" || \
-          npx --yes vercel@latest rollback --token="$VERCEL_TOKEN" --yes || \
-          echo "Automatic rollback command failed — see the issue; roll back from the Vercel dashboard (Instant Rollback)."
+          node autonomy/rollback.mjs --bad-sha current --verify-url "$HEALTH_URL" || \
+          echo "Automatic rollback did not complete (see the line above) — roll back from the Vercel dashboard (Instant Rollback)."
 
       - name: Open an alert issue
         if: steps.probe.outputs.decision == 'rollback' && steps.breaker.outputs.go == 'yes'

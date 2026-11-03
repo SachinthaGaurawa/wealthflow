@@ -233,7 +233,7 @@ describe('agent-swarm: sensitive-path gate (anti toxic-proactivity)', () => {
         'index.html', 'sw.js', 'firestore.rules', 'firebase.json', 'vercel.json',
         'package.json', 'package-lock.json',
         'drive-auth.js', 'send-otp.js', 'verify-otp.js', 'wealthflow-crypto.js',
-        'fifo-reconcile.js', 'wealthflow-allocator.js', 'predict-wealth.js',
+        'fifo-reconcile.js', 'wealthflow-allocator.js', 'wealthflow-migrations.js', 'predict-wealth.js',
         'market-data.js', 'fx-rate.js', 'approve-release.js', 'release-brain.js',
         'release.cjs', 'CODEOWNERS',
         '.github/workflows/auto-release.yml', 'policy/wealthflow.rego',
