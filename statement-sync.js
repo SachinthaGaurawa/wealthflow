@@ -13,7 +13,7 @@ import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped,
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
-import { semanticDirection, genericBankLine, proveDirections, cardCreditWords } from './statement-direction.mjs';
+import { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT, intentVerdict } from './wealthflow-statement-identity.js';
@@ -1420,7 +1420,7 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
     }
     if (!waiting.length) return { proved: 0, left: why.unproven, more: false, why };
     const registry = (((await userRef.get()).data() || {}).settings || {}).cardRegistry || {};
-    const sources = new Map(), asked = new Map();
+    const sources = new Map(), asked = new Map(), kept = new Map();
     let proved = 0, left = 0, more = false;
     for (const doc of waiting) {
         /* THE SCAN IS BOUNDED, NOT ONLY THE FILING: `limit` counts rows filed, but every statement looked at costs two reads (its own pending reviews, its document), and rows turned away cost reads too. The scan stops at `until` (the run's own deadline,
@@ -1444,7 +1444,17 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
             notCardView[key] = (notCardView[key] || 0) + 1; why.notCardView = notCardView;
             continue;
         }
-        if (cardCreditWords(row) || semanticDirection(row) === 'credit') { left += 1; why.moneyBack += 1; continue; }
+        if (cardCreditWords(row) || semanticDirection(row) === 'credit') {
+            left += 1; why.moneyBack += 1;
+            /* WHY THEY STAY, IN NAMES FROM A FIXED LIST AND YES/NO FLAGS (no text, no amount): which word kept each line for the owner, whether the statement printed its opening, closing, credits and debits totals, and whether the lines kept add up to the printed credits to the cent. */
+            const name = cardCreditWordName(row) || 'other';
+            why.moneyWords = why.moneyWords || {}; why.moneyWords[name] = (why.moneyWords[name] || 0) + 1;
+            const printed = source.proof && typeof source.proof === 'object' ? source.proof : {};
+            why.printed = why.printed || { opening: false, closing: false, credits: false, debits: false };
+            for (const field of ['opening', 'closing', 'credits', 'debits']) if (Number.isFinite(Number(printed[field])) && printed[field] !== null && printed[field] !== '') why.printed[field] = true;
+            kept.set(review.sourcePath, { cents: (kept.get(review.sourcePath)?.cents || 0) + Math.round(Number(row.amount || 0) * 100), credits: Number.isFinite(Number(printed.credits)) && printed.credits !== null && printed.credits !== '' ? Math.round(Number(printed.credits) * 100) : null });
+            continue;
+        }
         const decision = deterministicDecision(row, ctx);
         /* a decision the rules DID make and that is not a card line (an own-account transfer they leave out of the books, an income, a subscription) is theirs to keep: it is never turned into a Card Purchase here, and goes on waiting for the owner */
         const filing = decision && decision.verified === true ? decision : fallbackDecision(row, ctx);
@@ -1452,6 +1462,7 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
         try { await resolveReview({ db, uid, id: doc.id, decision: { ...filing, autoDecided: filing.autoDecided || 'layout-sweep' }, row: {}, directionSource: 'layout' }); proved += 1; }
         catch (_) { left += 1; why.refused += 1; /* the books refused it (a matching entry is there, a lock): it stays for the owner, untouched */ }
     }
+    if (!more) { const fits = [...kept.values()].filter(entry => entry.credits !== null); if (fits.length) why.creditsFit = fits.every(entry => entry.cents === entry.credits); }
     return { proved, left: left + why.shape, more, why };
 }
 

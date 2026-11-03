@@ -46,6 +46,15 @@ export function genericBankLine(row) {
 /* Words that mean money came BACK to a card. A line carrying one is never taken for a purchase by the card's layout, whatever else it says. */
 const CARD_CREDIT_WORDS = /\b(?:payments?|pmt|thank\s*you|refund\w*|revers\w*|cash\s*back|cashback|credits?|adjust\w*|waiv\w*|rebate|rewards?|redeem\w*|repay\w*|received|settle\w*|transfer\s+in|cr)\b/;
 export function cardCreditWords(row) { return CARD_CREDIT_WORDS.test(textOf(row)); }
+/** WHICH of the fixed words above a row carries, as a name from this list only (never the row's own text): what a log line may say about why a card line was kept for the owner. '' when none. */
+const CREDIT_WORD_NAMES = [[/^payments?$/, 'payment'], [/^pmt$/, 'pmt'], [/^thank/, 'thankyou'], [/^refund/, 'refund'], [/^revers/, 'reversal'], [/^cash\s*back$/, 'cashback'], [/^credits?$/, 'credit'], [/^adjust/, 'adjust'], [/^waiv/, 'waive'],
+    [/^rebate$/, 'rebate'], [/^rewards?$/, 'reward'], [/^redeem/, 'redeem'], [/^repay/, 'repay'], [/^received$/, 'received'], [/^settle/, 'settle'], [/^transfer\s+in$/, 'transferin'], [/^cr$/, 'cr']];
+export function cardCreditWordName(row) {
+    const hit = CARD_CREDIT_WORDS.exec(textOf(row));
+    if (!hit) return semanticDirection(row) === 'credit' ? 'inbound-words' : '';
+    const found = CREDIT_WORD_NAMES.find(([pattern]) => pattern.test(hit[0].replace(/\s+/g, ' ')));
+    return found ? found[1] : 'other';
+}
 const isCardStatement = (parsed, ctx) => !!(ctx && ctx.card === true) || String(parsed && parsed.layout && parsed.layout.statementType || '').toLowerCase().replace(/[^a-z]/g, '') === 'creditcard';
 
 const flagged = (row) => !!row && row.needsReview === true && row.valid !== false && ['assumed', 'keyword'].includes(row.directionSource) && ['debit', 'credit'].includes(row.direction);
@@ -76,4 +85,4 @@ export function proveDirections(parsed, ctx = {}) {
     return { rows: out, byStatement, byWords, byLayout };
 }
 
-export default { semanticDirection, genericBankLine, proveDirections, cardCreditWords };
+export default { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName };
