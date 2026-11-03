@@ -240,6 +240,28 @@ describe('collect / refresh on a real DOM module', () => {
         expect(JSON.parse(localStorage.getItem('wf_diag_evidence')).version.sha).toBe('abc123def456');
     });
 
+    it('an autonomy status the server could not measure stays "unknown": it is neither a confirmed failure nor a clean bill', async () => {
+        const unmeasured = async (url) => (/autonomy-status/.test(url)
+            ? reply({ ok: false, overall: 'unknown', canActuallyFixBugs: false, headline: 'Update system status could not be determined.', error: 'self-check threw' })
+            : site(url));
+        const m = loadBrowserModule('wealthflow-diagnosis.js', { fetchImpl: unmeasured, html: '', globals: { setInterval: () => 0, setTimeout: () => 0, WF_APP_VERSION: '7.69.39' } });
+        const ev = await m.window.WFDiagnosis.refresh();
+        expect(ev.autonomy).toMatchObject({ ok: false });
+        expect(ev.autonomy.error).toMatch(/self-check threw/);
+        const c = m.window.WFDiagnosis.collect();
+        expect(c.chain.find((l) => l.id === 'agent').state).toBe('unknown');
+        expect(c.chain.find((l) => l.id === 'release').state).toBe('unknown');
+    });
+
+    it('a "broken" status is still a measurement even though the endpoint sends ok:false with it', async () => {
+        const broken = async (url) => (/autonomy-status/.test(url)
+            ? reply({ ok: false, overall: 'broken', canActuallyFixBugs: false, headline: 'NOT working', checks: [{ id: 'models', status: 'broken', summary: 'no provider answers' }] })
+            : site(url));
+        const m = loadBrowserModule('wealthflow-diagnosis.js', { fetchImpl: broken, html: '', globals: { setInterval: () => 0, setTimeout: () => 0, WF_APP_VERSION: '7.69.39' } });
+        await m.window.WFDiagnosis.refresh();
+        expect(m.window.WFDiagnosis.collect().chain.find((l) => l.id === 'agent').state).toBe('fail');
+    });
+
     it('the evidence survives a restart: a new page load reads it back, with its age', async () => {
         const first = boot();
         await first.window.WFDiagnosis.refresh();

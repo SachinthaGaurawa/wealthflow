@@ -375,6 +375,12 @@
             return { ok: true, latest: latest, noteCount: items ? items.length : 0, problem: noteProblem(notes) };
         }, function (e) { return { ok: false, error: oneLine(e) }; });
         var pa = getJson('/api/autonomy-status?full=1').then(function (j) {
+            // The endpoint answers HTTP 200 with overall "unknown" when its own self-check could not run, and ok:false
+            // for "broken" too. Only healthy / degraded / broken are measurements; anything else is "not measured",
+            // which must stay unknown instead of being turned into a confirmed failure or a clean bill.
+            if (!j || (j.overall !== 'healthy' && j.overall !== 'degraded' && j.overall !== 'broken')) {
+                return { ok: false, error: String((j && (j.error || j.headline)) || 'the server could not measure it').slice(0, 140) };
+            }
             var failing = (j.checks || []).filter(function (c) { return c.status && c.status !== 'pass' && c.status !== 'ok' && c.status !== 'healthy'; }).slice(0, 6).map(function (c) { return { id: c.id, status: c.status, summary: String(c.summary || '').slice(0, 140) }; });
             return { ok: true, overall: j.overall, canActuallyFixBugs: j.canActuallyFixBugs, headline: j.headline, lastRealChange: j.lastRealChange || null, emptyVersionBumpsRecently: j.emptyVersionBumpsRecently || 0, failing: failing };
         }, function (e) { return { ok: false, error: oneLine(e) }; });

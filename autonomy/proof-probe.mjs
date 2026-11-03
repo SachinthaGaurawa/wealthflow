@@ -89,7 +89,7 @@ export function observeModule(file, { source = null, repoDir = ROOT, timeoutMs =
             args.push('--source-file', tmp);
         }
         const out = execFileSync(process.execPath, args, {
-            cwd: repoDir, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'], env: safeEnv(), maxBuffer: 4 * 1024 * 1024,
+            cwd: repoDir, timeout: timeoutMs, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'], env: safeEnv(), maxBuffer: 4 * 1024 * 1024,
         }).toString();
         const line = out.split('\n').reverse().find((l) => l.startsWith('__PROBE__'));
         if (!line) return { ok: false, error: 'the probe printed nothing' };
