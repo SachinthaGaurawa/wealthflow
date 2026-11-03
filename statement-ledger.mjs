@@ -39,8 +39,9 @@ export function sourceOccurrenceId(sourcePath, absoluteIndex) {
 }
 
 /* WHAT PROVES A ROW'S DIRECTION. The page itself (a running balance, a Dr/Cr marker, a Debit or Credit column, a sign) — or, for a row the page left unmarked, the statement as a whole
- * ('statement': its opening and closing balances add up only with every row where it is) or the words of the row itself ('words': a charge, a POS purchase, a salary). */
-export const PROVEN_DIRECTION = ['balance', 'marker', 'column', 'sign', 'statement', 'words'];
+ * ('statement': its opening and closing balances add up only with every row where it is) or the words of the row itself ('words': a charge, a POS purchase, a salary) — or, on a credit CARD statement with no running balance, the card layout's own convention ('layout':
+ * a plain amount with a merchant's name is a purchase; what comes back to the card is marked CR, a minus or a word, and that is checked per row in statement-direction.mjs). */
+export const PROVEN_DIRECTION = ['balance', 'marker', 'column', 'sign', 'statement', 'words', 'layout'];
 
 export function validateSettlementRow(row, decision, ctx = {}) {
     if (!row || !isStrictCalendarDate(row.date) || !amountCents(row.amount) || !norm(row.description || row.narration)) return 'invalid-transaction';
@@ -159,7 +160,7 @@ function makeRecord(row, decision, context, id, now) {
     const base = { id, ...provenance, amount: row.amount, date: row.date, source: 'statement', createdAt: new Date(now).toISOString(), _ut: now,
         notes: decision.autoDecided === 'history' ? 'Filed automatically with the category you have used for this merchant before. Change it if it is wrong.' : decision.autoDecided ? 'Filed automatically; the AI could not pick a more specific category. Change it if it is wrong.' : '', ...(decision.autoDecided ? { autoDecided: String(decision.autoDecided) } : {}),
         // a direction the page did not print, proven by the statement's own balances or by the row's words (statement-direction.mjs): said on the record, so it can be found
-        ...(['statement', 'words'].includes(row.directionSource) ? { directionProof: row.directionSource } : {}) };
+        ...(['statement', 'words', 'layout'].includes(row.directionSource) ? { directionProof: row.directionSource } : {}) };
     const module = modules[decision.module];
     /* A merchant the rules could not place is filed WITH its question. The money is counted in the month it left (nothing is held back or dropped); only the label waits, and
      * the app's Merchant review shows the owner the line, the candidates and how many rows one answer will settle. */

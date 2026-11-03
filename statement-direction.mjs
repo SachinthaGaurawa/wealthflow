@@ -11,6 +11,10 @@
  *                              cancel each other) are left alone.
  *   the words of the row       a charge, a fee, stamp duty, a POS purchase or an ATM withdrawal is money out; a salary, a refund, a reversal or interest credited is money in.
  *                              Used only when it AGREES with the direction the parser assumed — never to turn one round — and when the wording says nothing the row stays as it was.
+ *   the card's own layout      a CREDIT CARD statement prints a purchase as a plain amount and marks what comes back to the card (a payment, a refund) with CR, a minus or its own words. A plain
+ *                              amount on such a statement with a merchant's name and no word of money coming back is a purchase. Used only on a card statement with no running balance, only
+ *                              when the statement's own arithmetic does not contradict it (a statement whose opening and closing balances do NOT add up is left to the owner), and the
+ *                              row says so on the record ('layout'): it is a convention of the layout, not a figure the page proves.
  *
  * Pure: no network, no clock, no storage.
  * ===========================================================================*/
@@ -39,28 +43,37 @@ export function genericBankLine(row) {
     return !!text && DEBIT_WORDS.test(text) && !REVERSAL.test(text) && !INSTALMENT.test(text);
 }
 
+/* Words that mean money came BACK to a card. A line carrying one is never taken for a purchase by the card's layout, whatever else it says. */
+const CARD_CREDIT_WORDS = /\b(?:payments?|pmt|thank\s*you|refund\w*|revers\w*|cash\s*back|cashback|credits?|adjust\w*|waiv\w*|rebate|rewards?|redeem\w*|repay\w*|received|settle\w*|transfer\s+in|cr)\b/;
+export function cardCreditWords(row) { return CARD_CREDIT_WORDS.test(textOf(row)); }
+const isCardStatement = (parsed, ctx) => !!(ctx && ctx.card === true) || String(parsed && parsed.layout && parsed.layout.statementType || '').toLowerCase().replace(/[^a-z]/g, '') === 'creditcard';
+
 const flagged = (row) => !!row && row.needsReview === true && row.valid !== false && ['assumed', 'keyword'].includes(row.directionSource) && ['debit', 'credit'].includes(row.direction);
 const cents = (v) => Math.round(Math.abs(Number(v)) * 100);
 
 /**
  * The parsed statement with every flagged row whose direction is now proven marked as such. Returns new row objects only for the rows it changes.
- * @returns {{rows: object[], byStatement: number, byWords: number}}
+ * @param ctx  { card: true } when the statement is known to be a credit card's (its own header, or Cards and accounts) — the reader's own `layout.statementType` is read too
+ * @returns {{rows: object[], byStatement: number, byWords: number, byLayout: number}}
  */
-export function proveDirections(parsed) {
+export function proveDirections(parsed, ctx = {}) {
     const rows = Array.isArray(parsed && parsed.rows) ? parsed.rows : [];
     const rec = (parsed && parsed.reconciliation) || {};
     const balanced = rec.ok === true && Number.isFinite(Number(rec.opening)) && Number.isFinite(Number(rec.closing)) && rec.opening !== null && rec.closing !== null;
     const odd = new Map();                      // the amounts of flagged rows, by direction, to see which could cancel each other
     for (const row of rows) if (flagged(row)) { const key = `${cents(row.amount)}:${row.direction}`; odd.set(key, (odd.get(key) || 0) + 1); }
-    let byStatement = 0, byWords = 0;
+    /* THE CARD LAYOUT CONVENTION is open only on a card statement with no running balance, whose own arithmetic (when it has any) and balance checks do not contradict the rows. */
+    const layoutOpen = isCardStatement(parsed, ctx) && !(parsed && parsed.layout && parsed.layout.balanceColumn) && rec.ok !== false && !(parsed && parsed.balanceMismatches) && !(parsed && parsed.invalidDates);
+    let byStatement = 0, byWords = 0, byLayout = 0;
     const out = rows.map((row) => {
         if (!flagged(row)) return row;
         const other = row.direction === 'debit' ? 'credit' : 'debit';
         if (balanced && !odd.has(`${cents(row.amount)}:${other}`)) { byStatement += 1; return { ...row, directionSource: 'statement', needsReview: false }; }
         if (semanticDirection(row) === row.direction) { byWords += 1; return { ...row, directionSource: 'words', needsReview: false }; }
+        if (layoutOpen && row.directionSource === 'assumed' && row.direction === 'debit' && !cardCreditWords(row) && semanticDirection(row) !== 'credit') { byLayout += 1; return { ...row, directionSource: 'layout', needsReview: false }; }
         return row;
     });
-    return { rows: out, byStatement, byWords };
+    return { rows: out, byStatement, byWords, byLayout };
 }
 
-export default { semanticDirection, genericBankLine, proveDirections };
+export default { semanticDirection, genericBankLine, proveDirections, cardCreditWords };
