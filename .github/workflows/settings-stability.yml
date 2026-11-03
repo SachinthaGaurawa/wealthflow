@@ -14,6 +14,8 @@ on:
       - test/e2e/settings-sync.mjs
       - test/e2e/settings-stability.mjs
       - test/e2e/settings-runtime.mjs
+      - test/e2e/update-journey.mjs
+      - version.json
       - test/e2e/sync-banner.mjs
       - test/e2e/live-sync.mjs
       - test/e2e/convergence.mjs
@@ -64,3 +66,6 @@ jobs:
       # Repair connection: a save that never answers is not called a refusal and does not send the person to sign out, the repair turns the offline cache off
       # and it stays off after the reload, and the connection choices survive sign-out.
       - run: node test/e2e/connection-repair.mjs
+      # The whole in-app update journey: the Dashboard and Settings notices, the agreement, the PIN, the backup, the real progress bar and
+      # countdown, and the centred "what changed" popup after the restart. A brand-new install is not shown that popup.
+      - run: node test/e2e/update-journey.mjs
