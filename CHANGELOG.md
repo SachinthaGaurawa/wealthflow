@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.38 — 2026-11-03
+
+**What changed for you**
+
+- Release notes tell the truth about what shipped; Settings release card and welcome screen show real changes (#497)
+
 ## v7.69.37 — 2026-11-03
 
 **What changed for you**
