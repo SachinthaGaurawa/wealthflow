@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import { loadParser } from './statement-fixtures.mjs';
 import { proveDirections, cardCreditWords } from '../statement-direction.mjs';
@@ -136,7 +136,9 @@ describe('the rows that waited before the card layout proof existed', () => {
     });
     it('does nothing for a bank account\'s statement', async () => {
         const db = world(['KEELLS SUPER COLOMBO', 'UBER RIDE', 'POS PURCHASE'], { statementType: 'bank_account', last4: '1234', bank: 'DFCC' }, { cardRegistry: {} });
-        expect(await run(db)).toMatchObject({ proved: 0, left: 3 });
+        const out = await run(db);
+        expect(out).toMatchObject({ proved: 0, left: 3, more: false });
+        expect(out.why).toMatchObject({ notCard: 3, notCardView: { 't1l1r0b-': 3 } });      // what the statement knew of itself, as letters: type given, digits given, not registered
         expect(store(db).cconetime).toBeUndefined();
     });
     it('keeps a decision the rules made that is not a card line: an outward transfer is never turned into a Card Purchase', async () => {
@@ -164,5 +166,53 @@ describe('the rows that waited before the card layout proof existed', () => {
         db.db.collection = (path) => { const c = real(path); if (!/statementReview$/.test(path)) return c; return { ...c, where: (f, op, v) => { const q = c.where(f, op, v); return f === 'status' ? { ...q, get: async () => { const r = await q.get(); return { ...r, docs: r.docs.filter(d => d.data().index >= 0) }; } } : q; } }; };
         expect(await run(db)).toMatchObject({ proved: 0 });
         expect(reviews(db).every(r => r.status === 'pending')).toBe(true);
+    });
+});
+
+// Production, 2026-11-03 18:00 UTC: an interactive run spent its twelve front seconds on the mailbox (`frontIncomplete`), so the sweep, which stood in the front pass, was never reached and the 22 rows stayed in Open reviews for hours after the
+// fix was deployed. It is a step of the run's tail now, which a run that is out of front time still reaches.
+import { runStatementSync } from '../statement-sync.js';
+
+describe('the sweep runs even when the front of the run had no time left', () => {
+    afterEach(() => vi.restoreAllMocks());
+    const mailPath = 'wf-mail/owner_example_com', card = `${mailPath}/items/card1.pdf`, owner = { uid: 'u', email: 'owner@example.com' };
+    const world = (count = 3) => {
+        const now = 1_900_000_000_000;
+        const reviewDoc = (index, narration) => { const id = sourceOccurrenceId(card, index); return [[`users/u/statementReview/${id}`, { uid: 'u', sourcePath: card, index, status: 'pending', reason: 'unproven-direction', bank: 'HNB Credit Card',
+            row: { date: '2026-09-' + String(1 + (index % 28)).padStart(2, '0'), narration, description: narration, amount: 100 + index, direction: 'debit', directionSource: 'assumed', needsReview: true, valid: true } }], [`users/u/statementLedger/${id}`, { uid: 'u', sourcePath: card, index, status: 'review' }]]; };
+        const fs = createFirestore(Object.fromEntries([
+            [mailPath, { uid: 'u', email: owner.email, refresh_token: 'r', autonomous: true, lastCensusMs: now, lastLoanHealMs: now, lastRecoveryMs: now, senders: [{ id: 'statements@bank.example', kind: 'address', status: 'approved' }] }],
+            ['wf-statement-vault/u', { uid: 'u' }],
+            ['users/u', { settings: { cardRegistry: { '0048': { type: 'credit_card', bank: 'HNB' } } }, expenses: [], incomeRecv: [], cconetime: [], ccPayments: [] }],
+            [card, { uid: 'u', bank: 'HNB Credit Card', last4: '0048', statementType: 'credit-card', cursor: 3, totalRows: 3, status: 'needs_review', hasReview: true }],
+            ...(count === 3 ? [reviewDoc(0, 'KEELLS SUPER COLOMBO'), reviewDoc(1, 'UBER RIDE'), reviewDoc(2, 'SOME UNKNOWN SHOP')] : Array.from({ length: count }, (_, i) => reviewDoc(i, 'SHOP NUMBER ' + i))).flat()]));
+        const f = async (url) => (String(url).includes('/profile') ? { ok: true, json: async () => ({ emailAddress: owner.email, historyId: '1' }) } : { ok: true, json: async () => ({ access_token: 'token' }) });
+        let clock = now; vi.spyOn(Date, 'now').mockImplementation(() => clock);
+        const intake = async () => { clock += 20000; return { body: { ok: true, collectionPending: false } }; };
+        return { fs, f, intake };
+    };
+    it('files the waiting card rows from the tail of an interactive run whose front was skipped, and says so in one counts-only line', async () => {
+        const { fs, f, intake } = world(), lines = [];
+        const info = vi.spyOn(console, 'info').mockImplementation(line => { lines.push(String(line)); });
+        let result;
+        try { result = await runStatementSync({ action: 'collect', interactive: true, budgetMs: 45000, db: fs.db, owner, env: {}, f, intake, board: async () => { throw new Error('off'); }, extract: async () => { throw new Error('off'); } }); } finally { info.mockRestore(); }
+        const events = lines.map(l => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean);
+        expect(events.find(e => e.evt === 'statement-sync-run')).toMatchObject({ front: true, frontIncomplete: true });
+        expect(result.cardRowsProved).toBe(3);
+        expect(events.find(e => e.evt === 'statement-card-proof')).toMatchObject({ proved: 3, left: 0, more: false });
+        expect(JSON.stringify(events.find(e => e.evt === 'statement-card-proof'))).not.toMatch(/KEELLS|UBER/);      // counts only
+        expect(fs.data.get('users/u').cconetime).toHaveLength(3);
+        expect(fs.data.get(mailPath).lastCardProofMs).toBeGreaterThan(0);           // a pass that had nothing left is not repeated for a minute
+    });
+    it('a pass that did not get through brings the chain straight back, is not held back by the minute, and the next one finishes it', async () => {
+        const { fs, f, intake } = world(30);
+        const go = async () => { const info = vi.spyOn(console, 'info').mockImplementation(() => {}); try { return await runStatementSync({ action: 'collect', interactive: true, budgetMs: 45000, db: fs.db, owner, env: {}, f, intake, board: async () => { throw new Error('off'); }, extract: async () => { throw new Error('off'); } }); } finally { info.mockRestore(); } };
+        const first = await go();
+        expect(first.cardRowsProved).toBe(25);                                      // 25 a run on an interactive call
+        expect(first.morePending).toBe(true); expect(first.retryAfterMs).toBe(750);   // the app asks again at once
+        expect(fs.data.get(mailPath).lastCardProofMs).toBeUndefined();              // the minute does not hold the second pass back
+        const second = await go();
+        expect(second.cardRowsProved).toBe(5);
+        expect(fs.data.get('users/u').cconetime).toHaveLength(30);
     });
 });
