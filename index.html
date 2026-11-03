@@ -17513,7 +17513,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                          * tried (it hangs on the same networks); the copy this browser already holds is used, as before. */
                                         const _cs = _wfCloudSync();
                                         if (_cs) {
-                                            const rr = await _withTimeout(_cs.read(), 12000);
+                                            const rr = await _withTimeout(_cs.read({ timeoutMs: 12000 }), 14000);   // the request itself ends at 12 s, which also frees the sync queue for the saves that follow
                                             doc = { exists: rr.exists, data: () => rr.data, _rest: rr, _cs };
                                             console.log('[SYNC] @checkCircle@ Got data from SERVER over HTTPS', rr.bytes, 'bytes', rr.ms, 'ms');
                                         } else {

@@ -682,7 +682,8 @@ export function createRestClient({ projectId, getToken, fetchImpl, setTimer = se
             return { exists: true, data: fromFields(hit.found.fields), updateTime: hit.found.updateTime || null, bytes: r.received, ms: r.ms };
         },
         async commit(path, { fields = {}, meta = {}, serverTime = [], precondition = null, timeoutMs = 0 } = {}) {
-            const all = Object.assign({}, fields, meta);
+            const all = {};                                   // own-property copy: Object.assign would turn a field named __proto__ into the prototype and drop it from the save
+            for (const src of [fields, meta]) for (const k of Object.keys(src || {})) setOwn(all, k, src[k]);
             const write = { update: { name: nameOf(path), fields: toFields(all) }, updateMask: { fieldPaths: Object.keys(all).filter((k) => all[k] !== undefined).map((k) => fieldPath([k])) } };
             if (serverTime.length) write.updateTransforms = serverTime.map((f) => ({ fieldPath: fieldPath([f]), setToServerValue: 'REQUEST_TIME' }));
             if (precondition) write.currentDocument = precondition;
@@ -710,7 +711,7 @@ export function isConflict(err) {
  *                            Make the account hold what this device holds, sending only the fields that differ. apply(data) merges a newer copy into this
  *                            device (it is called whenever a copy is read); getLocal() is this device's whole data, taken AFTER that merge; meta() is the stamp
  *                            fields written with every save. -> { keys, bytes, ms, attempts, upToDate }
- *   read()                   Read the whole document without merging it (the first read at sign-in, which the page merges itself, then adopt()s).
+ *   read({timeoutMs})        Read the whole document without merging it (the first read at sign-in, which the page merges itself, then adopt()s).
  *                            -> { exists, data, updateTime, hashes, bytes, ms }
  *   adopt({ hashes, updateTime })  The page read the document itself (at sign-in) and merged it; remember that.
  *   forget()                 The account may have moved: the next pull or push reads it first.
@@ -745,9 +746,9 @@ export function createCloudSync({ client, path, now = Date.now } = {}) {
         state: st,
         forget() { st.ver = null; st.hashes = {}; },
         adopt({ hashes, updateTime } = {}) { st.hashes = hashes || {}; st.ver = updateTime || null; },
-        read() {
+        read({ timeoutMs = 0 } = {}) {
             return locked(async () => {
-                const r = await client.readDoc(path);
+                const r = await client.readDoc(path, { timeoutMs });
                 st.last.read = { at: now(), ms: r.ms, bytes: r.bytes, exists: r.exists };
                 return { exists: r.exists, data: r.data, updateTime: r.updateTime, hashes: r.exists ? hashesOf(r.data) : {}, bytes: r.bytes, ms: r.ms };
             });

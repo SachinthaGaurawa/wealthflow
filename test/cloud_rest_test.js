@@ -404,6 +404,29 @@ describe('a save sends only what differs, and is accepted only if nobody wrote i
         expect(cloud.data.settings.theme).toBe('light');
     });
 
+    it('a top-level field named __proto__ is written, with its place in the update mask (Object.assign would have dropped it)', async () => {
+        const seen = [];
+        const client = H.createRestClient({ projectId: 'p', getToken: async () => 't', fetchImpl: async (u, o) => { seen.push(JSON.parse(o.body)); return { ok: true, status: 200, text: async () => JSON.stringify({ writeResults: [{ updateTime: stamp(2) }] }) }; } });
+        const fields = JSON.parse('{"__proto__":[1,2],"settings":{"a":1}}');
+        await client.commit('users/u1', { fields, meta: { _writeTs: 5 } });
+        const w = seen[0].writes[0];
+        expect(Object.keys(w.update.fields).sort()).toEqual(['__proto__', '_writeTs', 'settings']);
+        expect(w.updateMask.fieldPaths.sort()).toEqual(['__proto__', '_writeTs', 'settings'].sort());
+        expect(Object.getPrototypeOf(fields)).toBe(Object.prototype);
+    });
+
+    it('a first read that is given a short deadline ends at it and frees the queue for the saves behind it', async () => {
+        let calls = 0; const cloud = newCloud(books()); const good = makeRestFetch(cloud);
+        const eng = H.createCloudSync({ client: H.createRestClient({ projectId: 'p', getToken: async () => 't', fetchImpl: (u, o) => { calls++; return calls === 1 ? new Promise((_, rej) => o.signal.addEventListener('abort', () => rej(new Error('aborted')))) : good(u, o); } }), path: 'users/u1' });
+        const t0 = Date.now();
+        const err = await eng.read({ timeoutMs: 40 }).then(() => null, (e) => e);
+        expect(err && err.code).toBe('deadline-exceeded');
+        expect(Date.now() - t0).toBeLessThan(2000);
+        const local = {};
+        const r = await eng.pull({ apply: apply(local), force: true });       // not left waiting behind the abandoned read
+        expect(r.exists).toBe(true);
+    });
+
     it('a refused sign-in or an invalid document is raised as it is, not retried as a race', async () => {
         const cloud = newCloud(books()); const eng = engineFor(cloud); const local = {};
         await eng.pull({ apply: apply(local), force: true });
@@ -589,7 +612,7 @@ describe('every way the page reads or writes the account goes through the same e
     });
 
     it('the first read at sign-in is one plain request, merged by the same function, then remembered', () => {
-        const at = HTML.indexOf('const rr = await _withTimeout(_cs.read(), 12000);');
+        const at = HTML.indexOf('const rr = await _withTimeout(_cs.read({ timeoutMs: 12000 }), 14000);');
         expect(at, 'the sign-in read is no longer over the engine').toBeGreaterThan(0);
         const around = HTML.slice(at - 700, at + 2000);
         expect(around).toMatch(/_wfCloudSync\(\)/);
