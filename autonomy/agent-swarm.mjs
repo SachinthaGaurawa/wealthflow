@@ -398,7 +398,19 @@ export function testPrompt(issue, filename, before, after) {
         '    kind, so `await import(...)` gives you a namespace with no `default`.',
         '    `module.default.anything` is undefined and will throw.',
         '',
-        'HOW TO LOAD IT — the pattern that works in this repository:',
+        'USE THE SHARED LOADER FIRST — it gives you a REAL DOM (linkedom is installed) and is tested:',
+        '  import * as loader from "./helpers/load-browser-module.js";',
+        `  const { window, document } = loader.loadBrowserModule(${JSON.stringify(filename)}, { html: '<div id="wfUpdateCard"></div>' });`,
+        '  // options: html (markup for <body>), localStorage ({key: value}), fetchImpl, globals, url',
+        '  // The module runs inside that window; whatever it attaches (for example window.wfUpdate)',
+        '  // is on `window`. Call its public API, then assert on `document` — the text a person sees:',
+        '  //   window.wfUpdate.refresh();',
+        '  //   expect(document.getElementById("wfUpdateCard").textContent).toContain("...");',
+        '  // Your test file lives in test/, so the import path is exactly the one shown above.',
+        '  // Do NOT hand-build `document`; a missing method on a fake is the commonest way these tests break.',
+        '  // The version shown is the build that is RUNNING (read from the file), not a value you store.',
+        '',
+        'HOW TO LOAD IT WITHOUT THE LOADER (only for pure logic):',
         '  Read the source with `fs.readFileSync` and evaluate it with `new Function`,',
         '  passing a hand-built fake `window`/`localStorage`, then assert against the',
         '  API the module attached to that fake window. `test/update_ui_truth_test.js`',
@@ -423,6 +435,37 @@ export function testPrompt(issue, filename, before, after) {
         'changed — not the module in general.',
     ].join('\n');
 }
+
+/**
+ * Round 2 and 3 of Agent 4: the test was RUN and failed. Show it the actual output and ask for a corrected
+ * TEST. Never the code: the fix has already been reviewed, and "change the code until my test passes" is
+ * exactly how a test comes to prove nothing.
+ */
+export function testRepairPrompt(issue, filename, before, after, previousTest, failure) {
+    const why = String(failure?.reason || 'it did not go from failing to passing');
+    const out = String(failure?.output || '').trim();
+    return [
+        testPrompt(issue, filename, before, after),
+        '',
+        '────────────────────────────────────────────────────────────',
+        'YOUR PREVIOUS TEST WAS EXECUTED AND REJECTED.',
+        `Verdict: ${why}`,
+        ...(out ? ['', 'What Vitest printed (the end of it):', '--- BEGIN OUTPUT ---', out.slice(-1800), '--- END OUTPUT ---'] : []),
+        '',
+        'YOUR PREVIOUS TEST:',
+        '--- BEGIN TEST ---',
+        String(previousTest || '').slice(0, 5000),
+        '--- END TEST ---',
+        '',
+        'Fix THE TEST so that it fails against the original file and passes against the fixed one.',
+        'Read the output above for the real cause (a missing method, a wrong selector, a wrong import path,',
+        'an assertion on text the fixed file does not produce). Do not weaken the assertion into something',
+        'that cannot fail, and do not assert on code that is not in the change. Return ONLY the complete test file.',
+    ].join('\n');
+}
+
+/** How many times Agent 4 may rewrite its test after seeing the real Vitest output. */
+export const TEST_ROUNDS = 3;
 
 /** The most diff text the security reviewer is shown. Bigger than this and the change is refused, not skimmed. */
 export const REVIEW_DIFF_MAX = 40_000;
@@ -545,6 +588,7 @@ export async function runSwarm({
     env = process.env,
     writeTest = true,
     verifyTest = true,           // execute Agent 4's test red→green before accepting it
+    runTest = null,              // unit tests only: stands in for Vitest; ignored when CI is set
     log = console.log,
 } = {}) {
     const issueText = `${issue?.title || ''}\n\n${issue?.body || ''}`.trim();
@@ -680,51 +724,69 @@ export async function runSwarm({
     log(`[swarm] Agent 5 verdict: PASS (via ${reviewed.provider})`);
 
     // ── stage 5: Agent 4 writes the proving test, and it is EXECUTED ────────
+    // The test is run for real (red on the old file, green on the new). A test that fails is not
+    // thrown away with the whole attempt any more: the actual Vitest output goes back to Agent 4
+    // for up to TEST_ROUNDS tries, because a correct, reviewed fix used to be discarded here for
+    // one wrong selector in a generated test whose error text nobody ever saw.
     let test = null, testFile = null, testProof = null;
     if (writeTest) {
-        const t = await chat({
-            system: ROLES.qa.system, prompt: testPrompt(issueText, file, before, code),
-            prefer: ROLES.qa.prefer, exclude: [authored.provider, reviewed.provider],
-            maxTokens: 4000, temperature: 0.1, env,
-        }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
-        providers.qa = t.provider;
-        const candidate = stripFences(t.text);
-
-        // Cheap shape checks first — they cost nothing and skip a Vitest run
-        // that could not possibly succeed. They are a filter, NOT the gate.
-        if (!candidate || !/from\s+['"]vitest['"]/.test(candidate) || !/expect\s*\(/.test(candidate) || !isValidJs(candidate)) {
-            return {
-                ok: false, stage: 'test', file, code, providers, review,
-                reason: 'Agent 4 produced nothing that is even shaped like a test',
-            };
-        }
-
-        const tf = path.join('test', `auto-${file.replace(/\.js$/i, '')}-${issue?.number || 'x'}.test.js`);
-
         const plan = verificationPlan({ verifyTest, ci: Boolean(env.CI) });
         if (!plan.allowed) {
             return { ok: false, stage: 'proof', file, code, providers, review, reason: plan.reason };
         }
+        const tf = path.join('test', `auto-${file.replace(/\.js$/i, '')}-${issue?.number || 'x'}.test.js`);
+        // An injected runner exists for unit tests only; in CI the real Vitest always runs.
+        const run = (runTest && !env.CI) ? runTest : undefined;
+        const rounds = [];
+        let candidate = '', previous = null;
+        for (let round = 1; round <= TEST_ROUNDS; round++) {
+            const t = await chat({
+                system: ROLES.qa.system,
+                prompt: previous
+                    ? testRepairPrompt(issueText, file, before, code, candidate, previous)
+                    : testPrompt(issueText, file, before, code),
+                prefer: ROLES.qa.prefer, exclude: [authored.provider, reviewed.provider],
+                maxTokens: 4000, temperature: round === 1 ? 0.1 : 0.2, env,
+            }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
+            providers.qa = t.provider;
+            candidate = stripFences(t.text);
 
-        testProof = plan.verify
-            ? verifyTestProves({ repoDir, targetFile: file, before, after: code, testFile: tf, testSource: candidate, log })
-            : { ok: true, skipped: true, beforeFailed: null, afterPassed: null };
+            // Cheap shape checks first — they cost nothing and skip a Vitest run
+            // that could not possibly succeed. They are a filter, NOT the gate.
+            if (!candidate || !/from\s+['"]vitest['"]/.test(candidate) || !/expect\s*\(/.test(candidate) || !isValidJs(candidate)) {
+                previous = { reason: 'it is not a runnable Vitest file (it needs `import ... from "vitest"`, at least one `expect(`, and valid JavaScript)', output: t._error || '' };
+                rounds.push({ round, reason: previous.reason });
+                log(`[swarm] Agent 4 round ${round}/${TEST_ROUNDS}: nothing shaped like a test`);
+                continue;
+            }
+
+            testProof = plan.verify
+                ? verifyTestProves({ repoDir, targetFile: file, before, after: code, testFile: tf, testSource: candidate, log, ...(run ? { run } : {}) })
+                : { ok: true, skipped: true, beforeFailed: null, afterPassed: null };
+            if (testProof.ok) { test = candidate; testFile = tf; break; }
+
+            // Loud: the reason AND the Vitest output reach the log (and the issue comment),
+            // so a proof failure can be diagnosed without re-running it.
+            rounds.push({ round, reason: testProof.reason });
+            log(`[swarm] Agent 4 round ${round}/${TEST_ROUNDS}: the test does not prove the fix: ${testProof.reason}`);
+            if (testProof.output) log(`[swarm] vitest said (round ${round}): ${String(testProof.output).trim().split('\n').slice(-14).join(' | ').slice(0, 900)}`);
+            previous = testProof;
+        }
 
         // A change whose test does not move from red to green is not a proven
         // change, and shipping it would only re-create the situation this gate
         // was built for: a PR that looks tested and is not. Fail the run and say
         // why, rather than open a PR that rego RULE 3 would refuse anyway.
-        if (!testProof.ok) {
-            log(`[swarm] Agent 4's test does not prove the fix: ${testProof.reason}`);
+        if (!test) {
+            const last = rounds[rounds.length - 1] || {};
             return {
-                ok: false, stage: 'proof', file, code, providers, review, testProof,
-                reason: `the proving test did not prove anything — ${testProof.reason}`,
+                ok: false, stage: 'proof', file, code, providers, review,
+                testProof: testProof || { ok: false, reason: last.reason, beforeFailed: null, afterPassed: null },
+                testRounds: rounds,
+                reason: `the proving test did not prove anything after ${TEST_ROUNDS} tries — ${last.reason || 'no usable test was produced'}`,
             };
         }
-
-        test = candidate;
-        testFile = tf;
-        log(`[swarm] Agent 4 wrote ${testFile}, verified red→green (via ${t.provider})`);
+        log(`[swarm] Agent 4 wrote ${testFile}, verified red→green (via ${providers.qa}${rounds.length ? `, after ${rounds.length} rejected ${rounds.length === 1 ? 'try' : 'tries'}` : ''})`);
     }
 
     // `verified` is stated separately from testProof so a skipped verification
