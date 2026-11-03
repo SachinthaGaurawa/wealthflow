@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.40 — 2026-11-03
+
+**What changed for you**
+
+- Card sweep: say why a money-back line stays (counts only) (#502)
+
+**Under the hood**
+
+- Fix agent: show the drafted change, measure the module before and after, scrub secrets from generated code (#503)
+
 ## v7.69.39 — 2026-11-03
 
 **What changed for you**
