@@ -363,7 +363,10 @@ export function deterministicDecision(row, allocations = {}) {
         expenses: { module: 'expenses', category: routed.category || expenseCategoryFor(row) },
         income: { module: 'incomeRecv', category: routed.category || incomeCategoryFor(row) },
         cc_payment: { module: 'ccPayments', category: 'Card Payment' },
-        cconetime: { module: 'cconetime', category: routed.subtype === 'fuel' ? 'Fuel' : routed.subtype === 'fee' ? 'Card Fee' : routed.subtype === 'cash_advance' ? 'Cash Advance' : 'Card Purchase' },
+        /* A CARD PURCHASE KEEPS THE CATEGORY THE RULES GAVE IT ("KEELLS SUPER" is Groceries, "UBER" is Transport): the router named it, and filing every card line as "Card Purchase" left the whole statement
+         * uncategorised until the app was opened and the merchant autopilot swept it. A merchant the rules could not place ("Other") is still filed as a Card Purchase, and the autopilot and the owner settle it. */
+        cconetime: { module: 'cconetime', category: routed.subtype === 'fuel' ? 'Fuel' : routed.subtype === 'fee' ? 'Card Fee' : routed.subtype === 'cash_advance' ? 'Cash Advance'
+            : routed.subtype === 'purchase' && routed.category && !/^(?:other|needs review|card\s)/i.test(String(routed.category)) && CLASSIFY_CATEGORIES.includes(routed.category) ? routed.category : 'Card Purchase' },
         ccinstall: { module: 'ccinstall', category: 'Installment' },
     };
     const decision = decisions[routed.module];
@@ -1366,6 +1369,22 @@ export async function repairReviewMetadata({ db, uid, limit = 100 }) {
 // There is nothing in them to file or to correct, so they are dismissed the way
 // the owner would dismiss them — through the same resolver — and marked as
 // automatic. Only a row whose amount is exactly the number 0 qualifies.
+/* WHAT THE READING SAW, AS COUNTS (never a figure or a name), for the log line of a statement: how the rows' directions were read, whether the layout carries a running balance, whether the statement's
+ * own opening and closing were found and agreed, and how many rows are not whole transactions (no real date, no amount or no words). It is what tells a statement that waits for the owner WHY. */
+export function readShape(parsed) {
+    const rows = Array.isArray(parsed && parsed.rows) ? parsed.rows : [], bySource = {}, rec = (parsed && parsed.reconciliation) || {};
+    let noDate = 0, noAmount = 0, noWords = 0;
+    for (const row of rows) {
+        const source = String(row && row.directionSource || 'none'); bySource[source] = (bySource[source] || 0) + 1;
+        if (!row || !/^\d{4}-\d{2}-\d{2}$/.test(String(row.date || ''))) noDate += 1;
+        if (!row || !(Number(row.amount) > 0)) noAmount += 1;
+        if (!row || !String(row.description || row.narration || '').replace(/[^\p{L}\p{N}]+/gu, '')) noWords += 1;
+    }
+    return { sources: bySource, balanceColumn: !!(parsed && parsed.layout && parsed.layout.balanceColumn), type: String(parsed && parsed.layout && parsed.layout.statementType || ''),
+        opening: Number.isFinite(rec.opening) && rec.opening !== null, closing: Number.isFinite(rec.closing) && rec.closing !== null, reconciled: rec.ok === null || rec.ok === undefined ? 'unknown' : rec.ok ? 'yes' : 'no', ...(rec.model ? { model: rec.model } : {}),
+        invalid: { noDate, noAmount, noWords } };
+}
+
 export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {
     const page = await db.collection('users').doc(uid).collection('statementReview').where('status', '==', 'pending').limit(Math.min(500, Math.max(1, limit))).get();
     let dismissed = 0;
@@ -2005,8 +2024,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         /* THE ROWS THE PAGE LEFT UNMARKED ARE PROVEN BY THE STATEMENT, OR BY THEIR WORDS, BEFORE ANYONE IS ASKED (statement-direction.mjs): when the printed opening and closing
          * balances are reached to the cent the parser's "assumed debit" for every unmarked row cannot have been wrong anywhere, and a charge, a POS purchase or a salary says which way it went. */
         if (parsed && Array.isArray(parsed.rows) && parsed.rows.some(row => row && row.needsReview === true)) {
-            const proof = proveDirections(parsed);
-            if (proof.byStatement + proof.byWords > 0) { parsed = { ...parsed, rows: proof.rows }; diag.directions = { statement: proof.byStatement, words: proof.byWords }; }
+            /* A CREDIT CARD STATEMENT IS KNOWN BY ITS OWN HEADER OR BY CARDS AND ACCOUNTS (statement-card-identity.mjs): the reader recognises "credit limit" and "cardholder", the registry knows the card by its last four digits. */
+            let registryNow = {};
+            try { registryNow = (await db.collection('users').doc(uid).get()).data()?.settings?.cardRegistry || {}; } catch (_) { /* no registry read: the statement's own header still says what it is */ }
+            const cardAccount = identifyAccount({ registry: registryNow, last4: parsed.layout?.accountLast4 || '', bank: claimed.bank || '', text, parsedType: parsed.layout?.statementType || '' });
+            const proof = proveDirections(parsed, { card: isCreditCardRow({}, { statementType: cardAccount.statementType, card_last4: parsed.layout?.accountLast4 || '', bank: claimed.bank || '', cardRegistry: registryNow }) });
+            if (proof.byStatement + proof.byWords + proof.byLayout > 0) { parsed = { ...parsed, rows: proof.rows }; diag.directions = { statement: proof.byStatement, words: proof.byWords, layout: proof.byLayout }; }
         }
         /* THE BANK'S OWN TOTALS ARE A SECOND, INDEPENDENT PROOF (statement-totals.mjs). A statement that prints its total withdrawals and total deposits (DFCC's "Transaction Summary") and whose rows reach both to
          * the cent has every row, in the right direction, whatever a balance column did. When the balance chain does not close but these two do, the statement is proven by them — and the log says so. */
@@ -2175,7 +2198,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 claimed = again;
             }
             outcome = { ...outcome, ...total };
-            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules', ...(diag.directions ? { directions: diag.directions } : {}), ...(diag.repaired ? { repaired: diag.repaired } : {}),
+            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules', ...(diag.directions ? { directions: diag.directions } : {}), read: readShape(parsed), ...(diag.repaired ? { repaired: diag.repaired } : {}),
                 ...(replayed?.healed ? { healed: replayed.healed } : {}), ...(total.dateShifted ? { dateShifted: total.dateShifted } : {}),
                 account: account.state, ...(account.via ? { accountVia: account.via } : {}), ...(account.conflict ? { accountConflict: true } : {}) });
         }
