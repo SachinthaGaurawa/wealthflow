@@ -195,17 +195,25 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         // the DOM and appeared to "move around" between pages/renders.
         var settingsPage = document.getElementById('page-settings');
         if (!settingsPage || !settingsPage.classList.contains('active')) return false;
-        // Stable anchor: always sit immediately AFTER the AI engine / intel card
-        // inside Settings. Fall back to the Settings content container's END only
-        // if that anchor isn't present — never to a random last section elsewhere.
+        // Stable anchor, set by the owner: the card sits between "Software Update"
+        // and "App and installation". Both are part of the Settings template, so
+        // the spot survives every rebuild. Fall back to just after the Software
+        // Update card, then the AI card, then the last section — never anywhere else.
         var host = null;
-        var intel = settingsPage.querySelector('#wfIntelPanel');
-        if (intel && intel.closest) host = intel.closest('.settings-section') || intel;
-        if (!host) {
-            var secs = settingsPage.querySelectorAll('.settings-section');
-            if (secs.length) host = secs[secs.length - 1];
+        var before = settingsPage.querySelector('#wfPwaSection');
+        if (before && !before.parentNode) before = null;
+        if (!before) {
+            host = settingsPage.querySelector('#wfUpdateCard');
+            if (!host) {
+                var intel = settingsPage.querySelector('#wfIntelPanel');
+                if (intel && intel.closest) host = intel.closest('.settings-section') || intel;
+            }
+            if (!host) {
+                var secs = settingsPage.querySelectorAll('.settings-section');
+                if (secs.length) host = secs[secs.length - 1];
+            }
+            if (!host || !host.parentNode) return false;
         }
-        if (!host || !host.parentNode) return false;
         _css();
         var card = document.createElement('div');
         card.className = 'settings-section';
@@ -220,7 +228,8 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
                 '</div>' +
                 '<button id="wfReleaseOpenBtn" type="button" style="padding:9px 16px;border-radius:10px;border:none;background:var(--accent,#f5a623);color:#1a1300;font-weight:800;cursor:pointer;white-space:nowrap;">Details</button>' +
             '</div>';
-        host.parentNode.insertBefore(card, host.nextSibling);
+        if (before) before.parentNode.insertBefore(card, before);
+        else host.parentNode.insertBefore(card, host.nextSibling);
         var btn = document.getElementById('wfReleaseOpenBtn');
         if (btn) btn.onclick = function () { showPanel(); };
         return true;
