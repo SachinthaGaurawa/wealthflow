@@ -1422,7 +1422,8 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
     if (!waiting.length) return { proved: 0, left: why.unproven, more: false, why };
     const registry = (((await userRef.get()).data() || {}).settings || {}).cardRegistry || {};
     const contextOf = (review, source) => ({ statementType: source.statementType || '', card_last4: source.last4 || review.row.card_last4 || '', bank: source.bank || review.bank || '', cardRegistry: registry, subscriptions: [], loans: [] });
-    const sources = new Map(), asked = new Map(), held = new Map(), cut = new Set();
+    const sources = new Map(), asked = new Map(), held = new Map(), cut = new Set(), ownDocs = new Map();
+    const moneyBackLine = (review) => { const line = { ...review.row, directionSource: 'layout', needsReview: false, valid: true }; return Boolean(cardCreditWords(line)) || semanticDirection(line) === 'credit'; };
     let proved = 0, left = 0, more = false;
     for (const doc of waiting) {
         /* THE SCAN IS BOUNDED, NOT ONLY THE FILING: `limit` counts rows filed, but every statement looked at costs two reads (its own pending reviews, its document), and rows turned away cost reads too. The scan stops at `until` (the run's own deadline,
@@ -1431,7 +1432,7 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
         if (proved >= limit || Date.now() > until) { left += 1; why.unreached += 1; more = true; cut.add(review.sourcePath); continue; }
         if (!asked.has(review.sourcePath) && asked.size >= maxSources) { left += 1; why.unreached += 1; more = true; cut.add(review.sourcePath); continue; }
         /* the statement's OWN pending reviews are asked for, not taken from the page above (which holds at most 500 of every statement's): a layout or reconciliation question still open on it keeps every row of it for the owner */
-        if (!asked.has(review.sourcePath)) asked.set(review.sourcePath, (await userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath).get()).docs.some(entry => { const r = entry.data(); return r.status === 'pending' && Number(r.index) < 0; }));
+        if (!asked.has(review.sourcePath)) { const own = (await userRef.collection('statementReview').where('sourcePath', '==', review.sourcePath).get()).docs; ownDocs.set(review.sourcePath, own); asked.set(review.sourcePath, own.some(entry => { const r = entry.data(); return r.status === 'pending' && Number(r.index) < 0; })); }
         if (asked.get(review.sourcePath)) { left += 1; why.statementQuestion += 1; continue; }
         if (!sources.has(review.sourcePath)) sources.set(review.sourcePath, (await db.doc(review.sourcePath).get()).data() || null);
         const source = sources.get(review.sourcePath);
@@ -1446,7 +1447,7 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
             notCardView[key] = (notCardView[key] || 0) + 1; why.notCardView = notCardView;
             continue;
         }
-        if (cardCreditWords(row) || semanticDirection(row) === 'credit') {
+        if (moneyBackLine(review)) {
             left += 1; why.moneyBack += 1;
             /* WHY THEY STAY, IN NAMES FROM A FIXED LIST (no text, no amount): which word kept each line for the owner. The lines are also gathered per statement, for the arithmetic proof below the loop. */
             const name = cardCreditWordName(row) || 'other';
@@ -1467,11 +1468,16 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
      * really credits. When ONE choice of the waiting lines of a CARD statement makes the sums add up to the cent, every one of them is proven by the statement: the chosen ones as card payments, the rest as card purchases.
      * No choice, or several, or a statement with a row still unreached: nothing is touched and the owner is asked as before. Only a statement whose waiting lines were ALL looked at is tried (a partly read list cannot add up).
      * The log says only HOW MANY statements fit, did not, or were ambiguous, and in a fixed word why one did not: never a line, a name or an amount. */
-    const totals = { tried: 0, unique: 0, none: 0, ambiguous: 0, unusable: 0, incomplete: 0, filed: 0, duplicate: 0, rules: 0, refused: 0 };
+    const totals = { tried: 0, unique: 0, none: 0, ambiguous: 0, unusable: 0, incomplete: 0, partial: 0, stamped: 0, filed: 0, duplicate: 0, rules: 0, refused: 0 };
     for (const [sourcePath, items] of held) {
         if (cut.has(sourcePath)) { totals.incomplete += 1; continue; }
         if (Date.now() > until) { totals.incomplete += 1; more = true; continue; }
         const source = sources.get(sourcePath), printed = source && source.proof && typeof source.proof === 'object' ? source.proof : {};
+        /* THE LIST MUST BE THE STATEMENT'S WHOLE LIST: the page of pending reviews read above holds at most 500 of all the statements' together, so the lines gathered from it are compared with the statement's OWN reviews (read without a limit)
+         * and the proof is refused for any difference. A statement already tried once is not tried again: after a line was filed, a re-run would add up a shorter list against the same printed totals. */
+        const whole = (ownDocs.get(sourcePath) || []).filter(entry => { const r = entry.data(); return r.status === 'pending' && r.reason === 'unproven-direction' && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && moneyBackLine(r); }).map(entry => entry.id).sort();
+        if (source && source.totalsProof) { totals.stamped += 1; continue; }
+        if (whole.length !== items.length || whole.some((id, at) => id !== items.map(entry => entry.doc.id).sort()[at])) { totals.partial += 1; continue; }
         const tails = new Set(items.map(entry => String(entry.review.row.card_last4 || '')));
         totals.tried += 1;
         const fit = tails.size > 1 ? { fit: 'unusable' } : proveByTotals({ opening: printed.opening, closing: printed.closing, credits: printed.credits, debits: printed.debits, models: ['card'],
@@ -1479,6 +1485,8 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
         totals[fit.fit] += 1;
         if (fit.reason) { totals.noneBy = totals.noneBy || {}; totals.noneBy[fit.reason] = (totals.noneBy[fit.reason] || 0) + 1; }
         if (fit.fit !== 'unique') continue;
+        /* the one attempt is written BEFORE anything is filed: a run that stops half way leaves the rest for the owner instead of being re-added against totals it no longer matches */
+        try { await db.doc(sourcePath).set({ totalsProof: { v: 1, at: Date.now(), lines: items.length } }, { merge: true }); } catch (_) { totals.refused += items.length; continue; }
         const credit = new Set(fit.credit);
         for (const { doc, review } of items) {
             const direction = credit.has(doc.id) ? 'credit' : 'debit';

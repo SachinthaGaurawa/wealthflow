@@ -297,6 +297,25 @@ describe('the lines that say money came back are settled by the statement\'s ari
         expect(fs.data.get('users/u').ccPayments.map(r => r.id)).toEqual(['old']);
         expect(out).toMatchObject({ proved: 4, left: 0 });
     });
+    it('writes the one attempt on the statement before it files anything, and never tries the same statement again', async () => {
+        const fs = world(lines, proof), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ unique: 1, filed: 2 });
+        expect(fs.data.get(sourcePath).totalsProof).toMatchObject({ v: 1, lines: 2 });
+        const again = world(lines, proof, [], { totalsProof: { v: 1, at: 1, lines: 2 } }), second = await run(again);
+        expect(second.why.totals).toMatchObject({ tried: 0, stamped: 1, filed: 0 });
+        expect(status(again)(lines)).toEqual(['resolved', 'pending', 'pending', 'resolved']);          // only the plain purchases, by the layout
+        expect(again.data.get('users/u').ccPayments).toEqual([]);
+    });
+    it('refuses the proof when the page of pending reviews did not hold the statement\'s whole list', async () => {
+        // 600 other pending reviews come before one more waiting "payment" line of the same statement: the page of 500 never reaches it, so the sums would be added up over a shorter list than the statement has
+        const filler = Array.from({ length: 600 }, (_, i) => [`users/u/statementReview/filler-${String(i).padStart(4, '0')}`, { uid: 'u', sourcePath: 'wf-mail/owner/items/other.pdf', index: 0, status: 'pending', reason: 'duplicate-suspect', row: { amount: 1 } }]);
+        const fs = world(lines, proof, [...filler, ...reviewDocs(9, 'PAYMENT RECEIVED', 7).slice(0, 1).map(([path, data]) => [path.replace('/statementReview/', '/statementReview/zz-'), data])]);
+        const out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 0, partial: 1, filed: 0 });
+        expect(fs.data.get(sourcePath).totalsProof).toBeUndefined();
+        expect(status(fs)(lines)).toEqual(['resolved', 'pending', 'pending', 'resolved']);
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
+    });
 });
 
 // Production, 2026-11-03 18:00 UTC: an interactive run spent its twelve front seconds on the mailbox (`frontIncomplete`), so the sweep, which stood in the front pass, was never reached and the 22 rows stayed in Open reviews for hours after the
