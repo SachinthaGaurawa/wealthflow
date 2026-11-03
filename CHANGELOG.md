@@ -1,5 +1,9 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.37 — 2026-11-03
+
+{"date":"2026-11-03","type":"security","headline":"Urgent security update","sections":[{"title":"Security","security":true,"items":["Urgent security hardening based on user reports."]},{"title":"Fixed","items":["Addressed: When released a new update, app versions not yet updated. Have an issue of that. In WealthFlow system Some places have another app versions, some places different. Whats that???? Please fix that. What are you doing in autonomous system in w","Addressed: System crashes have.fix that"]},{"title":"Improved","items":["UI: Please check is that  has “Add your income” button is working? Currently bot working","UI: Currently system UI as a kid. Not professional and smart. Make that most professional and smart and interesting vibe."]}]}
+
 ## v7.69.36 — 2026-11-03
 
 {"date":"2026-11-03","type":"security","headline":"Urgent security update","sections":[{"title":"Security","security":true,"items":["Urgent security hardening based on user reports."]},{"title":"Fixed","items":["Addressed: When released a new update, app versions not yet updated. Have an issue of that. In WealthFlow system Some places have another app versions, some places different. Whats that???? Please fix that. What are you doing in autonomous system in w","Addressed: System crashes have.fix that"]},{"title":"Improved","items":["UI: Please check is that  has “Add your income” button is working? Currently bot working","UI: Currently system UI as a kid. Not professional and smart. Make that most professional and smart and interesting vibe."]}]}
