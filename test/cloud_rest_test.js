@@ -662,6 +662,19 @@ describe('the connection report and the verdict, for reads and saves over plain 
         expect(v.text).toMatch(/saving queue inside this browser/);
         expect(v.repair).toBe(true);
     });
+    it('an HTTPS failure keeps the account\'s own reason: a usage limit says wait, a refused shape says it is the data, neither says "try another network"', () => {
+        const row = (id, detail) => ({ id, label: id, ok: false, ms: 1, via: 'https', detail });
+        for (const id of ['read', 'write']) {
+            const q = H.verdict([...front, row(id, 'resource-exhausted: Quota exceeded.')]);
+            expect(q.text).toMatch(/usage limit/);
+            expect(q.text).not.toMatch(/another network, for example/);
+            expect(q.repair).toBe(false);
+            const d = H.verdict([...front, row(id, 'invalid-argument: document size exceeds the maximum')]);
+            expect(d.text).toMatch(/cannot store/);
+            expect(d.text).not.toMatch(/another network, for example/);
+        }
+        expect(H.verdict([...front, row('write', 'deadline-exceeded: did not finish')]).text).toMatch(/another network/);
+    });
     it('a check step may set its own deadline and says how it was sent', async () => {
         let clockNow = 0;
         const rows = await H.runChecks([{ id: 'read', label: 'Reading', via: 'https', timeoutMs: 50, run: () => new Promise((r) => setTimeout(() => r('late'), 120)) }, { id: 'x', label: 'X', run: async () => 'fine' }], { timeoutMs: 5, clock: () => clockNow++ });

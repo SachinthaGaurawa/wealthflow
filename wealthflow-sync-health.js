@@ -374,6 +374,8 @@ const VERDICTS = Object.freeze({
     storage: 'This browser\'s own storage did not answer in time, so its saving queue cannot move. Press Repair connection below: it clears the connection cache and, if the browser still will not answer, close every other WealthFlow tab and window and open it once. Nothing on this device or in your account is deleted.',
     httpsRead: 'This device reached Google but reading your account did not finish. The read is one plain secure request, so something on the way is holding it up: a very weak signal, or a filter. Try another network, for example mobile data instead of Wi-Fi, then check again. Nothing on this device is lost, and it keeps trying on its own.',
     httpsWrite: 'This device reached Google and read your account, but saving to it did not finish. A save sends only what changed, as one plain secure request, so something on the way is holding it up: a very weak signal, or a filter. Try another network, for example mobile data instead of Wi-Fi, then check again. Nothing on this device is lost, and it keeps trying on its own.',
+    httpsQuota: 'This device reached Google, but the cloud account has reached a usage limit for now, so it would not take the request. Waiting is the fix: nothing on this device is lost, and WealthFlow keeps trying on its own. Changing the network will not help.',
+    httpsData: 'This device reached Google, but the account refused the data as it is: something on this device is in a shape the account cannot store, or it holds more than one account document can take. Changing the network will not help. Send this report so it can be looked at.',
     data: 'The data on this device cannot be stored as it is. This is the reason changes made here never reach your other devices.',
 });
 
@@ -387,7 +389,11 @@ export function verdict(rows) {
     if (bad.via === 'https') {
         // Saves and reads no longer pass through this browser's own connection library, so there is no stuck queue of it to repair.
         const refused = /permission-denied|unauthenticated|not allowed|insufficient/i.test(bad.detail || '');
-        key = bad.id === 'read' ? (refused ? 'signin' : 'httpsRead') : (refused ? 'write' : 'httpsWrite');
+        const quota = /resource-exhausted|quota/i.test(bad.detail || '');
+        const data = /invalid-argument|out-of-range|document size|exceeds the maximum|longer than/i.test(bad.detail || '');
+        if (quota) key = 'httpsQuota';
+        else if (data) key = 'httpsData';
+        else key = bad.id === 'read' ? (refused ? 'signin' : 'httpsRead') : (refused ? 'write' : 'httpsWrite');
     } else if (bad.id === 'write') {
         const refused = /permission-denied|unauthenticated|not allowed|insufficient/i.test(bad.detail || '');
         const direct = by('direct'), storage = by('storage');
