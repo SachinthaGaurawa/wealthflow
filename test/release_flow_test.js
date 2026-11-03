@@ -1,0 +1,177 @@
+/* test/release_flow_test.js — the check that would have caught the weeks-long stall */
+import { describe, it, expect } from 'vitest';
+import { evaluateReleaseFlow, STALL_HOURS, DEPLOY_GRACE_MIN } from '../autonomy/release-flow.mjs';
+
+const H = 36e5, M = 6e4;
+const now = Date.parse('2026-11-03T12:00:00Z');
+const base = (over = {}) => ({
+    now, lastTag: 'v7.69.35', oldestUnreleased: null, unreleasedCount: 0,
+    repoVersion: '7.69.35', repoVersionAt: now - 5 * H,
+    deployed: { version: '7.69.35', manifest: '7.69.35', shell: '7.69.35', sw: '7.69.35', sha: 'abc1234def' },
+    recentShas: ['abc1234', 'bbb2222'],
+    local: { shell: '7.69.35', sw: '7.69.35', update: '7.69.35', pkg: '7.69.35' },
+    ...over,
+});
+const by = (r, id) => r.checks.find((c) => c.id === id);
+
+describe('a production probe that does not answer is a finding (Codex review on #493)', () => {
+    it('/api/version missing while everything else answers is BROKEN, not healthy', () => {
+        const r = evaluateReleaseFlow(base({ deployed: { version: null, manifest: '7.69.35', shell: '7.69.35', sw: '7.69.35', sha: null } }));
+        expect(by(r, 'live-probes').status).toBe('broken');
+        expect(by(r, 'live-probes').summary).toMatch(/\/api\/version/);
+        expect(r.overall).toBe('broken');
+    });
+    it('names every probe that failed', () => {
+        const r = evaluateReleaseFlow(base({ deployed: { version: '7.69.35', manifest: null, shell: null, sw: '7.69.35', sha: 'abc1234def' } }));
+        expect(by(r, 'live-probes').summary).toMatch(/version\.json/);
+        expect(by(r, 'live-probes').summary).toMatch(/app shell/);
+    });
+    it('all four answering is fine', () => {
+        expect(by(evaluateReleaseFlow(base()), 'live-probes').status).toBe('ok');
+    });
+    it('nothing answering at all stays "could not be reached" (a warning), not four false failures', () => {
+        const r = evaluateReleaseFlow(base({ deployed: null }));
+        expect(by(r, 'live-probes')).toBeUndefined();
+        expect(by(r, 'release-live').status).toBe('warn');
+    });
+});
+
+// Codex review on #493: when every probe fails, the check was only a warning and the CLI exited 0,
+// so the liveness workflow closed an open release-flow issue as "recovered" though production was
+// never read. "Unverified" is its own exit code and the workflow must not treat it as recovery.
+import { exitCodeFor, EXIT_UNVERIFIED } from '../autonomy/release-flow.mjs';
+const WF = fs.readFileSync(path.join(path.resolve(import.meta.dirname, '..'), '.github/workflows/pipeline-liveness.yml'), 'utf8');
+const FLOWSRC = fs.readFileSync(path.join(path.resolve(import.meta.dirname, '..'), 'autonomy/release-flow.mjs'), 'utf8');
+const stepOf = (name) => { const i = WF.indexOf(`- name: ${name}`); const j = WF.indexOf('\n      - ', i + 1); return WF.slice(i, j < 0 ? undefined : j); };
+
+describe('an unreadable production is "unverified", never "recovered"', () => {
+    it('every probe failing marks the result unverified and exits 3 (not 0)', () => {
+        const r = evaluateReleaseFlow(base({ deployed: null }));
+        expect(r.unverified).toBe(true);
+        expect(r.overall).toBe('degraded');
+        expect(exitCodeFor(r)).toBe(EXIT_UNVERIFIED);
+        expect(EXIT_UNVERIFIED).toBe(3);
+    });
+    it('healthy -> 0; broken -> 1; broken wins over unverified', () => {
+        expect(exitCodeFor(evaluateReleaseFlow(base()))).toBe(0);
+        expect(exitCodeFor(evaluateReleaseFlow(base({ oldestUnreleased: { sha: 'a', at: now - 30 * H, subject: 's' }, unreleasedCount: 3 })))).toBe(1);
+        expect(exitCodeFor(evaluateReleaseFlow(base({ deployed: null, oldestUnreleased: { sha: 'a', at: now - 30 * H, subject: 's' }, unreleasedCount: 3 })))).toBe(1);
+    });
+    it('a degraded result that did read production is not "unverified"', () => {
+        const r = evaluateReleaseFlow(base({ deployed: { version: '7.69.35', manifest: '7.69.35', shell: '7.69.35', sw: '7.69.35', sha: 'ffff999' } }));
+        expect(r.overall).toBe('degraded');
+        expect(r.unverified).toBe(false);
+        expect(exitCodeFor(r)).toBe(0);
+    });
+    it('the CLI exits through exitCodeFor', () => {
+        expect(FLOWSRC).toMatch(/process\.exit\(exitCodeFor\(r\)\)/);
+    });
+    it('the workflow closes the issue only on rc 0, keeps it open on rc 3, files only on real breakage, and still turns red', () => {
+        expect(stepOf('Close the release-flow issue once it recovers')).toMatch(/steps\.flow\.outputs\.rc == '0'/);
+        expect(stepOf('Keep an open release-flow issue open while production cannot be read')).toMatch(/steps\.flow\.outputs\.rc == '3'/);
+        expect(stepOf('Keep an open release-flow issue open while production cannot be read')).not.toMatch(/gh issue close/);
+        expect(stepOf('File an issue if merged work is not reaching the app')).toMatch(/rc != '0' && steps\.flow\.outputs\.rc != '3'/);
+        expect(stepOf('Fail the run if the pipeline is dead')).toMatch(/steps\.flow\.outputs\.rc != '0'/);
+    });
+});
+
+describe('release stall', () => {
+    it('THE REAL CASE: 72 real commits waiting 24 days is BROKEN', () => {
+        const r = evaluateReleaseFlow(base({ unreleasedCount: 72, oldestUnreleased: { sha: 'x', at: now - 24 * 24 * H, subject: 'Portal: faster code request' } }));
+        expect(by(r, 'release-stall').status).toBe('broken');
+        expect(r.overall).toBe('broken');
+        expect(by(r, 'release-stall').summary).toMatch(/72 real change/);
+    });
+    it('a change merged an hour ago is inside the cadence', () => {
+        const r = evaluateReleaseFlow(base({ unreleasedCount: 1, oldestUnreleased: { sha: 'x', at: now - 1 * H, subject: 's' } }));
+        expect(by(r, 'release-stall').status).toBe('ok');
+    });
+    it(`the boundary is ${STALL_HOURS}h`, () => {
+        const mk = (h) => evaluateReleaseFlow(base({ unreleasedCount: 1, oldestUnreleased: { sha: 'x', at: now - h * H, subject: 's' } }));
+        expect(by(mk(STALL_HOURS - 0.1), 'release-stall').status).toBe('ok');
+        expect(by(mk(STALL_HOURS + 0.1), 'release-stall').status).toBe('broken');
+    });
+    it('nothing waiting is healthy; no reachable tag is only a warning', () => {
+        expect(evaluateReleaseFlow(base()).overall).toBe('healthy');
+        expect(by(evaluateReleaseFlow(base({ lastTag: null })), 'release-stall').status).toBe('warn');
+    });
+});
+
+describe('is it live, and do all places agree', () => {
+    it('repo ahead of production long after the version commit is BROKEN; inside the deploy window it is a warning', () => {
+        const dep = { version: '7.69.35', manifest: '7.69.35', shell: '7.69.35', sw: '7.69.35', sha: 'abc1234' };
+        const late = evaluateReleaseFlow(base({ repoVersion: '7.69.36', local: { shell: '7.69.36', sw: '7.69.36', update: '7.69.36', pkg: '7.69.36' }, repoVersionAt: now - (DEPLOY_GRACE_MIN + 5) * M, deployed: dep }));
+        expect(by(late, 'release-live').status).toBe('broken');
+        const early = evaluateReleaseFlow(base({ repoVersion: '7.69.36', local: { shell: '7.69.36', sw: '7.69.36', update: '7.69.36', pkg: '7.69.36' }, repoVersionAt: now - 10 * M, deployed: dep }));
+        expect(by(early, 'release-live').status).toBe('warn');
+    });
+    it('"some places show another version" (issue #110) is BROKEN', () => {
+        const r = evaluateReleaseFlow(base({ deployed: { version: '7.69.35', manifest: '7.69.35', shell: '7.69.31', sw: '7.69.35', sha: 'abc1234' } }));
+        expect(by(r, 'version-drift').status).toBe('broken');
+        expect(by(r, 'version-drift').summary).toMatch(/app shell=7\.69\.31/);
+    });
+    it('the repo disagreeing with itself is BROKEN', () => {
+        const r = evaluateReleaseFlow(base({ local: { shell: '7.69.35', sw: '7.69.34', update: '7.69.35', pkg: '7.69.35' } }));
+        expect(by(r, 'local-version-law').status).toBe('broken');
+    });
+    it('a deployed commit that is not on main is a warning; an unreachable site is a warning, never a pass', () => {
+        expect(by(evaluateReleaseFlow(base({ deployed: { version: '7.69.35', manifest: '7.69.35', shell: '7.69.35', sw: '7.69.35', sha: 'ffff999' } })), 'deployed-build').status).toBe('warn');
+        const r = evaluateReleaseFlow(base({ deployed: null }));
+        expect(by(r, 'release-live').status).toBe('warn');
+    });
+});
+
+// ── gitFacts against a real throwaway repository ────────────────────────────
+// Codex review on #493: a PR merged with a MERGE COMMIT has no patch of its own
+// (plain `git show` prints nothing for it), so a stalled release would have read
+// as healthy whenever the work arrived that way. This repo has such merges.
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { gitFacts } from '../autonomy/release-flow.mjs';
+
+function sandboxRepo() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-flow-'));
+    const g = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    g('init', '-q', '-b', 'main');
+    g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+    fs.writeFileSync(path.join(dir, 'app.js'), 'export function a() { return 1; }\n');
+    fs.writeFileSync(path.join(dir, 'version.json'), '{"latest":"1.0.0"}\n');
+    g('add', '-A'); g('commit', '-q', '-m', 'initial'); g('tag', 'v1.0.0');
+    return { dir, g };
+}
+
+describe('gitFacts counts work that arrived by a merge commit', () => {
+    it('a --no-ff merged feature branch is one unreleased substantive change', () => {
+        const { dir, g } = sandboxRepo();
+        try {
+            g('checkout', '-q', '-b', 'feature');
+            fs.writeFileSync(path.join(dir, 'app.js'), 'export function a() { return 2; }\nexport function b() { return 3; }\n');
+            g('commit', '-q', '-am', 'feature: real behaviour change');
+            g('checkout', '-q', 'main');
+            // a second main commit that is only release metadata (never substantive) forces a true
+            // merge commit, and leaves the merge as the ONLY thing that can be counted
+            fs.writeFileSync(path.join(dir, 'version.json'), '{"latest":"1.0.0","note":"meta"}\n'); g('commit', '-q', '-am', 'chore: metadata');
+            g('merge', '-q', '--no-ff', '-m', 'Merge pull request #1 from x/feature', 'feature');
+
+            const parents = g('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ');
+            expect(parents.length, 'HEAD must be a merge commit for this test to mean anything').toBe(3);
+
+            const f = gitFacts(Date.now(), dir);
+            expect(f.lastTag).toBe('v1.0.0');
+            expect(f.unreleasedCount).toBe(1);
+            expect(f.oldestUnreleased).toBeTruthy();
+            expect(f.oldestUnreleased.subject).toMatch(/Merge pull request #1/);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    });
+
+    it('with nothing since the tag the count is zero', () => {
+        const { dir } = sandboxRepo();
+        try {
+            const f = gitFacts(Date.now(), dir);
+            expect(f.unreleasedCount).toBe(0);
+            expect(f.oldestUnreleased).toBeNull();
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    });
+});

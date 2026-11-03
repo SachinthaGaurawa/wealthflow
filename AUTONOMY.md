@@ -208,7 +208,10 @@ So, plainly:
 - **The agent edits one module file per fix.** It cannot touch `index.html`, so
   UI work that lives in the app shell still needs a human. That is a deliberate
   limit, not an oversight — a 1.5MB single file is too blunt an instrument for an
-  autonomous rewrite.
+  autonomous rewrite. Inside the allowed modules it now finds the owner of a
+  behaviour by searching the code for the report's own words, and edits big
+  modules (up to 400 KB) with exact SEARCH/REPLACE blocks that must each match
+  exactly once — it no longer has to reproduce a whole file (`autonomy/swarm-patch.mjs`).
 - **Free tiers rate-limit.** That is why there are 15 providers and automatic
   failover rather than one.
 
@@ -218,7 +221,24 @@ files an issue against itself.
 
 ---
 
-## 7. Troubleshooting
+## 7. Why "version numbers moved but nothing shipped" happened — and what now stops it
+
+Found on 2026-11-03 by reading the release chain against its real run history, not
+by trusting this document:
+
+| Fault | Evidence | Fix |
+|---|---|---|
+| **Releases waited for a human tap that never came.** `release-brain.js` writes `system/pendingRelease` with `approval.required = true`; only `/api/approve-release` flips it. `release.cjs` then exited 2 ("awaits approval"), and the workflow treated exit 2 as a green no-op. | 70+ real changes sat un-announced for weeks behind green ticks. | `auto-release.yml` now earns approval from gates: tests pass on the exact commit, production health is OK, and the change is substantive. It then calls `release.cjs --auto-approve` (`autonomy/release-approval.cjs`). A human can still approve earlier. |
+| **A declined release looked like success.** | `test/auto_release_skip_not_failure_test.js` enshrined it. | After the gates pass, a decline turns the run red and files a `pipeline-health` issue. |
+| **Nobody confirmed the new version was live.** | — | The workflow polls `/api/version`, `/version.json` and `/app` until all show the new version, else it fails and files an issue. |
+| **Merged work could wait for a cron.** | daily cron only | Triggers: every 6 h, on every push to `main`, and manually. |
+| **Nothing noticed a stall.** | — | `autonomy/release-flow.mjs` (run by Pipeline liveness) measures merged-but-unreleased work, tag-vs-`version.json` drift and deploy drift, and files an issue when substantive changes wait longer than 8 h. |
+
+What is still **not** automatic, honestly: edits to `sw.js`, `index.html`, auth, rules,
+`package.json`, `.github/**` and `autonomy/**` need the `human-approved` label by
+design (section 5), and rollback needs `VERCEL_TOKEN` + `HEALTH_URL` set.
+
+## 8. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|

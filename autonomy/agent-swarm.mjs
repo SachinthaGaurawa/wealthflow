@@ -35,6 +35,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chat, stripFences, extractJson } from './llm-router.mjs';
+import {
+    keywordsFrom, rankFiles, selectPromptRanked, excerptFor, patchPrompt, parsePatchBlocks, applyPatchBlocks, changeExcerpt, changeView,
+} from './swarm-patch.mjs';
 
 // ── the mechanical safety gate (mirrors CODEOWNERS + rego + risk-gate) ───────
 const SENSITIVE = [
@@ -104,6 +107,13 @@ export function isSensitive(p) {
  * forever — see oversizedFiles().
  */
 export const MAX_AUTHORABLE_BYTES = 32_000;
+
+/**
+ * Past MAX_AUTHORABLE_BYTES a file cannot be reproduced whole, but it CAN be edited
+ * by exact SEARCH/REPLACE blocks over the relevant windows (autonomy/swarm-patch.mjs).
+ * That is how the Settings > Software update card (a 115 KB module) becomes reachable.
+ */
+export const MAX_PATCHABLE_BYTES = 400_000;
 
 const editable = (f) => /\.js$/i.test(f) && !f.includes('/') && !isSensitive(f) && !/\.test\.js$/i.test(f);
 const sizeOf = (f, repoDir) => { try { return fs.statSync(path.join(repoDir, f)).size; } catch { return Infinity; } };
@@ -398,9 +408,9 @@ export function testPrompt(issue, filename, before, after) {
         '  If the changed logic is pure, testing it directly is fine too — but the',
         '  assertions must be meaningful, never tautological.',
         '',
-        'RELEVANT PART OF THE NEW CODE:',
+        String(after).length > 6000 ? 'THE CHANGE (unified diff of the new code; the file is large):' : 'RELEVANT PART OF THE NEW CODE:',
         '--- BEGIN ---',
-        String(after).slice(0, 6000),
+        String(after).length > 6000 ? changeExcerpt(before, after, { ctx: 40, max: 6000 }) : String(after).slice(0, 6000),
         '--- END ---',
         '',
         'Return ONLY the complete test file contents (ESM, `import { describe, it, expect } from "vitest"`).',
@@ -414,6 +424,20 @@ export function testPrompt(issue, filename, before, after) {
     ].join('\n');
 }
 
+/** The most diff text the security reviewer is shown. Bigger than this and the change is refused, not skimmed. */
+export const REVIEW_DIFF_MAX = 40_000;
+const REVIEW_WHOLE_FILE_MAX = 5000;
+
+/**
+ * Can the independent security reviewer see the WHOLE change? A PASS from a reviewer that
+ * saw only the first part of a diff says nothing about the rest, so `runSwarm` refuses a
+ * change this returns false for instead of accepting a verdict on a prefix.
+ */
+export function reviewSeesWholeChange(before, after) {
+    if (String(before).length <= REVIEW_WHOLE_FILE_MAX && String(after).length <= REVIEW_WHOLE_FILE_MAX) return true;
+    return !changeView(before, after, { ctx: 15, max: REVIEW_DIFF_MAX }).truncated;
+}
+
 export function reviewPrompt(issue, filename, before, after) {
     return [
         'Adversarially review this autonomous code change to a personal-finance app.',
@@ -423,11 +447,9 @@ export function reviewPrompt(issue, filename, before, after) {
         '',
         `FILE: ${filename}`,
         '',
-        'BEFORE (excerpt):',
-        String(before).slice(0, 5000),
-        '',
-        'AFTER (excerpt):',
-        String(after).slice(0, 5000),
+        ...(String(before).length > REVIEW_WHOLE_FILE_MAX || String(after).length > REVIEW_WHOLE_FILE_MAX
+            ? ['THE CHANGE (unified diff, with context — the whole file is too large to show):', changeExcerpt(before, after, { ctx: 15, max: REVIEW_DIFF_MAX })]
+            : ['BEFORE (excerpt):', String(before).slice(0, REVIEW_WHOLE_FILE_MAX), '', 'AFTER (excerpt):', String(after).slice(0, REVIEW_WHOLE_FILE_MAX)]),
         '',
         'Reply with a single JSON object and nothing else:',
         '{"verdict":"PASS"|"FAIL","severity":"none|low|medium|high|critical","findings":["..."],"reason":"one sentence"}',
@@ -533,47 +555,84 @@ export async function runSwarm({
     log(`[swarm] ${role.agent} taking issue #${issue?.number ?? '—'}`);
 
     // ── stage 1: which file? ────────────────────────────────────────────────
+    // Selection used to see only a list of NAMES, which is how a "show the build id
+    // in Settings" report ended up at version.js and pwa-updater.js. Now the report's
+    // own words are searched for in the code and the model sees the best matches
+    // WITH the matching lines; files too big to rewrite are reachable by patching.
     const allFiles = fs.readdirSync(repoDir);
     const files = candidateFiles(allFiles, { repoDir });
     const oversized = oversizedFiles(allFiles, { repoDir });
-    if (!files.length) return { ok: false, stage: 'select', reason: 'no editable module files' };
+    const patchable = allFiles.filter((f) => editable(f) && sizeOf(f, repoDir) <= MAX_PATCHABLE_BYTES).sort();
+    if (!patchable.length) return { ok: false, stage: 'select', reason: 'no editable module files' };
 
+    const ranked = rankFiles(issueText, patchable, { repoDir, k: 8 });
+    const pool = ranked.length ? ranked.map((r) => r.file) : files;
     const picked = await chat({
-        system: role.system, prompt: selectPrompt(issueText, files),
+        system: role.system,
+        prompt: ranked.length ? selectPromptRanked(issueText, ranked) : selectPrompt(issueText, files),
         prefer: role.prefer, maxTokens: 64, temperature: 0, env,
     });
     providers.select = picked.provider;
-    const file = resolvePick(picked.text, files);
-    if (!file) {
-        // Name the real obstacle when there is one. "No safe editable file
-        // matches this issue" is what issue #71 was told fifteen times while the
-        // file it needed sat just over the size limit.
-        const tooBig = oversized.length
+    const choice = resolvePick(picked.text, pool);
+    if (!choice && /^\W*none\b/i.test(String(picked.text || '').trim())) {
+        const tooBig = oversized.length && !ranked.length
             ? ` The following module(s) are in scope but too large to rewrite in one model response, so a human has to take them: ${oversized.slice(0, 3).map((x) => `${x.file} (${Math.round(x.bytes / 1024)} KB)`).join(', ')}.`
             : '';
         return {
-            ok: false, stage: 'select', providers, oversized,
+            ok: false, stage: 'select', providers, oversized, ranked,
             reason: `no safe editable file matches this issue (model said: ${picked.text.trim().slice(0, 80)}).${tooBig}`,
         };
     }
-    log(`[swarm] target file: ${file} (via ${picked.provider})`);
-
-    // ── stage 2: author the fix ─────────────────────────────────────────────
-    const full = path.join(repoDir, file);
-    const before = fs.readFileSync(full, 'utf8');
-
-    const authored = await chat({
-        system: role.system, prompt: authorPrompt(issueText, file, before),
-        prefer: role.prefer, maxTokens: 16_000, temperature: 0.1, env,
-    });
-    providers.author = authored.provider;
-
-    if (/^CANNOT_FIX_SAFELY/i.test(authored.text.trim())) {
-        return { ok: false, stage: 'author', reason: authored.text.trim().slice(0, 300), file, providers };
+    // The model's pick first, then the next best matches: a wrong first guess no longer ends the run.
+    const order = [...new Set([choice, ...pool].filter(Boolean))].slice(0, 3);
+    if (!order.length) {
+        return { ok: false, stage: 'select', providers, oversized, ranked, reason: `no safe editable file matches this issue (model said: ${String(picked.text).trim().slice(0, 80)}).` };
     }
-    const code = stripFences(authored.text);
-    if (!code || code.trim() === before.trim()) {
-        return { ok: false, stage: 'author', reason: 'model returned no change', file, providers };
+
+    // ── stage 2: author the fix (whole file when small, SEARCH/REPLACE blocks when large) ─
+    let file = null, before = '', code = '', authored = null;
+    const tried = [];
+    for (const candidate of order) {
+        const full = path.join(repoDir, candidate);
+        const src = fs.readFileSync(full, 'utf8');
+        log(`[swarm] trying ${candidate} (${Math.round(src.length / 1024)} KB, ${src.length <= MAX_AUTHORABLE_BYTES ? 'whole-file' : 'patch'} mode, via ${picked.provider})`);
+
+        let out = null, why = '';
+        if (src.length <= MAX_AUTHORABLE_BYTES) {
+            const a = await chat({
+                system: role.system, prompt: authorPrompt(issueText, candidate, src),
+                prefer: role.prefer, maxTokens: 16_000, temperature: 0.1, env,
+            });
+            providers.author = a.provider;
+            if (/^CANNOT_FIX_SAFELY/i.test(a.text.trim())) why = a.text.trim().slice(0, 300);
+            else {
+                const c = stripFences(a.text);
+                if (!c || c.trim() === src.trim()) why = 'model returned no change';
+                else out = { code: c, authored: a };
+            }
+        } else {
+            const ex = excerptFor(src, keywordsFrom(issueText));
+            const totalLines = src.split('\n').length;
+            let feedback = '';
+            for (let attempt = 0; attempt < 2 && !out && !why; attempt++) {
+                const a = await chat({
+                    system: role.system, prompt: patchPrompt(issueText, candidate, ex.text, totalLines) + feedback,
+                    prefer: role.prefer, maxTokens: 6_000, temperature: attempt ? 0.2 : 0.1, env,
+                });
+                providers.author = a.provider;
+                if (/^CANNOT_FIX_SAFELY/i.test(a.text.trim())) { why = a.text.trim().slice(0, 300); break; }
+                const res = applyPatchBlocks(src, parsePatchBlocks(a.text));
+                if (res.ok) out = { code: res.code, authored: a, patched: res.applied };
+                else feedback = '\n\nYOUR PREVIOUS REPLY WAS REJECTED: ' + res.problems.join('; ') + '. Copy SEARCH text exactly from the excerpts.';
+                if (!res.ok && attempt === 1) why = 'patch could not be applied: ' + res.problems.join('; ').slice(0, 240);
+            }
+        }
+        if (out) { file = candidate; before = src; code = out.code; authored = out.authored; log(`[swarm] target file: ${file} (via ${authored.provider})`); break; }
+        tried.push(`${candidate}: ${why || 'no change'}`);
+        log(`[swarm] ${candidate} did not work out (${why || 'no change'}) — trying the next best match`);
+    }
+    if (!file) {
+        return { ok: false, stage: 'author', reason: tried.join(' | ').slice(0, 400), file: order[order.length - 1], providers, tried };
     }
 
     // ── stage 3: mechanical gates (free, instant, no CI minutes) ────────────
@@ -587,6 +646,15 @@ export async function runSwarm({
     log(`[swarm] mechanical gates passed (via ${authored.provider})`);
 
     // ── stage 4: Agent 5 security veto — on a DIFFERENT provider ───────────
+    // A verdict on a prefix of the change is not a verdict on the change. If the diff is
+    // longer than the reviewer is shown, refuse it (fail closed) instead of accepting a PASS.
+    if (!reviewSeesWholeChange(before, code)) {
+        return {
+            ok: false, stage: 'review_too_large', file, providers,
+            reason: `the change is larger than the independent security review can read in full (limit ${REVIEW_DIFF_MAX} characters of diff); it must be split into smaller changes`,
+            review: { verdict: 'FAIL', severity: 'high', findings: [], reason: 'change too large to review in full' },
+        };
+    }
     const reviewed = await chat({
         system: ROLES.security.system, prompt: reviewPrompt(issueText, file, before, code),
         prefer: ROLES.security.prefer,
