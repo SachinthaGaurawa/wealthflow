@@ -314,7 +314,46 @@ describe('the Settings card', () => {
         expect(document.getElementById('wfReleaseOpenBtn').textContent).toBe('Details');
     });
 
-    it('sits right after the AI card, once, and only while Settings is the active page', () => {
+    // The owner asked for this spot: below "Software Update", above "App and installation".
+    function fullSettings() {
+        const loaded = loadPanel({ fetchImpl: site() });
+        loaded.document.body.innerHTML = '<div id="page-settings" class="active">' +
+            '<div class="settings-section" id="s1"><div id="wfIntelPanel"></div></div>' +
+            '<div class="settings-section" id="wfUpdateCard"></div>' +
+            '<div class="settings-section" id="wfPwaSection"></div>' +
+            '<div class="settings-section" id="s9"></div></div>';
+        return loaded;
+    }
+
+    it('sits between Software Update and App and installation, once', () => {
+        const { api, document } = fullSettings();
+        expect(api._inject()).toBe(true);
+        api._inject();
+        expect(document.querySelectorAll('#wfReleasePanel').length).toBe(1);
+        const card = document.getElementById('wfReleasePanel');
+        expect(card.previousElementSibling.id).toBe('wfUpdateCard');
+        expect(card.nextElementSibling.id).toBe('wfPwaSection');
+    });
+
+    it('goes back to the same spot after Settings is rebuilt', () => {
+        const { api, document } = fullSettings();
+        api._inject();
+        // renderSettings() throws the whole template away and builds it again.
+        document.getElementById('wfReleasePanel').remove();
+        expect(api._inject()).toBe(true);
+        const card = document.getElementById('wfReleasePanel');
+        expect(card.previousElementSibling.id).toBe('wfUpdateCard');
+        expect(card.nextElementSibling.id).toBe('wfPwaSection');
+    });
+
+    it('falls back to just after the Software Update card when the installation section is missing', () => {
+        const { api, document } = fullSettings();
+        document.getElementById('wfPwaSection').remove();
+        api._inject();
+        expect(document.getElementById('wfUpdateCard').nextElementSibling.id).toBe('wfReleasePanel');
+    });
+
+    it('with neither anchor it still sits right after the AI card, once, and only while Settings is the active page', () => {
         const off = settings({ active: false });
         expect(off.api._inject()).toBe(false);
         expect(off.document.getElementById('wfReleasePanel')).toBeNull();
