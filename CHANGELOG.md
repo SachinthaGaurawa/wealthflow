@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.46 — 2026-11-04
+
+**What changed for you**
+
+- Add a layout lane so the fix agent can fix screens that overlap on a phone (#516)
+
 ## v7.69.45 — 2026-11-04
 
 **What changed for you**
