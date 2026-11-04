@@ -488,11 +488,36 @@
         return true;
     }
 
+    // The build id the server reports at /api/version ({ version, sha }). Read
+    // once, cached in memory; null until a read answers with a usable sha, and
+    // null forever if it never does — the row then shows no build id at all.
+    let _buildSha = null;
+    let _buildShaRequested = false;
+    function _buildId() {
+        if (!_buildShaRequested) {
+            _buildShaRequested = true;
+            try {
+                fetch('/api/version?_=' + Date.now(), { cache: 'no-store' })
+                    .then(r => (r && r.ok) ? r.json() : null)
+                    .then(j => {
+                        const sha = j && typeof j.sha === 'string' ? j.sha.trim() : '';
+                        if (!/^[0-9a-f]{7,}$/i.test(sha)) return;
+                        _buildSha = sha.slice(0, 7);
+                        _renderSettingsCard();
+                    })
+                    .catch(() => {});
+            } catch (_) {}
+        }
+        return _buildSha;
+    }
+
     function _renderSettingsCard() {
         const card = document.getElementById('wfUpdateCard');
         if (!card) return;
         card.classList.add('settings-section');
         const installed = _installedVersion() || CURRENT_VERSION;
+        const build = _buildId();
+        const buildText = build ? ' · build ' + _esc(build) : '';
         const latest = _latestVersion();
         const avail = _updateAvailable() || !!_swWaiting;
         const mand = avail && _isMandatory(latest);
@@ -500,7 +525,7 @@
         card.innerHTML =
             '<div class="settings-title" style="color:' + (avail ? '#10b981' : '#818cf8') + ';">Software Update</div>' +
             '<div class="setting-row">' +
-                '<div class="setting-info"><div class="setting-label">Current version</div><div class="setting-desc">WealthFlow v' + _esc(installed) + (avail ? '' : ' · up to date') + '</div></div>' +
+                '<div class="setting-info"><div class="setting-label">Current version</div><div class="setting-desc">WealthFlow v' + _esc(installed) + buildText + (avail ? '' : ' · up to date') + '</div></div>' +
                 (avail
                     ? '<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">' + _typeBadge(_updateType(latest)) + '<span class="badge" style="background:rgba(16,185,129,0.15);color:#10b981;padding:6px 12px;border-radius:999px;font-weight:800;">v' + _esc(latest) + '</span></span>'
                     : '<span class="badge" style="background:var(--bg2);color:var(--text3);padding:6px 12px;border-radius:999px;">Latest</span>') +
