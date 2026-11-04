@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.47 — 2026-11-04
+
+**What changed for you**
+
+- Prove the 9 waiting HNB card lines without the owner: second rung + miss diagnostics (#517)
+
+**Under the hood**
+
+- Harden the layout lane after its first real run on #514 (#518)
+
 ## v7.69.46 — 2026-11-04
 
 **What changed for you**
