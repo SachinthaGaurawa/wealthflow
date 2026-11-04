@@ -229,9 +229,12 @@ jobs:
           git add -- "$FIX_FILE"
           [ -n "${TEST_FILE:-}" ] && git add -- "$TEST_FILE" || true
           [ -d autonomy/state ] && git add -- autonomy/state || true
-          # files a lane changed by a mechanical edit (the build lane: index.html and the payload ceilings)
-          for EXTRA in $(node -p "(require('./ai-fix-pr.json').extraFiles || []).filter(f => /^[A-Za-z0-9_.\\/-]+$/.test(f) && !f.startsWith('.github/')).join(' ')" 2>/dev/null || true); do
-            git add -- "$EXTRA"
+          # files a lane changed by a mechanical edit. An ALLOWLIST of exactly two paths, never a pattern: whatever the
+          # agent writes into ai-fix-pr.json can ask for these two and nothing else to be staged.
+          for EXTRA in index.html autonomy/perf-budget.mjs; do
+            if node -e "process.exit((require('./ai-fix-pr.json').extraFiles || []).includes(process.argv[1]) ? 0 : 1)" "$EXTRA"; then
+              git add -- "$EXTRA"
+            fi
           done
           git commit -m "$TITLE"
           for i in 1 2 3 4; do
@@ -258,9 +261,12 @@ jobs:
           git add -- "$FIX_FILE"
           [ -n "${TEST_FILE:-}" ] && git add -- "$TEST_FILE" || true
           [ -d autonomy/state ] && git add -- autonomy/state || true
-          # files a lane changed by a mechanical edit (the build lane: index.html and the payload ceilings)
-          for EXTRA in $(node -p "(require('./ai-fix-pr.json').extraFiles || []).filter(f => /^[A-Za-z0-9_.\\/-]+$/.test(f) && !f.startsWith('.github/')).join(' ')" 2>/dev/null || true); do
-            git add -- "$EXTRA"
+          # files a lane changed by a mechanical edit. An ALLOWLIST of exactly two paths, never a pattern: whatever the
+          # agent writes into ai-fix-pr.json can ask for these two and nothing else to be staged.
+          for EXTRA in index.html autonomy/perf-budget.mjs; do
+            if node -e "process.exit((require('./ai-fix-pr.json').extraFiles || []).includes(process.argv[1]) ? 0 : 1)" "$EXTRA"; then
+              git add -- "$EXTRA"
+            fi
           done
           git commit -m "$TITLE"
           git pull --rebase --autostash origin "$GITHUB_REF_NAME" || true

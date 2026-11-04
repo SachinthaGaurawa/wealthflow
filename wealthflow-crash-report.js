@@ -8,8 +8,9 @@
  * same endpoint as the feedback form (/api/feedback-triage, type "crash"). The server de-duplicates by text, so the same
  * crash is one issue; the autonomous system picks it up like any other report.
  *
- * WHAT IT SENDS: the error message and the top of its stack with numbers, e-mail addresses, quoted text and query strings
- * removed; the file and line; the build id; the page name; the browser. It never sends records, amounts, names or tokens.
+ * WHAT IT SENDS: the error message with numbers, e-mail addresses, quoted text and query strings removed; the top of the stack as
+ * function names and file:line only (no values); the build id; the page name; the browser. It never sends records, amounts, names or tokens.
+ * It is ON by default because the owner asked for crashes to be fixed automatically; the owner (the only user) can switch it off.
  *
  * LIMITS (so it can never become noise): first-party errors only (not extensions, not cross-origin "Script error.", not a
  * network that is simply down); one report per distinct crash per 24 h; three per day; nothing at all offline; switch off
@@ -33,9 +34,20 @@
         t = t.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '<email>')
             .replace(/\bhttps?:\/\/[^\s)'"]+/gi, function (u) { try { var p = new URL(u); return p.pathname.split('/').pop() || p.hostname; } catch (_) { return '<url>'; } })
             .replace(/(["'`])((?:(?!\1).){0,200})\1/g, function (_, q, inner) { return /^[A-Za-z_$][\w$]{0,40}$/.test(inner) ? q + inner + q : q + '...' + q; })
-            .replace(/\d[\d,.]{3,}\d|\d{4,}/g, '#')
+            .replace(/\d[\d,.]{2,}\d|\d{3,}/g, '#')
             .replace(/\s+/g, ' ').trim();
         return t.slice(0, max || 300);
+    }
+
+    /** The stack as function names and positions only: no message text, no values, nothing a person typed. */
+    function frames(stack) {
+        var out = [];
+        String(stack == null ? '' : stack).split('\n').forEach(function (line) {
+            var m = /\bat\s+(?:async\s+)?([\w$.<>[\]\s]{1,60}?)\s*\(?(?:[a-z]+:\/\/[^/\s)]*)?([^\s():]*?\/)?([\w.$-]+\.(?:js|mjs|html)):(\d+):(\d+)\)?\s*$/.exec(line)
+                || /^\s*([\w$.<>]{0,60})@(?:[a-z]+:\/\/[^/\s]*)?([^\s:]*?\/)?([\w.$-]+\.(?:js|mjs|html)):(\d+):(\d+)\s*$/.exec(line);
+            if (m && out.length < 6) out.push((m[1] || '?').replace(/\s+/g, ' ').trim().slice(0, 40) + ' (' + m[3] + ':' + m[4] + ')');
+        });
+        return out.join(' | ');
     }
 
     function fileOf(e) {
@@ -79,7 +91,7 @@
         var err = e && (e.error || e.reason);
         var rawMsg = (e && e.message) || (err && err.message) || (typeof err === 'string' ? err : '') || '';
         var msg = sanitize(rawMsg, 220), file = fileOf(e);
-        var stack = sanitize(err && err.stack ? String(err.stack).split('\n').slice(0, 6).join(' | ') : '', 800);
+        var stack = frames(err && err.stack);
         var page = ''; try { page = (root.location && (root.location.hash || root.location.pathname) || '').replace(/[?].*$/, '').slice(0, 60); } catch (_) { /* optional */ }
         var text = '[Auto crash report] ' + (msg || 'the app threw an error') + (file ? ' (' + file + ')' : '');
         return {
@@ -120,6 +132,6 @@
         });
     }
 
-    root.WFCrashReport = { sanitize: sanitize, fingerprint: fingerprint, isOurs: isOurs, shouldReport: shouldReport, payload: payload, report: report, install: install };
+    root.WFCrashReport = { sanitize: sanitize, frames: frames, fingerprint: fingerprint, isOurs: isOurs, shouldReport: shouldReport, payload: payload, report: report, install: install };
     install();
 })(typeof window !== 'undefined' ? window : globalThis);

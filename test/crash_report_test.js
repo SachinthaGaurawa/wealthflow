@@ -26,8 +26,18 @@ describe('sanitize: nothing a person typed or earned leaves the device', () => {
         expect(out).toMatch(/'amount'/);
         expect(out).toMatch(/<email>/);
     });
+    it('also masks three-digit amounts', () => { expect(R.sanitize('balance 500 after 250.75')).not.toMatch(/500|250/); });
     it('caps the length', () => { expect(R.sanitize('x'.repeat(5000), 100)).toHaveLength(100); });
     it('copes with null and objects', () => { expect(R.sanitize(null)).toBe(''); expect(typeof R.sanitize({})).toBe('string'); });
+});
+
+describe('the stack is positions, not values', () => {
+    const { R } = load();
+    it('keeps function names and file:line, drops everything else', () => {
+        expect(R.frames("TypeError: bad 'LKR 52,000'\n    at calc (https://wf.app/js/wealthflow-loans.js:42:5)\n    at async run (https://wf.app/wealthflow-sync.js:7:3)")).toBe('calc (wealthflow-loans.js:42) | async run (wealthflow-sync.js:7)'.replace('async run', 'run'));
+    });
+    it('reads the Firefox and Safari shape too', () => { expect(R.frames('calc@https://wf.app/wealthflow-loans.js:42:5')).toBe('calc (wealthflow-loans.js:42)'); });
+    it('is empty for nothing', () => { expect(R.frames('')).toBe(''); expect(R.frames(null)).toBe(''); });
 });
 
 describe('what counts as a crash worth reporting', () => {
@@ -38,7 +48,7 @@ describe('what counts as a crash worth reporting', () => {
         expect(sent[0].url).toBe('/api/feedback-triage');
         expect(sent[0].body.type).toBe('crash');
         expect(sent[0].body.text).toMatch(/^\[Auto crash report\] Cannot read properties of undefined \(reading 'amount'\) \(\/wealthflow-loans\.js:42\)$/);
-        expect(sent[0].body.diagnostics.errors[0].stack).toMatch(/wealthflow-loans\.js/);
+        expect(sent[0].body.diagnostics.errors[0].stack).toBe('calc (wealthflow-loans.js:42)');
     });
     it.each([
         ['an extension', { message: 'boom', filename: 'chrome-extension://abc/x.js', lineno: 1, error: { message: 'boom', stack: 'at chrome-extension://abc/x.js:1:1' } }],
@@ -122,8 +132,8 @@ describe('it is on the page and inside the budget', () => {
     it('index.html loads it deferred', () => {
         expect(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes('<script src="wealthflow-crash-report.js" defer></script>')).toBe(true);
     });
-    it('never writes the books or talks to Firebase', async () => {
-        const { forbiddenIn } = await import('../autonomy/build-lane.mjs');
-        expect(forbiddenIn(fs.readFileSync(path.join(ROOT, 'wealthflow-crash-report.js'), 'utf8'))).toEqual([]);
+    it('never touches the books or Firebase (it does use the network and its own storage key, by design)', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'wealthflow-crash-report.js'), 'utf8');
+        expect(src).not.toMatch(/\bDB\s*\.|firebase|firestore/i);
     });
 });

@@ -27,7 +27,6 @@
 }
 #page-ccinstall table th,
 #page-ccinstall table td {
-  position: static;
   min-width: 72px;
   padding: 6px 8px;
   white-space: normal;

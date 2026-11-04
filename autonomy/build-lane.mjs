@@ -41,24 +41,39 @@ const SCRIPT_ANCHOR = '<script src="wealthflow-update-system.js" defer></script>
 const FORBIDDEN = [
     [/\beval\s*\(/, 'uses eval()'],
     [/\bnew\s+Function\s*\(/, 'uses new Function()'],
-    [/\bdocument\.write\s*\(/, 'uses document.write()'],
+    [/\bdocument\.write(?:ln)?\s*\(/, 'uses document.write()'],
     [/\bimport\s*\(/, 'uses dynamic import()'],
-    [/createElement\(\s*['"]script['"]\s*\)/, 'creates a script element'],
+    [/\bimportScripts\s*\(/, 'uses importScripts()'],
+    [/createElement\(\s*['"](?:script|iframe|embed|object)['"]\s*\)/, 'creates a script, iframe, embed or object element'],
     [/\bDB\s*\.\s*(set|remove|delete|clear|replace)\s*\(/, 'writes the books through DB (a new module may only read them)'],
     [/localStorage\s*\.\s*clear\s*\(/, 'clears localStorage'],
     [/indexedDB\s*\.\s*deleteDatabase/, 'deletes an IndexedDB database'],
     [/\bfirebase\b|\bfirestore\b|getFirestore|initializeApp/i, 'talks to Firebase directly'],
     [/\b(sk|pk|ghp|gho|xox[bp]|AKIA|AIza)[-_A-Za-z0-9]{16,}/, 'contains something that looks like a secret'],
-    [/innerHTML\s*[+]?=\s*[^;]*\$\{/, 'builds innerHTML from a template string (use textContent or escape)'],
+    // No HTML strings at all: a heuristic that only catches template literals is not a gate (a reviewer found `innerHTML = userVar` passes it).
+    [/\.\s*(?:inner|outer)HTML\s*(?:[+]?=|\+=)|insertAdjacentHTML\s*\(|\bsrcdoc\s*=/, 'builds HTML from strings (use createElement and textContent)'],
 ];
 
+/**
+ * A module may READ the books or TALK to the network, never both. A module that can do both can send the owner's
+ * records anywhere, however innocent its stated purpose, and a model-written "read-only" label is not a control.
+ * So a calculator or a card that shows the books has no network at all, and an integration that fetches public data
+ * has no way to read what the person has recorded.
+ */
+const NETWORK = /\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b|\bsendBeacon\b|\bnew\s+Image\s*\(|\bnavigator\s*\.\s*serviceWorker\b|\bWorker\s*\(|\bpostMessage\s*\(|\.\s*(?:src|href)\s*=\s*[^;]*(?:https?:)?\/\//;
+const PRIVATE_READ = /\bDB\s*\.\s*(?:get|all|keys|read)\b|\blocalStorage\b|\bsessionStorage\b|\bindexedDB\b|\bdocument\s*\.\s*cookie\b|\bcaches\b/;
+
 export function forbiddenIn(code) {
-    return FORBIDDEN.filter(([re]) => re.test(code)).map(([, why]) => why);
+    const out = FORBIDDEN.filter(([re]) => re.test(code)).map(([, why]) => why);
+    if (NETWORK.test(code) && PRIVATE_READ.test(code)) out.push('both reads the books or storage and uses the network (it must do one or the other)');
+    return out;
 }
 
 /** Does this report ask for something NEW, which no existing module can be edited to provide? */
 export function buildLaneFor(issue) {
     const t = `${issue?.title || ''}\n${issue?.body || ''}`.toLowerCase();
+    // a defect that happens to mention "new page" is a defect, not a request for something new
+    if (/\b(crash\w*|freez\w*|white screen|blank screen|overlap\w*|wrong (?:total|amount|number|value)|not working|doesn'?t work|broken|error|bug)\b/.test(t)) return { applies: false, why: '' };
     if (/\b(integrat\w*|connect(?:ion)? (?:to|with)|webhook|new (?:page|screen|module|widget|tool|calculator|report|section|tab|dashboard)|add an? (?:new )?(?:calculator|widget|tool|report|page|screen|dashboard|tracker|planner|simulator|checker))\b/.test(t)) {
         return { applies: true, why: 'asks for something new' };
     }
@@ -88,8 +103,8 @@ export function authorPrompt(issueText, plan) {
         `  · One IIFE: (function (root) { 'use strict'; ... })(typeof window !== 'undefined' ? window : globalThis);`,
         `  · Attach the public API to root.${plan.api}. Keep the code under ${MAX_MODULE_CHARS} characters.`,
         '  · No eval, new Function, document.write, dynamic import(), script injection, Firebase calls, or secrets.',
-        '  · Read the books with root.DB.get("expenses") style calls only. Never DB.set / DB.remove. Never touch localStorage keys you did not create (prefix yours "wf_<slug>_").',
-        '  · Build text with textContent; if you must use innerHTML, escape every dynamic value with a local esc() helper.',
+        '  · Read the books with root.DB.get("expenses") style calls only. Never DB.set / DB.remove. Never touch localStorage keys you did not create (prefix yours "wf_<slug>_"; a module that uses localStorage counts as reading storage).',
+        '  · Build the screen with createElement and textContent only. NEVER assign innerHTML, outerHTML or insertAdjacentHTML (a machine refuses it).\n  · A module may READ the books (root.DB.get) or use the network (fetch to a public https API), NEVER both (a machine refuses it): a calculator shows the numbers the owner recorded and has no network; an integration shows public data and cannot see what the owner recorded.',
         '  · Everything is guarded: no DOM, no DB, empty lists, NaN, negative and huge numbers must not throw.',
         '  · If it shows UI, mount ONE container with a stable id the first time the page is ready (DOMContentLoaded or immediately), inside document.body, and never replace existing elements. Respect prefers-reduced-motion. Hit targets at least 44px.',
         '  · Money: LKR, two decimals, toLocaleString("en-LK"). Do arithmetic in whole cents.',
@@ -104,17 +119,18 @@ export function authorPrompt(issueText, plan) {
 export function wireModule({ repoDir = process.cwd(), name, issue = '', now = new Date() } = {}) {
     if (!NAME_RE.test(name || '')) return { ok: false, files: [], raised: [], reason: 'not a valid module name' };
     const htmlPath = path.join(repoDir, 'index.html');
+    const budgetPath = path.join(repoDir, 'autonomy', 'perf-budget.mjs');
     const html = fs.readFileSync(htmlPath, 'utf8');
     const tag = `<script src="${name}" defer></script>`;
     if (html.includes(tag)) return { ok: false, files: [], raised: [], reason: 'already on the page' };
     const at = html.indexOf(SCRIPT_ANCHOR);
     if (at < 0 || html.indexOf(SCRIPT_ANCHOR, at + 1) >= 0) return { ok: false, files: [], raised: [], reason: 'could not find exactly one anchor line in index.html' };
     const stamp = now.toISOString().slice(0, 10);
-    const next = html.slice(0, at) + `<!-- ${stamp}: ${name}, added by the build lane${issue ? ` for #${issue}` : ''} -->\n    ` + tag + '\n    ' + html.slice(at);
-    fs.writeFileSync(htmlPath, next);
+    const nextHtml = html.slice(0, at) + `<!-- ${stamp}: ${name}, added by the build lane${issue ? ` for #${issue}` : ''} -->\n    ` + tag + '\n    ' + html.slice(at);
 
-    const m = measure({ repoDir });
-    const budgetPath = path.join(repoDir, 'autonomy', 'perf-budget.mjs');
+    // Everything is worked out in memory first and written together: a half-wired tree (a script tag with no
+    // matching ceiling) is what a failure here must never leave behind.
+    const m = measureWith({ repoDir, name, nextHtml });
     let src = fs.readFileSync(budgetPath, 'utf8');
     const raised = [];
     for (const key of ['htmlBytes', 'totalJsBytes', 'moduleCount', 'scriptTags', 'largestModuleBytes']) {
@@ -123,12 +139,25 @@ export function wireModule({ repoDir = process.cwd(), name, issue = '', now = ne
         // counts move to the measured value; byte ceilings keep 0.25% headroom, so the ratchet stays tight
         const to = /Bytes$/.test(key) ? Math.ceil(m[key] * 1.0025 / 500) * 500 : m[key];
         const re = new RegExp(`(^\\s*${key}:\\s*)[0-9_]+(,)([^\\n]*)$`, 'm');
-        if (!re.test(src)) return { ok: false, files: ['index.html'], raised, reason: `could not find ${key} in perf-budget.mjs` };
-        src = src.replace(re, (_, a, b) => `${a}${String(to).replace(/\B(?=(\d{3})+(?!\d))/g, '_')}${b} // ${stamp}: raised from ${limit} for ${name} (build lane${issue ? `, #${issue}` : ''}); measured ${m[key]}`);
+        if (!re.test(src)) return { ok: false, files: [], raised: [], reason: `could not find ${key} in perf-budget.mjs` };
+        src = src.replace(re, (_, a2, b2) => `${a2}${String(to).replace(/\B(?=(\d{3})+(?!\d))/g, '_')}${b2} // ${stamp}: raised from ${limit} for ${name} (build lane${issue ? `, #${issue}` : ''}); measured ${m[key]}`);
         raised.push(`${key} ${limit} -> ${to}`);
     }
+    fs.writeFileSync(htmlPath, nextHtml);
     if (raised.length) fs.writeFileSync(budgetPath, src);
     return { ok: true, files: raised.length ? ['index.html', 'autonomy/perf-budget.mjs'] : ['index.html'], raised };
+}
+
+/** The payload as it WILL be once the tag is on the page, measured without touching the tree. */
+function measureWith({ repoDir, name, nextHtml }) {
+    const m = measure({ repoDir });
+    const htmlBytes = Buffer.byteLength(nextHtml);
+    const tags = (nextHtml.match(/<script\b[^>]*\bsrc\s*=/gi) || []).length;
+    // the module is already on disk when this runs (the agent writes it first); count it only if measure() did not
+    const counted = m.modules.some((x) => x.file === name);
+    const bytes = counted ? 0 : (() => { try { return fs.statSync(path.join(repoDir, name)).size; } catch { return 0; } })();
+    const modules = counted ? m.modules : [...m.modules, { file: name, bytes }].sort((x, y) => y.bytes - x.bytes);
+    return { ...m, htmlBytes, scriptTags: tags, moduleCount: modules.length, totalJsBytes: modules.reduce((t, x) => t + x.bytes, 0), largestModuleBytes: modules[0] ? modules[0].bytes : 0 };
 }
 
 /** Bring wiring back to how it was (used when the dry run only wanted the measurement). */

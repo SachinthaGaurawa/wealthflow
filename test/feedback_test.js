@@ -742,7 +742,7 @@ describe('feedback: the user\'s own classification is not discarded', () => {
 
     it('the handler actually applies it', () => {
         const src = fs.readFileSync('feedback-triage.js', 'utf8');
-        expect(src).toMatch(/reconcile\(\(await edenClassify\(text\)\) \|\| localClassify\(text\), body\)/);
+        expect(src).toMatch(/reconcile\(\(await edenClassify\(forAI\)\) \|\| mlGuess \|\| localClassify\(forAI\), body\)/);
     });
 });
 

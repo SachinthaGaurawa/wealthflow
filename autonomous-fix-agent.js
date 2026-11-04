@@ -54,6 +54,7 @@ import { layoutLaneFor, runLayoutLane } from './autonomy/css-lane.mjs';
 import { buildLaneFor, runBuildLane, wireModule } from './autonomy/build-lane.mjs';
 import { conceptBoardFor, runConceptBoard, renderComment as boardComment, briefFor, parseStoredBoard, BOARD_MARKER } from './autonomy/concept-board.mjs';
 import { screenshotContext } from './autonomy/screenshot-reader.mjs';
+import { withTranslation } from './autonomy/feedback-language.mjs';
 import * as Q from './autonomy/work-queue.mjs';
 
 const MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
@@ -349,7 +350,8 @@ async function main() {
 
     // ── work the highest-priority issue we can actually move ────────────────
     const skipped = [];
-    for (const issue of candidates) {
+    for (const issue0 of candidates) {
+        let issue = issue0;
         const number = issue.number;
         const state = await reconcileAttempts(number, readState(number));
 
@@ -382,6 +384,14 @@ async function main() {
                 continue;
             }
         }
+
+        // A report written in another language (Sinhala, Tamil, ...) that was filed without an English reading gets one now, so the
+        // English-only routers (role, layout lane, build lane, concept board) read what the owner meant. Never fatal.
+        try {
+            const tr = await withTranslation(issue);
+            if (tr.status !== 'none') log(`#${number} language: ${tr.note}`);
+            issue = tr.issue;
+        } catch (e) { log(`#${number} translation step failed (${e.message}) — working from the original words`); }
 
         const kind = Q.roleFor(issue);
         log(`attempting #${number} [${Q.severityOf(issue)}/${kind}]: ${String(issue.title).slice(0, 80)}`);
