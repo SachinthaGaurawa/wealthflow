@@ -61,7 +61,7 @@ const SEED = `(() => {
 /** Runs in the page: what is wrong inside `boxSel`. */
 function measureInPage(boxSel) {
     const box = document.querySelector(boxSel);
-    if (!box) return { missing: true, overflowPx: 0, overlaps: [], clipped: [] };
+    if (!box) return { missing: true, overflowPx: 0, overlaps: [], clipped: [], misaligned: [] };
     const vw = document.documentElement.clientWidth;
     const label = (el) => {
         const id = el.id ? '#' + el.id : '';
@@ -100,16 +100,36 @@ function measureInPage(boxSel) {
     for (const { el } of items) {
         if (clipped.length >= 8) break;
         const cs = getComputedStyle(el);
-        if ((cs.overflowX === 'hidden' || cs.overflow === 'hidden') && el.scrollWidth > el.clientWidth + 2 && cs.textOverflow !== 'ellipsis' && el.clientWidth > 0 && !/^(IMG|SVG|INPUT|SELECT)$/i.test(el.tagName)) {
+        const cutsOff = /^(hidden|clip)$/.test(cs.overflowX) || /^(hidden|clip)$/.test(cs.overflow);
+        // An ellipsis on a plain label is a design choice. An ellipsis (or a hard cut) on anything with a digit is not:
+        // an amount, a date or an instalment count that is cut off is a wrong number on a finance screen (#514, round 3).
+        const hasDigit = /\d/.test(el.innerText || el.value || '');
+        if (cutsOff && el.scrollWidth > el.clientWidth + 2 && (cs.textOverflow !== 'ellipsis' || hasDigit) && el.clientWidth > 0 && !/^(IMG|SVG|INPUT|SELECT)$/i.test(el.tagName)) {
             clipped.push(label(el) + ' "' + textOf(el) + '"');
         }
     }
-    return { missing: false, overflowPx: Math.max(0, document.documentElement.scrollWidth - vw), overlaps, clipped };
+    // A table whose body cells no longer sit under their headings shows an amount under the wrong title.
+    const misaligned = [];
+    for (const table of box.querySelectorAll('table')) {
+        if (!visible(table) || misaligned.length >= 8) continue;
+        const head = table.querySelector('thead tr') || table.querySelector('tr');
+        const body = table.querySelector('tbody tr');
+        if (!head || !body || head === body) continue;
+        const hs = [...head.children].filter((c) => /^(TH|TD)$/.test(c.tagName));
+        const bs = [...body.children].filter((c) => /^(TH|TD)$/.test(c.tagName));
+        if (hs.length !== bs.length || [...hs, ...bs].some((c) => c.colSpan > 1)) continue;
+        hs.forEach((h, i) => {
+            if (!visible(h) || !visible(bs[i])) return;
+            const dx = Math.abs(h.getBoundingClientRect().left - bs[i].getBoundingClientRect().left);
+            if (dx > 3 && misaligned.length < 8) misaligned.push('heading "' + textOf(h) + '" is ' + Math.round(dx) + 'px away from its column');
+        });
+    }
+    return { missing: false, overflowPx: Math.max(0, document.documentElement.scrollWidth - vw), overlaps, clipped, misaligned };
 }
 
 /**
  * Open a screen at each width and report what is wrong.
- * @returns {Promise<{ok:boolean, reason?:string, screen:string, widths:Array<{width:number, overflowPx:number, overlaps:any[], clipped:string[]}>, problems:number}>}
+ * @returns {Promise<{ok:boolean, reason?:string, screen:string, widths:Array<{width:number, overflowPx:number, overlaps:any[], clipped:string[], misaligned:string[]}>, problems:number}>}
  */
 export async function probeLayout({ screen, repoDir = process.cwd(), widths = WIDTHS, extraCss = '', ignoreAgentFixes = false } = {}) {
     const def = SCREENS[screen];
@@ -135,9 +155,9 @@ export async function probeLayout({ screen, repoDir = process.cwd(), widths = WI
             const m = await page.evaluate(measureInPage, def.box);
             if (!sample) sample = await page.evaluate((b) => { const tr = document.querySelector(b + ' tbody tr, ' + b + ' .card, ' + b + ' li'); return tr ? tr.outerHTML.replace(/\s+/g, ' ').replace(/ (onclick|style)="[^"]*"/g, '').slice(0, 1400) : ''; }, def.box);
             if (m.missing) return { ok: false, reason: `the screen ${def.box} was not found`, screen, widths: out, problems: 0 };
-            out.push({ width, overflowPx: m.overflowPx, overlaps: m.overlaps, clipped: m.clipped });
+            out.push({ width, overflowPx: m.overflowPx, overlaps: m.overlaps, clipped: m.clipped, misaligned: m.misaligned || [] });
         }
-        const problems = out.reduce((s, w) => s + (w.overflowPx > 2 ? 1 : 0) + w.overlaps.length + w.clipped.length, 0);
+        const problems = out.reduce((s, w) => s + (w.overflowPx > 2 ? 1 : 0) + w.overlaps.length + w.clipped.length + (w.misaligned || []).length, 0);
         return { ok: true, screen, widths: out, problems, sample };
     } catch (e) {
         return { ok: false, reason: 'the measurement failed: ' + String((e && e.message) || e).slice(0, 200), screen, widths: [], problems: 0 };
@@ -161,6 +181,7 @@ export function describeProbe(r) {
         for (const [k, g] of [...groups].slice(0, 5)) bits.push(`${k}${g.n > 1 ? ` (${g.n} times, e.g. ${g.px})` : ` (${g.px})`}${g.n === 1 ? '' : ''} — e.g. "${String(g.ex.a).match(/"(.*)"/)?.[1] || ''}" with "${String(g.ex.b).match(/"(.*)"/)?.[1] || ''}"`);
         if (groups.size > 5) bits.push(`and ${groups.size - 5} more kinds`);
         for (const c of w.clipped.slice(0, 3)) bits.push(`text is cut off: ${c}`);
+        for (const c of (w.misaligned || []).slice(0, 2)) bits.push(`columns no longer line up: ${c}`);
         if (bits.length) lines.push(`At ${w.width}px wide: ${bits.join('; ')}.`);
     }
     return lines.length ? lines.join('\n') : `No overlap, overflow or cut-off text was found at ${r.widths.map((w) => w.width).join(', ')}px wide.`;
