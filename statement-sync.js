@@ -13,6 +13,7 @@ import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped,
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
+import { lineIdsWithBankPayment } from './statement-credit-evidence.mjs';
 import { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
@@ -1483,7 +1484,7 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
         const figures = { opening: printed.opening, closing: printed.closing, credits: printed.credits, debits: printed.debits }, asCandidates = (list) => list.map(entry => ({ id: entry.doc.id, amount: entry.review.row.amount }));
         /* THE LINES THE READER COULD NOT FILE WHOLE (no real date, no words) were still ADDED UP, as unmarked lines: debits. They are part of the sums the arithmetic is about, so they are gathered with the waiting lines. */
         const extras = (ownDocs.get(sourcePath) || []).filter(entry => { const r = entry.data(); return r.uid === uid && r.status === 'pending' && r.reason === 'invalid-transaction' && Number.isSafeInteger(r.index) && r.index >= 0 && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && Number(r.row.amount) > 0; }).map(entry => ({ doc: entry, review: entry.data() }));
-        let fit = tails.size > 1 ? { fit: 'unusable' } : proveByTotals({ ...figures, models: ['card'], candidates: asCandidates(items) }), lines = items;
+        let fit = tails.size > 1 ? { fit: 'unusable' } : proveByTotals({ ...figures, models: ['card'], candidates: asCandidates(items) }), lines = items, movers = [];
         totals[fit.fit] += 1;
         if (fit.reason) { totals.noneBy = totals.noneBy || {}; totals.noneBy[fit.reason] = (totals.noneBy[fit.reason] || 0) + 1; }
         /* the waiting lines alone make the balances add up: everything else the reader added up as a debit is a debit too, the unreadable lines included */
@@ -1498,14 +1499,28 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
                 if (second.fit === 'unique') { fit = second; lines = items.concat(extras); }
             }
             if (fit.fit !== 'unique') {
-                /* WHY IT STILL DID NOT FIT, in fixed words and counts: how far the miss is from the waiting lines and from every line the statement holds (the purchases already filed from it included), and in how many ways they can add up to it */
-                const user = (await userRef.get()).data() || {}, filed = ['cconetime', 'ccinstall'].flatMap(key => Array.isArray(user[key]) ? user[key] : []).filter(record => record && record.statementKey === sourcePath && record.direction === 'debit');
-                totals.diag = (totals.diag || []).slice(0, 2).concat([{ ...explainMiss({ ...figures, candidates: asCandidates(items), extras: extras.map(entry => ({ amount: entry.review.row.amount })), filed }), invalid: extras.length, filed: filed.length }]);
+                /* THE THIRD RUNG: the money that came back is among the lines the layout proof ALREADY filed as purchases (a payment whose words say nothing). A filed line is a candidate only with a second, independent witness: the owner's
+                 * own bank paid exactly that amount, to the cent, on a day just before the card posted it (statement-credit-evidence.mjs). The same arithmetic runs over the waiting lines, the unreadable ones and those witnessed lines, and
+                 * must still fit in exactly one way. A line it names is moved from CC One-Time to Card payments, whole and reversibly (reclassifyHiddenPayments). */
+                const user = (await userRef.get()).data() || {}, filedRecords = (Array.isArray(user.cconetime) ? user.cconetime : []).filter(record => record && record.id && record.statementKey === sourcePath && record.direction === 'debit' && record.source === 'statement' && record.directionProof === 'layout' && Number(record.amount) > 0 && !record.mergedInto);
+                const witnessed = lineIdsWithBankPayment(user, filedRecords.map(record => ({ id: String(record.id), amount: record.amount, date: record.date })), { sourcePath }), hidden = filedRecords.filter(record => witnessed.has(String(record.id)));
+                totals.rung3 = totals.rung3 || { tried: 0, unique: 0, none: 0, ambiguous: 0, unusable: 0, witnessed: 0 };
+                totals.rung3.witnessed += hidden.length;
+                if (hidden.length && tails.size <= 1 && items.length + extras.length + hidden.length <= 16) {
+                    const third = proveByTotals({ ...figures, models: ['card'], candidates: asCandidates(items.concat(extras)).concat(hidden.map(record => ({ id: String(record.id), amount: record.amount }))) });
+                    totals.rung3.tried += 1; totals.rung3[third.fit] += 1;
+                    if (third.fit === 'unique') { fit = third; lines = items.concat(extras); movers = hidden.filter(record => third.credit.includes(String(record.id))); }
+                }
+                if (fit.fit !== 'unique') {
+                    /* WHY IT STILL DID NOT FIT, in fixed words and counts: how far the miss is from the waiting lines and from every line the statement holds (the purchases already filed from it included), and in how many ways they can add up to it */
+                    const filed = ['cconetime', 'ccinstall'].flatMap(key => Array.isArray(user[key]) ? user[key] : []).filter(record => record && record.statementKey === sourcePath && record.direction === 'debit');
+                    totals.diag = (totals.diag || []).slice(0, 2).concat([{ ...explainMiss({ ...figures, candidates: asCandidates(items), extras: extras.map(entry => ({ amount: entry.review.row.amount })), filed }), invalid: extras.length, filed: filed.length, witnessed: hidden.length }]);
+                }
             }
         }
         if (fit.fit !== 'unique') continue;
         /* the one attempt is written BEFORE anything is filed: a run that stops half way leaves the rest for the owner instead of being re-added against totals it no longer matches */
-        try { await db.doc(sourcePath).set({ totalsProof: { v: 1, at: Date.now(), lines: lines.length } }, { merge: true }); } catch (_) { totals.refused += lines.length; continue; }
+        try { await db.doc(sourcePath).set({ totalsProof: { v: 1, at: Date.now(), lines: lines.length + movers.length } }, { merge: true }); } catch (_) { totals.refused += lines.length; continue; }
         const credit = new Set(fit.credit);
         for (const { doc, review } of lines) {
             const direction = credit.has(doc.id) ? 'credit' : 'debit';
@@ -1530,9 +1545,42 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
                 } else totals.refused += 1;
             }
         }
+        /* the lines the statement's balances AND the owner's bank name as payments to the card, which the layout proof had filed as purchases: moved to Card payments, in one transaction, all or none */
+        if (movers.length) {
+            const moved = await reclassifyHiddenPayments({ db, uid, sourcePath, ids: movers.map(record => String(record.id)) });
+            totals.moved = (totals.moved || 0) + moved.moved; if (moved.refused) totals.refused += movers.length;
+        }
     }
     if (held.size) why.totals = totals;
     return { proved, left: left + why.shape, more, why };
+}
+
+/* A PURCHASE THE LAYOUT PROOF FILED THAT THE STATEMENT AND THE OWNER'S BANK BOTH SAY IS MONEY PAID TO THE CARD (proveCardReviews, third rung) is moved from CC One-Time to Card payments. All or none: every id must still be a system-filed
+ * purchase of this statement (one the owner edited, or that is gone, stops the move). Nothing is lost: the purchase is kept whole in `statementTrash` (so it can be put back by hand), tombstoned so no device brings it back, and its
+ * ledger row says what became of it. The payment keeps the line's id, bank, card and statement row, and says on itself where it came from. */
+export async function reclassifyHiddenPayments({ db, uid, sourcePath, ids, now = Date.now() }) {
+    const userRef = db.collection('users').doc(uid), wanted = [...new Set((Array.isArray(ids) ? ids : []).map(String))];
+    if (!wanted.length || wanted.length > 16 || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(sourcePath || ''))) return { moved: 0, refused: 'invalid' };
+    return db.runTransaction(async tx => {
+        const snap = await tx.get(userRef), user = structuredClone(snap.data() || {});
+        const purchases = Array.isArray(user.cconetime) ? user.cconetime : [], payments = Array.isArray(user.ccPayments) ? user.ccPayments : [];
+        const take = purchases.filter(record => record && wanted.includes(String(record.id)));
+        const fine = record => record.statementKey === sourcePath && record.direction === 'debit' && record.source === 'statement' && record.directionProof === 'layout' && Number(record.amount) > 0 && !record.mergedInto;
+        if (take.length !== wanted.length || !take.every(fine) || take.some(record => payments.some(other => other && String(other.id) === String(record.id)))) return { moved: 0, refused: 'changed' };
+        const ledgers = [];
+        for (const record of take) ledgers.push(await tx.get(userRef.collection('statementLedger').doc(String(record.id))));
+        const tomb = user._tomb && typeof user._tomb === 'object' ? { ...user._tomb } : {}, gone = new Set(take);
+        take.forEach((record, at) => {
+            tomb.cconetime = { ...(tomb.cconetime && typeof tomb.cconetime === 'object' ? tomb.cconetime : {}), [record.id]: now };
+            tx.set(userRef.collection('statementTrash').doc(`cconetime_${String(record.id)}`.slice(0, 200)), { uid, store: 'cconetime', record: JSON.parse(JSON.stringify(record)), reason: 'statement-totals-payment', source: sourcePath, removedAt: now }, { merge: false });
+            payments.push({ id: record.id, statementKey: record.statementKey, statementRow: record.statementRow == null ? null : record.statementRow, bank: record.bank || '', card_last4: record.card_last4 || '', ref: String(record.ref || ''), direction: 'credit',
+                amount: record.amount, date: record.date, source: 'statement', createdAt: new Date(now).toISOString(), _ut: now, desc: String(record.desc || record.product || '').trim() || 'Statement line (no description printed)', directionProof: 'statement', autoDecided: 'statement-totals',
+                notes: 'Moved here automatically: the statement\'s own balances and a bank payment of the same amount show this line is money paid to the card. It was first filed as a purchase.' });
+            if (ledgers[at].exists) tx.set(ledgers[at].ref, { status: 'filed', module: 'ccPayments', reclassified: 'statement-totals', resolvedAt: now }, { merge: true });
+        });
+        tx.set(userRef, { cconetime: purchases.filter(record => !gone.has(record)), ccPayments: payments, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        return { moved: take.length };
+    });
 }
 
 // A statement row the ledger says was filed but the owner's data no longer holds, and nobody deleted: a device
