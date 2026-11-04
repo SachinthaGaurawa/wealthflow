@@ -1,0 +1,14 @@
+/* =============================================================================
+ * wf-agent-fixes.css — layout fixes written by the autonomous fix agent
+ * -----------------------------------------------------------------------------
+ * Loaded AFTER wf-ui.css. The agent may only APPEND blocks here, one per report, and only for a
+ * screen it measured in a real browser (autonomy/css-lane.mjs, autonomy/layout-probe.mjs).
+ *
+ * Every block starts with a header the validator reads:
+ *     lane-block: <issue number> scope=#page-<screen>
+ * and every selector in it must name that screen's own id. Layout properties only; nothing may
+ * be hidden. test/agent_fixes_css_test.js re-checks this whole file on every CI run, so a hand
+ * edit cannot weaken the rules either.
+ *
+ * Empty until the first report is fixed this way.
+ * ===========================================================================*/

@@ -94,6 +94,11 @@ jobs:
       - name: Install deps
         run: npm ci || npm install
 
+      # The layout lane measures a screen in a real browser (autonomy/layout-probe.mjs). If the browser cannot be
+      # installed the lane says so and makes no change; it never reports a screen it did not look at.
+      - name: Install Chromium for the layout lane
+        run: npx playwright install chromium || echo "::warning::Chromium could not be installed; layout reports cannot be measured this run"
+
       - name: Run the autonomous agent
         id: agent
         env:
@@ -169,7 +174,10 @@ jobs:
           FIX_FILE: ${{ steps.check.outputs.file }}
         run: |
           set -euo pipefail
-          node --check "$FIX_FILE"
+          case "$FIX_FILE" in
+            *.js|*.mjs|*.cjs) node --check "$FIX_FILE" ;;
+            *) echo "not JavaScript ($FIX_FILE): the test suite below validates it" ;;
+          esac
           npm test
           echo "ok=yes" >> "$GITHUB_OUTPUT"
 

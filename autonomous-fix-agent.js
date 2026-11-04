@@ -50,6 +50,7 @@ import { createHash } from 'node:crypto';
 
 import { describeAvailability } from './autonomy/llm-router.mjs';
 import { runSwarm } from './autonomy/agent-swarm.mjs';
+import { layoutLaneFor, runLayoutLane } from './autonomy/css-lane.mjs';
 import { screenshotContext } from './autonomy/screenshot-reader.mjs';
 import * as Q from './autonomy/work-queue.mjs';
 
@@ -204,7 +205,9 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null } =
         `**Authored by:** ${result.role} agent via \`${provs.author}\``,
         `**Independently reviewed by:** Agent 5 (Chaos Security) via \`${provs.security || 'unavailable'}\``,
         `**Security verdict:** ${result.review?.verdict || 'n/a'}${result.review?.reason ? ` — ${result.review.reason}` : ''}`,
-        testWritten && result.verified
+        result.lane === 'layout'
+            ? `**Proof:** measured in real Chromium on invented books at ${(result.layout?.widths || []).join(', ')}px wide, before and after: **${String(result.layout?.verdict || '').toUpperCase()}** (${result.layout?.reason || ''}). This is a measurement, not a person looking at a phone.`
+            : testWritten && result.verified
             ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — executed and verified: it FAILS against the original file and PASSES against this one.`
             : testWritten
                 ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — [WARNING] NOT verified red→green. Do not treat it as evidence.`
@@ -213,11 +216,20 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null } =
         '### Issue',
         '> ' + String(issue.title || '').replace(/\n/g, '\n> '),
         '',
+        ...(result.lane === 'layout' ? [
+            '### Measured before the change', '```', String(result.layout?.before || '').replace(/`{3,}/g, "'''").slice(0, 1800), '```',
+            '### Measured after the change', '```', String(result.layout?.after || '').replace(/`{3,}/g, "'''").slice(0, 1200), '```',
+            '',
+        ] : []),
         '### Gates already passed before this PR existed',
         '- Structural check (truncation, placeholders, new `eval`/`innerHTML` sinks, brace balance)',
-        '- `node --check` parse of the rewritten file',
+        result.lane === 'layout'
+            ? '- The CSS passed a strict reader: every selector names the one screen, layout properties only, no hiding, no url(), size capped'
+            : '- `node --check` parse of the rewritten file',
         '- Independent security review on a different model provider than the author',
-        result.verified
+        result.lane === 'layout'
+            ? '- **The screen was measured twice** in a real browser: the overlap was found before, and is gone or reduced after'
+            : result.verified
             ? '- **The proving test was executed twice** — red against the original file, green against this one'
             : '- [WARNING] The proving test was NOT executed red→green',
         '- Sensitive-path gate: this change touches no auth, crypto, money, rules, service-worker, dependency, or CI file',
@@ -373,10 +385,16 @@ async function main() {
 
         let result;
         try {
-            result = await runSwarm({
-                issue: { number, title: issue.title, body: shot.body, kind },
-                repoDir: REPO_DIR, log,
-            });
+            // A report about how a screen LOOKS (overlap, cut-off, a phone width) has no JavaScript to fix or to
+            // test, so it goes to the layout lane: CSS only, measured in a real browser before and after.
+            const lane = layoutLaneFor({ title: issue.title, body: shot.body });
+            if (lane.applies) log(`#${number} goes to the layout lane (${lane.why})`);
+            result = lane.applies
+                ? await runLayoutLane({ issue: { number, title: issue.title, body: shot.body }, repoDir: REPO_DIR, log })
+                : await runSwarm({
+                    issue: { number, title: issue.title, body: shot.body, kind },
+                    repoDir: REPO_DIR, log,
+                });
         } catch (e) {
             // A provider outage is not the agent's fault, but it must be visible.
             log(`#${number} swarm error: ${e.message}`);
