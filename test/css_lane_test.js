@@ -218,7 +218,7 @@ describe('css lane: wired into the agent and its workflow', () => {
     const wf = fs.readFileSync('.github/workflows/autonomous-fix.yml', 'utf8');
     it('the agent sends a layout report to the lane instead of the JavaScript swarm', () => {
         expect(agent).toMatch(/layoutLaneFor\(\{ title: issue\.title, body: shot\.body \}\)/);
-        expect(agent).toMatch(/lane\.applies\s*\n?\s*\? await runLayoutLane\(/);
+        expect(agent).toMatch(/if \(lane\.applies\) \{\s*result = await runLayoutLane\(/);
     });
     it('the workflow installs Chromium and does not run node --check on a CSS file', () => {
         expect(wf).toMatch(/npx playwright install chromium/);
