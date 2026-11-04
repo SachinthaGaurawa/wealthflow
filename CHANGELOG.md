@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.48 — 2026-11-04
+
+**What changed for you**
+
+- Did you see this. This is in ‘CC installments’. Thats resolu (#519)
+
 ## v7.69.47 — 2026-11-04
 
 **What changed for you**
