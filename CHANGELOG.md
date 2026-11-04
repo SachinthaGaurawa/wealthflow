@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.45 — 2026-11-04
+
+**What changed for you**
+
+- Fix update system: agent reads screenshots, honest autonomy status, every feedback critical (#515)
+
 ## v7.69.44 — 2026-11-04
 
 **What changed for you**
