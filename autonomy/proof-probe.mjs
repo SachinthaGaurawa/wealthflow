@@ -124,6 +124,7 @@ export function describeObservation(before, after, { filename = 'the module' } =
         const asked = [...new Set([...(after.fetched || [])])];
         if (asked.length) L.push(`  · the fixed module asked for: ${asked.join(', ')}`);
         L.push('  · the network stub answered /api/version with {"sha":"abc123def456","version":"<version.json latest>"}, /version.json with the real manifest, anything else with 404.');
+        if (asked.length) L.push('  · YOUR test does not get that stub: the loader\'s default fetch rejects. Pass your own `fetchImpl` for the URLs above, and wait for the redraw with `await vi.waitFor(() => expect(...))`; an immediate check misses text drawn after the fetch resolves.');
         if (after.errors?.length) L.push(`  · errors while running the fixed module: ${after.errors.slice(0, 3).join(' | ')}`);
     } else {
         L.push(`  · (${filename} could not be measured ${before?.ok ? 'after' : 'before'} the change: ${(before?.ok ? after : before)?.error || 'unknown'})`);

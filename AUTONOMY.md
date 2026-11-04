@@ -298,6 +298,11 @@ Attempt 1 invented a helper nothing calls; attempt 2 correctly answered CANNOT_F
 report names is shown whole, first, inside its own share of the budget (`symbolsFrom`, `definitionRange` in `autonomy/swarm-patch.mjs`).
 A second cause is also known and not changed: `roleFor` in `autonomy/work-queue.mjs` reads words like "fails" before the `enhancement`
 label, so a feature request that says "when that read fails" is handled as a bug, and the bug role skips the revision loop above.
+The third attempt (run 41744901165) got past that: the author wrote a correct patch (the agent's own measurement shows `build abc123d` on the card), and then the
+proving test failed against the fixed file. Reproduced by hand: the patch draws the build id only after `fetch('/api/version')` resolves, and the shared loader's
+own `fetch` rejects (offline), so a test that passes no `fetchImpl`, or checks once straight after `await refresh()`, sees nothing. Agent 4's prompt now says both
+(and shows `vi.waitFor`), and the measurement text says the probe's network stub is not the test's. A test written exactly as the prompt shows it is
+red on the old file and green on that patch (`verifyTestProves`, run by hand).
 Until an attempt ends in an opened pull request this is a repaired step, not a proven chain.
 
 **Owner-bound, still open** (nothing here can be done from the repository): `VERCEL_TOKEN`, `VERCEL_PROJECT_ID` and `HEALTH_URL` (rollback),
