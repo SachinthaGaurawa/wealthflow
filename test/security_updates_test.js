@@ -23,8 +23,8 @@ const WF = fs.readFileSync(path.join(ROOT, '.github/workflows/security-updates.y
 const CODE = WF.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
 
 describe('security-updates.yml is a real, scheduled, honest fixer', () => {
-    it('runs weekly (urgent) and monthly (full) and can be started by hand', () => {
-        expect(CODE).toMatch(/cron:\s*'30 5 \* \* 1'/);
+    it('runs daily (urgent) and monthly (full) and can be started by hand', () => {
+        expect(CODE).toMatch(/cron:\s*'30 5 \* \* \*'/);
         expect(CODE).toMatch(/cron:\s*'30 6 1 \* \*'/);
         expect(CODE).toMatch(/workflow_dispatch:/);
     });

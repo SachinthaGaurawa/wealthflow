@@ -52,6 +52,7 @@ import { describeAvailability } from './autonomy/llm-router.mjs';
 import { runSwarm } from './autonomy/agent-swarm.mjs';
 import { layoutLaneFor, runLayoutLane } from './autonomy/css-lane.mjs';
 import { buildLaneFor, runBuildLane, wireModule } from './autonomy/build-lane.mjs';
+import { conceptBoardFor, runConceptBoard, renderComment as boardComment, briefFor, parseStoredBoard, BOARD_MARKER } from './autonomy/concept-board.mjs';
 import { screenshotContext } from './autonomy/screenshot-reader.mjs';
 import * as Q from './autonomy/work-queue.mjs';
 
@@ -400,10 +401,24 @@ async function main() {
             // test, so it goes to the layout lane: CSS only, measured in a real browser before and after.
             const lane = layoutLaneFor({ title: issue.title, body: shot.body });
             if (lane.applies) log(`#${number} goes to the layout lane (${lane.why})`);
+            // A NEW idea is talked through by several AIs first (user-friendliness first); their brief joins the request, and
+            // the discussion is posted once on the issue. It never blocks: the owner's request is the decision.
+            let laneBody = shot.body;
+            if (!lane.applies && conceptBoardFor({ title: issue.title, body: shot.body }, kind)) {
+                try {
+                    const prior = (await Q.issueComments(number).catch(() => [])).find((c) => String(c.body || '').includes(BOARD_MARKER));
+                    let board = prior ? parseStoredBoard(prior.body) : null;
+                    if (!board) {
+                        board = await runConceptBoard({ issueText: `${issue.title}\n\n${shot.body}`, log });
+                        if (board.voters && !DRY) await Q.comment(number, boardComment(board)).catch(() => {});
+                    }
+                    laneBody = shot.body + briefFor(board);
+                } catch (e) { log(`#${number} concept board skipped (${e.message})`); }
+            }
             // Something NEW (an integration, a new calculator or page) has no existing module to edit, so it goes to the
             // build lane first; and a feature the one-file swarm could not place falls through to it as well.
             const build = buildLaneFor({ title: issue.title, body: shot.body });
-            const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: shot.body }, repoDir: REPO_DIR, log });
+            const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, repoDir: REPO_DIR, log });
             if (lane.applies) {
                 result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body }, repoDir: REPO_DIR, log });
             } else if (build.applies) {
@@ -411,7 +426,7 @@ async function main() {
                 result = await buildIt();
             } else {
                 result = await runSwarm({
-                    issue: { number, title: issue.title, body: shot.body, kind },
+                    issue: { number, title: issue.title, body: laneBody, kind },
                     repoDir: REPO_DIR, log,
                 });
                 if (!result.ok && kind === 'feature' && (result.stage === 'select' || result.stage === 'author')) {

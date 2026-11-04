@@ -1,4 +1,4 @@
-name: Security updates (urgent weekly + full monthly)
+name: Security updates (urgent daily + full monthly)
 
 # =============================================================================
 # WHY THIS WORKFLOW EXISTS — found on 2026-11-03 by reading the issue queue.
@@ -33,7 +33,7 @@ name: Security updates (urgent weekly + full monthly)
 
 on:
   schedule:
-    - cron: '30 5 * * 1'      # weekly — urgent path
+    - cron: '30 5 * * *'      # DAILY — urgent path (was weekly; the repository is public, so the minutes are not billed — see autonomy/actions-budget.mjs)
     - cron: '30 6 1 * *'      # monthly — full refresh
   workflow_dispatch:
     inputs:
