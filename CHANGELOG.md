@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.51 — 2026-11-04
+
+**What changed for you**
+
+- Build lane, concept board, crash reports, any-language feedback, red shell check fixed (#521)
+
 ## v7.69.50 — 2026-11-04
 
 **What changed for you**
