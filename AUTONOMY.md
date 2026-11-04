@@ -303,7 +303,15 @@ proving test failed against the fixed file. Reproduced by hand: the patch draws 
 own `fetch` rejects (offline), so a test that passes no `fetchImpl`, or checks once straight after `await refresh()`, sees nothing. Agent 4's prompt now says both
 (and shows `vi.waitFor`), and the measurement text says the probe's network stub is not the test's. A test written exactly as the prompt shows it is
 red on the old file and green on that patch (`verifyTestProves`, run by hand).
-Until an attempt ends in an opened pull request this is a repaired step, not a proven chain.
+**First pull request opened by the agent itself: #511, from issue #510 (2026-11-04).** With the excerpt pin (#508) and the test-author repair (#509) the
+run went through: the draft was reviewed, the proving test ran red then green, the pull request was opened. Three things then stood between it and a merge,
+none of them in the agent: (1) every `pull_request` workflow on a PR opened by `github-actions[bot]` ends `action_required` until a repo writer re-runs it
+(an August agent PR shows the owner doing exactly that), so no check exists until a human or a writer-identity re-run releases it; (2) the change touches
+`wealthflow-update-system.js`, a guarded path, so it needs `human-approved` by design; (3) the +1,090 bytes pushed the module over two pinned size ceilings
+(`update_ui_truth_test.js` 118,700 and `perf-budget.mjs` totalJsBytes 2,831,600), which the agent may not edit. The ceilings were raised by the measured
+overshoot in a separate pull request. So the chain is proven up to an opened PR; a merge without a human still needs the approval setting changed
+(Settings > Actions > General) or the agent to open PRs with a token other than `GITHUB_TOKEN`, and a feature in a guarded or size-capped file will always need a person.
+Until a pull request opened by the agent has merged and the release served it, this is a repaired and exercised chain, not a proven one.
 
 **Owner-bound, still open** (nothing here can be done from the repository): `VERCEL_TOKEN`, `VERCEL_PROJECT_ID` and `HEALTH_URL` (rollback),
 `CANARY_ROLLBACK=true` (opt in to automatic rollback), and a real update tried once on the owner's phone.
