@@ -12,3 +12,64 @@
  *
  * Empty until the first report is fixed this way.
  * ===========================================================================*/
+
+/* lane-block: 514 scope=#page-ccinstall — [CRITICAL] Did you see this. This is in ‘CC installments’. Thats resol */
+#page-ccinstall .tbl-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+#page-ccinstall table {
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+}
+#page-ccinstall table th,
+#page-ccinstall table td {
+  position: static;
+  min-width: 72px;
+  padding: 6px 8px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.25;
+  font-size: 13px;
+}
+#page-ccinstall table th:last-child,
+#page-ccinstall table td:last-child {
+  min-width: 132px;
+}
+#page-ccinstall .act-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  justify-content: flex-start;
+}
+#page-ccinstall .act-btns .ib {
+  min-width: 32px;
+  min-height: 32px;
+}
+#page-ccinstall .badge {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.25;
+}
+@media (max-width: 768px) {
+  #page-ccinstall table th,
+  #page-ccinstall table td {
+    min-width: 64px;
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+  #page-ccinstall table th:last-child,
+  #page-ccinstall table td:last-child {
+    min-width: 148px;
+  }
+  #page-ccinstall .act-btns .ib {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
