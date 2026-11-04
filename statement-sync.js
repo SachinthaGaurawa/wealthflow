@@ -1470,6 +1470,32 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
      * No choice, or several, or a statement with a row still unreached: nothing is touched and the owner is asked as before. Only a statement whose waiting lines were ALL looked at is tried (a partly read list cannot add up).
      * The log says only HOW MANY statements fit, did not, or were ambiguous, and in a fixed word why one did not: never a line, a name or an amount. */
     const totals = { tried: 0, unique: 0, none: 0, ambiguous: 0, unusable: 0, incomplete: 0, partial: 0, stamped: 0, filed: 0, duplicate: 0, rules: 0, refused: 0 };
+    /* the waiting lines of one statement, filed as the arithmetic (or the decision kept in the stamp) says: a credit as a card payment, a debit as a card purchase */
+    const fileLines = async (sourcePath, lines, credit, extras) => {
+        for (const { doc, review } of lines) {
+            const direction = credit.has(doc.id) ? 'credit' : 'debit';
+            /* a line the statement printed without words is filed under a plain label (the statement proves its direction and amount; its date must still be a real one, or the books refuse it and it stays for the owner) */
+            const description = String(review.row.description || review.row.narration || '').trim() || 'Statement line (no description printed)';
+            const row = { ...review.row, description, direction, directionSource: 'statement', needsReview: false, valid: true };
+            const ctx = contextOf(review, sources.get(sourcePath));
+            const decision = deterministicDecision(row, ctx);
+            const own = decision && decision.verified === true ? decision : null;
+            /* the arithmetic names the DIRECTION; the words' own reading of the place only stands where it agrees with it (a card payment for a credit, a card purchase for a debit): a row the rules took out of the books (an own transfer) stays for the owner */
+            const filing = direction === 'credit'
+                ? (own ? (own.module === 'ccPayments' ? own : null) : fallbackDecision(row, ctx))
+                : (own ? (['cconetime', 'ccinstall'].includes(own.module) ? own : own.module === 'ccPayments' ? fallbackDecision(row, ctx) : null) : fallbackDecision(row, ctx));
+            if (!filing || filing.verified !== true || (direction === 'credit' ? filing.module !== 'ccPayments' : !['cconetime', 'ccinstall'].includes(filing.module))) { totals.rules += 1; continue; }
+            try { await resolveReview({ db, uid, id: doc.id, decision: { ...filing, autoDecided: 'statement-totals' }, row: { direction, description }, directionSource: 'statement' }); proved += 1; if (!extras.some(extra => extra.doc.id === doc.id)) left -= 1; totals.filed += 1; }
+            catch (error) {
+                /* an entry for this very line (same bank, date, amount, direction) is ALREADY in the books: the statement is proven right and the money is counted once, so the waiting line is closed as the copy it is, the way the owner would
+                 * (dismissed, with its row kept on the review). Any other refusal (a lock, a schema) leaves the line for the owner, untouched. */
+                if (String(error && error.message) === 'matching-existing-entry-dismiss-or-edit') {
+                    try { await resolveReview({ db, uid, id: doc.id, decision: { module: 'skip' } }); await doc.ref.set({ dismissedBy: 'statement-totals-duplicate' }, { merge: true }); proved += 1; left -= 1; totals.duplicate += 1; }
+                    catch (_) { totals.refused += 1; }
+                } else totals.refused += 1;
+            }
+        }
+    };
     for (const [sourcePath, items] of held) {
         if (cut.has(sourcePath)) { totals.incomplete += 1; continue; }
         if (Date.now() > until) { totals.incomplete += 1; more = true; continue; }
@@ -1477,13 +1503,22 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
         /* THE LIST MUST BE THE STATEMENT'S WHOLE LIST: the page of pending reviews read above holds at most 500 of all the statements' together, so the lines gathered from it are compared with the statement's OWN reviews (read without a limit)
          * and the proof is refused for any difference. A statement already tried once is not tried again: after a line was filed, a re-run would add up a shorter list against the same printed totals. */
         const whole = (ownDocs.get(sourcePath) || []).filter(entry => { const r = entry.data(); return r.status === 'pending' && r.reason === 'unproven-direction' && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && moneyBackLine(r); }).map(entry => entry.id).sort();
-        if (source && source.totalsProof) { totals.stamped += 1; continue; }
+        const extras = (ownDocs.get(sourcePath) || []).filter(entry => { const r = entry.data(); return r.uid === uid && r.status === 'pending' && r.reason === 'invalid-transaction' && Number.isSafeInteger(r.index) && r.index >= 0 && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && Number(r.row.amount) > 0; }).map(entry => ({ doc: entry, review: entry.data() }));
+        /* A STATEMENT TRIED ONCE IS NOT TRIED AGAIN, but a run that stopped half way FINISHES what it decided: the stamp keeps the decision (the ids of the lines that are credits and of those that are debits), and the lines still waiting are filed
+         * exactly as it said, with no new arithmetic. A stamp from before the decision was kept (no lists) only blocks. */
+        if (source && source.totalsProof) {
+            const kept = source.totalsProof, credits = Array.isArray(kept.credit) ? kept.credit.map(String) : null, debits = Array.isArray(kept.debit) ? kept.debit.map(String) : null;
+            if (!credits || !debits) { totals.stamped += 1; continue; }
+            const decided = new Set(credits.concat(debits)), rest = items.concat(extras).filter(entry => decided.has(entry.doc.id));
+            totals.stamped += 1;
+            if (rest.length) { totals.resumed = (totals.resumed || 0) + 1; await fileLines(sourcePath, rest, new Set(credits), extras); }
+            continue;
+        }
         if (whole.length !== items.length || whole.some((id, at) => id !== items.map(entry => entry.doc.id).sort()[at])) { totals.partial += 1; continue; }
         const tails = new Set(items.map(entry => String(entry.review.row.card_last4 || '')));
         totals.tried += 1;
         const figures = { opening: printed.opening, closing: printed.closing, credits: printed.credits, debits: printed.debits }, asCandidates = (list) => list.map(entry => ({ id: entry.doc.id, amount: entry.review.row.amount }));
         /* THE LINES THE READER COULD NOT FILE WHOLE (no real date, no words) were still ADDED UP, as unmarked lines: debits. They are part of the sums the arithmetic is about, so they are gathered with the waiting lines. */
-        const extras = (ownDocs.get(sourcePath) || []).filter(entry => { const r = entry.data(); return r.uid === uid && r.status === 'pending' && r.reason === 'invalid-transaction' && Number.isSafeInteger(r.index) && r.index >= 0 && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && Number(r.row.amount) > 0; }).map(entry => ({ doc: entry, review: entry.data() }));
         let fit = tails.size > 1 ? { fit: 'unusable' } : proveByTotals({ ...figures, models: ['card'], candidates: asCandidates(items) }), lines = items, movers = [];
         totals[fit.fit] += 1;
         if (fit.reason) { totals.noneBy = totals.noneBy || {}; totals.noneBy[fit.reason] = (totals.noneBy[fit.reason] || 0) + 1; }
@@ -1519,37 +1554,18 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
             }
         }
         if (fit.fit !== 'unique') continue;
-        /* the one attempt is written BEFORE anything is filed: a run that stops half way leaves the rest for the owner instead of being re-added against totals it no longer matches */
-        try { await db.doc(sourcePath).set({ totalsProof: { v: 1, at: Date.now(), lines: lines.length + movers.length } }, { merge: true }); } catch (_) { totals.refused += lines.length; continue; }
-        const credit = new Set(fit.credit);
-        for (const { doc, review } of lines) {
-            const direction = credit.has(doc.id) ? 'credit' : 'debit';
-            /* a line the statement printed without words is filed under a plain label (the statement proves its direction and amount; its date must still be a real one, or the books refuse it and it stays for the owner) */
-            const description = String(review.row.description || review.row.narration || '').trim() || 'Statement line (no description printed)';
-            const row = { ...review.row, description, direction, directionSource: 'statement', needsReview: false, valid: true };
-            const ctx = contextOf(review, sources.get(sourcePath));
-            const decision = deterministicDecision(row, ctx);
-            const own = decision && decision.verified === true ? decision : null;
-            /* the arithmetic names the DIRECTION; the words' own reading of the place only stands where it agrees with it (a card payment for a credit, a card purchase for a debit): a row the rules took out of the books (an own transfer) stays for the owner */
-            const filing = direction === 'credit'
-                ? (own ? (own.module === 'ccPayments' ? own : null) : fallbackDecision(row, ctx))
-                : (own ? (['cconetime', 'ccinstall'].includes(own.module) ? own : own.module === 'ccPayments' ? fallbackDecision(row, ctx) : null) : fallbackDecision(row, ctx));
-            if (!filing || filing.verified !== true || (direction === 'credit' ? filing.module !== 'ccPayments' : !['cconetime', 'ccinstall'].includes(filing.module))) { totals.rules += 1; continue; }
-            try { await resolveReview({ db, uid, id: doc.id, decision: { ...filing, autoDecided: 'statement-totals' }, row: { direction, description }, directionSource: 'statement' }); proved += 1; if (!extras.some(extra => extra.doc.id === doc.id)) left -= 1; totals.filed += 1; }
-            catch (error) {
-                /* an entry for this very line (same bank, date, amount, direction) is ALREADY in the books: the statement is proven right and the money is counted once, so the waiting line is closed as the copy it is, the way the owner would
-                 * (dismissed, with its row kept on the review). Any other refusal (a lock, a schema) leaves the line for the owner, untouched. */
-                if (String(error && error.message) === 'matching-existing-entry-dismiss-or-edit') {
-                    try { await resolveReview({ db, uid, id: doc.id, decision: { module: 'skip' } }); await doc.ref.set({ dismissedBy: 'statement-totals-duplicate' }, { merge: true }); proved += 1; left -= 1; totals.duplicate += 1; }
-                    catch (_) { totals.refused += 1; }
-                } else totals.refused += 1;
-            }
-        }
-        /* the lines the statement's balances AND the owner's bank name as payments to the card, which the layout proof had filed as purchases: moved to Card payments, in one transaction, all or none */
+        const credit = new Set(fit.credit), decision = { v: 1, at: Date.now(), lines: lines.length + movers.length, credit: [...credit].map(String), debit: lines.filter(entry => !credit.has(entry.doc.id)).map(entry => String(entry.doc.id)) };
         if (movers.length) {
-            const moved = await reclassifyHiddenPayments({ db, uid, sourcePath, ids: movers.map(record => String(record.id)) });
-            totals.moved = (totals.moved || 0) + moved.moved; if (moved.refused) totals.refused += movers.length;
+            /* THE STATEMENT'S STAMP AND THE MOVE OF THE PAID-TO-CARD LINES ARE ONE TRANSACTION: all or none. If the books changed under the move, nothing is stamped and nothing is filed, and the statement is tried again as it is. */
+            let moved = { moved: 0, refused: 'error' };
+            try { moved = await reclassifyHiddenPayments({ db, uid, sourcePath, ids: movers.map(record => String(record.id)), stamp: decision }); } catch (_) { /* refused */ }
+            if (moved.refused || moved.moved !== movers.length) { totals.refused += movers.length; continue; }
+            totals.moved = (totals.moved || 0) + moved.moved;
+        } else {
+            /* the one attempt is written BEFORE anything is filed: a run that stops half way finishes the same decision next time instead of being re-added against totals it no longer matches */
+            try { await db.doc(sourcePath).set({ totalsProof: decision }, { merge: true }); } catch (_) { totals.refused += lines.length; continue; }
         }
+        await fileLines(sourcePath, lines, credit, extras);
     }
     if (held.size) why.totals = totals;
     return { proved, left: left + why.shape, more, why };
@@ -1558,7 +1574,7 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
 /* A PURCHASE THE LAYOUT PROOF FILED THAT THE STATEMENT AND THE OWNER'S BANK BOTH SAY IS MONEY PAID TO THE CARD (proveCardReviews, third rung) is moved from CC One-Time to Card payments. All or none: every id must still be a system-filed
  * purchase of this statement (one the owner edited, or that is gone, stops the move). Nothing is lost: the purchase is kept whole in `statementTrash` (so it can be put back by hand), tombstoned so no device brings it back, and its
  * ledger row says what became of it. The payment keeps the line's id, bank, card and statement row, and says on itself where it came from. */
-export async function reclassifyHiddenPayments({ db, uid, sourcePath, ids, now = Date.now() }) {
+export async function reclassifyHiddenPayments({ db, uid, sourcePath, ids, now = Date.now(), stamp = null }) {
     const userRef = db.collection('users').doc(uid), wanted = [...new Set((Array.isArray(ids) ? ids : []).map(String))];
     if (!wanted.length || wanted.length > 16 || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(sourcePath || ''))) return { moved: 0, refused: 'invalid' };
     return db.runTransaction(async tx => {
@@ -1579,6 +1595,7 @@ export async function reclassifyHiddenPayments({ db, uid, sourcePath, ids, now =
             if (ledgers[at].exists) tx.set(ledgers[at].ref, { status: 'filed', module: 'ccPayments', reclassified: 'statement-totals', resolvedAt: now }, { merge: true });
         });
         tx.set(userRef, { cconetime: purchases.filter(record => !gone.has(record)), ccPayments: payments, _tomb: tomb, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        if (stamp && typeof stamp === 'object') tx.set(db.doc(sourcePath), { totalsProof: stamp }, { merge: true });
         return { moved: take.length };
     });
 }

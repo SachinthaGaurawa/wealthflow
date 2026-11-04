@@ -473,9 +473,9 @@ describe('the money paid to the card is found among the lines already filed as p
     const waiting = (index, narration, amount) => [[`users/u/statementReview/${id(index)}`, { uid: 'u', sourcePath, index, status: 'pending', reason: 'unproven-direction', bank: 'HNB Credit Card',
         row: { date: '2026-09-1' + index, narration, description: narration, amount, direction: 'debit', directionSource: 'assumed', needsReview: true, valid: true } }], [`users/u/statementLedger/${id(index)}`, { uid: 'u', sourcePath, index, status: 'review' }]];
     const filed = (index, desc, amount, date, proof = 'layout') => ({ id: id(index), statementKey: sourcePath, statementRow: index, bank: 'HNB Credit Card', card_last4: '0048', direction: 'debit', amount, date, source: 'statement', desc, cat: 'Card Purchase', directionProof: proof });
-    const world = ({ cconetime, expenses = [], proof }) => createFirestore(Object.fromEntries([
+    const world = ({ cconetime, expenses = [], proof, totalsProof }) => createFirestore(Object.fromEntries([
         ['users/u', { settings: { cardRegistry: { '0048': { type: 'credit_card', bank: 'HNB' } } }, cconetime, ccPayments: [], expenses }],
-        [sourcePath, { uid: 'u', bank: 'HNB Credit Card', last4: '0048', statementType: 'credit-card', cursor: 4, totalRows: 4, status: 'needs_review', proof }],
+        [sourcePath, { uid: 'u', bank: 'HNB Credit Card', last4: '0048', statementType: 'credit-card', cursor: 4, totalRows: 4, status: 'needs_review', proof, ...(totalsProof ? { totalsProof } : {}) }],
         ...waiting(0, 'PAYMENT THANK YOU', 101), ...waiting(1, 'ONLINE PAYMENT DIALOG', 102),
         ...cconetime.map(record => [`users/u/statementLedger/${record.id}`, { uid: 'u', sourcePath, index: record.statementRow, status: 'filed' }])]));
     const run = (fs) => proveCardReviews({ db: fs.db, uid: 'u', limit: 10 });
@@ -499,6 +499,34 @@ describe('the money paid to the card is found among the lines already filed as p
         expect(fs.data.get(`users/u/statementLedger/${id(3)}`)).toMatchObject({ status: 'filed', module: 'ccPayments', reclassified: 'statement-totals' });
         expect(fs.data.get(sourcePath).totalsProof).toMatchObject({ v: 1, lines: 3 });
         expect(JSON.stringify(out.why)).not.toMatch(/CEFT|THANK|DIALOG|UBER|651|1000|653|400/);
+    });
+    it('stamps the statement INSIDE the move, with the decision, so a half-run can be finished', async () => {
+        const fs = world({ cconetime: purchases(), expenses: [bank], proof }); await run(fs);
+        expect(fs.data.get(sourcePath).totalsProof).toMatchObject({ v: 1, lines: 3, credit: [id(0), id(3)].sort(), debit: [id(1)] });
+    });
+    it('files nothing and stamps nothing when the books changed under the move (the purchase was edited by the owner meanwhile)', async () => {
+        const fs = world({ cconetime: purchases(), expenses: [bank], proof }), real = fs.db.runTransaction.bind(fs.db);
+        fs.db.runTransaction = async (fn, ...rest) => { fs.data.get('users/u').cconetime[1].directionProof = 'owner'; return real(fn, ...rest); };
+        const out = await run(fs);
+        expect(out.why.totals).toMatchObject({ rung3: { tried: 1, unique: 1 }, filed: 0, refused: 1 });
+        expect(out.why.totals.moved).toBeUndefined();
+        expect(fs.data.get(sourcePath).totalsProof).toBeUndefined();
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
+        expect(fs.data.get('users/u').cconetime).toHaveLength(2);
+        expect([0, 1].map(i => fs.data.get(`users/u/statementReview/${id(i)}`).status)).toEqual(['pending', 'pending']);
+    });
+    it('finishes what a stopped run decided: the stamp keeps the choice, and the lines still waiting are filed exactly so, with no new arithmetic', async () => {
+        const stamp = { v: 1, at: 1, lines: 3, credit: [id(0), id(3)], debit: [id(1)] };
+        const fs = world({ cconetime: [purchases()[0]], expenses: [bank], proof, totalsProof: stamp }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 0, stamped: 1, resumed: 1, filed: 2, refused: 0 });
+        const user = fs.data.get('users/u');
+        expect(user.ccPayments.map(r => r.amount)).toEqual([101]);
+        expect(user.cconetime.map(r => r.amount).sort((a, b) => a - b)).toEqual([50, 102]);
+    });
+    it('a stamp from before the decision was kept (no lists) still only blocks', async () => {
+        const fs = world({ cconetime: purchases(), expenses: [bank], proof, totalsProof: { v: 1, at: 1, lines: 3 } }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 0, stamped: 1, filed: 0 });
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
     });
     it('touches nothing when no bank payment stands behind any filed purchase, and says how many were looked at', async () => {
         const fs = world({ cconetime: purchases(), expenses: [], proof }), out = await run(fs);
