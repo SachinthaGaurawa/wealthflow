@@ -436,7 +436,7 @@ describe('a line the reader could not file whole is part of the statement\'s pro
     it('says how far off the sums are, with no amount and no name in the log, when even the second rung finds no fit', async () => {
         const fs = world({ narration: '', amount: 77 }, { ...proof, closing: 1000 + 430 - 2 * 900 }), out = await run(fs);
         expect(out.why.totals).toMatchObject({ tried: 1, none: 1, noneBy: { range: 1 }, rung2: { tried: 1, none: 1 }, filed: 0 });
-        expect(out.why.totals.diag).toEqual([{ miss: 'even', vsWaiting: 'gt4', vsAll: 'gt4', ways: 0, waysAll: 0, invalid: 1, filed: 2 }].map(d => ({ ...d, vsWaiting: expect.any(String), vsAll: expect.any(String) })));
+        expect(out.why.totals.diag).toEqual([{ miss: 'even', vsWaiting: 'gt4', vsAll: 'gt4', ways: 0, waysAll: 0, invalid: 1, filed: 2, witnessed: 0 }].map(d => ({ ...d, vsWaiting: expect.any(String), vsAll: expect.any(String) })));
         expect(JSON.stringify(out.why)).not.toMatch(/THANK|DIALOG|KEELLS|UBER|1074|1000|900|77/);
     });
     it('does not try a second rung when no unreadable line is waiting, but still says how far off it is', async () => {
@@ -444,5 +444,109 @@ describe('a line the reader could not file whole is part of the statement\'s pro
         expect(out.why.totals).toMatchObject({ noneBy: { range: 1 }, filed: 0 });
         expect(out.why.totals.rung2).toBeUndefined();
         expect(out.why.totals.diag).toEqual([expect.objectContaining({ miss: 'even', invalid: 0, filed: 2, ways: 0, waysAll: 0 })]);
+    });
+});
+
+// Production, 2026-11-04 18:46 UTC (`why.totals.diag`: miss "even", vsAll le1, ways 0, waysAll 2, invalid 1, filed 15): half the balances' miss is more than ALL the waiting lines and the unreadable line, and fits only with
+// lines the layout proof already FILED as purchases. The amounts alone make two choices, so a second, independent witness is asked: the owner's own bank paid exactly that amount just before the card posted it.
+import { lineIdsWithBankPayment } from '../statement-credit-evidence.mjs';
+
+describe('lineIdsWithBankPayment: which lines of a card statement have a bank payment behind them', () => {
+    const user = { expenses: [
+        { id: 'b1', source: 'statement', statementKey: 'wf-mail/owner/items/bank.pdf', amount: 400, date: '2026-09-10' },
+        { id: 'b2', source: 'statement', statementKey: 'wf-mail/owner/items/card3.pdf', amount: 77, date: '2026-09-10' },          // this statement's own record is no witness of itself
+        { id: 'b3', source: 'manual', amount: 55, date: '2026-09-10' },                                                         // typed by hand: not a bank statement
+    ] };
+    const at = (id, amount, date) => ({ id, amount, date });
+    it('finds a bank payment of the same amount from four days before the card posted it to one day after', () => {
+        const ids = lineIdsWithBankPayment(user, [at('a', 400, '2026-09-14'), at('b', 400, '2026-09-09'), at('c', 400, '2026-09-15'), at('d', 400, '2026-09-08'), at('e', 400.01, '2026-09-12')], { sourcePath: 'wf-mail/owner/items/card3.pdf' });
+        expect([...ids].sort()).toEqual(['a', 'b']);       // 4 days after the bank (a), 1 day before it (b); 5 days after (c), 2 days before (d) and another amount (e) are not
+    });
+    it('does not count the statement\'s own records or a hand-typed one', () => {
+        expect(lineIdsWithBankPayment(user, [at('x', 77, '2026-09-10'), at('y', 55, '2026-09-10')], { sourcePath: 'wf-mail/owner/items/card3.pdf' }).size).toBe(0);
+    });
+});
+
+describe('the money paid to the card is found among the lines already filed as purchases', () => {
+    const sourcePath = 'wf-mail/owner/items/card3.pdf', bankPath = 'wf-mail/owner/items/bank.pdf';
+    const id = (index) => sourceOccurrenceId(sourcePath, index);
+    const waiting = (index, narration, amount) => [[`users/u/statementReview/${id(index)}`, { uid: 'u', sourcePath, index, status: 'pending', reason: 'unproven-direction', bank: 'HNB Credit Card',
+        row: { date: '2026-09-1' + index, narration, description: narration, amount, direction: 'debit', directionSource: 'assumed', needsReview: true, valid: true } }], [`users/u/statementLedger/${id(index)}`, { uid: 'u', sourcePath, index, status: 'review' }]];
+    const filed = (index, desc, amount, date, proof = 'layout') => ({ id: id(index), statementKey: sourcePath, statementRow: index, bank: 'HNB Credit Card', card_last4: '0048', direction: 'debit', amount, date, source: 'statement', desc, cat: 'Card Purchase', directionProof: proof });
+    const world = ({ cconetime, expenses = [], proof, totalsProof }) => createFirestore(Object.fromEntries([
+        ['users/u', { settings: { cardRegistry: { '0048': { type: 'credit_card', bank: 'HNB' } } }, cconetime, ccPayments: [], expenses }],
+        [sourcePath, { uid: 'u', bank: 'HNB Credit Card', last4: '0048', statementType: 'credit-card', cursor: 4, totalRows: 4, status: 'needs_review', proof, ...(totalsProof ? { totalsProof } : {}) }],
+        ...waiting(0, 'PAYMENT THANK YOU', 101), ...waiting(1, 'ONLINE PAYMENT DIALOG', 102),
+        ...cconetime.map(record => [`users/u/statementLedger/${record.id}`, { uid: 'u', sourcePath, index: record.statementRow, status: 'filed' }])]));
+    const run = (fs) => proveCardReviews({ db: fs.db, uid: 'u', limit: 10 });
+    const bank = { id: 'bk1', source: 'statement', statementKey: bankPath, amount: 400, date: '2026-09-10', desc: 'CEFT TRANSFER' };
+    // owed 1000.00; the reader added 101 + 102 + 50 + 400 = 653.00 as debits; the 101.00 line and the 400.00 line are the payments: 1000 + 653 - 2 x 501 = 651.00
+    const proof = { opening: 1000, closing: 651, credits: 0, debits: 653 };
+    const purchases = () => [filed(2, 'UBER RIDE', 50, '2026-09-12'), filed(3, 'CEFT TRANSFER 123', 400, '2026-09-13')];
+
+    it('moves the witnessed purchase to Card payments, proves the waiting lines, and keeps the purchase whole in the trash', async () => {
+        const fs = world({ cconetime: purchases(), expenses: [bank], proof }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 1, none: 1, noneBy: { range: 1 }, rung3: { tried: 1, unique: 1, witnessed: 1 }, filed: 2, moved: 1, refused: 0 });
+        const user = fs.data.get('users/u');
+        expect(user.ccPayments.map(r => [r.amount, r.directionProof]).sort((a, b) => a[0] - b[0])).toEqual([[101, 'statement'], [400, 'statement']]);
+        expect(user.cconetime.map(r => r.amount).sort((a, b) => a - b)).toEqual([50, 102]);
+        const moved = user.ccPayments.find(r => r.amount === 400);
+        expect(moved).toMatchObject({ id: id(3), direction: 'credit', autoDecided: 'statement-totals', desc: 'CEFT TRANSFER 123', statementKey: sourcePath });
+        const trash = fs.data.get(`users/u/statementTrash/cconetime_${id(3)}`);
+        expect(trash).toMatchObject({ reason: 'statement-totals-payment', store: 'cconetime' });
+        expect(trash.record).toMatchObject({ amount: 400, direction: 'debit', desc: 'CEFT TRANSFER 123' });
+        expect(user._tomb.cconetime[id(3)]).toBeGreaterThan(0);
+        expect(fs.data.get(`users/u/statementLedger/${id(3)}`)).toMatchObject({ status: 'filed', module: 'ccPayments', reclassified: 'statement-totals' });
+        expect(fs.data.get(sourcePath).totalsProof).toMatchObject({ v: 1, lines: 3 });
+        expect(JSON.stringify(out.why)).not.toMatch(/CEFT|THANK|DIALOG|UBER|651|1000|653|400/);
+    });
+    it('stamps the statement INSIDE the move, with the decision, so a half-run can be finished', async () => {
+        const fs = world({ cconetime: purchases(), expenses: [bank], proof }); await run(fs);
+        expect(fs.data.get(sourcePath).totalsProof).toMatchObject({ v: 1, lines: 3, credit: [id(0), id(3)].sort(), debit: [id(1)] });
+    });
+    it('files nothing and stamps nothing when the books changed under the move (the purchase was edited by the owner meanwhile)', async () => {
+        const fs = world({ cconetime: purchases(), expenses: [bank], proof }), real = fs.db.runTransaction.bind(fs.db);
+        fs.db.runTransaction = async (fn, ...rest) => { fs.data.get('users/u').cconetime[1].directionProof = 'owner'; return real(fn, ...rest); };
+        const out = await run(fs);
+        expect(out.why.totals).toMatchObject({ rung3: { tried: 1, unique: 1 }, filed: 0, refused: 1 });
+        expect(out.why.totals.moved).toBeUndefined();
+        expect(fs.data.get(sourcePath).totalsProof).toBeUndefined();
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
+        expect(fs.data.get('users/u').cconetime).toHaveLength(2);
+        expect([0, 1].map(i => fs.data.get(`users/u/statementReview/${id(i)}`).status)).toEqual(['pending', 'pending']);
+    });
+    it('finishes what a stopped run decided: the stamp keeps the choice, and the lines still waiting are filed exactly so, with no new arithmetic', async () => {
+        const stamp = { v: 1, at: 1, lines: 3, credit: [id(0), id(3)], debit: [id(1)] };
+        const fs = world({ cconetime: [purchases()[0]], expenses: [bank], proof, totalsProof: stamp }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 0, stamped: 1, resumed: 1, filed: 2, refused: 0 });
+        const user = fs.data.get('users/u');
+        expect(user.ccPayments.map(r => r.amount)).toEqual([101]);
+        expect(user.cconetime.map(r => r.amount).sort((a, b) => a - b)).toEqual([50, 102]);
+    });
+    it('a stamp from before the decision was kept (no lists) still only blocks', async () => {
+        const fs = world({ cconetime: purchases(), expenses: [bank], proof, totalsProof: { v: 1, at: 1, lines: 3 } }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 0, stamped: 1, filed: 0 });
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
+    });
+    it('touches nothing when no bank payment stands behind any filed purchase, and says how many were looked at', async () => {
+        const fs = world({ cconetime: purchases(), expenses: [], proof }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ rung3: { tried: 0, witnessed: 0 }, filed: 0 });
+        expect(out.why.totals.moved).toBeUndefined();
+        expect(out.why.totals.diag).toEqual([expect.objectContaining({ miss: 'even', filed: 2, witnessed: 0 })]);
+        expect(fs.data.get('users/u').cconetime).toHaveLength(2);
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
+        expect(fs.data.get(sourcePath).totalsProof).toBeUndefined();
+    });
+    it('never moves a purchase the layout did not prove (one a marker, a balance or the owner decided)', async () => {
+        const fs = world({ cconetime: [filed(2, 'UBER RIDE', 50, '2026-09-12'), filed(3, 'CEFT TRANSFER 123', 400, '2026-09-13', 'marker')], expenses: [bank], proof }), out = await run(fs);
+        expect(out.why.totals.rung3).toMatchObject({ witnessed: 0 });
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
+    });
+    it('does not guess when two witnessed purchases both make the sum', async () => {
+        const two = [filed(2, 'TRANSFER A', 400, '2026-09-12'), filed(3, 'TRANSFER B', 400, '2026-09-13')];
+        const fs = world({ cconetime: two, expenses: [bank], proof: { opening: 1000, closing: 1000 + 903 - 2 * 501, credits: 0, debits: 903 } }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ rung3: { tried: 1, ambiguous: 1, witnessed: 2 }, filed: 0 });
+        expect(fs.data.get('users/u').ccPayments).toEqual([]);
+        expect(fs.data.get('users/u').cconetime).toHaveLength(2);
     });
 });
