@@ -129,6 +129,20 @@ describe('the test author is given what was measured', () => {
         expect(p).toMatch(/WHAT THE MODULE ACTUALLY DOES/);
         expect(p).toMatch(/YOUR PREVIOUS TEST WAS EXECUTED AND REJECTED/);
     });
+    it('tells the author its test needs its own fetch stub and a wait, because the loader is offline (issue #507)', () => {
+        const p = testPrompt('show the build id', FILE, 'a', 'b', obs);
+        expect(p).toMatch(/loader's own `fetch` REJECTS/);
+        expect(p).toMatch(/passes a `fetchImpl`/);
+        expect(p).toMatch(/vi\.waitFor/);
+        expect(p).toMatch(/YOUR test does not get that stub/);
+    });
+    it('stays quiet about fetch when the fixed module asked for nothing', () => {
+        const quiet = describeObservation(
+            { ok: true, api: { wfUpdate: ['init'] }, text: { wfUpdateCard: 'a' }, fetched: [] },
+            { ok: true, api: { wfUpdate: ['init'] }, text: { wfUpdateCard: 'a b' }, fetched: [] },
+            { filename: FILE });
+        expect(quiet).not.toMatch(/YOUR test does not get that stub/);
+    });
     it('without a measurement the prompt is what it was', () => {
         expect(testPrompt('x', FILE, 'a', 'b')).not.toMatch(/WHAT THE MODULE ACTUALLY DOES/);
     });
