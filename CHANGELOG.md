@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.50 — 2026-11-04
+
+**What changed for you**
+
+- Find money paid to the card among filed purchases, with the owner's bank as second witness (#522)
+
 ## v7.69.49 — 2026-11-04
 
 **What changed for you**
