@@ -115,6 +115,7 @@
     let _feedbackStatusDown = null;
     let _swWaiting = null;    // a waiting service worker, if any
     let _fbImageData = null;  // attached screenshot (downscaled data-URL) for feedback
+    let _fbImageReading = null; // the same screenshot at reading quality (<=3 parts); goes to triage only, never to storage
 
     // ───────────────────────────────────────────────────────────────────────
     //  DETECTION
@@ -1107,9 +1108,22 @@
         const imgBtn = ov.querySelector('#wfFbImgBtn'), imgInput = ov.querySelector('#wfFbImg'), prev = ov.querySelector('#wfFbImgPreview');
         if (imgBtn && imgInput) {
             imgBtn.onclick = () => imgInput.click();
+            const showPrev = () => {
+                if (prev) { prev.style.display = 'block'; prev.innerHTML = '<img src="' + (_fbImageData || (_fbImageReading && _fbImageReading[0]) || '') + '" style="max-width:100%;border-radius:8px;border:1px solid var(--border,#1f2638);"/><button type="button" onclick="this.parentNode.style.display=\'none\';this.parentNode.innerHTML=\'\';window.wfUpdate&&(window.wfUpdate._clearFbImg&&window.wfUpdate._clearFbImg());" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;">×</button>'; }
+                if (imgBtn) imgBtn.textContent = '@link@ Screenshot attached — tap to change';
+            };
             imgInput.onchange = () => {
                 const f = imgInput.files && imgInput.files[0];
                 if (!f) return;
+                // Any size: wealthflow-image-prep.js makes an issue-sized thumbnail AND up to three reading-quality parts.
+                if (typeof window !== "undefined" && window.WFImagePrep) {
+                    window.WFImagePrep.prepare(f).then((r) => {
+                        if (!r.ok) { _notify('That picture could not be read. Please try another one.', 'warn'); return; }
+                        _fbImageData = r.thumb || null; _fbImageReading = r.reading.length ? r.reading : null;
+                        showPrev();
+                    });
+                    return;
+                }
                 const reader = new FileReader();
                 reader.onload = () => {
                     // downscale to max 900px to keep the payload small
@@ -1127,8 +1141,7 @@
                             return _fbImageData.length <= 43500;
                         });
                         cv.width = cv.height = 0;
-                        if (prev) { prev.style.display = 'block'; prev.innerHTML = '<img src="' + _fbImageData + '" style="max-width:100%;border-radius:8px;border:1px solid var(--border,#1f2638);"/><button type="button" onclick="this.parentNode.style.display=\'none\';this.parentNode.innerHTML=\'\';window.wfUpdate&&(window.wfUpdate._clearFbImg&&window.wfUpdate._clearFbImg());" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;">×</button>'; }
-                        if (imgBtn) imgBtn.textContent = '@link@ Screenshot attached — tap to change';
+                        showPrev();
                     };
                     img.src = reader.result;
                 };
@@ -1282,6 +1295,7 @@
         const diag = !!(document.getElementById('wfFbDiag') || {}).checked;
         if (text.length < 4) { _notify('Please type a little more so we can help.', 'warn'); return; }
         const diagnostics = diag ? _collectDiagnostics() : null;
+        const readingImgs = _fbImageReading;
         const payload = {
             type, text,
             version: _installedVersion() || CURRENT_VERSION,
@@ -1357,7 +1371,9 @@
                     // field, so that renderer received '' on every real submission and
                     // the picture went only to Firestore. Machinery present, signal
                     // absent, for the second time in the same feature.
-                    image: payload.image || null
+                    image: payload.image || null,
+                    // reading-quality parts of the same screenshot: read by the server when the report is filed (never stored)
+                    imageReading: readingImgs
                 })
                 // Generous, because this endpoint classifies the report and calls
                 // the GitHub API before answering — but finite, so a stalled
@@ -1396,7 +1412,7 @@
                 { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 10000);
             if (rf && rf.ok) stored = true;
         } catch (_) {}
-        _fbImageData = null;
+        _fbImageData = null; _fbImageReading = null;
         _close('wfFeedback');
 
         // Tell the user what will actually happen, not just "thanks".
@@ -1906,7 +1922,7 @@
         init, start: startUpdate, whatsNew: showWhatsNew, openSection: openUpdateSection,
         feedback: openFeedback, check: checkForUpdates, diagnostics: showDiagnostics,
         simulate: simulateUpdate, setAutoSecurity: setAutoSecurity,
-        _clearFbImg: () => { _fbImageData = null; },
+        _clearFbImg: () => { _fbImageData = null; _fbImageReading = null; },
         refresh: () => { _refreshDashboardPill(); _injectSettingsCard(); _renderSettingsCard(); },
         // Feedback completion reporting — exposed so the Settings screen and the
         // "Your Feedback" list can refresh statuses on demand.

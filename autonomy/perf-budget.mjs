@@ -758,7 +758,8 @@ export const BUDGETS = {
     // 2026-11-03: the restore point before an update (its result is recorded and said, and the diagnosis reads it) and wealthflow-migrations.js (the runner that proves a data-shape change on a copy, writes it only with a restore point saved, and puts the books back if they do not check out), on top of main's 2,814,325; measured 2,831,427 + ~0.006% headroom): 2_814_500 -> 2_831_600.
     // 2026-11-04: 2_831_600 -> 2_832_600 for the build id beside the version in Settings > Software update (wealthflow-update-system.js, +1,090 bytes, written by the fix agent for issue #510; measured with it 2,832,517 + ~0.003% headroom).
     // 2026-11-04: 2_832_600 -> 2_834_100 (the feedback screenshot is compressed adaptively so it fits the issue, and the Your Feedback panel no longer shows a score; wealthflow-update-system.js and wealthflow-feedback-ai.js; measured 2,834,025 + ~0.003% headroom).
-    totalJsBytes: 2_834_100,
+    // 2026-11-04: 2_834_100 -> 2_842_000 for wealthflow-image-prep.js (any-size feedback screenshot: an issue-sized thumbnail plus up to three reading-quality parts, ~6.7 KB) and the hand-off in wealthflow-update-system.js (measured 2,841,775).
+    totalJsBytes: 2_842_000,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
@@ -864,7 +865,8 @@ export const BUDGETS = {
     // 2026-11-02: 93 -> 94 for wealthflow-card-tabs.js (one tab per credit card on CC One-Time and CC Instalments; a plain deferred script; see totalJsBytes).
     // 2026-11-03: 94 -> 95 for wealthflow-diagnosis.js (the update-system diagnosis; see totalJsBytes).
     // 2026-11-03: 95 -> 96 for wealthflow-migrations.js (the data-migration runner; see totalJsBytes).
-    moduleCount: 96,   // measured 96
+    // 2026-11-04: 96 -> 97 for wealthflow-image-prep.js.
+    moduleCount: 97,   // measured 97
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -941,7 +943,8 @@ export const BUDGETS = {
     // 2026-11-02: 85 -> 86 for wealthflow-card-tabs.js — a plain deferred script, so renderBlockingScripts below is unchanged at 2.
     // 2026-11-03: 86 -> 87 for wealthflow-diagnosis.js — a plain deferred script, so renderBlockingScripts below is unchanged at 2.
     // 2026-11-03: 87 -> 88 for wealthflow-migrations.js - a plain deferred script, so renderBlockingScripts below is unchanged at 2.
-    scriptTags: 88,              // measured 84; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
+    // 2026-11-04: 88 -> 89 for wealthflow-image-prep.js - a plain deferred script, so renderBlockingScripts below is unchanged at 2.
+    scriptTags: 89,              // measured 84; the progress, fact-sheet, scenario, answer-check, briefing, research, own-money, sms and people modules are nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

@@ -28,6 +28,11 @@
 import { PROVIDERS, keyFor } from './llm-router.mjs';
 
 export const IMAGE_MARKER = 'wf-feedback-image';
+/** Written into the issue when the screenshot was already read at filing time (feedback-triage.js). */
+export const READING_MARKER = 'wf-screenshot-reading';
+export const MAX_READING_IMAGES = 3;
+/** One reading image, as a data URL. A phone screenshot at 1568px is ~300-900 KB. */
+export const MAX_READING_CHARS = 1_100_000;
 
 const MARKER_BLOCK = new RegExp(
     '<!--\\s*' + IMAGE_MARKER + '\\s*-->\\s*<details>[\\s\\S]*?</details>', 'i');
@@ -139,6 +144,47 @@ export async function describeScreenshot({ dataUrl, title, text, env = process.e
     return { ok: false, tried };
 }
 
+const READING_URL = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+/** Only real raster data URLs, at most three, none over the size cap. */
+export function validReadingImages(list) {
+    if (!Array.isArray(list)) return [];
+    return list.filter((x) => typeof x === 'string' && x.length <= MAX_READING_CHARS && READING_URL.test(x)).slice(0, MAX_READING_IMAGES);
+}
+
+/**
+ * Read every reading image (a tall screenshot arrives as up to three tiles) and write one section for the issue.
+ * WHY HERE AND NOT ONLY IN THE AGENT: the issue body holds ~44 KB of image, so the agent only ever saw a thumbnail.
+ * The server receives the full-quality rendition when the report is filed, reads that, and puts WORDS in the issue.
+ * @returns {Promise<{ status:'none'|'read'|'unreadable', section:string, provider?:string }>}
+ */
+export async function readAttachments({ images, title = '', text = '', env = process.env, fetchImpl = globalThis.fetch, describeImpl = describeScreenshot, log = () => {} } = {}) {
+    const list = validReadingImages(images);
+    if (!list.length) return { status: 'none', section: '' };
+    const parts = await Promise.all(list.map((dataUrl, i) => describeImpl({
+        dataUrl, title, env, fetchImpl, log,
+        text: (list.length > 1 ? `[This is part ${i + 1} of ${list.length} of ONE tall or wide screenshot, cut top to bottom (or left to right) with a small overlap.] ` : '') + String(text).slice(0, 1000),
+    }).catch((e) => ({ ok: false, tried: [String((e && e.message) || e).slice(0, 80)] }))));
+    const read = parts.map((p, i) => ({ p, i })).filter((x) => x.p && x.p.ok);
+    if (!read.length) {
+        const tried = [...new Set(parts.flatMap((p) => (p && p.tried) || []))].slice(0, 4);
+        return { status: 'unreadable', section: '' , tried };
+    }
+    const who = [...new Set(read.map((x) => `${x.p.provider}/${x.p.model}`))].join(', ');
+    const body = read.map(({ p, i }) => (list.length > 1 ? `**Part ${i + 1} of ${list.length}**\n` : '') + p.text).join('\n\n');
+    const missing = list.length - read.length;
+    return {
+        status: 'read', provider: read[0].p.provider,
+        section: [
+            '### What the AI saw in the screenshot', '',
+            `<!-- ${READING_MARKER} -->`,
+            `_Read from the full-quality screenshot when the report was filed, by a vision model (${who}). It is a machine reading and can be wrong: use it to decide where to look, and trust the code over it._` +
+                (missing ? ` _(${missing} of ${list.length} parts could not be read.)_` : ''),
+            '', body.slice(0, 7000), '',
+        ].join('\n'),
+    };
+}
+
 /**
  * The one call the agent makes. Returns the issue body to give the other agents
  * and a one-line `note` for the attempt comment.
@@ -147,6 +193,8 @@ export async function describeScreenshot({ dataUrl, title, text, env = process.e
 export async function screenshotContext({ issue, env = process.env, fetchImpl, log = () => {} } = {}) {
     const body = String((issue && issue.body) || '');
     const dataUrl = extractScreenshot(body);
+    const hasReading = new RegExp('<!--\\s*' + READING_MARKER + '\\s*-->').test(body);
+    if (!dataUrl && hasReading) return { body, status: 'read', provider: 'filing', note: 'The screenshot was already read when the report was filed (see "What the AI saw in the screenshot").' };
     if (!dataUrl) {
         const oversize = /A screenshot was attached \(~\d+ KB\) but exceeds/.test(body);
         return {
@@ -155,6 +203,10 @@ export async function screenshotContext({ issue, env = process.env, fetchImpl, l
         };
     }
     const stripped = withoutScreenshot(body);
+    // Already read at filing time from the full-quality image: that reading is better than a second one of the thumbnail.
+    if (hasReading) {
+        return { body: stripped, status: 'read', provider: 'filing', note: 'The screenshot was already read when the report was filed (see "What the AI saw in the screenshot").' };
+    }
     const r = await describeScreenshot({ dataUrl, title: issue && issue.title, text: stripped.slice(0, 1200), env, fetchImpl, log });
     if (r.ok) {
         return {

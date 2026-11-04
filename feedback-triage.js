@@ -498,6 +498,24 @@ export default async function handler(req, res) {
     // is bounded here — the same defect class as the label, found while
     // auditing the rest of this payload rather than after it bit.
     const title = clampTitle('[' + String(cls.severity || 'low').toUpperCase() + '] ' + (cls.summary || text.slice(0, 60)));
+    // The client also sends the screenshot at reading quality (up to three tiles, ~1568 px, up to ~1 MB each). The issue can only
+    // hold a ~44 KB thumbnail, so it is READ here, now, and the words go into the issue; the fix agent then works from what the
+    // picture shows instead of a postage stamp of it. Never fatal: a report without a reading is still filed.
+    let readingSection = '';
+    out.imageRead = 'none';
+    if (Array.isArray(body.imageReading) && body.imageReading.length) {
+        try {
+            const { readAttachments } = await import('./autonomy/screenshot-reader.mjs');
+            let timer;
+            const rr = await Promise.race([
+                readAttachments({ images: body.imageReading, title, text }),
+                new Promise((resolve) => { timer = setTimeout(() => resolve({ status: 'unreadable', section: '' }), 35000); if (timer.unref) timer.unref(); }),
+            ]);
+            clearTimeout(timer);
+            readingSection = rr.section || '';
+            out.imageRead = rr.status || 'unreadable';
+        } catch (_) { out.imageRead = 'unreadable'; }
+    }
     // Everything except the screenshot is written first so the picture can use whatever room is really left.
     const footer = '_Filed automatically by the feedback triage agent. The autonomous pipeline picks this up ' +
         'on the `issues: opened` trigger, so work starts within minutes._';
@@ -518,6 +536,7 @@ export default async function handler(req, res) {
         // screen size. It now sends the recorded errors, stack traces and health
         // snapshot, and they are rendered here so the fix agent can read them —
         // otherwise the diagnostics would be collected and then discarded.
+        readingSection,
         diagnosticsSection(diagnostics),
     ].filter((x) => x !== null && x !== undefined);
     const restLength = head.join('\n').length + footer.length + 8;
