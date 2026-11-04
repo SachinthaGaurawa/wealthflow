@@ -128,7 +128,13 @@ export function isStuck({ attempts = 0, signatures = [] } = {}) {
  */
 async function reconcileAttempts(number, state) {
     try {
-        const fromComments = Q.attemptsFrom(await Q.issueComments(number));
+        const trail = await Q.issueComments(number);
+        const fromComments = Q.attemptsFrom(trail);
+        // A maintainer reset (work-queue.mjs) is the one case where the count may go DOWN.
+        if (Q.hasReset(trail) && fromComments !== (state.attempts || 0)) {
+            log(`#${number} attempts: a maintainer reset the budget — using ${fromComments} (disk said ${state.attempts || 0})`);
+            return { ...state, attempts: fromComments, signatures: [] };
+        }
         if (fromComments > (state.attempts || 0)) {
             log(`#${number} attempts: ${state.attempts || 0} on disk, ${fromComments} in the comment trail — using ${fromComments}`);
             return { ...state, attempts: fromComments };

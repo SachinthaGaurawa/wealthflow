@@ -67,10 +67,24 @@ describe('css lane: the CSS gate', () => {
         ['unbalanced braces', `${SCOPE} td { padding: 0 `, /unbalanced|outside/],
         ['an html tag', `${SCOPE} td { padding: 0 } </style><script>`, /not allowed|outside/],
         ['nothing', '   ', /no CSS/],
+        // #514 round 3: the model "fixed" 84 problems by making the table flex and cutting every cell with an ellipsis.
+        ['a flex table row (breaks the columns)', `${SCOPE} tr { display: flex; flex-wrap: wrap }`, /table row, cell or heading/],
+        ['flex cells', `${SCOPE} td { flex: 1 1 120px }`, /table row, cell or heading/],
+        ['an ellipsis', `${SCOPE} .tbl-wrap { text-overflow: ellipsis }`, /not a layout property/],
+        ['overflow hidden', `${SCOPE} .tbl-wrap { overflow: hidden }`, /cut content off/],
+        ['overflow clip on one axis', `${SCOPE} .tbl-wrap { overflow-x: clip }`, /cut content off/],
+        ['an absolutely positioned cell', `${SCOPE} td:last-child { position: absolute }`, /static or relative/],
     ])('refuses %s', (_name, css, why) => {
         const v = validateCss(css, { scope: SCOPE });
         expect(v.ok).toBe(false);
         expect(v.problems.join(' | ')).toMatch(why);
+    });
+    it('still accepts the safe toolkit: a scrolling wrapper, an un-stuck cell, room in the cells', () => {
+        for (const css of [
+            `${SCOPE} .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch }`,
+            `${SCOPE} td:last-child, ${SCOPE} th:last-child { position: static; box-shadow: none }`,
+            `@media (max-width: 768px) { ${SCOPE} td, ${SCOPE} th { padding: 8px 6px; min-width: 88px; white-space: nowrap } }`,
+        ]) expect(validateCss(css, { scope: SCOPE }), css).toMatchObject({ ok: true });
     });
     it('refuses a missing scope and an oversize block', () => {
         expect(validateCss(GOOD, {}).ok).toBe(false);
@@ -229,5 +243,26 @@ describe.skipIf(!chromeHere)('css lane: real Chromium', () => {
         const after = await probeLayout({ screen: 'cc-instalments', widths: [360, 1024], extraCss: GOOD, ignoreAgentFixes: true });
         expect(after.ok, after.reason).toBe(true);
         expect(judgeLayout(before, after)).toMatchObject({ ok: true, verdict: 'fixed' });
+    }, 110_000);
+
+    it('does not call the flex-and-ellipsis rewrite from #514 a fix, even if it got past the gate', async () => {
+        const { probeLayout } = await import('../autonomy/layout-probe.mjs');
+        const bad = `${SCOPE} tr{display:flex;flex-wrap:wrap} ${SCOPE} th, ${SCOPE} td{flex:1 1 120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`;
+        const widths = [360, 768];
+        const before = await probeLayout({ screen: 'cc-instalments', widths, ignoreAgentFixes: true });
+        const after = await probeLayout({ screen: 'cc-instalments', widths, extraCss: bad, ignoreAgentFixes: true });
+        expect(after.ok, after.reason).toBe(true);
+        // cut-off amounts count as problems again (they used to be exempt because they ended in an ellipsis)
+        expect(after.widths.some((w) => w.clipped.length > 0)).toBe(true);
+        expect(judgeLayout(before, after).verdict).not.toBe('fixed');
+    }, 110_000);
+    it('the safe toolkit measures as fixed', async () => {
+        const { probeLayout } = await import('../autonomy/layout-probe.mjs');
+        const good = `${SCOPE} .tbl-wrap{overflow-x:auto} ${SCOPE} .tbl-wrap table :is(thead th, tbody td):last-child{position:static;box-shadow:none}`;
+        expect(validateCss(good, { scope: SCOPE }).ok).toBe(true);
+        const before = await probeLayout({ screen: 'cc-instalments', widths: [360, 768], ignoreAgentFixes: true });
+        const after = await probeLayout({ screen: 'cc-instalments', widths: [360, 768], extraCss: good, ignoreAgentFixes: true });
+        expect(judgeLayout(before, after)).toMatchObject({ ok: true, verdict: 'fixed' });
+        expect(after.widths.every((w) => (w.misaligned || []).length === 0)).toBe(true);
     }, 110_000);
 });

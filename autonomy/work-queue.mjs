@@ -140,9 +140,24 @@ export async function fetchOpenWork({ env = process.env, limit = 30 } = {}) {
     return rankIssues(list);
 }
 
+/** Did a maintainer reset the attempt budget? (same trust rule as attemptsFrom) */
+export function hasReset(comments) {
+    return (comments || []).some((c) => /<!--\s*wf-agent-reset\s*-->/.test(String((c && c.body) || '')) && /^(OWNER|MEMBER|COLLABORATOR)$/.test(String((c && c.author_association) || '')));
+}
+
 /** Attempt count, read from the agent's own trail of comments. */
 export function attemptsFrom(comments) {
-    return (comments || []).filter((c) => /<!--\s*wf-agent-attempt\s*-->/.test(String(c.body || ''))).length;
+    let n = 0;
+    for (const c of comments || []) {
+        const body = String((c && c.body) || '');
+        // A maintainer's `<!-- wf-agent-reset -->` comment starts the count again. Why it exists: #514's three attempts
+        // ran BEFORE the layout lane was hardened (the third was a real try that the reviewer rightly vetoed), so
+        // they say nothing about whether the improved lane can do it. Only OWNER/MEMBER/COLLABORATOR comments count,
+        // so a stranger cannot reopen the budget on a public issue.
+        if (/<!--\s*wf-agent-reset\s*-->/.test(body) && /^(OWNER|MEMBER|COLLABORATOR)$/.test(String((c && c.author_association) || ''))) { n = 0; continue; }
+        if (/<!--\s*wf-agent-attempt\s*-->/.test(body)) n++;
+    }
+    return n;
 }
 
 /**

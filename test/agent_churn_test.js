@@ -33,7 +33,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { attemptsFrom } from '../autonomy/work-queue.mjs';
+import { attemptsFrom, hasReset } from '../autonomy/work-queue.mjs';
 import {
     candidateFiles, oversizedFiles, MAX_AUTHORABLE_BYTES,
 } from '../autonomy/agent-swarm.mjs';
@@ -49,6 +49,18 @@ describe('the attempt count survives a failed run', () => {
     it('ignores comments that are not attempts', () => {
         const mixed = [...attempt(2), { body: 'a human saying something' }, { body: '### ✅ Shipped in v7.69.19' }];
         expect(attemptsFrom(mixed)).toBe(2);
+    });
+
+    it('a maintainer reset starts the count again; a stranger\'s does not', () => {
+        const reset = (assoc) => ({ body: 'earlier tries ran before the lane was hardened\n<!-- wf-agent-reset -->', author_association: assoc });
+        expect(attemptsFrom([...attempt(3), reset('OWNER')])).toBe(0);
+        expect(attemptsFrom([...attempt(3), reset('OWNER'), ...attempt(1)])).toBe(1);
+        expect(attemptsFrom([...attempt(3), reset('COLLABORATOR')])).toBe(0);
+        expect(attemptsFrom([...attempt(3), reset('NONE')])).toBe(3);
+        expect(attemptsFrom([...attempt(3), reset('CONTRIBUTOR')])).toBe(3);
+        expect(hasReset([reset('OWNER')])).toBe(true);
+        expect(hasReset([reset('NONE')])).toBe(false);
+        expect(hasReset(null)).toBe(false);
     });
 
     it('survives junk without throwing', () => {
@@ -68,7 +80,9 @@ describe('the attempt count survives a failed run', () => {
         // the start, and nothing in production referenced either. That is the
         // defect this whole file is about, so assert the wiring exists.
         const src = fs.readFileSync(path.join(ROOT, 'autonomous-fix-agent.js'), 'utf8');
-        expect(src).toMatch(/Q\.attemptsFrom\(await Q\.issueComments\(number\)\)/);
+        expect(src).toMatch(/Q\.attemptsFrom\(trail\)/);
+        expect(src).toMatch(/Q\.issueComments\(number\)/);
+        expect(src).toMatch(/Q\.hasReset\(trail\)/);
         expect(src).toMatch(/reconcileAttempts\(number, readState\(number\)\)/);
     });
 });

@@ -48,12 +48,16 @@ export const ALLOWED_PROPERTIES = new Set([
     'width', 'min-width', 'max-width', 'height', 'min-height', 'max-height', 'box-sizing',
     'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
     'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
-    'overflow', 'overflow-x', 'overflow-y', 'text-overflow', 'white-space', 'word-break', 'overflow-wrap', 'hyphens',
+    'overflow', 'overflow-x', 'overflow-y', 'white-space', 'word-break', 'overflow-wrap', 'hyphens',
     'text-align', 'vertical-align', 'line-height', 'font-size',
     'table-layout', 'border-collapse', 'border-spacing',
     'box-shadow', 'background', 'background-color',
     '-webkit-overflow-scrolling', 'overscroll-behavior-x',
 ]);
+
+/** The last compound of a selector is a table row, cell or heading: it must stay a table part. */
+const TABLE_PART = /^(tr|td|th|thead|tbody|tfoot)(?![\w-])/i;
+const TABLE_SAFE = new Set(['padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'position', 'min-width', 'max-width', 'width', 'white-space', 'word-break', 'overflow-wrap', 'hyphens', 'text-align', 'vertical-align', 'line-height', 'font-size', 'box-sizing', 'left', 'right', 'top', 'bottom', 'z-index', 'box-shadow', 'background', 'background-color']);
 
 const SOMETHING_THAT_HIDES = [
     ['display', /^none\b/i], ['visibility', /^(hidden|collapse)\b/i], ['opacity', /^0(\.0+)?$/],
@@ -149,6 +153,7 @@ export function validateCss(css, { scope } = {}) {
             if (scope && !s.includes(scope)) problems.push(`selector "${s.slice(0, 60)}" does not name ${scope}`);
             if (/[{};]/.test(s)) problems.push('a selector contains a brace or semicolon');
         }
+        const tableParts = sels.some((x) => TABLE_PART.test(x.replace(/\[[^\]]*\]|\([^)]*\)/g, '').split(/[\s>+~]+/).pop() || ''));
         for (const d of r.body.split(';').map((x) => x.trim()).filter(Boolean)) {
             declarations++;
             const k = d.indexOf(':');
@@ -157,6 +162,9 @@ export function validateCss(css, { scope } = {}) {
             const value = d.slice(k + 1).replace(/!important\s*$/i, '').trim();
             if (!ALLOWED_PROPERTIES.has(prop)) { problems.push(`property "${prop}" is not a layout property the lane may set`); continue; }
             if (!value) { problems.push(`"${prop}" has no value`); continue; }
+            if (/^overflow(-x|-y)?$/.test(prop) && /\b(hidden|clip)\b/i.test(value)) problems.push(`"${prop}: ${value}" would cut content off; use auto or scroll so the person can still reach it`);
+            if (tableParts && !TABLE_SAFE.has(prop)) problems.push(`"${prop}" may not be set on a table row, cell or heading: changing how table parts are laid out breaks the columns (a figure ends up under the wrong title)`);
+            if (tableParts && prop === 'position' && !/^(static|relative)\b/i.test(value)) problems.push('a table cell may only be position: static or relative (use static to un-stick a column)');
             for (const [p, re] of SOMETHING_THAT_HIDES) {
                 if (prop === p && re.test(value)) problems.push(`"${prop}: ${value}" would hide content instead of laying it out`);
             }
@@ -248,11 +256,13 @@ export function layoutPrompt({ issueText, screen, scope, measured, ctx, sample, 
         '',
         'WRITE NEW CSS that will be appended after wf-ui.css. Hard rules (anything else is rejected by a program, not a person):',
         `  1. EVERY selector must contain ${scope}. A rule that does not is rejected.`,
-        '  2. Only layout properties: display, position, top/right/bottom/left, flex*, grid*, gap, align*/justify*, width/min/max, margin, padding, overflow*, text-overflow, white-space, word-break, overflow-wrap, line-height, font-size, table-layout, box-shadow, background, background-color. No colours of text, no content, no url(), no @import, no quotes.',
+        '  2. Only layout properties: display, position, top/right/bottom/left, flex*, grid*, gap, align*/justify*, width/min/max, margin, padding, overflow (auto or scroll only, never hidden/clip), white-space, word-break, overflow-wrap, line-height, font-size, table-layout, box-shadow, background, background-color. No text-overflow. No colours of text, no content, no url(), no @import, no quotes.',
         '  3. Never hide anything (no display:none, no zero sizes). Every column, button and number must stay reachable. The edit/delete buttons must stay.',
         '  4. Works in dark and light themes: use var(--wf-card) style variables for backgrounds, never fixed colours.',
         '  5. At most 40 declarations, 3000 characters. @media (max-width: ...) is allowed, one level only.',
-        '  6. The smallest change that makes the measured problems disappear at EVERY width listed, on phones first. A sticky or absolutely positioned cell that sits on top of other cells is the usual cause: give the content room, or let the cell scroll with the row.',
+        '  6. THIS IS A FINANCE SCREEN: never truncate or hide a number, date or amount (no ellipsis, no overflow:hidden), and never set display/flex/grid/float on a table, tr, td or th (that breaks the columns and puts a figure under the wrong heading; a reviewer rejects it and the program measures it). On a table-part you may only change padding, min-width/max-width, white-space, font-size, line-height, text-align and position (static/relative).',
+        '  7. THE SAFE TOOLKIT, in order: (a) give the table\'s wrapper overflow-x:auto so it scrolls sideways instead of overlapping (the wrapper must be named under ' + scope + '); (b) make a sticky/absolute cell position:static at narrow widths so it stops sitting on top of its neighbours; (c) give cells a sensible min-width and smaller padding; (d) at narrow widths shrink font-size a little. Use @media (max-width: 768px) so desktop is untouched.',
+        '  8. The smallest change that makes the measured problems disappear at EVERY width listed, on phones first. A sticky or absolutely positioned cell that sits on top of other cells is the usual cause: give the content room, or let the cell scroll with the row.',
         '',
         'Reply with ONLY the CSS, no fences, no commentary. If CSS alone cannot fix it, reply exactly: CANNOT_FIX_SAFELY <one sentence>.',
     ].filter((x) => x !== '').join('\n');
@@ -263,7 +273,7 @@ export function judgeLayout(before, after) {
     if (!before || !before.ok) return { ok: false, verdict: 'unmeasured', reason: 'the screen could not be measured before the change' + (before && before.reason ? ` (${before.reason})` : '') };
     if (!after || !after.ok) return { ok: false, verdict: 'unmeasured', reason: 'the screen could not be measured after the change' + (after && after.reason ? ` (${after.reason})` : '') };
     if (before.problems === 0) return { ok: false, verdict: 'nothing-to-fix', reason: 'no overlap, overflow or cut-off text was found before the change, so there is nothing to prove against' };
-    const per = (r) => new Map(r.widths.map((w) => [w.width, (w.overflowPx > 2 ? 1 : 0) + w.overlaps.length + w.clipped.length]));
+    const per = (r) => new Map(r.widths.map((w) => [w.width, (w.overflowPx > 2 ? 1 : 0) + w.overlaps.length + w.clipped.length + (w.misaligned || []).length]));
     const b = per(before), a = per(after);
     const worse = [...b].filter(([w, n]) => (a.get(w) ?? Infinity) > n).map(([w]) => w);
     if (worse.length) return { ok: false, verdict: 'worse', reason: `it made ${worse.join(', ')}px wide worse` };
