@@ -122,4 +122,37 @@ export function proveByTotals({ opening, closing, credits, debits, candidates, m
     return { fit: 'unique', model, credit: list.filter((_, i) => mask & (1 << i)).map((x) => x.id), debit: list.filter((_, i) => !(mask & (1 << i))).map((x) => x.id) };
 }
 
-export default { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals };
+/* HOW MANY WAYS A SET OF AMOUNTS (cents) ADDS UP TO A TARGET, counted up to `cap` (meet in the middle: two halves of at most 15 amounts, so 30 amounts cost about 65,000 sums). */
+function subsetWays(amounts, target, cap = 2) {
+    const half = amounts.length >> 1, sums = (xs) => { let out = [0]; for (const x of xs) out = out.concat(out.map((s) => s + x)); return out; };
+    const right = new Map();
+    for (const s of sums(amounts.slice(half))) right.set(s, (right.get(s) || 0) + 1);
+    let ways = 0;
+    for (const s of sums(amounts.slice(0, half))) { ways += right.get(target - s) || 0; if (ways >= cap) return cap; }
+    return ways;
+}
+
+/**
+ * WHY A CARD STATEMENT'S BALANCES DO NOT ADD UP, AS FIXED WORDS AND SMALL COUNTS ONLY (never an amount, a line or a name). `proveByTotals` says a statement did not fit and in one word why; this says how far off it is, which is what tells
+ * a reader that missed a line apart from a printed figure that was misread, or a credit hiding among the lines already filed. `half` is half the balances' miss (the sum of the lines that are really credits, if the card model holds):
+ *  - `miss`: 'unread' (a printed figure is missing), 'negative' (the miss runs the wrong way), 'odd' (an odd cent), 'zero' or 'even';
+ *  - `vsWaiting` / `vsAll`: half against the waiting money-word lines alone, and against every line the statement is known to hold (waiting, invalid, filed purchases) — 'le1' (it could be inside them), 'le1.5', 'le2', 'le4' or 'gt4' times their total;
+ *  - `ways` / `waysAll`: in how many ways (0, 1, or 2 for "two or more") the waiting + invalid lines, and then ALL lines, can add up to `half`. 0 for all lines means the model itself is wrong (a figure misread, a line never read).
+ * @returns {{miss:string, vsWaiting?:string, vsAll?:string, ways?:number, waysAll?:number|'many'}}
+ */
+export function explainMiss({ opening, closing, credits, debits, candidates = [], extras = [], filed = [] }) {
+    const money = (v) => (v === null || v === undefined || v === '' || typeof v === 'boolean' ? NaN : Math.round(Number(v) * 100));
+    const [o, c, cr, db] = [opening, closing, credits, debits].map(money);
+    if (![o, c, cr, db].every(Number.isFinite)) return { miss: 'unread' };
+    const miss = (o - cr + db) - c;
+    if (miss < 0) return { miss: 'negative' };
+    if (miss % 2) return { miss: 'odd' };
+    if (miss === 0) return { miss: 'zero' };
+    const half = miss / 2, cents = (list) => (Array.isArray(list) ? list : []).map((x) => money(x && x.amount)).filter((v) => Number.isFinite(v) && v > 0);
+    const waiting = cents(candidates), others = cents(extras), known = cents(filed), sum = (xs) => xs.reduce((a, b) => a + b, 0);
+    const bucket = (base) => { const r = half / (base || 1); return base <= 0 ? 'gt4' : r <= 1 ? 'le1' : r <= 1.5 ? 'le1.5' : r <= 2 ? 'le2' : r <= 4 ? 'le4' : 'gt4'; };
+    const near = waiting.concat(others), every = near.concat(known);
+    return { miss: 'even', vsWaiting: bucket(sum(waiting)), vsAll: bucket(sum(every)), ways: near.length <= 30 ? subsetWays(near, half) : 'many', waysAll: every.length <= 30 ? subsetWays(every, half) : 'many' };
+}
+
+export default { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss };

@@ -365,3 +365,84 @@ describe('the sweep runs even when the front of the run had no time left', () =>
         expect(fs.data.get('users/u').cconetime).toHaveLength(30);
     });
 });
+
+// The owner's statement (2026-11-04 17:24 UTC): 8 "payment" lines + 1 line the reader could not file whole waited, and the arithmetic over the 8 lines alone found no fit (`none`, reason `range`). A line without a real date or
+// words is still ADDED UP by the reader as an unmarked line (a debit), so if it is really money coming back it is part of the balances' miss and was not among the candidates. The second rung adds it; the third thing the sweep
+// does is say, in fixed words and counts only, how far off the sums are, so the next sync tells why.
+import { explainMiss } from '../statement-direction.mjs';
+
+describe('explainMiss: how far off the balances are, in fixed words and counts', () => {
+    const ids = (list) => list.map(([id, amount]) => ({ id, amount }));
+    const base = { opening: 1000, credits: 0, debits: 425.75, candidates: ids([['a', 100], ['b', 250.5], ['c', 75.25]]) };
+    it('says the miss fits inside the waiting lines, in one way', () => {
+        expect(explainMiss({ ...base, closing: 924.75 })).toEqual({ miss: 'even', vsWaiting: 'le1', vsAll: 'le1', ways: 1, waysAll: 1 });
+    });
+    it('names the figures that make it unusable, and the wrong-way and odd-cent misses', () => {
+        expect(explainMiss({ ...base, closing: undefined })).toEqual({ miss: 'unread' });
+        expect(explainMiss({ ...base, closing: 1500 })).toEqual({ miss: 'negative' });
+        expect(explainMiss({ ...base, closing: 1234.56 })).toEqual({ miss: 'odd' });
+        expect(explainMiss({ ...base, closing: 1425.75 })).toEqual({ miss: 'zero' });
+    });
+    it('tells a line outside the waiting ones from a model that cannot hold: 0 ways over every line means the figures are wrong', () => {
+        // half the miss is 400.00; the waiting lines add up to 425.75 but make no 400.00; with a 150.00 line already filed and a 250.00 invalid line, 150 + 250 does
+        const out = explainMiss({ opening: 2000, credits: 0, debits: 1000, closing: 2000 + 1000 - 800, candidates: ids([['a', 100], ['b', 325.75]]), extras: ids([['x', 250]]), filed: ids([['f', 150]]) });
+        expect(out).toMatchObject({ miss: 'even', vsWaiting: 'le1', ways: 0, waysAll: 1 });
+        expect(explainMiss({ opening: 2000, credits: 0, debits: 1000, closing: 1000, candidates: ids([['a', 100]]), filed: ids([['f', 90]]) })).toMatchObject({ vsWaiting: 'gt4', vsAll: 'gt4', ways: 0, waysAll: 0 });
+    });
+    it('never carries an amount or a name', () => {
+        expect(JSON.stringify(explainMiss({ ...base, closing: 924.75 }))).not.toMatch(/250|924|425|1000|100/);
+    });
+});
+
+describe('a line the reader could not file whole is part of the statement\'s proof', () => {
+    const sourcePath = 'wf-mail/owner/items/card2.pdf';
+    const line = (index, narration, amount, extra = {}, reason = 'unproven-direction') => { const id = sourceOccurrenceId(sourcePath, index); return [[`users/u/statementReview/${id}`, { uid: 'u', sourcePath, index, status: 'pending', reason, bank: 'HNB Credit Card',
+        row: { date: '2026-09-' + String(10 + index), narration, description: narration, amount, direction: 'debit', directionSource: 'assumed', needsReview: true, valid: reason === 'unproven-direction', ...extra } }], [`users/u/statementLedger/${id}`, { uid: 'u', sourcePath, index, status: 'review' }]]; };
+    const lines = [['KEELLS SUPER COLOMBO', 100], ['PAYMENT THANK YOU', 101], ['ONLINE PAYMENT DIALOG', 102], ['UBER RIDE', 50]];
+    const world = (invalid, proof) => createFirestore(Object.fromEntries([
+        ['users/u', { settings: { cardRegistry: { '0048': { type: 'credit_card', bank: 'HNB' } } }, cconetime: [], ccPayments: [] }],
+        [sourcePath, { uid: 'u', bank: 'HNB Credit Card', last4: '0048', statementType: 'credit-card', cursor: 5, totalRows: 5, status: 'needs_review', proof }],
+        ...lines.flatMap(([narration, amount], index) => line(index, narration, amount)), ...(invalid ? line(4, invalid.narration, invalid.amount, invalid.row || {}, 'invalid-transaction') : [])]));
+    const run = (fs) => proveCardReviews({ db: fs.db, uid: 'u', limit: 10 });
+    const state = (fs, index) => fs.data.get(`users/u/statementReview/${sourceOccurrenceId(sourcePath, index)}`).status;
+    // owed 1000.00; read as debits: 100 + 101 + 102 + 50 + 77 = 430.00; the 101.00 payment and the 77.00 line are really credits, so it closed at 1000 + 430 - 2 x 178 = 1074.00
+    const proof = { opening: 1000, closing: 1074, credits: 0, debits: 430 };
+
+    it('proves the waiting lines AND the unreadable one when only together do the balances add up, and files all three', async () => {
+        const fs = world({ narration: '', amount: 77 }, proof), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 1, none: 1, noneBy: { subset: 1 }, rung2: { tried: 1, unique: 1 }, filed: 3, refused: 0 });
+        expect([0, 1, 2, 3, 4].map(i => state(fs, i))).toEqual(['resolved', 'resolved', 'resolved', 'resolved', 'resolved']);
+        const user = fs.data.get('users/u');
+        expect(user.ccPayments.map(r => [r.amount, r.directionProof, r.desc]).sort((a, b) => a[0] - b[0])).toEqual([[77, 'statement', 'Statement line (no description printed)'], [101, 'statement', 'PAYMENT THANK YOU']]);
+        expect(user.cconetime.map(r => r.amount).sort((a, b) => a - b)).toEqual([50, 100, 102]);
+        expect(out).toMatchObject({ left: 0 });
+        expect(fs.data.get(sourcePath).totalsProof).toMatchObject({ v: 1, lines: 3 });
+    });
+    it('files the unreadable line as a purchase when the waiting lines alone already add up (it is then a debit like every other line the reader added up)', async () => {
+        // only the 102.00 line is a credit: 1000 + 430 - 2 x 102 = 1226.00; the 77.00 line is a plain debit
+        const fs = world({ narration: '', amount: 77 }, { ...proof, closing: 1226 }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 1, unique: 1, filed: 3 });
+        expect(out.why.totals.rung2).toBeUndefined();
+        expect(fs.data.get('users/u').ccPayments.map(r => r.amount)).toEqual([102]);
+        expect(fs.data.get('users/u').cconetime.map(r => r.amount).sort((a, b) => a - b)).toEqual([50, 77, 100, 101]);
+        expect(state(fs, 4)).toBe('resolved');
+    });
+    it('leaves the line pending, and the rest of the proof filed, when its date is not a real one', async () => {
+        const fs = world({ narration: '', amount: 77, row: { date: '2026-13-45' } }, proof), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ rung2: { unique: 1 }, filed: 2, refused: 1 });
+        expect([1, 2, 4].map(i => state(fs, i))).toEqual(['resolved', 'resolved', 'pending']);
+        expect(fs.data.get('users/u').ccPayments.map(r => r.amount)).toEqual([101]);
+    });
+    it('says how far off the sums are, with no amount and no name in the log, when even the second rung finds no fit', async () => {
+        const fs = world({ narration: '', amount: 77 }, { ...proof, closing: 1000 + 430 - 2 * 900 }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 1, none: 1, noneBy: { range: 1 }, rung2: { tried: 1, none: 1 }, filed: 0 });
+        expect(out.why.totals.diag).toEqual([{ miss: 'even', vsWaiting: 'gt4', vsAll: 'gt4', ways: 0, waysAll: 0, invalid: 1, filed: 2 }].map(d => ({ ...d, vsWaiting: expect.any(String), vsAll: expect.any(String) })));
+        expect(JSON.stringify(out.why)).not.toMatch(/THANK|DIALOG|KEELLS|UBER|1074|1000|900|77/);
+    });
+    it('does not try a second rung when no unreadable line is waiting, but still says how far off it is', async () => {
+        const fs = world(null, { opening: 1000, closing: 1000 + 353 - 2 * 400, credits: 0, debits: 353 }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ noneBy: { range: 1 }, filed: 0 });
+        expect(out.why.totals.rung2).toBeUndefined();
+        expect(out.why.totals.diag).toEqual([expect.objectContaining({ miss: 'even', invalid: 0, filed: 2, ways: 0, waysAll: 0 })]);
+    });
+});

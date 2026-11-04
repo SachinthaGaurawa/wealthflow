@@ -13,7 +13,7 @@ import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless, ledgerShaped,
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
-import { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals } from './statement-direction.mjs';
+import { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT, intentVerdict } from './wealthflow-statement-identity.js';
@@ -1480,17 +1480,38 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
         if (whole.length !== items.length || whole.some((id, at) => id !== items.map(entry => entry.doc.id).sort()[at])) { totals.partial += 1; continue; }
         const tails = new Set(items.map(entry => String(entry.review.row.card_last4 || '')));
         totals.tried += 1;
-        const fit = tails.size > 1 ? { fit: 'unusable' } : proveByTotals({ opening: printed.opening, closing: printed.closing, credits: printed.credits, debits: printed.debits, models: ['card'],
-            candidates: items.map(entry => ({ id: entry.doc.id, amount: entry.review.row.amount })) });
+        const figures = { opening: printed.opening, closing: printed.closing, credits: printed.credits, debits: printed.debits }, asCandidates = (list) => list.map(entry => ({ id: entry.doc.id, amount: entry.review.row.amount }));
+        /* THE LINES THE READER COULD NOT FILE WHOLE (no real date, no words) were still ADDED UP, as unmarked lines: debits. They are part of the sums the arithmetic is about, so they are gathered with the waiting lines. */
+        const extras = (ownDocs.get(sourcePath) || []).filter(entry => { const r = entry.data(); return r.uid === uid && r.status === 'pending' && r.reason === 'invalid-transaction' && Number.isSafeInteger(r.index) && r.index >= 0 && r.row && r.row.directionSource === 'assumed' && r.row.direction === 'debit' && Number(r.row.amount) > 0; }).map(entry => ({ doc: entry, review: entry.data() }));
+        let fit = tails.size > 1 ? { fit: 'unusable' } : proveByTotals({ ...figures, models: ['card'], candidates: asCandidates(items) }), lines = items;
         totals[fit.fit] += 1;
         if (fit.reason) { totals.noneBy = totals.noneBy || {}; totals.noneBy[fit.reason] = (totals.noneBy[fit.reason] || 0) + 1; }
+        /* the waiting lines alone make the balances add up: everything else the reader added up as a debit is a debit too, the unreadable lines included */
+        if (fit.fit === 'unique') lines = items.concat(extras);
+        if (fit.fit === 'none' && (fit.reason === 'range' || fit.reason === 'subset')) {
+            /* THE SECOND RUNG: the waiting lines alone cannot make the balances add up. If an unreadable line is really money coming back it is part of the miss and was not among the candidates. The same arithmetic is run with those lines as
+             * candidates too; it must still fit to the cent in exactly one way. */
+            if (extras.length && items.length + extras.length <= 16) {
+                const second = proveByTotals({ ...figures, models: ['card'], candidates: asCandidates(items.concat(extras)) });
+                totals.rung2 = totals.rung2 || { tried: 0, unique: 0, none: 0, ambiguous: 0, unusable: 0 };
+                totals.rung2.tried += 1; totals.rung2[second.fit] += 1;
+                if (second.fit === 'unique') { fit = second; lines = items.concat(extras); }
+            }
+            if (fit.fit !== 'unique') {
+                /* WHY IT STILL DID NOT FIT, in fixed words and counts: how far the miss is from the waiting lines and from every line the statement holds (the purchases already filed from it included), and in how many ways they can add up to it */
+                const user = (await userRef.get()).data() || {}, filed = ['cconetime', 'ccinstall'].flatMap(key => Array.isArray(user[key]) ? user[key] : []).filter(record => record && record.statementKey === sourcePath && record.direction === 'debit');
+                totals.diag = (totals.diag || []).slice(0, 2).concat([{ ...explainMiss({ ...figures, candidates: asCandidates(items), extras: extras.map(entry => ({ amount: entry.review.row.amount })), filed }), invalid: extras.length, filed: filed.length }]);
+            }
+        }
         if (fit.fit !== 'unique') continue;
         /* the one attempt is written BEFORE anything is filed: a run that stops half way leaves the rest for the owner instead of being re-added against totals it no longer matches */
-        try { await db.doc(sourcePath).set({ totalsProof: { v: 1, at: Date.now(), lines: items.length } }, { merge: true }); } catch (_) { totals.refused += items.length; continue; }
+        try { await db.doc(sourcePath).set({ totalsProof: { v: 1, at: Date.now(), lines: lines.length } }, { merge: true }); } catch (_) { totals.refused += lines.length; continue; }
         const credit = new Set(fit.credit);
-        for (const { doc, review } of items) {
+        for (const { doc, review } of lines) {
             const direction = credit.has(doc.id) ? 'credit' : 'debit';
-            const row = { ...review.row, direction, directionSource: 'statement', needsReview: false, valid: true };
+            /* a line the statement printed without words is filed under a plain label (the statement proves its direction and amount; its date must still be a real one, or the books refuse it and it stays for the owner) */
+            const description = String(review.row.description || review.row.narration || '').trim() || 'Statement line (no description printed)';
+            const row = { ...review.row, description, direction, directionSource: 'statement', needsReview: false, valid: true };
             const ctx = contextOf(review, sources.get(sourcePath));
             const decision = deterministicDecision(row, ctx);
             const own = decision && decision.verified === true ? decision : null;
@@ -1499,7 +1520,7 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
                 ? (own ? (own.module === 'ccPayments' ? own : null) : fallbackDecision(row, ctx))
                 : (own ? (['cconetime', 'ccinstall'].includes(own.module) ? own : own.module === 'ccPayments' ? fallbackDecision(row, ctx) : null) : fallbackDecision(row, ctx));
             if (!filing || filing.verified !== true || (direction === 'credit' ? filing.module !== 'ccPayments' : !['cconetime', 'ccinstall'].includes(filing.module))) { totals.rules += 1; continue; }
-            try { await resolveReview({ db, uid, id: doc.id, decision: { ...filing, autoDecided: 'statement-totals' }, row: { direction }, directionSource: 'statement' }); proved += 1; left -= 1; totals.filed += 1; }
+            try { await resolveReview({ db, uid, id: doc.id, decision: { ...filing, autoDecided: 'statement-totals' }, row: { direction, description }, directionSource: 'statement' }); proved += 1; if (!extras.some(extra => extra.doc.id === doc.id)) left -= 1; totals.filed += 1; }
             catch (error) {
                 /* an entry for this very line (same bank, date, amount, direction) is ALREADY in the books: the statement is proven right and the money is counted once, so the waiting line is closed as the copy it is, the way the owner would
                  * (dismissed, with its row kept on the review). Any other refusal (a lock, a schema) leaves the line for the owner, untouched. */
