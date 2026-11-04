@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.49 — 2026-11-04
+
+**What changed for you**
+
+- Any-size feedback screenshots reach the AI as readable parts (#520)
+
 ## v7.69.48 — 2026-11-04
 
 **What changed for you**
