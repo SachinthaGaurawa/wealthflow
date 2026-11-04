@@ -291,6 +291,15 @@ Also added in the same change: the update flow records whether the restore point
 before an update, instead of assuming it did, and the fix agent sends a change back to its author up to twice when
 before/after measurement shows no visible effect.
 
+**Why the fix agent had not opened a pull request yet, found on issue #507 (2026-11-03).** Two real attempts failed for one reason you
+can reproduce: the report named `_renderSettingsCard` in code quotes, but the excerpt shown to the author was chosen by how many of the
+report's words each window contains ("version" is on hundreds of lines), so the function that writes the text to change was not in it.
+Attempt 1 invented a helper nothing calls; attempt 2 correctly answered CANNOT_FIX_SAFELY. `excerptFor` now takes `pin`: a function the
+report names is shown whole, first, inside its own share of the budget (`symbolsFrom`, `definitionRange` in `autonomy/swarm-patch.mjs`).
+A second cause is also known and not changed: `roleFor` in `autonomy/work-queue.mjs` reads words like "fails" before the `enhancement`
+label, so a feature request that says "when that read fails" is handled as a bug, and the bug role skips the revision loop above.
+Until an attempt ends in an opened pull request this is a repaired step, not a proven chain.
+
 **Owner-bound, still open** (nothing here can be done from the repository): `VERCEL_TOKEN`, `VERCEL_PROJECT_ID` and `HEALTH_URL` (rollback),
 `CANARY_ROLLBACK=true` (opt in to automatic rollback), and a real update tried once on the owner's phone.
 

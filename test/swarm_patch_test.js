@@ -36,7 +36,7 @@ vi.mock('../autonomy/llm-router.mjs', async () => {
 });
 
 const {
-    keywordsFrom, rankFiles, excerptFor, parsePatchBlocks, applyPatchBlocks,
+    keywordsFrom, symbolsFrom, definitionRange, rankFiles, excerptFor, parsePatchBlocks, applyPatchBlocks,
     changeExcerpt, changeView, selectPromptRanked, patchPrompt,
 } = await import('../autonomy/swarm-patch.mjs');
 const { runSwarm, MAX_AUTHORABLE_BYTES, reviewPrompt, reviewSeesWholeChange, REVIEW_DIFF_MAX } = await import('../autonomy/agent-swarm.mjs');
@@ -144,6 +144,81 @@ describe('excerptFor — windows around the relevant code, capped', () => {
     it('annotates windows with real line numbers', () => {
         const e = excerptFor(big, ['softwareupdate']);
         expect(e.text).toMatch(/\/\/ ----- lines \d+-\d+ -----/);
+    });
+});
+
+// ── a function the report NAMES is always shown whole (issue #507) ───────────────────────────────────────────────────────────────
+// Attempt 1/3 and 2/3 on #507 failed because `_renderSettingsCard`, named in code quotes in the report, was not in the excerpt: the
+// ranking prefers windows dense in the report's words ("version" is on hundreds of lines). Verified on the real file: the function
+// starts at line 491 and no window covered it.
+describe('symbolsFrom / definitionRange / excerptFor({pin}) — the named function is never left out', () => {
+    // 300 keyword-dense clusters (the report's own words on every line) with filler between them, and the named function in the
+    // middle with NONE of those words inside its body, so only pinning can bring it in.
+    const REPORT = 'In `paintRow` show the build id next to the version in Settings > Software update.';
+    const dense = (i) => Array.from({ length: 8 }, (_, k) => `  // software update settings version build version ${i}.${k}`);
+    const filler = (i) => Array.from({ length: 40 }, (_, k) => `  var pad_${i}_${k} = ${k};`);
+    const parts = [];
+    for (let i = 0; i < 300; i++) {
+        parts.push(...dense(i), ...filler(i));
+        if (i === 150) parts.push(
+            '  function paintRow(el) {',
+            '      const row = el.firstChild; // ROW_BODY_MARK',
+            '      if (row) { row.textContent = "x"; }',
+            '      return row;',
+            '  }',
+        );
+    }
+    const SRC = parts.join('\n');
+
+    it('symbolsFrom takes code-quoted names and camelCase / _camelCase tokens, in their original case', () => {
+        expect(symbolsFrom(REPORT)).toContain('paintRow');
+        expect(symbolsFrom('the row in _renderSettingsCard and `sha` too')).toEqual(expect.arrayContaining(['_renderSettingsCard', 'sha']));
+        expect(symbolsFrom('plain words only')).toEqual([]);
+        expect(symbolsFrom('')).toEqual([]);
+        expect(symbolsFrom(null)).toEqual([]);
+    });
+
+    it('definitionRange finds declarations, arrow consts and async functions, and stops at the closing brace', () => {
+        const lines = ['// c', 'function a() {', '  if (x) { y(); }', '  return 1;', '}', 'const b = (q) => {', '  return q;', '};', 'async function c() { await d(); }', 'var z = 1;'];
+        expect(definitionRange(lines, 'a')).toEqual([0, 4]);      // two lines of lead-in, whole body
+        expect(definitionRange(lines, 'b')).toEqual([3, 7]);
+        expect(definitionRange(lines, 'c')).toEqual([6, 8]);
+        expect(definitionRange(lines, 'nope')).toBeNull();
+        expect(definitionRange(lines, 'a b')).toBeNull();         // not an identifier
+        expect(definitionRange(lines, '')).toBeNull();
+        expect(definitionRange(lines, undefined)).toBeNull();
+    });
+
+    it('a call or a property named like the function is not mistaken for its definition', () => {
+        const lines = ['paintRow(el);', 'obj.function paintRow = 1;', 'x = paintRowLater(el);', 'function paintRowLater() {', '}'];
+        expect(definitionRange(lines, 'paintRow')).toBeNull();
+    });
+
+    it('a huge function is capped, not dumped whole', () => {
+        const big = ['function huge() {', ...Array.from({ length: 500 }, (_, i) => `  call(${i});`), '}'];
+        const r = definitionRange(big, 'huge');
+        expect(r[1] - r[0]).toBeLessThanOrEqual(92);
+    });
+
+    it('WITHOUT pin the named function loses to the dense windows (this is the bug), WITH pin it is shown whole', () => {
+        const kws = keywordsFrom(REPORT);
+        expect(excerptFor(SRC, kws).text).not.toContain('ROW_BODY_MARK');
+        const e = excerptFor(SRC, kws, { pin: symbolsFrom(REPORT) });
+        expect(e.text).toContain('function paintRow(el) {');
+        expect(e.text).toContain('ROW_BODY_MARK');
+        expect(e.text).toContain('return row;');
+        expect(e.text.length).toBeLessThanOrEqual(18_000 + 400);   // the budget still holds
+    });
+
+    it('a name that is not defined in the file changes nothing', () => {
+        const kws = keywordsFrom(REPORT);
+        expect(excerptFor(SRC, kws, { pin: ['doesNotExist'] }).text).toBe(excerptFor(SRC, kws).text);
+    });
+
+    it('pins that do not fit their share of the budget are dropped, so they cannot starve the ranked windows', () => {
+        const kws = keywordsFrom(REPORT);
+        const e = excerptFor(SRC, kws, { pin: symbolsFrom(REPORT), pinChars: 10 });
+        expect(e.text).not.toContain('ROW_BODY_MARK');
     });
 });
 
@@ -326,6 +401,28 @@ describe('runSwarm — large-file patch mode, end to end', () => {
         // the independent reviewer saw the change itself
         expect(script.calls[2].prompt).toMatch(/unified diff/);
         expect(script.calls[2].prompt).toContain('(build ');
+    });
+
+    it('the function the report names reaches the author even when other windows are denser in the report\'s words (#507)', async () => {
+        const dense = (i) => Array.from({ length: 8 }, (_, k) => `    // software update settings version build version ${i}.${k}`);
+        const pad = (i) => Array.from({ length: 40 }, (_, k) => `    var pad_${i}_${k} = ${k};`);
+        const parts = ['(function(){'];
+        for (let i = 0; i < 60; i++) {                      // ~100 KB, like the real module, under the patchable ceiling
+            parts.push(...dense(i), ...pad(i));
+            if (i === 30) parts.push('    function paintRow(el) {', '        el.textContent = "row"; // NAMED_FN_BODY', '    }');
+        }
+        parts.push('})();', '');
+        fs.writeFileSync(path.join(dir, 'wealthflow-update-system.js'), parts.join('\n'));
+        fs.rmSync(path.join(dir, 'version.js'));   // one candidate: the owner of the screen
+        const report = 'Show the build id next to the version in Settings > Software update. The text is written by `paintRow`.';
+        const patch = '<<<<<<< SEARCH\n        el.textContent = "row"; // NAMED_FN_BODY\n=======\n        el.textContent = "row b"; // NAMED_FN_BODY\n>>>>>>> REPLACE';
+        script.replies = ['wealthflow-update-system.js', patch, '{"verdict":"PASS","severity":"none","findings":[],"reason":"display only"}'];
+        const r = await runSwarm({ issue: { title: 'Show build id', body: report, number: 507, kind: 'feature' }, repoDir: dir, env: { CI: '' }, writeTest: false, log: () => {} });
+        expect(r.ok, JSON.stringify(r)).toBe(true);
+        const authorCall = script.calls.find((c) => /<<<<<<< SEARCH/.test(c.prompt));
+        expect(authorCall, 'the author was asked for patch blocks').toBeTruthy();
+        expect(authorCall.prompt).toContain('function paintRow(el) {');
+        expect(authorCall.prompt).toContain('NAMED_FN_BODY');
     });
 
     it('a rejected patch gets ONE retry with the reason, then a loud, specific failure', async () => {

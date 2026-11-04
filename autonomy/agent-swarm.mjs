@@ -36,7 +36,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chat, stripFences, extractJson } from './llm-router.mjs';
 import {
-    keywordsFrom, rankFiles, selectPromptRanked, excerptFor, patchPrompt, parsePatchBlocks, applyPatchBlocks, changeExcerpt, changeView,
+    keywordsFrom, symbolsFrom, rankFiles, selectPromptRanked, excerptFor, patchPrompt, parsePatchBlocks, applyPatchBlocks, changeExcerpt, changeView,
 } from './swarm-patch.mjs';
 import { observeModule, describeObservation, observedNoChange, groundFacts, safeEnv } from './proof-probe.mjs';
 
@@ -697,7 +697,7 @@ export async function runSwarm({
                 else out = { code: c, authored: a };
             }
         } else {
-            const ex = excerptFor(src, keywordsFrom(issueText));
+            const ex = excerptFor(src, keywordsFrom(issueText), { pin: symbolsFrom(issueText) });
             const totalLines = src.split('\n').length;
             let feedback = '';
             for (let attempt = 0; attempt < 2 && !out && !why; attempt++) {
@@ -809,7 +809,7 @@ export async function runSwarm({
         const region = changedRegion(before, code);
         const a0 = Math.max(0, region.from - 1 - 40), b0 = Math.min(lines.length, region.to + 40);
         const around = `// ----- lines ${a0 + 1}-${b0} (where your previous change was) -----\n${lines.slice(a0, b0).join('\n')}`;
-        const more = excerptFor(before, ['/api/version', 'fetch(', ...keywordsFrom(issueText).slice(0, 6)], { ctx: 12, maxChars: 6_000 }).text;
+        const more = excerptFor(before, ['/api/version', 'fetch(', ...keywordsFrom(issueText).slice(0, 6)], { ctx: 12, maxChars: 6_000, pin: symbolsFrom(issueText) }).text;
         const r = await chat({
             system: role.system,
             prompt: revisionPrompt(issueText, file, `${around}\n\n${more}`, lines.length, { changeText, observation, facts: groundFacts({ repoDir }) }),

@@ -109,14 +109,54 @@ export function selectPromptRanked(issue, ranked) {
     ].join('\n');
 }
 
+/** Identifiers a report names: code-quoted words and camelCase / _camelCase tokens, original case. Pure. */
+export function symbolsFrom(text) {
+    const raw = String(text || '');
+    const out = new Set();
+    for (const m of raw.matchAll(/`([A-Za-z_$][\w$]{2,60})`/g)) out.add(m[1]);
+    for (const m of raw.matchAll(/(?<![\w$])_?[a-z]+(?:[A-Z][a-z0-9]+)+(?![\w$])/g)) out.add(m[0]);
+    return [...out];
+}
+
+/** Where a named function is defined in `lines`, with its whole body (brace-counted, capped). null when it is not defined here. */
+export function definitionRange(lines, name, { maxLines = 90, maxChars = 7_000 } = {}) {
+    if (!/^[A-Za-z_$][\w$]*$/.test(String(name || ''))) return null;
+    const n = name.replace(/\$/g, '\\$');
+    const re = new RegExp(`(?:^|[^\\w$.])(?:async\\s+)?function\\s*\\*?\\s*${n}\\s*\\(|(?:^|[^\\w$.])(?:const|let|var)\\s+${n}\\s*=\\s*(?:async\\s*)?(?:function\\b|\\([^)]*\\)\\s*=>|[\\w$]+\\s*=>)`);
+    const start = lines.findIndex((l) => re.test(l));
+    if (start < 0) return null;
+    let depth = 0, seen = false, end = start, chars = 0;
+    for (let i = start; i < lines.length && i < start + maxLines; i++) {
+        end = i; chars += lines[i].length + 1;
+        for (const ch of lines[i]) { if (ch === '{') { depth++; seen = true; } else if (ch === '}') depth--; }
+        if ((seen && depth <= 0) || chars >= maxChars) break;
+    }
+    return [Math.max(0, start - 2), end];
+}
+
 /**
  * Build the windows of a large file the model needs to see.
  * Lines matching the issue's keywords are expanded by `ctx` lines either side,
  * overlapping windows are merged, and the total is capped at `maxChars`.
+ *
+ * WHY `pin`: for issue #507 the report named `_renderSettingsCard` in code quotes, and the author was still never shown it —
+ * the ranking below scores lines by how many of the report's WORDS they contain, and "version" is on hundreds of lines, so the
+ * function that builds the text to change lost to unrelated windows. The author then either invented a helper nothing calls
+ * (attempt 1) or, rightly, refused (attempt 2: "the excerpts do not include the body of _renderSettingsCard").
+ * A function the report names is now always shown whole, first, inside its own share of the budget.
  */
-export function excerptFor(content, keywords, { ctx = 25, maxChars = 18_000 } = {}) {
+export function excerptFor(content, keywords, { ctx = 25, maxChars = 18_000, pin = [], pinChars = 9_000 } = {}) {
     const lines = String(content).split('\n');
     const kws = (keywords || []).map((k) => k.toLowerCase());
+    const pinned = [];
+    let pinnedChars = 0;
+    for (const name of pin || []) {
+        const r = definitionRange(lines, name);
+        if (!r) continue;
+        const size = lines.slice(r[0], r[1] + 1).join('\n').length;
+        if (pinnedChars + size > pinChars) continue;
+        pinned.push(r); pinnedChars += size;
+    }
     const hit = [];
     lines.forEach((l, i) => {
         const low = l.toLowerCase();
@@ -128,8 +168,8 @@ export function excerptFor(content, keywords, { ctx = 25, maxChars = 18_000 } = 
     const regionScore = new Map();
     for (const [i, s] of hit) for (let j = Math.max(0, i - ctx); j <= Math.min(lines.length - 1, i + ctx); j += 5) regionScore.set(j, (regionScore.get(j) || 0) + s);
     const seeds = [...regionScore.entries()].sort((a, b) => b[1] - a[1]).map(([j]) => j);
-    const picked = [];
-    let total = 0;
+    const picked = [...pinned];
+    let total = pinnedChars;
     for (const c of seeds) {
         const a = Math.max(0, c - ctx), b = Math.min(lines.length - 1, c + ctx);
         if (picked.some(([x, y]) => a <= y && b >= x && (Math.min(b, y) - Math.max(a, x)) > ctx)) continue;   // mostly covered
