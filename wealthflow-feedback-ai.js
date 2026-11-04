@@ -250,10 +250,17 @@
             clusters[k].category = cl.category;
             var securityWeight = cl.category === 'security' ? 0.30 : (cl.category === 'crash' ? 0.15 : 0);
             var freqBoost = Math.min(0.5, Math.log2(1 + clusters[k].count) * 0.18);
+            // The score is kept only as an internal tie-break for the server comparison; it is never shown.
             clusters[k].score = Math.min(1, (freqBoost + cl.weight * 0.6) + securityWeight);
-            clusters[k].priority = clusters[k].score >= 0.85 ? 'critical' : clusters[k].score >= 0.6 ? 'high' : clusters[k].score >= 0.4 ? 'medium' : 'low';
+            // EVERY report is critical. WealthFlow has one user, so there is nobody to rank this report
+            // behind, and the server files every report as [CRITICAL] (feedback-triage.js). A panel that
+            // said HIGH or MEDIUM contradicted the issue the same report became.
+            clusters[k].priority = 'critical';
+            clusters[k].latest = 0;
+            for (var m = 0; m < clusters[k].items.length; m++) clusters[k].latest = Math.max(clusters[k].latest, _ts(clusters[k].items[m]) || 0);
         }
-        clusters.sort(function (a, b) { return b.score - a.score || b.count - a.count; });
+        // Newest first: the one you just sent is at the top. No ranking by score.
+        clusters.sort(function (a, b) { return b.latest - a.latest || b.count - a.count; });
         return clusters;
     }
 
@@ -297,7 +304,7 @@
     async function showBoard() {
         var admin = _isAdmin();
         var title = admin ? 'Feedback Intelligence (all users)' : 'Your Feedback';
-        _overlay('wfFbBoard', title, admin ? 'Analysing all users\u2019 feedback…' : 'Your reports, scored by priority…',
+        _overlay('wfFbBoard', title, admin ? 'Analysing all users\u2019 feedback…' : 'Your reports…',
             '<div id="wfFbBoardBody" style="min-height:120px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px;">Loading…</div>',
             '<button class="btn btn-primary" style="width:100%;" onclick="wfFeedbackAI._close(\'wfFbBoard\')">Close</button>');
         // IMPORTANT: set the open flag AFTER _overlay — _overlay calls _close()
@@ -396,7 +403,7 @@
         if (!clusters.length) {
             body.style.display = 'block';
             body.innerHTML = '<div style="text-align:center;color:var(--text3,#8b95a8);font-size:13px;padding:20px;">' +
-                (admin ? 'No feedback yet across users.' : 'You haven\u2019t sent any feedback in the last 2 weeks. Use “Send Feedback” to report a bug or suggest an idea — you\u2019ll see it scored here, and the team is notified automatically.') + '</div>';
+                (admin ? 'No feedback yet across users.' : 'You haven\u2019t sent any feedback in the last 2 weeks. Use “Send Feedback” to report a bug or suggest an idea — you\u2019ll see it here, and the System AI is told automatically as a critical report.') + '</div>';
             _setSub('wfFbBoard', 'Nothing in the last 2 weeks');
             return;
         }
@@ -408,7 +415,6 @@
 
         var rows = clusters.map(function (c) {
             var pc = pColor[c.priority] || '#6b7280';
-            var pct = Math.round(c.score * 100);
             var cStatus = _consideringStatus(c, serverClusters);
             // Wording appears ONLY when the server brain has truly flagged the
             // issue. Neither line promises an automatic instant fix — they state
@@ -425,7 +431,7 @@
                 '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
                     '<span style="font-size:11px;font-weight:800;color:' + pc + ';text-transform:uppercase;">' + _esc(c.priority) + '</span>' +
                     '<span style="font-size:11px;color:var(--text3,#8b95a8);">' + _esc(catLabel[c.category] || c.category) + '</span>' +
-                    '<span style="margin-left:auto;font-size:11px;font-weight:700;color:var(--text2,#c7cdd9);">' + (c.count || 1) + ((c.count || 1) > 1 ? ' reports' : ' report') + ' · score ' + pct + '</span>' +
+                    '<span style="margin-left:auto;font-size:11px;font-weight:700;color:var(--text2,#c7cdd9);">' + (c.count || 1) + ((c.count || 1) > 1 ? ' reports' : ' report') + '</span>' +
                 '</div>' +
                 '<div style="font-size:13px;line-height:1.5;color:var(--text,#e6e7eb);">' + _esc((c.sample || '').slice(0, 220)) + ((c.sample || '').length > 220 ? '…' : '') + '</div>' +
                 badge +
@@ -440,7 +446,7 @@
                 '<div style="flex:1;text-align:center;padding:10px;background:var(--bg2,#0a0e1a);border-radius:10px;"><div style="font-size:22px;font-weight:900;color:#ef4444;">' + critical + '</div><div style="font-size:10.5px;color:var(--text3,#8b95a8);">critical</div></div>' +
                 '<div style="flex:1;text-align:center;padding:10px;background:var(--bg2,#0a0e1a);border-radius:10px;"><div style="font-size:22px;font-weight:900;color:#10b981;">' + totalReports + '</div><div style="font-size:10.5px;color:var(--text3,#8b95a8);">reports</div></div>' +
             '</div>' +
-            '<div style="font-size:11px;color:var(--text3,#8b95a8);margin-bottom:10px;">Ranked by: (report frequency × issue severity) + security weight. Security and crashes are prioritised. Repeated reports raise the score. Showing your reports from the last 2 weeks · live.</div>' +
+            '<div style="font-size:11px;color:var(--text3,#8b95a8);margin-bottom:10px;">Every report you send goes to the System AI as critical, newest first. Showing your reports from the last 2 weeks · live.</div>' +
             rows;
         _setSub('wfFbBoard', clusters.length + ' issues · ' + critical + ' critical · live');
     }

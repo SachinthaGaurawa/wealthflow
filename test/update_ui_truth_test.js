@@ -121,8 +121,10 @@ describe('the hardcoded release history is gone', () => {
         // recorded and said (one small function), and the unused copy of every wf2_ key it also wrote is gone.
         // Raised from 118_700 (measured 119,637, 2026-11-04): the build id beside the version in Settings > Software
         // update (one cached read of /api/version, checked as hex, shown only when it answers; +1,090 bytes).
+        // Raised from 119_700 (measured 120,155, 2026-11-04): the feedback screenshot is now downscaled in steps until it fits
+        // the room the issue body has for it (a picture that does not fit is dropped, and the fix agent then has nothing to look at).
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(119_700);
+        expect(bytes).toBeLessThan(120_300);
     });
 });
 

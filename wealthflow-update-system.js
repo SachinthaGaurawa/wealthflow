@@ -1115,11 +1115,17 @@
                     // downscale to max 900px to keep the payload small
                     const img = new Image();
                     img.onload = () => {
-                        const max = 900, scale = Math.min(1, max / Math.max(img.width, img.height));
-                        const cv = document.createElement('canvas');
-                        cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
-                        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-                        _fbImageData = cv.toDataURL('image/jpeg', 0.7);
+                        // Smaller until it fits the room an issue can hold (44,000 characters): quality first, then size. A
+                        // 900px/0.7 shot of a 1440px window was ~52,000 and was dropped, so the agent never saw it (issue #514).
+                        const cv = document.createElement('canvas'), cx = cv.getContext('2d');
+                        _fbImageData = '';
+                        [[900, .7], [900, .5], [900, .38], [720, .45], [560, .42], [440, .4]].some(([max, q]) => {
+                            const scale = Math.min(1, max / Math.max(img.width, img.height));
+                            cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+                            cx.drawImage(img, 0, 0, cv.width, cv.height);
+                            _fbImageData = cv.toDataURL('image/jpeg', q);
+                            return _fbImageData.length <= 43500;
+                        });
                         cv.width = cv.height = 0;
                         if (prev) { prev.style.display = 'block'; prev.innerHTML = '<img src="' + _fbImageData + '" style="max-width:100%;border-radius:8px;border:1px solid var(--border,#1f2638);"/><button type="button" onclick="this.parentNode.style.display=\'none\';this.parentNode.innerHTML=\'\';window.wfUpdate&&(window.wfUpdate._clearFbImg&&window.wfUpdate._clearFbImg());" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;">×</button>'; }
                         if (imgBtn) imgBtn.textContent = '@link@ Screenshot attached — tap to change';

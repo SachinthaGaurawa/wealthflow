@@ -146,6 +146,24 @@ export function attemptsFrom(comments) {
 }
 
 /**
+ * Milliseconds since the agent's most recent attempt comment, or null if it has none.
+ *
+ * WHY: one report fires several `issues` events within seconds (opened, then one `labeled`
+ * per label the triage step adds). Each used to run a full attempt, so on issue #514 two of
+ * the three attempts were spent 35 seconds apart on identical input. An attempt that
+ * cannot differ from the one before it only burns the budget a human is counting on.
+ */
+export function lastAttemptAgeMs(comments, now = Date.now()) {
+    let newest = null;
+    for (const c of comments || []) {
+        if (!/<!--\s*wf-agent-attempt\s*-->/.test(String(c.body || ''))) continue;
+        const t = Date.parse(c.created_at || c.updated_at || '');
+        if (Number.isFinite(t) && (newest === null || t > newest)) newest = t;
+    }
+    return newest === null ? null : Math.max(0, now - newest);
+}
+
+/**
  * The issue number a pull request is already handling, or null.
  *
  * The agent names its branches `ai-fix/issue-<n>-<timestamp>`, so the issue

@@ -272,7 +272,7 @@ describe('feedback: an attached screenshot reaches the agent', () => {
         // call left the test passing. A test that cannot fail is worse than no
         // test, because it reports safety that is not there.
         expect(src, 'imageSection is defined but never called from the issue body')
-            .toMatch(/^\s*imageSection\(image\),\s*$/m);
+            .toMatch(/^\s*imageSection\(image, imageRoom\(restLength\)\),\s*$/m);
 
         // And it must sit inside the issue-body array, next to the section it
         // belongs beside — not merely somewhere in the file.
@@ -282,11 +282,15 @@ describe('feedback: an attached screenshot reaches the agent', () => {
         // the same idiom made the end index precede the start index, the slice
         // come back empty, and this test fail for a reason that had nothing to
         // do with what it checks. (That is exactly what githubDetail() did.)
+        const headAt = src.indexOf('const head = [');
         const start = src.indexOf('const issueBody');
-        expect(start, 'the issue-body array has moved — retarget this test').toBeGreaterThan(-1);
+        expect(headAt, 'the issue-head array has moved — retarget this test').toBeGreaterThan(-1);
+        expect(start, 'the issue-body array has moved — retarget this test').toBeGreaterThan(headAt);
+        const head = src.slice(headAt, start);
         const body = src.slice(start, src.indexOf('.filter(Boolean)', start));
-        expect(body).toMatch(/diagnosticsSection\(diagnostics\)/);
-        expect(body).toMatch(/imageSection\(image\)/);
+        expect(head).toMatch(/diagnosticsSection\(diagnostics\)/);
+        expect(body).toMatch(/\.\.\.head/);
+        expect(body).toMatch(/imageSection\(image, imageRoom\(restLength\)\)/);
     });
 });
 

@@ -178,6 +178,8 @@ describe('the payload is what the measurement said it was', () => {
         // by far; what moved is how it compares with the SUM of 88 modules.
         // Re-measured 2026-11-03 (0.85 -> 0.84): the update system's diagnosis (wealthflow-diagnosis.js, 30 KB) joined the 95
         // modules. index.html is 2,378,515 bytes, still 6x larger than any single module; only the ratio to the SUM moved.
-        expect(htmlBytes).toBeGreaterThan(modBytes * 0.84);
+        // Re-measured 2026-11-04 (0.84 -> 0.83): the feedback screenshot compression and the fix agent's screenshot work grew the modules
+        // by ~1.4 KB (index.html is 2,380,038, still ~6x any single module; only the ratio to the SUM moved, to 0.8398).
+        expect(htmlBytes).toBeGreaterThan(modBytes * 0.83);
     });
 });
