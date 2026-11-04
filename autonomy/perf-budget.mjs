@@ -363,7 +363,8 @@ export const BUDGETS = {
     // 2026-11-03 (index.html: the update-system diagnosis joins Copy diagnostics, one script tag, and a crash on an older build is history rather than an error; measured 2,378,515 + ~0.01% headroom): 2_376_700 -> 2_378_800.
     // (the two 2026-11-03 changes above were each measured alone; together on one tree they measure 2,379,564, so the ceiling is set on the combined tree: 2_378_800 -> 2_380_000.)
     // 2026-11-03 (index.html: one script tag and one launch call for the data-migration runner, on top of main's 2,379,564; measured 2,380,038 + ~0.007% headroom): 2_380_000 -> 2_380_200.
-    htmlBytes: 2_380_200,
+    // 2026-11-04: 2_380_200 -> 2_380_500 (the <link> that loads wf-agent-fixes.css, where the fix agent's measured layout fixes live; measured 2,380,238 + ~0.01% headroom).
+    htmlBytes: 2_380_500,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
