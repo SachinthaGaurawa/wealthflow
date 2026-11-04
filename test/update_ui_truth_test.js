@@ -123,8 +123,10 @@ describe('the hardcoded release history is gone', () => {
         // update (one cached read of /api/version, checked as hex, shown only when it answers; +1,090 bytes).
         // Raised from 119_700 (measured 120,155, 2026-11-04): the feedback screenshot is now downscaled in steps until it fits
         // the room the issue body has for it (a picture that does not fit is dropped, and the fix agent then has nothing to look at).
+        // Raised from 120_300 (measured 121,2xx, 2026-11-04): the screenshot picker hands off to wealthflow-image-prep.js (any size,
+        // up to three reading-quality parts) and keeps its own downscale only as a fallback.
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(120_300);
+        expect(bytes).toBeLessThan(121_600);
     });
 });
 
