@@ -1,5 +1,17 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.44 — 2026-11-04
+
+**What changed for you**
+
+- Show the build id beside the version in Settings > Software update (#511)
+
+**Under the hood**
+
+- Raise two size ceilings for the build id the fix agent added to the update card (#512)
+- Fix agent: tell the test author its test needs its own fetch stub and a wait (#509)
+- Fix agent: show the author the function the report names, whole (#508)
+
 ## v7.69.43 — 2026-11-03
 
 **What changed for you**
