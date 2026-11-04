@@ -127,13 +127,13 @@ describe('the real schedule fits in the free tier', () => {
         // where the crons ran but no PR could be tested is worse than a month with
         // a slower watchdog: CI is the gate that contains mistakes.
         expect(p.ciReserve).toBeGreaterThanOrEqual(600);
-        expect(p.scheduledMinutes).toBeLessThan(MONTHLY_BUDGET_MINUTES - CI_RESERVE_MINUTES);
+        expect(p.scheduledMinutes).toBeLessThan(p.budget - CI_RESERVE_MINUTES);
     });
 
     it('has no single workflow consuming more than half the allowance', () => {
         // health-watchdog was 8,928 of 2,000 on its own. Any workflow over half the
         // budget is a design error regardless of what the total says today.
-        const hogs = p.rows.filter((r) => r.minutes > MONTHLY_BUDGET_MINUTES / 2);
+        const hogs = p.rows.filter((r) => r.minutes > p.budget / 2);
         expect(hogs.map((h) => `${h.file}=${h.minutes}`)).toEqual([]);
     });
 

@@ -224,7 +224,16 @@ function fingerprint(text) {   // exported in the list at the foot of this file
     // Too little left to identify anything. Deduplicating on two generic words
     // would merge unrelated reports, and losing a distinct report is far worse
     // than filing a duplicate — so this one deliberately never matches.
-    if (words.length < 3) return 'fb-x' + Math.random().toString(36).slice(2, 10);
+    if (words.length < 3) {
+        // Text in another writing system (Sinhala, Tamil, ...) has no a-z words at all, so it used to get a RANDOM label and
+        // an identical re-report was never recognised. Identical text now gets an identical label; different text a
+        // different one, so nothing is ever merged by guesswork. (A translated report is fingerprinted on its English words
+        // by the handler, which de-duplicates by meaning; this is the fallback when no translation was available.)
+        const letters = String(text == null ? '' : text).toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+        const joined = letters.join(' ');
+        if (/[^\u0000-\u024F]/.test(joined) && joined.replace(/\s/g, '').length >= 6) return 'fb-u-' + digest(joined);
+        return 'fb-x' + Math.random().toString(36).slice(2, 10);
+    }
 
     const full = 'fb-' + words.join('-');
     if (full.length <= LABEL_MAX) return full;
@@ -369,8 +378,24 @@ export default async function handler(req, res) {
         return send(res, out, 400);
     }
 
-    // classify (EdenAI, with safe local fallback)
-    const cls = reconcile((await edenClassify(text)) || localClassify(text), body);
+    // ANY LANGUAGE (owner, 2026-11-04). The words are kept exactly as written; an English reading is added beside them so the
+    // English-only routers, the fingerprint and the fix agent can understand the report. Never fatal: on any failure the report
+    // is filed from the original words, as before.
+    let lang = null, ml = null;
+    try {
+        ml = await import('./autonomy/feedback-language.mjs');
+        lang = await ml.understandFeedback(text);
+    } catch (_) { lang = null; }
+    const understood = !!(lang && lang.translated && lang.english);
+    const forAI = understood ? lang.english : text;
+    out.language = lang ? { code: lang.language.code, name: lang.language.name, translated: understood, via: lang.via } : { code: 'en', name: 'English', translated: false, via: 'none' };
+
+    // classify (EdenAI, with safe local fallback; Sinhala / Tamil / Singlish keywords when nothing else answered)
+    const mlGuess = lang && lang.language && !lang.language.english
+        ? (lang.type ? { type: lang.type, severity: 'high', summary: lang.summary } : (ml.multilingualClassify(text) || null))
+        : null;
+    const cls = reconcile((await edenClassify(forAI)) || mlGuess || localClassify(forAI), body);
+    if (understood && !cls.summary && lang.summary) cls.summary = lang.summary;
     out.classification = cls;
 
     if (!repo || !token) {
@@ -400,7 +425,7 @@ export default async function handler(req, res) {
     }
 
     // de-dup: if an issue with the same fingerprint label exists, comment instead of duplicating
-    const fp = fingerprint(text);
+    const fp = fingerprint(forAI);
     // WHY state=all AND NOT state=open
     // This asked for OPEN issues only. So a problem reported again AFTER its
     // issue was closed found nothing, and filed a brand-new issue — losing the
@@ -532,6 +557,8 @@ export default async function handler(req, res) {
         '### User feedback',
         '> ' + text.replace(/\n/g, '\n> '),
         '',
+        // The English reading (or a note that none was available) for a report written in another language.
+        lang && ml ? ml.translationSection(lang) : '',
         // The "send system diagnosis" tick used to attach only the user-agent and
         // screen size. It now sends the recorded errors, stack traces and health
         // snapshot, and they are rendered here so the fix agent can read them —

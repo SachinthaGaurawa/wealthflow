@@ -51,7 +51,10 @@ import { createHash } from 'node:crypto';
 import { describeAvailability } from './autonomy/llm-router.mjs';
 import { runSwarm } from './autonomy/agent-swarm.mjs';
 import { layoutLaneFor, runLayoutLane } from './autonomy/css-lane.mjs';
+import { buildLaneFor, runBuildLane, wireModule } from './autonomy/build-lane.mjs';
+import { conceptBoardFor, runConceptBoard, renderComment as boardComment, briefFor, parseStoredBoard, BOARD_MARKER } from './autonomy/concept-board.mjs';
 import { screenshotContext } from './autonomy/screenshot-reader.mjs';
+import { withTranslation } from './autonomy/feedback-language.mjs';
 import * as Q from './autonomy/work-queue.mjs';
 
 const MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
@@ -211,7 +214,9 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null } =
         `**Authored by:** ${result.role} agent via \`${provs.author}\``,
         `**Independently reviewed by:** Agent 5 (Chaos Security) via \`${provs.security || 'unavailable'}\``,
         `**Security verdict:** ${result.review?.verdict || 'n/a'}${result.review?.reason ? ` — ${result.review.reason}` : ''}`,
-        result.lane === 'layout'
+        result.lane === 'build'
+            ? `**New module:** \`${result.file}\` — ${result.change || ''}. It can read the books and show things; it cannot write them (a machine refuses \`DB.set\`, Firebase calls, eval, script injection and secrets).`
+            : result.lane === 'layout'
             ? `**Proof:** measured in real Chromium on invented books at ${(result.layout?.widths || []).join(', ')}px wide, before and after: **${String(result.layout?.verdict || '').toUpperCase()}** (${result.layout?.reason || ''}). This is a measurement, not a person looking at a phone.`
             : testWritten && result.verified
             ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — executed and verified: it FAILS against the original file and PASSES against this one.`
@@ -238,7 +243,9 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null } =
             : result.verified
             ? '- **The proving test was executed twice** — red against the original file, green against this one'
             : '- [WARNING] The proving test was NOT executed red→green',
-        '- Sensitive-path gate: this change touches no auth, crypto, money, rules, service-worker, dependency, or CI file',
+        result.lane === 'build'
+            ? '- Guarded paths touched: `index.html` (one added script line) and `autonomy/perf-budget.mjs` (ceilings raised to the measured value), so `human-approved` is required. No auth, crypto, money, rules, service-worker, dependency or CI file.'
+            : '- Sensitive-path gate: this change touches no auth, crypto, money, rules, service-worker, dependency, or CI file',
         '',
         '### Still to pass in CI',
         'Full test suite · multi-model consensus review · OPA/Conftest policy gate · fuzz gate if applicable.',
@@ -343,7 +350,8 @@ async function main() {
 
     // ── work the highest-priority issue we can actually move ────────────────
     const skipped = [];
-    for (const issue of candidates) {
+    for (const issue0 of candidates) {
+        let issue = issue0;
         const number = issue.number;
         const state = await reconcileAttempts(number, readState(number));
 
@@ -377,6 +385,14 @@ async function main() {
             }
         }
 
+        // A report written in another language (Sinhala, Tamil, ...) that was filed without an English reading gets one now, so the
+        // English-only routers (role, layout lane, build lane, concept board) read what the owner meant. Never fatal.
+        try {
+            const tr = await withTranslation(issue);
+            if (tr.status !== 'none') log(`#${number} language: ${tr.note}`);
+            issue = tr.issue;
+        } catch (e) { log(`#${number} translation step failed (${e.message}) — working from the original words`); }
+
         const kind = Q.roleFor(issue);
         log(`attempting #${number} [${Q.severityOf(issue)}/${kind}]: ${String(issue.title).slice(0, 80)}`);
 
@@ -395,12 +411,40 @@ async function main() {
             // test, so it goes to the layout lane: CSS only, measured in a real browser before and after.
             const lane = layoutLaneFor({ title: issue.title, body: shot.body });
             if (lane.applies) log(`#${number} goes to the layout lane (${lane.why})`);
-            result = lane.applies
-                ? await runLayoutLane({ issue: { number, title: issue.title, body: shot.body }, repoDir: REPO_DIR, log })
-                : await runSwarm({
-                    issue: { number, title: issue.title, body: shot.body, kind },
+            // A NEW idea is talked through by several AIs first (user-friendliness first); their brief joins the request, and
+            // the discussion is posted once on the issue. It never blocks: the owner's request is the decision.
+            let laneBody = shot.body;
+            if (!lane.applies && conceptBoardFor({ title: issue.title, body: shot.body }, kind)) {
+                try {
+                    const prior = (await Q.issueComments(number).catch(() => [])).find((c) => String(c.body || '').includes(BOARD_MARKER));
+                    let board = prior ? parseStoredBoard(prior.body) : null;
+                    if (!board) {
+                        board = await runConceptBoard({ issueText: `${issue.title}\n\n${shot.body}`, log });
+                        if (board.voters && !DRY) await Q.comment(number, boardComment(board)).catch(() => {});
+                    }
+                    laneBody = shot.body + briefFor(board);
+                } catch (e) { log(`#${number} concept board skipped (${e.message})`); }
+            }
+            // Something NEW (an integration, a new calculator or page) has no existing module to edit, so it goes to the
+            // build lane first; and a feature the one-file swarm could not place falls through to it as well.
+            const build = buildLaneFor({ title: issue.title, body: shot.body });
+            const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, repoDir: REPO_DIR, log });
+            if (lane.applies) {
+                result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body }, repoDir: REPO_DIR, log });
+            } else if (build.applies) {
+                log(`#${number} goes to the build lane (${build.why})`);
+                result = await buildIt();
+            } else {
+                result = await runSwarm({
+                    issue: { number, title: issue.title, body: laneBody, kind },
                     repoDir: REPO_DIR, log,
                 });
+                if (!result.ok && kind === 'feature' && (result.stage === 'select' || result.stage === 'author')) {
+                    log(`#${number} no existing module could take it (${result.stage}) — trying the build lane`);
+                    const built = await buildIt();
+                    result = built.ok ? built : { ...result, reason: `${result.reason} | build lane: ${built.reason}` };
+                }
+            }
         } catch (e) {
             // A provider outage is not the agent's fault, but it must be visible.
             log(`#${number} swarm error: ${e.message}`);
@@ -446,6 +490,21 @@ async function main() {
             result.code.endsWith('\n') ? result.code : result.code + '\n');
         log(`wrote ${result.file}`);
 
+        // A NEW module is put on the page by a mechanical edit, never a model-written one (see build-lane.mjs).
+        let extraFiles = [], wiringNote = '';
+        if (result.lane === 'build' && result.wire) {
+            const w = wireModule({ repoDir: REPO_DIR, name: result.wire.name, issue: number });
+            if (!w.ok) {
+                log(`#${number} the new module could not be put on the page: ${w.reason}`);
+                try { fs.unlinkSync(path.join(REPO_DIR, result.file)); } catch { /* nothing written */ }
+                skipped.push(`#${number} wiring: ${w.reason}`);
+                continue;
+            }
+            extraFiles = w.files;
+            wiringNote = `Put on the page by a mechanical edit: ${w.files.join(', ')}${w.raised.length ? ` (payload ceilings raised: ${w.raised.join('; ')})` : ''}.`;
+            log(wiringNote);
+        }
+
         let testWritten = null;
         if (result.test && result.testFile) {
             const tp = path.join(REPO_DIR, result.testFile);
@@ -460,10 +519,11 @@ async function main() {
             title: `fix: ${String(issue.title).replace(/^\[(critical|high|medium|low)\]\s*/i, '').slice(0, 68)}`,
             file: result.file,
             testFile: testWritten,
+            extraFiles,
             issue: number,
             role: result.role,
             providers: provs,
-            body: prBody({ issue, number, result, testWritten }),
+            body: prBody({ issue, number, result, testWritten }) + (wiringNote ? `\n\n### Wiring\n${wiringNote}\n` : ''),
         };
         fs.writeFileSync(OUTPUT, JSON.stringify(pr, null, 2) + '\n');
 

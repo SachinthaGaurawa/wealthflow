@@ -157,7 +157,8 @@ jobs:
             echo "::error::ai-fix-pr.json names no valid file ('$FILE')"
             exit 1
           fi
-          if git diff --quiet -- "$FILE"; then
+          # `git status`, not `git diff`: a NEW module (the build lane) is untracked, and `git diff` calls an untracked file unchanged.
+          if [ -z "$(git status --porcelain -- "$FILE")" ]; then
             echo "::error::agent claimed a fix to $FILE but the file is unchanged"
             exit 1
           fi
@@ -228,6 +229,13 @@ jobs:
           git add -- "$FIX_FILE"
           [ -n "${TEST_FILE:-}" ] && git add -- "$TEST_FILE" || true
           [ -d autonomy/state ] && git add -- autonomy/state || true
+          # files a lane changed by a mechanical edit. An ALLOWLIST of exactly two paths, never a pattern: whatever the
+          # agent writes into ai-fix-pr.json can ask for these two and nothing else to be staged.
+          for EXTRA in index.html autonomy/perf-budget.mjs; do
+            if node -e "process.exit((require('./ai-fix-pr.json').extraFiles || []).includes(process.argv[1]) ? 0 : 1)" "$EXTRA"; then
+              git add -- "$EXTRA"
+            fi
+          done
           git commit -m "$TITLE"
           for i in 1 2 3 4; do
             git push -u origin "$BRANCH" && break
@@ -253,6 +261,13 @@ jobs:
           git add -- "$FIX_FILE"
           [ -n "${TEST_FILE:-}" ] && git add -- "$TEST_FILE" || true
           [ -d autonomy/state ] && git add -- autonomy/state || true
+          # files a lane changed by a mechanical edit. An ALLOWLIST of exactly two paths, never a pattern: whatever the
+          # agent writes into ai-fix-pr.json can ask for these two and nothing else to be staged.
+          for EXTRA in index.html autonomy/perf-budget.mjs; do
+            if node -e "process.exit((require('./ai-fix-pr.json').extraFiles || []).includes(process.argv[1]) ? 0 : 1)" "$EXTRA"; then
+              git add -- "$EXTRA"
+            fi
+          done
           git commit -m "$TITLE"
           git pull --rebase --autostash origin "$GITHUB_REF_NAME" || true
           # --note takes the title as ONE argv entry, so quotes/backticks stay inert

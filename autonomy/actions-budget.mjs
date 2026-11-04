@@ -43,6 +43,19 @@ import path from 'node:path';
 export const MONTHLY_BUDGET_MINUTES = 2000;
 
 /**
+ * Verified 2026-11-04 (GitHub search API: SachinthaGaurawa/wealthflow `private: false`, visibility public): a public
+ * repository's standard-runner minutes are not billed. The model above was written for a private repository and
+ * left the schedule 1 minute under 2,000 with nothing to spare, which stopped the owner's "every moment, urgent
+ * security updates, always developing" from being scheduled at all.
+ *
+ * Unmetered is not unlimited in practice (concurrency caps, abuse limits, a runaway cron costing queue time), so a
+ * public repository gets a PLANNING ceiling, not a bill: it keeps a mistaken `* * * * *` from landing quietly.
+ * If the repository is ever made private, set REPO_IS_PUBLIC to false and the 2,000-minute model applies again.
+ */
+export const REPO_IS_PUBLIC = true;
+export const PUBLIC_PLANNING_MINUTES = 8000;
+
+/**
  * Share of the budget reserved for event-driven CI (pull requests, pushes).
  *
  * Scheduled work must NOT be allowed to consume everything. A month where the
@@ -138,6 +151,9 @@ export function runsPerMonth(cron) {
     return perHour * hours * days;
 }
 
+/** The ceiling the schedule is held to: a planning ceiling when the repository is public, the free private tier otherwise. */
+export function budgetMinutes() { return REPO_IS_PUBLIC ? PUBLIC_PLANNING_MINUTES : MONTHLY_BUDGET_MINUTES; }
+
 /** Project the monthly scheduled spend from the workflow files on disk. */
 export function projectSchedule(dir = '.github/workflows') {
     const rows = [];
@@ -158,9 +174,9 @@ export function projectSchedule(dir = '.github/workflows') {
         scheduledMinutes: scheduled,
         ciReserve: CI_RESERVE_MINUTES,
         totalMinutes: scheduled + CI_RESERVE_MINUTES,
-        budget: MONTHLY_BUDGET_MINUTES,
-        withinBudget: scheduled + CI_RESERVE_MINUTES <= MONTHLY_BUDGET_MINUTES,
-        headroom: MONTHLY_BUDGET_MINUTES - (scheduled + CI_RESERVE_MINUTES),
+        budget: budgetMinutes(),
+        withinBudget: scheduled + CI_RESERVE_MINUTES <= budgetMinutes(),
+        headroom: budgetMinutes() - (scheduled + CI_RESERVE_MINUTES),
     };
 }
 
