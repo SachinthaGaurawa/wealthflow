@@ -125,6 +125,7 @@
         var a = ev.server && ev.server.autonomy;
         if (!a || !a.ok) return link('agent', 'unknown', 'Could not read /api/autonomy-status' + (a && a.error ? ' (' + a.error + ')' : '') + '.', 'Open /api/autonomy-status?full=1 in a browser.');
         var failing = (a.failing || []).map(function (c) { return c.id + ': ' + c.summary; }).slice(0, 4).join(' | ');
+        if (a.overall === 'unknown') return link('agent', 'unknown', 'The server could not read GitHub just now, so it cannot say whether the fix agent is running.', 'Try again in a minute; open /api/autonomy-status?full=1 to see what it could not read.');
         if (a.overall === 'broken' || a.canActuallyFixBugs === false) return link('agent', 'fail', 'The server says automatic fixing is not working. ' + failing, 'Fix the failing check first: it names the provider, key or file.');
         if (a.overall === 'degraded') return link('agent', 'warn', 'Working below full strength. ' + failing, 'Dead provider models or missing keys reduce who can write and who can review a change.');
         return link('agent', 'ok', 'The pipeline says it can fix reported problems.' + (a.headline ? ' ' + a.headline : ''));
@@ -133,6 +134,8 @@
     function judgeRelease(ev) {
         var a = ev.server && ev.server.autonomy;
         if (!a || !a.ok) return link('release', 'unknown', 'Release history unavailable.');
+        if (a.overall === 'unknown') return link('release', 'unknown', 'Release history unavailable.');
+        if (a.releaseFailing) return link('release', 'fail', 'The latest Auto Release run did not succeed, so fixes may not reach the app.', 'Open the Auto Release workflow on GitHub and read the failing step.');
         if (a.emptyVersionBumpsRecently > 0) return link('release', 'warn', a.emptyVersionBumpsRecently + ' recent version bump(s) carried no functional change.', 'Compare the release commit with the merged PR before it: the stamp commit only changes version files.');
         var lr = a.lastRealChange;
         if (lr && lr.daysAgo != null && lr.daysAgo > LIMITS.staleChangeDays) return link('release', 'warn', 'The last real change shipped ' + lr.daysAgo + ' days ago.', 'Check that merged PRs are being released (Auto Release workflow).');

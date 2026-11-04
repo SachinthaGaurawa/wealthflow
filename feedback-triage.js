@@ -498,11 +498,18 @@ export default async function handler(req, res) {
     // is bounded here — the same defect class as the label, found while
     // auditing the rest of this payload rather than after it bit.
     const title = clampTitle('[' + String(cls.severity || 'low').toUpperCase() + '] ' + (cls.summary || text.slice(0, 60)));
-    const issueBody = [
+    // Everything except the screenshot is written first so the picture can use whatever room is really left.
+    const footer = '_Filed automatically by the feedback triage agent. The autonomous pipeline picks this up ' +
+        'on the `issues: opened` trigger, so work starts within minutes._';
+    const head = [
         '## Autonomous feedback issue',
         '',
         '**Type:** ' + cls.type + '  ·  **Severity:** ' + cls.severity +
             (body.version ? '  ·  **App version:** ' + String(body.version).slice(0, 20) : ''),
+        '',
+        // Said in words as well as in the title, because the agent reads the body: this is the owner's own
+        // report, from the only user the app has, and it is the top item in the queue by definition.
+        '**Priority: CRITICAL.** This was sent by the owner, who is the only user of the app. It is the most important work in the queue: read the screenshot if there is one, find the real cause, and fix it fully.',
         '',
         '### User feedback',
         '> ' + text.replace(/\n/g, '\n> '),
@@ -512,19 +519,22 @@ export default async function handler(req, res) {
         // snapshot, and they are rendered here so the fix agent can read them —
         // otherwise the diagnostics would be collected and then discarded.
         diagnosticsSection(diagnostics),
+    ].filter((x) => x !== null && x !== undefined);
+    const restLength = head.join('\n').length + footer.length + 8;
+    const issueBody = [
+        ...head,
         // A screenshot shows what the user was actually looking at, which is
         // often the whole report. It goes after the diagnosis so the readable
         // parts come first and the base64 is last.
-        imageSection(image),
-        '_Filed automatically by the feedback triage agent. The autonomous pipeline picks this up ' +
-        'on the `issues: opened` trigger, so work starts within minutes._'
+        imageSection(image, imageRoom(restLength)),
+        footer,
     ].filter(Boolean).join('\n');
 
     try {
         const r = await fetchWithTimeout('https://api.github.com/repos/' + repo + '/issues', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'wealthflow-triage' },
-            body: JSON.stringify({ title: title, body: issueBody, labels: [labelType, fp, 'autonomous', 'user-feedback'] })
+            body: JSON.stringify({ title: title, body: issueBody, labels: [labelType, fp, 'autonomous', 'user-feedback', 'critical'] })
         });
         const created = await r.json();
         if (r.ok) {
@@ -632,6 +642,25 @@ export const IMAGE_MARKER = 'wf-feedback-image';
  */
 export const IMAGE_BUDGET = 44000;
 
+/** Hard ceiling on the room an image may take, whatever the rest of the report leaves free. */
+export const IMAGE_BUDGET_MAX = 56000;
+
+/** GitHub rejects an issue body above 65,536 characters; keep a margin for the footer and encoding. */
+const BODY_LIMIT = 64000;
+
+/**
+ * The room left for a screenshot once the rest of the report is written.
+ *
+ * WHY NOT A FIXED 44,000: issue #514's screenshot (~39 KB as a file, about 52,000 characters as base64)
+ * was refused while the rest of its report used only a few thousand of the 65,536 characters, so the one
+ * picture that showed the overlap never reached the agent. The budget now follows what is actually free.
+ * It never drops below IMAGE_BUDGET and never above IMAGE_BUDGET_MAX.
+ */
+export function imageRoom(restLength) {
+    const free = BODY_LIMIT - (Number(restLength) || 0);
+    return Math.max(IMAGE_BUDGET, Math.min(IMAGE_BUDGET_MAX, free));
+}
+
 /**
  * Render an attached screenshot so the fix agent can actually see it.
  *
@@ -651,9 +680,10 @@ export const IMAGE_BUDGET = 44000;
  *   a human reading the issue is not scrolled past 40,000 characters of base64,
  *   and the note explains how to view it.
  */
-export function imageSection(image) {
+export function imageSection(image, budget = IMAGE_BUDGET) {
     const src = typeof image === 'string' ? image.trim() : '';
     if (!src) return '';
+    const limit = Number.isFinite(budget) && budget > 0 ? Math.min(budget, IMAGE_BUDGET_MAX) : IMAGE_BUDGET;
 
     // Only real, self-contained raster data. Anything else — a remote URL, an
     // SVG (which can carry script), a malformed prefix — is refused rather than
@@ -663,13 +693,13 @@ export function imageSection(image) {
     }
 
     const approxKb = Math.round((src.length * 3) / 4 / 1024);
-    if (src.length > IMAGE_BUDGET) {
+    if (src.length > limit) {
         // Refusing beats truncating: half a base64 string is not an image, and
         // silently attaching a corrupt one wastes a vision call to learn that.
         return [
             '### Screenshot',
             '',
-            `_A screenshot was attached (~${approxKb} KB) but exceeds the ${Math.round(IMAGE_BUDGET / 1024)} KB that fits in a GitHub issue body alongside the report, so it was not embedded. The full copy is in the Firestore \`feedback\` document._`,
+            `_A screenshot was attached (~${approxKb} KB) but exceeds the ${Math.round(limit / 1024)} KB that fits in a GitHub issue body alongside the report, so it was not embedded. The full copy is in the Firestore \`feedback\` document._`,
             '',
         ].join('\n');
     }

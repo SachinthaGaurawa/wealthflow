@@ -756,7 +756,8 @@ export const BUDGETS = {
     // 2026-11-03 (the CC Instalments overhaul, the card statement-totals proof and the update-system diagnosis merged on one tree; measured 2,814,325 + ~0.006% headroom): 2_813_500 -> 2_814_500.
     // 2026-11-03: the restore point before an update (its result is recorded and said, and the diagnosis reads it) and wealthflow-migrations.js (the runner that proves a data-shape change on a copy, writes it only with a restore point saved, and puts the books back if they do not check out), on top of main's 2,814,325; measured 2,831,427 + ~0.006% headroom): 2_814_500 -> 2_831_600.
     // 2026-11-04: 2_831_600 -> 2_832_600 for the build id beside the version in Settings > Software update (wealthflow-update-system.js, +1,090 bytes, written by the fix agent for issue #510; measured with it 2,832,517 + ~0.003% headroom).
-    totalJsBytes: 2_832_600,
+    // 2026-11-04: 2_832_600 -> 2_834_100 (the feedback screenshot is compressed adaptively so it fits the issue, and the Your Feedback panel no longer shows a score; wealthflow-update-system.js and wealthflow-feedback-ai.js; measured 2,834,025 + ~0.003% headroom).
+    totalJsBytes: 2_834_100,
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.

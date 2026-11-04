@@ -50,9 +50,11 @@ import { createHash } from 'node:crypto';
 
 import { describeAvailability } from './autonomy/llm-router.mjs';
 import { runSwarm } from './autonomy/agent-swarm.mjs';
+import { screenshotContext } from './autonomy/screenshot-reader.mjs';
 import * as Q from './autonomy/work-queue.mjs';
 
 const MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
+const ATTEMPT_COOLDOWN_MS = Number(process.env.AGENT_ATTEMPT_COOLDOWN_MS || 15 * 60_000);
 const DRY = /^(1|true|yes)$/i.test(process.env.AGENT_DRY_RUN || '');
 const REPO_DIR = process.env.REPO_DIR || process.cwd();
 const STATE_DIR = path.join(REPO_DIR, 'autonomy', 'state');
@@ -345,13 +347,34 @@ async function main() {
             continue;
         }
 
+        // A burst of `issues` events (opened + one `labeled` per label) must not spend the attempt budget in
+        // seconds on input that cannot have changed. A person dispatching the workflow, or the schedule, is
+        // never held back by this.
+        if (process.env.GITHUB_EVENT_NAME === 'issues' && !DRY) {
+            const age = Q.lastAttemptAgeMs(await Q.issueComments(number).catch(() => []));
+            if (age !== null && age < ATTEMPT_COOLDOWN_MS) {
+                log(`#${number} was attempted ${Math.round(age / 1000)}s ago and nothing has changed since — not spending another attempt on this event.`);
+                skipped.push(`#${number} attempted ${Math.round(age / 1000)}s ago`);
+                continue;
+            }
+        }
+
         const kind = Q.roleFor(issue);
         log(`attempting #${number} [${Q.severityOf(issue)}/${kind}]: ${String(issue.title).slice(0, 80)}`);
+
+        // The report's screenshot, read by a vision model and taken out of the text the
+        // other agents see (it is 40,000 characters of base64, and it was never read at all
+        // before issue #514). Never fatal: with no vision key the report is worked from text.
+        let shot = { body: issue.body, status: 'none', note: '' };
+        try {
+            shot = await screenshotContext({ issue, log });
+            if (shot.status !== 'none') log(`#${number} screenshot: ${shot.status} — ${shot.note}`);
+        } catch (e) { log(`#${number} screenshot step failed (${e.message}) — working from the text`); }
 
         let result;
         try {
             result = await runSwarm({
-                issue: { number, title: issue.title, body: issue.body, kind },
+                issue: { number, title: issue.title, body: shot.body, kind },
                 repoDir: REPO_DIR, log,
             });
         } catch (e) {
@@ -372,6 +395,7 @@ async function main() {
                     `**Stopped at:** \`${result.stage}\`\n` +
                     `**Why:** ${result.reason}\n` +
                     (result.file ? `**File considered:** \`${result.file}\`\n` : '') +
+                    (shot.note ? `**Screenshot:** ${shot.note}\n` : '') +
                     (result.review?.findings?.length ? `\n**Reviewer findings:**\n${result.review.findings.map((f) => `- ${f}`).join('\n')}\n` : '') +
                     proofEvidence(result) +
                     `\nNothing was committed. I will try again on the next scheduled run.\n` +
