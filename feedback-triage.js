@@ -383,7 +383,7 @@ export default async function handler(req, res) {
     // is filed from the original words, as before.
     let lang = null, ml = null;
     try {
-        ml = await import('./autonomy/feedback-language.mjs');
+        ml = await import('./wf-feedback-language.mjs');
         lang = await ml.understandFeedback(text);
     } catch (_) { lang = null; }
     const understood = !!(lang && lang.translated && lang.english);
@@ -530,7 +530,7 @@ export default async function handler(req, res) {
     out.imageRead = 'none';
     if (Array.isArray(body.imageReading) && body.imageReading.length) {
         try {
-            const { readAttachments } = await import('./autonomy/screenshot-reader.mjs');
+            const { readAttachments } = await import('./wf-screenshot-reader.mjs');
             let timer;
             const rr = await Promise.race([
                 readAttachments({ images: body.imageReading, title, text }),
