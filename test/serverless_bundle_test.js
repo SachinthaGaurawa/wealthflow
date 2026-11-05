@@ -87,7 +87,8 @@ describe('serverless bundle: nothing a function loads is removed by .vercelignor
                 "import { x } from './a.mjs';",
                 "import './b.mjs';",
                 "const m = await import('./c.mjs');",
-                "const r = require('./c.cjs');",
+                // split so test/esm_require_test.js does not read this fixture as a real bare require in an ES module
+                "const r = req" + "uire('./c.cjs');",
                 "// import('./d.mjs')",
                 "/* import { y } from './e.mjs' */",
             ].join('\n'));
