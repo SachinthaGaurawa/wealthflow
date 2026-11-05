@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.52 — 2026-11-05
+
+**What changed for you**
+
+- Fix feedback-triage importing modules Vercel does not ship; guard every function (#523)
+
 ## v7.69.51 — 2026-11-04
 
 **What changed for you**
