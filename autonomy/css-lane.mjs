@@ -396,7 +396,7 @@ export function judgeLayout(before, after) {
     if (!before || !before.ok) return { ok: false, verdict: 'unmeasured', reason: 'the screen could not be measured before the change' + (before && before.reason ? ` (${before.reason})` : '') };
     if (!after || !after.ok) return { ok: false, verdict: 'unmeasured', reason: 'the screen could not be measured after the change' + (after && after.reason ? ` (${after.reason})` : '') };
     if (before.problems === 0) return { ok: false, verdict: 'nothing-to-fix', reason: 'no overlap, overflow or cut-off text was found before the change, so there is nothing to prove against' };
-    const per = (r) => new Map(r.widths.map((w) => [w.width, (w.overflowPx > 2 ? 1 : 0) + w.overlaps.length + w.clipped.length + (w.misaligned || []).length + (w.spilled || []).length]));
+    const per = (r) => new Map(r.widths.map((w) => [w.width, (w.overflowPx > 2 ? 1 : 0) + w.overlaps.length + w.clipped.length + (w.misaligned || []).length + (w.spilled || []).length + (w.squeezed || []).length]));
     const b = per(before), a = per(after);
     const worse = [...b].filter(([w, n]) => (a.get(w) ?? Infinity) > n).map(([w]) => w);
     if (worse.length) return { ok: false, verdict: 'worse', reason: `it made ${worse.join(', ')}px wide worse` };

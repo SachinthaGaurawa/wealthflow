@@ -260,6 +260,18 @@ describe.skipIf(!chromeHere)('css lane: real Chromium', () => {
         expect(judgeLayout(before, after)).toMatchObject({ ok: true, verdict: 'fixed' });
     }, 110_000);
 
+    it('does not call the rule that merged for #524 a fix: it stood the label one letter per line (#531)', async () => {
+        const { probeLayout } = await import('../autonomy/layout-probe.mjs');
+        // What the agent shipped: the overlap is gone and the label is a column of single letters in a 24px grid track.
+        const SILENCE = `@media (max-width: 640px) { ${SCOPE} .stat-label { white-space: normal; overflow-wrap: anywhere; word-break: break-word; } }`;
+        const before = await probeLayout({ screen: 'cc-instalments', widths: [430], ignoreAgentFixes: true });
+        const after = await probeLayout({ screen: 'cc-instalments', widths: [430], extraCss: SILENCE, ignoreAgentFixes: true });
+        expect(after.ok, after.reason).toBe(true);
+        expect(after.widths[0].squeezed.length).toBeGreaterThan(0);
+        expect(after.widths[0].squeezed.join(' ')).toMatch(/grid-template-columns/);
+        expect(judgeLayout(before, after).verdict).not.toBe('fixed');
+    }, 110_000);
+
     it('does not count the pinned Actions column covering its neighbour as a problem, and never calls it a fix', async () => {
         const { probeLayout } = await import('../autonomy/layout-probe.mjs');
         const r = await probeLayout({ screen: 'cc-instalments', widths: [360], ignoreAgentFixes: true });
