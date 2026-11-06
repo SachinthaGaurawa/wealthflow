@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { loadParser } from './statement-fixtures.mjs';
 import { proveDirections, cardCreditWords, printedPaymentsCheck } from '../statement-direction.mjs';
 import { PROVEN_DIRECTION, validateSettlementRow } from '../statement-ledger.mjs';
-import { readShape, deterministicDecision } from '../statement-sync.js';
+import { readShape, deterministicDecision, adaptiveWanted, readingIsSuspect, secondOpinionAgrees } from '../statement-sync.js';
 
 const P = loadParser(fs);
 
@@ -662,5 +662,26 @@ describe('the statement\'s own printed "Total Payment" guards the layout convent
     });
     it('says nothing when the statement prints no such figure', () => {
         expect(printedPaymentsCheck(P.parseStatement(base.join('\n')))).toBe('none');
+    });
+});
+
+describe('a reading that contradicts the printed Total Payment gets a second opinion, believed only if it agrees', () => {
+    const text = ['HNB Credit Card Statement', 'Credit Limit 350,000.00', 'Statement Period 11 Aug 2026 / 30 Sep 2026', '11/08/2026 11/08/2026 Annual Fee 4,000.00', '19/08/2026 19/08/2026 Payment 004 150,000.00', '20/08/2026 19/08/2026 ELECTRONICS SHOP, COLOMBO 3 413,000.00', 'Total Payment: 150,000.00CR', 'Total Transactions: 413,000.00'].join('\n');
+    const wanted = (parsed) => adaptiveWanted({ parsed, result: {}, claimed: {}, text, now: 1e12 });
+    it('a reading that agrees with the printed figure is left alone', () => {
+        const parsed = P.parseStatement(text.replace('Payment 004 150,000.00', 'Payment 004 CR 150,000.00'));
+        expect(readingIsSuspect(parsed)).toBe(false);
+        expect(wanted({ ...parsed, verdict: 'parsed', understood: true })).toBe(false);
+    });
+    it('a reading that contradicts it is suspect and is read again, even though the rules thought they understood it', () => {
+        const parsed = { ...P.parseStatement(text), verdict: 'parsed', understood: true };
+        expect(readingIsSuspect(parsed)).toBe(true);
+        expect(wanted(parsed)).toBe(true);
+    });
+    it('the second opinion is accepted only when its own rows reach the printed Total Payment', () => {
+        const first = P.parseStatement(text), good = { rows: [{ valid: true, direction: 'credit', amount: 150000, narration: 'Payment 004' }] }, bad = { rows: [{ valid: true, direction: 'debit', amount: 150000, narration: 'Payment 004' }] };
+        expect(secondOpinionAgrees(first, good)).toBe(true);
+        expect(secondOpinionAgrees(first, bad)).toBe(false);
+        expect(secondOpinionAgrees(P.parseStatement(text.replace('Payment 004 150,000.00', 'Payment 004 CR 150,000.00')), bad)).toBe(true);   // the first reading was fine: nothing to compare
     });
 });

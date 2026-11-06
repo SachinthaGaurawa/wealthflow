@@ -2022,8 +2022,12 @@ export async function recoverRevokedSenderReviews({ db, uid, limit = 25, until =
  * the same sixty. The production log of 2026-10-01 showed runs of 48–55 s ending in "Task timed out after 60 seconds" (three links, eleven
  * vault saves). The last statement is allowed to finish, so the run's own deadline is 48 s and the budgets leave it room to. */
 const ADAPTIVE_MAX_TRIES = 3, ADAPTIVE_COOLDOWN_MS = 6 * 3600 * 1000, ADAPTIVE_PART = 100, ADAPTIVE_MIN_ROOM_MS = 28000, INVOCATION_MS = 48000;
-function adaptiveWanted({ parsed, result, claimed, text, now }) {
-    if (parsed.verdict === 'parsed' && parsed.understood === true && parsed.reconciliation?.ok !== false && Array.isArray(parsed.rows) && parsed.rows.length) return false;
+/* A READING THAT CONTRADICTS THE STATEMENT'S OWN PRINTED "Total Payment" IS A SUSPECT READING (printedPaymentsCheck): it gets a second opinion from the model even though the rules thought they understood it. */
+export const readingIsSuspect = parsed => Array.isArray(parsed && parsed.rows) && parsed.rows.length > 0 && printedPaymentsCheck(parsed) === 'differs';
+/* The second opinion is believed only if it ends up agreeing with the printed figure the first reading contradicted: the model's rows are checked against the same printed Total Payment, to the cent. */
+export const secondOpinionAgrees = (first, second) => !readingIsSuspect(first) || (Array.isArray(second && second.rows) && printedPaymentsCheck({ ...second, printedFigures: first.printedFigures }) === 'agree');
+export function adaptiveWanted({ parsed, result, claimed, text, now }) {
+    if (!readingIsSuspect(parsed) && parsed.verdict === 'parsed' && parsed.understood === true && parsed.reconciliation?.ok !== false && Array.isArray(parsed.rows) && parsed.rows.length) return false;
     if (parsed.layout?.reconciliationBypassed || result.zeroActivity === true || claimed.emptyOverride === 'owner') return false;
     if ((Number(claimed.adaptiveTries) || 0) >= ADAPTIVE_MAX_TRIES || (claimed.adaptiveAt && now - Number(claimed.adaptiveAt) < ADAPTIVE_COOLDOWN_MS)) return false;
     if (textVerdict(text || '').verdict === VERDICT.NOT_STATEMENT) return false;
@@ -2231,7 +2235,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         const adaptiveNow = Date.now();
         if (claimed.adaptive?.v === ADAPTIVE_VERSION) {
             const saved = await loadAdaptive(sourceRef, claimed.adaptive);
-            if (saved) parsed = saved;
+            if (saved) parsed = { ...saved, printedFigures: parsed.printedFigures };
         } else if (adaptiveWanted({ parsed, result, claimed, text, now: adaptiveNow })) {
             /* ONE SERVERLESS INVOCATION HAS SIXTY SECONDS. A reading asks the model for up to ~12 s per attempt; it is started only
              * when there is room for two of them, and given the room that is left — otherwise the statement waits for the next
@@ -2239,8 +2243,11 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const room = deadlineAt - adaptiveNow;
             if (room < ADAPTIVE_MIN_ROOM_MS) throw deferral();
             const ai = await adaptiveRead({ text, ask: prompt => extract(prompt), uid, budgetMs: Math.min(22000, room - 14000) });
-            if (ai.ok) {
-                parsed = ai.parsed;
+            if (ai.ok && !secondOpinionAgrees(parsed, ai.parsed)) {
+                /* the model's reading does not reach the printed Total Payment either: neither reading is believed, the first one stays and its layout filing stays closed */
+                await noteAdaptiveFailure(sourceRef, claimed, { reason: 'printed-total-differs', attempts: ai.attempts || 1, problems: [], differenceCents: null }, adaptiveNow);
+            } else if (ai.ok) {
+                parsed = { ...ai.parsed, printedFigures: parsed.printedFigures };
                 try { await saveAdaptive(sourceRef, parsed, adaptiveNow); } catch (_) { throw new Error('statement-worker-retry-required'); }
                 await rememberLayout(db, uid, claimed.bank || '', text, parsed);
             } else if (ai.reason !== 'ai-unavailable') await noteAdaptiveFailure(sourceRef, claimed, ai, adaptiveNow);
