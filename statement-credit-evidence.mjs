@@ -15,24 +15,25 @@
 const cents = (v) => (v === null || v === undefined || v === '' || typeof v === 'boolean' ? NaN : Math.round(Number(v) * 100));
 const dayOf = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000 : NaN; };
 
-/** The bank gave the money up this many days before the card posted it, or this many after (a date read the other way round). */
-export const BANK_BEFORE_DAYS = 4, BANK_AFTER_DAYS = 1;
+/** The bank gave the money up this many days before the card posted it, or this many after. The bank's date can lag the card's: production 2026-11-06, the owner's own books hold a card payment posted TWO days before its bank debit
+ *  (`statement-legs-plan` card:day-gap--2, a weekend), so the lag allowed is the three days `statement-twins` already counts a pair within. The arithmetic of the whole statement still has to agree to the cent: the window only picks candidates. */
+export const BANK_BEFORE_DAYS = 4, BANK_AFTER_DAYS = 3;
 
 /**
  * @param {object} user the owner's document
  * @param {{id:string, amount:number, date:string}[]} lines lines of ONE card statement
- * @param {{sourcePath:string}} ctx the statement they are on (its own records are never evidence of themselves)
+ * @param {{sourcePath:string, before?:number, after?:number, anySource?:boolean}} ctx the statement they are on (its own records are never evidence of themselves); `before`/`after`/`anySource` widen the window only to COUNT (diagnostics), never to prove
  * @returns {Set<string>} the ids of the lines that have at least one bank payment of the same amount behind them
  */
-export function lineIdsWithBankPayment(user, lines, { sourcePath = '' } = {}) {
-    const bank = (Array.isArray(user && user.expenses) ? user.expenses : []).filter((record) => record && record.source === 'statement' && record.statementKey !== sourcePath && Number.isFinite(cents(record.amount)) && Number.isFinite(dayOf(record.date)));
+export function lineIdsWithBankPayment(user, lines, { sourcePath = '', before = BANK_BEFORE_DAYS, after = BANK_AFTER_DAYS, anySource = false } = {}) {
+    const bank = (Array.isArray(user && user.expenses) ? user.expenses : []).filter((record) => record && (anySource || record.source === 'statement') && record.statementKey !== sourcePath && Number.isFinite(cents(record.amount)) && Number.isFinite(dayOf(record.date)));
     const byAmount = new Map();
     for (const record of bank) { const key = cents(record.amount); if (!byAmount.has(key)) byAmount.set(key, []); byAmount.get(key).push(dayOf(record.date)); }
     const out = new Set();
     for (const line of Array.isArray(lines) ? lines : []) {
         const day = dayOf(line && line.date), days = byAmount.get(cents(line && line.amount));
         if (!days || !Number.isFinite(day)) continue;
-        if (days.some((paid) => day - paid >= -BANK_AFTER_DAYS && day - paid <= BANK_BEFORE_DAYS)) out.add(String(line.id));
+        if (days.some((paid) => day - paid >= -after && day - paid <= before)) out.add(String(line.id));
     }
     return out;
 }
