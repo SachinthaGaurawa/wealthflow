@@ -109,7 +109,7 @@ const SEED = `(() => {
 /** Runs in the page: what is wrong inside `boxSel`. */
 function measureInPage(boxSel) {
     const box = document.querySelector(boxSel);
-    if (!box) return { missing: true, overflowPx: 0, overlaps: [], clipped: [], misaligned: [], spilled: [], pinnedCover: 0 };
+    if (!box) return { missing: true, overflowPx: 0, overlaps: [], clipped: [], misaligned: [], spilled: [], squeezed: [], pinnedCover: 0 };
     const vw = document.documentElement.clientWidth;
     const label = (el) => {
         const id = el.id ? '#' + el.id : '';
@@ -139,6 +139,10 @@ function measureInPage(boxSel) {
     };
     const items = [];
     const spilled = [];
+    // Text squeezed into a sliver: a word broken in the middle, or a long label wrapped inside a column under 48px. This is what a fix that
+    // only silences the overlap looks like (#524: `overflow-wrap:anywhere` made "Monthly CC Payments" stand one letter per line in a 24px grid
+    // column: no overlap left, and the screen worse than before). The parent's grid is named, because that is where the cause is.
+    const squeezed = [];
     for (const el of box.querySelectorAll('*')) {
         if (!visible(el)) continue;
         const own = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
@@ -154,6 +158,16 @@ function measureInPage(boxSel) {
         if (own && !control && spilled.length < 8 && !/^(hidden|clip|auto|scroll)$/.test(cs.overflowX)) {
             const out = Math.max(...rects.map((q) => Math.max(q.right - (r.right + 2), (r.left - 2) - q.left)));
             if (out > 2 && r.width < vw) spilled.push(label(el) + ' "' + textOf(el) + '" runs ' + Math.round(out) + 'px outside its box');
+        }
+        if (own && !control && squeezed.length < 8) {
+            const words = (el.innerText || '').trim().split(/\s+/).filter(Boolean).length;
+            const brokenWord = words > 0 && rects.length > words;
+            const sliver = r.width < 48 && rects.length >= 2 && textOf(el).replace(/\s/g, '').length >= 8;
+            if (brokenWord || sliver) {
+                const par = el.parentElement, pcs = par ? getComputedStyle(par) : null;
+                const where = pcs && /grid/.test(pcs.display) ? ' inside ' + label(par) + ' (display:grid; grid-template-columns: ' + pcs.gridTemplateColumns + ')' : pcs && /flex/.test(pcs.display) ? ' inside ' + label(par) + ' (display:flex)' : '';
+                squeezed.push(label(el) + ' "' + textOf(el) + '" is squeezed to ' + Math.round(r.width) + 'px wide (' + (brokenWord ? 'a word is broken across lines' : rects.length + ' lines') + ')' + where);
+            }
         }
     }
     const hit = (a, b) => a.rects.some((x) => b.rects.some((y) => {
@@ -204,7 +218,7 @@ function measureInPage(boxSel) {
             if (dx > 3 && misaligned.length < 8) misaligned.push('heading "' + textOf(h) + '" is ' + Math.round(dx) + 'px away from its column');
         });
     }
-    return { missing: false, overflowPx: Math.max(0, document.documentElement.scrollWidth - vw), overlaps, clipped, misaligned, spilled, pinnedCover };
+    return { missing: false, overflowPx: Math.max(0, document.documentElement.scrollWidth - vw), overlaps, clipped, misaligned, spilled, squeezed, pinnedCover };
 }
 
 /**
@@ -235,9 +249,9 @@ export async function probeLayout({ screen, repoDir = process.cwd(), widths = WI
             const m = await page.evaluate(measureInPage, def.box);
             if (!sample) sample = await page.evaluate((b) => { const tr = document.querySelector(b + ' tbody tr, ' + b + ' .card, ' + b + ' li'); return tr ? tr.outerHTML.replace(/\s+/g, ' ').replace(/ (onclick|style)="[^"]*"/g, '').slice(0, 1400) : ''; }, def.box);
             if (m.missing) return { ok: false, reason: `the screen ${def.box} was not found`, screen, widths: out, problems: 0 };
-            out.push({ width, overflowPx: m.overflowPx, overlaps: m.overlaps, clipped: m.clipped, misaligned: m.misaligned || [], spilled: m.spilled || [], pinnedCover: m.pinnedCover || 0 });
+            out.push({ width, overflowPx: m.overflowPx, overlaps: m.overlaps, clipped: m.clipped, misaligned: m.misaligned || [], spilled: m.spilled || [], squeezed: m.squeezed || [], pinnedCover: m.pinnedCover || 0 });
         }
-        const problems = out.reduce((s, w) => s + (w.overflowPx > 2 ? 1 : 0) + w.overlaps.length + w.clipped.length + (w.misaligned || []).length + (w.spilled || []).length, 0);
+        const problems = out.reduce((s, w) => s + (w.overflowPx > 2 ? 1 : 0) + w.overlaps.length + w.clipped.length + (w.misaligned || []).length + (w.spilled || []).length + (w.squeezed || []).length, 0);
         return { ok: true, screen, widths: out, problems, sample };
     } catch (e) {
         return { ok: false, reason: 'the measurement failed: ' + String((e && e.message) || e).slice(0, 200), screen, widths: [], problems: 0 };
@@ -263,6 +277,7 @@ export function describeProbe(r) {
         for (const c of w.clipped.slice(0, 3)) bits.push(`text is cut off: ${c}`);
         for (const c of (w.misaligned || []).slice(0, 2)) bits.push(`columns no longer line up: ${c}`);
         for (const c of (w.spilled || []).slice(0, 3)) bits.push(`text spills out of its box: ${c}`);
+        for (const c of (w.squeezed || []).slice(0, 3)) bits.push(`text squeezed into a sliver: ${c}`);
         if (bits.length) lines.push(`At ${w.width}px wide: ${bits.join('; ')}.`);
     }
     return lines.length ? lines.join('\n') : `No overlap, overflow or cut-off text was found at ${r.widths.map((w) => w.width).join(', ')}px wide.`;
@@ -296,8 +311,8 @@ export async function sweepScreens({ repoDir = process.cwd(), width = 390, pages
             if (!m || m.missing) continue;
             const furniture = (o) => /^(th|svg|button\.ib)/.test(o.a) || /^(th|svg|button\.ib)/.test(o.b) || /\bACTIONS\b/i.test(o.a + o.b);
             const real = m.overlaps.filter((o) => !furniture(o));
-            const score = m.spilled.length * 3 + real.length + (m.overflowPx > 2 ? 2 : 0) + m.clipped.length;
-            if (score > 0) ranked.push({ screen: screenKeyOfPage(id) || id, score, problems: m.overlaps.length + m.spilled.length + m.clipped.length + (m.overflowPx > 2 ? 1 : 0) });
+            const score = (m.spilled.length + (m.squeezed || []).length) * 3 + real.length + (m.overflowPx > 2 ? 2 : 0) + m.clipped.length;
+            if (score > 0) ranked.push({ screen: screenKeyOfPage(id) || id, score, problems: m.overlaps.length + m.spilled.length + (m.squeezed || []).length + m.clipped.length + (m.overflowPx > 2 ? 1 : 0) });
         }
         ranked.sort((a, b) => b.score - a.score);
         return { ok: true, ranked };

@@ -72,10 +72,3 @@
     min-height: 44px;
   }
 }
-
-/* lane-block: 524 scope=#page-ccinstall — [CRITICAL] Overlap issue on phones, needs fixing. */
-@media (max-width: 640px) {
-  #page-ccinstall .stat-label { white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word; }
-}
