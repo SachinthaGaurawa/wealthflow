@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.58 — 2026-11-06
+
+**What changed for you**
+
+- Overlap issue on phones, needs fixing. (#531)
+
 ## v7.69.57 — 2026-11-06
 
 **What changed for you**
