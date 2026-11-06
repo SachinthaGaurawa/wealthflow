@@ -72,3 +72,13 @@
     min-height: 44px;
   }
 }
+
+/* lane-block: 524 scope=#page-ccinstall — [CRITICAL] Overlap issue on phones, needs fixing. */
+@media (max-width: 640px) {
+  #page-ccinstall #cciStats.g4 > .stat-card > .stat-val { grid-column: 1;
+    grid-row: auto;
+    margin: 4px 0 0;
+    text-align: left;
+    min-width: 0;
+    line-height: 1.15; }
+}
