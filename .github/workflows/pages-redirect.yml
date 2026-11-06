@@ -1,0 +1,64 @@
+name: Pages redirect (legacy github.io -> official domain)
+
+# WHY THIS EXISTS
+# The app is served from https://www.wealthflow.lk (Vercel). The old github.io address only has to send visitors there (404.html,
+# test/github_pages_redirect_test.js). With the Pages source set to "Deploy from a branch", GitHub runs its own "pages build and
+# deployment" workflow on EVERY push to main and publishes the whole 20 MB repository. The release bot commits two minutes after every
+# merge, so GitHub cancels the first deployment (a red X on the merge commit), and when GitHub's own queue is slow the 10-minute deploy
+# step times out ("Deployment failed, try again later"). Every real check was green; only this deploy showed red.
+#
+# This workflow publishes ONLY the redirect page, only when it changes, and never cancels a deployment in progress. It acts only once
+# the repository's Pages source is "GitHub Actions" (Settings > Pages > Build and deployment); until then it says so and ends green.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '404.html'
+      - '.github/workflows/pages-redirect.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-redirect
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Is Pages set to deploy from Actions?
+        id: mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mode="$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq '.build_type' 2>/dev/null || echo unknown)"
+          echo "build_type=${mode}" >> "$GITHUB_OUTPUT"
+          if [ "${mode}" != "workflow" ]; then
+            echo "::notice::Pages source is '${mode}', not 'GitHub Actions'. Nothing deployed here; set Settings > Pages > Source to GitHub Actions to use this workflow."
+          fi
+      - name: Build the redirect-only site
+        if: steps.mode.outputs.build_type == 'workflow'
+        run: |
+          mkdir -p _site
+          cp 404.html _site/404.html
+          cp 404.html _site/index.html
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+        if: steps.mode.outputs.build_type == 'workflow'
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.mode.outputs.build_type == 'workflow'
+        with:
+          path: _site
+      - id: deployment
+        if: steps.mode.outputs.build_type == 'workflow'
+        uses: actions/deploy-pages@v4
