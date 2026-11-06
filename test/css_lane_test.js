@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import {
     layoutLaneFor, validateCss, validateLaneFile, appendFix, judgeLayout, runLayoutLane, cssContext, layoutPrompt,
+    serializeRules, pruneToWhatMatters,
     LANE_FILE, MAX_CSS_CHARS,
 } from '../autonomy/css-lane.mjs';
 import { screenFor, describeProbe } from '../autonomy/layout-probe.mjs';
@@ -309,5 +310,72 @@ describe('css lane: the model is shown the elements the measurement names (#524 
     it('accepts a rule that fixes the stat card and nothing else', () => {
         expect(validateCss(`${SCOPE} #cciStats .stat-card { display: block; }`, { scope: SCOPE })).toMatchObject({ ok: true });
         expect(validateCss(`@media (max-width: 640px) { ${SCOPE} #cciStats .stat-card { grid-template-columns: minmax(0, 1fr); } }`, { scope: SCOPE }).ok).toBe(true);
+    });
+});
+
+// Attempt 3 on #524: the author's stat-card rule fixed the measured problem, but the same block also re-declared table rules that undid
+// block 514, so the reviewer vetoed all of it. The program now removes each rule in turn and keeps only those the browser needs.
+describe('css lane: only the rules the measurement needs', () => {
+    const STAT = `${SCOPE} .stat-card { grid-template-columns: 1fr; }`;
+    const TABLE = `@media (max-width: 768px) {\n  ${SCOPE} .tbl-wrap th, ${SCOPE} .tbl-wrap td { white-space: nowrap; padding: 8px 6px; }\n}`;
+    const AUTHOR = `${STAT}\n${TABLE}\n${SCOPE} .tbl-wrap { overflow-x: auto; }`;
+    // a fake browser: the stat-card rule is what removes the 4 measured problems; nothing else changes the count
+    const browser = () => { const seen = []; const fn = async ({ extraCss = '' }) => { seen.push(extraCss); return probe({ 390: /\.stat-card/.test(extraCss) ? 0 : 4 }); }; fn.seen = seen; return fn; };
+    const before = probe({ 390: 4 });
+
+    it('writes rules back as CSS the gate accepts, media rules grouped and order kept', () => {
+        const css = serializeRules([
+            { selector: `${SCOPE} .a`, body: 'gap: 4px', media: '' },
+            { selector: `${SCOPE} .b`, body: 'gap: 2px;', media: '@media (max-width: 768px)' },
+            { selector: `${SCOPE} .c`, body: 'gap: 1px', media: '@media (max-width: 768px)' },
+        ]);
+        expect(css).toMatch(/@media \(max-width: 768px\) \{[\s\S]*\.b[\s\S]*\.c[\s\S]*\}/);
+        expect(css.match(/@media/g)).toHaveLength(1);
+        expect(validateCss(css, { scope: SCOPE }).ok).toBe(true);
+    });
+    it('drops the table rules the stat-card fix does not need, and keeps the stat-card rule', async () => {
+        const probeImpl = browser();
+        const after = await probeImpl({ extraCss: AUTHOR });
+        const r = await pruneToWhatMatters({ css: AUTHOR, scope: SCOPE, before, after, judged: judgeLayout(before, after), probeImpl, screen: 'cc-instalments', repoDir: '.', widths: [390] });
+        expect(r.dropped).toBe(2);
+        expect(r.css).toContain('.stat-card');
+        expect(r.css).not.toMatch(/tbl-wrap|nowrap/);
+        expect(validateCss(r.css, { scope: SCOPE }).ok).toBe(true);
+        expect(r.judged.verdict).toBe('fixed');
+    });
+    it('keeps a rule whose removal brings the problem back', async () => {
+        const probeImpl = async ({ extraCss = '' }) => probe({ 390: /overflow-x/.test(extraCss) && /\.stat-card/.test(extraCss) ? 0 : 4 });
+        const after = await probeImpl({ extraCss: AUTHOR });
+        const r = await pruneToWhatMatters({ css: AUTHOR, scope: SCOPE, before, after, judged: judgeLayout(before, after), probeImpl, screen: 'cc-instalments', repoDir: '.', widths: [390] });
+        expect(r.css).toContain('overflow-x');
+        expect(r.css).toContain('.stat-card');
+        expect(r.css).not.toMatch(/nowrap/);
+    });
+    it('leaves a single rule alone and never measures for it', async () => {
+        const probeImpl = async () => { throw new Error('must not be measured'); };
+        const r = await pruneToWhatMatters({ css: STAT, scope: SCOPE, before, after: probe({ 390: 0 }), judged: { ok: true, verdict: 'fixed' }, probeImpl, screen: 'x', repoDir: '.', widths: [390] });
+        expect(r).toMatchObject({ dropped: 0, css: STAT, probes: 0 });
+    });
+    it('a browser failure while pruning keeps the proven block as it was', async () => {
+        const after = probe({ 390: 0 });
+        const r = await pruneToWhatMatters({ css: AUTHOR, scope: SCOPE, before, after, judged: judgeLayout(before, after), probeImpl: async () => { throw new Error('chrome died'); }, screen: 'x', repoDir: '.', widths: [390] });
+        expect(r.dropped).toBe(0);
+        expect(r.css).toBe(AUTHOR);
+    });
+    it('the lane sends the reviewer only the pruned block', async () => {
+        const issue = { number: 524, title: '[CRITICAL] CC installments overlap', body: '### User feedback\n> overlapped on my smartphone' };
+        const d = fs.mkdtempSync('/tmp/lane-');
+        fs.writeFileSync(d + '/index.html', '<div class="page" id="page-ccinstall"><div class="stat-card"></div></div>');
+        fs.writeFileSync(d + '/wf-ui.css', '.stat-card { display: grid; }');
+        fs.writeFileSync(d + '/' + LANE_FILE, '/* empty */\n');
+        const calls = [];
+        const chatImpl = async (a) => { calls.push(a); return calls.length === 1 ? { text: AUTHOR, provider: 'deepseek' } : { text: '{"verdict":"PASS","severity":"none","findings":[],"reason":"ok"}', provider: 'mistral' }; };
+        const probeImpl = async ({ extraCss } = {}) => (extraCss === undefined ? before : probe({ 390: /\.stat-card/.test(extraCss) ? 0 : 4 }));
+        const r = await runLayoutLane({ issue: { ...issue, body: issue.body }, repoDir: d, env: {}, log: () => {}, chatImpl, probeImpl });
+        expect(r.ok).toBe(true);
+        expect(r.code).toContain('.stat-card');
+        expect(r.code).not.toMatch(/nowrap/);
+        expect(calls[1].prompt).toMatch(/removing them one at a time/);
+        expect(calls[1].prompt).not.toMatch(/white-space: nowrap/);
     });
 });
