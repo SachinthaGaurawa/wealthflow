@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.60 — 2026-11-06
+
+**What changed for you**
+
+- Overlap issue on phones, needs fixing. (#536)
+
+**Under the hood**
+
+- GitHub Models reader, cross-check by a second reader, words looked up in the code (#535)
+
 ## v7.69.59 — 2026-11-06
 
 **What changed for you**
