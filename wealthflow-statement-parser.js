@@ -356,6 +356,15 @@
      *                                 loop: the second pass never re-enters the
      *                                 layout memory.
      */
+    // The two figures a CARD statement prints under its last line ("Total Payment: 281,200.00CR", "Total Transactions: 623,440.17"): the bank's own addition of the money paid in and of the purchases. Null when not printed.
+    function printedFigures(text) {
+        var fig = '(\\d{1,3}(?:,\\d{3})+\\.\\d{2}|\\d+\\.\\d{2})', out = { payments: null, purchases: null };
+        var a = new RegExp('total\\s+payments?\\b[^\\d\\n]{0,30}' + fig, 'i').exec(text), b = new RegExp('total\\s+(?:transactions|purchases)\\b[^\\d\\n]{0,30}' + fig, 'i').exec(text);
+        if (a) out.payments = _num(a[1]);
+        if (b) out.purchases = _num(b[1]);
+        return out;
+    }
+
     function parseStatement(text, opts) {
         opts = opts || {};
         var src = String(text || '');
@@ -639,6 +648,7 @@
             /* What the screen shows when it is not. */
             reason: VERDICT_TEXT[verdict] || '',
             moneyLines: moneyLines,
+            printedFigures: printedFigures(String(text || '')),
             candidateRows: cands.length,
             invalidDates: invalidDates,
             balanceMismatches: balanceMismatches,

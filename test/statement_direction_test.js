@@ -47,10 +47,11 @@ describe('a direction the parser only assumed', () => {
         expect(fallbackDecision(assumed({ narration: 'SALARY JULY', description: 'SALARY JULY', direction: 'credit' }), { statementType: 'bank_account' })).toMatchObject({ module: 'incomeRecv', category: 'Salary' });
         expect(fallbackDecision(assumed({ valid: false }), {})).toBeNull();
     });
-    it('a card statement\'s fee is a Card Fee and its purchase a Card Purchase', () => {
+    it('a card statement\'s fee is a Card Fee, a purchase keeps the category its words give, and one nobody can place is a Card Purchase', () => {
         const card = { statementType: 'credit_card', card_last4: '3766570000000276' };
         expect(fallbackDecision(assumed({ narration: 'ANNUAL FEE', description: 'ANNUAL FEE' }), card)).toMatchObject({ module: 'cconetime', category: 'Card Fee' });
-        expect(fallbackDecision(assumed({ narration: 'POS Transaction - KEELLS', description: 'POS Transaction - KEELLS' }), card)).toMatchObject({ module: 'cconetime', category: 'Card Purchase' });
+        expect(fallbackDecision(assumed({ narration: 'POS Transaction - KEELLS', description: 'POS Transaction - KEELLS' }), card)).toMatchObject({ module: 'cconetime', category: 'Groceries' });
+        expect(fallbackDecision(assumed({ narration: 'POS Transaction - ZZ NOBODY KNOWS 7', description: 'POS Transaction - ZZ NOBODY KNOWS 7' }), card)).toMatchObject({ module: 'cconetime', category: 'Card Purchase' });
     });
     it('the ledger accepts the two new proofs', () => {
         expect(PROVEN_DIRECTION).toEqual(expect.arrayContaining(['statement', 'words']));

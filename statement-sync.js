@@ -14,7 +14,7 @@ import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs'
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
 import { lineIdsWithBankPayment } from './statement-credit-evidence.mjs';
-import { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
+import { semanticDirection, genericBankLine, proveDirections, printedPaymentsCheck, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT, intentVerdict } from './wealthflow-statement-identity.js';
@@ -322,6 +322,8 @@ async function askBoard(rows, rules, allocations, board) {
     });
 }
 
+/* The category a card line may keep: one the rules or the merchant list really named (never "Other", "Needs Review" or a "Card ..." label), else the plain "Card Purchase" the merchant review settles. */
+export const namedCardCategory = category => (category && !/^(?:other|needs review|card\s)/i.test(String(category)) && CLASSIFY_CATEGORIES.includes(category) ? category : 'Card Purchase');
 export function deterministicDecision(row, allocations = {}) {
     const description = String(row?.narration || row?.description || '');
     /* THE OWNER'S OWN CARD IN A BANK ROW IS THE OWNER'S OWN MONEY (wealthflow-own-money.js, the same rule the manual upload applies): "Cash advance cr 376657******0276" is money drawn on the AMEX arriving in
@@ -357,8 +359,9 @@ export function deterministicDecision(row, allocations = {}) {
     const routed = routeRow(row, { ...allocations, ...(genericBankLine(row) ? { targets: [], loans: [] } : {}), reviewThreshold: 0.7 });
     if (routed.needsReview) return { verified: false, reason: 'ai-consensus-unavailable' };
     if (routed.module === 'subscriptions' && !routed.allocation?.id) {
+        /* A CARD PAYMENT TO A MERCHANT THAT IS ONLY EVER A SUBSCRIPTION (Netflix, Dialog, a gym, an insurer) KEEPS THE CATEGORY THE LIST GAVE IT: with no plan of the owner's to attach it to it is a one-time card line, but "Card Purchase" threw the merchant's name away */
         return isCreditCardRow(row, allocations)
-            ? { module: 'cconetime', category: 'Card Purchase', allocationId: '', verified: true, deterministic: true }
+            ? { module: 'cconetime', category: namedCardCategory(routed.category), allocationId: '', verified: true, deterministic: true }
             : { module: 'expenses', category: routed.category || expenseCategoryFor(row), allocationId: '', verified: true, deterministic: true };
     }
     const decisions = {
@@ -368,6 +371,7 @@ export function deterministicDecision(row, allocations = {}) {
         /* A CARD PURCHASE KEEPS THE CATEGORY THE RULES GAVE IT ("KEELLS SUPER" is Groceries, "UBER" is Transport): the router named it, and filing every card line as "Card Purchase" left the whole statement
          * uncategorised until the app was opened and the merchant autopilot swept it. A merchant the rules could not place ("Other") is still filed as a Card Purchase, and the autopilot and the owner settle it. */
         cconetime: { module: 'cconetime', category: routed.subtype === 'fuel' ? 'Fuel' : routed.subtype === 'fee' ? 'Card Fee' : routed.subtype === 'cash_advance' ? 'Cash Advance'
+            : routed.subtype === 'subscription' ? namedCardCategory(expenseCategoryFor(row) !== 'Other' ? expenseCategoryFor(row) : routed.category)
             : routed.subtype === 'purchase' && routed.category && !/^(?:other|needs review|card\s)/i.test(String(routed.category)) && CLASSIFY_CATEGORIES.includes(routed.category) ? routed.category : 'Card Purchase' },
         ccinstall: { module: 'ccinstall', category: 'Installment' },
     };
@@ -400,7 +404,7 @@ export function fallbackDecision(row, allocations = {}) {
     if (!proven && !byWords) return null;
     const autoDecided = proven ? 'rules-fallback' : 'rules-words';
     const card = isCreditCardRow(row, allocations);
-    if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? (/\b(?:fees?|charges?|duty|tax)\b/i.test(String(row.narration || row.description || '')) ? 'Card Fee' : 'Card Purchase') : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
+    if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? (/\b(?:fees?|charges?|tax)\b/i.test(String(row.narration || row.description || '')) ? 'Card Fee' : namedCardCategory(expenseCategoryFor(row))) : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
     if (row.direction === 'credit') return { module: card ? 'ccPayments' : 'incomeRecv', category: card ? 'Card Payment' : (incomeCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
     return null;
 }
@@ -1385,7 +1389,7 @@ export function readShape(parsed) {
     }
     return { sources: bySource, balanceColumn: !!(parsed && parsed.layout && parsed.layout.balanceColumn), type: String(parsed && parsed.layout && parsed.layout.statementType || ''),
         opening: Number.isFinite(rec.opening) && rec.opening !== null, closing: Number.isFinite(rec.closing) && rec.closing !== null, reconciled: rec.ok === null || rec.ok === undefined ? 'unknown' : rec.ok ? 'yes' : 'no', ...(rec.model ? { model: rec.model } : {}),
-        invalid: { noDate, noAmount, noWords } };
+        printed: printedPaymentsCheck(parsed), invalid: { noDate, noAmount, noWords } };
 }
 
 export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {
@@ -2022,8 +2026,12 @@ export async function recoverRevokedSenderReviews({ db, uid, limit = 25, until =
  * the same sixty. The production log of 2026-10-01 showed runs of 48–55 s ending in "Task timed out after 60 seconds" (three links, eleven
  * vault saves). The last statement is allowed to finish, so the run's own deadline is 48 s and the budgets leave it room to. */
 const ADAPTIVE_MAX_TRIES = 3, ADAPTIVE_COOLDOWN_MS = 6 * 3600 * 1000, ADAPTIVE_PART = 100, ADAPTIVE_MIN_ROOM_MS = 28000, INVOCATION_MS = 48000;
-function adaptiveWanted({ parsed, result, claimed, text, now }) {
-    if (parsed.verdict === 'parsed' && parsed.understood === true && parsed.reconciliation?.ok !== false && Array.isArray(parsed.rows) && parsed.rows.length) return false;
+/* A READING THAT CONTRADICTS THE STATEMENT'S OWN PRINTED "Total Payment" IS A SUSPECT READING (printedPaymentsCheck): it gets a second opinion from the model even though the rules thought they understood it. */
+export const readingIsSuspect = parsed => Array.isArray(parsed && parsed.rows) && parsed.rows.length > 0 && printedPaymentsCheck(parsed) === 'differs';
+/* The second opinion is believed only if it ends up agreeing with the printed figure the first reading contradicted: the model's rows are checked against the same printed Total Payment, to the cent. */
+export const secondOpinionAgrees = (first, second) => !readingIsSuspect(first) || (Array.isArray(second && second.rows) && printedPaymentsCheck({ ...second, printedFigures: first.printedFigures }) === 'agree');
+export function adaptiveWanted({ parsed, result, claimed, text, now }) {
+    if (!readingIsSuspect(parsed) && parsed.verdict === 'parsed' && parsed.understood === true && parsed.reconciliation?.ok !== false && Array.isArray(parsed.rows) && parsed.rows.length) return false;
     if (parsed.layout?.reconciliationBypassed || result.zeroActivity === true || claimed.emptyOverride === 'owner') return false;
     if ((Number(claimed.adaptiveTries) || 0) >= ADAPTIVE_MAX_TRIES || (claimed.adaptiveAt && now - Number(claimed.adaptiveAt) < ADAPTIVE_COOLDOWN_MS)) return false;
     if (textVerdict(text || '').verdict === VERDICT.NOT_STATEMENT) return false;
@@ -2231,7 +2239,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         const adaptiveNow = Date.now();
         if (claimed.adaptive?.v === ADAPTIVE_VERSION) {
             const saved = await loadAdaptive(sourceRef, claimed.adaptive);
-            if (saved) parsed = saved;
+            if (saved) parsed = { ...saved, printedFigures: parsed.printedFigures };
         } else if (adaptiveWanted({ parsed, result, claimed, text, now: adaptiveNow })) {
             /* ONE SERVERLESS INVOCATION HAS SIXTY SECONDS. A reading asks the model for up to ~12 s per attempt; it is started only
              * when there is room for two of them, and given the room that is left — otherwise the statement waits for the next
@@ -2239,8 +2247,11 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const room = deadlineAt - adaptiveNow;
             if (room < ADAPTIVE_MIN_ROOM_MS) throw deferral();
             const ai = await adaptiveRead({ text, ask: prompt => extract(prompt), uid, budgetMs: Math.min(22000, room - 14000) });
-            if (ai.ok) {
-                parsed = ai.parsed;
+            if (ai.ok && !secondOpinionAgrees(parsed, ai.parsed)) {
+                /* the model's reading does not reach the printed Total Payment either: neither reading is believed, the first one stays and its layout filing stays closed */
+                await noteAdaptiveFailure(sourceRef, claimed, { reason: 'printed-total-differs', attempts: ai.attempts || 1, problems: [], differenceCents: null }, adaptiveNow);
+            } else if (ai.ok) {
+                parsed = { ...ai.parsed, printedFigures: parsed.printedFigures };
                 try { await saveAdaptive(sourceRef, parsed, adaptiveNow); } catch (_) { throw new Error('statement-worker-retry-required'); }
                 await rememberLayout(db, uid, claimed.bank || '', text, parsed);
             } else if (ai.reason !== 'ai-unavailable') await noteAdaptiveFailure(sourceRef, claimed, ai, adaptiveNow);

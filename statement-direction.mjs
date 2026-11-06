@@ -57,6 +57,19 @@ export function cardCreditWordName(row) {
 }
 const isCardStatement = (parsed, ctx) => !!(ctx && ctx.card === true) || String(parsed && parsed.layout && parsed.layout.statementType || '').toLowerCase().replace(/[^a-z]/g, '') === 'creditcard';
 
+/**
+ * THE STATEMENT'S OWN "Total Payment" AGAINST WHAT WAS READ. A card statement that prints the money paid in must have the lines that say "payment" add up to it, to the cent. If the rows we read as credits with payment words do NOT reach it, the reading of the
+ * directions is wrong somewhere (the 2026-11 HNB statement: every payment read as a purchase, found only when the owner asked why 9 items waited), so nothing on that statement is filed by the layout convention and the lines wait for the arithmetic or the owner.
+ * @returns {'agree'|'differs'|'none'} 'none' when the statement prints no such figure
+ */
+export function printedPaymentsCheck(parsed) {
+    const printed = parsed && parsed.printedFigures && parsed.printedFigures.payments;
+    if (!(Number(printed) > 0)) return 'none';
+    const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+    const read = rows.filter((row) => row && row.valid !== false && row.direction === 'credit' && /\b(?:payments?|pmt)\b/.test(textOf(row))).reduce((sum, row) => sum + cents(row.amount), 0);
+    return read === Math.round(Number(printed) * 100) ? 'agree' : 'differs';
+}
+
 const flagged = (row) => !!row && row.needsReview === true && row.valid !== false && ['assumed', 'keyword'].includes(row.directionSource) && ['debit', 'credit'].includes(row.direction);
 const cents = (v) => Math.round(Math.abs(Number(v)) * 100);
 
@@ -72,7 +85,7 @@ export function proveDirections(parsed, ctx = {}) {
     const odd = new Map();                      // the amounts of flagged rows, by direction, to see which could cancel each other
     for (const row of rows) if (flagged(row)) { const key = `${cents(row.amount)}:${row.direction}`; odd.set(key, (odd.get(key) || 0) + 1); }
     /* THE CARD LAYOUT CONVENTION is open only on a card statement with no running balance, whose own arithmetic (when it has any) and balance checks do not contradict the rows. */
-    const layoutOpen = isCardStatement(parsed, ctx) && !(parsed && parsed.layout && parsed.layout.balanceColumn) && rec.ok !== false && !(parsed && parsed.balanceMismatches) && !(parsed && parsed.invalidDates);
+    const layoutOpen = isCardStatement(parsed, ctx) && !(parsed && parsed.layout && parsed.layout.balanceColumn) && rec.ok !== false && !(parsed && parsed.balanceMismatches) && !(parsed && parsed.invalidDates) && printedPaymentsCheck(parsed) !== 'differs';
     let byStatement = 0, byWords = 0, byLayout = 0;
     const out = rows.map((row) => {
         if (!flagged(row)) return row;
@@ -155,4 +168,4 @@ export function explainMiss({ opening, closing, credits, debits, candidates = []
     return { miss: 'even', vsWaiting: bucket(sum(waiting)), vsAll: bucket(sum(every)), ways: near.length <= 30 ? subsetWays(near, half) : 'many', waysAll: every.length <= 30 ? subsetWays(every, half) : 'many' };
 }
 
-export default { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss };
+export default { printedPaymentsCheck, semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss };
