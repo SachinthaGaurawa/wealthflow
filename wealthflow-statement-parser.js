@@ -236,6 +236,12 @@
             if (/[\d,]$/.test(before)) continue;
             var lead = (before.match(/[\s(\-]*(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)?[\s(\-]*$/i) || [''])[0];
             var mk = (after.match(/^\s*\)?\s*(CR|DR)\b/i) || [])[1] || '';
+            // A marker printed BEFORE the amount ("CR 150,000.00": a card statement that has a column of its own for it) is the amount's own marker, unless it follows another money token directly (that one's trailing marker).
+            var pm = /(?:^|[\s|])(CR|DR)\s*$/i.exec(before), pre = '';
+            if (pm) {
+                var at = pm.index + (pm[0].length - pm[0].replace(/^[\s|]/, '').length), prior = out[out.length - 1];
+                if (!prior || before.slice(prior.end, at).trim() !== '') pre = pm[1].toUpperCase();
+            }
             // a balance below zero is "-40,367.58" or "(40,367.58)"; a "-" with a space after it stands for an empty column
             var below = /(?:^|[^\w.,\-])-(?:(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)\s?)?$/i.test(before) || /\(\s?(?:(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)\s?)?$/i.test(before) && /^\s*\)/.test(after);
             out.push({
@@ -246,8 +252,14 @@
                 end: end,
                 // "(1,500.00)" and "-1,500.00" both mean a negative movement.
                 neg: /\(/.test(lead) || /-\s*$/.test(lead) || /^\s*\)/.test(after),
-                marker: mk ? mk.toUpperCase() : ''
+                marker: mk ? mk.toUpperCase() : '',
+                pre: pre,
+                foreign: /(?:USD|EUR|GBP|AUD|INR|SGD)[\s(\-]*$/i.test(lead)
             });
+        }
+        // "USD 527.55  CR  175,674.15": the marker sits between a foreign amount and the amount in rupees; it belongs to the second.
+        for (var q = 0; q + 1 < out.length; q++) {
+            if (out[q].foreign && out[q].marker && !out[q + 1].marker && !out[q + 1].pre && text.slice(out[q].end, out[q + 1].start).replace(/\s*(?:CR|DR)\s*/i, '').trim() === '') { out[q + 1].pre = out[q].marker; out[q].marker = ''; }
         }
         return out;
     }
@@ -487,7 +499,7 @@
                 }
             }
             if (!direction) {
-                var marker = (amtTok && amtTok.marker) || (lastTok && lastTok.marker) || '';
+                var marker = (amtTok && (amtTok.marker || amtTok.pre)) || (lastTok && (lastTok.marker || lastTok.pre)) || '';
                 if (marker) { direction = marker === 'CR' ? 'credit' : 'debit'; source = 'marker'; }
             }
             if (!direction && colDir) { direction = colDir; source = 'column'; }
