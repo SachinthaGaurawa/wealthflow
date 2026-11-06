@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.56 — 2026-11-06
+
+**What changed for you**
+
+- Read the CR the bank prints before an HNB card amount; settle the filed statement (#529)
+
+**Under the hood**
+
+- Show the layout lane's model the elements the measurement names (#528)
+
 ## v7.69.55 — 2026-11-06
 
 **What changed for you**
