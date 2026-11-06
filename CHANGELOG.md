@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.59 — 2026-11-06
+
+**What changed for you**
+
+- Squeezed text counts as a layout problem; revert the wrong #524 block (#534)
+
+**Under the hood**
+
+- Publish only the redirect page, never cancel a deployment in progress (#533)
+
 ## v7.69.58 — 2026-11-06
 
 **What changed for you**
