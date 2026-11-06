@@ -457,7 +457,9 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
             const module = modules[decision.module];
             const user = userSnap.data() || {};
             const records = ['expenses', 'incomeRecv', 'cconetime', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
-            if (crossSourceMatches(records, corrected, context).length) throw new Error('matching-existing-entry-dismiss-or-edit');
+            /* a line of THIS statement that is filed already under another row number is a second line of the same statement (two payments of one amount on one day), never the copy of another statement */
+            const elsewhere = records.filter(record => !(record && record.statementKey === review.sourcePath && record.statementRow != null && Number(record.statementRow) !== Number(review.index)));
+            if (crossSourceMatches(elsewhere, corrected, context).length) throw new Error('matching-existing-entry-dismiss-or-edit');
             if (user[module] != null && !Array.isArray(user[module])) throw new Error('invalid-ledger-schema');
             if (module === 'subscriptions') {
                 const subs = structuredClone(user.subscriptions || []);
