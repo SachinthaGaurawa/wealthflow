@@ -1162,6 +1162,24 @@
      *  Size-capped, and financial data is never included: only error messages,
      *  stack traces, counts and device facts.
      */
+    // The feedback form lives in Settings, so "the page that was open" is always Settings when a report is sent, even when the owner
+    // was looking at CC Instalments (issue #524: the screenshot showed CC Instalments, the report said "settings"). The pages visited
+    // just before are kept here so the report can say where the person really was.
+    var _pageTrail = [];
+    function _notePage() {
+        try {
+            var a = document.querySelector('.page.active'), id = a ? String(a.id).replace('page-', '') : '';
+            if (id && _pageTrail[_pageTrail.length - 1] !== id) { _pageTrail.push(id); if (_pageTrail.length > 8) _pageTrail.shift(); }
+        } catch (_) { /* optional */ }
+    }
+    function _watchPages() {
+        try {
+            if (!window.MutationObserver) return;
+            var mo = new MutationObserver(_notePage);
+            document.querySelectorAll('.page').forEach(function (p) { mo.observe(p, { attributes: true, attributeFilter: ['class'] }); });
+            _notePage();
+        } catch (_) { /* optional */ }
+    }
     function _collectDiagnostics() {
         var d = {
             ua: navigator.userAgent,
@@ -1172,6 +1190,7 @@
             online: navigator.onLine,
             tz: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (_) { return null; } })(),
             standalone: (function () { try { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; } catch (_) { return false; } })(),
+            recentPages: (_notePage(), _pageTrail.slice(-6)),
             activePage: (function () { try { var a = document.querySelector('.page.active'); return a ? a.id.replace('page-', '') : ''; } catch (_) { return ''; } })(),
             domNodes: (function () { try { return document.getElementsByTagName('*').length; } catch (_) { return -1; } })()
         };
@@ -1747,6 +1766,7 @@
     //  INIT
     // ───────────────────────────────────────────────────────────────────────
     async function init() {
+        _watchPages();
         // Wrap everything so a failure in any single step can never prevent the
         // Software Update card from being injected (the "sometimes missing" bug).
         try { _watchServiceWorker(); } catch (_) {}

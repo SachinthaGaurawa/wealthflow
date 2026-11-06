@@ -125,8 +125,10 @@ describe('the hardcoded release history is gone', () => {
         // the room the issue body has for it (a picture that does not fit is dropped, and the fix agent then has nothing to look at).
         // Raised from 120_300 (measured 121,2xx, 2026-11-04): the screenshot picker hands off to wealthflow-image-prep.js (any size,
         // up to three reading-quality parts) and keeps its own downscale only as a fallback.
+        // Raised from 121_600 (measured 122,424, 2026-11-06): the last pages open are recorded (a feedback sent from Settings says which
+        // screen it was about; one MutationObserver on the page elements, +1.2 KB).
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(121_600);
+        expect(bytes).toBeLessThan(122_700);
     });
 });
 

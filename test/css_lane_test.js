@@ -31,9 +31,19 @@ describe('css lane: when it applies', () => {
     });
     it('does not take a report with no layout words, or with no screen it can measure', () => {
         expect(layoutLaneFor(issue('CC instalments total is wrong', 'the monthly amount is 12000 not 13000')).applies).toBe(false);
-        const noScreen = layoutLaneFor(issue('The dashboard overlaps on my phone'));
-        expect(noScreen.applies).toBe(false);
-        expect(noScreen.why).toMatch(/no screen/);
+    });
+    it('opens the page the report names, or sweeps every page when it names none (#524 sat in Settings, named nothing)', () => {
+        expect(layoutLaneFor(issue('The dashboard overlaps on my phone'))).toMatchObject({ applies: true, screen: 'dashboard' });
+        expect(layoutLaneFor(issue('Everything overlaps on my phone'))).toMatchObject({ applies: true, screen: '', sweep: true });
+    });
+    it('catches the way the owner spells it, and the English the translator wrote for a Sinhala report', () => {
+        expect(layoutLaneFor(issue('x', 'Did you see this. This is in CC installments. Overalaped.'))).toMatchObject({ applies: true, screen: 'cc-instalments' });
+        const si = { title: '[CRITICAL] x', body: '### User feedback\n> \u0D9C\u0DD0\u0DA7\u0DBD\u0DD4\u0DC0\u0D9A\u0DCA\n### English translation (AI)\n> The labels overlap on the CC Instalments page on my phone.\n### System diagnosis\n| Device | iPhone |' };
+        expect(layoutLaneFor(si)).toMatchObject({ applies: true, screen: 'cc-instalments' });
+    });
+    it('falls back to the page the person had open just before sending (the feedback form lives in Settings)', () => {
+        const b = '### User feedback\n> it overlaps\n### System diagnosis\n| App page | settings |\n| Pages open just before (oldest to newest) | dashboard > ccinstall > settings |';
+        expect(layoutLaneFor({ title: 'x', body: b })).toMatchObject({ applies: true, screen: 'cc-instalments' });
     });
     it('reads only what the person wrote, not the diagnostics', () => {
         const i = { title: 'Wrong total', body: '### User feedback\n> the total is wrong on CC instalments\n### System diagnosis\n| Device | mobile phone layout |' };
@@ -235,14 +245,27 @@ const chromeHere = (() => {
     } catch { return false; }
 })();
 describe.skipIf(!chromeHere)('css lane: real Chromium', () => {
-    it('measures red before and green after a rule that removes the sticky overlay', async () => {
+    // #524: at phone width the label of a CC Instalments stat card is drawn over its figure. The boxes of the two elements
+    // can sit side by side while the painted text runs out of its own box, so the probe measures the text itself.
+    const STAT_FIX = `${SCOPE} #cciStats .stat-card { display: block; }`;
+    it('measures red before and green after a rule that stops the stat-card label running over its figure', async () => {
         const { probeLayout } = await import('../autonomy/layout-probe.mjs');
-        const before = await probeLayout({ screen: 'cc-instalments', widths: [360, 1024], ignoreAgentFixes: true });
+        const before = await probeLayout({ screen: 'cc-instalments', widths: [430], ignoreAgentFixes: true });
         expect(before.ok, before.reason).toBe(true);
         expect(before.problems).toBeGreaterThan(0);
-        const after = await probeLayout({ screen: 'cc-instalments', widths: [360, 1024], extraCss: GOOD, ignoreAgentFixes: true });
+        expect(before.widths[0].spilled.length).toBeGreaterThan(0);
+        const after = await probeLayout({ screen: 'cc-instalments', widths: [430], extraCss: STAT_FIX, ignoreAgentFixes: true });
         expect(after.ok, after.reason).toBe(true);
         expect(judgeLayout(before, after)).toMatchObject({ ok: true, verdict: 'fixed' });
+    }, 110_000);
+
+    it('does not count the pinned Actions column covering its neighbour as a problem, and never calls it a fix', async () => {
+        const { probeLayout } = await import('../autonomy/layout-probe.mjs');
+        const r = await probeLayout({ screen: 'cc-instalments', widths: [360], ignoreAgentFixes: true });
+        expect(r.ok, r.reason).toBe(true);
+        expect(r.widths[0].pinnedCover).toBeGreaterThan(0);
+        expect(r.widths[0].overlaps.length).toBe(0);
+        expect(r.problems).toBe(0);
     }, 110_000);
 
     it('does not call the flex-and-ellipsis rewrite from #514 a fix, even if it got past the gate', async () => {
@@ -256,13 +279,11 @@ describe.skipIf(!chromeHere)('css lane: real Chromium', () => {
         expect(after.widths.some((w) => w.clipped.length > 0)).toBe(true);
         expect(judgeLayout(before, after).verdict).not.toBe('fixed');
     }, 110_000);
-    it('the safe toolkit measures as fixed', async () => {
-        const { probeLayout } = await import('../autonomy/layout-probe.mjs');
-        const good = `${SCOPE} .tbl-wrap{overflow-x:auto} ${SCOPE} .tbl-wrap table :is(thead th, tbody td):last-child{position:static;box-shadow:none}`;
-        expect(validateCss(good, { scope: SCOPE }).ok).toBe(true);
-        const before = await probeLayout({ screen: 'cc-instalments', widths: [360, 768], ignoreAgentFixes: true });
-        const after = await probeLayout({ screen: 'cc-instalments', widths: [360, 768], extraCss: good, ignoreAgentFixes: true });
-        expect(judgeLayout(before, after)).toMatchObject({ ok: true, verdict: 'fixed' });
-        expect(after.widths.every((w) => (w.misaligned || []).length === 0)).toBe(true);
-    }, 110_000);
+
+    it('a sweep with no page named finds the page that has the problem', async () => {
+        const { sweepScreens } = await import('../autonomy/layout-probe.mjs');
+        const r = await sweepScreens({ repoDir: process.cwd(), width: 430 });
+        expect(r.ok, r.reason).toBe(true);
+        expect(r.ranked[0].screen).toBe('cc-instalments');
+    }, 115_000);
 });
