@@ -1496,6 +1496,13 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
             }
         }
     };
+    /* a line the statement's own arithmetic proves is NOT a transaction (proveCardReviews, fourth rung) is closed as that: dismissed, its row kept on the review */
+    const dropLines = async (list) => {
+        for (const { doc } of list) {
+            try { await resolveReview({ db, uid, id: doc.id, decision: { module: 'skip' } }); await doc.ref.set({ dismissedBy: 'statement-totals-not-a-line' }, { merge: true }); proved += 1; totals.notALine = (totals.notALine || 0) + 1; }
+            catch (_) { totals.refused += 1; }
+        }
+    };
     for (const [sourcePath, items] of held) {
         if (cut.has(sourcePath)) { totals.incomplete += 1; continue; }
         if (Date.now() > until) { totals.incomplete += 1; more = true; continue; }
@@ -1511,7 +1518,8 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
             if (!credits || !debits) { totals.stamped += 1; continue; }
             const decided = new Set(credits.concat(debits)), rest = items.concat(extras).filter(entry => decided.has(entry.doc.id));
             totals.stamped += 1;
-            if (rest.length) { totals.resumed = (totals.resumed || 0) + 1; await fileLines(sourcePath, rest, new Set(credits), extras); }
+            const dropped = Array.isArray(kept.drop) ? new Set(kept.drop.map(String)) : new Set(), restDrop = extras.filter(entry => dropped.has(entry.doc.id));
+            if (rest.length || restDrop.length) { totals.resumed = (totals.resumed || 0) + 1; await fileLines(sourcePath, rest.filter(entry => !dropped.has(entry.doc.id)), new Set(credits), extras); await dropLines(restDrop); }
             continue;
         }
         if (whole.length !== items.length || whole.some((id, at) => id !== items.map(entry => entry.doc.id).sort()[at])) { totals.partial += 1; continue; }
@@ -1519,7 +1527,7 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
         totals.tried += 1;
         const figures = { opening: printed.opening, closing: printed.closing, credits: printed.credits, debits: printed.debits }, asCandidates = (list) => list.map(entry => ({ id: entry.doc.id, amount: entry.review.row.amount }));
         /* THE LINES THE READER COULD NOT FILE WHOLE (no real date, no words) were still ADDED UP, as unmarked lines: debits. They are part of the sums the arithmetic is about, so they are gathered with the waiting lines. */
-        let fit = tails.size > 1 ? { fit: 'unusable' } : proveByTotals({ ...figures, models: ['card'], candidates: asCandidates(items) }), lines = items, movers = [];
+        let fit = tails.size > 1 ? { fit: 'unusable' } : proveByTotals({ ...figures, models: ['card'], candidates: asCandidates(items) }), lines = items, movers = [], drop = [];
         totals[fit.fit] += 1;
         if (fit.reason) { totals.noneBy = totals.noneBy || {}; totals.noneBy[fit.reason] = (totals.noneBy[fit.reason] || 0) + 1; }
         /* the waiting lines alone make the balances add up: everything else the reader added up as a debit is a debit too, the unreadable lines included */
@@ -1550,6 +1558,16 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
                     totals.rung3.tried += 1; totals.rung3[third.fit] += 1;
                     if (third.fit === 'unique') { fit = third; lines = items.concat(extras); movers = hidden.filter(record => third.credit.includes(String(record.id))); }
                 }
+                if (fit.fit !== 'unique' && extras.length && tails.size <= 1) {
+                    /* THE FOURTH RUNG: the unreadable line (no real date, no words) may not be a transaction at all: a printed total, a limit or a minimum due the reader took for a line and ADDED UP as a debit. Every way in which it IS a line has failed above
+                     * (a debit, a credit, a payment among the filed purchases). The same arithmetic is run once more with it taken OUT of the sums, over the waiting lines (and the witnessed ones); it must fit to the cent in exactly one way. A line it
+                     * proves is not a transaction is closed as that, its row kept on the review (the owner can reopen it). */
+                    const out = extras.reduce((sum, entry) => sum + Math.round(Number(entry.review.row.amount) * 100), 0), without = { ...figures, debits: (Math.round(Number(printed.debits) * 100) - out) / 100 };
+                    const fourth = proveByTotals({ ...without, models: ['card'], candidates: asCandidates(items).concat(items.length + hidden.length <= 16 ? hidden.map(record => ({ id: String(record.id), amount: record.amount })) : []) });
+                    totals.rung4 = totals.rung4 || { tried: 0, unique: 0, none: 0, ambiguous: 0, unusable: 0 };
+                    totals.rung4.tried += 1; totals.rung4[fourth.fit] += 1;
+                    if (fourth.fit === 'unique') { fit = fourth; lines = items; drop = extras; movers = hidden.filter(record => fourth.credit.includes(String(record.id))); }
+                }
                 if (fit.fit !== 'unique') {
                     /* WHY IT STILL DID NOT FIT, in fixed words and counts: how far the miss is from the waiting lines and from every line the statement holds (the purchases already filed from it included), and in how many ways they can add up to it */
                     const filed = ['cconetime', 'ccinstall'].flatMap(key => Array.isArray(user[key]) ? user[key] : []).filter(record => record && record.statementKey === sourcePath && record.direction === 'debit');
@@ -1558,7 +1576,7 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
             }
         }
         if (fit.fit !== 'unique') continue;
-        const credit = new Set(fit.credit), decision = { v: 1, at: Date.now(), lines: lines.length + movers.length, credit: [...credit].map(String), debit: lines.filter(entry => !credit.has(entry.doc.id)).map(entry => String(entry.doc.id)) };
+        const credit = new Set(fit.credit), decision = { v: 1, at: Date.now(), lines: lines.length + movers.length, credit: [...credit].map(String), debit: lines.filter(entry => !credit.has(entry.doc.id)).map(entry => String(entry.doc.id)), ...(drop.length ? { drop: drop.map(entry => String(entry.doc.id)) } : {}) };
         if (movers.length) {
             /* THE STATEMENT'S STAMP AND THE MOVE OF THE PAID-TO-CARD LINES ARE ONE TRANSACTION: all or none. If the books changed under the move, nothing is stamped and nothing is filed, and the statement is tried again as it is. */
             let moved = { moved: 0, refused: 'error' };
@@ -1570,6 +1588,7 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
             try { await db.doc(sourcePath).set({ totalsProof: decision }, { merge: true }); } catch (_) { totals.refused += lines.length; continue; }
         }
         await fileLines(sourcePath, lines, credit, extras);
+        await dropLines(drop);
     }
     if (held.size) why.totals = totals;
     return { proved, left: left + why.shape, more, why };

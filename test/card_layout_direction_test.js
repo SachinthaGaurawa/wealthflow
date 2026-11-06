@@ -418,6 +418,32 @@ describe('a line the reader could not file whole is part of the statement\'s pro
         expect(out).toMatchObject({ left: 0 });
         expect(fs.data.get(sourcePath).totalsProof).toMatchObject({ v: 1, lines: 3 });
     });
+    it('closes the unreadable line as NOT a transaction when only without it do the balances add up (a printed total the reader added as a debit)', async () => {
+        // only the 102.00 line is a credit: closing 1000 + 100 + 101 + 50 - 102 = 1149.00; the reader also added a 78.00 line that is not a transaction: debits 100 + 101 + 102 + 50 + 78 = 431.00 (100 and 50 are filed by the layout)
+        const fs = world({ narration: '', amount: 78 }, { opening: 1000, closing: 1149, credits: 0, debits: 431 }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 1, none: 1, rung2: { tried: 1, none: 1 }, rung4: { tried: 1, unique: 1 }, filed: 2, notALine: 1, refused: 0 });
+        expect([0, 1, 2, 3].map(i => state(fs, i))).toEqual(['resolved', 'resolved', 'resolved', 'resolved']);
+        expect(state(fs, 4)).toBe('dismissed');
+        expect(fs.data.get(`users/u/statementReview/${sourceOccurrenceId(sourcePath, 4)}`).dismissedBy).toBe('statement-totals-not-a-line');
+        const user = fs.data.get('users/u');
+        expect(user.ccPayments.map(r => r.amount)).toEqual([102]);
+        expect(user.cconetime.map(r => r.amount).sort((a, b) => a - b)).toEqual([50, 100, 101]);
+        expect(fs.data.get(sourcePath).totalsProof).toMatchObject({ v: 1, drop: [sourceOccurrenceId(sourcePath, 4)] });
+        expect(JSON.stringify(out.why)).not.toMatch(/KEELLS|THANK|UBER|1149|431|78/);
+    });
+    it('finishes closing the not-a-transaction line a stopped run had decided on (the stamp keeps it)', async () => {
+        const fs = world({ narration: '', amount: 78 }, { opening: 1000, closing: 1149, credits: 0, debits: 431 });
+        fs.data.get(sourcePath).totalsProof = { v: 1, at: 1, lines: 2, credit: [sourceOccurrenceId(sourcePath, 1)], debit: [sourceOccurrenceId(sourcePath, 2)], drop: [sourceOccurrenceId(sourcePath, 4)] };
+        const out = await run(fs);
+        expect(out.why.totals).toMatchObject({ tried: 0, stamped: 1, resumed: 1, notALine: 1 });
+        expect(state(fs, 4)).toBe('dismissed');
+    });
+    it('leaves the unreadable line alone when without it the balances still do not add up', async () => {
+        const fs = world({ narration: '', amount: 78 }, { opening: 1000, closing: 1150, credits: 0, debits: 431 }), out = await run(fs);
+        expect(out.why.totals).toMatchObject({ rung4: { tried: 1, none: 1 }, filed: 0 });
+        expect(state(fs, 4)).toBe('pending');
+        expect(fs.data.get(sourcePath).totalsProof).toBeUndefined();
+    });
     it('files the unreadable line as a purchase when the waiting lines alone already add up (it is then a debit like every other line the reader added up)', async () => {
         // only the 102.00 line is a credit: 1000 + 430 - 2 x 102 = 1226.00; the 77.00 line is a plain debit
         const fs = world({ narration: '', amount: 77 }, { ...proof, closing: 1226 }), out = await run(fs);
