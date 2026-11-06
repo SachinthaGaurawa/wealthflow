@@ -172,7 +172,7 @@ function readBlocks(css, problems, nested = false) {
  * @param {string} css
  * @param {{ scope:string }} opt  the screen's own id selector, e.g. "#page-ccinstall"
  */
-export function validateCss(css, { scope } = {}) {
+export function validateCss(css, { scope, allowShred = false } = {}) {
     const problems = [];
     const text = stripComments(css).trim();
     if (!text) return { ok: false, problems: ['no CSS'], rules: 0, declarations: 0 };
@@ -200,6 +200,10 @@ export function validateCss(css, { scope } = {}) {
             const value = d.slice(k + 1).replace(/!important\s*$/i, '').trim();
             if (!ALLOWED_PROPERTIES.has(prop)) { problems.push(`property "${prop}" is not a layout property the lane may set`); continue; }
             if (!value) { problems.push(`"${prop}" has no value`); continue; }
+            // The shortcut that silences an overlap by shredding the text (#531: one letter per line in a 24px grid track). Fix the box, not the words.
+            if (!allowShred && (((prop === 'overflow-wrap' || prop === 'word-wrap') && /\banywhere\b/i.test(value)) || (prop === 'word-break' && /\b(break-all|break-word)\b/i.test(value)))) {
+                problems.push(`"${prop}: ${value}" breaks words into pieces; widen or restack the box that squeezes the text instead (change grid-template-columns or the flex/grid layout)`);
+            }
             if (/^overflow(-x|-y)?$/.test(prop) && /\b(hidden|clip)\b/i.test(value)) problems.push(`"${prop}: ${value}" would cut content off; use auto or scroll so the person can still reach it`);
             if (tableParts && !TABLE_SAFE.has(prop)) problems.push(`"${prop}" may not be set on a table row, cell or heading: changing how table parts are laid out breaks the columns (a figure ends up under the wrong title)`);
             if (tableParts && prop === 'position' && !/^(static|relative)\b/i.test(value)) problems.push('a table cell may only be position: static or relative (use static to un-stick a column)');
@@ -264,7 +268,8 @@ export function validateLaneFile(content) {
     for (const b of blocks) {
         const head = b.match(/^\/\*\s*lane-block:\s*(\S+)\s+scope=(#[\w-]+)/);
         if (!head) { problems.push('a block has no "lane-block: <issue> scope=#id" header'); continue; }
-        const v = validateCss(b.replace(/^\/\*[\s\S]*?\*\//, ''), { scope: head[2] });
+        // allowShred: blocks already merged (514 breaks long words in table cells, measured fine) stay valid; only NEW blocks are held to it
+        const v = validateCss(b.replace(/^\/\*[\s\S]*?\*\//, ''), { scope: head[2], allowShred: true });
         if (!v.ok) problems.push(`block ${head[1]}: ${v.problems.join('; ')}`);
     }
     const text = String(content || '');
@@ -384,7 +389,7 @@ export function layoutPrompt({ issueText, screen, scope, measured, ctx, sample, 
         '  4. Works in dark and light themes: use var(--wf-card) style variables for backgrounds, never fixed colours.',
         '  5. At most 40 declarations, 3000 characters. @media (max-width: ...) is allowed, one level only.',
         '  6. THIS IS A FINANCE SCREEN: never truncate or hide a number, date or amount (no ellipsis, no overflow:hidden), and never set display/flex/grid/float on a table, tr, td or th (that breaks the columns and puts a figure under the wrong heading; a reviewer rejects it and the program measures it). On a table-part you may only change padding, min-width/max-width, white-space, font-size, line-height, text-align and position (static/relative).',
-        '  7. FIX WHAT THE MEASUREMENT NAMES, nothing else. If it names a stat card, a label or a figure (for example stat-label over stat-val), change THAT: for instance stop the card being a two-column grid at that width, let the label wrap with white-space: normal, give the figure its own row, with a selector under ' + scope + ' that is more specific than the rule that causes it (the CSS above shows which rule). Do not touch the table, and do not repeat or override rules the screen already has for other elements (a reviewer rejects a block that undoes an earlier fix). Only if the measurement names table cells use the table toolkit: (a) give the table\'s wrapper overflow-x:auto so it scrolls sideways instead of overlapping (the wrapper must be named under ' + scope + '); (b) NEVER un-pin the last (actions) column of a table that holds Edit/Delete buttons: test/e2e/ui-toolbars.mjs requires it to stay position:sticky and in view, and un-pinning it (as #519 did) put the buttons off-screen and turned the shell check red; instead give the neighbouring cells room; (c) give cells a sensible min-width and smaller padding; (d) at narrow widths shrink font-size a little. Use @media (max-width: 768px) so desktop is untouched.',
+        '  7. FIX WHAT THE MEASUREMENT NAMES, nothing else. If it names a stat card, a label or a figure (for example stat-label over stat-val), change THAT: for instance stop the card being a two-column grid at that width and give the figure its own row, with a selector under ' + scope + ' that is more specific than the rule that causes it (the CSS above shows which rule). If the measurement says text is SQUEEZED into a narrow column (it names a grid-template-columns with a track under 48px), change that GRID or flex layout so the text gets the width (for example grid-template-columns: 1fr on the card, then grid-column: 1; grid-row: auto; text-align: left on the figure so it sits on its own row). NEVER fix it with overflow-wrap: anywhere or word-break: the validator rejects it and the program measures broken words as a problem. Do not touch the table, and do not repeat or override rules the screen already has for other elements (a reviewer rejects a block that undoes an earlier fix). Only if the measurement names table cells use the table toolkit: (a) give the table\'s wrapper overflow-x:auto so it scrolls sideways instead of overlapping (the wrapper must be named under ' + scope + '); (b) NEVER un-pin the last (actions) column of a table that holds Edit/Delete buttons: test/e2e/ui-toolbars.mjs requires it to stay position:sticky and in view, and un-pinning it (as #519 did) put the buttons off-screen and turned the shell check red; instead give the neighbouring cells room; (c) give cells a sensible min-width and smaller padding; (d) at narrow widths shrink font-size a little. Use @media (max-width: 768px) so desktop is untouched.',
         '  8. The smallest change that makes the measured problems disappear at EVERY width listed, on phones first. A sticky or absolutely positioned cell that sits on top of other cells is the usual cause: give the content room, or let the cell scroll with the row.',
         '',
         'Reply with ONLY the CSS, no fences, no commentary. If CSS alone cannot fix it, reply exactly: CANNOT_FIX_SAFELY <one sentence>.',

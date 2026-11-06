@@ -132,11 +132,11 @@ describe('reading the attachment when the report is filed', () => {
 });
 
 describe('the fix agent does not read the thumbnail again', () => {
-    it('uses the filing-time reading and makes no vision call', async () => {
+    it('keeps the filing-time reading and only has a second reader check it (a failed check leaves the reading standing)', async () => {
         let calls = 0;
         const body = `## Autonomous feedback issue\n### What the AI saw in the screenshot\n\n<!-- ${READING_MARKER} -->\nPROBLEM: overlap\n\n<!-- ${IMAGE_MARKER} -->\n<details>\n\n\`\`\`\n${'data:image/jpeg;base64,' + 'A'.repeat(60)}\n\`\`\`\n\n</details>`;
         const r = await screenshotContext({ issue: { title: 't', body }, env: { GEMINI_API_KEY: 'k' }, fetchImpl: async () => { calls++; return { ok: true, json: async () => ({}) }; } });
-        expect(calls).toBe(0);
+        expect(calls).toBeGreaterThan(0);        // the second reader was asked
         expect(r.status).toBe('read');
         expect(r.body).toContain('PROBLEM: overlap');
         expect(r.body).not.toContain('AAAAAAAAAA');

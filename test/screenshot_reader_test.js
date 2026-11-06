@@ -45,7 +45,9 @@ describe('screenshot-reader: finding the picture', () => {
     it('asks for what is visible, not for a guess at the code', () => {
         const p = visionPrompt({ title: 'T', text: 'overlap' });
         expect(p).toMatch(/Describe ONLY what is visible/);
-        expect(p).toMatch(/TEXT:/);
+        expect(p).toMatch(/TRANSCRIPT:/);
+        expect(p).toMatch(/LAYOUT:/);
+        expect(p).toMatch(/LIKELY CAUSE:/);
     });
 });
 

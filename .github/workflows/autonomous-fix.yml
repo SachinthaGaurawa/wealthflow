@@ -57,6 +57,8 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # The run's own token reads screenshots through GitHub Models (free, no key of the owner's): wf-screenshot-reader.mjs `visionKey`.
+  models: read
 
 concurrency:
   group: wealthflow-main-push

@@ -59,6 +59,15 @@ describe('css lane: when it applies', () => {
 });
 
 describe('css lane: the CSS gate', () => {
+    it('refuses the shortcuts that shred text to silence an overlap (#531)', () => {
+        for (const d of ['overflow-wrap: anywhere', 'word-break: break-all', 'word-break: break-word']) {
+            const v = validateCss(`${SCOPE} .stat-label { white-space: normal; ${d}; }`, { scope: SCOPE });
+            expect(v.ok, d).toBe(false);
+            expect(v.problems.join(' ')).toMatch(/breaks words into pieces/);
+        }
+        expect(validateCss(`${SCOPE} .stat-card { grid-template-columns: 1fr; }`, { scope: SCOPE }).ok).toBe(true);
+        expect(validateCss(`${SCOPE} .stat-label { overflow-wrap: normal; word-break: normal; }`, { scope: SCOPE }).ok).toBe(true);
+    });
     it('accepts a scoped, layout-only rule', () => {
         expect(validateCss(GOOD, { scope: SCOPE })).toMatchObject({ ok: true, rules: 1 });
         expect(validateCss(`@media (max-width: 600px) { ${SCOPE} td { padding-right: 56px; white-space: normal; } }`, { scope: SCOPE }).ok).toBe(true);

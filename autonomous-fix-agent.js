@@ -401,7 +401,7 @@ async function main() {
         // before issue #514). Never fatal: with no vision key the report is worked from text.
         let shot = { body: issue.body, status: 'none', note: '' };
         try {
-            shot = await screenshotContext({ issue, log });
+            shot = await screenshotContext({ issue, repoDir: REPO_DIR, log });
             if (shot.status !== 'none') log(`#${number} screenshot: ${shot.status} — ${shot.note}`);
         } catch (e) { log(`#${number} screenshot step failed (${e.message}) — working from the text`); }
 
