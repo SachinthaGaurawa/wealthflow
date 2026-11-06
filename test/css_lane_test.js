@@ -287,3 +287,27 @@ describe.skipIf(!chromeHere)('css lane: real Chromium', () => {
         expect(r.ranked[0].screen).toBe('cc-instalments');
     }, 115_000);
 });
+
+describe('css lane: the model is shown the elements the measurement names (#524 attempt 2)', () => {
+    const measured = 'At 430px wide: div.stat-label overlaps div.stat-val (19x10) — e.g. "Monthly CC Payments" with "LKR 383,000"';
+    it('reads the class names out of the measurement', async () => {
+        const { focusClasses } = await import('../autonomy/css-lane.mjs');
+        expect(focusClasses(measured)).toEqual(['stat-label', 'stat-val']);
+        expect(focusClasses('th "BANK" overlaps th "ACTIONS"')).toEqual([]);
+        expect(focusClasses(null)).toEqual([]);
+    });
+    it('puts the rule that causes it, and the script that builds it, in front of the model', async () => {
+        const { cssContext, layoutPrompt } = await import('../autonomy/css-lane.mjs');
+        const ctx = cssContext({ screen: 'cc-instalments', measured });
+        expect(ctx.focus).toContain('stat-label');
+        expect(ctx.css).toMatch(/max-width: 640px[^}]*stat-card[^}]*display: grid/);
+        expect(ctx.builds).toMatch(/#cciStats is filled by:.*stat-card.*stat-label/);
+        const p = layoutPrompt({ issueText: 'x', screen: 'cc-instalments', scope: SCOPE, measured, ctx, sample: '' });
+        expect(p).toMatch(/FIX WHAT THE MEASUREMENT NAMES/);
+        expect(p).toMatch(/HOW THE ELEMENTS IN THE MEASUREMENT ARE BUILT/);
+    });
+    it('accepts a rule that fixes the stat card and nothing else', () => {
+        expect(validateCss(`${SCOPE} #cciStats .stat-card { display: block; }`, { scope: SCOPE })).toMatchObject({ ok: true });
+        expect(validateCss(`@media (max-width: 640px) { ${SCOPE} #cciStats .stat-card { grid-template-columns: minmax(0, 1fr); } }`, { scope: SCOPE }).ok).toBe(true);
+    });
+});
