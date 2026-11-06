@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.57 — 2026-11-06
+
+**What changed for you**
+
+- Statement accuracy: printed Total Payment guard, model second opinion, merchant categories on cards (#532)
+
+**Under the hood**
+
+- Layout lane: keep only the rules the measurement needs (#530)
+
 ## v7.69.56 — 2026-11-06
 
 **What changed for you**
