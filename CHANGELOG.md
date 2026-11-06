@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.53 — 2026-11-06
+
+**What changed for you**
+
+- Let the bank's date lag the card's by three days in the card bank-witness, and log what the books could still tell (#525)
+
 ## v7.69.52 — 2026-11-05
 
 **What changed for you**
