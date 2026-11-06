@@ -212,6 +212,51 @@ export function validateCss(css, { scope } = {}) {
     return { ok: problems.length === 0, problems: [...new Set(problems)].slice(0, 12), rules: rules.length, declarations };
 }
 
+/** Rules back to CSS text: consecutive rules in the same @media share one block, order kept. */
+export function serializeRules(rules) {
+    const out = [];
+    let openMedia = null, buf = [];
+    const flush = () => { if (openMedia) out.push(`${openMedia} {\n${buf.join('\n')}\n}`); else out.push(...buf); buf = []; };
+    for (const r of rules) {
+        const m = r.media || null;
+        if (m !== openMedia) { flush(); openMedia = m; }
+        buf.push(`${m ? '  ' : ''}${r.selector.trim()} { ${r.body.trim().replace(/;?\s*$/, ';')} }`);
+    }
+    flush();
+    return out.join('\n');
+}
+
+/**
+ * Keep only the rules the measurement needs (attempt 3 on #524: the author's stat-card rule fixed the measured problem, but it also
+ * re-declared table rules that undid block 514, and the reviewer rightly vetoed the whole block).
+ * Each rule is dropped in turn and the screen measured again; the rule stays only if its removal makes the verdict worse. What is left
+ * is the smallest set of rules the browser itself says is needed, so nothing the measurement does not ask for can undo another fix.
+ */
+export async function pruneToWhatMatters({ css, scope, before, after: after0, judged, probeImpl, screen, repoDir, widths, maxProbes = 8, log = () => {} }) {
+    const problems = [];
+    let rules = readBlocks(stripComments(css).trim(), problems);
+    const kept = { css, judged, after: after0, dropped: 0, probes: 0 };
+    if (problems.length || rules.length < 2) return kept;
+    let best = { judged, after: after0 };
+    for (let i = rules.length - 1; i >= 0 && kept.probes < maxProbes; i--) {
+        if (rules.length < 2) break;
+        const candidate = serializeRules(rules.filter((_, k) => k !== i));
+        if (!validateCss(candidate, { scope }).ok) continue;
+        kept.probes++;
+        let after;
+        try { after = await probeImpl({ screen, repoDir, extraCss: candidate, widths }); } catch { break; }
+        const j = judgeLayout(before, after);
+        const needed = !j.ok || after.problems > best.after.problems;   // never accept a worse screen than the one already proven
+        if (needed) continue;
+        log(`[lane] dropped a rule the measurement does not need: ${rules[i].selector.slice(0, 80)}`);
+        rules = rules.filter((_, k) => k !== i);
+        best = { judged: j, after };
+        kept.dropped++;
+    }
+    if (!kept.dropped) return kept;
+    return { ...kept, css: serializeRules(rules), judged: best.judged, after: best.after };
+}
+
 /** The whole lane file must pass on every CI run, however it was edited. Blocks are `/* #N … *​/` headed. */
 export function validateLaneFile(content) {
     const problems = [];
@@ -427,6 +472,10 @@ export async function runLayoutLane({
         };
     }
 
+    // Only what the browser says is needed goes to the reviewer: a rule the measurement did not ask for cannot undo another fix.
+    const pruned = await pruneToWhatMatters({ css, scope, before, after, judged, probeImpl, screen, repoDir, widths, log });
+    if (pruned.dropped) { css = pruned.css; judged = pruned.judged; after = pruned.after; log(`[lane] kept only the rules the measurement needs (${pruned.dropped} dropped, ${pruned.probes} measurements)`); }
+
     const code = appendFix(existing, css, { issue: issue.number, scope, title: issue.title });
     const lf = validateLaneFile(code);
     if (!lf.ok) return { ok: false, stage: 'syntax', file: LANE_FILE, providers, reason: 'the lane file would not pass its own validation: ' + lf.problems.join('; ').slice(0, 300) };
@@ -436,7 +485,7 @@ export async function runLayoutLane({
     const r = await chatImpl({
         system: ROLES.security.system,
         // The reviewer reads a diff, not a browser. Say what the program measured, so "no evidence it fixes the overlap" is not a finding.
-        prompt: reviewPrompt(issueText + `\n\nMEASURED BY THE PROGRAM IN A REAL BROWSER (invented data): before this CSS, ${before.problems} layout problem(s):\n${measured.slice(0, 700)}\nWith this CSS applied: ${judged ? judged.reason : 'not measured'} (verdict: ${judged ? judged.verdict : 'none'}). The block is judged on whether it changes layout only and does not undo another rule's fix.`, LANE_FILE, existing, code),
+        prompt: reviewPrompt(issueText + `\n\nMEASURED BY THE PROGRAM IN A REAL BROWSER (invented data): before this CSS, ${before.problems} layout problem(s):\n${measured.slice(0, 700)}\nWith this CSS applied: ${judged ? judged.reason : 'not measured'} (verdict: ${judged ? judged.verdict : 'none'}). ${pruned.probes ? `The program tested the rules by removing them one at a time and measuring again (${pruned.dropped} the measurement did not need were already removed; the rest made the result worse when removed). ` : ''}The block is judged on whether it changes layout only and does not undo another rule's fix.`, LANE_FILE, existing, code),
         prefer: ROLES.security.prefer, exclude: [authored.provider], maxTokens: 1500, temperature: 0, env,
     }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
     providers.security = r.provider;
