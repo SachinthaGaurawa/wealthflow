@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.54 — 2026-11-06
+
+**What changed for you**
+
+- Prove an unreadable card line is not a transaction when only without it the balances add up (#527)
+
 ## v7.69.53 — 2026-11-06
 
 **What changed for you**
