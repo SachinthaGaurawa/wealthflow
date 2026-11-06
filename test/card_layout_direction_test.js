@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { loadParser } from './statement-fixtures.mjs';
 import { proveDirections, cardCreditWords, printedPaymentsCheck } from '../statement-direction.mjs';
 import { PROVEN_DIRECTION, validateSettlementRow } from '../statement-ledger.mjs';
-import { readShape, deterministicDecision, adaptiveWanted, readingIsSuspect, secondOpinionAgrees } from '../statement-sync.js';
+import { readShape, deterministicDecision, fallbackDecision, adaptiveWanted, readingIsSuspect, secondOpinionAgrees } from '../statement-sync.js';
 
 const P = loadParser(fs);
 
@@ -683,5 +683,18 @@ describe('a reading that contradicts the printed Total Payment gets a second opi
         expect(secondOpinionAgrees(first, good)).toBe(true);
         expect(secondOpinionAgrees(first, bad)).toBe(false);
         expect(secondOpinionAgrees(P.parseStatement(text.replace('Payment 004 150,000.00', 'Payment 004 CR 150,000.00')), bad)).toBe(true);   // the first reading was fine: nothing to compare
+    });
+});
+
+describe('a card payment to a subscription-type merchant keeps the merchant\'s own category, not "Card Purchase"', () => {
+    const card = { cardRegistry: { '0001': { type: 'credit_card', bank: 'HNB' } }, card_last4: '0001', statementType: 'credit-card', bank: 'HNB' };
+    const row = (narration) => ({ narration, description: narration, direction: 'debit', amount: 1000, directionSource: 'layout', needsReview: false, valid: true });
+    it.each([['NETFLIX.COM', 'Entertainment'], ['SPOTIFY', 'Entertainment'], ['DIALOG AXIATA RELOAD', 'Telecom'], ['SLT MOBITEL BILL', 'Telecom']])('%s is filed as %s', (name, category) => {
+        expect(deterministicDecision(row(name), card)).toMatchObject({ module: 'cconetime', category });
+        expect(fallbackDecision(row(name), card)).toMatchObject({ module: 'cconetime', category });
+    });
+    it('a merchant nobody can place stays a Card Purchase, and a fee stays a Card Fee', () => {
+        expect(deterministicDecision(row('SOME UNKNOWN SHOP 77'), card)).toMatchObject({ category: 'Card Purchase' });
+        expect(fallbackDecision(row('Annual Fee'), card)).toMatchObject({ category: 'Card Fee' });
     });
 });

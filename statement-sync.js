@@ -322,6 +322,8 @@ async function askBoard(rows, rules, allocations, board) {
     });
 }
 
+/* The category a card line may keep: one the rules or the merchant list really named (never "Other", "Needs Review" or a "Card ..." label), else the plain "Card Purchase" the merchant review settles. */
+export const namedCardCategory = category => (category && !/^(?:other|needs review|card\s)/i.test(String(category)) && CLASSIFY_CATEGORIES.includes(category) ? category : 'Card Purchase');
 export function deterministicDecision(row, allocations = {}) {
     const description = String(row?.narration || row?.description || '');
     /* THE OWNER'S OWN CARD IN A BANK ROW IS THE OWNER'S OWN MONEY (wealthflow-own-money.js, the same rule the manual upload applies): "Cash advance cr 376657******0276" is money drawn on the AMEX arriving in
@@ -357,8 +359,9 @@ export function deterministicDecision(row, allocations = {}) {
     const routed = routeRow(row, { ...allocations, ...(genericBankLine(row) ? { targets: [], loans: [] } : {}), reviewThreshold: 0.7 });
     if (routed.needsReview) return { verified: false, reason: 'ai-consensus-unavailable' };
     if (routed.module === 'subscriptions' && !routed.allocation?.id) {
+        /* A CARD PAYMENT TO A MERCHANT THAT IS ONLY EVER A SUBSCRIPTION (Netflix, Dialog, a gym, an insurer) KEEPS THE CATEGORY THE LIST GAVE IT: with no plan of the owner's to attach it to it is a one-time card line, but "Card Purchase" threw the merchant's name away */
         return isCreditCardRow(row, allocations)
-            ? { module: 'cconetime', category: 'Card Purchase', allocationId: '', verified: true, deterministic: true }
+            ? { module: 'cconetime', category: namedCardCategory(routed.category), allocationId: '', verified: true, deterministic: true }
             : { module: 'expenses', category: routed.category || expenseCategoryFor(row), allocationId: '', verified: true, deterministic: true };
     }
     const decisions = {
@@ -368,6 +371,7 @@ export function deterministicDecision(row, allocations = {}) {
         /* A CARD PURCHASE KEEPS THE CATEGORY THE RULES GAVE IT ("KEELLS SUPER" is Groceries, "UBER" is Transport): the router named it, and filing every card line as "Card Purchase" left the whole statement
          * uncategorised until the app was opened and the merchant autopilot swept it. A merchant the rules could not place ("Other") is still filed as a Card Purchase, and the autopilot and the owner settle it. */
         cconetime: { module: 'cconetime', category: routed.subtype === 'fuel' ? 'Fuel' : routed.subtype === 'fee' ? 'Card Fee' : routed.subtype === 'cash_advance' ? 'Cash Advance'
+            : routed.subtype === 'subscription' ? namedCardCategory(expenseCategoryFor(row) !== 'Other' ? expenseCategoryFor(row) : routed.category)
             : routed.subtype === 'purchase' && routed.category && !/^(?:other|needs review|card\s)/i.test(String(routed.category)) && CLASSIFY_CATEGORIES.includes(routed.category) ? routed.category : 'Card Purchase' },
         ccinstall: { module: 'ccinstall', category: 'Installment' },
     };
@@ -400,7 +404,7 @@ export function fallbackDecision(row, allocations = {}) {
     if (!proven && !byWords) return null;
     const autoDecided = proven ? 'rules-fallback' : 'rules-words';
     const card = isCreditCardRow(row, allocations);
-    if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? (/\b(?:fees?|charges?|duty|tax)\b/i.test(String(row.narration || row.description || '')) ? 'Card Fee' : 'Card Purchase') : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
+    if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? (/\b(?:fees?|charges?|tax)\b/i.test(String(row.narration || row.description || '')) ? 'Card Fee' : namedCardCategory(expenseCategoryFor(row))) : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
     if (row.direction === 'credit') return { module: card ? 'ccPayments' : 'incomeRecv', category: card ? 'Card Payment' : (incomeCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
     return null;
 }
