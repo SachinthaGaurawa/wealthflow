@@ -240,20 +240,27 @@ export function appendFix(existing, css, { issue, scope, title = '' } = {}) {
 function styleBlocks(html) { return [...String(html).matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join('\n'); }
 
 function rulesMentioning(css, tokens, max) {
-    const out = [];
-    let used = 0;
-    for (const chunk of String(css).split('}')) {
+    // Rank before cutting: the rule that causes a phone-width problem is usually a media rule naming several of the tokens, and a plain
+    // first-come cut let ten unrelated rules of another screen (#dashStats) use the whole budget before it was reached.
+    const found = [];
+    String(css).split('}').forEach((chunk, i) => {
         const rule = chunk.trim() + '}';
-        if (rule.length < 6 || rule.length > 900) continue;
-        if (!tokens.some((t) => rule.includes(t))) continue;
-        if (used + rule.length > max) break;
-        out.push(rule.replace(/\s+/g, ' ')); used += rule.length;
+        if (rule.length < 6 || rule.length > 900) return;
+        const hits = tokens.filter((t) => rule.includes(t)).length;
+        if (!hits) return;
+        found.push({ i, rule: rule.replace(/\s+/g, ' '), score: hits * 2 + (/@media/.test(rule) ? 3 : 0) + (/#dash/.test(rule) ? -4 : 0) });
+    });
+    const picked = [];
+    let used = 0;
+    for (const f of [...found].sort((a, b) => b.score - a.score || a.i - b.i)) {
+        if (used + f.rule.length > max) continue;
+        picked.push(f); used += f.rule.length;
     }
-    return out.join('\n');
+    return picked.sort((a, b) => a.i - b.i).map((f) => f.rule).join('\n');
 }
 
 /** The screen's markup, the CSS that already styles it, and what is already in the lane file. */
-export function cssContext({ screen, repoDir = process.cwd(), sample = '' } = {}) {
+export function cssContext({ screen, repoDir = process.cwd(), sample = '', measured = '' } = {}) {
     const def = screenDef(screen);
     if (!def) return { markup: '', css: '', lane: '' };
     let html = '', ui = '', lane = '';
@@ -269,8 +276,40 @@ export function cssContext({ screen, repoDir = process.cwd(), sample = '' } = {}
     }
     const classes = [...new Set([...(markup + ' ' + sample).matchAll(/class="([^"]+)"/g)].flatMap((m) => m[1].split(/\s+/)))].filter((c) => c.length > 1).slice(0, 30);
     const tokens = [def.box, ...classes.map((c) => '.' + c)];
-    const css = rulesMentioning(ui, tokens, 4500) + '\n' + rulesMentioning(styleBlocks(html), tokens, 3500);
-    return { markup, css: css.trim(), lane: lane.slice(-1500) };
+    // The elements the measurement NAMES come first: attempt 2 on #524 was told "div.stat-label overlaps div.stat-val", was shown only
+    // table rules (the table was the only markup in view), and wrote table CSS for a problem in the stat cards above it.
+    const focus = focusClasses(measured);
+    const builds = buildersOf(html, markup, focus);
+    // the card that holds a named label is named in the script that builds it, and its rules (a grid at phone width) are the cause
+    const builtClasses = [...builds.matchAll(/class="([^"]+)"/g)].flatMap((m) => m[1].split(/\s+/)).filter((c) => c.length > 2);
+    const focusTokens = [...new Set([...focus, ...builtClasses])].slice(0, 14).map((c) => '.' + c);
+    const css = (focusTokens.length ? rulesMentioning(ui, focusTokens, 3200) + '\n' + rulesMentioning(styleBlocks(html), focusTokens, 1500) + '\n' : '')
+        + rulesMentioning(ui, tokens, 2600) + '\n' + rulesMentioning(styleBlocks(html), tokens, 2200);
+    const unique = [...new Set(css.split('\n').map((l) => l.trim()).filter(Boolean))].join('\n');
+    return { markup, css: unique, lane: lane.slice(-1500), focus, builds };
+}
+
+/** Class names the measurement names, e.g. "div.stat-label overlaps div.stat-val" gives stat-label, stat-val. */
+export function focusClasses(measured) {
+    const out = [];
+    for (const m of String(measured || '').matchAll(/\b(?:div|span|td|th|tr|button|a|p|h[1-6]|li|label|input|select|table|section)\.([A-Za-z][\w-]{2,})/g)) if (!out.includes(m[1])) out.push(m[1]);
+    return out.slice(0, 8);
+}
+
+/** The script that fills the page's containers: a stat row or a list is built in JavaScript, so its markup is not in the page source. */
+function buildersOf(html, markup, focus) {
+    const ids = [...String(markup).matchAll(/\bid="([A-Za-z][\w-]{2,})"/g)].map((m) => m[1]);
+    const out = [];
+    for (const id of ids) {
+        const re = new RegExp(`[$(]['"]${id}['"]\\)?\\.innerHTML|getElementById\\(['"]${id}['"]\\)\\.innerHTML`);
+        const m = re.exec(html);
+        if (!m) continue;
+        const chunk = html.slice(m.index, m.index + 900).replace(/\s+/g, ' ');
+        if (focus.length && !focus.some((c) => chunk.includes(c))) continue;
+        out.push(`#${id} is filled by: ${chunk}`);
+        if (out.length >= 3) break;
+    }
+    return out.join('\n');
 }
 
 export function layoutPrompt({ issueText, screen, scope, measured, ctx, sample, previousCss = '', remaining = '' }) {
@@ -286,6 +325,7 @@ export function layoutPrompt({ issueText, screen, scope, measured, ctx, sample, 
         '',
         'THE SCREEN\'S MARKUP (trimmed):', ctx.markup || '(not found)',
         '',
+        ctx.builds ? 'HOW THE ELEMENTS IN THE MEASUREMENT ARE BUILT (JavaScript fills them, so they are not in the markup above):\n' + ctx.builds + '\n' : '',
         'ONE ROW AS IT RENDERS:', sample || '(none)',
         '',
         'CSS THAT ALREADY STYLES THIS SCREEN (wf-ui.css and the page; later rules win at equal specificity, so be specific):',
@@ -299,7 +339,7 @@ export function layoutPrompt({ issueText, screen, scope, measured, ctx, sample, 
         '  4. Works in dark and light themes: use var(--wf-card) style variables for backgrounds, never fixed colours.',
         '  5. At most 40 declarations, 3000 characters. @media (max-width: ...) is allowed, one level only.',
         '  6. THIS IS A FINANCE SCREEN: never truncate or hide a number, date or amount (no ellipsis, no overflow:hidden), and never set display/flex/grid/float on a table, tr, td or th (that breaks the columns and puts a figure under the wrong heading; a reviewer rejects it and the program measures it). On a table-part you may only change padding, min-width/max-width, white-space, font-size, line-height, text-align and position (static/relative).',
-        '  7. THE SAFE TOOLKIT, in order: (a) give the table\'s wrapper overflow-x:auto so it scrolls sideways instead of overlapping (the wrapper must be named under ' + scope + '); (b) NEVER un-pin the last (actions) column of a table that holds Edit/Delete buttons: test/e2e/ui-toolbars.mjs requires it to stay position:sticky and in view, and un-pinning it (as #519 did) put the buttons off-screen and turned the shell check red; instead give the neighbouring cells room; (c) give cells a sensible min-width and smaller padding; (d) at narrow widths shrink font-size a little. Use @media (max-width: 768px) so desktop is untouched.',
+        '  7. FIX WHAT THE MEASUREMENT NAMES, nothing else. If it names a stat card, a label or a figure (for example stat-label over stat-val), change THAT: for instance stop the card being a two-column grid at that width, let the label wrap with white-space: normal, give the figure its own row, with a selector under ' + scope + ' that is more specific than the rule that causes it (the CSS above shows which rule). Do not touch the table, and do not repeat or override rules the screen already has for other elements (a reviewer rejects a block that undoes an earlier fix). Only if the measurement names table cells use the table toolkit: (a) give the table\'s wrapper overflow-x:auto so it scrolls sideways instead of overlapping (the wrapper must be named under ' + scope + '); (b) NEVER un-pin the last (actions) column of a table that holds Edit/Delete buttons: test/e2e/ui-toolbars.mjs requires it to stay position:sticky and in view, and un-pinning it (as #519 did) put the buttons off-screen and turned the shell check red; instead give the neighbouring cells room; (c) give cells a sensible min-width and smaller padding; (d) at narrow widths shrink font-size a little. Use @media (max-width: 768px) so desktop is untouched.',
         '  8. The smallest change that makes the measured problems disappear at EVERY width listed, on phones first. A sticky or absolutely positioned cell that sits on top of other cells is the usual cause: give the content room, or let the cell scroll with the row.',
         '',
         'Reply with ONLY the CSS, no fences, no commentary. If CSS alone cannot fix it, reply exactly: CANNOT_FIX_SAFELY <one sentence>.',
@@ -352,10 +392,10 @@ export async function runLayoutLane({
     log(`[lane] measured before: ${before.problems} problem(s)\n${describeProbe(before).slice(0, 1500)}`);
     if (before.problems === 0) return { ok: false, stage: 'measure', reason: describeProbe(before) + ' There is nothing to prove a CSS change against, so no change was made.', providers };
 
-    const ctx = cssContext({ screen, repoDir, sample: before.sample });
+    const measured = describeProbe(before);
+    const ctx = cssContext({ screen, repoDir, sample: before.sample, measured });
     const lanePath = path.join(repoDir, LANE_FILE);
     const existing = fs.existsSync(lanePath) ? fs.readFileSync(lanePath, 'utf8') : '';
-    const measured = describeProbe(before);
 
     let css = '', after = null, judged = null, authored = null, remaining = '', tried = [];
     for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -394,7 +434,9 @@ export async function runLayoutLane({
     // An independent reviewer reads the CSS on a different provider; absence of a reviewer is not approval.
     if (!reviewSeesWholeChange(existing, code)) return { ok: false, stage: 'review_too_large', file: LANE_FILE, providers, reason: 'the change is larger than the reviewer can read in full' };
     const r = await chatImpl({
-        system: ROLES.security.system, prompt: reviewPrompt(issueText, LANE_FILE, existing, code),
+        system: ROLES.security.system,
+        // The reviewer reads a diff, not a browser. Say what the program measured, so "no evidence it fixes the overlap" is not a finding.
+        prompt: reviewPrompt(issueText + `\n\nMEASURED BY THE PROGRAM IN A REAL BROWSER (invented data): before this CSS, ${before.problems} layout problem(s):\n${measured.slice(0, 700)}\nWith this CSS applied: ${judged ? judged.reason : 'not measured'} (verdict: ${judged ? judged.verdict : 'none'}). The block is judged on whether it changes layout only and does not undo another rule's fix.`, LANE_FILE, existing, code),
         prefer: ROLES.security.prefer, exclude: [authored.provider], maxTokens: 1500, temperature: 0, env,
     }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
     providers.security = r.provider;
