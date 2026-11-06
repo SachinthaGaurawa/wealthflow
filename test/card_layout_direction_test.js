@@ -458,9 +458,13 @@ describe('lineIdsWithBankPayment: which lines of a card statement have a bank pa
         { id: 'b3', source: 'manual', amount: 55, date: '2026-09-10' },                                                         // typed by hand: not a bank statement
     ] };
     const at = (id, amount, date) => ({ id, amount, date });
-    it('finds a bank payment of the same amount from four days before the card posted it to one day after', () => {
-        const ids = lineIdsWithBankPayment(user, [at('a', 400, '2026-09-14'), at('b', 400, '2026-09-09'), at('c', 400, '2026-09-15'), at('d', 400, '2026-09-08'), at('e', 400.01, '2026-09-12')], { sourcePath: 'wf-mail/owner/items/card3.pdf' });
-        expect([...ids].sort()).toEqual(['a', 'b']);       // 4 days after the bank (a), 1 day before it (b); 5 days after (c), 2 days before (d) and another amount (e) are not
+    it('finds a bank payment of the same amount from four days before the card posted it to three days after (a weekend lag)', () => {
+        const ids = lineIdsWithBankPayment(user, [at('a', 400, '2026-09-14'), at('b', 400, '2026-09-09'), at('c', 400, '2026-09-15'), at('d', 400, '2026-09-08'), at('f', 400, '2026-09-07'), at('g', 400, '2026-09-06'), at('e', 400.01, '2026-09-12')], { sourcePath: 'wf-mail/owner/items/card3.pdf' });
+        expect([...ids].sort()).toEqual(['a', 'b', 'd', 'f']);       // 4 days after the bank (a), 1, 2 and 3 days before it (b, d, f); 5 days after (c), 4 days before (g) and another amount (e) are not
+    });
+    it('can be asked wider only to count: any day, and a hand-typed entry too', () => {
+        expect(lineIdsWithBankPayment(user, [at('h', 400, '2026-12-25'), at('i', 55, '2026-09-10')], { sourcePath: 'wf-mail/owner/items/card3.pdf', before: 4000, after: 4000 }).size).toBe(1);
+        expect(lineIdsWithBankPayment(user, [at('h', 400, '2026-12-25'), at('i', 55, '2026-09-10')], { sourcePath: 'wf-mail/owner/items/card3.pdf', before: 4000, after: 4000, anySource: true }).size).toBe(2);
     });
     it('does not count the statement\'s own records or a hand-typed one', () => {
         expect(lineIdsWithBankPayment(user, [at('x', 77, '2026-09-10'), at('y', 55, '2026-09-10')], { sourcePath: 'wf-mail/owner/items/card3.pdf' }).size).toBe(0);
@@ -486,7 +490,7 @@ describe('the money paid to the card is found among the lines already filed as p
 
     it('moves the witnessed purchase to Card payments, proves the waiting lines, and keeps the purchase whole in the trash', async () => {
         const fs = world({ cconetime: purchases(), expenses: [bank], proof }), out = await run(fs);
-        expect(out.why.totals).toMatchObject({ tried: 1, none: 1, noneBy: { range: 1 }, rung3: { tried: 1, unique: 1, witnessed: 1 }, filed: 2, moved: 1, refused: 0 });
+        expect(out.why.totals).toMatchObject({ tried: 1, none: 1, noneBy: { range: 1 }, rung3: { tried: 1, unique: 1, witnessed: 1, probe: { lines: 2, near: 1, wide: 1, anyDay: 1, anySource: 1 } }, filed: 2, moved: 1, refused: 0 });
         const user = fs.data.get('users/u');
         expect(user.ccPayments.map(r => [r.amount, r.directionProof]).sort((a, b) => a[0] - b[0])).toEqual([[101, 'statement'], [400, 'statement']]);
         expect(user.cconetime.map(r => r.amount).sort((a, b) => a - b)).toEqual([50, 102]);
@@ -530,7 +534,7 @@ describe('the money paid to the card is found among the lines already filed as p
     });
     it('touches nothing when no bank payment stands behind any filed purchase, and says how many were looked at', async () => {
         const fs = world({ cconetime: purchases(), expenses: [], proof }), out = await run(fs);
-        expect(out.why.totals).toMatchObject({ rung3: { tried: 0, witnessed: 0 }, filed: 0 });
+        expect(out.why.totals).toMatchObject({ rung3: { tried: 0, witnessed: 0, probe: { lines: 2, near: 0, wide: 0, anyDay: 0, anySource: 0 } }, filed: 0 });
         expect(out.why.totals.moved).toBeUndefined();
         expect(out.why.totals.diag).toEqual([expect.objectContaining({ miss: 'even', filed: 2, witnessed: 0 })]);
         expect(fs.data.get('users/u').cconetime).toHaveLength(2);

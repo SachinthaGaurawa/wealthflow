@@ -1539,6 +1539,10 @@ export async function proveCardReviews({ db, uid, limit = 10, until = Infinity, 
                  * must still fit in exactly one way. A line it names is moved from CC One-Time to Card payments, whole and reversibly (reclassifyHiddenPayments). */
                 const user = (await userRef.get()).data() || {}, filedRecords = (Array.isArray(user.cconetime) ? user.cconetime : []).filter(record => record && record.id && record.statementKey === sourcePath && record.direction === 'debit' && record.source === 'statement' && record.directionProof === 'layout' && Number(record.amount) > 0 && !record.mergedInto);
                 const witnessed = lineIdsWithBankPayment(user, filedRecords.map(record => ({ id: String(record.id), amount: record.amount, date: record.date })), { sourcePath }), hidden = filedRecords.filter(record => witnessed.has(String(record.id)));
+                /* HOW MANY FILED LINES HAVE A SAME-AMOUNT BANK RECORD under looser and looser rules, as counts only: the lines the proof may use are only the `witnessed` ones, these say what the books could still tell (no bank statement of that amount at all, one outside the days, or only a hand-typed entry) */
+                const asLines = filedRecords.map(record => ({ id: String(record.id), amount: record.amount, date: record.date }));
+                totals.rung3 = totals.rung3 || { tried: 0, unique: 0, none: 0, ambiguous: 0, unusable: 0, witnessed: 0 };
+                totals.rung3.probe = { lines: filedRecords.length, near: hidden.length, wide: lineIdsWithBankPayment(user, asLines, { sourcePath, before: 14, after: 14 }).size, anyDay: lineIdsWithBankPayment(user, asLines, { sourcePath, before: 4000, after: 4000 }).size, anySource: lineIdsWithBankPayment(user, asLines, { sourcePath, before: 4000, after: 4000, anySource: true }).size };
                 totals.rung3 = totals.rung3 || { tried: 0, unique: 0, none: 0, ambiguous: 0, unusable: 0, witnessed: 0 };
                 totals.rung3.witnessed += hidden.length;
                 if (hidden.length && tails.size <= 1 && items.length + extras.length + hidden.length <= 16) {
