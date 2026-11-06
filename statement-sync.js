@@ -14,7 +14,7 @@ import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs'
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
 import { lineIdsWithBankPayment } from './statement-credit-evidence.mjs';
-import { semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
+import { semanticDirection, genericBankLine, proveDirections, printedPaymentsCheck, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT, intentVerdict } from './wealthflow-statement-identity.js';
@@ -1385,7 +1385,7 @@ export function readShape(parsed) {
     }
     return { sources: bySource, balanceColumn: !!(parsed && parsed.layout && parsed.layout.balanceColumn), type: String(parsed && parsed.layout && parsed.layout.statementType || ''),
         opening: Number.isFinite(rec.opening) && rec.opening !== null, closing: Number.isFinite(rec.closing) && rec.closing !== null, reconciled: rec.ok === null || rec.ok === undefined ? 'unknown' : rec.ok ? 'yes' : 'no', ...(rec.model ? { model: rec.model } : {}),
-        invalid: { noDate, noAmount, noWords } };
+        printed: printedPaymentsCheck(parsed), invalid: { noDate, noAmount, noWords } };
 }
 
 export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {

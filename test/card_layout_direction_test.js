@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import { loadParser } from './statement-fixtures.mjs';
-import { proveDirections, cardCreditWords } from '../statement-direction.mjs';
+import { proveDirections, cardCreditWords, printedPaymentsCheck } from '../statement-direction.mjs';
 import { PROVEN_DIRECTION, validateSettlementRow } from '../statement-ledger.mjs';
 import { readShape, deterministicDecision } from '../statement-sync.js';
 
@@ -581,13 +581,13 @@ describe('the money paid to the card is found among the lines already filed as p
     });
 });
 
-// HNB credit card e-statement, owner's file (11 Aug to 30 Sep 2026), read from the owner's screenshot: the bank prints "CR" BEFORE the amount ("Payment 004   CR   150,000.00"), and "Conv_Trxn_To_Inst   USD 527.55   CR   175,674.15" puts it
-// between the foreign amount and the amount. The reader looked for CR only AFTER a number, so every payment was an assumed debit and both conversions were filed as purchases. Names and figures below are the statement's own.
+// HNB credit card e-statement, owner's file (two months), read from a screenshot with names and numbers replaced: the bank prints "CR" BEFORE the amount ("Payment 004   CR   150,000.00"), and "Conv_Trxn_To_Inst   USD 527.55   CR   175,674.15" puts it
+// between the foreign amount and the amount. The reader looked for CR only AFTER a number, so every payment was an assumed debit and both conversions were filed as purchases. Merchant names and the card number are invented; the figures are the statement's own.
 describe('the CR the bank prints BEFORE the amount is the amount\'s own marker', () => {
-    const real = ['Statement of Account', 'Card Number 4284 1700 0048 1861', 'Credit Limit 350,000.00',
-        '11/08/2026 11/08/2026 Annual Fee 4,000.00', '19/08/2026 19/08/2026 Payment 004 CR 150,000.00', '20/08/2026 19/08/2026 THE PHONE BAR, COLOMBO 3 413,000.00',
-        '24/08/2026 19/08/2026 CHINA DUTY FREE (LANKA, COLOMBO 1 USD 527.55 175,674.15', '24/08/2026 24/08/2026 Conv_Trxn_To_Inst USD 527.55 CR 175,674.15', '24/08/2026 24/08/2026 Instalment Principle - 1/12 14,639.51',
-        '17/09/2026 16/09/2026 Payment 074 CR 100.00', '17/09/2026 16/09/2026 PIZZA HUT, COLOMBO, LKA 6,075.00'].join('\n');
+    const real = ['Statement of Account', 'Card Number 4000 0000 0000 0001', 'Credit Limit 350,000.00',
+        '11/08/2026 11/08/2026 Annual Fee 4,000.00', '19/08/2026 19/08/2026 Payment 004 CR 150,000.00', '20/08/2026 19/08/2026 ELECTRONICS SHOP, COLOMBO 3 413,000.00',
+        '24/08/2026 19/08/2026 DUTY FREE SHOP, COLOMBO 1 USD 527.55 175,674.15', '24/08/2026 24/08/2026 Conv_Trxn_To_Inst USD 527.55 CR 175,674.15', '24/08/2026 24/08/2026 Instalment Principle - 1/12 14,639.51',
+        '17/09/2026 16/09/2026 Payment 074 CR 100.00', '17/09/2026 16/09/2026 PIZZA PLACE, COLOMBO, LKA 6,075.00'].join('\n');
     it('reads the payments and the instalment conversion as credits by the statement\'s own marker, and every other line as before', () => {
         const rows = P.parseStatement(real).rows;
         expect(rows.map(r => [r.amount, r.direction, r.directionSource])).toEqual([[4000, 'debit', 'assumed'], [150000, 'credit', 'marker'], [413000, 'debit', 'assumed'], [175674.15, 'debit', 'assumed'], [175674.15, 'credit', 'marker'], [14639.51, 'debit', 'assumed'], [100, 'credit', 'marker'], [6075, 'debit', 'assumed']]);
@@ -604,22 +604,22 @@ describe('the CR the bank prints BEFORE the amount is the amount\'s own marker',
 });
 
 describe('the statement above, already read and filed the old way, is settled by its own arithmetic', () => {
-    const sourcePath = 'wf-mail/owner/items/hnb-aug-sep.pdf';
+    const sourcePath = 'wf-mail/owner/items/card-two-months.pdf';
     const id = (index) => sourceOccurrenceId(sourcePath, index);
     const pays = [150000, 50000, 50000, 25000, 1000, 100, 100, 5000];
     const waiting = (index, amount) => [[`users/u/statementReview/${id(index)}`, { uid: 'u', sourcePath, index, status: 'pending', reason: 'unproven-direction', bank: 'HNB Credit Card',
         row: { date: '2026-08-19', narration: 'Payment 004 CR', description: 'Payment 004 CR', amount, direction: 'debit', directionSource: 'assumed', needsReview: true, valid: true } }], [`users/u/statementLedger/${id(index)}`, { uid: 'u', sourcePath, index, status: 'review' }]];
     const invalid = [[`users/u/statementReview/${id(8)}`, { uid: 'u', sourcePath, index: 8, status: 'pending', reason: 'invalid-transaction', bank: 'HNB Credit Card',
         row: { date: '', narration: '', description: '', amount: 281200, direction: 'debit', directionSource: 'assumed', needsReview: true, valid: false } }], [`users/u/statementLedger/${id(8)}`, { uid: 'u', sourcePath, index: 8, status: 'review' }]];
-    const purchases = [['Annual Fee', 4000], ['THE PHONE BAR, COLOMBO 3', 413000], ['YAGGAPITIYA INTERCHANGE, RDA', 300], ['NAI KOCHCHI (PVT) LTD, RAMBUKKANA', 3078], ['S A SOMARATHNE & SONS PVT, COLOMBO', 3335.02], ['CHINA DUTY FREE (LANKA, COLOMBO 1', 8658],
-        ['CHINA DUTY FREE (LANKA, COLOMBO 1', 175674.15], ['CHINA DUTY FREE (LANKA, COLOMBO 1', 13320], ['Conv_Trxn_To_Inst', 175674.15], ['Conv_Trxn_To_Inst', 13320], ['Instalment Principle - 1/12', 14639.51], ['Instalment Principle - 1/12', 1110], ['PIZZA HUT, COLOMBO, LKA', 6075],
+    const purchases = [['Annual Fee', 4000], ['ELECTRONICS SHOP, COLOMBO 3', 413000], ['HIGHWAY INTERCHANGE FEE', 300], ['FUEL STATION (PVT) LTD, TOWN', 3078], ['HARDWARE & SONS PVT, COLOMBO', 3335.02], ['DUTY FREE SHOP, COLOMBO 1', 8658],
+        ['DUTY FREE SHOP, COLOMBO 1', 175674.15], ['DUTY FREE SHOP, COLOMBO 1', 13320], ['Conv_Trxn_To_Inst', 175674.15], ['Conv_Trxn_To_Inst', 13320], ['Instalment Principle - 1/12', 14639.51], ['Instalment Principle - 1/12', 1110], ['PIZZA PLACE, COLOMBO, LKA', 6075],
         ['Instalment Principle - 2/12', 14639.51], ['Instalment Principle - 2/12', 1110]];
-    const filed = purchases.map(([desc, amount], at) => ({ id: id(9 + at), statementKey: sourcePath, statementRow: 9 + at, bank: 'HNB Credit Card', card_last4: '1861', direction: 'debit', amount, date: '2026-08-20', source: 'statement', desc, cat: 'Card Purchase', directionProof: 'layout' }));
+    const filed = purchases.map(([desc, amount], at) => ({ id: id(9 + at), statementKey: sourcePath, statementRow: 9 + at, bank: 'HNB Credit Card', card_last4: '0001', direction: 'debit', amount, date: '2026-08-20', source: 'statement', desc, cat: 'Card Purchase', directionProof: 'layout' }));
     // previous balance 50,000.00; the bank's closing is 50,000 + 623,440.17 purchases + 31,499.02 instalments + 4,000 fee - 281,200 payments - 188,994.15 conversions = 238,745.04; the reader added every line as a debit, the printed total of payments (281,200.00) too
     const proof = { opening: 50000, closing: 238745.04, credits: 0, debits: 1410333.34 };
     const world = (cconetime = filed) => createFirestore(Object.fromEntries([
-        ['users/u', { settings: { cardRegistry: { '1861': { type: 'credit_card', bank: 'HNB' } } }, cconetime, ccPayments: [], expenses: [] }],
-        [sourcePath, { uid: 'u', bank: 'HNB Credit Card', last4: '1861', statementType: 'credit-card', cursor: 24, totalRows: 24, status: 'needs_review', proof }],
+        ['users/u', { settings: { cardRegistry: { '0001': { type: 'credit_card', bank: 'HNB' } } }, cconetime, ccPayments: [], expenses: [] }],
+        [sourcePath, { uid: 'u', bank: 'HNB Credit Card', last4: '0001', statementType: 'credit-card', cursor: 24, totalRows: 24, status: 'needs_review', proof }],
         ...pays.flatMap((amount, index) => waiting(index, amount)), ...invalid, ...cconetime.map(record => [`users/u/statementLedger/${record.id}`, { uid: 'u', sourcePath, index: record.statementRow, status: 'filed' }])]));
     it('files the 8 payments as payments, moves the 2 conversions out of the purchases (reversibly), and closes the printed total as not a transaction', async () => {
         const fs = world(), out = await proveCardReviews({ db: fs.db, uid: 'u', limit: 10 });
@@ -638,5 +638,29 @@ describe('the statement above, already read and filed the old way, is settled by
         expect(out.why.totals).toMatchObject({ filed: 0 }); expect(out.why.totals.moved).toBeUndefined();
         expect(fs.data.get('users/u').ccPayments).toEqual([]);
         expect(fs.data.get('users/u').cconetime).toHaveLength(15);
+    });
+});
+
+describe('the statement\'s own printed "Total Payment" guards the layout convention', () => {
+    const base = ['Statement of Account', 'Credit Limit 350,000.00', '11/08/2026 11/08/2026 Annual Fee 4,000.00', '19/08/2026 19/08/2026 Payment 004 CR 150,000.00', '20/08/2026 19/08/2026 ELECTRONICS SHOP, COLOMBO 3 413,000.00'];
+    const withTotals = (total) => [...base, `Total Payment: ${total}CR`, 'Total Transactions: 413,000.00'].join('\n');
+    it('reads the two printed figures', () => {
+        expect(P.parseStatement(withTotals('150,000.00')).printedFigures).toEqual({ payments: 150000, purchases: 413000 });
+        expect(P.parseStatement(base.join('\n')).printedFigures).toEqual({ payments: null, purchases: null });
+    });
+    it('agrees when the payment lines read as credits add up to it, and then the purchases are filed by the layout as before', () => {
+        const parsed = P.parseStatement(withTotals('150,000.00'));
+        expect(printedPaymentsCheck(parsed)).toBe('agree');
+        expect(proveDirections(parsed, { card: true }).byLayout).toBe(1);   // the fee is proven by its words
+    });
+    it('differs, and nothing is filed by the layout, when the payments read do not reach the printed figure (a marker the reader did not understand)', () => {
+        const unreadable = withTotals('150,000.00').replace('Payment 004 CR 150,000.00', 'Payment 004 150,000.00');
+        const parsed = P.parseStatement(unreadable);
+        expect(printedPaymentsCheck(parsed)).toBe('differs');
+        expect(proveDirections(parsed, { card: true }).byLayout).toBe(0);
+        expect(readShape(parsed).printed).toBe('differs');
+    });
+    it('says nothing when the statement prints no such figure', () => {
+        expect(printedPaymentsCheck(P.parseStatement(base.join('\n')))).toBe('none');
     });
 });
