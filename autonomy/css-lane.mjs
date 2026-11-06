@@ -31,7 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chat, stripFences } from './llm-router.mjs';
 import { ROLES, reviewPrompt, parseVerdict, reviewSeesWholeChange } from './agent-swarm.mjs';
-import { probeLayout, describeProbe, screenFor, SCREENS } from './layout-probe.mjs';
+import { probeLayout, describeProbe, sweepScreens, anyScreenFor, screenFromReading, screenKeyOfPage, screenDef, WIDTHS } from './layout-probe.mjs';
 
 export const LANE_FILE = 'wf-agent-fixes.css';
 export const MAX_CSS_CHARS = 3000;
@@ -66,7 +66,7 @@ const SOMETHING_THAT_HIDES = [
 ];
 
 /** Words that make a report one about how a screen looks. */
-const LAYOUT_WORDS = /\b(overlap(s|ped|ping)?|overlay(s|ed)?|cut\s*off|cropped|clipp?ed|misalign(ed)?|off[- ]?screen|too wide|horizontal scroll|resolutions?|responsive|compatib\w*|smart\s*phones?|phones?|mobile|tablet|layout|squash(ed)?|stack(ed|ing)? on top|on top of each other|screen size)\b/i;
+const LAYOUT_WORDS = /\b(over+a?l+a+p+\w*|overlap(s|ped|ping)?|overlay(s|ed)?|cut\s*off|cropped|clipp?ed|misalign(ed)?|off[- ]?screen|too wide|horizontal scroll|resolutions?|responsive|compatib\w*|smart\s*phones?|phones?|mobile|tablet|layout|squash(ed)?|stack(ed|ing)? on top|on top of each other|screen size)\b/i;
 
 /** Only what the person wrote: the diagnostics table and the screenshot reading do not decide the lane. */
 function userWords(issue) {
@@ -76,17 +76,55 @@ function userWords(issue) {
     return `${(issue && issue.title) || ''}\n${quoted}`.slice(0, 1800);
 }
 
+/** The English reading of a report written in another language (Sinhala, Tamil, ...), if the issue carries one. */
+function englishReading(issue) {
+    const body = String((issue && issue.body) || '');
+    const m = body.match(/### English translation \(AI\)[\s\S]*?\n((?:>[^\n]*\n?)+)/);
+    return m ? m[1].replace(/^>\s?/gm, '').trim().slice(0, 1200) : '';
+}
+
+/** What a vision model wrote about the screenshot (filing time or fix time), if anything. */
+function screenshotReading(issue) {
+    const body = String((issue && issue.body) || '');
+    const m = body.match(/### What (?:the AI saw in the|the) screenshot(?: shows)?\s*\n([\s\S]*?)(?:\n### |$)/i);
+    const t = m ? m[1].trim() : '';
+    return /no vision model could read it|exceeds/i.test(t.slice(0, 200)) ? '' : t.slice(0, 3000);
+}
+
+/** The pages the app says were open just before the report, and the viewport width it was sent from. */
+function deviceFacts(issue) {
+    const body = String((issue && issue.body) || '');
+    const row = (k) => ((body.match(new RegExp('\\|\\s*' + k + '[^|]*\\|\\s*([^|\\n]+?)\\s*\\|')) || [])[1] || '').trim();
+    const trail = row('Pages open just before').split('>').map((x) => x.trim()).filter(Boolean);
+    const vp = row('Viewport').match(/^(\d{3,4})x(\d{3,4})$/);
+    return { trail, appPage: row('App page'), width: vp ? Number(vp[1]) : 0 };
+}
+
 /**
- * Does the lane apply? It needs BOTH a layout complaint and a screen the probe can open: without a
- * screen there is nothing to measure, and an unmeasured CSS change is the guess this lane exists to avoid.
- * @returns {{ applies:boolean, screen:string, why:string }}
+ * Does the lane apply? It needs a layout complaint. WHERE to look is found in this order, and every step is honest about what it used:
+ *   1. a page the person named (in their own words or in the English reading of them);
+ *   2. what a vision model read off the screenshot;
+ *   3. the pages the app says were open just before the report (the feedback form lives in Settings, so "App page" alone is Settings);
+ *   4. nothing named: the lane then measures EVERY page at the reported phone width and takes the broken one (`sweep`).
+ * Without any measurement there is nothing to prove a CSS change against, so an unmeasured guess is never made.
+ * @returns {{ applies:boolean, screen:string, why:string, sweep?:boolean, width?:number }}
  */
 export function layoutLaneFor(issue) {
-    const text = userWords(issue);
-    if (!LAYOUT_WORDS.test(text)) return { applies: false, screen: '', why: 'the report does not describe a layout problem' };
-    const screen = screenFor(text);
-    if (!screen) return { applies: false, screen: '', why: 'the report names no screen the layout probe can open yet' };
-    return { applies: true, screen, why: `layout report about ${screen}` };
+    const said = userWords(issue) + '\n' + englishReading(issue);
+    const reading = screenshotReading(issue);
+    const problemLine = (reading.match(/PROBLEM:\s*([^\n]+(?:\n(?![A-Z]+:)[^\n]+)*)/i) || [])[1] || '';
+    const seen = /\b(overlap\w*|collid\w*|on top of|cut\s*off|clipp?ed|truncat\w*|overflow\w*|misalign\w*|squash\w*)\b/i.test(problemLine);
+    if (!LAYOUT_WORDS.test(said) && !(seen && said.trim().length < 400)) return { applies: false, screen: '', why: 'the report does not describe a layout problem' };
+    const facts = deviceFacts(issue);
+    const named = anyScreenFor(said);
+    if (named) return { applies: true, screen: named, why: `layout report about ${named} (named in the report)`, width: facts.width };
+    const shown = screenFromReading(reading);
+    if (shown) return { applies: true, screen: shown, why: `layout report; the screenshot shows ${shown}`, width: facts.width };
+    for (const id of [...facts.trail].reverse()) {
+        const key = id === 'settings' ? '' : screenKeyOfPage(id);
+        if (key) return { applies: true, screen: key, why: `layout report; the page open just before it was sent was ${id}`, width: facts.width };
+    }
+    return { applies: true, screen: '', sweep: true, width: facts.width, why: 'layout report that names no page: every page is measured at the reported phone width' };
 }
 
 // ── a small, strict CSS reader (no dependency; refuses what it does not understand) ──────────────
@@ -216,7 +254,7 @@ function rulesMentioning(css, tokens, max) {
 
 /** The screen's markup, the CSS that already styles it, and what is already in the lane file. */
 export function cssContext({ screen, repoDir = process.cwd(), sample = '' } = {}) {
-    const def = SCREENS[screen];
+    const def = screenDef(screen);
     if (!def) return { markup: '', css: '', lane: '' };
     let html = '', ui = '', lane = '';
     try { html = fs.readFileSync(path.join(repoDir, 'index.html'), 'utf8'); } catch { /* none */ }
@@ -273,7 +311,7 @@ export function judgeLayout(before, after) {
     if (!before || !before.ok) return { ok: false, verdict: 'unmeasured', reason: 'the screen could not be measured before the change' + (before && before.reason ? ` (${before.reason})` : '') };
     if (!after || !after.ok) return { ok: false, verdict: 'unmeasured', reason: 'the screen could not be measured after the change' + (after && after.reason ? ` (${after.reason})` : '') };
     if (before.problems === 0) return { ok: false, verdict: 'nothing-to-fix', reason: 'no overlap, overflow or cut-off text was found before the change, so there is nothing to prove against' };
-    const per = (r) => new Map(r.widths.map((w) => [w.width, (w.overflowPx > 2 ? 1 : 0) + w.overlaps.length + w.clipped.length + (w.misaligned || []).length]));
+    const per = (r) => new Map(r.widths.map((w) => [w.width, (w.overflowPx > 2 ? 1 : 0) + w.overlaps.length + w.clipped.length + (w.misaligned || []).length + (w.spilled || []).length]));
     const b = per(before), a = per(after);
     const worse = [...b].filter(([w, n]) => (a.get(w) ?? Infinity) > n).map(([w]) => w);
     if (worse.length) return { ok: false, verdict: 'worse', reason: `it made ${worse.join(', ')}px wide worse` };
@@ -289,18 +327,27 @@ export function judgeLayout(before, after) {
  */
 export async function runLayoutLane({
     issue, repoDir = process.cwd(), env = process.env, log = console.log,
-    chatImpl = chat, probeImpl = probeLayout,
+    chatImpl = chat, probeImpl = probeLayout, sweepImpl = sweepScreens,
 } = {}) {
     const lane = layoutLaneFor(issue);
     if (!lane.applies) return { ok: false, stage: 'lane', reason: lane.why };
-    const { screen } = lane;
-    const scope = SCREENS[screen].box;
-    const issueText = userWords(issue);
-    const role = ROLES.ui;
+    let { screen } = lane;
+    const widths = lane.width && !WIDTHS.includes(lane.width) ? [...WIDTHS, lane.width].sort((a, b) => a - b) : WIDTHS;
     const providers = {};
+    if (!screen) {
+        // Nothing says which page: measure them all at the reported phone width, take the one that is really broken.
+        const sw = await sweepImpl({ repoDir, width: lane.width || 390 });
+        if (!sw.ok) return { ok: false, stage: 'measure', reason: 'no page was named and the pages could not be measured: ' + sw.reason, providers };
+        if (!sw.ranked.length) return { ok: false, stage: 'measure', reason: `no page was named, and none of the pages shows an overlap, overflow or cut-off text at ${lane.width || 390}px wide with invented data, so there is nothing to prove a change against`, providers };
+        screen = sw.ranked[0].screen;
+        log(`[lane] no page named; the sweep found ${sw.ranked.slice(0, 3).map((r) => `${r.screen} (${r.problems})`).join(', ')} — taking ${screen}`);
+    }
+    const scope = screenDef(screen).box;
+    const issueText = userWords(issue) + (englishReading(issue) ? '\n(In English: ' + englishReading(issue) + ')' : '');
+    const role = ROLES.ui;
 
     log(`[lane] layout lane for #${issue.number} on ${screen}`);
-    const before = await probeImpl({ screen, repoDir });
+    const before = await probeImpl({ screen, repoDir, widths });
     if (!before.ok) return { ok: false, stage: 'measure', reason: describeProbe(before), providers };
     log(`[lane] measured before: ${before.problems} problem(s)\n${describeProbe(before).slice(0, 1500)}`);
     if (before.problems === 0) return { ok: false, stage: 'measure', reason: describeProbe(before) + ' There is nothing to prove a CSS change against, so no change was made.', providers };
@@ -323,7 +370,7 @@ export async function runLayoutLane({
         const candidate = stripComments(stripFences(a.text)).trim();
         const v = validateCss(candidate, { scope });
         if (!v.ok) { tried.push(`round ${round}: refused by the CSS gate: ${v.problems.join('; ').slice(0, 300)}`); remaining = 'Your CSS was refused: ' + v.problems.join('; '); css = candidate.slice(0, 1500); continue; }
-        after = await probeImpl({ screen, repoDir, extraCss: candidate });
+        after = await probeImpl({ screen, repoDir, extraCss: candidate, widths });
         judged = judgeLayout(before, after);
         log(`[lane] round ${round}: ${judged.verdict} — ${judged.reason}`);
         css = candidate; authored = a;

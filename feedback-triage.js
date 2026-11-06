@@ -777,7 +777,9 @@ export function diagnosticsSection(d) {
     const L = ['### System diagnosis', ''];
 
     const facts = [
-        ['App page', d.activePage], ['Device', d.ua], ['Screen', d.screen],
+        ['App page', d.activePage],
+        ['Pages open just before (oldest to newest)', Array.isArray(d.recentPages) ? d.recentPages.filter((x) => typeof x === 'string').slice(-6).join(' > ') : ''],
+        ['Device', d.ua], ['Screen', d.screen],
         ['Viewport', d.viewport], ['DPR', d.dpr], ['Language', d.lang],
         ['Timezone', d.tz], ['Installed as app', d.standalone], ['Online', d.online],
         ['DOM nodes', d.domNodes],

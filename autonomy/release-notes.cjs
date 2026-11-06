@@ -104,8 +104,9 @@ function commitsInRange(from, to = 'HEAD', { repoDir = process.cwd(), exec = exe
  * Reuses the same classification the release gate uses, so the notes and the
  * decision to release can never disagree about what "user-facing" means.
  */
-function touchesUserFacing(files) {
-    return (files || []).some((f) => !isMetaFile(f) && !isInfraFile(f));
+function touchesUserFacing(files, isServerOnly) {
+    // a server function the phone never loads went live on merge: it is not something the owner's copy of the app updates
+    return (files || []).some((f) => !isMetaFile(f) && !isInfraFile(f) && !(isServerOnly && isServerOnly(f)));
 }
 
 /**
@@ -113,7 +114,7 @@ function touchesUserFacing(files) {
  *
  * @returns {{markdown:string, summary:string, userFacing:number, internal:number}}
  */
-function describeRelease(commits, { version = null } = {}) {
+function describeRelease(commits, { version = null, isServerOnly = null } = {}) {
     const kept = (commits || []).filter((c) => !SKIP_SUBJECT.test(String(c.subject || '').trim()));
 
     const user = [];
@@ -121,7 +122,7 @@ function describeRelease(commits, { version = null } = {}) {
     for (const c of kept) {
         const p = parseSubject(c.subject);
         if (!p.text) continue;
-        (touchesUserFacing(c.files) ? user : internal).push(p);
+        (touchesUserFacing(c.files, isServerOnly) ? user : internal).push(p);
     }
 
     // Nothing describable. Say that rather than inventing a sentence — an
@@ -207,7 +208,13 @@ function notesForRelease({ repoDir = process.cwd(), from = null, to = 'HEAD', ex
     if (!base) return null;
     const commits = commitsInRange(base, to, { repoDir, exec });
     if (!commits.length) return null;
-    return { base, ...describeRelease(commits) };
+    let isServerOnly = null;
+    try {
+        const cf = require('./client-files.cjs');
+        const reach = cf.clientReachable(repoDir);
+        isServerOnly = (f) => cf.isServerOnlyFile(f, reach);
+    } catch { /* cannot tell which files reach the phone: every code change counts as user-facing */ }
+    return { base, ...describeRelease(commits, { isServerOnly }) };
 }
 
 module.exports = {

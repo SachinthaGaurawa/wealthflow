@@ -26,6 +26,7 @@
  * ===========================================================================*/
 
 import { PROVIDERS, keyFor } from './wf-llm-router.mjs';
+import { choose, loadModels, isModelGone } from './ai-models.mjs';
 
 export const IMAGE_MARKER = 'wf-feedback-image';
 /** Written into the issue when the screenshot was already read at filing time (feedback-triage.js). */
@@ -48,6 +49,7 @@ export function visionModels(providerId, env = process.env) {
     if (providerId === 'mistral') return pick(env.MISTRAL_VISION_MODEL, ['mistral-small-latest', 'pixtral-large-latest']);
     if (providerId === 'openrouter') return pick(env.OPENROUTER_VISION_MODEL, ['meta-llama/llama-3.2-11b-vision-instruct:free']);
     if (providerId === 'together') return pick(env.TOGETHER_VISION_MODEL, ['meta-llama/Llama-Vision-Free']);
+    if (providerId === 'nvidia') return pick(env.NVIDIA_VISION_MODEL, ['meta/llama-3.2-90b-vision-instruct', 'meta/llama-3.2-11b-vision-instruct']);
     return [];
 }
 
@@ -97,12 +99,13 @@ async function askOpenAiStyle(provider, key, model, dataUrl, prompt, fetchImpl) 
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: dataUrl } }] }],
     });
     const text = r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message && r.data.choices[0].message.content;
-    return { ok: r.ok && typeof text === 'string' && text.trim().length > 0, status: r.status, text: String(text || '').trim() };
+    const err = r.ok ? '' : String((r.data && (r.data.error && (r.data.error.message || r.data.error) || r.data.message)) || '').slice(0, 200);
+    return { ok: r.ok && typeof text === 'string' && text.trim().length > 0, status: r.status, text: String(text || '').trim(), err };
 }
 
-async function askGemini(key, dataUrl, prompt, fetchImpl, env) {
+async function askGemini(key, dataUrl, prompt, fetchImpl, env, forModel = '') {
     const m = dataUrl.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/i);
-    const model = env.GEMINI_VISION_MODEL || env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const model = forModel || env.GEMINI_VISION_MODEL || env.GEMINI_MODEL || 'gemini-2.5-flash';
     const r = await postJson(fetchImpl,
         'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key), {},
         { contents: [{ role: 'user', parts: [{ text: prompt }, { inline_data: { mime_type: m[1], data: m[2] } }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 700 } });
@@ -115,30 +118,66 @@ async function askGemini(key, dataUrl, prompt, fetchImpl, env) {
  * Ask each provider that has a key and a vision model, in order, until one reads the image.
  * @returns {{ ok:boolean, text?:string, provider?:string, model?:string, tried:string[] }}
  */
+const HEAL_NAME = { groq: 'Groq', mistral: 'Mistral', openrouter: 'OpenRouter', together: 'Together', nvidia: 'NVIDIA', gemini: 'Gemini' };
+
+/**
+ * A provider that retires a vision model is not a provider that cannot read a picture. On #524 every vision model named here was gone
+ * (Groq 404 and 400, OpenRouter 404) and the screenshot was never read, so the fix agent worked blind. Ask the provider what it serves
+ * NOW (its own /models list, same key), choose a vision model by rule, and try it once. Never throws.
+ */
+async function liveVisionModel(id, provider, key, fetchImpl, exclude) {
+    try {
+        const kind = id === 'gemini' ? 'gemini' : 'openai';
+        const url = id === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta/models' : String(provider.url || '').replace(/\/chat\/completions$/, '/models');
+        if (!url) return '';
+        const fetcher = (u, init, ms) => fetchImpl(u, { ...init, signal: AbortSignal.timeout(ms) });
+        const models = await loadModels({ kind, url, key, fetcher });
+        return choose({ provider: HEAL_NAME[id] || id, vision: true, models, exclude });
+    } catch (_) { return ''; }
+}
+
+/**
+ * Ask each provider that has a key and a vision model, in order, until one reads the image.
+ * @returns {{ ok:boolean, text?:string, provider?:string, model?:string, tried:string[] }}
+ */
 export async function describeScreenshot({ dataUrl, title, text, env = process.env, fetchImpl = globalThis.fetch, log = () => {} } = {}) {
     const tried = [];
     if (!dataUrl) return { ok: false, tried };
     const prompt = visionPrompt({ title, text });
-    const order = ['gemini', 'mistral', 'groq', 'openrouter', 'together'];
+    const order = ['gemini', 'mistral', 'groq', 'nvidia', 'openrouter', 'together'];
+    const ask = (id, provider, k, model) => (id === 'gemini'
+        ? askGemini(k.value, dataUrl, prompt, fetchImpl, env, model || '')
+        : askOpenAiStyle(provider, k.value, model, dataUrl, prompt, fetchImpl));
     for (const id of order) {
         const provider = PROVIDERS.find((p) => p.id === id);
         const k = provider && keyFor(provider, env);
         if (!k) continue;
         const models = id === 'gemini' ? [null] : visionModels(id, env);
+        const failedIds = [];
+        let healable = false;      // a model of this provider was refused as gone, or its quota ran out on a model that has company
         for (const model of models) {
             try {
-                const r = id === 'gemini'
-                    ? await askGemini(k.value, dataUrl, prompt, fetchImpl, env)
-                    : await askOpenAiStyle(provider, k.value, model, dataUrl, prompt, fetchImpl);
+                const r = await ask(id, provider, k, model);
                 const used = r.model || model || id;
                 if (r.ok) return { ok: true, text: r.text.slice(0, MAX_DESCRIPTION), provider: id, model: used, tried };
-                tried.push(`${id}/${used}: HTTP ${r.status}`);
+                tried.push(`${id}/${used}: HTTP ${r.status}${r.err ? ' ' + r.err.slice(0, 60) : ''}`);
+                failedIds.push(used);
+                if (isModelGone(r.status, r.err)) { healable = true; continue; }
+                if (id === 'gemini' && r.status === 429) { healable = true; break; }     // Gemini's quota is per model
                 if (r.status === 401 || r.status === 403 || r.status === 429 || r.status === 402) break; // same key, same answer
             } catch (e) {
                 tried.push(`${id}/${model || 'default'}: ${String((e && e.message) || e).slice(0, 80)}`);
                 break;
             }
         }
+        if (!healable) continue;
+        const live = await liveVisionModel(id, provider, k.value, fetchImpl, failedIds);
+        if (!live) continue;
+        try {
+            const r = await ask(id, provider, k, live);
+            if (r.ok) { log(`[screenshot] ${id}: the named vision models were gone; read it with ${live} from the provider's own list`); return { ok: true, text: r.text.slice(0, MAX_DESCRIPTION), provider: id, model: r.model || live, tried }; }
+            tried.push(`${id}/${live} (from its list): HTTP ${r.status}`);
+        } catch (e) { tried.push(`${id}/${live}: ${String((e && e.message) || e).slice(0, 80)}`); }
     }
     log(`[screenshot] no provider read the image (${tried.join('; ') || 'no vision-capable key'})`);
     return { ok: false, tried };

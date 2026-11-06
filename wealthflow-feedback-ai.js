@@ -171,6 +171,9 @@
             if (!prev) { byKey.set(k, it); continue; }
             // prefer the cloud copy (has _id / _src cloud) as the canonical one
             var keep = (it._src === 'cloud' || it._id) ? it : prev;
+            // the cloud copy was written BEFORE the report became a work item, so only the on-device copy knows its number
+            var issue = it.issue || prev.issue;
+            if (issue && !keep.issue) keep = Object.assign({}, keep, { issue: issue });
             byKey.set(k, keep);
         }
         return Array.from(byKey.values());
@@ -298,7 +301,73 @@
     }
     function _isConsidering(cluster, serverClusters) { return _consideringStatus(cluster, serverClusters) !== null; }
 
+    // ── what became of each report (the GitHub work item behind it) ───────────
+    // A report is "Fixed" only when its work item was closed as done by the update system; the server also says which release carried it.
+    // Last known answers are kept on the device so the board is right offline too. Nothing here is guessed: no answer, no mark.
+    var K_STATUS = 'wf_fb_status', K_MAP = 'wf_fb_issue_map';
+    function _readJson(k) { try { var v = JSON.parse(localStorage.getItem(k) || '{}'); return v && typeof v === 'object' ? v : {}; } catch (_) { return {}; } }
+    function _writeJson(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} }
+    function _issuesOf(c) {
+        var map = _readJson(K_MAP), out = [];
+        var fp = _fingerprint(c.sample);
+        c.items.forEach(function (it) { if (it && it.issue) out.push(Number(it.issue)); });
+        if (map[fp]) out.push(Number(map[fp]));
+        return out.filter(function (n, i, a) { return n > 0 && a.indexOf(n) === i; });
+    }
+    // The cluster's overall state from the work items behind it: fixed only when every one of them is; else the most active open one.
+    function _fixOf(c, statuses) {
+        var nums = _issuesOf(c), list = nums.map(function (n) { return statuses[n]; }).filter(Boolean);
+        if (!list.length) return null;
+        var open = list.filter(function (x) { return x.status !== 'fixed' && x.status !== 'declined'; });
+        if (open.length) {
+            var rank = { stuck: 3, working: 2, waiting: 1 };
+            open.sort(function (a, b) { return (rank[b.status] || 0) - (rank[a.status] || 0); });
+            return open[0];
+        }
+        // "Fixed" is a claim about EVERY report in the cluster: when some report here has no known work item, say nothing rather than overclaim
+        var map = _readJson(K_MAP), fp = _fingerprint(c.sample);
+        var knownAll = c.items.every(function (it) { return it && it.issue; }) || (c.items.length === 1 && !!map[fp]);
+        if (!knownAll) return null;
+        var fixed = list.filter(function (x) { return x.status === 'fixed'; });
+        if (fixed.length) { fixed.sort(function (a, b) { return String(b.shippedAt || '').localeCompare(String(a.shippedAt || '')); }); return fixed[0]; }
+        return list[0];
+    }
+    var _statusAt = 0;
+    async function _loadStatuses(clusters) {
+        var statuses = _readJson(K_STATUS);
+        if (Date.now() - _statusAt < 8000) return statuses;     // the board redraws on every Firestore tick; ask GitHub at most every 8 s
+        _statusAt = Date.now();
+        var want = [], texts = [], unknown = [];
+        clusters.forEach(function (c) {
+            var nums = _issuesOf(c);
+            nums.forEach(function (n) { want.push(n); });
+            if (!nums.length && c.sample) { texts.push(String(c.sample).slice(0, 120)); unknown.push(c); }
+        });
+        want = want.filter(function (n, i, a) { return a.indexOf(n) === i; }).slice(0, 25);
+        if (!want.length && !texts.length) return statuses;
+        try {
+            var qs = [];
+            if (want.length) qs.push('issues=' + encodeURIComponent(want.join(',')));
+            if (texts.length) qs.push('texts=' + encodeURIComponent(JSON.stringify(texts.slice(0, 5))));
+            var r = await _withTimeout(fetch('/api/feedback-status?' + qs.join('&'), { cache: 'no-store' }), 6000, null);
+            if (!r || !r.ok) return statuses;
+            var j = await r.json().catch(function () { return null; });
+            if (!j || j.ok === false) return statuses;
+            (j.items || []).forEach(function (i) {
+                if (i && i.number && i.status && i.status !== 'unknown') {
+                    statuses[i.number] = { number: i.number, status: i.status, shippedVersion: i.shippedVersion || null, shippedAt: i.shippedAt || null, releasePending: !!i.releasePending, at: Date.now() };
+                }
+            });
+            var map = _readJson(K_MAP);
+            (j.matches || []).forEach(function (m) { if (m && m.number && m.text) map[_fingerprint(m.text)] = m.number; });
+            _writeJson(K_MAP, map);
+            _writeJson(K_STATUS, statuses);
+        } catch (_) { /* offline: the last known answers stand */ }
+        return statuses;
+    }
+
     // ── UI: ranked board ──────────────────────────────────────────────────────
+    var _lastClusters = [], _lastAdmin = false;
     var _unsub = null, _unsubPriority = null, _boardOpen = false, _renderTimer = 0, _serverClusters = [];
 
     async function showBoard() {
@@ -392,7 +461,13 @@
         } catch (_) {
             /* never let an error leave the board stuck on "Loading…" */
         } finally {
-            _render(clusters || [], _serverClusters || [], admin);
+            _lastClusters = clusters || []; _lastAdmin = !!admin;
+            _render(_lastClusters, _serverClusters || [], admin);
+            // then ask what became of each report; the board is redrawn when the answer arrives
+            if (!admin && _lastClusters.length) {
+                var snapshot = _lastClusters;
+                _loadStatuses(snapshot).then(function () { if (_boardOpen && snapshot === _lastClusters) _render(snapshot, _serverClusters || [], admin); }).catch(function () {});
+            }
         }
     }
 
@@ -410,11 +485,16 @@
 
         var pColor = { critical: '#ef4444', high: '#f59e0b', medium: '#818cf8', low: '#6b7280' };
         var catLabel = { security: 'Security', crash: 'Crash / data', bug: 'Bug', performance: 'Performance', ui: 'UI / UX', idea: 'Feature idea' };
-        var critical = clusters.filter(function (c) { return c.priority === 'critical'; }).length;
+        var statuses = admin ? {} : _readJson(K_STATUS);
+        clusters.forEach(function (c) { c.fix = admin ? null : _fixOf(c, statuses); c.isFixed = !!(c.fix && c.fix.status === 'fixed'); });
+        // open reports first (newest first inside each group), fixed ones below
+        clusters = clusters.slice().sort(function (a, b) { return (a.isFixed ? 1 : 0) - (b.isFixed ? 1 : 0) || b.latest - a.latest; });
+        var fixedCount = clusters.filter(function (c) { return c.isFixed; }).length;
+        var critical = clusters.length - fixedCount;
         var totalReports = clusters.reduce(function (s, c) { return s + (c.count || 1); }, 0);
 
         var rows = clusters.map(function (c) {
-            var pc = pColor[c.priority] || '#6b7280';
+            var pc = c.isFixed ? '#10b981' : (pColor[c.priority] || '#6b7280');
             var cStatus = _consideringStatus(c, serverClusters);
             // Wording appears ONLY when the server brain has truly flagged the
             // issue. Neither line promises an automatic instant fix — they state
@@ -427,9 +507,25 @@
                 badge = '<div style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;color:#fbbf24;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);padding:3px 9px;border-radius:999px;">' +
                     '<span style="width:6px;height:6px;border-radius:50%;background:#fbbf24;"></span>Queued by System AI for the next release</div>';
             }
-            return '<div style="padding:12px;border:1px solid var(--border,#1f2638);border-left:3px solid ' + pc + ';border-radius:11px;margin-bottom:9px;background:var(--bg2,#0a0e1a);">' +
+            var fx = c.fix;
+            if (fx) {
+                var tag = '<span style="opacity:.75;font-weight:600;"> · work item #' + _esc(String(fx.number)) + '</span>';
+                if (fx.status === 'fixed') {
+                    badge = '<div style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:#34d399;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.35);padding:4px 10px;border-radius:999px;">' +
+                        '\u2713 Fixed' + (fx.shippedVersion ? ' \u2014 in update v' + _esc(fx.shippedVersion) : (fx.releasePending ? ' \u2014 the update is being released' : '')) + tag + '</div>';
+                } else if (fx.status === 'declined') {
+                    badge = '<div style="margin-top:8px;display:inline-flex;font-size:11px;font-weight:700;color:var(--text3,#8b95a8);border:1px solid var(--border,#1f2638);padding:4px 10px;border-radius:999px;">Closed without a change' + tag + '</div>';
+                } else if (fx.status === 'stuck') {
+                    badge = '<div style="margin-top:8px;display:inline-flex;font-size:11px;font-weight:800;color:#f87171;background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.3);padding:4px 10px;border-radius:999px;">The AI could not fix this alone yet \u2014 it keeps trying' + tag + '</div>';
+                } else if (fx.status === 'working') {
+                    badge = '<div style="margin-top:8px;display:inline-flex;font-size:11px;font-weight:800;color:#fbbf24;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);padding:4px 10px;border-radius:999px;">The AI is working on it' + tag + '</div>';
+                } else {
+                    badge = '<div style="margin-top:8px;display:inline-flex;font-size:11px;font-weight:700;color:var(--text2,#c7cdd9);border:1px solid var(--border,#1f2638);padding:4px 10px;border-radius:999px;">Filed for the AI' + tag + '</div>';
+                }
+            }
+            return '<div style="padding:12px;border:1px solid var(--border,#1f2638);border-left:3px solid ' + pc + ';border-radius:11px;margin-bottom:9px;background:var(--bg2,#0a0e1a);' + (c.isFixed ? 'opacity:.82;' : '') + '">' +
                 '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
-                    '<span style="font-size:11px;font-weight:800;color:' + pc + ';text-transform:uppercase;">' + _esc(c.priority) + '</span>' +
+                    '<span style="font-size:11px;font-weight:800;color:' + pc + ';text-transform:uppercase;">' + (c.isFixed ? 'Fixed' : _esc(c.priority)) + '</span>' +
                     '<span style="font-size:11px;color:var(--text3,#8b95a8);">' + _esc(catLabel[c.category] || c.category) + '</span>' +
                     '<span style="margin-left:auto;font-size:11px;font-weight:700;color:var(--text2,#c7cdd9);">' + (c.count || 1) + ((c.count || 1) > 1 ? ' reports' : ' report') + '</span>' +
                 '</div>' +
@@ -443,12 +539,12 @@
             '<style>@keyframes wfPulseDot{0%{box-shadow:0 0 0 0 rgba(52,211,153,0.6);}70%{box-shadow:0 0 0 6px rgba(52,211,153,0);}100%{box-shadow:0 0 0 0 rgba(52,211,153,0);}}</style>' +
             '<div style="display:flex;gap:8px;margin-bottom:14px;">' +
                 '<div style="flex:1;text-align:center;padding:10px;background:var(--bg2,#0a0e1a);border-radius:10px;"><div style="font-size:22px;font-weight:900;color:var(--text,#e6e7eb);">' + clusters.length + '</div><div style="font-size:10.5px;color:var(--text3,#8b95a8);">issues</div></div>' +
-                '<div style="flex:1;text-align:center;padding:10px;background:var(--bg2,#0a0e1a);border-radius:10px;"><div style="font-size:22px;font-weight:900;color:#ef4444;">' + critical + '</div><div style="font-size:10.5px;color:var(--text3,#8b95a8);">critical</div></div>' +
-                '<div style="flex:1;text-align:center;padding:10px;background:var(--bg2,#0a0e1a);border-radius:10px;"><div style="font-size:22px;font-weight:900;color:#10b981;">' + totalReports + '</div><div style="font-size:10.5px;color:var(--text3,#8b95a8);">reports</div></div>' +
+                '<div style="flex:1;text-align:center;padding:10px;background:var(--bg2,#0a0e1a);border-radius:10px;"><div style="font-size:22px;font-weight:900;color:#ef4444;">' + critical + '</div><div style="font-size:10.5px;color:var(--text3,#8b95a8);">open</div></div>' +
+                '<div style="flex:1;text-align:center;padding:10px;background:var(--bg2,#0a0e1a);border-radius:10px;"><div style="font-size:22px;font-weight:900;color:#10b981;">' + (admin ? totalReports : fixedCount) + '</div><div style="font-size:10.5px;color:var(--text3,#8b95a8);">' + (admin ? 'reports' : 'fixed') + '</div></div>' +
             '</div>' +
-            '<div style="font-size:11px;color:var(--text3,#8b95a8);margin-bottom:10px;">Every report you send goes to the System AI as critical, newest first. Showing your reports from the last 2 weeks · live.</div>' +
+            '<div style="font-size:11px;color:var(--text3,#8b95a8);margin-bottom:10px;">Every report you send goes to the System AI as critical. A report is marked Fixed only after the AI closed its work item and the update that carries the fix was released. Showing your reports from the last 2 weeks · live.</div>' +
             rows;
-        _setSub('wfFbBoard', clusters.length + ' issues · ' + critical + ' critical · live');
+        _setSub('wfFbBoard', admin ? clusters.length + ' issues · live' : critical + ' open · ' + fixedCount + ' fixed · live');
     }
 
     async function topPriority() {

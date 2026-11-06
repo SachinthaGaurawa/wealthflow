@@ -161,12 +161,17 @@ function parseUnifiedDiff(diffText) {
  * @returns {{substantive:boolean, substantiveFiles:string[], ignored:string[],
  *            versionOnly:string[], reason:string}}
  */
-function classifyDiff(diffText) {
+function classifyDiff(diffText, opts) {
     const byFile = parseUnifiedDiff(diffText);
     const substantiveFiles = [];
     const ignored = [];
     const versionOnly = [];
     const infra = [];
+    const server = [];
+    // isServerOnly(file) → true when nothing the phone loads can reach the file (autonomy/client-files.cjs).
+    // Vercel deploys such a change the moment it merges; the phone's copy of the app is byte-for-byte the same,
+    // so telling the owner "Update available" would be the fake release this gate exists to stop.
+    const isServerOnly = opts && typeof opts.isServerOnly === 'function' ? opts.isServerOnly : null;
 
     for (const [file, hunks] of Object.entries(byFile)) {
         if (isMetaFile(file)) { ignored.push(file); continue; }
@@ -176,6 +181,9 @@ function classifyDiff(diffText) {
         // separately so the run summary can say so out loud instead of leaving
         // the owner to wonder why a busy day produced no release.
         if (isInfraFile(file)) { infra.push(file); continue; }
+        let serverOnly = false;
+        try { serverOnly = !!(isServerOnly && isServerOnly(file)); } catch { serverOnly = false; }   // unsure → tell the owner
+        if (serverOnly) { server.push(file); continue; }
         substantiveFiles.push(file);
     }
 
@@ -183,6 +191,10 @@ function classifyDiff(diffText) {
     let reason;
     if (substantive) {
         reason = `real changes in ${substantiveFiles.length} file(s): ${substantiveFiles.slice(0, 8).join(', ')}`;
+    } else if (server.length) {
+        reason = `no change on the phone — ${server.length} file(s) changed, but they are server functions that no page, ` +
+            `script or service worker on the phone loads (${server.slice(0, 6).join(', ')}). They went live on the server when ` +
+            'they were merged; the app on the phone is identical, so there is nothing to update there.';
     } else if (infra.length) {
         reason = `no user-facing change — ${infra.length} file(s) changed, but all of them are ` +
             `pipeline/tooling code that never reaches the browser or the API ` +
@@ -193,7 +205,7 @@ function classifyDiff(diffText) {
           'Releasing here would be a FAKE update (the exact bug this gate exists to stop).';
     }
 
-    return { substantive, substantiveFiles, ignored, versionOnly, infra, reason };
+    return { substantive, substantiveFiles, ignored, versionOnly, infra, server, reason };
 }
 
 module.exports = {
@@ -226,11 +238,18 @@ if (require.main === module) {
         console.error('[substantive] git diff failed:', e.message);
         process.exit(1);   // fail loud — never silently claim "nothing to ship"
     }
-    const r = classifyDiff(diff);
+    let isServerOnly = null;
+    try {
+        const cf = require('./client-files.cjs');
+        const reach = cf.clientReachable(process.cwd());
+        isServerOnly = (f) => cf.isServerOnlyFile(f, reach);
+    } catch (e) { console.error('[substantive] client-file scan unavailable, every code change counts:', e.message); }
+    const r = classifyDiff(diff, { isServerOnly });
     console.log('[substantive] ' + (r.substantive ? 'SUBSTANTIVE' : 'NOT substantive'));
     console.log('[substantive] ' + r.reason);
     if (r.versionOnly.length) console.log('[substantive] version-string-only: ' + r.versionOnly.join(', '));
     if (r.ignored.length) console.log('[substantive] data/meta ignored: ' + r.ignored.join(', '));
+    if (r.server.length) console.log('[substantive] server-only (live already, not on the phone): ' + r.server.join(', '));
     if (process.env.GITHUB_OUTPUT) {
         require('fs').appendFileSync(process.env.GITHUB_OUTPUT,
             `substantive=${r.substantive ? 'yes' : 'no'}\n` +
