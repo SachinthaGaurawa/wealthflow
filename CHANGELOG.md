@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.55 — 2026-11-06
+
+**What changed for you**
+
+- Make the update system fix layout reports itself, mark Fixed feedback, and stop fake "Update available" (#526)
+
 ## v7.69.54 — 2026-11-06
 
 **What changed for you**
