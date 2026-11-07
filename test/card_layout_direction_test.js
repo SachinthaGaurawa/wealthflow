@@ -645,8 +645,8 @@ describe('the statement\'s own printed "Total Payment" guards the layout convent
     const base = ['Statement of Account', 'Credit Limit 350,000.00', '11/08/2026 11/08/2026 Annual Fee 4,000.00', '19/08/2026 19/08/2026 Payment 004 CR 150,000.00', '20/08/2026 19/08/2026 ELECTRONICS SHOP, COLOMBO 3 413,000.00'];
     const withTotals = (total) => [...base, `Total Payment: ${total}CR`, 'Total Transactions: 413,000.00'].join('\n');
     it('reads the two printed figures', () => {
-        expect(P.parseStatement(withTotals('150,000.00')).printedFigures).toEqual({ payments: 150000, purchases: 413000 });
-        expect(P.parseStatement(base.join('\n')).printedFigures).toEqual({ payments: null, purchases: null });
+        expect(P.parseStatement(withTotals('150,000.00')).printedFigures).toMatchObject({ payments: 150000, purchases: 413000 });
+        expect(P.parseStatement(base.join('\n')).printedFigures).toMatchObject({ payments: null, purchases: null });
     });
     it('agrees when the payment lines read as credits add up to it, and then the purchases are filed by the layout as before', () => {
         const parsed = P.parseStatement(withTotals('150,000.00'));

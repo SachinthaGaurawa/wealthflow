@@ -63,9 +63,13 @@
     'use strict';
 
     var MON = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec';
-    var DATE_CORE = '(?:\\d{1,2}[\\/\\-](?:\\d{1,2}|' + MON + ')[\\/\\-]\\d{2,4}'
-        + '|\\d{1,2}\\s+(?:' + MON + ')\\s+\\d{2,4}'
-        + '|\\d{4}[\\/\\-]\\d{1,2}[\\/\\-]\\d{1,2})';
+    // a month is its three letters or its whole name ("Oct", "October"); a date may be month-first ("Oct 02, 2026")
+    var MONW = '(?:' + MON + ')[a-z]*';
+    var DATE_CORE = '(?:\\d{1,2}[\\/\\-](?:\\d{1,2}|' + MONW + ')[\\/\\-]\\d{2,4}'
+        // "12 AUG 12 AUG" is a post date and a transaction date, both without a year; the second "12" is a day, not the year 2012
+        + '|\\d{1,2}\\s+' + MONW + '\\s+(?:\\d{4}|\\d{2}(?!\\d)(?!\\s*' + MONW + '))'
+        + '|\\d{4}[\\/\\-]\\d{1,2}[\\/\\-]\\d{1,2}'
+        + '|\\b' + MONW + '\\.?\\s+\\d{1,2},?\\s+\\d{4}\\b)';
     var DATE_ANY = new RegExp(DATE_CORE, 'ig');
 
     // How far into a line the row date may start. Covers a leading reference or
@@ -119,7 +123,7 @@
     var CARD_WORDS_RE = /\b(credit limit|available credit|minimum payment|payment due date|card no|card number|cardmember|credit card)\b/i;
     var MONTHS = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
 
-    var EPS = 0.02;              // cents-level tolerance for money comparisons
+    var EPS = 0.005;             // money is whole cents: a one-cent difference is a real difference, never rounding
     var MAX_BLOCK = 4;           // most trailing money columns a row may have
 
     function _num(s) { var n = parseFloat(String(s).replace(/,/g, '')); return isFinite(n) ? n : 0; }
@@ -153,6 +157,10 @@
         s = String(s || '').trim();
         var m;
         if ((m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/))) return calendarDate(m[1], m[2], m[3]);
+        if ((m = s.match(/^([A-Za-z]{3,})\.?\s+(\d{1,2}),?\s+(\d{4})$/))) {
+            var mo2 = MONTHS[m[1].toLowerCase().slice(0, 3)];
+            if (mo2) return calendarDate(m[3], mo2, m[2]);
+        }
         if ((m = s.match(/^(\d{1,2})[\/\-.\s]+([A-Za-z]{3,})[\/\-.\s]+(\d{2,4})$/))) {
             var mo = MONTHS[m[2].toLowerCase().slice(0, 3)];
             if (mo) return calendarDate(_y4(m[3]), mo, m[1]);
@@ -219,8 +227,16 @@
 
     // "USD 12.50  3,750.00": the foreign amount is not an account column; the amount in the account's currency that follows it is the block
     function withoutForeign(block) {
-        var kept = block.filter(function (t, i) { return !(t.foreign && block.slice(i + 1).some(function (u) { return !u.foreign; })); });
-        return kept.length ? kept : block;
+        var cut = null;
+        var kept = block.filter(function (t, i) {
+            var drop = t.foreign && block.slice(i + 1).some(function (u) { return !u.foreign; });
+            if (drop && cut === null) cut = t.start;
+            return !drop;
+        });
+        if (!kept.length) return block;
+        // the dropped foreign amount is not part of the description either
+        if (cut !== null) kept.cutAt = cut;
+        return kept;
     }
 
     function hasTextLayer(text) {
@@ -368,11 +384,37 @@
         var a = new RegExp('total\\s+payments?\\b[^\\d\\n]{0,30}' + fig, 'i').exec(text), b = new RegExp('total\\s+(?:transactions|purchases)\\b[^\\d\\n]{0,30}' + fig, 'i').exec(text);
         if (a) out.payments = _num(a[1]);
         if (b) out.purchases = _num(b[1]);
+        out.summary = printedSummary(text);
         return out;
+    }
+    // A card statement's summary strip: names on one or two lines ("Opening Purchases Cash Interest Charges Payments Other Closing / Balance Advances Credits Balance") and the figures under them in the same order. Taken only
+    // when the names and the figures agree in number and the strip adds up by itself (opening + purchases + cash + interest + charges - payments - other credits = closing, to the cent): a misread figure cannot pass that.
+    var SUMMARY_NAMES = [['opening', /\bopening\b/i], ['purchases', /\bpurchases\b/i], ['cash', /\bcash\b/i], ['interest', /\binterest\b/i], ['charges', /\bcharges\b/i], ['payments', /\bpayments\b/i], ['other', /\bother\b/i], ['closing', /\bclosing\b/i]];
+    function printedSummary(text) {
+        var lines = String(text || '').split(/\r?\n/), money = /(?:^|\s)(\d{1,3}(?:,\d{3})*\.\d{2})(?=\s|$)/g;
+        for (var i = 0; i < lines.length; i++) {
+            var figs = [], m;
+            money.lastIndex = 0;
+            if (!/^\s*(?:\d{1,3}(?:,\d{3})*\.\d{2}\s*){6,8}$/.test(lines[i])) continue;
+            while ((m = money.exec(lines[i])) !== null) figs.push(_num(m[1]));
+            var head = lines.slice(Math.max(0, i - 6), i).join(' ').toLowerCase(), found = [];
+            for (var n = 0; n < SUMMARY_NAMES.length; n++) { var at = head.search(SUMMARY_NAMES[n][1]); if (at >= 0) found.push([at, SUMMARY_NAMES[n][0]]); }
+            found.sort(function (x, y) { return x[0] - y[0]; });
+            var names = found.map(function (f) { return f[1]; });
+            if (names.length !== figs.length || names[0] !== 'opening' || names[names.length - 1] !== 'closing') continue;
+            var sum = {};
+            for (var k = 0; k < names.length; k++) sum[names[k]] = figs[k];
+            var net = sum.opening + (sum.purchases || 0) + (sum.cash || 0) + (sum.interest || 0) + (sum.charges || 0) - (sum.payments || 0) - (sum.other || 0);
+            if (Math.abs(net - sum.closing) < 0.005) return sum;
+        }
+        return null;
     }
 
     // a row dated "02 Oct" takes the year of the statement period (the year before it for a month after the period's end month); with no period it is left alone
-    var YEARLESS = new RegExp('^(\\s*)(\\d{1,2})\\s+(' + MON + ')\\b(?!\\s+\\d{2,4}(?:\\s|$))', 'i');
+    // a post date and a transaction date both without a year ("12 AUG 12 AUG ...") are two dates: the second "12" is not the year of the first
+    var NO_YEAR_AFTER = '\\b(?!\\s+(?:\\d{4}|\\d{2}(?!\\d)(?!\\s*(?:' + MON + ')))(?:\\s|$))';
+    var YEARLESS = new RegExp('^(\\s*)(\\d{1,2})\\s+(' + MON + ')' + NO_YEAR_AFTER, 'i');
+    var YEARLESS_NEXT = new RegExp('^(\\s+)(\\d{1,2})\\s+(' + MON + ')' + NO_YEAR_AFTER, 'i');
     var PERIOD_DATE = new RegExp('(\\d{1,2})[\\s\\/\\-]+(' + MON + '|\\d{1,2})[\\s\\/\\-,]+(\\d{4})', 'ig');
     function addMissingYears(src) {
         var lines = src.split(/\r?\n/), end = null, k, m, any = false;
@@ -390,23 +432,57 @@
         return lines.map(function (ln) {
             var y = YEARLESS.exec(ln);
             if (!y) return ln;
-            var mon = MON.split('|').indexOf(y[3].toLowerCase()) + 1;
-            return y[1] + y[2] + ' ' + y[3] + ' ' + (mon > end.month ? end.year - 1 : end.year) + ln.slice(y[0].length);
+            var yearOf = function (name) { return MON.split('|').indexOf(name.toLowerCase()) + 1 > end.month ? end.year - 1 : end.year; };
+            var rest = ln.slice(y[0].length), second = YEARLESS_NEXT.exec(rest);
+            if (second) rest = second[1] + second[2] + ' ' + second[3] + ' ' + yearOf(second[3]) + rest.slice(second[0].length);
+            return y[1] + y[2] + ' ' + y[3] + ' ' + yearOf(y[3]) + rest;
         }).join('\n');
     }
 
     // newest-first statement: when the dates only go down and the reading does not reconcile, read the lines bottom to top and keep that if it reconciles or proves more rows by balance
     function provenByBalance(rows) { var n = 0; for (var i = 0; i < rows.length; i++) if (rows[i].directionSource === 'balance' && rows[i].balanceVerified) n++; return n; }
     function newestFirst(rows) {
-        var down = 0, up = 0;
-        for (var i = 1; i < rows.length; i++) { if (rows[i].date < rows[i - 1].date) down++; else if (rows[i].date > rows[i - 1].date) up++; }
-        return down >= 2 && up === 0;
+        var up = 0;
+        for (var i = 1; i < rows.length; i++) if (rows[i].date > rows[i - 1].date) up++;
+        // dates that never go up (down, or all the same day): the running balance settles which way the lines are in, and the other reading is kept only when it proves more
+        return up === 0 && rows.length >= 2;
     }
+    // "4 250.50" is four thousand two hundred fifty when a bank spaces its thousands; a text that does not add up is read again with the spaces taken as commas, and that reading is kept only when the balances prove it
+    // (the figure must not start in the cents of the amount before it: "200.00 100 000.00" is two amounts, not "00 100 000.00")
+    var SPACED_MONEY = /(^|[^\d.,])(\d{1,3}(?: \d{3})+\.\d{2})(?!\d)/g;
     function parseStatement(text, opts) {
+        var first = parseWays(text, opts);
+        var src = String(text || '');
+        var spacedCount = (src.match(SPACED_MONEY) || []).length;
+        if (!spacedCount) return first;
+        // a page that prints thousands with commas somewhere is not a spaced page; and a reading that adds up on its own is kept unless the page plainly spaces every thousand (three or more such figures, none with a comma), when "104 474.78" read as 474.78 would add up too, on the wrong figures
+        var spacesAreThousands = spacedCount >= 3 && !/\d,\d{3}\.\d{2}/.test(src);
+        if (first.reconciliation && first.reconciliation.ok === true && !spacesAreThousands) return first;
+        var spaced = parseWays(src.replace(SPACED_MONEY, function (all, pre, g) { return pre + g.replace(/ /g, ','); }), opts);
+        // on a page that plainly spaces its thousands the other reading is the truncated one, so when neither adds up the spaced one is the one to show (unverified, for the owner), never the truncated one that looks fine
+        return spaced.reconciliation && spaced.reconciliation.ok === true ? spaced : spacesAreThousands ? spaced : first;
+    }
+    // the lines bottom to top, with a lone opening balance read first and a lone closing balance read last whichever end of the page the statement printed them at
+    function reversedLines(text) {
+        var lines = String(text || '').split(/\r?\n/).reverse();
+        var o = [], c = [];
+        for (var i = 0; i < lines.length; i++) {
+            if (OPENING_RE.test(lines[i]) && looksLikeBalanceLine(lines[i], OPENING_RE)) o.push(i);
+            else if (CLOSING_RE.test(lines[i]) && looksLikeBalanceLine(lines[i], CLOSING_RE)) c.push(i);
+        }
+        if (o.length === 1 && c.length === 1) {
+            var op = lines[o[0]], cl = lines[c[0]];
+            lines = lines.filter(function (_, k) { return k !== o[0] && k !== c[0]; });
+            lines.unshift(op);
+            lines.push(cl);
+        }
+        return lines.join('\n');
+    }
+    function parseWays(text, opts) {
         var first = parseOnce(text, opts);
         if (first.reconciliation && first.reconciliation.ok === true) return first;
         if (!newestFirst(first.rows)) return first;
-        var second = parseOnce(String(text || '').split(/\r?\n/).reverse().join('\n'), opts);
+        var second = parseOnce(reversedLines(text), opts);
         var fits = second.reconciliation && second.reconciliation.ok === true;
         return fits || provenByBalance(second.rows) > provenByBalance(first.rows) ? second : first;
     }
@@ -542,7 +618,7 @@
             for (var b = 0; b < amountToks.length; b++) if (amountToks[b].v === amount) { amtTok = amountToks[b]; break; }
 
             // narration = everything before the trailing money block
-            var narr0 = c.rest.slice(0, block[0].start);
+            var narr0 = c.rest.slice(0, block.cutAt !== undefined && block.cutAt < block[0].start ? block.cutAt : block[0].start);
             var extra = c.extra || chequeTail(narr0, c.rest.slice(block[block.length - 1].end));
             var narration = cleanNarration(extra ? narr0 + extra : narr0);
 
@@ -609,7 +685,11 @@
             for (var z = rows.length - 1; z >= 0; z--) if (rows[z].balance !== null) { lastWithBal = rows[z].balance; break; }
             closing = lastWithBal;
         }
+        // a card statement that prints no "Opening balance NNN" line but a summary strip has its opening and closing there
+        var strip = opening === null && closing === null && CARD_WORDS_RE.test(src) ? printedSummary(src) : null;
+        if (strip) { opening = strip.opening; closing = strip.closing; }
         var reconciliation = { opening: opening, closing: closing, credits: _r2(credits), debits: _r2(debits), expected: null, difference: null, ok: null };
+        if (strip) reconciliation.from = 'printed-summary';
         if (opening !== null && closing !== null) {
             reconciliation.expected = _r2(opening + credits - debits);
             reconciliation.difference = _r2(closing - reconciliation.expected);
