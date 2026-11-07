@@ -106,6 +106,8 @@ const PLAN_WORDS_CLEAN = new RegExp(PLAN_WORDS.source.replace(/^\\b/, '').replac
 /* THE LENGTH OF A PLAN IS WHAT THE LINE SAYS, NEVER A GUESS: "3/12" and "3 of 12" say twelve instalments, "EASY PAY 6 MONTHS" and "6 INSTALMENTS" say six; one instalment is one month. `length` is 0 when the line says nothing,
  * and the plan is then kept as a one-month plan whose length is marked as not on the statement (statement-ledger.mjs), instead of showing a length nobody printed. */
 const PLAN_LENGTH = /\b(\d{1,2})\s*(?:months?|mths?|mnths?|instal+ments?|instl?mts?)\b/i;
+/** A line whose own words say it is a fee, tax or interest. */
+export const isCardFeeWording = (raw) => RE.fee.test(String(raw || ''));
 export function installmentInfo(raw) {
   const text = String(raw || '');
   const none = { isInstallment: false, no: 0, of: 0, length: 0, name: '' };

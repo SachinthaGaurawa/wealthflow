@@ -31,7 +31,7 @@ import { runSteps } from './statement-budget.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
 import { bankAgrees } from './wealthflow-institutions.js';
-import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow, installmentInfo } from './wealthflow-statement-router.js';
+import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow, installmentInfo, isCardFeeWording } from './wealthflow-statement-router.js';
 import { readPlanTable, planFor } from './statement-plan-table.mjs';
 import { PROPOSAL, REVIEW, decisionProblem, agreedRows, approvedRows, reviewPrompt, proposalPrompt, inVocabulary } from './statement-board.mjs';
 import { healLoanLinks } from './loan-link.mjs';
@@ -1078,6 +1078,42 @@ export async function healCardFeeType({ db, uid, now = Date.now(), log = console
         return { healed };
     });
     if (result.healed) log(JSON.stringify({ evt: 'card-fee-type-heal', healed: result.healed }));
+    return result;
+}
+
+/* A FEE FILED AS AN INSTALMENT PLAN MOVES TO THE CARD ONE-TIME TAB, EACH MONTH AT ITS OWN PRINTED AMOUNT. Before the reader knew that "Instalment Interest - 3/12" is a charge, such a line became a plan
+ * whose monthly money and guessed total were one month's figure, so the app showed one number where the statement prints a different one every month. Only a plan the STATEMENT made, whose own
+ * words say fee/interest and not instalment, is moved: one Service Fee per month it was charged (date, amount and statement row from the plan's own payments). The plan stays in the data, finished
+ * and marked `mergedInto` (the list hides it; nothing is deleted), and a second run adds nothing. */
+export async function healFeePlans({ db, uid, now = Date.now(), log = console.info }) {
+    const userRef = db.collection('users').doc(uid);
+    const result = await db.runTransaction(async tx => {
+        const data = (await tx.get(userRef)).data() || {};
+        if (!Array.isArray(data.ccinstall) || (data.cconetime != null && !Array.isArray(data.cconetime))) return { moved: 0 };
+        const plans = structuredClone(data.ccinstall), fees = structuredClone(data.cconetime || []);
+        let moved = 0, plansMoved = 0;
+        for (const plan of plans) {
+            const words = String(plan?.desc || plan?.product || '');
+            if (!plan || plan.mergedInto || !(plan.source === 'statement' || plan.statementKey) || !words || installmentInfo(words).isInstallment || !isCardFeeWording(words)) continue;
+            const paid = (Array.isArray(plan.payments) ? plan.payments : []).filter(p => p && p.paid && Number(p.amount) > 0 && /^\d{4}-\d{2}$/.test(String(p.month)));
+            if (!paid.length) continue;
+            const ids = [];
+            for (const p of paid) {
+                const date = Number(p.paidAt) ? new Date(Number(p.paidAt)).toISOString().slice(0, 10) : `${p.month}-01`;
+                const id = `fee-${plan.id}-${p.month}`, deadline = new Date(`${date}T00:00:00Z`); deadline.setUTCDate(deadline.getUTCDate() + 50);
+                if (!fees.some(f => f && f.id === id)) {
+                    fees.push({ id, desc: words.slice(0, 80), amount: Number(p.amount), date, source: 'statement', statementKey: p.statementKey || plan.statementKey || '', statementRow: p.statementRow, bank: plan.bank || '', direction: 'debit', type: 'service_fee', category: 'Card Fee', serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: Number(p.amount), deadline: deadline.toISOString().slice(0, 10), paid: false, fromPlan: plan.id, createdAt: new Date(now).toISOString(), _ut: now });
+                    moved++;
+                }
+                ids.push(id);
+            }
+            Object.assign(plan, { completed: true, mergedInto: ids[0], movedToFees: ids, _ut: now }); plansMoved++;
+        }
+        if (!plansMoved) return { moved: 0 };
+        tx.set(userRef, { ccinstall: plans, cconetime: fees, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        return { moved, plans: plansMoved };
+    });
+    if (result.moved) log(JSON.stringify({ evt: 'fee-plan-heal', moved: result.moved, plans: result.plans }));
     return result;
 }
 
@@ -2981,7 +3017,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     if (Date.now() < tailUntil && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
         // each on its own: one that fails (a document in a shape it did not expect) must not stop the others from ever running
         const pass = await runSteps({ from: mail.loanHealNext, until: tailUntil, steps: [
-            { name: 'card-installments', run: () => repairCardInstallments({ db, uid }) }, { name: 'card-fee-type', run: () => healCardFeeType({ db, uid }) }, { name: 'loan-installments', run: () => healLoanInstallments({ db, uid }) }, { name: 'hand-made-twins', run: () => healHandMadeTwins({ db, uid }) },
+            { name: 'card-installments', run: () => repairCardInstallments({ db, uid }) }, { name: 'card-fee-type', run: () => healCardFeeType({ db, uid }) }, { name: 'fee-plans', run: () => healFeePlans({ db, uid }) }, { name: 'loan-installments', run: () => healLoanInstallments({ db, uid }) }, { name: 'hand-made-twins', run: () => healHandMadeTwins({ db, uid }) },
             { name: 'statement-cheques', run: () => healStatementCheques({ db, uid }) }, { name: 'cheque-twins', run: () => healChequeTwins({ db, uid }) }, { name: 'statement-copies', run: () => healStatementCopies({ db, mailRef, uid }) }, { name: 'own-transfers', run: () => healOwnTransfers({ db, uid }) },
             { name: 'card-settlement', run: () => healCardSettlement({ db, uid }) }] });
         tail.heal = { ran: pass.ran.length, failed: pass.failed, ms: pass.ms, ...(pass.done ? {} : { skipped: pass.skipped }) };

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readPlanTable, planFor } from '../statement-plan-table.mjs';
-import { healCardFeeType } from '../statement-sync.js';
+import { healCardFeeType, healFeePlans } from '../statement-sync.js';
 import fs from 'node:fs';
 import { loadParser } from './statement-fixtures.mjs';
 
@@ -59,5 +59,23 @@ describe('card fees filed before the type followed the category', () => {
         expect(await healCardFeeType({ db: store, uid: 'u', log: () => {} })).toEqual({ healed: 1 });
         expect(store.doc.cconetime.map(record => record.type)).toEqual(['service_fee', 'purchase', 'purchase', 'cash_advance']);
         expect(await healCardFeeType({ db: store, uid: 'u', log: () => {} })).toEqual({ healed: 0 });
+    });
+});
+
+describe('an interest line that was filed as an instalment plan', () => {
+    function db(doc) {
+        const ref = { get: async () => ({ data: () => doc }) };
+        return { doc, collection: () => ({ doc: () => ref }), runTransaction: async fn => fn({ get: async () => ({ data: () => doc }), set: (_ref, value) => Object.assign(doc, value) }) };
+    }
+    const paid = (month, amount, row) => ({ month, paid: true, amount, paidAt: Date.parse(`${month}-28T00:00:00Z`), source: 'statement', statementKey: `k/${month}`, statementRow: row });
+    const plan = (id, desc, extra = {}) => ({ id, desc, product: desc, source: 'statement', statementKey: 'k/2026-08', bank: 'HNB', monthly: 800, total: 9600, payments: [paid('2026-08', 800, 3), paid('2026-09', 760.5, 4), paid('2026-10', 712.25, 2)], ...extra });
+    it('becomes one Service Fee per month at that month\'s printed amount; real plans and hand-made plans stay', async () => {
+        const store = db({ cconetime: [], ccinstall: [plan('p1', 'Instalment Interest - 3/12'), plan('p2', 'Instalment Principle - 3/12'), plan('p3', 'Interest', { source: 'manual', statementKey: '' }), plan('p4', '0% Interest Free Instalment 3/12 SAMPLE SHOP')] });
+        expect(await healFeePlans({ db: store, uid: 'u', log: () => {} })).toEqual({ moved: 3, plans: 1 });
+        expect(store.doc.cconetime.map(f => [f.date, f.amount, f.type, f.category])).toEqual([['2026-08-28', 800, 'service_fee', 'Card Fee'], ['2026-09-28', 760.5, 'service_fee', 'Card Fee'], ['2026-10-28', 712.25, 'service_fee', 'Card Fee']]);
+        expect(store.doc.ccinstall.filter(p => p.mergedInto).map(p => p.id)).toEqual(['p1']);
+        expect(store.doc.ccinstall.find(p => p.id === 'p1').payments).toHaveLength(3);      // nothing is deleted
+        expect(await healFeePlans({ db: store, uid: 'u', log: () => {} })).toEqual({ moved: 0 });
+        expect(store.doc.cconetime).toHaveLength(3);
     });
 });
