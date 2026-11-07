@@ -199,3 +199,40 @@ describe('preview-sync: safe by construction', () => {
         expect(yml).toMatch(/force=true/);
     });
 });
+
+// This repository has no branch protection (the release bot and merchant-sync push to main directly), so GitHub's
+// auto-merge merges a clean PR at once, before any test finishes (PR #558 merged 31 s after it opened with the suite
+// still running). The job therefore waits for the suite on the exact head commit and fails closed.
+describe('auto-merge: waits for the test suite on the exact head commit', () => {
+    const yml = fs.readFileSync('.github/workflows/auto-merge.yml', 'utf8');
+    const job = yml.slice(yml.indexOf('  auto-merge:'));
+
+    it('polls the suite on the PR head sha, not on the branch name', () => {
+        expect(job).toMatch(/SHA:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha\s*\}\}/);
+        expect(job).toMatch(/commits\/\$SHA\/check-runs/);
+        expect(job).toMatch(/Tests \+ fuzz \(shadow harness\)/);
+    });
+
+    it('enables auto-merge only when the suite succeeded', () => {
+        const enable = job.slice(job.indexOf('- name: Enable auto-merge'));
+        expect(enable).toMatch(/if:\s*steps\.tests\.outputs\.ok == 'yes'/);
+        expect(job).toMatch(/"completed success"\)\s*echo "ok=yes"/);
+    });
+
+    it('fails closed: a failed, missing or silent suite never enables auto-merge', () => {
+        expect(job).toMatch(/"completed "\*\)\s*echo "ok=no"/);
+        // after the loop with no answer
+        expect(job).toMatch(/No answer from the test suite in 30 minutes; not enabling auto-merge/);
+        expect(job).toMatch(/timeout-minutes:\s*40/);
+    });
+
+    it('does not claim branch protection exists', () => {
+        expect(yml).not.toMatch(/Branch protection still requires/);
+    });
+
+    it('the jq filter picks the newest run and prints status and conclusion', () => {
+        const m = job.match(/--jq '([^']+)'/);
+        expect(m).not.toBeNull();
+        expect(m[1]).toMatch(/sort_by\(\.started_at\) \| last/);
+    });
+});
