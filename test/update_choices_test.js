@@ -1,8 +1,11 @@
 // What the person sees and can do about an update: later, skip, install when idle, staged rollout, required updates,
 // one catch-up list across skipped releases, the agreement once per minor line, and patch-style downloads.
 import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { loadBrowserModule } from './helpers/load-browser-module.js';
 
+const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const POLICY = loadBrowserModule('wealthflow-update-policy.js').window.WF_UPDATE_POLICY;
 const note = (items, extra = {}) => ({ headline: "What's New", date: '2026-11-07', sections: [{ title: 'What changed for you', items }], ...extra });
 
@@ -101,11 +104,14 @@ describe('an update the person may take or leave', () => {
 
 describe('everything since the version this device had', () => {
     it('what\'s new joins the notes of the releases in between instead of showing only the last', async () => {
-        const manifest = { latest: '7.69.70', notes: { '7.69.67': note(['First fix']), '7.69.68': note(['Second fix']), '7.69.70': note(['Third fix']) } };
+        // Versions are built from the running version, so a release that bumps CURRENT_VERSION does not break this.
+        const [maj, min, pat] = fs.readFileSync(path.join(ROOT, 'wealthflow-update-system.js'), 'utf8').match(/const CURRENT_VERSION = '(\d+)\.(\d+)\.(\d+)'/).slice(1).map(Number);
+        const v = (n) => `${maj}.${min}.${pat + n}`;
+        const manifest = { latest: v(4), notes: { [v(1)]: note(['First fix']), [v(2)]: note(['Second fix']), [v(4)]: note(['Third fix']) } };
         const t = await boot({ manifest });
-        t.u.whatsNew('7.69.70');
+        t.u.whatsNew(v(4));
         const text = t.document.getElementById('wfWhatsNew').textContent;
-        expect(text).toContain('Everything new since v7.69.66');
+        expect(text).toContain('Everything new since v' + `${maj}.${min}.${pat}`);
         expect(text).toContain('First fix');
         expect(text).toContain('Second fix');
         expect(text).toContain('Third fix');
