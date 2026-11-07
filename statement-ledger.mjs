@@ -8,6 +8,7 @@ import { canonicalBank } from './wealthflow-institutions.js';
 import { ownMoney } from './wealthflow-own-money.js';
 import { bankKeyOf } from './statement-coverage.mjs';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
+import { subscriptionToCreate, identityOf } from './statement-subscriptions.mjs';
 import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment, planFromLine } from './statement-links.mjs';
 import { settleCheque } from './wealthflow-cheques.js';
 
@@ -141,20 +142,37 @@ function findCounterpart({ row, module, user, cards, cardRegistry, bank }) {
     if (module === 'expenses' || module === 'cconetime') { const sub = matchSubscriptionForDebit(row, user.subscriptions); if (sub) return { kind: 'subscription', sub }; }
     return null;
 }
-/* One statement debit as a payment of a subscription the owner tracks: the subscription's month says what was really charged. */
+/* One statement debit as a payment of a subscription the owner tracks: the subscription's month says what was really charged. A phone bill can be paid more than once in a month (a reload, then the bill): the
+ * month then holds what was paid in total, and every payment stays in the entry's list. */
 function applySubscriptionPayment(sub, row, sourcePath, index, bank, last4, now) {
     if (sub.history != null && !Array.isArray(sub.history)) return 'invalid-subscription-schema';
     if ((sub.history || []).some(payment => payment.date === row.date && amountCents(payment.amount) === amountCents(row.amount))) return 'ambiguous-subscription-payment';
     const month = row.date.slice(0, 7);
     sub.history = sub.history || [];
+    const earlier = sub.history.filter(payment => payment && payment.month === month && payment.source === 'statement').reduce((total, payment) => total + amountCents(payment.amount), 0);
+    const monthTotal = earlier ? (earlier + amountCents(row.amount)) / 100 : row.amount;
     sub.history.push({ month, amount: row.amount, date: row.date, source: 'statement', statementKey: sourcePath, statementRow: index, ref: String(row.ref || ''), bank, card_last4: last4 });
-    sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: row.amount };
-    sub.amount = row.amount; sub._ut = now;
+    sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: monthTotal };
+    sub.amount = monthTotal; sub._ut = now;
     if (/^(once|one-time|onetime)$/.test(String(sub.cycle || '').toLowerCase())) {
         sub.paid = true; sub.completed = true; sub.paidAt = row.date;
         sub.paidSource = 'statement'; sub.paidStatementKey = sourcePath; sub.reopened = false;
     }
     return '';
+}
+/** Does the owner already track something for this number or brand? (Then a payment that matched none of it is a different charge, not a reason to start another entry.) */
+function identityTaken(subs, spec) {
+    const probe = { name: spec.name, merchantKeys: spec.merchantKeys };
+    const want = identityOf(probe);
+    return (Array.isArray(subs) ? subs : []).some(sub => { const have = identityOf(sub); return want.phones.some(n => have.phones.includes(n)) || want.brands.some(b => have.brands.includes(b)); });
+}
+/* A payment that is plainly a subscription or a phone bill, with no entry yet (statement-subscriptions.mjs), starts its own: named after the brand or the number, dated to the month of its first payment,
+ * and marked so it can be found, renamed or removed. Its id comes from the ledger line, so reading the statement again makes it once. */
+function startedSubscription(spec, row, id, sourcePath, now) {
+    return { id: `sub-${id}`, name: spec.name, category: spec.category, amount: row.amount, dueDay: Number(String(row.date).slice(8, 10)) || 1, dueDate: '', cycle: 'monthly', anomalyDetect: false,
+        completed: false, paid: false, paidAt: null, paidSource: null, paidStatementKey: null, reopened: false,
+        notes: 'Started automatically from a statement payment. Rename it or delete it if it is wrong.', history: [], monthOverrides: {}, merchantKeys: spec.merchantKeys,
+        createdAt: `${String(row.date).slice(0, 7)}-01T00:00:00.000Z`, _ut: now, source: 'statement', autoCreated: true, createdByStatement: sourcePath };
 }
 
 function makeRecord(row, decision, context, id, now) {
@@ -356,7 +374,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                     }
                 }
             }
-            const counterpart = reason ? null : findCounterpart({ row, module, user, cards, cardRegistry, bank: canonicalBank(bank || source.bank || '') });
+            let counterpart = reason ? null : findCounterpart({ row, module, user, cards, cardRegistry, bank: canonicalBank(bank || source.bank || '') });
             let subscriptionOfCard = null;
             if (counterpart && counterpart.kind === 'twin') {
                 markTwin(counterpart.twin, row.date.slice(0, 7), sourceRef.path, index, now, row); changes[counterpart.store || module] = user[counterpart.store || module];
@@ -369,6 +387,17 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 outcome.duplicates++; continue;
             }
             if (counterpart && counterpart.kind === 'card-settlement') { module = 'skip'; decision = { ...decision, module: 'skip', category: 'Card Payment' }; }
+            /* NO ENTRY FOR IT YET, AND THE PAYMENT IS PLAINLY A SUBSCRIPTION OR A PHONE BILL: it starts its own entry, so it lands on the Subscriptions tab (with its month) and not on Expenses. Nothing is started when the
+             * owner already tracks something for the same number or brand (an amount that did not fit is a different charge, not a new subscription). */
+            let startedSub = null;
+            if (!reason && !counterpart && (module === 'expenses' || module === 'cconetime') && row.direction === 'debit' && (user.subscriptions == null || Array.isArray(user.subscriptions))) {
+                const spec = subscriptionToCreate(row);
+                if (spec && !identityTaken(user.subscriptions, spec)) {
+                    startedSub = startedSubscription(spec, row, id, sourceRef.path, now);
+                    user.subscriptions = [...(user.subscriptions || []), startedSub];
+                    counterpart = { kind: 'subscription', sub: startedSub };
+                }
+            }
             if (counterpart && counterpart.kind === 'subscription') {
                 if (module === 'expenses') { module = 'subscriptions'; decision = { ...decision, module: 'subscriptions', allocationId: counterpart.sub.id }; }
                 else subscriptionOfCard = counterpart.sub;
@@ -383,6 +412,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 else {
                     reason = applySubscriptionPayment(subMatches[0], row, sourceRef.path, index, bank, last4, now);
                     if (!reason) changes.subscriptions = subs;
+                    else if (startedSub) user.subscriptions = user.subscriptions.filter(sub => sub !== startedSub);
                 }
             } else if (!reason) {
                 if (user[module] != null && !Array.isArray(user[module])) reason = 'invalid-ledger-schema';
@@ -392,9 +422,10 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                     user[module].push(record); allRecords.push(record); changes[module] = user[module];
                     if (module === 'expenses' && linkInstallment(user.loans, user.expenses, record, now)) changes.loans = user.loans;
                     // a card charge for a subscription the owner tracks stays a card charge (what is owed to the card), and says which subscription counts it
-                    if (subscriptionOfCard && module === 'cconetime' && !applySubscriptionPayment(subscriptionOfCard, row, sourceRef.path, index, bank, last4, now)) { record.subscriptionLink = subscriptionOfCard.id; changes.subscriptions = user.subscriptions; }
+                    if (subscriptionOfCard && module === 'cconetime') { if (!applySubscriptionPayment(subscriptionOfCard, row, sourceRef.path, index, bank, last4, now)) { record.subscriptionLink = subscriptionOfCard.id; changes.subscriptions = user.subscriptions; } else if (startedSub) user.subscriptions = user.subscriptions.filter(sub => sub !== startedSub); }
                 }
             }
+            if (startedSub && !startedSub.history.length) user.subscriptions = user.subscriptions.filter(sub => sub !== startedSub);     // nothing was paid into it: it is not started
             if (reason) {
                 outcome.review++;
                 writes.push([reviewRefs[offset], {

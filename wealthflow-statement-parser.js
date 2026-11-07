@@ -215,11 +215,13 @@
     var CLEARING_RE = /\b(?:clearing|clg)\b/i, ELECTRONIC_RE = /\b(?:ceft|rtgs|slips|swift|atm|pos|card|visa|mastercard|amex|lankapay)\b/i;
     function namesCheque(n) { return CHEQUE_WORD_RE.test(n) || (CLEARING_RE.test(n) && !ELECTRONIC_RE.test(n)); }
     var CHEQUE_TOKEN_RE = /^(?:\d+|(?:cheques?|chq|chque|cheq|chk|check|cq|pdc)\d+)$/i;
+    // A Sri Lankan phone number written as one token (0771234567, 94771234567, 0112345678) is WHAT THE PAYMENT IS FOR, not a reference number: it says which phone bill this is, so it stays in the narration.
+    var PHONE_TOKEN_RE = /^(?:\+?94|0094|0)(?:7[0-8]\d{7}|(?:11|2[1-7]|3[1-8]|41|45|47|5[12457]|6[3567]|81|91)\d{7})$/;
     function cleanNarration(n) {
         n = String(n || '').trim();
         var cheque = namesCheque(n);
-        n = n.replace(/^([A-Za-z]{1,4}\d{5,}[A-Za-z]?)\s+/, function (all, tok) { return cheque && CHEQUE_TOKEN_RE.test(tok) ? all : ''; });
-        n = n.replace(/\s+([A-Za-z]{0,4}\d{5,}[A-Za-z]?)\s*$/, function (all, tok) { return cheque && CHEQUE_TOKEN_RE.test(tok) ? all : ''; });
+        n = n.replace(/^([A-Za-z]{1,4}\d{5,}[A-Za-z]?)\s+/, function (all, tok) { return (cheque && CHEQUE_TOKEN_RE.test(tok)) || PHONE_TOKEN_RE.test(tok) ? all : ''; });
+        n = n.replace(/\s+([A-Za-z]{0,4}\d{5,}[A-Za-z]?)\s*$/, function (all, tok) { return (cheque && CHEQUE_TOKEN_RE.test(tok)) || PHONE_TOKEN_RE.test(tok) ? all : ''; });
         n = n.replace(/\b(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)\s*$/i, '');
         n = n.replace(/[\s|,;:.\-(]+$/, '');
         n = n.replace(/^[\s|,;:.\-)]+/, '');

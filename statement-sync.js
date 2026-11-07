@@ -1870,14 +1870,21 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
         const plans = stripped(user.ccinstall, 'payments', row => row && row.statementKey === path);
         if (!changes.ccinstall && touched(user.ccinstall, plans)) changes.ccinstall = plans; else if (changes.ccinstall) changes.ccinstall = stripped(changes.ccinstall, 'payments', row => row && row.statementKey === path);
         const droppedMonths = new Map((Array.isArray(user.subscriptions) ? user.subscriptions : []).filter(sub => sub && Array.isArray(sub.history)).map(sub => [sub.id, sub.history.filter(row => row && row.statementKey === path).map(row => row.month)]));
-        /* the month's amount the statement wrote goes with the statement, unless another statement payment still stands behind that month */
+        /* the month's amount the statement wrote goes with the statement, unless another statement payment still stands behind that month; when one does, the month is what those payments add up to
+         * (a phone bill paid twice in a month holds both), unless the owner wrote an amount of their own into that month */
         const withoutStatementOverrides = sub => {
-            const months = (droppedMonths.get(sub && sub.id) || []).filter(month => month && sub.monthOverrides && Object.prototype.hasOwnProperty.call(sub.monthOverrides, month) && !(Array.isArray(sub.history) && sub.history.some(row => row && row.month === month)));
+            const months = (droppedMonths.get(sub && sub.id) || []).filter(month => month && sub.monthOverrides && Object.prototype.hasOwnProperty.call(sub.monthOverrides, month));
             if (!months.length) return sub;
             const monthOverrides = { ...sub.monthOverrides };
-            for (const month of months) delete monthOverrides[month];
-            return { ...sub, monthOverrides, _ut: now };
+            let changed = false;
+            for (const month of months) {
+                const left = (Array.isArray(sub.history) ? sub.history : []).filter(row => row && row.month === month);
+                if (!left.length) { delete monthOverrides[month]; changed = true; }
+                else if (left.every(row => row.source === 'statement')) { monthOverrides[month] = left.reduce((total, row) => total + Math.round(Number(row.amount) * 100), 0) / 100; changed = true; }
+            }
+            return changed ? { ...sub, monthOverrides, _ut: now } : sub;
         };
+        const droppedSubs = [];
         const subs = stripped(user.subscriptions, 'history', row => row && row.statementKey === path).map(withoutStatementOverrides).map(sub => {
             if (!sub || sub.paidSource !== 'statement' || sub.paidStatementKey !== path) return sub;
             const remaining = Array.isArray(sub.history) ? sub.history.filter(row => row && row.source === 'statement') : [];
@@ -1889,7 +1896,14 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
             const clean = { ...sub };
             delete clean.paid; delete clean.completed; delete clean.paidAt; delete clean.paidSource; delete clean.paidStatementKey;
             return clean;
+        }).filter(sub => {
+            /* an entry this statement STARTED (statement-ledger.mjs startedSubscription) and that holds no payment of any other statement leaves with it, tombstoned; one the owner edited or typed into stays */
+            const startedHere = sub && sub.autoCreated === true && sub.source === 'statement' && sub.createdByStatement === path;
+            const empty = !(Array.isArray(sub && sub.history) && sub.history.length) && !Object.keys((sub && sub.monthOverrides) || {}).length;
+            if (startedHere && empty) { droppedSubs.push(String(sub.id)); return false; }
+            return true;
         });
+        if (droppedSubs.length) tomb.subscriptions = { ...(tomb.subscriptions && typeof tomb.subscriptions === 'object' ? tomb.subscriptions : {}), ...Object.fromEntries(droppedSubs.map(id => [id, now])) };
         if (touched(user.subscriptions, subs)) changes.subscriptions = subs;
         const loans = stripped(user.loans, 'payments', row => row && row.source === 'statement' && gone.has(String(row.expenseId)));
         if (touched(user.loans, loans)) changes.loans = loans;

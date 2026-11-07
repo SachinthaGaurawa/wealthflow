@@ -14,7 +14,7 @@ const RE = {
 // Deterministic categories: unknown merchants remain Other.
 const EXPENSE_CATEGORY_RULES = [
   ['Bank Charges', /\b(ceft\w*\s+charges?|slips?\s+charges?|bank\s+charges?|atm\s+(?:withdrawal\s+)?(?:fee|charge)|withdrawal\s+(?:fee|charge)|service\s+(?:fee|charge)|stamp\s+duty|debit\s+tax|annual\s+fee|late\s+(?:payment\s+)?fee|finance\s+charge|sms\s+(?:alert|charge)|maintenance\s+fee|ledger\s+fee|(?:pos\s+transaction|lpopp)\s+(?:fee|charges?))\b/i],
-  ['Cash Withdrawal', /\b(atm\s+(?:withdrawal|wtd|cash)|cash\s+(?:withdrawal|withdraw|wd))\b/i],
+  ['Cash Withdrawal', /\b(atm\s+(?:withdrawal|wtd|wdl|w\/d|wd|cash)|cash\s+(?:withdrawal|withdraw|wd|wdl))\b/i],
   ['Groceries', /\b(keells?|cargills|food\s*city|arpico|glomark|laugfs\s+super|sathosa|spar|super\s*market|supermarket|grocery|mini\s*mart|provision)\b/i],
   ['Dining', /\b(restaurant|cafe|coffee|bakery|pizza|burger|kfc|mc\s*donalds?|dominos?|dinemore|barista|spicy\s+food|food\s+court|canteen|grill|ice\s+cream|uber\s*eats|food\s*panda|pick\s*me\s+food|taco\s+bell|subway|java\s+lounge|kottu)\b/i],
   ['Telecom', /\b(dialog(?:\s+axiata)?|mobitel|slt(?:\s+mobitel)?|hutch|airtel|lanka\s*bell|reload|recharge|airtime|phone\s+bill)\b/i],
@@ -28,12 +28,14 @@ const EXPENSE_CATEGORY_RULES = [
   ['Education', /\b(school|tuition|university|campus|course|institute|academy|college|book\s*(?:shop|store)|sarasavi|vijitha\s+yapa)\b/i],
   ['Insurance', /\b(insur\w*|assurance|takaful|policy\s+premium|aia|ceylinco|allianz|janashakthi|fairfirst)\b/i],
   ['Government', /\b(inland\s+revenue|motor\s+traffic|immigration|passport|municipal\s+council|government|license\s+fee|income\s+tax|tax\s+(?:payment|pymt)|\bird\b|municipal\s+rates?|tv\s+licen[cs]e)\b/i],
-  ['Personal Care', /\b(?:salons?|barbers?|beauty|parlou?rs?|spa|cosmetics?)\b/i],
+  ['Personal Care', /\b(?:salons?|barbers?|beauty|parlou?rs?|spa|cosmetics?|gym|fitness)\b/i],
+  /* RENT PAID: a house, room or shop rent, or the landlord. ("Rent" is a name on the expense dropdown already; a bare "rent" is not enough - it is also "car rental" and income.) */
+  ['Rent', /\b(?:(?:house|room|office|shop|boarding|apartment|flat|monthly)\s+rent|rent\s+(?:payment|pymt|advance|deposit)|landlord|landlady)\b/i],
   ['Kids & Family', /\b(?:toy\s+(?:shop|world|mart|zone|store)|baby\s+(?:shop|care|world|mart|wear)|kids\s+(?:shop|wear|world|mart)|creche)\b/i],
   ['Charity', /\b(?:donations?|charity|temple|kovil|church|mosque|devale)\b/i],
   ['Shopping', /\b(daraz|amazon|phone\s+(?:bar|shop|zone|world|house|mart)|mobile\s+(?:shop|phones?|world|zone)|aliexpress|odel|nolimit|fashion|clothing|textiles?|tex|singer|abans|softlogic|damro|electronics|furniture|hardware|gift\s+shop)\b/i],
   ['Subscriptions', /\b(github|openai|chatgpt|adobe|microsoft\s*365|office\s*365|notion|canva|dropbox|vercel|cloudflare)\b/i],
-  ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube\s+premium|playstation|xbox|concert|bowling)\b/i],
+  ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube\s*premium|playstation|xbox|concert|bowling)\b/i],
 ];
 
 /* THE SERVER HANDS THE ROUTER ITS MERCHANT LIST. statement-merchants.mjs (server-only; reads merchants.json) calls this when it is imported: the router, which the page also
@@ -204,7 +206,8 @@ export function routeRow(row, ctx = {}) {
     // The account type is stronger evidence than narration. A card-side credit
     // (including an "interest credit") settles the card; it is not cash income.
     // Narration alone never makes a BANK account's credit a card payment ("settlement", "online payment" are common on a bank account): the card's own statement carries card payments.
-    if (onCard || (RE.ccPayment.test(desc) && !isBankAccountRow(row, ctx))) {
+    // "Payment received" with a word that names where the money came from (freelance, invoice, rent, salary...) is income, not a card payment: the account type decides when it is known, the words when it is not
+    if (onCard || (RE.ccPayment.test(desc) && !isBankAccountRow(row, ctx) && incomeCategoryFor(row) === 'Other')) {
       module = 'cc_payment'; tabLabel = 'CC Payment → FIFO reconcile'; confidence = 0.92;
     } else if (RE.salary.test(desc)) {
       module = 'income'; tabLabel = 'Income & Investments'; confidence = 0.9; category = incomeCategoryFor(row);
