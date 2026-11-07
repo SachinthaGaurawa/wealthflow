@@ -92,3 +92,9 @@
     font-size: 18px;
     line-height: 1.25; }
 }
+
+/* lane-block: 554 scope=#page-dashboard — [HIGH] Layout overlap on phones: dashboard */
+#page-dashboard .wf-runway-cause { display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px; }
