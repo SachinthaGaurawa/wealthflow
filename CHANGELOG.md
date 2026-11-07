@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.66 — 2026-11-07
+
+**What changed for you**
+
+- Statement parser: every printed shape read exactly (currency prefixes, year-less dates, wrapped lines, newest-first, DR balances, foreign amounts); fee wording (#565)
+
 ## v7.69.65 — 2026-11-07
 
 **What changed for you**
