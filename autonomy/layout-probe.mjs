@@ -133,7 +133,19 @@ export function measureInPage(boxSel) {
             if (n.nodeType !== 3 || !n.textContent.trim()) continue;
             const rg = document.createRange();
             rg.selectNodeContents(n);
-            for (const q of rg.getClientRects()) if (q.width > 1 && q.height > 1) out.push(q);
+            for (const q of rg.getClientRects()) {
+                // Letters hidden by an `overflow:hidden` / ellipsis box are not painted, so they cannot overlap what sits beside them
+                // (the Dashboard legend's "Card Installments..." was filed as an overlap for text the ellipsis already hides).
+                let l = q.left, rt = q.right, t = q.top, b = q.bottom;
+                for (let a = el; a && a !== document.body; a = a.parentElement) {
+                    const as = getComputedStyle(a);
+                    if (/^(visible)$/.test(as.overflowX) && /^(visible)$/.test(as.overflowY)) continue;
+                    const ar = a.getBoundingClientRect();
+                    if (/^(hidden|clip|auto|scroll)$/.test(as.overflowX)) { l = Math.max(l, ar.left); rt = Math.min(rt, ar.right); }
+                    if (/^(hidden|clip|auto|scroll)$/.test(as.overflowY)) { t = Math.max(t, ar.top); b = Math.min(b, ar.bottom); }
+                }
+                if (rt - l > 1 && b - t > 1) out.push({ left: l, right: rt, top: t, bottom: b, width: rt - l, height: b - t });
+            }
         }
         return out;
     };
@@ -202,6 +214,18 @@ export function measureInPage(boxSel) {
         if (cutsOff && el.scrollWidth > el.clientWidth + 2 && (cs.textOverflow !== 'ellipsis' || hasDigit) && el.clientWidth > 0 && !/^(IMG|SVG|INPUT|SELECT)$/i.test(el.tagName)) {
             clipped.push(label(el) + ' "' + textOf(el) + '"');
         }
+    }
+    // A box that scrolls sideways with columns of text hidden beyond its edge (a legend whose percentages were pushed out of view). A table's own
+    // scroll wrapper is by design and is left alone.
+    for (const el of box.querySelectorAll('*')) {
+        if (clipped.length >= 8) break;
+        const cs = getComputedStyle(el);
+        if (!/^(auto|scroll)$/.test(cs.overflowX) || !visible(el) || el.querySelector('table') || /^(TABLE|TEXTAREA|PRE|CODE)$/i.test(el.tagName)) continue;
+        // A tab strip or chip row is a deliberate scroller with a lot beyond the edge; a legend or a row that is only a few pixels too wide
+        // is not meant to scroll at all, and what hides in that sliver is the last column (the percentages in #551).
+        const hidden = el.scrollWidth - el.clientWidth;
+        if (/tab|chip|carousel|scroller/i.test(String(el.className)) || el.getAttribute('role') === 'tablist') continue;
+        if (hidden > 8 && hidden <= Math.max(64, el.clientWidth * 0.4) && el.clientWidth > 0 && (el.innerText || '').trim()) clipped.push(label(el) + ' scrolls sideways with ' + hidden + 'px of its content out of view');
     }
     // A table whose body cells no longer sit under their headings shows an amount under the wrong title.
     const misaligned = [];

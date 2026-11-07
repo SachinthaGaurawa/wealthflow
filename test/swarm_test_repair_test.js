@@ -94,8 +94,8 @@ describe('runSwarm — the proving test is repaired from its real error', () => 
         expect(qa[1].prompt).toMatch(/YOUR PREVIOUS TEST WAS EXECUTED AND REJECTED/);
         expect(qa[1].prompt).toContain('Cannot read properties of null');   // the real output, not a paraphrase
         expect(qa[1].prompt).toContain('// BAD');                           // and the test it is about
-        // red before, green after, for the accepted test
-        expect(runs.filter((x) => x.tag === 'GOOD').map((x) => x.fixed)).toEqual([false, true]);
+        // red before, green after, for the accepted test (any later runs are the mutation check sabotaging the fix)
+        expect(runs.filter((x) => x.tag === 'GOOD').map((x) => x.fixed).slice(0, 2)).toEqual([false, true]);
     });
 
     it('still demands red-before: a test that also passes on the UNFIXED file is rejected and the model is told why', async () => {
