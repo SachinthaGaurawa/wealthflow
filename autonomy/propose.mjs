@@ -235,7 +235,7 @@ export async function proposeOnce({
     let reply;
     try {
         reply = await chatImpl({
-            system: withCharter(SYSTEM),
+            system: withCharter(SYSTEM, 'board'),
             prompt: buildPrompt({ modules, sections, feedback }),
             env,
             only: allowed,          // never a provider the critical path is holding

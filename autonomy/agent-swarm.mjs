@@ -35,7 +35,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chat, stripFences, extractJson } from './llm-router.mjs';
-import { withCharter } from '../wf-charter.mjs';
+import { withCharter, fitCharter } from '../wf-charter.mjs';
+import { taskCard, cardPrompt } from './task-card.mjs';
+import { fenceUntrusted } from './untrusted-text.mjs';
+import { qaHints } from './analysis-pass.mjs';
 import {
     keywordsFrom, symbolsFrom, rankFiles, selectPromptRanked, excerptFor, patchPrompt, parsePatchBlocks, applyPatchBlocks, changeExcerpt, changeView,
 } from './swarm-patch.mjs';
@@ -226,7 +229,7 @@ export function selectPrompt(issue, files) {
         'A user of a vanilla-JS personal-finance PWA reported the following.',
         '',
         'REPORT:',
-        String(issue).slice(0, 1500),
+        fenceUntrusted('report', issue, 1500),
         '',
         'These are the source files you may edit:',
         files.map((f) => `- ${f}`).join('\n'),
@@ -250,7 +253,7 @@ export function resolvePick(modelText, files) {
 export function authorPrompt(issue, filename, content) {
     return [
         'ISSUE TO FIX:',
-        String(issue).slice(0, 2000),
+        fenceUntrusted('issue', issue, 2000),
         '',
         `FILE: ${filename}`,
         'CURRENT CONTENTS:',
@@ -395,7 +398,7 @@ export function testPrompt(issue, filename, before, after, observation = '') {
         'A fix was just made to a vanilla-JS PWA module. Write a Vitest test proving it.',
         '',
         'ISSUE THAT WAS FIXED:',
-        String(issue).slice(0, 1200),
+        fenceUntrusted('issue', issue, 1200),
         '',
         `FILE CHANGED: ${filename}`,
         '',
@@ -505,7 +508,7 @@ export function reviewPrompt(issue, filename, before, after) {
         'Adversarially review this autonomous code change to a personal-finance app.',
         '',
         'ISSUE IT CLAIMS TO FIX:',
-        String(issue).slice(0, 1200),
+        fenceUntrusted('issue', issue, 1200),
         '',
         `FILE: ${filename}`,
         '',
@@ -645,6 +648,7 @@ export async function runSwarm({
     writeTest = true,
     verifyTest = true,           // execute Agent 4's test red→green before accepting it
     runTest = null,              // unit tests only: stands in for Vitest; ignored when CI is set
+    analyse = null,              // async ({ issueText, file, before, code, changeText, depth, authorProvider }) => analysis | null: the independent analysis pass (autonomy/analysis-pass.mjs). Injected so a unit test needs no extra model call.
     log = console.log,
 } = {}) {
     const issueText = `${issue?.title || ''}\n\n${issue?.body || ''}`.trim();
@@ -652,6 +656,9 @@ export async function runSwarm({
 
     const role = roleFor(issue?.kind);
     const providers = {};
+    // The task card (part 25 of the owner's prompt): written by a program and put under every seat's instructions.
+    const cardFor = (f = '') => taskCard({ issue, role: role.id, lane: 'swarm', file: f, text: issueText });
+    const withCard = (system, f = '') => `${system}\n\n${cardPrompt(cardFor(f))}`;
     log(`[swarm] ${role.agent} taking issue #${issue?.number ?? '—'}`);
 
     // ── stage 1: which file? ────────────────────────────────────────────────
@@ -668,7 +675,7 @@ export async function runSwarm({
     const ranked = rankFiles(issueText, patchable, { repoDir, k: 8 });
     const pool = ranked.length ? ranked.map((r) => r.file) : files;
     const picked = await chat({
-        system: role.system,
+        system: fitCharter(withCard(role.system), 'standard'),   // picking a file name is a small job: every part, in short form
         prompt: ranked.length ? selectPromptRanked(issueText, ranked) : selectPrompt(issueText, files),
         prefer: role.prefer, maxTokens: 64, temperature: 0, env,
     });
@@ -700,7 +707,7 @@ export async function runSwarm({
         let out = null, why = '';
         if (src.length <= MAX_AUTHORABLE_BYTES) {
             const a = await chat({
-                system: role.system, prompt: authorPrompt(issueText, candidate, src),
+                system: withCard(role.system, candidate), prompt: authorPrompt(issueText, candidate, src),
                 prefer: role.prefer, maxTokens: 16_000, temperature: 0.1, env,
             });
             providers.author = a.provider;
@@ -716,7 +723,7 @@ export async function runSwarm({
             let feedback = '';
             for (let attempt = 0; attempt < 2 && !out && !why; attempt++) {
                 const a = await chat({
-                    system: role.system, prompt: patchPrompt(issueText, candidate, ex.text, totalLines) + feedback,
+                    system: withCard(role.system, candidate), prompt: patchPrompt(issueText, candidate, ex.text, totalLines) + feedback,
                     prefer: role.prefer, maxTokens: 6_000, temperature: attempt ? 0.2 : 0.1, env,
                 });
                 providers.author = a.provider;
@@ -762,7 +769,7 @@ export async function runSwarm({
             };
         }
         const r = await chat({
-            system: ROLES.security.system, prompt: reviewPrompt(issueText, file, before, candidate),
+            system: withCard(ROLES.security.system, file), prompt: reviewPrompt(issueText, file, before, candidate),
             prefer: ROLES.security.prefer,
             exclude: [authored.provider],        // never let the author review itself
             maxTokens: 1500, temperature: 0, env,
@@ -825,7 +832,7 @@ export async function runSwarm({
         const around = `// ----- lines ${a0 + 1}-${b0} (where your previous change was) -----\n${lines.slice(a0, b0).join('\n')}`;
         const more = excerptFor(before, ['/api/version', 'fetch(', ...keywordsFrom(issueText).slice(0, 6)], { ctx: 12, maxChars: 6_000, pin: symbolsFrom(issueText) }).text;
         const r = await chat({
-            system: role.system,
+            system: withCard(role.system, file),
             prompt: revisionPrompt(issueText, file, `${around}\n\n${more}`, lines.length, { changeText, observation, facts: groundFacts({ repoDir }) }),
             prefer: role.prefer, maxTokens: 6_000, temperature: 0.3, env,
         }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
@@ -850,6 +857,18 @@ export async function runSwarm({
     }
     if (revisions && !observedNoChange(obsBefore, obsAfter)) log(`[swarm] after ${revisions} revision(s) the change is visible`);
 
+    // ── the independent analysis (parts 7, 9, 10, 14, 23 of the owner's prompt) ──────────────────────────────────────────
+    // A model that did not write the change names the real cause, the other credible causes, the ways the change could
+    // fail and what is unknown, and must quote the code for its claim (a program checks the quote). Its edge cases go to the
+    // QA seat below. Advice, never a gate: if it is unavailable the run goes on.
+    let analysis = null;
+    if (typeof analyse === 'function') {
+        try {
+            analysis = await analyse({ issueText, file, before, code, changeText, depth: cardFor(file).depth, authorProvider: authored && authored.provider });
+        } catch (e) { log(`[swarm] analysis skipped: ${e?.message || e}`); }
+    }
+    const hints = qaHints(analysis);
+
     // ── stage 5: Agent 4 writes the proving test, and it is EXECUTED ────────
     // The test is run for real (red on the old file, green on the new). A test that fails is not
     // thrown away with the whole attempt any more: the actual Vitest output goes back to Agent 4
@@ -868,10 +887,10 @@ export async function runSwarm({
         let candidate = '', previous = null;
         for (let round = 1; round <= TEST_ROUNDS; round++) {
             const t = await chat({
-                system: ROLES.qa.system,
-                prompt: previous
+                system: withCard(ROLES.qa.system, file),
+                prompt: (previous
                     ? testRepairPrompt(issueText, file, before, code, candidate, previous, observation)
-                    : testPrompt(issueText, file, before, code, observation),
+                    : testPrompt(issueText, file, before, code, observation)) + hints,
                 prefer: ROLES.qa.prefer, exclude: [authored.provider, reviewed.provider],
                 maxTokens: 4000, temperature: round === 1 ? 0.1 : 0.2, env,
             }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
@@ -935,5 +954,5 @@ export async function runSwarm({
     // can never be read downstream as a passed one — the distinction that
     // decides whether this PR's evidence means anything.
     const verified = Boolean(testProof && testProof.ok && !testProof.skipped);
-    return { ok: true, stage: 'ready', file, code, test, testFile, testProof, mutation, verified, role: role.id, review, providers, change: changeText, observation };
+    return { ok: true, stage: 'ready', file, code, test, testFile, testProof, mutation, verified, role: role.id, review, providers, change: changeText, observation, card: cardFor(file), analysis };
 }

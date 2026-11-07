@@ -26,6 +26,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { chat, stripFences, extractJson } from './llm-router.mjs';
+import { taskCard, cardPrompt } from './task-card.mjs';
+import { fenceUntrusted } from './untrusted-text.mjs';
 import {
     isSensitive, structuralCheck, isValidJs, reviewPrompt, parseVerdict, reviewSeesWholeChange,
     testPrompt, verifyTestProves, verificationPlan, TEST_ROUNDS, ROLES,
@@ -85,7 +87,7 @@ export function planPrompt(issueText, existing) {
         'WealthFlow is a vanilla-JS personal-finance PWA (no build step). A report asks for something NEW.',
         'Decide the one new browser module that provides it.',
         '',
-        'REPORT:', String(issueText).slice(0, 1800), '',
+        'REPORT:', fenceUntrusted('report', issueText, 1800), '',
         'Modules that already exist (do not reuse a name):', existing.slice(0, 120).join(', '), '',
         'Reply with ONE JSON object and nothing else:',
         '{"name":"wealthflow-<2-5 lowercase words joined by ->.js","api":"WF<PascalCase>","summary":"one sentence","feasible":true|false,"why_not":"only when feasible is false"}',
@@ -97,7 +99,7 @@ export function authorPrompt(issueText, plan) {
     return [
         `Write the COMPLETE file ${plan.name} for WealthFlow, a vanilla-JS personal-finance PWA. Reply with the file contents only, no fences.`,
         '',
-        'REPORT:', String(issueText).slice(0, 2000), '',
+        'REPORT:', fenceUntrusted('report', issueText, 2000), '',
         `PURPOSE: ${plan.summary}`, '',
         'RULES (a machine checks the first group; a reviewer checks the rest):',
         `  · One IIFE: (function (root) { 'use strict'; ... })(typeof window !== 'undefined' ? window : globalThis);`,
@@ -178,10 +180,12 @@ export async function runBuildLane({ issue, repoDir = process.cwd(), env = proce
     if (!issueText) return { ok: false, stage: 'input', reason: 'empty issue' };
     const providers = {};
     const role = ROLES.feature;
+    const cardText = cardPrompt(taskCard({ issue, role: 'feature', lane: 'build', text: issueText }));
+    const withCard = (system) => `${system}\n\n${cardText}`;
     const existing = fs.readdirSync(repoDir).filter((f) => /^wealthflow-.*\.js$/.test(f));
 
     // 1. plan
-    const p = await chat({ system: role.system, prompt: planPrompt(issueText, existing), prefer: role.prefer, maxTokens: 400, temperature: 0, env });
+    const p = await chat({ system: withCard(role.system), prompt: planPrompt(issueText, existing), prefer: role.prefer, maxTokens: 400, temperature: 0, env });
     providers.plan = p.provider;
     const parsed = parsePlan(p.text, { existing, repoDir });
     if (!parsed.ok) return { ok: false, stage: 'plan', providers, reason: parsed.reason };
@@ -191,7 +195,7 @@ export async function runBuildLane({ issue, repoDir = process.cwd(), env = proce
     // 2. author the whole module
     let code = '', authored = null, why = '';
     for (let attempt = 0; attempt < 2 && !code; attempt++) {
-        const a = await chat({ system: role.system, prompt: authorPrompt(issueText, plan) + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
+        const a = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan) + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
         providers.author = a.provider;
         const c = stripFences(a.text || '');
         const bad = !c ? ['no code came back'] : [
@@ -209,7 +213,7 @@ export async function runBuildLane({ issue, repoDir = process.cwd(), env = proce
 
     // 3. independent review of the WHOLE new file, on a different provider
     if (!reviewSeesWholeChange('', code)) return { ok: false, stage: 'review_too_large', file: plan.name, providers, reason: 'the module is larger than the independent review can read in full' };
-    const r = await chat({ system: ROLES.security.system, prompt: reviewPrompt(issueText, plan.name, '', code), prefer: ROLES.security.prefer, exclude: [authored.provider], maxTokens: 1500, temperature: 0, env })
+    const r = await chat({ system: withCard(ROLES.security.system), prompt: reviewPrompt(issueText, plan.name, '', code), prefer: ROLES.security.prefer, exclude: [authored.provider], maxTokens: 1500, temperature: 0, env })
         .catch((e) => ({ text: '', provider: 'none', _error: e.message }));
     providers.security = r.provider;
     if (!r.text) return { ok: false, stage: 'security_unavailable', file: plan.name, providers, reason: 'no independent security reviewer was available' };
@@ -229,7 +233,7 @@ export async function runBuildLane({ issue, repoDir = process.cwd(), env = proce
     try {
         for (let round = 1; round <= TEST_ROUNDS; round++) {
             const t = await chat({
-                system: ROLES.qa.system,
+                system: withCard(ROLES.qa.system),
                 prompt: testPrompt(issueText, plan.name, '', code, `The module is NEW: before the change the file does not exist, so the test must fail then. It attaches window.${plan.api}.`)
                     + (previous ? `\n\nYOUR PREVIOUS TEST WAS REJECTED: ${previous.reason}\n${String(previous.output || '').slice(-1200)}` : ''),
                 prefer: ROLES.qa.prefer, exclude: [authored.provider, r.provider], maxTokens: 4000, temperature: round === 1 ? 0.1 : 0.2, env,
