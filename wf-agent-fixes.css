@@ -92,3 +92,8 @@
     font-size: 18px;
     line-height: 1.25; }
 }
+
+/* lane-block: 547 scope=#page-dashboard — [HIGH] Layout overlap on wide screens: dashboard */
+#page-dashboard .dash-pie-item { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+#page-dashboard .dash-pie-amt { flex:0 0 auto;white-space:nowrap;overflow:auto; }
+#page-dashboard .wf-runway-cause .lbl { white-space:normal;overflow:auto; }
