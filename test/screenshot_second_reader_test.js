@@ -115,4 +115,13 @@ describe('what the reader saw is looked up in the code', () => {
         expect(r.note).toMatch(/Not cross-checked/);
         expect(r.body).not.toContain('iVBORw0KGgo');
     });
+    it('names the readers that failed before the one that worked (a quiet provider is not a broken one)', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-tried-'));
+        const body = `### User feedback\n> overlap\n<!-- ${IMAGE_MARKER} -->\n<details>\n\n\`\`\`\n${PNG}\n\`\`\`\n\n</details>`;
+        const fetchImpl = async (url) => (String(url).includes('models.github.ai') ? { ok: false, status: 403, json: async () => ({ error: { message: 'no access' } }), text: async () => 'no access' } : gemini(READING));
+        const r = await screenshotContext({ issue: { title: 't', body }, repoDir: dir, env: { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 't', GEMINI_API_KEY: 'g' }, fetchImpl });
+        expect(r.status).toBe('read');
+        expect(r.provider).toBe('gemini');
+        expect(r.note).toMatch(/Tried first and failed: github-models\/[^;]*HTTP 403/);
+    });
 });
