@@ -290,6 +290,22 @@ describe.skipIf(!chromeHere)('css lane: real Chromium', () => {
         expect(r.problems).toBe(0);
     }, 110_000);
 
+    it('a hyphenated word that wraps after its hyphen is not a broken word (Settings "one-time", filed as #542 by mistake)', async () => {
+        const { measureInPage } = await import('../autonomy/layout-probe.mjs');
+        const { bootApp } = await import('./e2e/harness.mjs');
+        const app = await bootApp({ repoDir: process.cwd() });
+        try {
+            const { page } = app;
+            const run = async (html) => { await page.setContent(`<div id="box" style="width:300px">${html}</div>`); return page.evaluate(measureInPage, '#box'); };
+            // 120px fits "one-" (96px) but not "one-time" (192px): the browser wraps it after the hyphen, which is how hyphens work.
+            const hyphen = await run('<span style="display:inline-block;width:120px;font:40px monospace">one-time</span>');
+            expect(hyphen.squeezed, JSON.stringify(hyphen.squeezed)).toEqual([]);
+            // a plain word that cannot fit is broken into pieces: still caught.
+            const shred = await run('<span style="display:inline-block;width:120px;font:40px monospace;overflow-wrap:anywhere">Monthly</span>');
+            expect(shred.squeezed.length).toBeGreaterThan(0);
+        } finally { await app.close(); }
+    }, 110_000);
+
     it('does not call the flex-and-ellipsis rewrite from #514 a fix, even if it got past the gate', async () => {
         const { probeLayout } = await import('../autonomy/layout-probe.mjs');
         const bad = `${SCOPE} tr{display:flex;flex-wrap:wrap} ${SCOPE} th, ${SCOPE} td{flex:1 1 120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`;
