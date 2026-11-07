@@ -306,6 +306,28 @@ describe.skipIf(!chromeHere)('css lane: real Chromium', () => {
         } finally { await app.close(); }
     }, 110_000);
 
+    it('text an ellipsis already hides is not an overlap, and a legend pushed into a sideways scroll is a problem (Dashboard, #547 / #551)', async () => {
+        const { measureInPage } = await import('../autonomy/layout-probe.mjs');
+        const { bootApp } = await import('./e2e/harness.mjs');
+        const app = await bootApp({ repoDir: process.cwd() });
+        try {
+            const { page } = app;
+            const run = async (html) => { await page.setContent(`<div id="box" style="width:200px;font:12px monospace">${html}</div>`); return page.evaluate(measureInPage, '#box'); };
+            // name | amount in a 200px legend row: the name is longer than its column and ends in an ellipsis. Nothing is painted under the amount.
+            const row = (extra) => `<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">Card Installments with a very long name</span><span>LKR 1.49M</span></div>`;
+            const ellipsis = await run(row(''));
+            expect(ellipsis.overlaps, JSON.stringify(ellipsis.overlaps)).toEqual([]);
+            // the same letters with no clipping DO paint over the amount: still caught
+            const spill = await run(row('overflow:visible;text-overflow:clip'));
+            expect(spill.overlaps.length).toBeGreaterThan(0);
+            // a box that scrolls sideways with content out of view is reported; a table's own scroll wrapper is not
+            const legend = await run('<div style="overflow:auto;width:120px"><div style="width:140px;white-space:nowrap">Card Installments 78%</div></div>');
+            expect(legend.clipped.join('|')).toMatch(/scrolls sideways/);
+            const wrapped = await run('<div style="overflow:auto;width:120px"><table style="width:140px"><tr><td>a</td><td>b</td></tr></table></div>');
+            expect(wrapped.clipped).toEqual([]);
+        } finally { await app.close(); }
+    }, 110_000);
+
     it('does not call the flex-and-ellipsis rewrite from #514 a fix, even if it got past the gate', async () => {
         const { probeLayout } = await import('../autonomy/layout-probe.mjs');
         const bad = `${SCOPE} tr{display:flex;flex-wrap:wrap} ${SCOPE} th, ${SCOPE} td{flex:1 1 120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`;

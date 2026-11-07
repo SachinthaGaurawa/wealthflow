@@ -220,7 +220,7 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null } =
             : result.lane === 'layout'
             ? `**Proof:** measured in real Chromium on invented books at ${(result.layout?.widths || []).join(', ')}px wide, before and after: **${String(result.layout?.verdict || '').toUpperCase()}** (${result.layout?.reason || ''}). This is a measurement, not a person looking at a phone.`
             : testWritten && result.verified
-            ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — executed and verified: it FAILS against the original file and PASSES against this one.`
+            ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — executed and verified: it FAILS against the original file and PASSES against this one.${result.mutation && !result.mutation.skipped ? ` Sabotage check: it caught ${result.mutation.killed} of ${result.mutation.total} deliberately broken versions of the fix${result.mutation.weak ? ' (weak: treat the test as thin evidence)' : ''}.` : ''}`
             : testWritten
                 ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — [WARNING] NOT verified red→green. Do not treat it as evidence.`
                 : '**Proving test:** none — this PR needs human review before merge.',

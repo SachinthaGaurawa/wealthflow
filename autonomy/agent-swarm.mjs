@@ -39,6 +39,7 @@ import {
     keywordsFrom, symbolsFrom, rankFiles, selectPromptRanked, excerptFor, patchPrompt, parsePatchBlocks, applyPatchBlocks, changeExcerpt, changeView,
 } from './swarm-patch.mjs';
 import { observeModule, describeObservation, observedNoChange, groundFacts, safeEnv } from './proof-probe.mjs';
+import { mutationCheck, weakTestReason } from './mutation-check.mjs';
 
 // ── the mechanical safety gate (mirrors CODEOWNERS + rego + risk-gate) ───────
 const SENSITIVE = [
@@ -848,7 +849,7 @@ export async function runSwarm({
     // thrown away with the whole attempt any more: the actual Vitest output goes back to Agent 4
     // for up to TEST_ROUNDS tries, because a correct, reviewed fix used to be discarded here for
     // one wrong selector in a generated test whose error text nobody ever saw.
-    let test = null, testFile = null, testProof = null;
+    let test = null, testFile = null, testProof = null, mutation = null;
     if (writeTest) {
         const plan = verificationPlan({ verifyTest, ci: Boolean(env.CI) });
         if (!plan.allowed) {
@@ -883,7 +884,22 @@ export async function runSwarm({
             testProof = plan.verify
                 ? verifyTestProves({ repoDir, targetFile: file, before, after: code, testFile: tf, testSource: candidate, log, ...(run ? { run } : {}) })
                 : { ok: true, skipped: true, beforeFailed: null, afterPassed: null };
-            if (testProof.ok) { test = candidate; testFile = tf; break; }
+            if (testProof.ok) {
+                // Red→green is necessary, not sufficient: a test that only restates the new code stays green when
+                // the fixed lines are sabotaged. Break them on purpose; a weak test gets one more try with the
+                // survivors named. On the last round it is accepted and the weakness is reported, not hidden, so a
+                // correct fix is never thrown away for the quality of its test alone.
+                mutation = plan.verify
+                    ? mutationCheck({ repoDir, targetFile: file, before, after: code, testFile: tf, testSource: candidate, run: run || runVitestFile, isValid: isValidJs, log })
+                    : null;
+                if (mutation && mutation.weak && round < TEST_ROUNDS) {
+                    previous = { reason: weakTestReason(mutation), output: '' };
+                    rounds.push({ round, reason: previous.reason });
+                    log(`[swarm] Agent 4 round ${round}/${TEST_ROUNDS}: ${previous.reason}`);
+                    continue;
+                }
+                test = candidate; testFile = tf; break;
+            }
 
             // Loud: the reason AND the Vitest output reach the log (and the issue comment),
             // so a proof failure can be diagnosed without re-running it.
@@ -913,5 +929,5 @@ export async function runSwarm({
     // can never be read downstream as a passed one — the distinction that
     // decides whether this PR's evidence means anything.
     const verified = Boolean(testProof && testProof.ok && !testProof.skipped);
-    return { ok: true, stage: 'ready', file, code, test, testFile, testProof, verified, role: role.id, review, providers, change: changeText, observation };
+    return { ok: true, stage: 'ready', file, code, test, testFile, testProof, mutation, verified, role: role.id, review, providers, change: changeText, observation };
 }
