@@ -21,8 +21,10 @@
  *
  * HONESTY: a translation is a machine reading. The block says so, always shows the owner's own words first, and the
  * fix agent is told to trust the original when the two differ.
- * Zero dependencies; the AI call is injectable (`chatImpl`) so tests never touch the network.
+ * One local import (the charter); the AI call is injectable (`chatImpl`) so tests never touch the network.
  * ===========================================================================*/
+
+import { withCharter } from './wf-charter.mjs';
 
 export const TRANSLATION_MARKER = 'wf-translation';
 const MARKER_RE = new RegExp('<!--\\s*' + TRANSLATION_MARKER + '\\b');
@@ -177,7 +179,7 @@ export async function understandFeedback(text, { chatImpl, timeoutMs = 20000, en
     let timer;
     try {
         const res = await Promise.race([
-            chatFn({ prompt: translationPrompt(text, lang), system: 'You are a precise translator. Output JSON only.', maxTokens: 700, temperature: 0, timeoutMs: Math.max(5000, timeoutMs - 2000), env }),
+            chatFn({ prompt: translationPrompt(text, lang), system: withCharter('You are a precise translator. Output JSON only.', 'translate'), maxTokens: 700, temperature: 0, timeoutMs: Math.max(5000, timeoutMs - 2000), env }),
             new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('translation timed out')), timeoutMs); if (timer.unref) timer.unref(); }),
         ]);
         const parsed = parseTranslation(res && res.text !== undefined ? res.text : res);

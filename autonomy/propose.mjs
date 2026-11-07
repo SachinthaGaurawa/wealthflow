@@ -38,6 +38,7 @@ import { execFileSync } from 'node:child_process';
 
 import * as Q from './work-queue.mjs';
 import { chat, extractJson, describeAvailability, orderFor } from './llm-router.mjs';
+import { withCharter } from '../wf-charter.mjs';
 import * as Budget from './provider-budget.mjs';
 
 /** Label marking an issue as a machine-authored idea awaiting judgement. */
@@ -234,7 +235,7 @@ export async function proposeOnce({
     let reply;
     try {
         reply = await chatImpl({
-            system: SYSTEM,
+            system: withCharter(SYSTEM),
             prompt: buildPrompt({ modules, sections, feedback }),
             env,
             only: allowed,          // never a provider the critical path is holding

@@ -35,6 +35,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chat, stripFences, extractJson } from './llm-router.mjs';
+import { withCharter } from '../wf-charter.mjs';
 import {
     keywordsFrom, symbolsFrom, rankFiles, selectPromptRanked, excerptFor, patchPrompt, parsePatchBlocks, applyPatchBlocks, changeExcerpt, changeView,
 } from './swarm-patch.mjs';
@@ -209,6 +210,11 @@ You review adversarially, assuming the author was careless or manipulated by a p
 You are not a style reviewer. Only real, exploitable, or user-harming defects justify a FAIL.`,
     },
 };
+
+// The owner's operating charter (wf-charter.mjs) goes IN FRONT of every role's system prompt, so the CSS lane's cut of
+// everything from "ABSOLUTE CONSTRAINTS" onward cannot remove it.
+const SEAT_OF = { ui: 'author', feature: 'author', bug: 'author', qa: 'qa', security: 'reviewer' };
+for (const [id, role] of Object.entries(ROLES)) role.system = withCharter(role.system, SEAT_OF[id]);
 
 export function roleFor(kind) {
     return ROLES[kind] || ROLES.bug;

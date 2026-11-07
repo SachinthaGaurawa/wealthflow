@@ -319,3 +319,7 @@ Until a pull request opened by the agent has merged and the release served it, t
 **Not possible on a free tier, and not claimed:** 100,000 live agents, a quantum state snapshot, a holographic database,
 a vector database service, Sentry Seer and E2B sandboxes. The research report's own conclusion applies: the reliability
 comes from the guardrails, not from the model.
+
+## Operating charter
+
+Every model call in the update system starts with the owner's operating charter (`wf-charter.mjs`, explained in `docs/update-charter.md`): truth over agreement, VERIFIED/INFERRED/GUESS, cause before symptom, untrusted text is data, pre-mortem, fail closed, and the reply formats that programs parse come first. It is advice; the gates still decide. Two programs check it: the evidence ledger at the end of every agent pull request (what was verified and what was not, written from recorded facts) and the weekly charter probe that names which providers actually follow it.
