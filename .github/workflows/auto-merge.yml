@@ -251,6 +251,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Enable auto-merge (GitHub merges once every required check is green)
+        # This repository has no branch-protection rules on `main`, and GitHub
+        # refuses to enable auto-merge without them ("Protected branch rules not
+        # configured for this branch"). That is a property of the repository, not
+        # a defect in the PR, so it must not paint every auto-safe PR with a red X
+        # (the owner read it as a bug). The PR is then merged by the driver once
+        # its real checks are green. If protection is ever added, this step starts
+        # working again with no change here.
+        continue-on-error: true
         uses: peter-evans/enable-pull-request-automerge@v3
         with:
           pull-request-number: ${{ github.event.pull_request.number }}
