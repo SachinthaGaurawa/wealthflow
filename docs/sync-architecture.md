@@ -100,6 +100,10 @@ server are unchanged; the live listener stays as a hint. What is proven, what is
 the emulator check with
 `npx firebase-tools emulators:exec --only firestore --project demo-wf "npx vitest run test/cloud_rest_emulator_test.js"`.
 
+## Update state across devices (2026-11-07)
+
+`updateSync` is a declared `appData` key: which version each device runs, the newest version the person installed on purpose, and which agreement lines were accepted. One fact per leaf (a string), so the per-field merge cannot split it. The rules are `wealthflow-update-policy.js` (pure), the screens `wealthflow-update-system.js`; proven by `test/update_follow_test.js` and, across three real browsers sharing one cloud document, `test/e2e/update-follow.mjs`. See `docs/update-model-research.md`.
+
 ## Known limits
 
 - The document is still one Firestore document of up to 1 MiB (the owner's is about 75% of it). A save sends only what changed, but an edit to the largest

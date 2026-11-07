@@ -26,6 +26,9 @@
     const LS_HISTORY = 'wf_update_history';      // last 30 things that happened to updates on this device
     const LS_EULA_OK = 'wf_update_eula_ok';      // 'major.minor' whose agreement the person accepted
     const LS_FEATURES = 'wf_feature_overrides';  // {featureId: true|false}: the person's own switches
+    const LS_FOLLOW = 'wf_update_follow';        // '0': this device does not follow the version the account's other devices installed
+    const LS_FOLLOW_TRY = 'wf_update_follow_try'; // {version, at, n}: the last time this device tried to follow, so a failure is not retried every few seconds
+    const LS_REPORT = 'wf_update_report';        // {version, advance}: an install that landed and has not yet been told to the account
     // Absent only if the file failed to load; every use below then falls back to the old behaviour.
     const P = window.WF_UPDATE_POLICY || null;
     // An announced version can outrun its own code by a whole deploy cycle —
@@ -297,6 +300,7 @@
                 fetched: (evidence && evidence.fetched) || 0,
                 total: (evidence && evidence.total) || 0,
                 backup: (evidence && evidence.backup) || '',
+                follow: _followRun === true,
                 measured: (evidence && evidence.measured) || 0,
                 changed: (evidence && evidence.changed) || 0,
                 kb: evidence && evidence.measured ? Math.round((evidence.bytes || 0) / 1024) : null
@@ -328,7 +332,9 @@
             _markInstalled(CURRENT_VERSION);
             try { localStorage.removeItem(LS_FAILED_TARGET); } catch (_) {}
             try { console.log('[WFUpdate] @info@ update to ' + c.target + ' landed — running ' + CURRENT_VERSION); } catch (_) {}
-            _record(c.auto ? 'auto' : 'installed', c.target, { from: c.from, backup: c.backup || undefined, files: c.measured || undefined, changed: c.measured ? c.changed : undefined, kb: c.measured ? c.kb : undefined });
+            // Tell the account, once the app is up: a deliberate install on a device that is not on early access moves the account's version.
+            _lsPut(LS_REPORT, { version: CURRENT_VERSION, advance: !c.follow && !_earlyOn() });
+            _record(c.follow ? 'followed' : c.auto ? 'auto' : 'installed', c.target, { from: c.from, backup: c.backup || undefined, files: c.measured || undefined, changed: c.measured ? c.changed : undefined, kb: c.measured ? c.kb : undefined });
             return { ok: true, target: c.target, running: CURRENT_VERSION, from: c.from };
         }
 
@@ -379,13 +385,14 @@
         return {
             version: v, priority: priority, stance: P.stanceOf(priority), manifest: _manifest, now: Date.now(),
             available: _updateAvailable(), choice: _lsJson(LS_CHOICE, null),
-            inRollout: P.inRollout(v, _manifest, _deviceBucket(), _earlyOn()),
+            inRollout: P.inRollout(v, _manifest, _deviceBucket(), _earlyOn()) || _followPending(),
             staleDays: P.staleDays(first && first.version === v ? first : { version: v, at: Date.now() }, v, Date.now())
         };
     }
     /** Should the dashboard pill and the Settings badge show? Settings itself always shows what is available. */
     function _announce() {
         const s = _policyState();
+        if (_followPending()) return true;   // another device of this account already took it: say so, whatever the stance or share
         return s ? P.announce(s).show : _updateAvailable();
     }
     /** The person's live choice for the version on offer, or null. */
@@ -518,7 +525,7 @@
         pill.id = 'wfUpdatePill';
         pill.type = 'button';
         pill.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 0 0 rgba(16,185,129,0.7);animation:wfUpPulse 1.8s infinite;"></span>' +
-                         '<span>Update available — ' + _esc(_latestVersion()) + '</span>' +
+                         '<span>' + (function () { const f = _followState(); return f && f.act === 'install' ? 'Your ' + _esc(f.from.name) + ' is on v' + _esc(f.account) + ' — update to match' : 'Update available — ' + _esc(_latestVersion()); })() + '</span>' +
                          '<span style="opacity:.7;">View ›</span>';
         pill.style.cssText = 'display:flex;align-items:center;gap:10px;margin:0 auto 14px;padding:10px 16px;border-radius:999px;border:1px solid rgba(16,185,129,0.4);background:linear-gradient(135deg,rgba(16,185,129,0.12),rgba(16,185,129,0.04));color:var(--text,#e6e7eb);font-size:13px;font-weight:700;cursor:pointer;width:fit-content;max-width:100%;';
         pill.onclick = openUpdateSection;
@@ -676,6 +683,7 @@
                 '<button class="btn btn-secondary btn-sm" onclick="wfUpdate.history()">View</button>' +
             '</div>' +
             _featuresRow() +
+            _devicesBlock() +
             '<div class="setting-row">' +
                 '<div class="setting-info"><div class="setting-label">Prioritised feedback</div><div class="setting-desc">See all user feedback scored and ranked by urgency (security & crashes first).</div></div>' +
                 '<button class="btn btn-secondary btn-sm" onclick="wfFeedbackAI && wfFeedbackAI.showBoard()">View</button>' +
@@ -743,7 +751,10 @@
         if (document.visibilityState === 'hidden' || Date.now() - _lastInteraction < 60000) return false;
         const el = document.activeElement;
         if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return false;
-        return !document.querySelector('[role="dialog"], .mo.open, .modal-overlay.active, .modal.show, #authScreen.show, #wfProgress, #wfEula');
+        /* Only what is ON SCREEN counts. The notification panel is a permanent role="dialog" that is display:none until opened, and it made this
+         * answer "busy" for ever, so no automatic install (security, idle or following another device) could ever start. */
+        const shown = (e) => { try { if (e.hidden || e.getAttribute('aria-hidden') === 'true') return false; return typeof e.getClientRects === 'function' ? e.getClientRects().length > 0 : true; } catch (_) { return true; } };
+        return !Array.prototype.some.call(document.querySelectorAll('[role="dialog"], .mo.open, .modal-overlay.active, .modal.show, #authScreen.show, #wfProgress, #wfEula'), shown);
     }
     async function _autoApplyIfSecurity() {
         if (!_autoSecurityOn()) return false;
@@ -813,7 +824,105 @@
         return true;
     }
 
-    const KIND_TEXT = { installed: 'Installed', failed: 'Did not install', later: 'Postponed', skipped: 'Skipped', idle: 'Set to install when idle', auto: 'Installed automatically' };
+    // ── One account, several devices ─────────────────────────────────────────────
+    // When the person updates one device, the others signed in to the same account install the same version when it is safe
+    // (not in use, backup first, rolled back if it fails). The account record is `updateSync` in the person's synced books, merged
+    // like every other setting (docs/sync-architecture.md); the rules are pure functions in wealthflow-update-policy.js.
+    // A device that is closed cannot install anything: it catches up the next time WealthFlow is opened.
+    let _followRun = false;
+    function _followOn() { try { return localStorage.getItem(LS_FOLLOW) !== '0'; } catch (_) { return true; } }
+    function setFollow(on) {
+        _lsPut(LS_FOLLOW, on ? '1' : '0');
+        _notify(on ? 'This device will follow the version your other devices install.' : 'This device will not follow your other devices. Updates here stay your choice.', on ? 'success' : 'info');
+        _afterChoice();
+    }
+    function _deviceId() {
+        try {
+            let id = localStorage.getItem('wf_device_id');
+            if (!id) { id = 'dev_' + Math.random().toString(36).substr(2, 9); localStorage.setItem('wf_device_id', id); }
+            return id;
+        } catch (_) { return ''; }
+    }
+    function _appUp() { const a = document.getElementById('app'); return !!(a && a.classList.contains('show')); }
+    /** The account record, or null while the books are not open (signed out, locked, or the decoy books, which must never show real devices). */
+    function _acct() {
+        try { if (window._isDecoyMode === true || !window.DB || typeof DB.getObj !== 'function' || !_appUp()) return null; const o = DB.getObj('updateSync', {}); return o && typeof o === 'object' ? o : {}; } catch (_) { return null; }
+    }
+    function _acctWrite(next, prev) { try { if (next !== prev && window.DB && typeof DB.set === 'function') DB.set('updateSync', next); } catch (_) {} }
+    /** Says to the account what this device runs, and (after a deliberate install) which version the person has taken. Writes only on a change. */
+    function _reportToAccount() {
+        if (!P || !P.reportDevice) return;
+        const cur = _acct(); if (cur === null) return;
+        const id = _deviceId(); if (!id) return;
+        const pending = _lsJson(LS_REPORT, null);
+        const advance = !!(pending && pending.advance && pending.version === CURRENT_VERSION);
+        let name = ''; try { name = P.deviceLabel(navigator.userAgent); } catch (_) {}
+        _acctWrite(P.reportDevice(cur, id, CURRENT_VERSION, name, Date.now(), advance), cur);
+        if (pending) { try { localStorage.removeItem(LS_REPORT); } catch (_) {} }
+    }
+    function _acceptedHere(line) { try { return localStorage.getItem(LS_EULA_OK) === line; } catch (_) { return false; } }
+    function _shareAgreement(line) { if (!P || !P.noteAgreed) return; const cur = _acct(); if (cur !== null) _acctWrite(P.noteAgreed(cur, line, Date.now()), cur); }
+    /** What this device should do about the version the account already has: {act:'none'|'install', version, from:{name}, ...} or null without a policy. */
+    function _followState() {
+        if (!P || !P.followDecision || !_manifest) return null;
+        const acct = _acct(); if (acct === null) return null;
+        const target = _latestVersion();
+        return P.followDecision(acct, _deviceId(), CURRENT_VERSION, _manifest, {
+            on: _followOn(), now: Date.now(), type: _updateType(target), choice: _lsJson(LS_CHOICE, null)
+        });
+    }
+    /** The account can know of a version before this device's copy of the release list does (that list is read every 30 minutes). Read it again, at most every 2 minutes. */
+    let _lastAcctRefresh = 0;
+    function _refreshForAccount() {
+        if (!P || !P.parseWanted || !_followOn() || Date.now() - _lastAcctRefresh < 120000) return;
+        const acct = _acct(); if (acct === null) return;
+        const w = P.parseWanted(acct.wanted);
+        if (!w || w.by === _deviceId() || P.cmp(w.v, CURRENT_VERSION) <= 0) return;
+        if (_manifest && _manifest.latest && P.cmp(_manifest.latest, w.v) >= 0) return;
+        _lastAcctRefresh = Date.now();
+        _loadManifest().then(() => { _refreshDashboardPill(); _renderSettingsCard(); }).catch(() => {});
+    }
+    function _followPending() { const f = _followState(); return !!(f && f.act === 'install'); }
+    function _agreementOk(version) {
+        const line = String(version).split('.').slice(0, 2).join('.');
+        return _acceptedHere(line) || (!!P && P.agreedOn(_acct(), line));
+    }
+    /** Installs the version the account already has, when it is safe. The same safeguards as every automatic install, plus a retry limit. */
+    async function _autoFollow() {
+        const f = _followState();
+        if (!f || f.act !== 'install') return false;
+        if (!_safeToAutoInstall() || _progressTask || !_mayAutoInstallNow()) return false;
+        const v = f.version;
+        if (!_isDeployedVersion(v) || _recentlyFailedTarget(v) || !_agreementOk(v)) return false;
+        const t = _lsJson(LS_FOLLOW_TRY, null);
+        if (t && t.version === v && (Date.now() - Number(t.at) < 30 * 60000 || Number(t.n) >= 3)) return false;
+        _lsPut(LS_FOLLOW_TRY, { version: v, at: Date.now(), n: (t && t.version === v ? Number(t.n) || 0 : 0) + 1 });
+        _followRun = true;
+        _notify('Installing v' + v + ' to match ' + f.from.name + '…', 'info');
+        try { await _runProgress(v); } finally { _followRun = false; }
+        return true;
+    }
+    function _ago(ms) {
+        const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+        return m < 2 ? 'just now' : m < 90 ? m + ' min ago' : m < 2160 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago';
+    }
+    /** Settings: which devices the account has seen and what they run, and the switch for following. */
+    function _devicesBlock() {
+        if (!P || !P.deviceList) return '';
+        const acct = _acct();
+        const list = acct ? P.deviceList(acct, _deviceId(), Date.now()) : [];
+        const f = _followState();
+        const rows = list.length > 1 ? list.map(function (d) {
+            return '<div class="setting-row"><div class="setting-info"><div class="setting-label">' + _esc(d.name) + (d.isThis ? ' · this device' : '') + '</div>' +
+                '<div class="setting-desc">v' + _esc(d.v) + ' · ' + (d.isThis ? 'open now' : 'seen ' + _esc(_ago(d.at))) + '</div></div>' +
+                '<span class="badge" style="background:' + (d.behind ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)') + ';color:' + (d.behind ? '#f59e0b' : '#10b981') + ';padding:6px 12px;border-radius:999px;font-weight:700;">' + (d.behind ? 'Behind' : 'Newest') + '</span></div>';
+        }).join('') : '<div class="setting-row"><div class="setting-info"><div class="setting-desc">Your other devices show here after they open WealthFlow with this account.</div></div></div>';
+        return '<div class="setting-row" style="border-top:1px solid var(--border);margin-top:8px;padding-top:12px;"><div class="setting-info"><div class="setting-label">Your devices</div><div class="setting-desc">' +
+            (f && f.act === 'install' ? 'Your ' + _esc(f.from.name) + ' is already on v' + _esc(f.account) + '. This device will install it when you are not using the app, or tap Update now.' : 'Devices signed in to this account, and the version each one runs.') + '</div></div></div>' + rows +
+            _toggleRow('wfFollow', 'Keep my devices on the same version', 'When you update one device, your other devices install the same version when you are not using them. A backup is taken first. A device that is closed updates the next time you open WealthFlow. Skipping a version on a device is respected.', _followOn(), 'setFollow');
+    }
+
+    const KIND_TEXT = { installed: 'Installed', failed: 'Did not install', later: 'Postponed', skipped: 'Skipped', idle: 'Set to install when idle', auto: 'Installed automatically', followed: 'Installed to match your other device' };
     function showHistory() {
         _closeOverlay('wfHistory');
         const rows = _history().slice().reverse();
@@ -903,11 +1012,13 @@
         const line = String(version).split('.').slice(0, 2).join('.');
         let accepted = null;
         try { accepted = localStorage.getItem(LS_EULA_OK); } catch (_) {}
-        if (!P || accepted !== line) {
+        // Accepted on any device of this account counts here too (the agreement says so).
+        if (!P || (accepted !== line && !P.agreedOn(_acct(), line))) {
             const ok = await _showEula(version);
             if (!ok) return;
             _lsPut(LS_EULA_OK, line);
         }
+        _shareAgreement(line);
         // PIN gate (reuse the app's verified prompt)
         if (typeof window._verifyPinPrompt === 'function') {
             const pinOk = await window._verifyPinPrompt('Enter your PIN to authorise the update to v' + version + '.');
@@ -976,8 +1087,10 @@
 'to the extent permitted by law. You remain responsible for verifying your own ' +
 'financial figures.\n' +
 '\n' +
-'7. PER-DEVICE INSTALLATION. This update applies to this device only. Other ' +
-'devices update independently when you choose.\n' +
+'7. YOUR DEVICES. This update installs on this device. Other devices signed in ' +
+'to the same account install the same version when you are not using them, ' +
+'unless you switch that off in Settings or skip the version on that device. ' +
+'This agreement counts for all of them.\n' +
 '\n' +
 '8. ROLLBACK SAFETY. If the update cannot complete, the previous version ' +
 'remains active. An update replaces app files, never your data. A restore point is ' +
@@ -2158,6 +2271,9 @@
                 if (!document.getElementById('wfUpdatePill')) _refreshDashboardPill();
                 if (_autoSecurityOn()) _autoApplyIfSecurity().catch(() => {});
                 _autoApplyIfChosen().catch(() => {});
+                _reportToAccount();
+                _refreshForAccount();
+                _autoFollow().catch(() => {});
             } catch (_) {}
         }, 5000);
 
@@ -2205,7 +2321,7 @@
         simulate: simulateUpdate, setAutoSecurity: setAutoSecurity,
         later: later, skip: skipVersion, whenIdle: whenIdle, undoChoice: undoChoice, setWifiOnly: setWifiOnly, setEarly: setEarly,
         history: showHistory, features: showFeatures, setFeature: setFeature, featureOn: featureOn,
-        _policyState, _announce, _autoApplyIfChosen, _history, _record, _loadManifest,
+        setFollow: setFollow, _followState, _autoFollow, _reportToAccount, _refreshForAccount, _policyState, _announce, _autoApplyIfChosen, _history, _record, _loadManifest,
         _clearFbImg: () => { _fbImageData = null; _fbImageReading = null; },
         refresh: () => { _refreshDashboardPill(); _injectSettingsCard(); _renderSettingsCard(); },
         // Feedback completion reporting — exposed so the Settings screen and the

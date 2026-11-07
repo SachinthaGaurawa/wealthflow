@@ -8274,6 +8274,10 @@
             /* The saved-people book (who the owner lends to or invests with, saved once) and the owner's bank accounts for statements. Record arrays
              * with ids, so they sit in _WF_RECORD_KEYS and merge per record across devices. DECLARED HERE, or the hydration loops never read them back. */
             people: [], payAccounts: [],
+            /* Which devices of this account run which version, and the newest version the owner installed on purpose, so one device's update
+             * reaches the others (wealthflow-update-system.js, "One account, several devices"). Every leaf is one string: a leaf written by one
+             * device is never half overwritten by another. DECLARED HERE, or the hydration loops never read it back. */
+            updateSync: {},
             cribReports: [], cribAnalyses: {},
             // Money moved out of the current account into a deposit or savings.
             // A record here is NOT a second subtraction from the balance — the

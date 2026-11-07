@@ -54,7 +54,7 @@ describe('active sessions survive background deployment events', () => {
         h.emit('input'); expect(a._safeToAutoInstall()).toBe(false);
         h.setTime(222000); h.ctx.document.activeElement={tagName:'INPUT'}; expect(a._safeToAutoInstall()).toBe(false);
         h.ctx.document.activeElement=null; h.ctx.document.visibilityState='hidden'; expect(a._safeToAutoInstall()).toBe(false);
-        h.ctx.document.visibilityState='visible'; h.ctx.document.querySelector=()=>({}); expect(a._safeToAutoInstall()).toBe(false);
+        h.ctx.document.visibilityState='visible'; h.ctx.document.querySelectorAll=()=>[{}]; expect(a._safeToAutoInstall()).toBe(false);
     });
     it('shares one installation task for simultaneous install requests', async () => {
         const h=harness(richProbe), a=h.ctx.wfUpdate;
