@@ -40,4 +40,19 @@ describe('prioritiseDiff', () => {
         expect(body.length).toBeGreaterThan(5);
         for (const l of body) expect(l.endsWith(`big.js ${l.split('big.js ')[1]}`)).toBe(true);   // every shown line is whole
     });
+
+    it('lists all of 60 files even when the budget fits only a few bodies, and never cuts the list', () => {
+        const names = Array.from({ length: 60 }, (_, i) => `src/module-number-${i}.js`);
+        const d = names.map((n) => file(n, 80)).join('');
+        const r = prioritiseDiff(d, 9_000);
+        expect(r.text.length).toBeLessThanOrEqual(9_000);
+        for (const n of names) expect(r.text).toMatch(new RegExp(`#   ${n.replace(/\./g, '\\.')}  \\+80 -0`));
+        expect(r.text.split('\n').filter((l) => l.startsWith('#   ')).length).toBe(60);
+    });
+
+    it('past 400 files the list says how many it leaves out', () => {
+        const d = Array.from({ length: 450 }, (_, i) => file(`f${i}.js`, 2)).join('');
+        const r = prioritiseDiff(d, 40_000);
+        expect(r.text).toContain('#   ... and 50 more file(s) not listed');
+    });
 });

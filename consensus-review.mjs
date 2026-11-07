@@ -249,30 +249,38 @@ export function prioritiseDiff(diff, max = MAX_DIFF) {
     };
     const files = chunks.map((c) => ({ c, name: nameOf(c), risky: isRisky(c), ...stat(c) }));
 
-    const manifestOf = (rows) => ['# Every file in this change (+added / -removed lines); a file marked [partly shown] or [not shown] was cut to fit the review budget:']
-        .concat(rows.map((f) => `#   ${f.name}  +${f.add} -${f.del}${f.note ? `  [${f.note}]` : ''}`)).join('\n') + '\n';
-    const manifestBudget = Math.min(Math.floor(max * 0.12), manifestOf(files).length + 40 * files.length);
-    let room = Math.max(0, max - manifestBudget);
+    // The manifest is reserved at its WORST case (every file marked "partly shown") before any body is placed, so the bodies
+    // can never push it out of the budget and the list of files is never cut. Past 400 files the list says how many it omits.
+    const LIST_MAX = 400;
+    const manifestOf = (rows) => {
+        const shownRows = rows.slice(0, LIST_MAX);
+        const lines = shownRows.map((f) => `#   ${String(f.name).slice(0, 120)}  +${f.add} -${f.del}${f.note ? `  [${f.note}]` : ''}`);
+        if (rows.length > LIST_MAX) lines.push(`#   ... and ${rows.length - LIST_MAX} more file(s) not listed`);
+        return ['# Every file in this change (+added / -removed lines); a file marked [partly shown] or [not shown] was cut to fit the review budget:', ...lines].join('\n') + '\n';
+    };
+    const worstManifest = manifestOf(files.map((f) => ({ ...f, note: 'partly shown' }))).length;
+    let room = Math.max(0, max - worstManifest);
 
     const ranked = [...files.filter((f) => f.risky), ...files.filter((f) => !f.risky)];
-    const floor = Math.max(1200, Math.floor(room / Math.max(1, ranked.length) / 2));      // every file gets at least this much, if the budget allows
+    const floor = Math.max(1200, Math.floor(room / Math.max(1, ranked.length) / 2));      // a file that cannot be shown whole gets about this much, while room lasts
     const shown = new Map();
     for (const f of ranked) {
         if (f.c.length <= room) { shown.set(f, f.c); room -= f.c.length; continue; }
-        const take = Math.min(room, Math.max(floor, 0));
-        if (take < 400) { f.note = 'not shown'; continue; }
+        const take = Math.min(room, floor);
+        if (take < 400) { f.note = 'not shown'; continue; }                               // 400 leaves room for the cut marker below
         const cut = f.c.lastIndexOf('\n', take - 120);
         const head = f.c.slice(0, cut > 200 ? cut : take);
         const left = Math.max(0, f.c.split('\n').length - head.split('\n').length);
-        shown.set(f, `${head}\n[... ${left} more line(s) of ${f.name} not shown ...]\n`);
+        const part = `${head}\n[... ${left} more line(s) of ${f.name} not shown ...]\n`;
+        if (part.length > room) { f.note = 'not shown'; continue; }
+        shown.set(f, part);
         f.note = 'partly shown';
-        room -= shown.get(f).length;
+        room -= part.length;
     }
     for (const f of files) if (!shown.has(f) && !f.note) f.note = 'not shown';
 
     let out = manifestOf(files);
     for (const f of ranked) if (shown.has(f)) out += shown.get(f);
-    if (out.length > max) out = out.slice(0, max);
     return { text: out, truncated: true };
 }
 
