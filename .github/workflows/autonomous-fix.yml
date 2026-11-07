@@ -58,20 +58,58 @@ permissions:
   pull-requests: write
   issues: write
 
-concurrency:
-  group: wealthflow-main-push
-  cancel-in-progress: false
+# The shared push lock is taken by the `fix` job only. It used to cover the whole workflow, and the waiting job below would have
+# held every release and merge behind a quiet period.
 
 jobs:
-  fix:
+  # ONE UPDATE FOR A BURST OF FEEDBACK (owner, 2026-11-07). A person sends feedback while using the app, several reports in a
+  # sitting. This job waits until no new report has arrived for a quarter of an hour (never more than 45 minutes after the
+  # oldest), and a newer report CANCELS this wait and starts its own, so the last one decides when the fix starts. The fix job
+  # then works every report of that day and ships them as one update. A crash or a security report does not wait.
+  # See autonomy/feedback-group.mjs. Schedule and manual runs wait for nothing.
+  gather:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    # Skip issues the pipeline files for humans, and skip its own noise.
+    timeout-minutes: 55
+    concurrency:
+      group: wealthflow-feedback-gather-${{ github.event_name }}
+      cancel-in-progress: true
     if: >-
       github.event_name != 'issues' ||
       (!contains(github.event.issue.labels.*.name, 'auto-rollback') &&
        !contains(github.event.issue.labels.*.name, 'ai-stuck') &&
        !contains(github.event.issue.labels.*.name, 'pipeline-health'))
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: autonomy
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Wait until the burst of feedback is over
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          SECS=$(node autonomy/feedback-window-cli.mjs)
+          echo "waiting ${SECS:-0}s for more feedback before starting"
+          if [ "${SECS:-0}" -gt 0 ]; then sleep "$SECS"; fi
+
+  fix:
+    needs: gather
+    runs-on: ubuntu-latest
+    timeout-minutes: 50          # several reports of one day are worked in one run (AGENT_GROUP_BUDGET_MS caps the extra time)
+    concurrency:
+      group: wealthflow-main-push
+      cancel-in-progress: false
+    # Skip issues the pipeline files for humans, and skip its own noise. `gather` is skipped or cancelled when a newer report
+    # took over the wait, and then this run must not start.
+    if: >-
+      needs.gather.result == 'success' &&
+      (github.event_name != 'issues' ||
+      (!contains(github.event.issue.labels.*.name, 'auto-rollback') &&
+       !contains(github.event.issue.labels.*.name, 'ai-stuck') &&
+       !contains(github.event.issue.labels.*.name, 'pipeline-health')))
     steps:
       # Egress firewall FIRST, before any untrusted issue text is read. An issue
       # body is attacker-controlled input in the general case, so even if a
@@ -108,6 +146,7 @@ jobs:
           AGENT_ISSUE: ${{ github.event.issue.number || inputs.issue }}
           AGENT_DRY_RUN: ${{ inputs.dry_run }}
           AGENT_MAX_ATTEMPTS: ${{ vars.AGENT_MAX_ATTEMPTS || '3' }}
+          AGENT_GROUP: ${{ vars.AUTONOMY_LEVEL == 'direct' && '0' || '1' }}   # same-day feedback in one update; the direct ship step commits one fix at a time
           # ── every model provider; ANY ONE is enough ──
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -163,6 +202,14 @@ jobs:
             echo "::error::agent claimed a fix to $FILE but the file is unchanged"
             exit 1
           fi
+          # every fix of a same-day group must really have changed its file too
+          node -e "
+            const fs=require('fs'),cp=require('child_process');
+            const g=(require('./ai-fix-pr.json').group)||[];
+            for(const x of g){ if(!x.file||x.file.startsWith('/')||x.file.includes('..')) { console.error('bad path in group: '+x.file); process.exit(1);} 
+              if(!cp.execFileSync('git',['status','--porcelain','--',x.file]).toString().trim()){ console.error('group member #'+x.issue+' changed nothing in '+x.file); process.exit(1);} }
+            console.log('group of '+g.length+' fix(es) verified');
+          "
           echo "file=$FILE"  >> "$GITHUB_OUTPUT"
           echo "test=$TEST"  >> "$GITHUB_OUTPUT"
           echo "issue=$ISSUE" >> "$GITHUB_OUTPUT"
@@ -218,7 +265,11 @@ jobs:
           # rather than pasted, so no issue body can smuggle a directive in here.
           if printf '%s' "${ISSUE:-}" | grep -qE '^[0-9]+$'; then
             printf '\n\nCloses #%s\n' "$ISSUE" >> pr-body.txt
-            echo "linked: merging this PR will close #$ISSUE and mark the feedback Completed in the app"
+            # the other reports of a same-day group close when the one update merges
+            for N in $(node -p "((require('./ai-fix-pr.json').group)||[]).map(g=>g.issue).filter(n=>Number.isInteger(n)).join(' ')" 2>/dev/null); do
+              [ "$N" = "$ISSUE" ] || printf 'Closes #%s\n' "$N" >> pr-body.txt
+            done
+            echo "linked: merging this PR will close the report(s) and mark the feedback Completed in the app"
           else
             echo "no valid issue number (got '${ISSUE:-}') — PR opened without a close link"
           fi
@@ -229,11 +280,16 @@ jobs:
           git checkout -b "$BRANCH"
           git add -- "$FIX_FILE"
           [ -n "${TEST_FILE:-}" ] && git add -- "$TEST_FILE" || true
+          # the other fixes of a same-day group: the same checks the first one passed (a relative path that really changed)
+          node -e "for (const g of ((require('./ai-fix-pr.json').group)||[])) for (const f of [g.file, g.testFile]) if (f) console.log(f)" | while IFS= read -r F; do
+            case "$F" in /*|*..*) echo "skipping unsafe path $F"; continue ;; esac
+            [ -n "$(git status --porcelain -- "$F")" ] && git add -- "$F" || true
+          done
           [ -d autonomy/state ] && git add -- autonomy/state || true
           # files a lane changed by a mechanical edit. An ALLOWLIST of exactly two paths, never a pattern: whatever the
           # agent writes into ai-fix-pr.json can ask for these two and nothing else to be staged.
           for EXTRA in index.html autonomy/perf-budget.mjs; do
-            if node -e "process.exit((require('./ai-fix-pr.json').extraFiles || []).includes(process.argv[1]) ? 0 : 1)" "$EXTRA"; then
+            if node -e "const j=require('./ai-fix-pr.json'); process.exit(((j.extraFiles || []).concat(...(j.group || []).map(g => g.extraFiles || []))).includes(process.argv[1]) ? 0 : 1)" "$EXTRA"; then
               git add -- "$EXTRA"
             fi
           done

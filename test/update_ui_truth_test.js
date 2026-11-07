@@ -127,8 +127,11 @@ describe('the hardcoded release history is gone', () => {
         // up to three reading-quality parts) and keeps its own downscale only as a fallback.
         // Raised from 121_600 (measured 122,424, 2026-11-06): the last pages open are recorded (a feedback sent from Settings says which
         // screen it was about; one MutationObserver on the page elements, +1.2 KB).
+        // Raised from 122_700 (measured 143,081, 2026-11-07): the update policy screens (later / skip / install when idle, rollout
+        // note, update history, per-device features, Wi-Fi only, patch-style download with a measured size). The rules themselves
+        // live in wealthflow-update-policy.js; this file only draws them.
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(122_700);
+        expect(bytes).toBeLessThan(143_500);
     });
 });
 
@@ -359,7 +362,7 @@ describe('an update is claimed, then settled against the code that loaded', () =
             + 'flow reported success on zero downloads')
             .not.toMatch(/await fetch\(src, \{ cache: 'reload' \}\); \} catch \(_\) \{ \}/);
         expect(SRC, 'the download step no longer counts which fetches actually succeeded')
-            .toMatch(/if \(r && r\.ok\) _dl\.fetched \+= 1/);
+            .toMatch(/if \(r && r\.ok\) \{ _dl\.fetched \+= 1/);
     });
 
     it('init settles the claim before anything reads the installed version', () => {

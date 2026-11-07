@@ -25,6 +25,8 @@
  *                            a release mandatory: the brain's own `urgent` is ignored under
  *                            this flag; only an explicit --urgent can force an update.
  *   --urgent                 mark this a security release (adds it to mandatory[])
+ *   --priority N             0-5 how strongly the app offers it (default: derived from the release type)
+ *   --rollout N              0-100 share of devices offered it now (default 100); raise it later by editing version.json
  *   --note "text"            changelog/what's-new text for this version
  *   --push                   git add/commit/push the changed files (Vercel deploys)
  *   --dry                    print what WOULD change; write nothing
@@ -119,6 +121,17 @@ function applyVersion(next) {
     // actual list; fall back to the string when nothing could be derived.
     vj.notes[next] = (RELEASE_NOTES && RELEASE_NOTES.structured) ? RELEASE_NOTES.structured : NOTE;
     if (URGENT) { vj.mandatory = Array.from(new Set([...(vj.mandatory || []), next])); }
+    // Release controls read by wealthflow-update-policy.js. Only written when asked for; the maps keep the last 12 versions.
+    const setControl = (key, raw, lo, hi) => {
+        if (raw === '') return;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < lo || n > hi) die(`--${key} must be a number from ${lo} to ${hi}`);
+        vj[key] = Object.assign({}, vj[key] || {}, { [next]: Math.round(n) });
+        const keep = Object.keys(vj[key]).sort(cmp).slice(-12);
+        vj[key] = Object.fromEntries(keep.map(k => [k, vj[key][k]]));
+    };
+    setControl('priority', val('--priority', ''), 0, 5);
+    setControl('rollout', val('--rollout', ''), 0, 100);
     if (!DRY) fs.writeFileSync(R('version.json'), JSON.stringify(vj, null, 2) + '\n');
     changed.push('version.json'); log('  [INFO] version.json latest + notes' + (URGENT ? ' + mandatory' : ''), '→', next);
     // 2) package.json

@@ -304,7 +304,8 @@ describe('3. the progress bar must measure work, not setTimeout', () => {
 
     it('the download step really fetches the app files', () => {
         expect(steps).toMatch(/_appFileList\(\)/);
-        expect(steps).toMatch(/fetch\(src,\s*\{\s*cache:\s*['"]reload['"]/);
+        // Scripts use no-cache (a 304 for unchanged files, 2026-11-07); the page document still uses reload.
+        expect(steps).toMatch(/fetch\(src,\s*\{\s*cache:[^}]*['"]reload['"]/);
     });
 
     it('derives the ETA from the observed rate rather than a constant', () => {

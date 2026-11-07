@@ -80,6 +80,13 @@ const JOB_MINUTES = {
     'consensus-review.yml': 2,      // three model calls, now in parallel
 };
 
+/**
+ * Jobs that finish inside the billing floor on a SCHEDULED run, so they cost 1 minute, not the workflow's estimate.
+ * autonomous-fix.yml's `gather` job only waits for a burst of feedback on an `issues` event (autonomy/feedback-group.mjs);
+ * on the 6-hourly schedule it computes "no wait" and ends. Issue-triggered runs are not scheduled work and are not projected here.
+ */
+const FLOOR_JOBS = { 'autonomous-fix.yml': 1 };
+
 /** Every workflow file, ordered so output is stable. */
 export function workflowFiles(dir = '.github/workflows') {
     let names = [];
@@ -165,7 +172,8 @@ export function projectSchedule(dir = '.github/workflows') {
         const jobs = jobsIn(text).length || 1;
         const perJob = JOB_MINUTES[name] || 1;
         const runs = crons.reduce((s, c) => s + runsPerMonth(c), 0);
-        rows.push({ file: name, crons, jobs, minutesPerJob: perJob, runs, minutes: Math.round(runs * jobs * perJob) });
+        const floor = Math.min(FLOOR_JOBS[name] || 0, Math.max(0, jobs - 1));
+        rows.push({ file: name, crons, jobs, minutesPerJob: perJob, runs, minutes: Math.round(runs * ((jobs - floor) * perJob + floor)) });
     }
     rows.sort((a, b) => b.minutes - a.minutes);
     const scheduled = rows.reduce((s, r) => s + r.minutes, 0);

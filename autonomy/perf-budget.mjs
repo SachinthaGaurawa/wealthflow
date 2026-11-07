@@ -759,7 +759,7 @@ export const BUDGETS = {
     // 2026-11-04: 2_831_600 -> 2_832_600 for the build id beside the version in Settings > Software update (wealthflow-update-system.js, +1,090 bytes, written by the fix agent for issue #510; measured with it 2,832,517 + ~0.003% headroom).
     // 2026-11-04: 2_832_600 -> 2_834_100 (the feedback screenshot is compressed adaptively so it fits the issue, and the Your Feedback panel no longer shows a score; wealthflow-update-system.js and wealthflow-feedback-ai.js; measured 2,834,025 + ~0.003% headroom).
     // 2026-11-04: 2_834_100 -> 2_842_000 for wealthflow-image-prep.js (any-size feedback screenshot: an issue-sized thumbnail plus up to three reading-quality parts, ~6.7 KB) and the hand-off in wealthflow-update-system.js (measured 2,841,775).
-    totalJsBytes: 2_876_500, // 2026-11-07 (later): raised from 2866500 (measured 2871086) for the card summary strip, year-less double dates and cent-exact reconciliation in wealthflow-statement-parser.js. 2026-11-07: raised from 2862500 (measured 2866252) for card fee wording and the plan table in the statement worker, and in the statement parser: foreign-currency and currency-prefixed amounts, year-less dates, wrapped descriptions, newest-first statements, overdrawn (DR) balances. 2026-11-06 (later): raised from 2861000 (measured 2861094) for the printed Total Payment figure in wealthflow-statement-parser.js. Earlier 2026-11-06: raised from 2857000 (measured 2859244): the page trail in the feedback diagnostics (wealthflow-update-system.js) and the Fixed mark in Your Feedback (wealthflow-feedback-ai.js). 2026-11-04: raised from 2842000 for wealthflow-crash-report.js (build lane); measured 2849493
+    totalJsBytes: 2_902_500, // 2026-11-07 (later): raised from 2899500 (measured 2901966, +2,466) for the Wi-Fi-only note, the standby report and the history/feature wording polish. // 2026-11-07: raised from 2866500 (measured 2898438, +31,938) for the update policy: wealthflow-update-policy.js (new, pure rules for priority, later/skip/idle, staged rollout, catch-up notes, features) and its screens in wealthflow-update-system.js (choices, update history, features, patch-style download). // 2026-11-07: raised from 2862500 (measured 2866252) for card fee wording and the plan table in the statement worker, and in the statement parser: foreign-currency and currency-prefixed amounts, year-less dates, wrapped descriptions, newest-first statements, overdrawn (DR) balances. 2026-11-06 (later): raised from 2861000 (measured 2861094) for the printed Total Payment figure in wealthflow-statement-parser.js. Earlier 2026-11-06: raised from 2857000 (measured 2859244): the page trail in the feedback diagnostics (wealthflow-update-system.js) and the Fixed mark in Your Feedback (wealthflow-feedback-ai.js). 2026-11-04: raised from 2842000 for wealthflow-crash-report.js (build lane); measured 2849493
     // 2026-10-03 (the bank can be corrected): 223,000 -> 225_000 (wealthflow-ai-v4.js, measured 223,296): it now remembers what the owner said about a card or account number (WFBankMemory) and hands the review screen the context it needs to turn a correction into an answer.
     // 2026-10-04: 232,000 -> 233_000 (wealthflow-ai-v4.js, measured 232,325): the "Add missing rows" dialog and the re-run of the same upload with the owner's word.
     // 2026-10-10: 233,000 -> 234,000 (wealthflow-ai-v4.js, measured 233,539): bill vision now fills the exact date and preserves the saved cycle.
@@ -866,7 +866,7 @@ export const BUDGETS = {
     // 2026-11-03: 94 -> 95 for wealthflow-diagnosis.js (the update-system diagnosis; see totalJsBytes).
     // 2026-11-03: 95 -> 96 for wealthflow-migrations.js (the data-migration runner; see totalJsBytes).
     // 2026-11-04: 96 -> 97 for wealthflow-image-prep.js.
-    moduleCount: 98, // 2026-11-04: raised from 97 for wealthflow-crash-report.js (build lane); measured 98
+    moduleCount: 99, // 2026-11-07: raised from 98 for wealthflow-update-policy.js; measured 99. // 2026-11-04: raised from 97 for wealthflow-crash-report.js (build lane); measured 98
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -944,7 +944,7 @@ export const BUDGETS = {
     // 2026-11-03: 86 -> 87 for wealthflow-diagnosis.js — a plain deferred script, so renderBlockingScripts below is unchanged at 2.
     // 2026-11-03: 87 -> 88 for wealthflow-migrations.js - a plain deferred script, so renderBlockingScripts below is unchanged at 2.
     // 2026-11-04: 88 -> 89 for wealthflow-image-prep.js - a plain deferred script, so renderBlockingScripts below is unchanged at 2.
-    scriptTags: 90, // 2026-11-04: raised from 89 for wealthflow-crash-report.js (build lane); measured 90
+    scriptTags: 91, // 2026-11-07: raised from 90 for wealthflow-update-policy.js; measured 91. // 2026-11-04: raised from 89 for wealthflow-crash-report.js (build lane); measured 90
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

@@ -170,6 +170,14 @@
         if (c > 0) return link('offer', 'warn', 'Running ' + run + ' but the server serves ' + newest + ': this device is ahead of the deploy (a rollback, or a stale deploy).', 'Check Vercel production deployments and the health watchdog history.');
         var seen = ev.offerSeen && ev.offerSeen.target === newest ? ev.offerSeen.at : null;
         var age = seen != null ? ev.now - seen : null;
+        // Postponing or skipping is the person's right (as on Android and iOS), not a fault. Only a choice for THIS version counts,
+        // a "later" only until it runs out, and a required update cannot be skipped (wealthflow-update-policy.js).
+        var ch = ev.updateChoice;
+        if (ch && ch.version === newest) {
+            if (ch.action === 'skip') return link('offer', 'ok', 'Update ' + newest + ' is available; you chose to skip it. Running ' + run + '.');
+            if (ch.action === 'later' && ev.now < Number(ch.until || 0)) return link('offer', 'ok', 'Update ' + newest + ' is available; you asked to be reminded later. Running ' + run + '.');
+            if (ch.action === 'idle') return link('offer', 'ok', 'Update ' + newest + ' is set to install when you are not using the app. Running ' + run + '.');
+        }
         if (age != null && age > LIMITS.offerMs) return link('offer', 'warn', 'Update ' + newest + ' has been available for ' + ago(age) + ' and is not installed.', 'Open Settings > Software Update and tap Update now (updates are always your own choice).');
         return link('offer', 'ok', 'Update ' + newest + ' is available' + (age != null ? ' (offered ' + ago(age) + ' ago)' : '') + '; running ' + run + '.');
     }
@@ -301,7 +309,7 @@
             popupSeen: readRaw('wf_update_popup_seen'),
             feedback: feedbackEvidence(), feedbackStatusDown: down,
             crashes: crashEvidence(run), statementReview: statementReview,
-            offerSeen: seen.offer || null, waitingSince: seen.waitingAt || null,
+            offerSeen: seen.offer || null, waitingSince: seen.waitingAt || null, updateChoice: read('wf_update_choice', null),
             sw: _sw
         };
     }
@@ -402,12 +410,53 @@
             if (r[0].ok && r[0].sha) { if (!_bootSha) _bootSha = r[0].sha; seen.sha = r[0].sha; }
             write(K_SEEN, seen);
             write(K_EVIDENCE, _server);
+            standby();
             return _server;
         }).catch(function () { return null; }).then(function (x) { _refreshing = null; return x; });
         return _refreshing;
     }
 
-    W.WFDiagnosis = { collect: collect, refresh: refresh, judge: judge, noteProblem: noteProblem, LINKS: LINKS, LIMITS: LIMITS, VERSION: '1.0' };
+
+    /* ── standby: a device that cannot update says so by itself (owner, 2026-11-07: "always stand by")
+     *    The chain above only spoke when someone copied it. The one break that is the device's own and that nobody else can see is an
+     *    update that did not land, so that, and only that, is filed: one report per target and running build per day, at most two a day,
+     *    nothing offline, through the same endpoint as a crash report. It carries two version numbers and no free text. Switch off with
+     *    localStorage "wf_diag_standby_off" = "1". */
+    var K_STANDBY = 'wf_diag_standby', STANDBY_OFF = 'wf_diag_standby_off', STANDBY_PER_DAY = 2, DAY_MS = 24 * H;
+    function standbyPayload(ev) {
+        var f = ev && ev.failedTarget, run = ev && ev.running;
+        if (!f || !ver(f.target) || !ver(run) || cmp(run, f.target) >= 0) return null;
+        var fp = 'install-failed:' + f.target + ':' + run;
+        return {
+            fp: fp,
+            body: {
+                text: '[Auto diagnosis] The update to ' + f.target + ' did not land on a device that is still running ' + run + '.',
+                type: 'bug', source: 'auto-diagnosis',
+                diagnostics: { activePage: '', online: true, errors: [], updateSystem: { firstBreak: 'install', target: f.target, running: run, claim: ev.claim ? { fetched: ev.claim.fetched || 0, total: ev.claim.total || 0 } : null } }
+            }
+        };
+    }
+    function standbyAllowed(fp, now) {
+        try { if (W.localStorage && W.localStorage.getItem(STANDBY_OFF) === '1') return false; } catch (_) {}
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+        var seen = read(K_STANDBY, {}) || {};
+        var recent = Object.keys(seen).filter(function (k) { return now - seen[k] < DAY_MS; });
+        if (seen[fp] && now - seen[fp] < DAY_MS) return false;
+        return recent.length < STANDBY_PER_DAY;
+    }
+    function standby() {
+        try {
+            var p = standbyPayload(deviceEvidence());
+            if (!p || typeof W.fetch !== 'function') return false;
+            var now = Date.now();
+            if (!standbyAllowed(p.fp, now)) return false;
+            var seen = read(K_STANDBY, {}) || {}; seen[p.fp] = now; write(K_STANDBY, seen);
+            W.fetch('/api/feedback-triage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p.body), keepalive: true }).catch(function () {});
+            return true;
+        } catch (_) { return false; }
+    }
+
+    W.WFDiagnosis = { collect: collect, refresh: refresh, judge: judge, standby: standby, standbyPayload: standbyPayload, standbyAllowed: standbyAllowed, noteProblem: noteProblem, LINKS: LINKS, LIMITS: LIMITS, VERSION: '1.0' };
 
     /* evidence is gathered a few seconds after the app opens and again every 15 minutes while it is in front */
     try {
