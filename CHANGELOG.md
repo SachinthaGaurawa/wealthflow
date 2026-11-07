@@ -1,5 +1,18 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.65 — 2026-11-07
+
+**What changed for you**
+
+- Card statements: plans take the statement's plan table, fees are Service Fees, CR flag leaves the description (#563)
+
+**Under the hood**
+
+- Operating charter for every model, evidence ledger in agent PRs, charter probe (#564)
+- Screenshot reader: GitHub Models is retired; probe measures real providers (#562)
+- Vision probe: prove the screenshot reader reads a picture (#561)
+- Auto-merge waits for the test suite on the exact head commit (#560)
+
 ## v7.69.64 — 2026-11-07
 
 **What changed for you**
