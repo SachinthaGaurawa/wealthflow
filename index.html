@@ -23530,7 +23530,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     host.__wfDueWired = true;
                     host.addEventListener('click', ev => { const b = ev.target && ev.target.closest ? ev.target.closest('[data-due-paid]') : null; if (b) markCardDuePaid(b.getAttribute('data-due-paid')); });
                 }
-            } catch (_) { host.innerHTML = ''; }
+            } catch (e) { host.innerHTML = ''; try { console.warn('[CC due panel]', e && e.message); } catch (_) {} }
         }
         function markCardDuePaid(id) {
             const arr = DB.get('cardDues') || [], i = arr.findIndex(x => x && x.id === id);

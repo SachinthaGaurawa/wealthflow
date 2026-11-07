@@ -222,15 +222,15 @@
                 if (d.paid > 0) note.push(fmt(d.paid) + ' paid since the statement; ' + fmt(d.short) + ' still to go.');
                 if (d.closing != null && d.closing > 0) note.push('Statement balance ' + fmt(d.closing) + '. Paying only the minimum leaves the rest to carry interest.');
             }
-            return '<article class="wf-due-card is-' + esc(d.state) + '" data-due-id="' + esc(d.id) + '">'
+            return '<article class="wf-due-card is-' + esc(d.state) + '" data-due-id="' + esc(d.id) + '" aria-label="' + esc(d.label + ': minimum payment ' + fmt(d.minimum) + ', ' + (done ? 'was due ' : 'before ') + longDate(d.dueDate) + ', ' + chip) + '">'
                 + '<div class="wf-due-top"><span class="wf-due-who">' + esc(d.label) + '</span><span class="wf-due-chip">' + esc(chip) + '</span></div>'
                 + '<div class="wf-due-main"><span class="wf-due-lbl">' + (done ? 'Minimum payment' : 'Pay at least') + '</span> <span class="wf-due-amt">' + esc(fmt(d.minimum)) + '</span></div>'
                 + '<div class="wf-due-when">' + (done ? 'was due ' : 'before ') + esc(longDate(d.dueDate)) + '</div>'
                 + (note.length ? '<div class="wf-due-note">' + esc(note.join(' ')) + '</div>' : '')
-                + (done ? '' : '<div class="wf-due-act"><button type="button" class="btn btn-sm" data-due-paid="' + esc(d.id) + '">I have paid this</button></div>')
+                + (done ? '' : '<div class="wf-due-act"><button type="button" class="btn btn-sm" data-due-paid="' + esc(d.id) + '" aria-label="' + esc('I have paid the minimum on ' + d.label) + '">I have paid this</button></div>')
                 + '</article>';
         }).join('');
-        return '<section class="wf-due" aria-label="Minimum payment due"><div class="wf-due-h"><span class="wf-due-title">Minimum payment due</span><span class="wf-due-sub">The least each card statement asks for, and the date the bank must have it by. These are not charges.</span></div><div class="wf-due-list">' + cards + '</div></section>';
+        return '<section class="wf-due" role="region" aria-labelledby="wfDueTitle"><div class="wf-due-h"><h3 class="wf-due-title" id="wfDueTitle">Minimum payment due</h3><span class="wf-due-sub">The least each card statement asks for, and the date the bank must have it by. These are not charges.</span></div><div class="wf-due-list">' + cards + '</div></section>';
     }
 
     var API = { build: build, render: render, wire: wire, reveal: reveal, dues: dues, renderDues: renderDues, initials: initials, keyParts: function (key) { var i = String(key).indexOf('|'); return i < 0 ? { bankKey: String(key), last4: '' } : { bankKey: key.slice(0, i), last4: key.slice(i + 1) }; } };
