@@ -217,6 +217,12 @@
         return n.replace(/\s{2,}/g, ' ').trim();
     }
 
+    // "USD 12.50  3,750.00": the foreign amount is not an account column; the amount in the account's currency that follows it is the block
+    function withoutForeign(block) {
+        var kept = block.filter(function (t, i) { return !(t.foreign && block.slice(i + 1).some(function (u) { return !u.foreign; })); });
+        return kept.length ? kept : block;
+    }
+
     function hasTextLayer(text) {
         if (!text) return false;
         var m = String(text).match(DATE_ANY);
@@ -274,7 +280,7 @@
         var block = [tokens[tokens.length - 1]];
         for (var k = tokens.length - 2; k >= 0 && block.length < MAX_BLOCK; k--) {
             var gap = text.slice(tokens[k].end, block[0].start);
-            if (!/^[\s()|,;:]*(?:(?:CR|DR)\b)?[\s()|,;:]*-?$/i.test(gap)) break;
+            if (!/^[\s()|,;:]*(?:(?:CR|DR)\b)?[\s()|,;:]*(?:(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)[\s()|,;:]*)?-?$/i.test(gap)) break;
             block.unshift(tokens[k]);
         }
         return block;
@@ -365,13 +371,55 @@
         return out;
     }
 
+    // a row dated "02 Oct" takes the year of the statement period (the year before it for a month after the period's end month); with no period it is left alone
+    var YEARLESS = new RegExp('^(\\s*)(\\d{1,2})\\s+(' + MON + ')\\b(?!\\s+\\d{2,4}(?:\\s|$))', 'i');
+    var PERIOD_DATE = new RegExp('(\\d{1,2})[\\s\\/\\-]+(' + MON + '|\\d{1,2})[\\s\\/\\-,]+(\\d{4})', 'ig');
+    function addMissingYears(src) {
+        var lines = src.split(/\r?\n/), end = null, k, m, any = false;
+        for (k = 0; k < lines.length; k++) if (YEARLESS.test(lines[k])) { any = true; break; }
+        if (!any) return src;
+        for (k = 0; k < lines.length && !end; k++) {
+            if (!/period|statement\s+date|from\b/i.test(lines[k]) || YEARLESS.test(lines[k])) continue;
+            PERIOD_DATE.lastIndex = 0;
+            while ((m = PERIOD_DATE.exec(lines[k])) !== null) {
+                var mon = /^\d+$/.test(m[2]) ? Number(m[2]) : MON.split('|').indexOf(m[2].toLowerCase()) + 1;
+                if (mon >= 1 && mon <= 12) end = { month: mon, year: Number(m[3]) };
+            }
+        }
+        if (!end) return src;
+        return lines.map(function (ln) {
+            var y = YEARLESS.exec(ln);
+            if (!y) return ln;
+            var mon = MON.split('|').indexOf(y[3].toLowerCase()) + 1;
+            return y[1] + y[2] + ' ' + y[3] + ' ' + (mon > end.month ? end.year - 1 : end.year) + ln.slice(y[0].length);
+        }).join('\n');
+    }
+
+    // newest-first statement: when the dates only go down and the reading does not reconcile, read the lines bottom to top and keep that if it reconciles or proves more rows by balance
+    function provenByBalance(rows) { var n = 0; for (var i = 0; i < rows.length; i++) if (rows[i].directionSource === 'balance' && rows[i].balanceVerified) n++; return n; }
+    function newestFirst(rows) {
+        var down = 0, up = 0;
+        for (var i = 1; i < rows.length; i++) { if (rows[i].date < rows[i - 1].date) down++; else if (rows[i].date > rows[i - 1].date) up++; }
+        return down >= 2 && up === 0;
+    }
     function parseStatement(text, opts) {
+        var first = parseOnce(text, opts);
+        if (first.reconciliation && first.reconciliation.ok === true) return first;
+        if (!newestFirst(first.rows)) return first;
+        var second = parseOnce(String(text || '').split(/\r?\n/).reverse().join('\n'), opts);
+        var fits = second.reconciliation && second.reconciliation.ok === true;
+        return fits || provenByBalance(second.rows) > provenByBalance(first.rows) ? second : first;
+    }
+
+    function parseOnce(text, opts) {
         opts = opts || {};
-        var src = String(text || '');
+        var src = addMissingYears(String(text || ''));
         var order = detectDateOrder(src);
         var lines = src.split(/\r?\n/);
         var cands = [];
-        var lastTx = null, owed = '';
+        var lastTx = null, owed = '', wrapHead = '', cardDoc = CARD_WORDS_RE.test(src);
+        // a bank balance printed "9,250.00 DR" is overdrawn; on a card statement DR is what is owed
+        function signed(tok) { return !cardDoc && tok.marker === 'DR' ? -Math.abs(tok.v) : tok.sv; }
         var invalidDates = 0, balanceMismatches = 0;
 
         // pass 1 — tokenise candidate rows
@@ -407,6 +455,9 @@
             }
 
             var d = dateAt(line);
+            // a description that wrapped: a dated line with no money, then the line that carries the money
+            if (!d && wrapHead && !NOISE_RE.test(line) && moneyTokens(line).length) { line = wrapHead + ' ' + line; d = dateAt(line); }
+            wrapHead = '';
             if (!d) {
                 // a cell that wrapped: the cheque's number on a line of its own. Under a row that names a cheque but prints no number it is that row's; a labelled one over its row is the next row's.
                 var labelled = CHEQUE_LINE_RE.exec(line), bare = labelled ? null : BARE_NO_LINE_RE.exec(line);
@@ -425,7 +476,7 @@
             if (second && second.start <= 2) rest = rest.slice(second.end);
 
             var tokens = moneyTokens(rest);
-            if (!tokens.length) continue;
+            if (!tokens.length) { if (/[A-Za-z]{3}/.test(rest)) wrapHead = line; continue; }
             var normalizedDate = normDate(d.text, order);
             if (!normalizedDate) { invalidDates++; continue; }
 
@@ -433,7 +484,7 @@
                 line: line,
                 date: normalizedDate,
                 rest: rest,
-                block: trailingBlock(tokens, rest),
+                block: withoutForeign(trailingBlock(tokens, rest)),
                 opening: isOpening,
                 closing: isClosing
             };
@@ -458,10 +509,10 @@
             var block = c.block;
             var lastTok = block[block.length - 1];
 
-            if (c.opening) { prevBal = lastTok.sv; if (opening === null) opening = lastTok.sv; endSec(); sec = { opening: lastTok.sv, closing: null, last: null, n: 0, credits: 0, debits: 0, acct: acct }; continue; }
-            if (c.closing) { closing = lastTok.sv; if (sec) sec.closing = lastTok.sv; continue; }
+            if (c.opening) { prevBal = signed(lastTok); if (opening === null) opening = signed(lastTok); endSec(); sec = { opening: signed(lastTok), closing: null, last: null, n: 0, credits: 0, debits: 0, acct: acct }; continue; }
+            if (c.closing) { closing = signed(lastTok); if (sec) sec.closing = signed(lastTok); continue; }
 
-            var balance = layout.balanceColumn ? lastTok.sv : null;
+            var balance = layout.balanceColumn ? signed(lastTok) : null;
             var amountToks = layout.balanceColumn ? block.slice(0, -1) : block.slice();
 
             // Which money column is the amount, and what that column implies.
@@ -509,7 +560,7 @@
             }
             if (!direction) {
                 var marker = (amtTok && (amtTok.marker || amtTok.pre)) || (lastTok && (lastTok.marker || lastTok.pre)) || '';
-                if (marker) { direction = marker === 'CR' ? 'credit' : 'debit'; source = 'marker'; narration = narration.replace(/\s+(?:CR|DR)$/i, ''); }      // a "CR" printed before the amount is the flag, not part of the description
+                if (marker) { direction = marker === 'CR' ? 'credit' : 'debit'; source = 'marker'; narration = narration.replace(/\s+(?:CR|DR)$/i, ''); }
             }
             if (!direction && colDir) { direction = colDir; source = 'column'; }
             if (!direction && amtTok && amtTok.neg) { direction = 'credit'; source = 'sign'; }

@@ -407,7 +407,7 @@ export function fallbackDecision(row, allocations = {}) {
     if (!proven && !byWords) return null;
     const autoDecided = proven ? 'rules-fallback' : 'rules-words';
     const card = isCreditCardRow(row, allocations);
-    if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? (/\b(?:fees?|charges?|tax)\b/i.test(String(row.narration || row.description || '')) ? 'Card Fee' : namedCardCategory(expenseCategoryFor(row))) : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
+    if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? (/\b(?:fees?|charges?|tax|interest)\b/i.test(String(row.narration || row.description || '')) ? 'Card Fee' : namedCardCategory(expenseCategoryFor(row))) : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
     if (row.direction === 'credit') return { module: card ? 'ccPayments' : 'incomeRecv', category: card ? 'Card Payment' : (incomeCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
     return null;
 }
@@ -1062,8 +1062,7 @@ export async function repairCardInstallments({ db, uid, now = Date.now(), log = 
     return result;
 }
 
-/* A CARD FEE THE STATEMENT FILED AS A "PURCHASE": before the type followed the category, "Interest" and "Annual Fee" lines sat on the Card One-Time tab typed Purchase. The type is what the tab shows, so it is
- * set to Service Fee, on the statement's own Card Fee rows only (nothing the owner typed, nothing with another category). Only the label changes; the amount and everything else stay. */
+/* Card fee rows the statement filed as "Purchase" are retyped Service Fee (the label only; the statement's own Card Fee rows). */
 export async function healCardFeeType({ db, uid, now = Date.now(), log = console.info }) {
     const userRef = db.collection('users').doc(uid);
     const result = await db.runTransaction(async tx => {
@@ -2435,7 +2434,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             for (const word of saved.words) who.names.add(word);
             for (const letter of saved.initials) who.initials.add(letter);
             Object.defineProperty(allocations, 'ownerWords', { value: who, enumerable: false });
-            /* A card's instalment line names no shop and no total; the table the statement prints for its plans does (statement-plan-table.mjs). A line that belongs to exactly one table row carries it. */
+            // an instalment line names no shop and no total; the statement's plan table does (statement-plan-table.mjs)
             const planTable = readPlanTable(text);
             if (planTable.length) for (const row of parsed.rows) {
                 if (!row || row.direction !== 'debit' || !isCreditCardRow(row, allocations)) continue;
