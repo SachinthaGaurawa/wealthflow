@@ -421,7 +421,7 @@ async function main() {
             if (lane.applies) log(`#${number} goes to the layout lane (${lane.why})`);
             // A NEW idea is talked through by several AIs first (user-friendliness first); their brief joins the request, and
             // the discussion is posted once on the issue. It never blocks: the owner's request is the decision.
-            let laneBody = shot.body + retryBrief;
+            let laneBody = shot.body;
             if (!lane.applies && conceptBoardFor({ title: issue.title, body: shot.body }, kind)) {
                 try {
                     const prior = (await Q.issueComments(number).catch(() => [])).find((c) => String(c.body || '').includes(BOARD_MARKER));
@@ -430,12 +430,13 @@ async function main() {
                         board = await runConceptBoard({ issueText: `${issue.title}\n\n${shot.body}`, log });
                         if (board.voters && !DRY) await Q.comment(number, boardComment(board)).catch(() => {});
                     }
-                    laneBody = shot.body + retryBrief + briefFor(board);
+                    laneBody = shot.body + briefFor(board);
                 } catch (e) { log(`#${number} concept board skipped (${e.message})`); }
             }
             // Something NEW (an integration, a new calculator or page) has no existing module to edit, so it goes to the
             // build lane first; and a feature the one-file swarm could not place falls through to it as well.
             const build = buildLaneFor({ title: issue.title, body: shot.body });
+            laneBody += retryBrief;   // why an earlier fix failed in CI, if one did (autonomy/pr-recovery.mjs)
             const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, repoDir: REPO_DIR, log });
             if (lane.applies) {
                 result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body + retryBrief }, repoDir: REPO_DIR, log });
