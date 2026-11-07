@@ -16,11 +16,14 @@ name: Auto-merge safe changes (free)
 #   • it stays inside the blast-radius cap;
 #   • it ships with a test.
 #
-# Nothing here can bypass a gate. Branch protection still requires the test
-# suite, the consensus board, and the OPA policy gate to be green, and GitHub's
-# auto-merge only fires once every required check passes. `auto-safe` grants
-# permission to merge WITHOUT WAITING FOR A HUMAN — it does not grant permission
-# to merge while red.
+# Nothing here can bypass a gate. This repository has NO branch-protection rules
+# (the release bot and merchant-sync push to main directly, which required checks
+# would reject), so GitHub's auto-merge would merge a clean PR at once, before any
+# test finished (PR #558 merged 31 s after it opened). The `auto-merge` job below
+# therefore waits for `Tests + fuzz (shadow harness)` to pass on the exact head
+# commit before it enables anything, and does nothing if that check fails, never
+# appears or times out. `auto-safe` grants permission to merge WITHOUT WAITING FOR
+# A HUMAN — it does not grant permission to merge while red.
 #
 # SECURITY: `pull_request_target` runs in the context of the base branch, so a
 # fork PR cannot rewrite this logic to label itself. This workflow never checks
@@ -249,8 +252,36 @@ jobs:
     # by hand.
     if: needs.classify.outputs.safe == 'yes' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
-      - name: Enable auto-merge (GitHub merges once every required check is green)
+      - name: Wait for the test suite on this exact commit (fails closed)
+        id: tests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          # No branch protection means GitHub would merge at once. The newest result of the suite on this
+          # commit decides: success enables auto-merge; failure, a missing check (a bot's run waiting for
+          # approval) or 30 minutes without an answer leaves the PR for the driver. A newer push cancels
+          # this run (concurrency group above), so a stale commit is never merged.
+          for i in $(seq 1 90); do
+            R=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+                  --jq '[.check_runs[] | select(.name == "Tests + fuzz (shadow harness)")] | sort_by(.started_at) | last | "\(.status // "none") \(.conclusion // "")"' 2>/dev/null || echo "none ")
+            echo "attempt $i: $R"
+            case "$R" in
+              "completed success") echo "ok=yes" >> "$GITHUB_OUTPUT"; exit 0 ;;
+              "completed "*)       echo "ok=no" >> "$GITHUB_OUTPUT"; echo "The suite did not pass ($R); not enabling auto-merge."; exit 0 ;;
+            esac
+            sleep 20
+          done
+          echo "ok=no" >> "$GITHUB_OUTPUT"
+          echo "No answer from the test suite in 30 minutes; not enabling auto-merge."
+
+      - name: Enable auto-merge (only after the suite passed on this commit)
+        if: steps.tests.outputs.ok == 'yes'
         # This repository has no branch-protection rules on `main`, and GitHub
         # refuses to enable auto-merge without them ("Protected branch rules not
         # configured for this branch"). That is a property of the repository, not
