@@ -136,6 +136,27 @@ describe('judge: each way the chain has really broken', () => {
         expect(link(fresh, 'offer').state).toBe('ok');
     });
 
+    it('an update the person postponed, skipped or set for later is a choice, not a fault', () => {
+        const newer = { version: { ok: true, sha: 'f00', version: '7.70.0', env: 'production' }, manifest: { ok: true, latest: '7.70.0', problem: null } };
+        const base = { server: goodServer(newer), offerSeen: { target: '7.70.0', at: NOW - 72 * H } };
+        expect(link(D.judge(healthy({ ...base, updateChoice: { version: '7.70.0', action: 'skip' } })), 'offer').state).toBe('ok');
+        expect(link(D.judge(healthy({ ...base, updateChoice: { version: '7.70.0', action: 'later', until: NOW + H } })), 'offer').state).toBe('ok');
+        expect(link(D.judge(healthy({ ...base, updateChoice: { version: '7.70.0', action: 'idle' } })), 'offer').state).toBe('ok');
+        // a postponement that ran out, or one made for another version, no longer excuses it
+        expect(link(D.judge(healthy({ ...base, updateChoice: { version: '7.70.0', action: 'later', until: NOW - H } })), 'offer').state).toBe('warn');
+        expect(link(D.judge(healthy({ ...base, updateChoice: { version: '7.69.9', action: 'skip' } })), 'offer').state).toBe('warn');
+    });
+
+    it('standby: a device whose update did not land reports it once, with two version numbers and no free text', () => {
+        const ev = healthy({ running: '7.69.39', failedTarget: { target: '7.70.0', at: NOW - H }, claim: null });
+        const p = D.standbyPayload(ev);
+        expect(p.body.source).toBe('auto-diagnosis');
+        expect(p.body.text).toBe('[Auto diagnosis] The update to 7.70.0 did not land on a device that is still running 7.69.39.');
+        expect(p.fp).toBe('install-failed:7.70.0:7.69.39');
+        expect(D.standbyPayload(healthy())).toBe(null);                                              // nothing failed: nothing said
+        expect(D.standbyPayload(healthy({ running: '7.70.0', failedTarget: { target: '7.70.0' } }))).toBe(null);  // it landed after all
+    });
+
     it('a device AHEAD of the server (rollback / stale deploy) is named', () => {
         const r = D.judge(healthy({ running: '7.69.40' }));
         expect(link(r, 'offer').state).toBe('warn');

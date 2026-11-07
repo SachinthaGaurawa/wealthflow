@@ -17,6 +17,17 @@
     const LS_ANOMALY = 'wf_version_anomaly';  // stored version was ahead of the running code — kept as evidence
     const LS_AUTOSEC = 'wf_auto_security';    // user opted in to auto-install security updates
     const LS_FAILED_TARGET = 'wf_update_failed_target';  // a target that just demonstrably failed to land
+    // What the person decided about updates. Every one of these is theirs to change in Settings > Software update.
+    const LS_CHOICE = 'wf_update_choice';        // {version, action: later|skip|idle, until?}: applies to that one version only
+    const LS_FIRST_SEEN = 'wf_update_first_seen'; // {version, at}: when this device first heard of the version on offer
+    const LS_BUCKET = 'wf_device_bucket';        // 0 to 99, random once: where this device sits in a staged rollout
+    const LS_EARLY = 'wf_early_access';          // '1': this device gets releases first
+    const LS_WIFI_ONLY = 'wf_update_wifi_only';  // '1': automatic installs wait for a connection that is not metered
+    const LS_HISTORY = 'wf_update_history';      // last 30 things that happened to updates on this device
+    const LS_EULA_OK = 'wf_update_eula_ok';      // 'major.minor' whose agreement the person accepted
+    const LS_FEATURES = 'wf_feature_overrides';  // {featureId: true|false}: the person's own switches
+    // Absent only if the file failed to load; every use below then falls back to the old behaviour.
+    const P = window.WF_UPDATE_POLICY || null;
     // An announced version can outrun its own code by a whole deploy cycle —
     // that gap used to retry the same doomed target every boot. 6h breaks the
     // loop, short enough to retry once the real deploy lands.
@@ -168,6 +179,11 @@
             // manifest leaves a shipped version with no notes to show.
             notes: Object.assign({}, a.notes || {}, b.notes || {}),
             securitySchedule: b.securitySchedule || a.securitySchedule,
+            // Release controls (see wealthflow-update-policy.js). Each is optional; absent means "behave as before".
+            priority: Object.assign({}, a.priority || {}, b.priority || {}),
+            rollout: Object.assign({}, a.rollout || {}, b.rollout || {}),
+            halted: (a.halted || []).concat(b.halted || []).filter((v, i, arr) => _validVersion(v) && arr.indexOf(v) === i),
+            features: Object.assign({}, a.features || {}, b.features || {}),
         };
     }
 
@@ -279,7 +295,11 @@
             localStorage.setItem(LS_CLAIM, JSON.stringify({
                 target: target, from: CURRENT_VERSION, at: Date.now(),
                 fetched: (evidence && evidence.fetched) || 0,
-                total: (evidence && evidence.total) || 0
+                total: (evidence && evidence.total) || 0,
+                backup: (evidence && evidence.backup) || '',
+                measured: (evidence && evidence.measured) || 0,
+                changed: (evidence && evidence.changed) || 0,
+                kb: evidence && evidence.measured ? Math.round((evidence.bytes || 0) / 1024) : null
             }));
         } catch (_) {}
     }
@@ -308,7 +328,8 @@
             _markInstalled(CURRENT_VERSION);
             try { localStorage.removeItem(LS_FAILED_TARGET); } catch (_) {}
             try { console.log('[WFUpdate] @info@ update to ' + c.target + ' landed — running ' + CURRENT_VERSION); } catch (_) {}
-            return { ok: true, target: c.target, running: CURRENT_VERSION };
+            _record(c.auto ? 'auto' : 'installed', c.target, { from: c.from, backup: c.backup || undefined, files: c.measured || undefined, changed: c.measured ? c.changed : undefined, kb: c.measured ? c.kb : undefined });
+            return { ok: true, target: c.target, running: CURRENT_VERSION, from: c.from };
         }
 
         // The claim did not come true. Say so, and do NOT write the target into
@@ -319,15 +340,61 @@
             console.error('[WFUpdate] @info@ update to ' + c.target + ' did NOT land — still running '
                 + CURRENT_VERSION + ' (' + c.fetched + '/' + c.total + ' files fetched)');
         } catch (_) {}
+        _record('failed', c.target, { from: c.from, files: c.total || undefined });
         return { ok: false, target: c.target, running: CURRENT_VERSION, fetched: c.fetched, total: c.total };
     }
 
     // The version available to move to: the newer of version.json and
     // system/manifest, else the running build. See _mergeManifests.
     function _latestVersion() {
-        if (_manifest && _manifest.latest) return _manifest.latest;
+        // A halted version is offered to nobody, the way a halted Play rollout reaches no further users.
+        if (_manifest && _manifest.latest) return (P && P.isHalted(_manifest.latest, _manifest)) ? CURRENT_VERSION : _manifest.latest;
         return CURRENT_VERSION;
     }
+
+    // ── What the person decided, and where this device sits in a staged rollout ──
+    function _lsJson(key, fallback) { try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v == null ? fallback : v; } catch (_) { return fallback; } }
+    function _lsPut(key, value) { try { localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value)); } catch (_) {} }
+    function _deviceBucket() {
+        let stored = null;
+        try { stored = localStorage.getItem(LS_BUCKET); } catch (_) {}
+        const b = P.bucketOf(stored, (() => { try { return crypto.getRandomValues(new Uint32Array(1))[0] % 100; } catch (_) { return Math.floor(Math.random() * 100); } })());
+        if (String(b) !== stored) _lsPut(LS_BUCKET, String(b));
+        return b;
+    }
+    function _earlyOn() { try { return localStorage.getItem(LS_EARLY) === '1'; } catch (_) { return false; } }
+    function _wifiOnlyOn() { try { return localStorage.getItem(LS_WIFI_ONLY) === '1'; } catch (_) { return false; } }
+    function _history() { const h = _lsJson(LS_HISTORY, []); return Array.isArray(h) ? h : []; }
+    function _record(kind, version, extra) {
+        if (!P) return;
+        _lsPut(LS_HISTORY, P.pushHistory(_history(), Object.assign({ at: Date.now(), kind: kind, version: version }, extra || {}), 30));
+    }
+    /** The facts the policy decides on, for the version on offer. null when no policy is loaded (old behaviour). */
+    function _policyState() {
+        if (!P || !_manifest) return null;
+        const v = _latestVersion();
+        const priority = P.priorityOf(v, _manifest, _updateType(v));
+        const first = _lsJson(LS_FIRST_SEEN, null);
+        if (_updateAvailable() && (!first || first.version !== v)) _lsPut(LS_FIRST_SEEN, { version: v, at: Date.now() });
+        return {
+            version: v, priority: priority, stance: P.stanceOf(priority), manifest: _manifest, now: Date.now(),
+            available: _updateAvailable(), choice: _lsJson(LS_CHOICE, null),
+            inRollout: P.inRollout(v, _manifest, _deviceBucket(), _earlyOn()),
+            staleDays: P.staleDays(first && first.version === v ? first : { version: v, at: Date.now() }, v, Date.now())
+        };
+    }
+    /** Should the dashboard pill and the Settings badge show? Settings itself always shows what is available. */
+    function _announce() {
+        const s = _policyState();
+        return s ? P.announce(s).show : _updateAvailable();
+    }
+    /** The person's live choice for the version on offer, or null. */
+    function _activeChoice() {
+        const s = _policyState();
+        return s ? P.activeChoice(s.choice, s.version, s.priority, s.now) : null;
+    }
+    /** A waiting worker is the same news as an available version: it follows the same choice. */
+    function _pillWanted() { return _announce() || (!!_swWaiting && !(_activeChoice() && _activeChoice().action !== 'idle')); }
 
     // v7.35.0 — release notes come in TWO shapes: a rich object
     // { headline, date, sections:[{title, items:[...]}] } (BUILTIN_NOTES) OR a plain
@@ -368,6 +435,14 @@
         return null;
     }
     function _notesFor(v) { return _normNotes(_rawNotesFor(v)); }
+    /** One list for a device that is several releases behind: nothing the person skipped past is lost from view. */
+    function _catchUp(from, to) {
+        if (!P || !_manifest || !_manifest.notes || !from) return null;
+        const list = P.versionsBetween(_manifest.notes, from, to).map(v => ({ version: v, notes: _notesFor(v) }));
+        const m = P.mergeNotes(list);
+        return m && m.count > 1 ? m : null;
+    }
+
     function _isMandatory(v) {
         if (_manifest && _manifest.mandatory && _manifest.mandatory.indexOf(v) >= 0) return true;
         const n = _notesFor(v);
@@ -433,7 +508,7 @@
     // ───────────────────────────────────────────────────────────────────────
     function _refreshDashboardPill() {
         _updateNavBadge();
-        const show = _updateAvailable() || !!_swWaiting;
+        const show = _pillWanted();
         let pill = document.getElementById('wfUpdatePill');
         if (!show) { if (pill) pill.remove(); return; }
         if (pill) return; // already shown
@@ -512,6 +587,44 @@
         return _buildSha;
     }
 
+
+    function _toggleRow(id, label, desc, on, fn) {
+        return '<div class="setting-row"><div class="setting-info"><div class="setting-label">' + _esc(label) + '</div><div class="setting-desc">' + _esc(desc) + '</div></div>' +
+            '<div class="toggle' + (on ? ' on' : '') + '" id="' + id + '" role="switch" tabindex="0" aria-label="' + _esc(label) + '" aria-checked="' + (on ? 'true' : 'false') + '" onclick="wfUpdate.' + fn + '(!this.classList.contains(\'on\'))"></div></div>';
+    }
+    function _fmtDate(ms) { try { return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); } catch (_) { return ''; } }
+    /** Said only while a staged rollout has not reached this device, and only about what is true. */
+    function _rolloutNote(st) {
+        if (!st || st.inRollout) return '';
+        const pct = P.rolloutPercent(st.version, st.manifest);
+        return '<div style="margin-bottom:10px;padding:9px 12px;border-radius:9px;background:rgba(129,140,248,0.10);border:1px solid rgba(129,140,248,0.30);color:var(--text2,#c7cdd9);font-size:12.5px;">This version is being released in stages (' + pct + '% of devices so far). It will be offered here soon. You can install it now if you prefer.</div>';
+    }
+    /** Later, skip and install-when-idle: the part of this screen that Android and iOS also give. */
+    function _choiceControls(st) {
+        if (!st) return '';
+        const c = P.activeChoice(st.choice, st.version, st.priority, st.now);
+        const aged = st.staleDays > 0 ? '<div style="margin-top:8px;font-size:12px;color:var(--text3,#8b95a8);">Offered ' + st.staleDays + (st.staleDays === 1 ? ' day' : ' days') + ' ago.</div>' : '';
+        if (c) {
+            const text = c.action === 'later' ? 'Reminders are paused until ' + _fmtDate(c.until) + '.'
+                : c.action === 'skip' ? 'You skipped v' + st.version + '. A newer version will still be offered.'
+                : 'v' + st.version + ' will install when you are not using WealthFlow. The app has to be open for that.';
+            return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:12.5px;color:var(--text2,#c7cdd9);"><span style="flex:1;min-width:180px;">' + _esc(text) + '</span><button class="btn btn-ghost btn-sm" onclick="wfUpdate.undoChoice()">Undo</button></div>' + aged;
+        }
+        const days = P.maxSnoozeDays(st.priority);
+        return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">' +
+            '<button class="btn btn-ghost btn-sm" onclick="wfUpdate.later(1)">Remind me tomorrow</button>' +
+            (days >= 7 ? '<button class="btn btn-ghost btn-sm" onclick="wfUpdate.later(7)">In a week</button>' : '') +
+            '<button class="btn btn-ghost btn-sm" onclick="wfUpdate.whenIdle()">Install when idle</button>' +
+            (P.canSkip(st.priority) ? '<button class="btn btn-ghost btn-sm" onclick="wfUpdate.skip()">Skip this version</button>' : '') +
+            '</div>' + aged;
+    }
+    function _featuresRow() {
+        const defs = (_manifest && _manifest.features) || {};
+        if (!P || !Object.keys(defs).length) return '';
+        return '<div class="setting-row"><div class="setting-info"><div class="setting-label">Features on this device</div><div class="setting-desc">Optional features you can switch on or off for this device.</div></div>' +
+            '<button class="btn btn-secondary btn-sm" onclick="wfUpdate.features()">View</button></div>';
+    }
+
     function _renderSettingsCard() {
         const card = document.getElementById('wfUpdateCard');
         if (!card) return;
@@ -522,6 +635,7 @@
         const latest = _latestVersion();
         const avail = _updateAvailable() || !!_swWaiting;
         const mand = avail && _isMandatory(latest);
+        const st = avail ? _policyState() : null;
         card.style.border = avail ? '1px solid rgba(16,185,129,0.45)' : '1px solid var(--border2)';
         card.innerHTML =
             '<div class="settings-title" style="color:' + (avail ? '#10b981' : '#818cf8') + ';">Software Update</div>' +
@@ -533,11 +647,13 @@
             '</div>' +
             (avail
                 ? '<div style="margin-top:6px;">' +
-                    (mand ? '<div style="margin-bottom:10px;padding:9px 12px;border-radius:9px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#f87171;font-size:12.5px;font-weight:700;">Required security update — please install to keep your finances protected.</div>' : '') +
+                    (mand ? '<div style="margin-bottom:10px;padding:9px 12px;border-radius:9px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#f87171;font-size:12.5px;font-weight:700;">Required security update. You can keep using WealthFlow, but this device stays exposed until you install it.</div>' : '') +
+                    _rolloutNote(st) +
                     '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-                        '<button class="btn btn-primary btn-sm" style="flex:1;min-width:150px;" onclick="wfUpdate.start()">' + (mand ? 'Install required update' : 'Update now') + '</button>' +
+                        '<button class="btn btn-primary btn-sm" style="flex:1;min-width:150px;" onclick="wfUpdate.start()">' + (mand ? 'Install required update' : (st && !st.inRollout ? 'Install now anyway' : 'Update now')) + '</button>' +
                         '<button class="btn btn-secondary btn-sm" onclick="wfUpdate.whatsNew(\'' + _esc(latest) + '\')">What\'s new</button>' +
                     '</div>' +
+                    _choiceControls(st) +
                   '</div>'
                 : '<div class="setting-row"><div class="setting-info"><div class="setting-label">Release notes</div><div class="setting-desc">See what changed in this version.</div></div><button class="btn btn-ghost btn-sm" onclick="wfUpdate.whatsNew(\'' + _esc(installed) + '\')">View</button></div>'
             ) +
@@ -553,6 +669,13 @@
                 '<div class="setting-info"><div class="setting-label">Auto-install security updates</div><div class="setting-desc">When on, urgent security updates install automatically. A backup is taken first and the update is rolled back if it fails. Other updates always ask first.</div></div>' +
                 '<div class="toggle' + (_autoSecurityOn() ? ' on' : '') + '" id="wfAutoSec" role="switch" tabindex="0" aria-label="Auto-install security updates" aria-checked="' + (_autoSecurityOn() ? 'true' : 'false') + '" onclick="wfUpdate.setAutoSecurity(!this.classList.contains(\'on\'))"></div>' +
             '</div>' +
+            _toggleRow('wfWifiOnly', 'Automatic installs on Wi-Fi only', 'Urgent security installs and installs you set for when you are idle wait for a connection that is not mobile data. Where the browser does not say (Safari), they go ahead.', _wifiOnlyOn(), 'setWifiOnly') +
+            _toggleRow('wfEarly', 'Early access on this device', 'This device gets new versions before the others. Use it on the device you trust to try things first.', _earlyOn(), 'setEarly') +
+            '<div class="setting-row">' +
+                '<div class="setting-info"><div class="setting-label">Update history</div><div class="setting-desc">What was installed, postponed or skipped on this device.</div></div>' +
+                '<button class="btn btn-secondary btn-sm" onclick="wfUpdate.history()">View</button>' +
+            '</div>' +
+            _featuresRow() +
             '<div class="setting-row">' +
                 '<div class="setting-info"><div class="setting-label">Prioritised feedback</div><div class="setting-desc">See all user feedback scored and ranked by urgency (security & crashes first).</div></div>' +
                 '<button class="btn btn-secondary btn-sm" onclick="wfFeedbackAI && wfFeedbackAI.showBoard()">View</button>' +
@@ -587,7 +710,7 @@
         } catch (_) {}
         const badge = document.getElementById('nb-settings');
         if (!badge) return;
-        const show = _updateAvailable() || !!_swWaiting;
+        const show = _pillWanted();
         const disp = show ? '' : 'none';
         if (badge.style.display !== disp) badge.style.display = disp;
         if (show && badge.textContent !== '1') badge.textContent = '1';
@@ -624,7 +747,7 @@
     }
     async function _autoApplyIfSecurity() {
         if (!_autoSecurityOn()) return false;
-        if (!_safeToAutoInstall() || _progressTask) return false;
+        if (!_safeToAutoInstall() || _progressTask || !_mayAutoInstallNow()) return false;
         const v = _latestVersion();
         if (!_updateAvailable()) return false;
         if (!_isDeployedVersion(v)) return false; // announcement is not deployment
@@ -635,11 +758,120 @@
         return true;
     }
 
+
+    // ── The person's choices ──────────────────────────────────────────────────
+    function _afterChoice() { try { _refreshDashboardPill(); _renderSettingsCard(); } catch (_) {} }
+    function later(days) {
+        const st = _policyState();
+        if (!st || !st.available) return;
+        const c = P.later(st.version, days, st.priority, Date.now());
+        _lsPut(LS_CHOICE, c);
+        _record('later', st.version, { days: c.days });
+        _notify('Okay. WealthFlow will remind you about v' + st.version + ' after ' + _fmtDate(c.until) + '.', 'info');
+        _afterChoice();
+    }
+    function skipVersion() {
+        const st = _policyState();
+        if (!st || !st.available) return;
+        const c = P.skip(st.version, st.priority, Date.now());
+        if (!c) { _notify('This update is required, so it cannot be skipped. You can postpone it for a day.', 'warn'); return; }
+        _lsPut(LS_CHOICE, c);
+        _record('skipped', st.version);
+        _notify('Skipped v' + st.version + '. The next version will be offered as usual.', 'info');
+        _afterChoice();
+    }
+    function whenIdle() {
+        const st = _policyState();
+        if (!st || !st.available) return;
+        _lsPut(LS_CHOICE, P.whenIdle(st.version, Date.now()));
+        _record('idle', st.version);
+        _notify('v' + st.version + ' will install when you are not using WealthFlow. Keep the app open.', 'info');
+        _afterChoice();
+    }
+    function undoChoice() { try { localStorage.removeItem(LS_CHOICE); } catch (_) {} _afterChoice(); }
+    function setWifiOnly(on) { _lsPut(LS_WIFI_ONLY, on ? '1' : '0'); _notify(on ? 'Automatic installs will wait for Wi-Fi.' : 'Automatic installs can use any connection.', 'info'); _afterChoice(); }
+    function setEarly(on) {
+        _lsPut(LS_EARLY, on ? '1' : '0');
+        _notify(on ? 'Early access is ON for this device. It gets new versions first.' : 'Early access is OFF. This device follows the normal rollout.', on ? 'success' : 'info');
+        _afterChoice();
+    }
+    /** Connection facts the browser is willing to give; Safari gives none, and then nothing is held back. */
+    function _connection() { try { return navigator.connection || navigator.mozConnection || navigator.webkitConnection || null; } catch (_) { return null; } }
+    function _mayAutoInstallNow() { return !P || P.mayInstallAutomatically(_wifiOnlyOn(), _connection()); }
+
+    /** Installs the version the person asked to have installed when idle. Same safeguards as the security auto-install: backup first, rollback if it fails. */
+    async function _autoApplyIfChosen() {
+        const c = _activeChoice();
+        if (!c || c.action !== 'idle') return false;
+        if (!_safeToAutoInstall() || _progressTask || !_mayAutoInstallNow()) return false;
+        const v = _latestVersion();
+        if (!_updateAvailable() || c.version !== v) return false;
+        if (!_isDeployedVersion(v) || _recentlyFailedTarget(v)) return false;
+        try { localStorage.removeItem(LS_CHOICE); } catch (_) {}
+        _notify('Installing v' + v + ' as you asked…', 'info');
+        await _runProgress(v);
+        return true;
+    }
+
+    const KIND_TEXT = { installed: 'Installed', failed: 'Did not install', later: 'Postponed', skipped: 'Skipped', idle: 'Set to install when idle', auto: 'Installed automatically' };
+    function showHistory() {
+        _closeOverlay('wfHistory');
+        const rows = _history().slice().reverse();
+        const body = rows.length ? rows.map(function (h) {
+            const when = new Date(h.at || 0).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+            const extra = (h.files ? ' · ' + h.changed + ' of ' + h.files + ' files changed' + (h.kb != null ? ', about ' + h.kb + ' KB' : '') : '') + (h.backup ? ' · restore point ' + (h.backup === 'saved' ? 'saved' : 'not saved') : '') + (h.days ? ' · ' + h.days + ' d' : '');
+            return '<div style="padding:9px 0;border-bottom:1px solid var(--border,#1f2638);font-size:13px;color:var(--text,#e6e7eb);"><b>' + _esc(KIND_TEXT[h.kind] || h.kind) + '</b> v' + _esc(h.version) + (h.from ? ' (from v' + _esc(h.from) + ')' : '') +
+                '<div style="font-size:11.5px;color:var(--text3,#8b95a8);margin-top:2px;">' + _esc(when + extra) + '</div></div>';
+        }).join('') : '<div style="color:var(--text3);font-size:13px;">Nothing yet. Installs, postponed and skipped updates show up here.</div>';
+        const ov = document.createElement('div');
+        ov.id = 'wfHistory';
+        ov.style.cssText = _overlayCss();
+        ov.innerHTML = _sheet('Update history', 'Last ' + Math.min(30, rows.length) + ' events on this device', body, '<button class="btn btn-primary" style="width:100%;" onclick="wfUpdate._close(\'wfHistory\')">Close</button>');
+        document.body.appendChild(ov);
+        requestAnimationFrame(() => ov.style.opacity = '1');
+    }
+    function setFeature(id, on) {
+        const o = _lsJson(LS_FEATURES, {}) || {};
+        o[id] = !!on;
+        _lsPut(LS_FEATURES, o);
+        showFeatures();
+    }
+    /** Is this optional feature on for THIS device? Code that ships behind a flag asks here. Unknown features are on, so a missing manifest never turns the app off. */
+    function featureOn(id) {
+        const def = _manifest && _manifest.features && _manifest.features[id];
+        if (!P || !def) return true;
+        return P.featureState(id, def, { overrides: _lsJson(LS_FEATURES, {}), early: _earlyOn(), bucket: _deviceBucket() }, _installedVersion() || CURRENT_VERSION).on;
+    }
+    function showFeatures() {
+        _closeOverlay('wfFeatures');
+        const defs = (_manifest && _manifest.features) || {};
+        const prefs = { overrides: _lsJson(LS_FEATURES, {}), early: _earlyOn(), bucket: _deviceBucket() };
+        const body = Object.keys(defs).map(function (id) {
+            const d = defs[id] || {}, f = P.featureState(id, d, prefs, _installedVersion() || CURRENT_VERSION);
+            return '<div style="display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border,#1f2638);"><div style="flex:1;"><div style="font-weight:700;font-size:13.5px;color:var(--text,#e6e7eb);">' + _esc(d.label || id) + '</div>' +
+                '<div style="font-size:12px;color:var(--text3,#8b95a8);">' + _esc(d.desc || '') + ' (' + _esc(f.why) + ')</div></div>' +
+                '<div class="toggle' + (f.on ? ' on' : '') + '" role="switch" tabindex="0" aria-checked="' + (f.on ? 'true' : 'false') + '" onclick="wfUpdate.setFeature(\'' + _esc(id) + '\',!this.classList.contains(\'on\'))"></div></div>';
+        }).join('');
+        const ov = document.createElement('div');
+        ov.id = 'wfFeatures';
+        ov.style.cssText = _overlayCss();
+        ov.innerHTML = _sheet('Features on this device', 'Your switch always wins over the rollout', body, '<button class="btn btn-primary" style="width:100%;" onclick="wfUpdate._close(\'wfFeatures\')">Close</button>');
+        document.body.appendChild(ov);
+        requestAnimationFrame(() => ov.style.opacity = '1');
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     //  WHAT'S NEW (scrollable changelog sheet)
     // ───────────────────────────────────────────────────────────────────────
     function showWhatsNew(version) {
-        const notes = _notesFor(version);
+        let notes = _notesFor(version);
+        let subtitle = null;
+        const behind = _installedVersion() || CURRENT_VERSION;
+        const merged = _cmp(version, behind) > 0 ? _catchUp(behind, version) : null;
+        if (merged) {
+            notes = { headline: 'Everything new since v' + behind, sections: merged.sections };
+            subtitle = merged.count + ' updates, v' + merged.oldest + ' to v' + merged.newest;
+        }
         _closeOverlay('wfWhatsNew');
         const ov = document.createElement('div');
         ov.id = 'wfWhatsNew';
@@ -653,7 +885,7 @@
         }).join('') : '<div style="color:var(--text3);font-size:13px;">No release notes available for this version.</div>';
         ov.innerHTML = _sheet(
             (notes && notes.headline ? _esc(notes.headline) : 'What\'s New') ,
-            'Version ' + _esc(version) + (notes && notes.date ? ' · ' + _esc(notes.date) : ''),
+            subtitle ? _esc(subtitle) : 'Version ' + _esc(version) + (notes && notes.date ? ' · ' + _esc(notes.date) : ''),
             secHtml,
             '<button class="btn btn-primary" style="width:100%;" onclick="wfUpdate._close(\'wfWhatsNew\')">Close</button>'
         );
@@ -666,8 +898,16 @@
     // ───────────────────────────────────────────────────────────────────────
     async function startUpdate() {
         const version = _latestVersion();
-        const ok = await _showEula(version);
-        if (!ok) return;
+        // The agreement is read once per major.minor line, as on Android and iOS: sixty small patches do not each ask for it again.
+        // A new minor or major version, or a device that never accepted, still gets the full text.
+        const line = String(version).split('.').slice(0, 2).join('.');
+        let accepted = null;
+        try { accepted = localStorage.getItem(LS_EULA_OK); } catch (_) {}
+        if (!P || accepted !== line) {
+            const ok = await _showEula(version);
+            if (!ok) return;
+            _lsPut(LS_EULA_OK, line);
+        }
         // PIN gate (reuse the app's verified prompt)
         if (typeof window._verifyPinPrompt === 'function') {
             const pinOk = await window._verifyPinPrompt('Enter your PIN to authorise the update to v' + version + '.');
@@ -768,6 +1008,17 @@
             .finally(() => { _progressTask = null; });
         return _progressTask;
     }
+    /** Resource Timing tells what really crossed the network: a 304 costs headers only (transferSize < encodedBodySize). Unknown stays unknown. */
+    function _measure(src, dl) {
+        try {
+            const url = new URL(src, location.href).href;
+            const list = performance.getEntriesByName(url);
+            const e = list && list[list.length - 1];
+            if (!e || !(e.encodedBodySize > 0)) return;
+            dl.measured += 1;
+            if (e.transferSize >= e.encodedBodySize) { dl.changed += 1; dl.bytes += e.transferSize; }
+        } catch (_) {}
+    }
     async function _executeProgress(version) {
         _closeOverlay('wfProgress');
         const ov = document.createElement('div');
@@ -795,7 +1046,7 @@
         // What the download step actually achieved. The steps below report into
         // this, and the end of the flow refuses to claim an update that did not
         // fetch enough of the app to possibly be one.
-        const _dl = { fetched: 0, total: 0, failed: [], backup: '' };
+        const _dl = { fetched: 0, total: 0, failed: [], backup: '', changed: 0, measured: 0, bytes: 0 };
 
         const steps = [
             { pct: 12, eta: 9, label: 'Backing up your data…', run: async () => { _dl.backup = await _preUpdateBackup(version); }},
@@ -821,8 +1072,13 @@
                     // "still counts as attempted", and the flow then reported the
                     // update complete whether or not anything had been downloaded.
                     try {
-                        const r = await fetch(src, { cache: 'reload' });
-                        if (r && r.ok) _dl.fetched += 1;
+                        // Scripts are asked with their validators (cache: 'no-cache'): the server answers 304 for a file that did not
+                        // change and sends only the files that did, which is how a patch should behave. Measured in Chromium on
+                        // 2026-11-07 (3 files of 50 KB): 304, 300 bytes each, against 50,300 with 'reload'. The page document keeps
+                        // 'reload', because the service worker treats a 304 on a navigation as unusable (sw.js _isUnusableDocument).
+                        const isDoc = !/\.m?js(\?|$)/i.test(src);
+                        const r = await fetch(src, { cache: (P && !isDoc) ? 'no-cache' : 'reload' });
+                        if (r && r.ok) { _dl.fetched += 1; _measure(src, _dl); }
                         else _dl.failed.push(src + ' → HTTP ' + ((r && r.status) || '?'));
                     } catch (e) {
                         _dl.failed.push(src + ' → ' + ((e && e.message) || 'network error'));
@@ -885,7 +1141,7 @@
         _claimUpdate(version, _dl);
         try { localStorage.setItem(LS_SEEN_POPUP, ''); } catch (_) {}
         setBar(100); setEta(0);
-        setStep('Update complete. Restarting…' + (_dl.backup === 'saved' ? '' : ' No restore point was saved first; an update never changes your data.'));
+        setStep('Update complete' + (_dl.measured ? ' (' + _dl.changed + ' of ' + _dl.measured + ' files changed, about ' + Math.round(_dl.bytes / 1024) + ' KB)' : '') + '. Restarting…' + (_dl.backup === 'saved' ? '' : ' No restore point was saved first; an update never changes your data.'));
 
         // One owner, after backup/download/claim: no competing controller reload.
         await _sleep(_dl.backup === 'saved' ? 700 : 2400);
@@ -907,7 +1163,11 @@
         if (seen === installed) return;            // already shown for this version
         // No welcome ever recorded = a NEW install, already on the newest version: nothing changed for it.
         if (seen === null) { try { localStorage.setItem(LS_SEEN_POPUP, installed); } catch (_) {} return; }
-        const notes = _notesFor(installed);
+        let notes = _notesFor(installed);
+        // After an update that jumped over releases, welcome the person to all of them, not only the last.
+        const last = _history().filter(h => (h.kind === 'installed' || h.kind === 'auto') && h.version === installed && h.from).pop();
+        const merged = last ? _catchUp(last.from, installed) : null;
+        if (merged) notes = { headline: 'Everything new since v' + last.from, sections: merged.sections };
         if (!notes) { try { localStorage.setItem(LS_SEEN_POPUP, installed); } catch (_) {} return; }
         // show centered welcome
         _closeOverlay('wfPostUpdate');
@@ -1813,7 +2073,7 @@
             // mandatory-update handling, after we know the real latest version.
             // Skipped for a target that just failed to settle (see below).
             try {
-                if (_updateAvailable() && _isMandatory(_latestVersion()) && _isDeployedVersion(_latestVersion()) && !_recentlyFailedTarget(_latestVersion())) {
+                if (_updateAvailable() && _isMandatory(_latestVersion()) && _isDeployedVersion(_latestVersion()) && !_recentlyFailedTarget(_latestVersion()) && !_activeChoice()) {
                     if (_autoSecurityOn() && _updateType(_latestVersion()) === 'security') setTimeout(() => { _autoApplyIfSecurity(); }, 2000);
                     else setTimeout(() => { _notify('A required security update is available.', 'warn'); openUpdateSection(); }, 1800);
                 }
@@ -1897,6 +2157,7 @@
                 if (ph && !ph.querySelector('.settings-title')) _renderSettingsCard();
                 if (!document.getElementById('wfUpdatePill')) _refreshDashboardPill();
                 if (_autoSecurityOn()) _autoApplyIfSecurity().catch(() => {});
+                _autoApplyIfChosen().catch(() => {});
             } catch (_) {}
         }, 5000);
 
@@ -1942,6 +2203,9 @@
         init, start: startUpdate, whatsNew: showWhatsNew, openSection: openUpdateSection,
         feedback: openFeedback, check: checkForUpdates, diagnostics: showDiagnostics,
         simulate: simulateUpdate, setAutoSecurity: setAutoSecurity,
+        later: later, skip: skipVersion, whenIdle: whenIdle, undoChoice: undoChoice, setWifiOnly: setWifiOnly, setEarly: setEarly,
+        history: showHistory, features: showFeatures, setFeature: setFeature, featureOn: featureOn,
+        _policyState, _announce, _autoApplyIfChosen, _history, _record, _loadManifest,
         _clearFbImg: () => { _fbImageData = null; _fbImageReading = null; },
         refresh: () => { _refreshDashboardPill(); _injectSettingsCard(); _renderSettingsCard(); },
         // Feedback completion reporting — exposed so the Settings screen and the

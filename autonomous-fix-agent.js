@@ -61,6 +61,7 @@ import { evidenceLedger } from './autonomy/evidence-ledger.mjs';
 import { taskCard, cardMarkdown } from './autonomy/task-card.mjs';
 import { runAnalysis, analysisMarkdown } from './autonomy/analysis-pass.mjs';
 import * as Q from './autonomy/work-queue.mjs';
+import { siblingsOf, groupTitle } from './autonomy/feedback-group.mjs';
 
 const MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
 const ATTEMPT_COOLDOWN_MS = Number(process.env.AGENT_ATTEMPT_COOLDOWN_MS || 15 * 60_000);
@@ -68,6 +69,11 @@ const DRY = /^(1|true|yes)$/i.test(process.env.AGENT_DRY_RUN || '');
 const REPO_DIR = process.env.REPO_DIR || process.cwd();
 const STATE_DIR = path.join(REPO_DIR, 'autonomy', 'state');
 const OUTPUT = path.join(REPO_DIR, 'ai-fix-pr.json');
+// Feedback filed on the same day rides in ONE update (owner, 2026-11-07); a lone report is its own update. See autonomy/feedback-group.mjs.
+// Off for AUTONOMY_LEVEL=direct, whose ship step commits one fix at a time, and for a dry run.
+const GROUP = process.env.AGENT_GROUP !== '0';
+const GROUP_BUDGET_MS = Number(process.env.AGENT_GROUP_BUDGET_MS || 20 * 60_000);
+const STARTED = Date.now();
 
 function log(...m) { console.log('[agent]', ...m); }
 function fail(msg) {
@@ -372,7 +378,12 @@ async function main() {
 
     // ── work the highest-priority issue we can actually move ────────────────
     const skipped = [];
-    for (const issue0 of candidates) {
+    const done = [];                 // fixes written this run; more than one only for feedback filed on the same day
+    let groupNumbers = null;
+    for (let ci = 0; ci < candidates.length; ci++) {
+        const issue0 = candidates[ci];
+        // after the first fix, only that day's feedback rides along, and only while there is time to do it well
+        if (groupNumbers && (!groupNumbers.has(issue0.number) || Date.now() - STARTED > GROUP_BUDGET_MS)) continue;
         let issue = issue0;
         const number = issue.number;
         const state = await reconcileAttempts(number, readState(number));
@@ -598,8 +609,32 @@ async function main() {
             ).catch(() => {});
         }
 
-        output({ have: 'yes', file: result.file, test: testWritten || '', issue: String(number), role: result.role });
-        log('done — exit 0 so the workflow validates and ships this');
+        done.push({ issue, number, pr });
+        if (done.length === 1 && GROUP && !DRY) {
+            // Who else filed feedback on this report's day? They are worked next, on top of this fix, and ship in the same update.
+            const sib = siblingsOf(issue, queue.issues);
+            if (sib.length) {
+                log(`#${number}: ${sib.length} more report(s) from the same day will ride in this update: ${sib.map((i) => '#' + i.number).join(', ')}`);
+                groupNumbers = new Set(sib.map((i) => i.number));
+                candidates = sib;
+                ci = -1;
+            }
+        }
+    }
+
+    if (done.length) {
+        const first = done[0].pr;
+        const group = done.map((d) => ({ issue: d.number, title: d.issue.title, file: d.pr.file, testFile: d.pr.testFile, extraFiles: d.pr.extraFiles || [] }));
+        const out = done.length === 1 ? { ...first, group } : {
+            ...first, group,
+            title: groupTitle(done.map((d) => d.issue)),
+            issues: done.map((d) => d.number),
+            body: `This update fixes ${done.length} reports filed on the same day (#${done.map((d) => d.number).join(', #')}).\n\n` +
+                done.map((d) => `## #${d.number}\n\n${d.pr.body}`).join('\n\n---\n\n'),
+        };
+        fs.writeFileSync(OUTPUT, JSON.stringify(out, null, 2) + '\n');
+        output({ have: 'yes', file: first.file, test: first.testFile || '', issue: String(first.issue), issues: done.map((d) => d.number).join(','), role: first.role });
+        log(`done — ${done.length} fix(es) in one update; exit 0 so the workflow validates and ships this`);
         process.exit(0);
     }
 

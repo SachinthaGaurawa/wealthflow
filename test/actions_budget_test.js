@@ -161,7 +161,9 @@ describe('the gate can actually fail', () => {
         expect(before).toBeGreaterThan(MONTHLY_BUDGET_MINUTES * 5);
 
         const after = projectSchedule().scheduledMinutes;
-        expect(after).toBeLessThan(before / 8);
+        // 2026-11-07: /8 became /7 when autonomous-fix.yml gained its one-minute `gather` job (124 more scheduled minutes a month,
+        // see FLOOR_JOBS in autonomy/actions-budget.mjs). The schedule is still far under a seventh of what it used to be.
+        expect(after).toBeLessThan(before / 7);
     });
 });
 
