@@ -548,6 +548,7 @@ async function main() {
                 `I changed \`${result.file}\`${testWritten ? ` and added \`${testWritten}\`` : ''}.\n\n` +
                 `- **Author:** ${result.role} agent via \`${provs.author}\`\n` +
                 `- **Security review:** ${result.review?.verdict} via \`${provs.security || 'unavailable'}\`\n` +
+                (shot.note ? `- **Screenshot:** ${shot.note}\n` : '') +
                 `${result.review?.findings?.length ? `- **Noted:** ${result.review.findings.join('; ')}\n` : ''}` +
                 `\nCI will now test it. If everything passes it ships automatically and I will report back here.\n` +
                 FOOTER

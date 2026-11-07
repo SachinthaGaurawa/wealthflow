@@ -390,7 +390,8 @@ export async function screenshotContext({ issue, env = process.env, fetchImpl, r
             body: stripped + '\n\n### What the screenshot shows\n' +
                 `_Read from the user's screenshot by a vision model (${r.provider}/${r.model}).${how} It is a machine reading and can be wrong: use it to decide where to look, and trust the code over it._\n\n` + r.text + '\n' + ground(r.text),
             status: 'read', provider: r.provider,
-            note: `Screenshot read by ${r.provider}/${r.model}.${how}`,
+            // Readers that were asked first and failed: the only way to tell a quiet provider (no key, quota) from a broken one.
+            note: `Screenshot read by ${r.provider}/${r.model}.${how}` + (r.tried && r.tried.length ? ` Tried first and failed: ${r.tried.slice(0, 4).join('; ')}.` : ''),
         };
     }
     return {
