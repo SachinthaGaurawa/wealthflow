@@ -415,6 +415,49 @@ function trackedCode(repoDir) {
 let uiSweepStatus = { ran: false, reason: 'not attempted' };
 export function getUiSweepStatus() { return { ...uiSweepStatus }; }
 
+/** Phone widths the sweep walks: a small iPhone, and the width the owner's reports came from. */
+const PHONE_WIDTHS = [390, 430];
+/** At most this many pages are filed per run, worst first, so one bad stylesheet cannot bury the queue. */
+const MAX_LAYOUT_FINDINGS = 3;
+
+/**
+ * Pages whose text overlaps, spills, is squeezed into a sliver or is cut off at a phone width (autonomy/layout-probe.mjs).
+ * Never throws and never files a page it did not measure: no browser means no findings, and the sweep status says so.
+ * @param {string} repoDir
+ * @param {{ sweepImpl?:Function, probeImpl?:Function, describeImpl?:Function }} [impl] injected in tests
+ */
+export async function layoutFindings(repoDir = process.cwd(), impl = {}) {
+    try {
+        const probe = impl.sweepImpl && impl.probeImpl && impl.describeImpl ? null : await import('./layout-probe.mjs');
+        const sweepImpl = impl.sweepImpl || probe.sweepScreens;
+        const probeImpl = impl.probeImpl || probe.probeLayout;
+        const describeImpl = impl.describeImpl || probe.describeProbe;
+        const worst = new Map();    // screen -> { score, width }
+        for (const width of PHONE_WIDTHS) {
+            const r = await sweepImpl({ repoDir, width });
+            if (!r || !r.ok) { console.warn(`[discover] layout sweep at ${width}px did not run: ${(r && r.reason) || 'unknown'}`); continue; }
+            for (const x of r.ranked || []) {
+                const prev = worst.get(x.screen);
+                if (!prev || x.score > prev.score) worst.set(x.screen, { score: x.score, width });
+            }
+        }
+        const out = [];
+        for (const [screen, { score, width }] of [...worst].sort((a, b) => b[1].score - a[1].score).slice(0, MAX_LAYOUT_FINDINGS)) {
+            const m = await probeImpl({ screen, repoDir, widths: [width] }).catch(() => null);
+            const measured = describeImpl(m);
+            if (!m || !m.ok || /^No overlap, overflow or cut-off/.test(measured)) continue;   // the second look found nothing: do not file it
+            // The key carries WHAT is wrong (numbers and quoted words stripped), not only where: a closed issue means handled, so
+            // a page that breaks again in a different way is a new finding, while the same breakage re-measured is not.
+            const what = measured.replace(/"[^"]*"/g, '').replace(/[0-9.]+(px)?|\(\d+x\d+\)/g, '#').replace(/\s+/g, ' ').slice(0, 240);
+            out.push({ kind: 'layout-overlap', key: `${screen}|${what}`, severity: 'high', screen, width, score, measured });
+        }
+        return out;
+    } catch (e) {
+        console.warn(`[discover] layout sweep unavailable: ${e.message}`);
+        return [];
+    }
+}
+
 export async function uiFindings(repoDir = process.cwd()) {
     let runSweep;
     try {
@@ -477,6 +520,12 @@ export async function uiFindings(repoDir = process.cwd()) {
             depth: perf.maxDomDepth,
         });
     }
+
+    // ── layout: what a phone shows, measured, before the owner has to report it ─────────────────────────────────────────
+    // Until now a layout problem was found only when the owner filed it (#514, #524), because the measuring tools lived in
+    // the layout lane and ran only on a report. Walking every page at phone width here means the fix agent is handed the
+    // problem with the measurement already in it.
+    out.push(...await layoutFindings(repoDir));
 
     // Accessibility findings are grouped: 31 separate issues for 31 unlabelled
     // buttons would bury the queue for one fix that touches them together.
@@ -553,6 +602,14 @@ export function renderIssue(f) {
             title: `[${sev}] Unguarded JSON.parse of external data in ${f.file}`,
             labels: ['bug', 'autonomous'],
             body: `## Crash risk\n\n\`${f.file}:${f.line}\` parses data from outside the program without a guard. If that value is empty or malformed, \`JSON.parse\` throws and takes the surrounding operation down with it.\n\n\`\`\`js\n${f.snippet}\n\`\`\`\n\n> This is the exact bug class that silently killed the previous autonomous agent for months: \`JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)\` threw on an unset variable, and the failure was swallowed.\n\n### Fix\nWrap it in \`try/catch\` and fall back to a safe default, or validate before parsing.\n`,
+        };
+    }
+    if (f.kind === 'layout-overlap') {
+        const name = f.screen === 'cc-instalments' ? 'CC Instalments' : f.screen === 'cc-onetime' ? 'CC one-time charges' : f.screen;
+        return {
+            title: `[${sev}] Layout overlap on phones: ${name}`,
+            labels: ['bug', 'ui/ux', 'autonomous'],
+            body: `## Text overlaps or is cut off on a phone\n\nOn the **${name}** page at ${f.width}px wide (a phone), a real browser measured this layout problem. Nobody reported it: the system found it by looking.\n\n### What was measured\n\`\`\`\n${String(f.measured || '').slice(0, 1800)}\n\`\`\`\n\n### Evidence\nThe same measurement the layout lane uses before and after a fix (invented data, real Chromium; not a person looking at a phone):\n\`\`\`bash\nnode -e "import('./autonomy/layout-probe.mjs').then(async (m) => console.log(m.describeProbe(await m.probeLayout({ screen: '${f.screen}', widths: [${f.width}] }))))"\n\`\`\`\n\n### Fix\nA layout change scoped to this page, measured before and after. Do not break words into pieces (\`overflow-wrap: anywhere\`): restack or widen the box that squeezes the text.\n`,
         };
     }
     if (f.kind === 'broken-handler') {
