@@ -19,12 +19,14 @@ describe('layout findings from a sweep', () => {
         const ranked = [{ screen: 'a', score: 3 }, { screen: 'b', score: 9 }, { screen: 'c', score: 5 }, { screen: 'd', score: 1 }];
         const out = await layoutFindings('.', { sweepImpl: async () => ({ ok: true, ranked }), probeImpl: probeOk(MEASURED), describeImpl: describeFrom });
         expect(out.map((f) => f.screen)).toEqual(['b', 'c', 'a']);
-        expect(out[0]).toMatchObject({ kind: 'layout-overlap', severity: 'high', width: 390 });
+        expect(out[0]).toMatchObject({ kind: 'layout-overlap', severity: 'high', width: 320 });   // ties keep the narrowest width
         expect(out[0].measured).toContain('squeezed into a sliver');
     });
-    it('takes the narrower of the two phone widths when a page is broken at both', async () => {
-        const sweepImpl = async ({ width }) => ({ ok: true, ranked: [{ screen: 'liquidity', score: width === 390 ? 12 : 4 }] });
+    it('walks the smallest phone, common phones and a wide screen, and keeps the worst width for a page broken at several', async () => {
+        const seen = [];
+        const sweepImpl = async ({ width }) => { seen.push(width); return { ok: true, ranked: [{ screen: 'liquidity', score: width === 390 ? 12 : 4 }] }; };
         const out = await layoutFindings('.', { sweepImpl, probeImpl: probeOk(MEASURED), describeImpl: describeFrom });
+        expect(seen).toEqual([320, 390, 430, 1024]);
         expect(out).toHaveLength(1);
         expect(out[0]).toMatchObject({ screen: 'liquidity', width: 390, score: 12 });
     });
@@ -50,6 +52,13 @@ describe('the issue it files', () => {
         expect(r.labels).toEqual(['bug', 'ui/ux', 'autonomous']);
         expect(r.body).toContain('squeezed into a sliver');
         expect(r.body).toMatch(/Do not break words into pieces/);
+    });
+    it('a finding at a laptop width is titled for wide screens, not phones', async () => {
+        const f = (await layoutFindings('.', { sweepImpl: async ({ width }) => ({ ok: true, ranked: width === 1024 ? [{ screen: 'dashboard', score: 2 }] : [] }), probeImpl: probeOk('At 1024px wide: span.a overlaps span.b (13x13).'), describeImpl: describeFrom }))[0];
+        const r = renderIssue(f);
+        expect(r.title).toBe('[HIGH] Layout overlap on wide screens: dashboard');
+        expect(r.body).toContain('a laptop or tablet');
+        expect(layoutLaneFor({ title: r.title, body: r.body }).applies).toBe(true);
     });
     it('routes into the layout lane on the right screen (named pages and the credit-card screens)', async () => {
         for (const [screen, expected] of [['liquidity', 'liquidity'], ['cc-instalments', 'cc-instalments']]) {

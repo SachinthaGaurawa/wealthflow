@@ -415,8 +415,8 @@ function trackedCode(repoDir) {
 let uiSweepStatus = { ran: false, reason: 'not attempted' };
 export function getUiSweepStatus() { return { ...uiSweepStatus }; }
 
-/** Phone widths the sweep walks: a small iPhone, and the width the owner's reports came from. */
-const PHONE_WIDTHS = [390, 430];
+/** Widths the sweep walks: the smallest phone still in use (iPhone SE), a common phone, the width the owner's reports came from, and a laptop/tablet landscape. */
+const PHONE_WIDTHS = [320, 390, 430, 1024];
 /** At most this many pages are filed per run, worst first, so one bad stylesheet cannot bury the queue. */
 const MAX_LAYOUT_FINDINGS = 3;
 
@@ -607,9 +607,9 @@ export function renderIssue(f) {
     if (f.kind === 'layout-overlap') {
         const name = f.screen === 'cc-instalments' ? 'CC Instalments' : f.screen === 'cc-onetime' ? 'CC one-time charges' : f.screen;
         return {
-            title: `[${sev}] Layout overlap on phones: ${name}`,
+            title: `[${sev}] Layout overlap ${f.width <= 480 ? 'on phones' : 'on wide screens'}: ${name}`,
             labels: ['bug', 'ui/ux', 'autonomous'],
-            body: `## Text overlaps or is cut off on a phone\n\nOn the **${name}** page at ${f.width}px wide (a phone), a real browser measured this layout problem. Nobody reported it: the system found it by looking.\n\n### What was measured\n\`\`\`\n${String(f.measured || '').slice(0, 1800)}\n\`\`\`\n\n### Evidence\nThe same measurement the layout lane uses before and after a fix (invented data, real Chromium; not a person looking at a phone):\n\`\`\`bash\nnode -e "import('./autonomy/layout-probe.mjs').then(async (m) => console.log(m.describeProbe(await m.probeLayout({ screen: '${f.screen}', widths: [${f.width}] }))))"\n\`\`\`\n\n### Fix\nA layout change scoped to this page, measured before and after. Do not break words into pieces (\`overflow-wrap: anywhere\`): restack or widen the box that squeezes the text.\n`,
+            body: `## Text overlaps or is cut off on a phone\n\nOn the **${name}** page at ${f.width}px wide (${f.width <= 480 ? 'a phone' : 'a laptop or tablet'}), a real browser measured this layout problem. Nobody reported it: the system found it by looking.\n\n### What was measured\n\`\`\`\n${String(f.measured || '').slice(0, 1800)}\n\`\`\`\n\n### Evidence\nThe same measurement the layout lane uses before and after a fix (invented data, real Chromium; not a person looking at a phone):\n\`\`\`bash\nnode -e "import('./autonomy/layout-probe.mjs').then(async (m) => console.log(m.describeProbe(await m.probeLayout({ screen: '${f.screen}', widths: [${f.width}] }))))"\n\`\`\`\n\n### Fix\nA layout change scoped to this page, measured before and after. Do not break words into pieces (\`overflow-wrap: anywhere\`): restack or widen the box that squeezes the text.\n`,
         };
     }
     if (f.kind === 'broken-handler') {
