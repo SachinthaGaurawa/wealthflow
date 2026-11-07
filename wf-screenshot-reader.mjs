@@ -27,6 +27,7 @@
 
 import { PROVIDERS, keyFor } from './wf-llm-router.mjs';
 import { choose, loadModels, isModelGone } from './ai-models.mjs';
+import { askProvider } from './ai-provider-call.mjs';
 import nodeFs from 'node:fs';
 
 export const IMAGE_MARKER = 'wf-feedback-image';
@@ -49,9 +50,8 @@ export function visionModels(providerId, env = process.env) {
     if (providerId === 'groq') return pick(env.GROQ_VISION_MODEL, ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.2-90b-vision-preview']);
     if (providerId === 'mistral') return pick(env.MISTRAL_VISION_MODEL, ['mistral-small-latest', 'pixtral-large-latest']);
     if (providerId === 'openrouter') return pick(env.OPENROUTER_VISION_MODEL, ['meta-llama/llama-3.2-11b-vision-instruct:free']);
-    // GitHub Models reads images with no key of the owner's: inside GitHub Actions the run's own GITHUB_TOKEN works when the workflow
-    // grants `models: read`. It is the one vision route that does not depend on a free-tier quota the owner has to keep alive.
-    if (providerId === 'github-models') return pick(env.GITHUB_MODELS_VISION_MODEL, ['openai/gpt-4.1', 'openai/gpt-4o', 'meta/Llama-3.2-90B-Vision-Instruct', 'openai/gpt-4o-mini']);
+    // GitHub Models is NOT a route any more: GitHub retired it on 2026-07-30 (https://github.blog/changelog/2026-07-30-github-models-is-now-retired/).
+    // #535 built the reader around it; the vision probe (autonomy/vision-probe.mjs) showed every model answering HTTP 200 with the body "OK".
     if (providerId === 'together') return pick(env.TOGETHER_VISION_MODEL, ['meta-llama/Llama-Vision-Free']);
     if (providerId === 'nvidia') return pick(env.NVIDIA_VISION_MODEL, ['meta/llama-3.2-90b-vision-instruct', 'meta/llama-3.2-11b-vision-instruct']);
     return [];
@@ -113,8 +113,10 @@ async function postJson(fetchImpl, url, headers, body) {
     try {
         const r = await fetchImpl(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: ctl.signal });
         let data = null;
-        try { data = await r.json(); } catch { /* not json */ }
-        return { ok: r.ok, status: r.status, data };
+        let raw = '';
+        if (typeof r.text === 'function') { try { raw = await r.text(); data = JSON.parse(raw); } catch { /* not json: `raw` still says what came back */ } }
+        else { try { data = await r.json(); } catch { /* not json */ } }
+        return { ok: r.ok, status: r.status, data, raw: String(raw || '').replace(/\s+/g, ' ').slice(0, 100) };
     } finally { clearTimeout(t); }
 }
 
@@ -124,8 +126,11 @@ async function askOpenAiStyle(provider, key, model, dataUrl, prompt, fetchImpl) 
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: dataUrl } }] }],
     });
     const text = r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message && r.data.choices[0].message.content;
-    const err = r.ok ? '' : String((r.data && (r.data.error && (r.data.error.message || r.data.error) || r.data.message)) || '').slice(0, 200);
-    return { ok: r.ok && typeof text === 'string' && text.trim().length > 0, status: r.status, text: String(text || '').trim(), err };
+    const has = typeof text === 'string' && text.trim().length > 0;
+    // A 200 that carries no answer must say what it carried, or "HTTP 200" reads like success in the log.
+    const err = r.ok ? (has ? '' : `no answer in the body: ${r.raw || '(empty)'}`)
+        : String((r.data && (r.data.error && (r.data.error.message || r.data.error) || r.data.message)) || '').slice(0, 200);
+    return { ok: r.ok && has, status: r.status, text: String(text || '').trim(), err };
 }
 
 async function askGemini(key, dataUrl, prompt, fetchImpl, env, forModel = '') {
@@ -143,14 +148,11 @@ async function askGemini(key, dataUrl, prompt, fetchImpl, env, forModel = '') {
  * Ask each provider that has a key and a vision model, in order, until one reads the image.
  * @returns {{ ok:boolean, text?:string, provider?:string, model?:string, tried:string[] }}
  */
-const HEAL_NAME = { groq: 'Groq', mistral: 'Mistral', openrouter: 'OpenRouter', together: 'Together', nvidia: 'NVIDIA', gemini: 'Gemini', 'github-models': 'GitHubModels' };
+const HEAL_NAME = { groq: 'Groq', mistral: 'Mistral', openrouter: 'OpenRouter', together: 'Together', nvidia: 'NVIDIA', gemini: 'Gemini' };
 
-/** A provider's credential for READING a picture. Inside GitHub Actions the run's own token is a GitHub Models credential when the workflow grants `models: read`. */
+/** A provider's credential for READING a picture: the owner's own key for that provider, or null. */
 export function visionKey(id, provider, env = process.env) {
-    const k = provider && keyFor(provider, env);
-    if (k) return k;
-    if (id === 'github-models' && env.GITHUB_ACTIONS === 'true' && env.GITHUB_TOKEN && String(env.GITHUB_TOKEN).trim()) return { name: 'GITHUB_TOKEN', value: String(env.GITHUB_TOKEN).trim() };
-    return null;
+    return (provider && keyFor(provider, env)) || null;
 }
 
 /**
@@ -169,7 +171,26 @@ async function liveVisionModel(id, provider, key, fetchImpl, exclude) {
     } catch (_) { return ''; }
 }
 
-const VISION_ORDER = ['github-models', 'gemini', 'mistral', 'groq', 'nvidia', 'openrouter', 'together'];
+/**
+ * Ollama Cloud and Fireworks go through the one provider table the receipt scanner uses (ai-provider-call.mjs), which already replaces a
+ * retired model from the provider's own list. They come first: the vision probe on 2026-11-07 found every other route here refusing
+ * (Gemini 402, Mistral 429, Groq 404/400, NVIDIA timeout, OpenRouter 404/429) while these two are the ones that read pictures in production.
+ */
+const SHARED_READERS = { ollama: { name: 'Ollama', env: 'OLLAMA_API_KEY', keys: (v) => ({ ollamaKey: v }) }, fireworks: { name: 'Fireworks', env: 'FIREWORKS_API_KEY', keys: (v) => ({ fireworksKey: v }) } };
+
+const VISION_ORDER = ['ollama', 'fireworks', 'gemini', 'mistral', 'groq', 'nvidia', 'openrouter', 'together'];
+
+async function askShared(id, dataUrl, prompt, env, fetchImpl, log) {
+    const spec = SHARED_READERS[id];
+    const value = String(env[spec.env] || '').trim();
+    if (!value) return null;
+    const base64 = dataUrl.replace(/^data:[^,]*,/, '');
+    const r = await askProvider(spec.name, {
+        keys: spec.keys(value), image: base64, prompt, tokens: 900, temperature: 0.2, timeoutMs: VISION_TIMEOUT_MS, deadlineMs: 60_000, log,
+        fetcher: (u, init, ms) => fetchImpl(u, { ...init, signal: AbortSignal.timeout(ms) }),
+    });
+    return { text: String(r.text || '').trim(), model: r.model };
+}
 
 /**
  * Ask each provider that has a key and a vision model, in order, until one answers `prompt` about the image.
@@ -181,6 +202,15 @@ async function readWithProviders({ dataUrl, prompt, order, env, fetchImpl, log }
         ? askGemini(k.value, dataUrl, prompt, fetchImpl, env, model || '')
         : askOpenAiStyle(provider, k.value, model, dataUrl, prompt, fetchImpl));
     for (const id of order) {
+        if (SHARED_READERS[id]) {
+            try {
+                const r = await askShared(id, dataUrl, prompt, env, fetchImpl, log);
+                if (!r) continue;
+                if (r.text) return { ok: true, text: r.text.slice(0, MAX_DESCRIPTION), provider: id, model: r.model, tried };
+                tried.push(`${id}/${r.model}: no answer`);
+            } catch (e) { tried.push(`${id}: ${String((e && e.message) || e).slice(0, 120)}`); }
+            continue;
+        }
         const provider = PROVIDERS.find((p) => p.id === id);
         const k = provider && visionKey(id, provider, env);
         if (!k) continue;

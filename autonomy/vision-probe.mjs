@@ -1,13 +1,14 @@
 /* =============================================================================
  * autonomy/vision-probe.mjs — does the screenshot reader really read a picture?
  * -----------------------------------------------------------------------------
- * WHY: "GitHub Models reads images for the run token" was claimed in #535 and never proven; every other vision
- * provider had failed. This renders a picture of INVENTED words in a real browser, gives it to the same reader the fix
+ * WHY: "GitHub Models reads images for the run token" was claimed in #535 and never proven. The first run of this probe showed
+ * it was false: GitHub retired GitHub Models on 2026-07-30 and its endpoint answers HTTP 200 "OK" to everything. This renders a picture of INVENTED words in a real browser, gives it to the same reader the fix
  * agent uses, and checks that the invented words come back. Invented words cannot be guessed from the issue text or
  * the code, so a pass means the picture was actually read.
  *
- * Run by .github/workflows/vision-probe.yml with ONLY the run's own GITHUB_TOKEN (no owner keys), so the provider that
- * answers is GitHub Models and nothing else. Exit 0 = read, 1 = not read (the reasons, HTTP status per model, are printed).
+ * Run by .github/workflows/vision-probe.yml with the same provider keys as the fix agent, so it measures what the agent can
+ * really do: the summary names the provider and model that read the picture. Exit 0 = read, 1 = not read (the reasons, HTTP
+ * status per model, are printed).
  * ===========================================================================*/
 
 import { describeScreenshot } from '../wf-screenshot-reader.mjs';
@@ -56,18 +57,45 @@ export async function renderProbeImage({ launch, words = PROBE_WORDS } = {}) {
     } finally { await browser.close(); }
 }
 
-export async function run({ env = process.env, log = console.log, describeImpl = describeScreenshot, renderImpl = renderProbeImage } = {}) {
+/**
+ * Diagnosis kept from the GitHub Models investigation (its endpoint answered "OK" to the catalogue and to a text question, so the
+ * whole service was gone, not just images). Only used when a GitHub token is the sole credential; status and the first 100
+ * characters of each body only.
+ */
+export async function diagnose({ env = process.env, fetchImpl = globalThis.fetch } = {}) {
+    const token = String(env.GITHUB_TOKEN || '').trim();
+    const head = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+    const show = async (label, url, init) => {
+        try {
+            const r = await fetchImpl(url, { ...init, headers: { ...head, ...(init && init.headers) }, signal: AbortSignal.timeout(20000) });
+            const body = String(await r.text()).replace(/\s+/g, ' ').slice(0, 100);
+            return `${label}: HTTP ${r.status} ${body || '(empty)'}`;
+        } catch (e) { return `${label}: ${String((e && e.message) || e).slice(0, 80)}`; }
+    };
+    return [
+        await show('catalogue', 'https://models.github.ai/catalog/models'),
+        await show('text-only', 'https://models.github.ai/inference/chat/completions', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'openai/gpt-4o-mini', max_tokens: 8, messages: [{ role: 'user', content: 'Reply with the single word PONG.' }] }),
+        }),
+    ];
+}
+
+export async function run({ env = process.env, log = console.log, describeImpl = describeScreenshot, renderImpl = renderProbeImage, diagnoseImpl = diagnose } = {}) {
     const dataUrl = await renderImpl();
     // verify:false, one reader: this asks "can it read", not "do two readers agree".
     const result = await describeImpl({ dataUrl, title: 'Probe', text: '', verify: false, env, log });
     const v = probeVerdict(result);
     log(`[vision-probe] ${v.ok ? 'READ' : 'NOT READ'}: ${v.reason}`);
+    if (!v.ok) {
+        try { for (const line of await diagnoseImpl({ env })) log(`[vision-probe] diagnosis ${line}`); } catch (_) { /* the verdict stands */ }
+    }
     return v;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
     run().then((v) => {
-        const line = v.ok ? `GitHub Models read the picture: ${v.reason}` : `The picture was NOT read: ${v.reason}`;
+        const line = v.ok ? `The picture was read: ${v.reason}` : `The picture was NOT read: ${v.reason}`;
         if (process.env.GITHUB_STEP_SUMMARY) {
             import('node:fs').then((fs) => fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Vision probe\n\n${line}\n`));
         }

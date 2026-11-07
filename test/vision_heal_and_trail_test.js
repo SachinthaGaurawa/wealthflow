@@ -50,3 +50,12 @@ describe('the pages open just before a report are written into the issue', () =>
         expect(diagnosticsSection({ activePage: 'settings' })).not.toMatch(/Pages open just before/);
     });
 });
+
+describe('screenshot reader: an answerless 200', () => {
+    it('says what the body carried instead of looking like success', async () => {
+        const fetchImpl = async () => ({ ok: true, status: 200, json: async () => { throw new Error('not json'); }, text: async () => 'OK' });
+        const r = await describeScreenshot({ dataUrl: PNG, verify: false, env: { MISTRAL_API_KEY: 'k' }, fetchImpl });
+        expect(r.ok).toBe(false);
+        expect(r.tried.join(' ')).toMatch(/HTTP 200 no answer in the body: OK/);
+    });
+});

@@ -1,7 +1,7 @@
 // =============================================================================
 // Reading a screenshot well (owner, 2026-11-06: "the AI's accuracy on an attached image is far too low").
 // What these pin down:
-//   - GitHub Models is a vision route that needs no key of the owner's: inside Actions the run's own token works.
+//   - GitHub Models is retired (2026-07-30): no route may depend on it, and the run's own token is not a vision credential.
 //   - A reading is checked by a DIFFERENT provider; disagreement is written into the text, not hidden.
 //   - What the reader says it saw is looked up in the app's own code by a program, and the line is named.
 //   - The device facts the app recorded reach the reader.
@@ -23,50 +23,79 @@ const gemini = (t) => ok({ candidates: [{ content: { parts: [{ text: t }] } }] }
 
 const READING = ['TRANSCRIPT:', 'Monthly CC', 'Payments', 'LKR 15,749.51', 'due each month', 'Total CC Financed', 'SCREEN: CC Instalments, phone', 'PROBLEM: label overlaps value'].join('\n');
 
-describe('GitHub Models reads pictures with the run\'s own token', () => {
-    const gh = PROVIDERS.find((p) => p.id === 'github-models');
-    it('uses GITHUB_TOKEN only inside GitHub Actions', () => {
-        expect(visionKey('github-models', gh, { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 't' })).toMatchObject({ name: 'GITHUB_TOKEN', value: 't' });
-        expect(visionKey('github-models', gh, { GITHUB_TOKEN: 't' })).toBeNull();          // a laptop's token is not a models credential
-        expect(visionKey('github-models', gh, { GITHUB_ACTIONS: 'true' })).toBeNull();
+describe('GitHub Models is retired and is not a vision route', () => {
+    it('the run\'s own token is not a vision credential, in or out of Actions', () => {
+        const gh = PROVIDERS.find((p) => p.id === 'github-models');
+        expect(visionKey('github-models', gh, { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 't' })).toBeNull();
+        expect(visionModels('github-models', {})).toEqual([]);
     });
-    it('a dedicated GITHUB_MODELS_TOKEN wins over the run token', () => {
-        expect(visionKey('github-models', gh, { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 't', GITHUB_MODELS_TOKEN: 'm' }).value).toBe('m');
+    it('with only the run token no provider is asked at all', async () => {
+        let calls = 0;
+        const r = await describeScreenshot({ dataUrl: PNG, env: { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 'tok' }, fetchImpl: async () => { calls++; return text('x'); }, verify: false });
+        expect(r.ok).toBe(false);
+        expect(calls).toBe(0);
     });
-    it('names vision-capable models and honours the override', () => {
-        expect(visionModels('github-models', {})[0]).toBe('openai/gpt-4.1');
-        expect(visionModels('github-models', { GITHUB_MODELS_VISION_MODEL: 'x/y' })[0]).toBe('x/y');
-    });
-    it('is asked first, with the run token, at the models.github.ai endpoint', async () => {
+    it('the reader asks Gemini first, then the others, with the owner\'s keys', async () => {
         const seen = [];
-        const fetchImpl = async (url, init) => { seen.push({ url: String(url), auth: init.headers.Authorization, model: JSON.parse(init.body).model }); return text('TRANSCRIPT:\nhello world'); };
-        const r = await describeScreenshot({ dataUrl: PNG, env: { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 'tok' }, fetchImpl, verify: false });
-        expect(r).toMatchObject({ ok: true, provider: 'github-models', model: 'openai/gpt-4.1' });
-        expect(seen[0].url).toBe('https://models.github.ai/inference/chat/completions');
-        expect(seen[0].auth).toBe('Bearer tok');
+        const fetchImpl = async (url) => { seen.push(String(url)); return gemini('TRANSCRIPT:\nhello world'); };
+        const r = await describeScreenshot({ dataUrl: PNG, env: { GEMINI_API_KEY: 'g', MISTRAL_API_KEY: 'm' }, fetchImpl, verify: false });
+        expect(r).toMatchObject({ ok: true, provider: 'gemini' });
+        expect(seen[0]).toMatch(/generativelanguage\.googleapis\.com/);
+    });
+});
+
+describe('Ollama Cloud and Fireworks read the picture (the routes that work in production)', () => {
+    const ollama = (t) => ({ ok: true, status: 200, text: async () => JSON.stringify({ message: { content: t } }) });
+    const openai = (t) => ({ ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: t } }] }) });
+    it('Ollama is asked first, with the picture as base64 and without the data-URL prefix', async () => {
+        const calls = [];
+        const fetchImpl = async (url, init) => { calls.push({ url: String(url), body: JSON.parse(init.body) }); return ollama('TRANSCRIPT:\nQuartz Harbor'); };
+        const r = await describeScreenshot({ dataUrl: PNG, env: { OLLAMA_API_KEY: 'o', GEMINI_API_KEY: 'g' }, fetchImpl, verify: false });
+        expect(r).toMatchObject({ ok: true, provider: 'ollama', text: 'TRANSCRIPT:\nQuartz Harbor' });
+        expect(calls[0].url).toBe('https://ollama.com/api/chat');
+        expect(calls[0].body.messages[0].images[0]).toBe(PNG.replace(/^data:[^,]*,/, ''));
+        expect(calls.length).toBe(1);
+    });
+    it('when Ollama refuses, Fireworks reads it, and the refusal is not hidden', async () => {
+        const fetchImpl = async (url) => (String(url).includes('ollama.com') ? { ok: false, status: 429, text: async () => 'rate limited' } : openai('TRANSCRIPT:\nLedger 7Q'));
+        const r = await describeScreenshot({ dataUrl: PNG, env: { OLLAMA_API_KEY: 'o', FIREWORKS_API_KEY: 'f' }, fetchImpl, verify: false });
+        expect(r).toMatchObject({ ok: true, provider: 'fireworks', text: 'TRANSCRIPT:\nLedger 7Q' });
+    });
+    it('a failing Ollama falls through to the older routes and names why', async () => {
+        const fetchImpl = async (url) => (String(url).includes('ollama.com') ? { ok: false, status: 401, text: async () => 'bad key' } : { ok: false, status: 402, json: async () => ({}) });
+        const r = await describeScreenshot({ dataUrl: PNG, env: { OLLAMA_API_KEY: 'o', GEMINI_API_KEY: 'g' }, fetchImpl, verify: false });
+        expect(r.ok).toBe(false);
+        expect(r.tried.join(' ')).toMatch(/ollama/);
+        expect(r.tried.join(' ')).toMatch(/gemini.*402/);
+    });
+    it('two working readers check each other', async () => {
+        const fetchImpl = async (url) => (String(url).includes('ollama.com') ? ollama(READING) : openai('CONFIRMED.'));
+        const r = await describeScreenshot({ dataUrl: PNG, env: { OLLAMA_API_KEY: 'o', FIREWORKS_API_KEY: 'f' }, fetchImpl });
+        expect(r).toMatchObject({ ok: true, provider: 'ollama', checked: 'confirmed' });
+        expect(r.checker).toMatch(/^fireworks\//);
     });
 });
 
 describe('a second reader checks the first one', () => {
-    const env = { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 't', GEMINI_API_KEY: 'g' };
-    const route = (first, second) => async (url) => (String(url).includes('models.github.ai') ? text(first) : gemini(second));
+    const env = { GEMINI_API_KEY: 'g', MISTRAL_API_KEY: 'm' };
+    const route = (first, second) => async (url) => (String(url).includes('generativelanguage') ? gemini(first) : text(second));
     it('says so when a different provider confirms', async () => {
         const r = await describeScreenshot({ dataUrl: PNG, env, fetchImpl: route(READING, 'CONFIRMED.') });
-        expect(r).toMatchObject({ ok: true, provider: 'github-models', checked: 'confirmed' });
-        expect(r.checker).toMatch(/^gemini\//);
+        expect(r).toMatchObject({ ok: true, provider: 'gemini', checked: 'confirmed' });
+        expect(r.checker).toMatch(/^mistral\//);
         expect(r.text).toBe(READING);
     });
     it('writes the disagreement into the reading instead of hiding it', async () => {
         const r = await describeScreenshot({ dataUrl: PNG, env, fetchImpl: route(READING, 'CORRECTIONS:\n- the value is drawn OVER the label, not beside it') });
         expect(r.checked).toBe('corrected');
         expect(r.text).toContain(READING.slice(0, 40));
-        expect(r.text).toMatch(/SECOND READER \(gemini\/.*\) CORRECTS/);
+        expect(r.text).toMatch(/SECOND READER \(mistral\/.*\) CORRECTS/);
         expect(r.text).toContain('drawn OVER the label');
     });
     it('a lone reader says it was not cross-checked, and a failing checker does not lose the reading', async () => {
-        const lone = await describeScreenshot({ dataUrl: PNG, env: { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 't' }, fetchImpl: route(READING, '') });
+        const lone = await describeScreenshot({ dataUrl: PNG, env: { GEMINI_API_KEY: 'g' }, fetchImpl: route(READING, '') });
         expect(lone).toMatchObject({ ok: true, checked: 'alone' });
-        const broken = await describeScreenshot({ dataUrl: PNG, env, fetchImpl: async (url) => (String(url).includes('models.github.ai') ? text(READING) : { ok: false, status: 500, json: async () => ({}) }) });
+        const broken = await describeScreenshot({ dataUrl: PNG, env, fetchImpl: async (url) => (String(url).includes('generativelanguage') ? gemini(READING) : { ok: false, status: 500, json: async () => ({}) }) });
         expect(broken).toMatchObject({ ok: true, checked: 'alone' });
         expect(broken.text).toBe(READING);
     });
@@ -109,7 +138,7 @@ describe('what the reader saw is looked up in the code', () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-ground-'));
         fs.writeFileSync(path.join(dir, 'index.html'), 'a\nMonthly CC Payments\n');
         const body = `### User feedback\n> overlap\n| Viewport | 430x932 |\n<!-- ${IMAGE_MARKER} -->\n<details>\n\n\`\`\`\n${PNG}\n\`\`\`\n\n</details>`;
-        const r = await screenshotContext({ issue: { title: 't', body }, repoDir: dir, env: { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 't' }, fetchImpl: async () => text(READING) });
+        const r = await screenshotContext({ issue: { title: 't', body }, repoDir: dir, env: { GEMINI_API_KEY: 'g' }, fetchImpl: async () => gemini(READING) });
         expect(r.status).toBe('read');
         expect(r.body).toContain('index.html:2');
         expect(r.note).toMatch(/Not cross-checked/);
@@ -118,10 +147,10 @@ describe('what the reader saw is looked up in the code', () => {
     it('names the readers that failed before the one that worked (a quiet provider is not a broken one)', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-tried-'));
         const body = `### User feedback\n> overlap\n<!-- ${IMAGE_MARKER} -->\n<details>\n\n\`\`\`\n${PNG}\n\`\`\`\n\n</details>`;
-        const fetchImpl = async (url) => (String(url).includes('models.github.ai') ? { ok: false, status: 403, json: async () => ({ error: { message: 'no access' } }), text: async () => 'no access' } : gemini(READING));
-        const r = await screenshotContext({ issue: { title: 't', body }, repoDir: dir, env: { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 't', GEMINI_API_KEY: 'g' }, fetchImpl });
+        const fetchImpl = async (url) => (String(url).includes('generativelanguage') ? { ok: false, status: 403, json: async () => ({ error: { message: 'no access' } }), text: async () => 'no access' } : text(READING));
+        const r = await screenshotContext({ issue: { title: 't', body }, repoDir: dir, env: { GEMINI_API_KEY: 'g', MISTRAL_API_KEY: 'm' }, fetchImpl });
         expect(r.status).toBe('read');
-        expect(r.provider).toBe('gemini');
-        expect(r.note).toMatch(/Tried first and failed: github-models\/[^;]*HTTP 403/);
+        expect(r.provider).toBe('mistral');
+        expect(r.note).toMatch(/Tried first and failed: gemini\/[^;]*HTTP 403/);
     });
 });
