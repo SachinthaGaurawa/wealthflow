@@ -67,7 +67,8 @@
     var MONW = '(?:' + MON + ')[a-z]*';
     var DATE_CORE = '(?:\\d{1,2}[\\/\\-](?:\\d{1,2}|' + MONW + ')[\\/\\-]\\d{2,4}'
         // "12 AUG 12 AUG" is a post date and a transaction date, both without a year; the second "12" is a day, not the year 2012
-        + '|\\d{1,2}\\s+' + MONW + '\\s+(?:\\d{4}|\\d{2}(?!\\d)(?!\\s*' + MONW + '))'
+        // (the year follows within a few spaces: "31 Mar" at the end of a wide column gap is a day and a month, not "31 Mar 16")
+        + '|\\d{1,2}\\s+' + MONW + '(?:\\s{1,4}\\d{4}|[ \\t]{1,4}\\d{2}(?!\\d)(?!\\s*' + MONW + '))'
         + '|\\d{4}[\\/\\-]\\d{1,2}[\\/\\-]\\d{1,2}'
         + '|\\b' + MONW + '\\.?\\s+\\d{1,2},?\\s+\\d{4}\\b)';
     var DATE_ANY = new RegExp(DATE_CORE, 'ig');
@@ -738,8 +739,12 @@
         // A text layer is text: hasTextLayer() needs three dates ("looks like a statement page"), which made every fixture 'no-text'.
         var hasText = String(text || '').replace(/\s+/g, ' ').trim().length > 40;
 
+        /* A SCRAMBLED TEXT LAYER (a PDF printed from a phone, with fonts that carry no text map) has text, a page of it, but not one date and hardly a line with money: letters and digits are other characters.
+         * It is read like a scan (the page images go to the image scanner), and the reason says so, instead of asking the owner to "confirm rows" of a layout that was never seen. */
+        var dateCount = (String(text || '').match(DATE_ANY) || []).filter(function (d) { return !/\s{4,}/.test(d); }).length, garbled = hasText && dateCount === 0 && lines.length >= 25 && moneyLines < lines.length * 0.15;
+
         var verdict;
-        if (!hasText) verdict = 'no-text';
+        if (!hasText || garbled) verdict = 'no-text';
         else if (invalidDates || balanceMismatches || (rows.length && reconciliation.ok === false)) verdict = 'unverified';
         else if (rows.length) verdict = 'parsed';
         // Money on the page and not one row assembled is a layout nobody taught this parser (a statement with no transactions carries only its balances): erring toward 'unreadable' costs one tap, dropping a real one costs a month.
@@ -771,13 +776,14 @@
         return {
             rows: rows, layout: layout, reconciliation: reconciliation, dateOrder: order,
             verdict: verdict,
+            garbled: garbled,
             /* True only when the result can be filed without a person looking.
              * 'unverified' is deliberately NOT understood: arithmetic that does
              * not close is exactly the case where a wrong number is worse than
              * no number. */
             understood: verdict === 'parsed',
             /* What the screen shows when it is not. */
-            reason: VERDICT_TEXT[verdict] || '',
+            reason: garbled ? GARBLED_TEXT : (VERDICT_TEXT[verdict] || ''),
             moneyLines: moneyLines,
             printedFigures: printedFigures(String(text || '')),
             candidateRows: cands.length,
@@ -789,6 +795,7 @@
 
     /* Sentences, not codes. Every one of these is shown to the owner on the
      * review screen, so it has to say what to DO, not what went wrong. */
+    var GARBLED_TEXT = 'This PDF has a text layer, but its letters and digits are scrambled (it was probably printed from a phone). It needs the image scanner instead.';
     var VERDICT_TEXT = {
         parsed: '',
         unverified: 'The rows were read, but the opening and closing balances do not add up. Check it before it is filed.',

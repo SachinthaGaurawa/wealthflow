@@ -35,7 +35,7 @@ export function safeShape(shape) {
     const s = shape && typeof shape === 'object' ? shape : {}, sources = {};
     for (const [key, count] of Object.entries(s.sources || {}).slice(0, 8)) sources[clean(key)] = safeNumber(count);
     const invalid = s.invalid || {};
-    return { sources, balanceColumn: !!s.balanceColumn, type: clean(s.type), opening: !!s.opening, closing: !!s.closing, reconciled: clean(s.reconciled), printed: clean(s.printed),
+    return { sources, balanceColumn: !!s.balanceColumn, type: clean(s.type), opening: !!s.opening, closing: !!s.closing, reconciled: clean(s.reconciled), printed: clean(s.printed), summary: clean(s.summary),
         invalid: { noDate: safeNumber(invalid.noDate), noAmount: safeNumber(invalid.noAmount), noWords: safeNumber(invalid.noWords) } };
 }
 
@@ -58,7 +58,7 @@ export function reportBody(kind, { bank = '', shape = {}, rows = 0, secondOpinio
         '- directions read by: ' + (Object.entries(s.sources).map(([key, n]) => key + ' ' + n).join(', ') || 'none'),
         '- balance column: ' + (s.balanceColumn ? 'yes' : 'no') + '  ·  statement type: ' + (s.type || 'unknown'),
         '- printed opening found: ' + (s.opening ? 'yes' : 'no') + '  ·  printed closing found: ' + (s.closing ? 'yes' : 'no') + '  ·  reconciled: ' + (s.reconciled || 'unknown'),
-        '- printed Total Payment check: ' + (s.printed || 'unknown'),
+        '- printed Total Payment check: ' + (s.printed || 'unknown') + '  ·  summary strip check: ' + (s.summary || 'unknown'),
         '- rows that are not whole transactions: no date ' + s.invalid.noDate + ', no amount ' + s.invalid.noAmount + ', no words ' + s.invalid.noWords,
         '',
         '### What to do',

@@ -70,6 +70,29 @@ export function printedPaymentsCheck(parsed) {
     return read === Math.round(Number(printed) * 100) ? 'agree' : 'differs';
 }
 
+/**
+ * THE CARD STATEMENT'S OWN SUMMARY STRIP (previous balance, purchases, cash, interest, charges, payments, other credits, new balance) AGAINST WHAT WAS READ.
+ * The strip is taken by the parser only when it adds up by itself, so each figure in it is the bank's own. Three things must then hold to the cent: the rows read as credits add up to payments plus other credits,
+ * the rows read as debits add up to purchases, cash, interest and charges, and the lines that say "interest" add up to the interest figure. The first two are independent of "opening plus credits minus debits equals closing":
+ * a line and its mirror image (a charge and a credit of one amount, read twice or lost together) move the balance by nothing, so they pass that one and fail these.
+ * @returns {{status: 'agree'|'differs'|'none', differs: string[]}} differs names the parts from a fixed list, never a line's own words
+ */
+const INTEREST_WORDS = /\b(?:interest|finance\s+charges?)\b/;
+export function printedSummaryCheck(parsed) {
+    const sum = parsed && parsed.printedFigures && parsed.printedFigures.summary;
+    if (!sum || !Number.isFinite(Number(sum.closing))) return { status: 'none', differs: [] };
+    const rows = (Array.isArray(parsed.rows) ? parsed.rows : []).filter((row) => row && row.valid !== false && (row.direction === 'credit' || row.direction === 'debit'));
+    const total = (direction) => rows.filter((row) => row.direction === direction).reduce((acc, row) => acc + cents(row.amount), 0);
+    const want = (...keys) => Math.round(keys.reduce((acc, key) => acc + (Number(sum[key]) || 0), 0) * 100);
+    const differs = [];
+    if (total('credit') !== want('payments', 'other')) differs.push('credits');
+    if (total('debit') !== want('purchases', 'cash', 'interest', 'charges')) differs.push('debits');
+    const interest = Math.round((Number(sum.interest) || 0) * 100);
+    const interestRows = rows.filter((row) => row.direction === 'debit' && INTEREST_WORDS.test(textOf(row)));
+    if (interest > 0 && interestRows.length && interestRows.reduce((acc, row) => acc + cents(row.amount), 0) !== interest) differs.push('interest');
+    return { status: differs.length ? 'differs' : 'agree', differs };
+}
+
 const flagged = (row) => !!row && row.needsReview === true && row.valid !== false && ['assumed', 'keyword'].includes(row.directionSource) && ['debit', 'credit'].includes(row.direction);
 const cents = (v) => Math.round(Math.abs(Number(v)) * 100);
 
@@ -85,7 +108,7 @@ export function proveDirections(parsed, ctx = {}) {
     const odd = new Map();                      // the amounts of flagged rows, by direction, to see which could cancel each other
     for (const row of rows) if (flagged(row)) { const key = `${cents(row.amount)}:${row.direction}`; odd.set(key, (odd.get(key) || 0) + 1); }
     /* THE CARD LAYOUT CONVENTION is open only on a card statement with no running balance, whose own arithmetic (when it has any) and balance checks do not contradict the rows. */
-    const layoutOpen = isCardStatement(parsed, ctx) && !(parsed && parsed.layout && parsed.layout.balanceColumn) && rec.ok !== false && !(parsed && parsed.balanceMismatches) && !(parsed && parsed.invalidDates) && printedPaymentsCheck(parsed) !== 'differs';
+    const layoutOpen = isCardStatement(parsed, ctx) && !(parsed && parsed.layout && parsed.layout.balanceColumn) && rec.ok !== false && !(parsed && parsed.balanceMismatches) && !(parsed && parsed.invalidDates) && printedPaymentsCheck(parsed) !== 'differs' && printedSummaryCheck(parsed).status !== 'differs';
     let byStatement = 0, byWords = 0, byLayout = 0;
     const out = rows.map((row) => {
         if (!flagged(row)) return row;
@@ -168,4 +191,4 @@ export function explainMiss({ opening, closing, credits, debits, candidates = []
     return { miss: 'even', vsWaiting: bucket(sum(waiting)), vsAll: bucket(sum(every)), ways: near.length <= 30 ? subsetWays(near, half) : 'many', waysAll: every.length <= 30 ? subsetWays(every, half) : 'many' };
 }
 
-export default { printedPaymentsCheck, semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss };
+export default { printedPaymentsCheck, printedSummaryCheck, semanticDirection, genericBankLine, proveDirections, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss };

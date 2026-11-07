@@ -16,7 +16,7 @@ import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZero
 import { lineIdsWithBankPayment } from './statement-credit-evidence.mjs';
 import { reportSuspectReading } from './wf-statement-self-report.mjs';
 import { confirmedKeys, applyOwnerConfirmed } from './statement-owner-confirmed.mjs';
-import { semanticDirection, genericBankLine, proveDirections, printedPaymentsCheck, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
+import { semanticDirection, genericBankLine, proveDirections, printedPaymentsCheck, printedSummaryCheck, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, sniffKind, VERDICT, intentVerdict } from './wealthflow-statement-identity.js';
@@ -1447,7 +1447,7 @@ export function readShape(parsed) {
     }
     return { sources: bySource, balanceColumn: !!(parsed && parsed.layout && parsed.layout.balanceColumn), type: String(parsed && parsed.layout && parsed.layout.statementType || ''),
         opening: Number.isFinite(rec.opening) && rec.opening !== null, closing: Number.isFinite(rec.closing) && rec.closing !== null, reconciled: rec.ok === null || rec.ok === undefined ? 'unknown' : rec.ok ? 'yes' : 'no', ...(rec.model ? { model: rec.model } : {}),
-        printed: printedPaymentsCheck(parsed), invalid: { noDate, noAmount, noWords } };
+        printed: printedPaymentsCheck(parsed), summary: printedSummaryCheck(parsed).status, invalid: { noDate, noAmount, noWords } };
 }
 
 export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {
@@ -2085,9 +2085,16 @@ export async function recoverRevokedSenderReviews({ db, uid, limit = 25, until =
  * vault saves). The last statement is allowed to finish, so the run's own deadline is 48 s and the budgets leave it room to. */
 const ADAPTIVE_MAX_TRIES = 3, ADAPTIVE_COOLDOWN_MS = 6 * 3600 * 1000, ADAPTIVE_PART = 100, ADAPTIVE_MIN_ROOM_MS = 28000, INVOCATION_MS = 48000;
 /* A READING THAT CONTRADICTS THE STATEMENT'S OWN PRINTED "Total Payment" IS A SUSPECT READING (printedPaymentsCheck): it gets a second opinion from the model even though the rules thought they understood it. */
-export const readingIsSuspect = parsed => Array.isArray(parsed && parsed.rows) && parsed.rows.length > 0 && printedPaymentsCheck(parsed) === 'differs';
+export const readingIsSuspect = parsed => Array.isArray(parsed && parsed.rows) && parsed.rows.length > 0 && (printedPaymentsCheck(parsed) === 'differs' || printedSummaryCheck(parsed).status === 'differs');
 /* The second opinion is believed only if it ends up agreeing with the printed figure the first reading contradicted: the model's rows are checked against the same printed Total Payment, to the cent. */
-export const secondOpinionAgrees = (first, second) => !readingIsSuspect(first) || (Array.isArray(second && second.rows) && printedPaymentsCheck({ ...second, printedFigures: first.printedFigures }) === 'agree');
+export const secondOpinionAgrees = (first, second) => {
+    if (!readingIsSuspect(first)) return true;
+    if (!Array.isArray(second && second.rows)) return false;
+    const again = { ...second, printedFigures: first.printedFigures };
+    const payments = printedPaymentsCheck(again), summary = printedSummaryCheck(again).status;
+    // every printed figure that exists must agree; at least one must exist (the first reading was suspect because one of them differed)
+    return payments !== 'differs' && summary !== 'differs' && (payments === 'agree' || summary === 'agree');
+};
 export function adaptiveWanted({ parsed, result, claimed, text, now }) {
     if (!readingIsSuspect(parsed) && parsed.verdict === 'parsed' && parsed.understood === true && parsed.reconciliation?.ok !== false && Array.isArray(parsed.rows) && parsed.rows.length) return false;
     if (parsed.layout?.reconciliationBypassed || result.zeroActivity === true || claimed.emptyOverride === 'owner') return false;
