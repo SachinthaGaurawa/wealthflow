@@ -60,6 +60,19 @@ describe('the issue it files', () => {
         expect(r.body).toContain('a laptop or tablet');
         expect(layoutLaneFor({ title: r.title, body: r.body }).applies).toBe(true);
     });
+    it('names its screen explicitly, so the words it quotes cannot send it to another page (#547 went to CC Instalments)', async () => {
+        const f = (await layoutFindings('.', { sweepImpl: async () => ({ ok: true, ranked: [{ screen: 'dashboard', score: 2 }] }), probeImpl: probeOk('At 1024px wide: span.dash-pie-name overlaps span.dash-pie-amt (2 times, e.g. 13x13) — e.g. "Card Installments" with "LKR 1.49M".'), describeImpl: describeFrom }))[0];
+        const r = renderIssue(f);
+        expect(r.body).toContain('<!-- wf-layout-screen: dashboard width=');
+        const lane = layoutLaneFor({ title: r.title, body: r.body });
+        expect(lane).toMatchObject({ applies: true, screen: 'dashboard' });
+        // the same text WITHOUT the marker is the bug this pins: the words alone name CC Instalments
+        expect(layoutLaneFor({ title: r.title, body: r.body.replace(/<!--[^>]*-->\n/, '') }).screen).toBe('cc-instalments');
+    });
+    it('ignores a marker that names no screen the probe can open', () => {
+        const lane = layoutLaneFor({ title: 'Layout overlap on phones', body: '<!-- wf-layout-screen: nonsense -->\nthe layout overlaps on my phone, the liquidity page' });
+        expect(lane.screen).toBe('liquidity');
+    });
     it('routes into the layout lane on the right screen (named pages and the credit-card screens)', async () => {
         for (const [screen, expected] of [['liquidity', 'liquidity'], ['cc-instalments', 'cc-instalments']]) {
             const r = renderIssue(await mk(screen));

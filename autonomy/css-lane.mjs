@@ -110,6 +110,13 @@ function deviceFacts(issue) {
  * @returns {{ applies:boolean, screen:string, why:string, sweep?:boolean, width?:number }}
  */
 export function layoutLaneFor(issue) {
+    // 0. A finding the system filed itself (autonomy/discover.mjs layoutFindings) names the screen it MEASURED. Its text quotes
+    // the words on that screen ("Card Installments" on the Dashboard), and words alone would route it to the wrong page: #547
+    // was sent to CC Instalments, measured clean there, and the agent stopped with "nothing to prove a change against".
+    const marked = String((issue && issue.body) || '').match(/<!--\s*wf-layout-screen:\s*([a-z0-9-]+)\s*(?:width=(\d+))?\s*-->/i);
+    if (marked && screenDef(marked[1].toLowerCase())) {
+        return { applies: true, screen: marked[1].toLowerCase(), why: `layout finding the system measured on ${marked[1].toLowerCase()}`, width: marked[2] ? Number(marked[2]) : 0 };
+    }
     const said = userWords(issue) + '\n' + englishReading(issue);
     const reading = screenshotReading(issue);
     const problemLine = (reading.match(/PROBLEM:\s*([^\n]+(?:\n(?![A-Z]+:)[^\n]+)*)/i) || [])[1] || '';
