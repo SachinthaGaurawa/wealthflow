@@ -56,6 +56,7 @@ import { conceptBoardFor, runConceptBoard, renderComment as boardComment, briefF
 import { screenshotContext } from './autonomy/screenshot-reader.mjs';
 import { withTranslation } from './autonomy/feedback-language.mjs';
 import { recoveryBrief } from './autonomy/pr-recovery.mjs';
+import { lessonsBrief, lessonsFor } from './autonomy/lessons.mjs';
 import * as Q from './autonomy/work-queue.mjs';
 
 const MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
@@ -437,9 +438,13 @@ async function main() {
             // build lane first; and a feature the one-file swarm could not place falls through to it as well.
             const build = buildLaneFor({ title: issue.title, body: shot.body });
             laneBody += retryBrief;   // why an earlier fix failed in CI, if one did (autonomy/pr-recovery.mjs)
+            // Rules this repository already paid for (autonomy/lessons.mjs): shown to the author, never used for routing.
+            const standing = lessonsBrief(`${issue.title}\n${String(shot.body).slice(0, 6000)}${retryBrief}`);
+            if (standing) log(`#${number} standing rules shown: ${lessonsFor(`${issue.title}\n${String(shot.body).slice(0, 6000)}${retryBrief}`).map((l) => l.id).join(', ')}`);
+            laneBody += standing;
             const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, repoDir: REPO_DIR, log });
             if (lane.applies) {
-                result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body + retryBrief }, repoDir: REPO_DIR, log });
+                result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body + retryBrief + standing }, repoDir: REPO_DIR, log });
             } else if (build.applies) {
                 log(`#${number} goes to the build lane (${build.why})`);
                 result = await buildIt();
