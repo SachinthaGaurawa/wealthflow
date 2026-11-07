@@ -335,4 +335,41 @@ describe('a locked emailed statement is opened by ANY saved password, whatever b
             expect(setup.db.docs.get('users/u').cconetime.length + setup.db.docs.get('users/u').ccPayments.length).toBeLessThan(4);
         });
     });
+
+    /* THE MATRIX. Every kind of statement the owner can meet on the "Map statement layout" screen, invented, through the whole composed pipeline: the reader does not know the layout, the owner confirms the
+     * reading (choosing In/Out for a row the page leaves unmarked), and the statement must end up filed on the right tabs with nothing left in Open reviews. */
+    describe('owner-confirmed layouts, every statement kind (invented)', () => {
+        const CARD = ['CREDIT CARD STATEMENT', 'Card Number 4000 00XX XXXX 5678', 'Credit Limit 500,000.00', 'Statement Date 30.07.2026'];
+        const BANK = ['ACCOUNT STATEMENT', 'Account No 0012345678', 'OPENING BALANCE 100,000.00'];
+        const cases = [
+            { name: 'credit card, dotted dates, nothing marked', lines: [...CARD, '02.07.2026 SAMPLE SUPERMARKET COLOMBO 4,250.00', '03.07.2026 PAYMENT RECEIVED THANK YOU 20,000.00', '05.07.2026 SAMPLE TELECOM 8,430.50', '09.07.2026 SAMPLE RIDE TRIP 1,250.00'],
+                expect: { cconetime: 3, ccPayments: 1, expenses: 0, incomeRecv: 0 } },
+            { name: 'credit card with an instalment plan line', lines: [...CARD, '02.07.2026 SAMPLE SUPERMARKET COLOMBO 4,250.00', '04.07.2026 SAMPLE PLAN INSTALMENT 3/12 12,500.00', '09.07.2026 SAMPLE RIDE TRIP 1,250.00'],
+                expect: { cconetime: 2, ccinstall: 1, expenses: 0, incomeRecv: 0 } },
+            { name: 'bank account with a running balance and one unmarked row', lines: [...BANK, '02.07.2026 SAMPLE SUPERMARKET 4,250.00 95,750.00', '03.07.2026 SAMPLE MYSTERY ITEM 500.00 95,750.00', '05.07.2026 SAMPLE SALARY JULY 250,000.00 345,750.00', 'CLOSING BALANCE 345,750.00'],
+                expect: { expenses: 2, incomeRecv: 1, cconetime: 0, ccPayments: 0 } },
+            { name: 'bank account, month-name dates, balance column', lines: [...BANK, '02 Jul 2026 SAMPLE SUPERMARKET 4,250.00 95,750.00', '05 Jul 2026 SAMPLE SALARY JULY 250,000.00 345,750.00', 'CLOSING BALANCE 345,750.00'],
+                expect: { expenses: 1, incomeRecv: 1, cconetime: 0, ccPayments: 0 } },
+        ];
+        for (const entry of cases) {
+            it(entry.name, async () => {
+                const body = `<html><body>${entry.lines.join('\n')}</body></html>`;
+                const cold = await readStatement({ bytes: Buffer.from(body), filename: 's.html' });
+                const offered = await proposeCloudLayouts(cold.text, { bank: 'NTB' });
+                expect(offered.length, 'the screen must offer a reading').toBeGreaterThan(0);
+                const confirmed = offered[0].rows.map(row => ({ date: row.date, amount: row.amount, direction: row.direction || 'debit' }));   // the owner picks Out for an unmarked row
+                const learned = await learnCloudLayout(cold.text, confirmed, { bank: 'NTB' });
+                expect(learned.ok, learned.reason).toBe(true);
+                const docId = createHash('sha256').update(JSON.stringify(['NTB', learned.template.id])).digest('hex');
+                const setup = simulation({ noVault: true, unencrypted: true, body, sourceExtra: { learnedTemplate: docId, ownerConfirmed: confirmedKeys(confirmed) },
+                    extraDocs: { ['users/u/statementLayouts/' + docId]: { uid: 'u', bank: 'NTB', template: learned.template, savedAt: 1 } } });
+                const result = await runStatementSync(setup.args);
+                const user = setup.db.docs.get('users/u');
+                const reviews = [...setup.db.docs.keys()].filter(path => path.startsWith('users/u/statementReview/'));
+                const counts = Object.fromEntries(['cconetime', 'ccPayments', 'ccinstall', 'expenses', 'incomeRecv'].map(key => [key, (user[key] || []).length]));
+                const filed = Object.values(counts).reduce((a, b) => a + b, 0);
+                expect({ status: result.status, reviews: reviews.length, filed, ...counts }).toMatchObject({ status: 'filed', reviews: 0, filed: confirmed.length, ...Object.fromEntries(Object.entries(entry.expect).filter(([key]) => key !== 'filed')) });
+            });
+        }
+    });
 });
