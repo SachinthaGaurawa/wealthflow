@@ -44,6 +44,8 @@ jobs:
       - name: Render a picture of invented words and read it
         env:
           # The same provider keys the fix agent receives (autonomous-fix.yml). Only the vision-capable ones matter here.
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           WealthFlow_API_Key: ${{ secrets.WealthFlow_API_Key }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

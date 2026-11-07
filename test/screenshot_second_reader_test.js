@@ -44,6 +44,38 @@ describe('GitHub Models is retired and is not a vision route', () => {
     });
 });
 
+describe('Ollama Cloud and Fireworks read the picture (the routes that work in production)', () => {
+    const ollama = (t) => ({ ok: true, status: 200, text: async () => JSON.stringify({ message: { content: t } }) });
+    const openai = (t) => ({ ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: t } }] }) });
+    it('Ollama is asked first, with the picture as base64 and without the data-URL prefix', async () => {
+        const calls = [];
+        const fetchImpl = async (url, init) => { calls.push({ url: String(url), body: JSON.parse(init.body) }); return ollama('TRANSCRIPT:\nQuartz Harbor'); };
+        const r = await describeScreenshot({ dataUrl: PNG, env: { OLLAMA_API_KEY: 'o', GEMINI_API_KEY: 'g' }, fetchImpl, verify: false });
+        expect(r).toMatchObject({ ok: true, provider: 'ollama', text: 'TRANSCRIPT:\nQuartz Harbor' });
+        expect(calls[0].url).toBe('https://ollama.com/api/chat');
+        expect(calls[0].body.messages[0].images[0]).toBe(PNG.replace(/^data:[^,]*,/, ''));
+        expect(calls.length).toBe(1);
+    });
+    it('when Ollama refuses, Fireworks reads it, and the refusal is not hidden', async () => {
+        const fetchImpl = async (url) => (String(url).includes('ollama.com') ? { ok: false, status: 429, text: async () => 'rate limited' } : openai('TRANSCRIPT:\nLedger 7Q'));
+        const r = await describeScreenshot({ dataUrl: PNG, env: { OLLAMA_API_KEY: 'o', FIREWORKS_API_KEY: 'f' }, fetchImpl, verify: false });
+        expect(r).toMatchObject({ ok: true, provider: 'fireworks', text: 'TRANSCRIPT:\nLedger 7Q' });
+    });
+    it('a failing Ollama falls through to the older routes and names why', async () => {
+        const fetchImpl = async (url) => (String(url).includes('ollama.com') ? { ok: false, status: 401, text: async () => 'bad key' } : { ok: false, status: 402, json: async () => ({}) });
+        const r = await describeScreenshot({ dataUrl: PNG, env: { OLLAMA_API_KEY: 'o', GEMINI_API_KEY: 'g' }, fetchImpl, verify: false });
+        expect(r.ok).toBe(false);
+        expect(r.tried.join(' ')).toMatch(/ollama/);
+        expect(r.tried.join(' ')).toMatch(/gemini.*402/);
+    });
+    it('two working readers check each other', async () => {
+        const fetchImpl = async (url) => (String(url).includes('ollama.com') ? ollama(READING) : openai('CONFIRMED.'));
+        const r = await describeScreenshot({ dataUrl: PNG, env: { OLLAMA_API_KEY: 'o', FIREWORKS_API_KEY: 'f' }, fetchImpl });
+        expect(r).toMatchObject({ ok: true, provider: 'ollama', checked: 'confirmed' });
+        expect(r.checker).toMatch(/^fireworks\//);
+    });
+});
+
 describe('a second reader checks the first one', () => {
     const env = { GEMINI_API_KEY: 'g', MISTRAL_API_KEY: 'm' };
     const route = (first, second) => async (url) => (String(url).includes('generativelanguage') ? gemini(first) : text(second));

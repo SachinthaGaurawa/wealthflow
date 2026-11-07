@@ -27,6 +27,7 @@
 
 import { PROVIDERS, keyFor } from './wf-llm-router.mjs';
 import { choose, loadModels, isModelGone } from './ai-models.mjs';
+import { askProvider } from './ai-provider-call.mjs';
 import nodeFs from 'node:fs';
 
 export const IMAGE_MARKER = 'wf-feedback-image';
@@ -170,7 +171,26 @@ async function liveVisionModel(id, provider, key, fetchImpl, exclude) {
     } catch (_) { return ''; }
 }
 
-const VISION_ORDER = ['gemini', 'mistral', 'groq', 'nvidia', 'openrouter', 'together'];
+/**
+ * Ollama Cloud and Fireworks go through the one provider table the receipt scanner uses (ai-provider-call.mjs), which already replaces a
+ * retired model from the provider's own list. They come first: the vision probe on 2026-11-07 found every other route here refusing
+ * (Gemini 402, Mistral 429, Groq 404/400, NVIDIA timeout, OpenRouter 404/429) while these two are the ones that read pictures in production.
+ */
+const SHARED_READERS = { ollama: { name: 'Ollama', env: 'OLLAMA_API_KEY', keys: (v) => ({ ollamaKey: v }) }, fireworks: { name: 'Fireworks', env: 'FIREWORKS_API_KEY', keys: (v) => ({ fireworksKey: v }) } };
+
+const VISION_ORDER = ['ollama', 'fireworks', 'gemini', 'mistral', 'groq', 'nvidia', 'openrouter', 'together'];
+
+async function askShared(id, dataUrl, prompt, env, fetchImpl, log) {
+    const spec = SHARED_READERS[id];
+    const value = String(env[spec.env] || '').trim();
+    if (!value) return null;
+    const base64 = dataUrl.replace(/^data:[^,]*,/, '');
+    const r = await askProvider(spec.name, {
+        keys: spec.keys(value), image: base64, prompt, tokens: 900, temperature: 0.2, timeoutMs: VISION_TIMEOUT_MS, deadlineMs: 60_000, log,
+        fetcher: (u, init, ms) => fetchImpl(u, { ...init, signal: AbortSignal.timeout(ms) }),
+    });
+    return { text: String(r.text || '').trim(), model: r.model };
+}
 
 /**
  * Ask each provider that has a key and a vision model, in order, until one answers `prompt` about the image.
@@ -182,6 +202,15 @@ async function readWithProviders({ dataUrl, prompt, order, env, fetchImpl, log }
         ? askGemini(k.value, dataUrl, prompt, fetchImpl, env, model || '')
         : askOpenAiStyle(provider, k.value, model, dataUrl, prompt, fetchImpl));
     for (const id of order) {
+        if (SHARED_READERS[id]) {
+            try {
+                const r = await askShared(id, dataUrl, prompt, env, fetchImpl, log);
+                if (!r) continue;
+                if (r.text) return { ok: true, text: r.text.slice(0, MAX_DESCRIPTION), provider: id, model: r.model, tried };
+                tried.push(`${id}/${r.model}: no answer`);
+            } catch (e) { tried.push(`${id}: ${String((e && e.message) || e).slice(0, 120)}`); }
+            continue;
+        }
         const provider = PROVIDERS.find((p) => p.id === id);
         const k = provider && visionKey(id, provider, env);
         if (!k) continue;
