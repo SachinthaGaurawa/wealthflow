@@ -55,6 +55,7 @@ import { buildLaneFor, runBuildLane, wireModule } from './autonomy/build-lane.mj
 import { conceptBoardFor, runConceptBoard, renderComment as boardComment, briefFor, parseStoredBoard, BOARD_MARKER } from './autonomy/concept-board.mjs';
 import { screenshotContext } from './autonomy/screenshot-reader.mjs';
 import { withTranslation } from './autonomy/feedback-language.mjs';
+import { recoveryBrief } from './autonomy/pr-recovery.mjs';
 import * as Q from './autonomy/work-queue.mjs';
 
 const MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
@@ -405,6 +406,13 @@ async function main() {
             if (shot.status !== 'none') log(`#${number} screenshot: ${shot.status} — ${shot.note}`);
         } catch (e) { log(`#${number} screenshot step failed (${e.message}) — working from the text`); }
 
+        // If an earlier fix for this report was opened as a PR and failed in CI, the recovery job wrote why on the issue.
+        // The author is told, so the retry changes its approach instead of repeating the failure. The routing below keeps
+        // reading the report's own words, so a check name in that text cannot send the issue to a different lane.
+        let retryBrief = '';
+        try { retryBrief = recoveryBrief(await Q.issueComments(number)); } catch (_) { /* no trail, no brief */ }
+        if (retryBrief) log(`#${number} an earlier fix failed in CI — the author is shown why`);
+
         let result;
         try {
             // A report about how a screen LOOKS (overlap, cut-off, a phone width) has no JavaScript to fix or to
@@ -428,9 +436,10 @@ async function main() {
             // Something NEW (an integration, a new calculator or page) has no existing module to edit, so it goes to the
             // build lane first; and a feature the one-file swarm could not place falls through to it as well.
             const build = buildLaneFor({ title: issue.title, body: shot.body });
+            laneBody += retryBrief;   // why an earlier fix failed in CI, if one did (autonomy/pr-recovery.mjs)
             const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, repoDir: REPO_DIR, log });
             if (lane.applies) {
-                result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body }, repoDir: REPO_DIR, log });
+                result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body + retryBrief }, repoDir: REPO_DIR, log });
             } else if (build.applies) {
                 log(`#${number} goes to the build lane (${build.why})`);
                 result = await buildIt();

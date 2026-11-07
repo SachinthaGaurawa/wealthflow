@@ -302,11 +302,16 @@ describe.skipIf(!chromeHere)('css lane: real Chromium', () => {
         expect(judgeLayout(before, after).verdict).not.toBe('fixed');
     }, 110_000);
 
-    it('a sweep with no page named finds the page that has the problem', async () => {
+    it('a sweep with no page named lists only the pages that have a problem, worst first; CC Instalments (#524) no longer does', async () => {
+        // This used to assert that cc-instalments ranked first, which was true only while #524 was unfixed. The agent's fix
+        // (#536) landed, so the sweep now reports whatever page is worst TODAY. What stays true is the contract below.
         const { sweepScreens } = await import('../autonomy/layout-probe.mjs');
         const r = await sweepScreens({ repoDir: process.cwd(), width: 430 });
         expect(r.ok, r.reason).toBe(true);
-        expect(r.ranked[0].screen).toBe('cc-instalments');
+        for (const x of r.ranked) expect(x.score).toBeGreaterThan(0);
+        const scores = r.ranked.map((x) => x.score);
+        expect(scores).toEqual([...scores].sort((a, b) => b - a));
+        expect(r.ranked.map((x) => x.screen)).not.toContain('cc-instalments');   // the #524 regression guard
     }, 115_000);
 });
 

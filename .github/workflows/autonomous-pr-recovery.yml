@@ -1,0 +1,65 @@
+name: Autonomous PR recovery (free)
+
+# =============================================================================
+# When the agent's own pull request goes red, nothing used to notice.
+#
+# The work queue treats an issue with an open `ai-fix/issue-<n>-*` PR as claimed, so the agent never looked at it again,
+# and a red PR sat there while the issue stayed claimed forever. This job closes that gap (autonomy/pr-recovery.mjs):
+#   - a check that failed on its first attempt is re-run once (a dead runner is not a wrong fix);
+#   - a check that failed twice hands the issue back: the PR is closed, the issue gets a comment saying what failed,
+#     and the fix agent starts again and is shown that comment. The attempt that opened the PR already counted against
+#     the issue's 3, so this cannot loop: after the third the issue is `ai-stuck`.
+#
+# It never checks out or runs a pull request's code. It reads the API as data, on the default branch's copy of this
+# file, so a pull request cannot change what this job does. Runs from a bot that GitHub holds for approval are left
+# alone: approving them is the one gate GitHub keeps for a person (a PR's own workflows run with the repo's secrets).
+# =============================================================================
+
+on:
+  workflow_run:
+    workflows: ["WealthFlow CI (free)"]
+    types: [completed]
+  schedule:
+    - cron: '41 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Only say what would be done'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write        # delete the closed agent branch
+  pull-requests: write   # close the agent's red PR
+  issues: write          # explain on the issue why it came back
+  actions: write         # re-run failed jobs once; start the fix agent again
+  checks: read
+
+concurrency:
+  group: wf-pr-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Look at every open agent pull request
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RECOVERY_DRY_RUN: ${{ inputs.dry_run }}
+        run: node autonomy/pr-recovery.mjs
