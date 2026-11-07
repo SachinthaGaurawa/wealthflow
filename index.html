@@ -6270,6 +6270,8 @@
                     </div>
                     <!-- Per-card / per-bank filter (shown by renderCCOT only when the
                          user has cards from more than one bank). -->
+                    <!-- The minimum payment each card statement asks for, and its date (renderCCDuePanel): not a charge, so it is not in the table below. -->
+                    <div id="ccotDuePanel"></div>
                     <div id="ccotFilterBar" style="display:none;"></div>
                     <!-- v7.27.0 — Card payments / credits + auto-@checkCircle@ reconciliation summary.
                          Populated by renderCCOT(): lists every payment made TO the card and
@@ -8256,6 +8258,8 @@
         // ==================== STATE MANAGEMENT ====================
         let appData = {
             auth: {}, income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
+            /* The minimum payment each card statement asks for, one record per statement (statement-due.mjs). A record list with ids, so it sits in _WF_RECORD_KEYS; DECLARED HERE or it is never read back. */
+            cardDues: [],
             cheques: [], expenses: [], targets: [], subscriptions: [], subMerchantMap: {},
             incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
             /* The verification queue's three answers. `incomeReceived` was
@@ -8342,7 +8346,7 @@
         // by recency (newest wins) with tombstones removing deleted rows. This merge
         // is commutative + idempotent, so every device converges to the union of the
         // newest records — no whole-document clobber, deletes included.
-        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps', 'pawns', 'debtors', 'people', 'payAccounts'];
+        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cardDues', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps', 'pawns', 'debtors', 'people', 'payAccounts'];
         const _WF_TOMB_TTL = 100 * 24 * 3600 * 1000;   // keep tombstones ~100 days, then prune
 
         // A record's effective update time: explicit _ut, else parsed createdAt, else 0.
@@ -23513,6 +23517,28 @@ table.amort tbody tr { page-break-inside: avoid; }
         window.openCCPaymentModal = openCCPaymentModal;
 
         // Per-card payments + auto-match summary panel (shown above the charges table).
+        /* THE MINIMUM PAYMENT DUE, above the charges: the least each card's latest statement asks for and the date by when (wealthflow-card-tabs.js `dues`). Always every card, whatever tab is chosen below: a date the
+         * bank sets does not depend on which card the owner is looking at. */
+        function renderCCDuePanel() {
+            const host = $('ccotDuePanel');
+            if (!host) return;
+            try {
+                const t = new Date(), today = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+                const list = window.WFCardTabs && window.WFCardTabs.dues ? window.WFCardTabs.dues(DB.get('cardDues') || [], DB.get('ccPayments') || [], { today, canonBank: _canonBank, shown: _bankShown }) : [];
+                host.innerHTML = window.WFCardTabs && window.WFCardTabs.renderDues ? window.WFCardTabs.renderDues(list, { fmt }) : '';
+                if (!host.__wfDueWired) {
+                    host.__wfDueWired = true;
+                    host.addEventListener('click', ev => { const b = ev.target && ev.target.closest ? ev.target.closest('[data-due-paid]') : null; if (b) markCardDuePaid(b.getAttribute('data-due-paid')); });
+                }
+            } catch (_) { host.innerHTML = ''; }
+        }
+        function markCardDuePaid(id) {
+            const arr = DB.get('cardDues') || [], i = arr.findIndex(x => x && x.id === id);
+            if (i < 0) return;
+            arr[i] = { ...arr[i], paidManually: true, paidAt: Date.now(), _ut: Date.now() };
+            DB.set('cardDues', arr); if (typeof setDirty === 'function') setDirty(true);
+            renderCCDuePanel(); notify('Marked as paid.');
+        }
         function _renderCCReconcilePanel(model) {
             const host = $('ccotReconcilePanel');
             if (!host) return;
@@ -23570,6 +23596,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const model = _ccotModel();
             if (_ccotBankFilter !== 'all' && !(model && model.tabs.length > 1 && model.tabs.some(t => t.key === _ccotBankFilter))) _ccotBankFilter = 'all';   // a card that is gone, or the only card left
             _renderCCReconcilePanel(model);
+            renderCCDuePanel();
 
             // ── One tab per credit card ────────────────────────────────────────
             // A person may hold several cards, of different banks or of one. With more than one, a tab per card (bank, last four digits, rows, what is due) lists each on its own;
@@ -36576,7 +36603,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const _wipeStamp = Date.now();
             appData = {
                 auth: currentAuth,
-                income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
+                income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [], cardDues: [],
                 cheques: [], expenses: [], targets: [], subscriptions: [], importBatches: [],
                 cribReports: [], sessions: [], subMerchantMap: {}, incomeReceived: {},
                 incomeDelayed: {}, billPaid: {}, billDelayed: {}, pawns: [], debtors: [], people: [], payAccounts: [],

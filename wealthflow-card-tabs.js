@@ -159,7 +159,81 @@
         if (t.left < r.left - 1 || t.right > r.right + 1) row.scrollLeft += (t.left - r.left);
     }
 
-    var API = { build: build, render: render, wire: wire, reveal: reveal, initials: initials, keyParts: function (key) { var i = String(key).indexOf('|'); return i < 0 ? { bankKey: String(key), last4: '' } : { bankKey: key.slice(0, i), last4: key.slice(i + 1) }; } };
+    /* ── THE MINIMUM PAYMENT EACH CARD ASKS FOR ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     * A card statement's foot prints the least the bank must receive and the day it must receive it by. The worker keeps that as one `cardDues` record per statement (statement-due.mjs). This is the model
+     * and the markup of the section the CC One-Time page shows above the charges: the latest ask of each card, how many days are left, and whether the payments made since the statement already cover it.
+     * Days are counted on the calendar (UTC day numbers of the printed dates), money in whole cents. */
+    var dayNum = function (iso) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000) : NaN; };
+    var RANK = { late: 0, soon: 1, open: 2, covered: 3, paid: 4 };
+    /**
+     * @param {Array<object>} records the owner's `cardDues` ({id, bank, card_last4, minimum, dueDate, closing?, statementEnd?, paidManually?})
+     * @param {Array<object>} payments the owner's `ccPayments` (money paid TO a card: {date, amount, card_last4?, bank?})
+     * @param {{today:string, canonBank?:function(string):string, shown?:function(string):string}} ctx today as 'YYYY-MM-DD'
+     * @returns {Array<{id,key,bank,last4,label,minimum,closing,dueDate,statementEnd,daysLeft,paid,short,state}>} state: late (past the date, minimum not covered) | soon (5 days or fewer) | open | covered | paid (the owner said so)
+     */
+    function dues(records, payments, ctx) {
+        ctx = ctx || {};
+        var today = dayNum(ctx.today);
+        if (isNaN(today)) return [];
+        var canon = typeof ctx.canonBank === 'function' ? ctx.canonBank : function (b) { return String(b || '').trim(); };
+        var shown = typeof ctx.shown === 'function' ? ctx.shown : function (b) { return String(b || ''); };
+        var bankOf = function (r) { return String(canon(r && r.bank) || '').toLowerCase().trim(); };
+        var latest = {};
+        (Array.isArray(records) ? records : []).forEach(function (r) {
+            if (!r || !(Number(r.minimum) > 0)) return;
+            var due = dayNum(r.dueDate);
+            if (isNaN(due)) return;
+            var l4 = last4Of(r), key = bankOf(r) + '|' + l4;
+            if (!latest[key] || latest[key].due < due) latest[key] = { r: r, due: due, key: key, l4: l4, bank: bankOf(r) };
+        });
+        var out = [];
+        Object.keys(latest).forEach(function (k) {
+            var x = latest[k], r = x.r, min = cents(r.minimum);
+            // what the card received after the statement's last day counts toward it; a statement that does not say its last day is taken to close 25 days before its due date
+            var from = !isNaN(dayNum(r.statementEnd)) ? dayNum(r.statementEnd) : x.due - 25, paid = 0;
+            (Array.isArray(payments) ? payments : []).forEach(function (p) {
+                var d = p ? dayNum(p.date) : NaN;
+                if (isNaN(d) || d <= from || d > today) return;
+                var pl = last4Of(p), same = x.l4 && pl ? pl === x.l4 : !!x.bank && bankOf(p) === x.bank;
+                if (same) paid += cents(p.amount);
+            });
+            var daysLeft = x.due - today;
+            var state = r.paidManually ? 'paid' : paid >= min ? 'covered' : daysLeft < 0 ? 'late' : daysLeft <= 5 ? 'soon' : 'open';
+            if (daysLeft < -45 || ((state === 'paid' || state === 'covered') && daysLeft < -7)) return;        // an old ask that was met is not news
+            var bankName = shown(r.bank) || r.bank || 'Card';
+            out.push({ id: r.id, key: k, bank: bankName, last4: x.l4, label: bankName + (x.l4 ? ' ••••' + x.l4 : ''), minimum: min / 100, closing: r.closing == null ? null : Number(r.closing), dueDate: r.dueDate, statementEnd: r.statementEnd || '', daysLeft: daysLeft, paid: paid / 100, short: Math.max(0, min - paid) / 100, state: state });
+        });
+        out.sort(function (a, b) { return (RANK[a.state] - RANK[b.state]) || (a.daysLeft - b.daysLeft) || a.label.localeCompare(b.label); });
+        return out;
+    }
+    var when = function (n) { return n < 0 ? Math.abs(n) + ' day' + (Math.abs(n) === 1 ? '' : 's') + ' overdue' : n === 0 ? 'due today' : n === 1 ? 'due tomorrow' : 'in ' + n + ' days'; };
+    var longDate = function (iso) { var d = new Date(dayNum(iso) * 86400000); try { return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }); } catch (_) { return iso; } };
+    /** The section as HTML (empty string when no card has an ask). `opts.fmt` turns a number into the money text the page uses. */
+    function renderDues(list, opts) {
+        opts = opts || {};
+        var fmt = typeof opts.fmt === 'function' ? opts.fmt : function (n) { return Number(n).toFixed(2); };
+        if (!Array.isArray(list) || !list.length) return '';
+        var cards = list.map(function (d) {
+            var done = d.state === 'covered' || d.state === 'paid';
+            var chip = d.state === 'paid' ? 'Marked as paid' : d.state === 'covered' ? 'Covered' : when(d.daysLeft);
+            var note = [];
+            if (d.state === 'covered') note.push(fmt(d.paid) + ' has reached this card since the statement, which covers the minimum.');
+            else {
+                if (d.paid > 0) note.push(fmt(d.paid) + ' paid since the statement; ' + fmt(d.short) + ' still to go.');
+                if (d.closing != null && d.closing > 0) note.push('Statement balance ' + fmt(d.closing) + '. Paying only the minimum leaves the rest to carry interest.');
+            }
+            return '<article class="wf-due-card is-' + esc(d.state) + '" data-due-id="' + esc(d.id) + '">'
+                + '<div class="wf-due-top"><span class="wf-due-who">' + esc(d.label) + '</span><span class="wf-due-chip">' + esc(chip) + '</span></div>'
+                + '<div class="wf-due-main"><span class="wf-due-lbl">' + (done ? 'Minimum payment' : 'Pay at least') + '</span> <span class="wf-due-amt">' + esc(fmt(d.minimum)) + '</span></div>'
+                + '<div class="wf-due-when">' + (done ? 'was due ' : 'before ') + esc(longDate(d.dueDate)) + '</div>'
+                + (note.length ? '<div class="wf-due-note">' + esc(note.join(' ')) + '</div>' : '')
+                + (done ? '' : '<div class="wf-due-act"><button type="button" class="btn btn-sm" data-due-paid="' + esc(d.id) + '">I have paid this</button></div>')
+                + '</article>';
+        }).join('');
+        return '<section class="wf-due" aria-label="Minimum payment due"><div class="wf-due-h"><span class="wf-due-title">Minimum payment due</span><span class="wf-due-sub">The least each card statement asks for, and the date the bank must have it by. These are not charges.</span></div><div class="wf-due-list">' + cards + '</div></section>';
+    }
+
+    var API = { build: build, render: render, wire: wire, reveal: reveal, dues: dues, renderDues: renderDues, initials: initials, keyParts: function (key) { var i = String(key).indexOf('|'); return i < 0 ? { bankKey: String(key), last4: '' } : { bankKey: key.slice(0, i), last4: key.slice(i + 1) }; } };
     root.WFCardTabs = API;
     if (typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof window !== 'undefined' ? window : globalThis);
