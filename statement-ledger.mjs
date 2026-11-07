@@ -9,6 +9,7 @@ import { ownMoney } from './wealthflow-own-money.js';
 import { bankKeyOf } from './statement-coverage.mjs';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
 import { subscriptionToCreate, identityOf } from './statement-subscriptions.mjs';
+import { cardDueRecord, withCardDue } from './statement-due.mjs';
 import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment, planFromLine } from './statement-links.mjs';
 import { settleCheque } from './wealthflow-cheques.js';
 
@@ -267,7 +268,7 @@ async function settledRowVerdict({ entry, row, user, sourcePath, index, id, read
     return 'unknown-status';
 }
 
-export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', cardRegistry = {}, ownTails = null, mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false }) {
+export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', cardRegistry = {}, ownTails = null, due = null, mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false }) {
     if (!db || !uid || !sourceRef?.path || !leaseToken || !Array.isArray(rows) || rows.length > 30 || !rows.length || !Array.isArray(decisions) || decisions.length !== rows.length || !Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(totalRows) || totalRows < cursor + rows.length || !Number.isSafeInteger(now)) throw new Error('invalid-settlement-request');
     const userRef = db.collection('users').doc(uid);
     const ledgerRefs = rows.map((_, index) => userRef.collection('statementLedger').doc(sourceOccurrenceId(sourceRef.path, cursor + index)));
@@ -446,6 +447,9 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         /* THE MOMENT A CARD PAYMENT (OR A CARD CHARGE) IS FILED, THE CARD'S CHARGES ARE WALKED AGAIN (cc-fifo.mjs): the new money joins the pool, the charges it clears are paid oldest first, and the first one it
          * cannot clear stays unpaid with what is left carried — in the same transaction, so the books are never between two answers and no device has to be opened for it to be true. */
         if (changes.ccPayments || changes.cconetime) { const walked = applyCardSettlement(user, now); if (walked.changed) changes.cconetime = user.cconetime; }
+
+        /* THE MINIMUM PAYMENT THE CARD STATEMENT ASKS FOR is kept once, as its own record (statement-due.mjs), from the first slice: a statement that waits for the owner's review still has a date the bank wants its money by. */
+        if (cursor === 0 && due) { const kept = withCardDue(user.cardDues, cardDueRecord({ due, sourcePath: sourceRef.path, bank: bank || source.bank || '', last4: last4 || source.last4 || '', statementType: statementType || source.statementType || '', now })); if (kept) changes.cardDues = kept; }
         
         if (Object.keys(changes).length) tx.set(userRef, {
             ...changes,
