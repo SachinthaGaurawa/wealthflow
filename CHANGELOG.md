@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.70 — 2026-11-07
+
+**What changed for you**
+
+- Subscription and phone-bill payments land on their own Subscriptions entry, month by month (#572)
+
 ## v7.69.69 — 2026-11-07
 
 **What changed for you**
