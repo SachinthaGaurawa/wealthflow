@@ -113,19 +113,27 @@ async function postJson(fetchImpl, url, headers, body) {
     try {
         const r = await fetchImpl(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: ctl.signal });
         let data = null;
-        try { data = await r.json(); } catch { /* not json */ }
-        return { ok: r.ok, status: r.status, data };
+        let raw = '';
+        if (typeof r.text === 'function') { try { raw = await r.text(); data = JSON.parse(raw); } catch { /* not json: `raw` still says what came back */ } }
+        else { try { data = await r.json(); } catch { /* not json */ } }
+        return { ok: r.ok, status: r.status, data, raw: String(raw || '').replace(/\s+/g, ' ').slice(0, 100) };
     } finally { clearTimeout(t); }
 }
 
 async function askOpenAiStyle(provider, key, model, dataUrl, prompt, fetchImpl) {
-    const r = await postJson(fetchImpl, provider.url, { Authorization: 'Bearer ' + key }, {
+    // GitHub's endpoint wants its own Accept and API-version headers (api/ai.js sends them); without them the probe on 2026-11-07
+    // got HTTP 200 and no answer from all four models.
+    const extra = provider.id === 'github-models' ? { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } : {};
+    const r = await postJson(fetchImpl, provider.url, { Authorization: 'Bearer ' + key, ...extra }, {
         model, temperature: 0.2, max_tokens: 900,
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: dataUrl } }] }],
     });
     const text = r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message && r.data.choices[0].message.content;
-    const err = r.ok ? '' : String((r.data && (r.data.error && (r.data.error.message || r.data.error) || r.data.message)) || '').slice(0, 200);
-    return { ok: r.ok && typeof text === 'string' && text.trim().length > 0, status: r.status, text: String(text || '').trim(), err };
+    const has = typeof text === 'string' && text.trim().length > 0;
+    // A 200 that carries no answer must say what it carried, or "HTTP 200" reads like success in the log.
+    const err = r.ok ? (has ? '' : `no answer in the body: ${r.raw || '(empty)'}`)
+        : String((r.data && (r.data.error && (r.data.error.message || r.data.error) || r.data.message)) || '').slice(0, 200);
+    return { ok: r.ok && has, status: r.status, text: String(text || '').trim(), err };
 }
 
 async function askGemini(key, dataUrl, prompt, fetchImpl, env, forModel = '') {
