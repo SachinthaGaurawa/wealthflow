@@ -65,3 +65,32 @@ describe('vision probe: does the reader read a picture', () => {
         expect(y).toMatch(/node autonomy\/vision-probe\.mjs/);
     });
 });
+
+describe('vision probe: diagnosis when the picture was not read', () => {
+    it('asks the catalogue and a text-only question, printing only status and a short head of the body', async () => {
+        const { diagnose } = await import('../autonomy/vision-probe.mjs');
+        const seen = [];
+        const fetchImpl = async (url, init) => { seen.push({ url: String(url), init }); return { status: 200, text: async () => 'OK\n' + 'x'.repeat(500) }; };
+        const lines = await diagnose({ env: { GITHUB_TOKEN: 'tok' }, fetchImpl });
+        expect(lines).toHaveLength(2);
+        expect(lines[0]).toMatch(/^catalogue: HTTP 200 OK x+$/);
+        expect(lines[0].length).toBeLessThan(140);
+        expect(seen[0].url).toBe('https://models.github.ai/catalog/models');
+        expect(seen[1].init.method).toBe('POST');
+        expect(JSON.parse(seen[1].init.body).messages[0].content).toMatch(/PONG/);
+        expect(seen[0].init.headers.Authorization).toBe('Bearer tok');
+    });
+
+    it('a network error is reported, never thrown, and run() only diagnoses a failure', async () => {
+        const { diagnose, run } = await import('../autonomy/vision-probe.mjs');
+        expect((await diagnose({ env: {}, fetchImpl: async () => { throw new Error('boom'); } }))[0]).toBe('catalogue: boom');
+        const logged = [];
+        let diagnosed = 0;
+        const base = { env: {}, log: (m) => logged.push(m), renderImpl: async () => 'data:image/png;base64,AAAA', diagnoseImpl: async () => { diagnosed++; return ['a: b']; } };
+        await run({ ...base, describeImpl: async () => ({ ok: true, text: 'Quartz Harbor LKR 48,271.50', provider: 'p', model: 'm' }) });
+        expect(diagnosed).toBe(0);
+        await run({ ...base, describeImpl: async () => ({ ok: false, tried: ['x: HTTP 200'] }) });
+        expect(diagnosed).toBe(1);
+        expect(logged.join('\n')).toMatch(/diagnosis a: b/);
+    });
+});

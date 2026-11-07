@@ -56,12 +56,39 @@ export async function renderProbeImage({ launch, words = PROBE_WORDS } = {}) {
     } finally { await browser.close(); }
 }
 
-export async function run({ env = process.env, log = console.log, describeImpl = describeScreenshot, renderImpl = renderProbeImage } = {}) {
+/**
+ * When the picture was not read, find out WHY with two plain calls (status and the first 100 characters only): is the
+ * catalogue reachable with this token, and does a text-only question get an answer? A token the service ignores shows
+ * on both; a model that cannot take images shows only on the picture.
+ */
+export async function diagnose({ env = process.env, fetchImpl = globalThis.fetch } = {}) {
+    const token = String(env.GITHUB_TOKEN || '').trim();
+    const head = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+    const show = async (label, url, init) => {
+        try {
+            const r = await fetchImpl(url, { ...init, headers: { ...head, ...(init && init.headers) }, signal: AbortSignal.timeout(20000) });
+            const body = String(await r.text()).replace(/\s+/g, ' ').slice(0, 100);
+            return `${label}: HTTP ${r.status} ${body || '(empty)'}`;
+        } catch (e) { return `${label}: ${String((e && e.message) || e).slice(0, 80)}`; }
+    };
+    return [
+        await show('catalogue', 'https://models.github.ai/catalog/models'),
+        await show('text-only', 'https://models.github.ai/inference/chat/completions', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'openai/gpt-4o-mini', max_tokens: 8, messages: [{ role: 'user', content: 'Reply with the single word PONG.' }] }),
+        }),
+    ];
+}
+
+export async function run({ env = process.env, log = console.log, describeImpl = describeScreenshot, renderImpl = renderProbeImage, diagnoseImpl = diagnose } = {}) {
     const dataUrl = await renderImpl();
     // verify:false, one reader: this asks "can it read", not "do two readers agree".
     const result = await describeImpl({ dataUrl, title: 'Probe', text: '', verify: false, env, log });
     const v = probeVerdict(result);
     log(`[vision-probe] ${v.ok ? 'READ' : 'NOT READ'}: ${v.reason}`);
+    if (!v.ok) {
+        try { for (const line of await diagnoseImpl({ env })) log(`[vision-probe] diagnosis ${line}`); } catch (_) { /* the verdict stands */ }
+    }
     return v;
 }
 
