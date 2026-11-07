@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.68 — 2026-11-07
+
+**What changed for you**
+
+- Statement parser: card summary strip, year-less double dates, cent-exact check, newest-first and spaced-thousands fixes (#569)
+
 ## v7.69.67 — 2026-11-07
 
 **What changed for you**
