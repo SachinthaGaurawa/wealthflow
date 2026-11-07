@@ -57,6 +57,7 @@ import { screenshotContext } from './autonomy/screenshot-reader.mjs';
 import { withTranslation } from './autonomy/feedback-language.mjs';
 import { recoveryBrief } from './autonomy/pr-recovery.mjs';
 import { lessonsBrief, lessonsFor } from './autonomy/lessons.mjs';
+import { evidenceLedger } from './autonomy/evidence-ledger.mjs';
 import * as Q from './autonomy/work-queue.mjs';
 
 const MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
@@ -206,7 +207,7 @@ export function proofEvidence(result = {}) {
  * changes nobody's decision — the same computed-and-never-consumed defect this
  * pipeline keeps producing, one level up.
  */
-export function prBody({ issue = {}, number, result = {}, testWritten = null } = {}) {
+export function prBody({ issue = {}, number, result = {}, testWritten = null, ledger = '' } = {}) {
     const provs = result.providers || {};
     return [
         '## Autonomous fix',
@@ -251,6 +252,7 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null } =
         '',
         '### Still to pass in CI',
         'Full test suite · multi-model consensus review · OPA/Conftest policy gate · fuzz gate if applicable.',
+        ...(ledger ? ['', ledger] : []),
         FOOTER,
     ].join('\n');
 }
@@ -389,9 +391,11 @@ async function main() {
 
         // A report written in another language (Sinhala, Tamil, ...) that was filed without an English reading gets one now, so the
         // English-only routers (role, layout lane, build lane, concept board) read what the owner meant. Never fatal.
+        let translation = null;
         try {
             const tr = await withTranslation(issue);
             if (tr.status !== 'none') log(`#${number} language: ${tr.note}`);
+            translation = { status: tr.status, note: tr.note };
             issue = tr.issue;
         } catch (e) { log(`#${number} translation step failed (${e.message}) — working from the original words`); }
 
@@ -415,6 +419,7 @@ async function main() {
         if (retryBrief) log(`#${number} an earlier fix failed in CI — the author is shown why`);
 
         let result;
+        let rulesShown = [];
         try {
             // A report about how a screen LOOKS (overlap, cut-off, a phone width) has no JavaScript to fix or to
             // test, so it goes to the layout lane: CSS only, measured in a real browser before and after.
@@ -440,7 +445,8 @@ async function main() {
             laneBody += retryBrief;   // why an earlier fix failed in CI, if one did (autonomy/pr-recovery.mjs)
             // Rules this repository already paid for (autonomy/lessons.mjs): shown to the author, never used for routing.
             const standing = lessonsBrief(`${issue.title}\n${String(shot.body).slice(0, 6000)}${retryBrief}`);
-            if (standing) log(`#${number} standing rules shown: ${lessonsFor(`${issue.title}\n${String(shot.body).slice(0, 6000)}${retryBrief}`).map((l) => l.id).join(', ')}`);
+            rulesShown = lessonsFor(`${issue.title}\n${String(shot.body).slice(0, 6000)}${retryBrief}`).map((l) => l.id);
+            if (standing) log(`#${number} standing rules shown: ${rulesShown.join(', ')}`);
             laneBody += standing;
             const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, repoDir: REPO_DIR, log });
             if (lane.applies) {
@@ -537,7 +543,7 @@ async function main() {
             issue: number,
             role: result.role,
             providers: provs,
-            body: prBody({ issue, number, result, testWritten }) + (wiringNote ? `\n\n### Wiring\n${wiringNote}\n` : ''),
+            body: prBody({ issue, number, result, testWritten, ledger: evidenceLedger({ result, shot: shot.status === 'none' ? null : shot, translation, testWritten, rules: rulesShown }).markdown }) + (wiringNote ? `\n\n### Wiring\n${wiringNote}\n` : ''),
         };
         fs.writeFileSync(OUTPUT, JSON.stringify(pr, null, 2) + '\n');
 

@@ -43,6 +43,7 @@ import * as Budget from './autonomy/provider-budget.mjs';
  * world-readable comment — on the very pull request that was removing it.
  * Every reviewer-supplied string is redacted on its way out, below. */
 import { redact } from './autonomy/secret-scan.mjs';
+import { withCharter } from './wf-charter.mjs';
 
 const MAX_DIFF = 60_000;
 
@@ -330,6 +331,8 @@ export const REVIEWERS = [
         ],
     },
 ];
+// The owner's operating charter (wf-charter.mjs) is read by every reviewer before its own seat.
+for (const r of REVIEWERS) r.system = withCharter(r.system, 'reviewer');
 
 function prompt(reviewer, diff, truncated) {
     return [
