@@ -33836,9 +33836,12 @@ Be direct and use real numbers. Avoid generic advice.`;
                     ? `<span title="Unusual — outside the ±2σ band of your last 12 months" style="color:var(--accent);font-weight:700;margin-left:6px;">@alert@ unusual</span>`
                     : '';
                 const cur = m.isCurrent ? '<span style="font-size:10px;background:rgba(212,175,55,.18);color:var(--accent);padding:2px 7px;border-radius:8px;margin-left:6px;font-weight:700;">THIS MONTH</span>' : '';
+                // what the bank statements say was paid this month, one line per payment (a phone bill paid twice shows both; the month holds the total)
+                const _pays = (s.history || []).filter(h => h && h.month === m.ym && h.source === 'statement' && Number.isFinite(Number(h.amount)));
+                const paysNote = _pays.length ? `<div style="font-size:10px;color:var(--text3);font-weight:500;margin-top:3px;">From your statements: ${_pays.map(h => `${_wfEsc(String(h.date || '').slice(8, 10))} · ${fmt(Number(h.amount))}`).join(' + ')}</div>` : '';
                 return `
                     <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg2);border-radius:10px;margin-bottom:8px;border:1px solid var(--border);">
-                        <div style="font-weight:700;font-size:13px;min-width:110px;">${_wfEsc(m.label)}${cur}</div>
+                        <div style="font-weight:700;font-size:13px;min-width:110px;">${_wfEsc(m.label)}${cur}${paysNote}</div>
                         <input type="text" class="sm-amount money-input" data-ym="${m.ym}"
                                value="${v === '' ? '' : v.toFixed(2)}"
                                placeholder="${placeholder}"
