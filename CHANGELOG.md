@@ -1,5 +1,16 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.61 — 2026-11-07
+
+**What changed for you**
+
+- Statement reader reports a reading it does not trust (PII-free issue for the fix agent) (#538)
+
+**Under the hood**
+
+- Autonomous PR recovery: re-run a red agent PR once, then hand the issue back to the agent with the reason (#539)
+- Screenshot reading: name the readers that failed first, show the Screenshot line on the drafted-fix comment (#537)
+
 ## v7.69.60 — 2026-11-06
 
 **What changed for you**
