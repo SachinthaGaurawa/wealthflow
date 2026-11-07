@@ -4,7 +4,7 @@ import { bankAgrees } from './wealthflow-institutions.js';
 const RE = {
   subscription:/\b(netflix|spotify|youtube|prime|disney|hbo|icloud|google\s*(one|storage)|microsoft|office\s*365|adobe|dialog|mobitel|hutch|airtel|slt|peo\s*tv|chatgpt|openai|notion|canva|dropbox)\b/i,
   ccPayment:  /\b(payment\s*[-–]?\s*thank\s*you|payment\s*received|thank\s*you\s*for\s*your\s*payment|online\s*payment|card\s*payment|settlement)\b/i,
-  fee:        /\b(annual\s*fee|late\s*(payment\s*)?fee|over\s*limit|finance\s*charge|interest|service\s*charge|joining\s*fee|stamp\s*duty|vat|processing\s*(fee|charge)s?|(instal+ment|plan|conversion)\s*(fee|charge)s?)\b/i,
+  fee:        /\b(?:annual\s*fee|(?:membership|renewal|joining)\s*fee|late\s*(?:payment\s*)?(?:fees?|charges?)|over\s*limit(?:\s*(?:fees?|charges?))?|(?:finance|service|processing|handling|admin\w*|sms|alert|card|replacement|reissue|return|atm|withdrawal|cash\s*advance|(?:instal+ment|plan|conversion))\s*(?:fees?|charges?)|interest(?:\s*charged?|\s*charges?)?|surcharge|stamp\s*duty|debit\s*tax|vat|nbt|sscl|govt?\s*levy|government\s*levy)\b/i,
   cashAdvance:/\b(cash\s*advance|atm|withdrawal|cash\s*w\/?d)\b/i,
   fuel:       /\b(ceypetco|cargills\s*petroleum|lanka\s*ioc|\bioc\b|filling\s*station|fuel|petrol|diesel)\b/i,
   refund:     /\b(refund|reversal|reimburs|chargeback|cashback)\b/i,
@@ -100,7 +100,7 @@ function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, 
  * pattern could tell from a date). A "n/m" alone is not evidence — "KEELLS 05/12" is a day — it only says WHICH instalment once the words have said it is one. A fee ABOUT a plan ("INSTALMENT FEE",
  * "PROCESSING FEE INSTALMENT PLAN") is a card fee, not a plan payment. */
 const PLAN_WORDS = /\b(?:instal+ments?|instl?mts?|easy\s*pay(?:ment)?s?|flexi[\s-]*pay|ez[\s-]*(?:cash|pay)|e[\s-]?z\s*cash|emi|epp|ipp|smart\s*pay|split\s*pay|monthly\s*plan|0\s*%\s*(?:plan|instal\w*|interest)|zero\s*(?:%\s*)?interest|interest[\s-]*free)\b/i;
-const PLAN_FEE = /\b(?:fees?|charges?|chgs?|commission|stamp|vat|nbt|penalty|late)\b/i;
+const PLAN_FEE = /\b(?:fees?|charges?|chgs?|commission|stamp|vat|nbt|penalty|late)\b|\b(?:instal+ments?|instl?mts?)\W{0,3}interest\b(?!\W{0,3}free)|\binterest\W+(?:on|for|of)\W+instal+ments?\b/i;
 const PLAN_ORDINAL = /(?:^|[^\d/.])(\d{1,2})\s*(?:\/|of)\s*(\d{1,2})(?![\d/.]|\s*%)/i;
 const PLAN_WORDS_CLEAN = new RegExp(PLAN_WORDS.source.replace(/^\\b/, '').replace(/\\b$/, ''), 'ig');
 /* THE LENGTH OF A PLAN IS WHAT THE LINE SAYS, NEVER A GUESS: "3/12" and "3 of 12" say twelve instalments, "EASY PAY 6 MONTHS" and "6 INSTALMENTS" say six; one instalment is one month. `length` is 0 when the line says nothing,
@@ -221,9 +221,9 @@ export function routeRow(row, ctx = {}) {
     else if (onCard) {
       if (installmentInfo(rawDesc).isInstallment) { module = 'ccinstall'; tabLabel = 'CC Installments'; confidence = 0.85; }
       else if (RE.subscription.test(desc)){ module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'subscription'; confidence = 0.9; category = 'Subscriptions'; }
+      else if (RE.fee.test(desc))         { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'fee'; confidence = 0.8; }
       else if (RE.cashAdvance.test(desc)) { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'cash_advance'; confidence = 0.85; }
       else if (RE.fuel.test(desc))        { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'fuel'; confidence = 0.85; }
-      else if (RE.fee.test(desc))         { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'fee'; confidence = 0.8; }
       else                                { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'purchase'; confidence = 0.7; category = expenseCategoryFor(row); }
     } else {
       if (RE.subscription.test(desc)) { module = 'subscriptions'; tabLabel = 'Subscriptions'; confidence = 0.9; category = expenseCategoryFor(row); }

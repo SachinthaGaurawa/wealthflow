@@ -351,6 +351,28 @@ describe('a locked emailed statement is opened by ANY saved password, whatever b
             { name: 'bank account, month-name dates, balance column', lines: [...BANK, '02 Jul 2026 SAMPLE SUPERMARKET 4,250.00 95,750.00', '05 Jul 2026 SAMPLE SALARY JULY 250,000.00 345,750.00', 'CLOSING BALANCE 345,750.00'],
                 expect: { expenses: 1, incomeRecv: 1, cconetime: 0, ccPayments: 0 } },
         ];
+
+        const HEAD = ['Statement of Account', 'Card Number 4000 0000 0000 5678', 'Card type VISA PLATINUM', 'Credit Limit 350,000.00', 'Statement Period 30 Sep 2026 / 31 Oct 2026', 'Posting Date Transaction Date Transaction Details Foreign Currency Amount Amount'];
+        const VARIANTS = {
+            crAfter: [...HEAD, 'Opening Balance 100,000.00', '16/10/2026 16/10/2026 Payment 004 20,000.00 CR', '22/10/2026 21/10/2026 SAMPLE PIZZA-TOWN, TOWN 1,500.25', 'Closing Balance 81,500.25'],
+            foreign: [...HEAD, 'Opening Balance 100,000.00', '20/10/2026 19/10/2026 SAMPLE ONLINE STORE, SINGAPORE USD 12.50 3,750.00', '22/10/2026 21/10/2026 SAMPLE PIZZA-TOWN, TOWN 1,500.25', 'Closing Balance 105,250.25'],
+            fees: [...HEAD, 'Opening Balance 100,000.00', '10/10/2026 10/10/2026 Instalment Interest - 3/12 800.00', '11/10/2026 11/10/2026 Finance Charges 1,000.00', '12/10/2026 12/10/2026 Over Limit Fee 500.00', '13/10/2026 13/10/2026 SMS Alert Fee 50.00', '14/10/2026 14/10/2026 Stamp Duty 25.00', '15/10/2026 15/10/2026 Annual Fee 3,000.00', '16/10/2026 16/10/2026 Late Payment Charge 1,000.00', 'Closing Balance 106,375.00'],
+            openingCr: [...HEAD, 'Opening Balance 2,000.00 CR', '22/10/2026 21/10/2026 SAMPLE PIZZA-TOWN, TOWN 1,500.25', 'Closing Balance 0.00'],
+            lastPlan: [...HEAD, 'Opening Balance 100,000.00', '23/10/2026 24/10/2026 Instalment Principle - 12/12 900.00', '22/10/2026 21/10/2026 SAMPLE PIZZA-TOWN, TOWN 1,500.25', 'Page 2 of 2', 'Your Instalment Purchases', 'Total Months Total Amount Remaining Months Remaining Amount', '2222222/SAMPLE STORE TWO (LAN 12 10,800.00 0 0.00', 'Closing Balance 102,400.25'],
+            twins: [...HEAD, 'Opening Balance 100,000.00', '22/10/2026 21/10/2026 SAMPLE PIZZA-TOWN, TOWN 1,500.25', '22/10/2026 21/10/2026 SAMPLE PIZZA-TOWN, TOWN 1,500.25', 'Closing Balance 103,000.50'],
+            oneDate: ['Statement of Account', 'Card Number 4000 0000 0000 5678', 'Credit Limit 350,000.00', 'Opening Balance 100,000.00', '16/10/2026 Payment 004 CR 20,000.00', '22/10/2026 SAMPLE PIZZA-TOWN, TOWN 1,500.25', 'Closing Balance 81,500.25'],
+        };
+        /* The other shapes the same bank's card statements take (invented): the flag after the amount, a foreign-currency charge, every kind of fee, an opening balance in credit, a plan's last month, two identical lines, one date column. */
+        const cardCases = {
+            crAfter: { expect: { cconetime: 1, ccPayments: 1 }, check: user => expect(user.ccPayments[0].desc).toBe('Payment 004') },
+            foreign: { expect: { cconetime: 2 }, check: user => expect(user.cconetime.map(r => r.amount).sort()).toEqual([1500.25, 3750]) },       // 12.50 dollars that cost 3,750.00 rupees: the rupees are the amount
+            fees: { expect: { cconetime: 7 }, check: user => expect(user.cconetime.map(r => [r.category, r.type])).toEqual(Array(7).fill(['Card Fee', 'service_fee'])) },
+            openingCr: { expect: { cconetime: 1 } },
+            lastPlan: { expect: { cconetime: 1, ccinstall: 1 }, check: user => expect(user.ccinstall[0]).toMatchObject({ product: 'SAMPLE STORE TWO', total: 10800, paid: 12, remaining: 0 }) },
+            twins: { expect: { cconetime: 2 } },
+            oneDate: { expect: { cconetime: 1, ccPayments: 1 } },
+        };
+        for (const [name, lines] of Object.entries(VARIANTS)) cases.push({ name: 'HNB-shaped card statement, ' + name, lines, ...cardCases[name] });
         for (const entry of cases) {
             it(entry.name, async () => {
                 const body = `<html><body>${entry.lines.join('\n')}</body></html>`;
@@ -368,6 +390,7 @@ describe('a locked emailed statement is opened by ANY saved password, whatever b
                 const reviews = [...setup.db.docs.keys()].filter(path => path.startsWith('users/u/statementReview/'));
                 const counts = Object.fromEntries(['cconetime', 'ccPayments', 'ccinstall', 'expenses', 'incomeRecv'].map(key => [key, (user[key] || []).length]));
                 const filed = Object.values(counts).reduce((a, b) => a + b, 0);
+                if (entry.check) entry.check(user);
                 expect({ status: result.status, reviews: reviews.length, filed, ...counts }).toMatchObject({ status: 'filed', reviews: 0, filed: confirmed.length, ...Object.fromEntries(Object.entries(entry.expect).filter(([key]) => key !== 'filed')) });
             });
         }

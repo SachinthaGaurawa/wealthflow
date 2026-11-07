@@ -25,6 +25,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fenceUntrusted } from './untrusted-text.mjs';
 
 const STOP = new Set(('the a an and or of to in on for with from that this these those is are was were be been it its as at by not no ' +
     'but if so we you i my me our your please fix make add show when what which have has had can could should would will just also than then ' +
@@ -95,7 +96,7 @@ export function selectPromptRanked(issue, ranked) {
         'A user of a vanilla-JS personal-finance PWA reported the following.',
         '',
         'REPORT:',
-        String(issue).slice(0, 1500),
+        fenceUntrusted('report', issue, 1500),
         '',
         'Files that mention the report\'s own words (best match first), with the matching lines.',
         'Choose the one that OWNS the behaviour — the code that renders or decides it.',
@@ -195,7 +196,7 @@ export function excerptFor(content, keywords, { ctx = 25, maxChars = 18_000, pin
 export function patchPrompt(issue, filename, excerptText, totalLines) {
     return [
         'ISSUE TO FIX:',
-        String(issue).slice(0, 2000),
+        fenceUntrusted('issue', issue, 2000),
         '',
         `FILE: ${filename} (${totalLines} lines; only the relevant windows are shown below)`,
         '--- BEGIN EXCERPTS ---',
