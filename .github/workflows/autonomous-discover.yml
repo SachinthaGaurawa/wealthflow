@@ -46,6 +46,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: write     # wake the fix agent right after filing (issues filed with the run's token start no workflow by themselves)
 
 concurrency:
   group: wealthflow-discover
@@ -116,6 +117,18 @@ jobs:
           else
             node autonomy/discover.mjs
           fi
+
+      # An issue filed with the run's own token does NOT start the fix agent's `issues` trigger (GitHub never lets a
+      # workflow's token start another workflow that way), so what discovery files used to wait up to six hours for
+      # the agent's schedule. A manual dispatch is the one allowed exception: wake the agent now. If nothing was filed
+      # the agent finds nothing to do and exits green.
+      - name: Wake the fix agent
+        if: github.event_name == 'schedule' || inputs.file == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run autonomous-fix.yml --ref "$DEFAULT_BRANCH"
 
       # The scanner is itself code, and code that decides what the pipeline works
       # on is exactly the code most worth testing.
