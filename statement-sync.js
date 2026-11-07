@@ -32,6 +32,7 @@ import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER
 import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
 import { bankAgrees } from './wealthflow-institutions.js';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow, installmentInfo } from './wealthflow-statement-router.js';
+import { readPlanTable, planFor } from './statement-plan-table.mjs';
 import { PROPOSAL, REVIEW, decisionProblem, agreedRows, approvedRows, reviewPrompt, proposalPrompt, inVocabulary } from './statement-board.mjs';
 import { healLoanLinks } from './loan-link.mjs';
 import { manualTwin, markTwin } from './statement-links.mjs';
@@ -1058,6 +1059,26 @@ export async function repairCardInstallments({ db, uid, now = Date.now(), log = 
         return { repaired: done.length, kinds };
     });
     if (result.repaired) log(JSON.stringify({ evt: 'card-installment-repair', repaired: result.repaired, kinds: result.kinds }));
+    return result;
+}
+
+/* A CARD FEE THE STATEMENT FILED AS A "PURCHASE": before the type followed the category, "Interest" and "Annual Fee" lines sat on the Card One-Time tab typed Purchase. The type is what the tab shows, so it is
+ * set to Service Fee, on the statement's own Card Fee rows only (nothing the owner typed, nothing with another category). Only the label changes; the amount and everything else stay. */
+export async function healCardFeeType({ db, uid, now = Date.now(), log = console.info }) {
+    const userRef = db.collection('users').doc(uid);
+    const result = await db.runTransaction(async tx => {
+        const data = (await tx.get(userRef)).data() || {};
+        if (!Array.isArray(data.cconetime)) return { healed: 0 };
+        let healed = 0;
+        const list = data.cconetime.map(record => {
+            if (!record || record.source !== 'statement' || record.category !== 'Card Fee' || (record.type && record.type !== 'purchase')) return record;
+            healed++; return { ...record, type: 'service_fee', _ut: now };
+        });
+        if (!healed) return { healed: 0 };
+        tx.set(userRef, { cconetime: list, _lastModified: new Date(now), _lastModifiedBy: 'statement-worker', _writeDeviceId: 'statement-worker', _writeTs: now }, { merge: true });
+        return { healed };
+    });
+    if (result.healed) log(JSON.stringify({ evt: 'card-fee-type-heal', healed: result.healed }));
     return result;
 }
 
@@ -2414,6 +2435,14 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             for (const word of saved.words) who.names.add(word);
             for (const letter of saved.initials) who.initials.add(letter);
             Object.defineProperty(allocations, 'ownerWords', { value: who, enumerable: false });
+            /* A card's instalment line names no shop and no total; the table the statement prints for its plans does (statement-plan-table.mjs). A line that belongs to exactly one table row carries it. */
+            const planTable = readPlanTable(text);
+            if (planTable.length) for (const row of parsed.rows) {
+                if (!row || row.direction !== 'debit' || !isCreditCardRow(row, allocations)) continue;
+                const said = installmentInfo(String(row.narration || row.description || ''));
+                const hit = said.isInstallment ? planFor(planTable, row.amount, said.of) : null;
+                if (hit) row.plan = hit;
+            }
             /* A STATEMENT BEING RESUMED (resumePartialStatements) is replayed from its first row: the rows the ledger already holds are
              * checked against this reading by fingerprint inside the settlement, and cost no classification here. */
             /* THE COMPOSITE KEY, TAKEN BEFORE A ROW IS FILED: bank + account + the statement's month (+ the file's bytes). If the owner's upload (or another
@@ -2953,7 +2982,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     if (Date.now() < tailUntil && start - Number(mail.lastLoanHealMs || 0) >= LOAN_HEAL_EVERY_MS) {
         // each on its own: one that fails (a document in a shape it did not expect) must not stop the others from ever running
         const pass = await runSteps({ from: mail.loanHealNext, until: tailUntil, steps: [
-            { name: 'card-installments', run: () => repairCardInstallments({ db, uid }) }, { name: 'loan-installments', run: () => healLoanInstallments({ db, uid }) }, { name: 'hand-made-twins', run: () => healHandMadeTwins({ db, uid }) },
+            { name: 'card-installments', run: () => repairCardInstallments({ db, uid }) }, { name: 'card-fee-type', run: () => healCardFeeType({ db, uid }) }, { name: 'loan-installments', run: () => healLoanInstallments({ db, uid }) }, { name: 'hand-made-twins', run: () => healHandMadeTwins({ db, uid }) },
             { name: 'statement-cheques', run: () => healStatementCheques({ db, uid }) }, { name: 'cheque-twins', run: () => healChequeTwins({ db, uid }) }, { name: 'statement-copies', run: () => healStatementCopies({ db, mailRef, uid }) }, { name: 'own-transfers', run: () => healOwnTransfers({ db, uid }) },
             { name: 'card-settlement', run: () => healCardSettlement({ db, uid }) }] });
         tail.heal = { ran: pass.ran.length, failed: pass.failed, ms: pass.ms, ...(pass.done ? {} : { skipped: pass.skipped }) };

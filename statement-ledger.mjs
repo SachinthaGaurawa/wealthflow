@@ -133,6 +133,10 @@ function findCounterpart({ row, module, user, cards, cardRegistry, bank }) {
         if (cardSettlementDebit(row, { cardRegistry, cards })) return { kind: 'card-settlement' };
     }
     // a card charge for a plan the owner already has is that plan's month, whether or not the narration says installment
+    if (module === 'ccinstall' && row.plan && row.plan.ref) {      // the statement's plan table names the plan by its reference: the month of the plan the books already hold under it
+        const ym = String(row.date || '').slice(0, 7), held = (Array.isArray(user.ccinstall) ? user.ccinstall : []).find(p => p && p.planRef === row.plan.ref && !(Array.isArray(p.payments) && p.payments.some(x => x && x.month === ym && x.paid && x.source === 'statement')));
+        if (held) return { kind: 'plan', plan: held, info: installmentInfo(String(row.description || row.narration || '')) };
+    }
     if (module === 'ccinstall' || module === 'cconetime') { const info = installmentInfo(String(row.description || row.narration || '')); const plan = matchInstallmentPlan(row, user.ccinstall, { installment: module === 'ccinstall', bank, of: info.of }); if (plan) return { kind: 'plan', plan, info }; }
     if (module === 'expenses' || module === 'cconetime') { const sub = matchSubscriptionForDebit(row, user.subscriptions); if (sub) return { kind: 'subscription', sub }; }
     return null;
@@ -173,14 +177,17 @@ function makeRecord(row, decision, context, id, now) {
      * charge in hand is its first paid month. Its `date` is a month's first day: the totals count a plan from the month after a mid-month date, which would put this charge a month late. */
     if (module === 'ccinstall') {
         // "INSTALLMENT 03/12 ABANS" is the 3rd of 12 of the Abans plan: the plan is named after the merchant, and the note says which month this charge is
-        const plan = installmentInfo(desc);
+        const plan = installmentInfo(desc), table = row.plan && row.plan.name ? row.plan : null;
         const ofText = plan.no && plan.of ? ` (${plan.no} of ${plan.of})` : '';
-        const shape = planFromLine({ amount: row.amount, date: row.date, no: plan.no, length: plan.length });
-        return { ...base, desc, product: (plan.name || desc).slice(0, 60), bank: canonicalBank(context.bank || ''), buyer: 'Self', rate: 0, rateUnknown: true, ...shape, completed: false, skipped: [], notes: `Card installment charge of ${row.date}${ofText}`,
+        /* the statement's own plan table (statement-plan-table.mjs) names the plan and prints its real total: "Instalment Principle - 3/12" is one of its rows, not a plan called "Principle" */
+        const shape = { ...planFromLine({ amount: row.amount, date: row.date, no: plan.no || (table ? table.months - table.remainingMonths : 0), length: plan.length || (table ? table.months : 0) }),
+            ...(table ? { total: table.total, totalEstimated: false, planRef: table.ref } : {}) };
+        return { ...base, desc, product: (table ? table.name : plan.name || desc).slice(0, 60), bank: canonicalBank(context.bank || ''), buyer: 'Self', rate: 0, rateUnknown: true, ...shape, completed: false, skipped: [], notes: `Card installment charge of ${row.date}${ofText}`,
             monthly: row.amount, startDate: row.date, category: decision.category, payments: [{ month: row.date.slice(0, 7), paid: true, amount: row.amount, paidAt: Date.parse(`${row.date}T00:00:00Z`) || now, source: 'statement', statementKey: context.sourcePath, statementRow: context.index }],
             ...(plan.no && plan.of ? { installmentNo: plan.no, installmentOf: plan.of } : {}) };
     }
-    return { ...base, desc, type: row.type || 'purchase', category: decision.category, serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
+    /* a card FEE or interest line is a Service Fee on the Card One-Time tab, as the manual upload types it: "Interest" showing as a Purchase is a line that says one thing and is filed as another */
+    return { ...base, desc, type: decision.category === 'Card Fee' ? 'service_fee' : row.type || 'purchase', category: decision.category, serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
 }
 
 /* A ROW THE LEDGER ALREADY HOLDS IS THE SAME TRANSACTION IF THE MONEY IS THE SAME. A statement that stopped part-way was filed by an earlier

@@ -371,5 +371,45 @@ describe('a locked emailed statement is opened by ANY saved password, whatever b
                 expect({ status: result.status, reviews: reviews.length, filed, ...counts }).toMatchObject({ status: 'filed', reviews: 0, filed: confirmed.length, ...Object.fromEntries(Object.entries(entry.expect).filter(([key]) => key !== 'filed')) });
             });
         }
+        /* A CARD STATEMENT WITH A PLAN TABLE (invented shops and money, the shape a real one prints): the "Instalment Principle - 3/12" lines carry no shop, the table on the next page names each plan and gives its
+         * real total; "Interest" is a Service Fee; "Payment 004 CR" is the card payment without the flag in its description; every row files and nothing is left in review. */
+        it('credit card with a plan table: plans take the table\'s name and total, interest is a Service Fee, the CR flag is not part of the description', async () => {
+            const lines = ['Statement of Account','Card Number 4000 0000 0000 5678','Card type VISA PLATINUM','Credit Limit 350,000.00','Statement Period 30 Sep 2026 / 31 Oct 2026',
+ 'Posting Date Transaction Date Transaction Details Foreign Currency Amount Amount',
+ 'Opening Balance 100,000.00','SAMPLE HOLDER',
+ '16/10/2026 16/10/2026 Payment 004 CR 20,000.00',
+ '22/10/2026 21/10/2026 SAMPLE PIZZA-TOWN, TOWN 1,500.25',
+ '23/10/2026 21/10/2026 SAMPLE*ClickShop Digital, Colombo 2,200.00',
+ '23/10/2026 24/10/2026 Instalment Principle - 3/12 5,000.10',
+ '23/10/2026 25/10/2026 Instalment Principle - 3/12 900.00',
+ '26/10/2026 24/10/2026 Payment 004 CR 10,000.00',
+ '27/10/2026 22/10/2026 SAMPLE Channelling PLC, https://www.e 3,300.50',
+ '31/10/2026 31/10/2026 Interest 4,100.35',
+ 'Total Payment: 30,000.00CR','Total Transactions: 7,000.75','Others: 10,000.45',
+ 'Page 1 of 2',
+ 'Your Instalment Purchases','Total Months Total Amount Remaining Months Remaining Amount',
+ '1111111/SAMPLE STORE ONE (LAN 12 60,001.20 9 45,000.90','2222222/SAMPLE STORE TWO (LAN 12 10,800.00 9 8,100.00',
+ 'Closing Balance 87,001.20','Payment Due Date 25 Nov 2026 Min Amt. Due 4,000.00'];
+            const body = `<html><body>${lines.join('\n')}</body></html>`;
+            const cold = await readStatement({ bytes: Buffer.from(body), filename: 's.html' });
+            const offered = await proposeCloudLayouts(cold.text, { bank: 'HNB' });
+            const confirmed = offered[0].rows.map(row => ({ date: row.date, amount: row.amount, direction: row.direction || 'debit' }));
+            const learned = await learnCloudLayout(cold.text, confirmed, { bank: 'HNB' });
+            expect(learned.ok, learned.reason).toBe(true);
+            const docId = createHash('sha256').update(JSON.stringify(['HNB', learned.template.id])).digest('hex');
+            const setup = simulation({ noVault: true, unencrypted: true, body, sourceExtra: { bank: 'HNB', learnedTemplate: docId, ownerConfirmed: confirmedKeys(confirmed) },
+                extraDocs: { ['users/u/statementLayouts/' + docId]: { uid: 'u', bank: 'HNB', template: learned.template, savedAt: 1 } } });
+            const result = await runStatementSync(setup.args);
+            const user = setup.db.docs.get('users/u');
+            expect(result.status).toBe('filed');
+            expect([...setup.db.docs.keys()].filter(path => path.startsWith('users/u/statementReview/'))).toEqual([]);
+            expect(user.cconetime.length + user.ccinstall.length + user.ccPayments.length).toBe(confirmed.length);
+            const plans = Object.fromEntries(user.ccinstall.map(plan => [plan.planRef, plan]));
+            expect(plans['1111111']).toMatchObject({ product: 'SAMPLE STORE ONE', monthly: 5000.1, total: 60001.2, totalEstimated: false, duration: 12, paid: 3, remaining: 9 });
+            expect(plans['2222222']).toMatchObject({ product: 'SAMPLE STORE TWO', monthly: 900, total: 10800, totalEstimated: false, duration: 12, paid: 3, remaining: 9 });
+            expect(user.cconetime.find(record => record.desc === 'Interest')).toMatchObject({ category: 'Card Fee', type: 'service_fee' });
+            expect(user.cconetime.filter(record => record.desc !== 'Interest').every(record => record.type === 'purchase')).toBe(true);
+            expect(user.ccPayments.map(payment => payment.desc)).toEqual(['Payment 004', 'Payment 004']);
+        });
     });
 });

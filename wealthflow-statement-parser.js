@@ -509,7 +509,7 @@
             }
             if (!direction) {
                 var marker = (amtTok && (amtTok.marker || amtTok.pre)) || (lastTok && (lastTok.marker || lastTok.pre)) || '';
-                if (marker) { direction = marker === 'CR' ? 'credit' : 'debit'; source = 'marker'; }
+                if (marker) { direction = marker === 'CR' ? 'credit' : 'debit'; source = 'marker'; narration = narration.replace(/\s+(?:CR|DR)$/i, ''); }      // a "CR" printed before the amount is the flag, not part of the description
             }
             if (!direction && colDir) { direction = colDir; source = 'column'; }
             if (!direction && amtTok && amtTok.neg) { direction = 'credit'; source = 'sign'; }
