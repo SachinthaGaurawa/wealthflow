@@ -144,3 +144,21 @@ describe('the release workflow runs the canary, and cannot swallow its verdict',
         expect(step).toMatch(/\[ "\$CANARY_ROLLBACK" = "true" \] && \[ -n "\$VERCEL_TOKEN" \]/);
     });
 });
+
+describe('the release signs what shipped, after the live check and the canary, and says what that proves', () => {
+    const wf = fs.readFileSync(path.join(import.meta.dirname, '..', '.github', 'workflows', 'auto-release.yml'), 'utf8');
+    it('has the two permissions signing needs, and signs after the canary', () => {
+        expect(wf).toMatch(/permissions:[\s\S]{0,200}id-token: write[\s\S]{0,200}attestations: write/);
+        expect(wf.indexOf('Canary - open the live release')).toBeLessThan(wf.indexOf('Sign the build provenance'));
+        expect(wf).toMatch(/uses: actions\/attest-build-provenance@v2/);
+    });
+    it('packs a reproducible tree (git archive | gzip -n) and prints the command anyone can verify it with', () => {
+        expect(wf).toMatch(/git archive --format=tar --prefix=wealthflow\/ "v\$V" \| gzip -n/);
+        expect(wf).toMatch(/gh attestation verify wealthflow-v\$V\.tar\.gz --repo/);
+    });
+    it('never swallows a signing failure and does not claim to be a zero-knowledge proof', () => {
+        const at = wf.indexOf('- name: Sign the build provenance');
+        expect(wf.slice(at, at + 400)).not.toMatch(/continue-on-error/);
+        expect(wf).toMatch(/not a zero-knowledge proof/);
+    });
+});

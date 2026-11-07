@@ -64,6 +64,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write                # sign the build provenance (Sigstore, free for a public repository)
+  attestations: write            # store the signed statement of what this release is
   issues: write                  # a blocked or unconfirmed release files an issue instead of staying silent
 
 # Shared with every workflow that pushes to the default branch, so two bots can
@@ -537,3 +539,35 @@ jobs:
         run: |
           echo "::error::A real change is waiting but a safety gate (tests on this commit, or production health) is red. See the Gates step and the release-blocked issue."
           exit 1
+
+      # SIGNED PROOF OF WHAT SHIPPED. After the release is live and the canary has looked at it, the exact tree of the release tag is
+      # packed deterministically (`git archive | gzip -n`, so anyone can rebuild the same bytes) and GitHub signs a build-provenance
+      # statement for its SHA-256: which repository, which workflow, which commit made it. It is stored in GitHub's attestation store
+      # (Sigstore; free for a public repository) and can be checked by anyone, with no secret:
+      #     git archive --format=tar --prefix=wealthflow/ v<version> | gzip -n > wealthflow-v<version>.tar.gz
+      #     gh attestation verify wealthflow-v<version>.tar.gz --repo SachinthaGaurawa/wealthflow
+      # This is the honest form of a "cryptographic attestation": it proves provenance (this commit, built by this workflow, no later
+      # edit), it does not prove the code is bug-free, and it is not a zero-knowledge proof. It runs AFTER the live check and the canary
+      # on purpose: a signing hiccup must never block or hide a release that is already serving users, and it turns the run red, not green.
+      - name: Pack the released tree (deterministic)
+        id: pack
+        if: steps.due.outputs.due == 'yes' && steps.gates.outputs.ok == 'yes' && steps.release.outputs.declined != 'yes' && steps.release.outputs.moved != 'yes'
+        run: |
+          V=$(node -p "require('./version.json').latest")
+          git archive --format=tar --prefix=wealthflow/ "v$V" | gzip -n > "wealthflow-v$V.tar.gz"
+          SUM=$(sha256sum "wealthflow-v$V.tar.gz" | cut -d' ' -f1)
+          echo "file=wealthflow-v$V.tar.gz" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Signed provenance for v$V"; echo ""
+            echo "SHA-256 of the released tree: \`$SUM\`"; echo ""
+            echo "Verify (needs the \`gh\` CLI, no secret):"; echo ""
+            echo '```bash'
+            echo "git archive --format=tar --prefix=wealthflow/ v$V | gzip -n > wealthflow-v$V.tar.gz"
+            echo "gh attestation verify wealthflow-v$V.tar.gz --repo $GITHUB_REPOSITORY"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Sign the build provenance
+        if: steps.pack.outputs.file != ''
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.pack.outputs.file }}
