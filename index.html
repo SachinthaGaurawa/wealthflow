@@ -28616,7 +28616,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         pick.setAttribute('aria-label', 'Money in or out for ' + (row.date || 'this row'));
                         pick.style.cssText = 'min-height:36px;border-radius:8px;padding:4px 8px;background:transparent;color:inherit;border:1px solid rgba(234,179,8,.6);';
                         [['', 'Choose…'], ['debit', 'Out'], ['credit', 'In']].forEach(([value, label]) => { const o = document.createElement('option'); o.value = value; o.textContent = label; o.style.color = '#111'; pick.appendChild(o); });
-                        pick.addEventListener('change', () => { row.direction = pick.value; row.directionSource = pick.value ? 'marker' : row.directionSource; row.valid = !!pick.value || row.valid; });
+                        pick.addEventListener('change', () => { row.direction = pick.value; row.directionSource = pick.value ? 'marker' : row.directionSource; row.valid = !!pick.value; });
                         dirCell.appendChild(pick);
                     }
                     tr.appendChild(dirCell);
