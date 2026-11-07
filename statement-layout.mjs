@@ -72,8 +72,23 @@ export async function learnCloudLayout(text, confirmedRows, { bank } = {}) {
     const wanted = confirmedRows.map(rowKey).sort();
     const result = await run('window.WFLayoutMemory.learn(layoutText, layoutRows, null, {bank:layoutBankName})', { layoutText: text, layoutRows: confirmedRows, layoutBankName: bank });
     if (!result.ok) return result;
-    const actual = result.rows.map(rowKey).sort();
-    if (JSON.stringify(wanted) !== JSON.stringify(actual)) return { ok: false, reason: 'The confirmed rows do not reproduce the entire statement reading.' };
+    /* A ROW THE PAGE LEFT UNMARKED IS MATCHED BY DATE AND AMOUNT. The owner was shown each row with its In/Out and, for a row the page does not mark, chose it themselves; the reader's own
+     * answer for such a row is empty, so there is nothing to disagree with, and the owner's choice is kept separately (statement-owner-confirmed.mjs). A row the reader DID mark must agree
+     * with the owner's direction exactly, as before. */
+    const rows = result.rows, left = wanted.slice(), money = key => key.split('|').slice(0, 2).join('|');
+    for (const row of rows) {
+        if (!['credit', 'debit'].includes(row?.direction)) continue;
+        const at = left.indexOf(rowKey(row));
+        if (at < 0) return { ok: false, reason: 'The confirmed rows do not reproduce the entire statement reading.' };
+        left.splice(at, 1);
+    }
+    for (const row of rows) {
+        if (['credit', 'debit'].includes(row?.direction)) continue;
+        const at = left.findIndex(key => money(key) === money(rowKey({ ...row, direction: 'debit' })));
+        if (at < 0) return { ok: false, reason: 'The confirmed rows do not reproduce the entire statement reading.' };
+        left.splice(at, 1);
+    }
+    if (left.length) return { ok: false, reason: 'The confirmed rows do not reproduce the entire statement reading.' };
     result.template = validateCloudTemplate(result.template, bank);
     return result;
 }

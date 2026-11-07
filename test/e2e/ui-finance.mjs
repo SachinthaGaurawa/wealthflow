@@ -88,10 +88,13 @@ for (const name of ['incRecv', 'loans', 'ccinstall', 'cheques']) {
     await go(name);
     const rows = await page.evaluate((n) => [...document.querySelectorAll('#page-' + n + ' :is(.g3,.g4,.g5) > .stat-card')].filter((c) => c.getBoundingClientRect().height > 0).map((c) => {
         const l = c.querySelector('.stat-label').getBoundingClientRect(), v = c.querySelector('.stat-val').getBoundingClientRect();
-        return { h: Math.round(c.getBoundingClientRect().height), side: v.left >= l.right - 1 };
+        return { h: Math.round(c.getBoundingClientRect().height), side: v.left >= l.right - 1, below: v.top >= l.bottom - 1 };
     }), name);
     check(rows.length > 0, `${name}: no stat cards found on the page`);
-    check(rows.every((r) => r.h <= 92 && r.side), `${name}: phone stat cards should be one short row each, got ${JSON.stringify(rows)}`);
+    // CC Instalments: the owner's report "overlap on phones" (#524) is fixed by putting each figure UNDER its name (wf-agent-fixes.css, lane-block 524). There the figure must sit
+    // fully below the name (never over it) and the card stay short; every other page keeps the name-left, figure-right line.
+    const stacked = name === 'ccinstall';
+    check(rows.every((r) => r.h <= 92 && (stacked ? (r.side || r.below) : r.side)), `${name}: phone stat cards should be one short row each${stacked ? ' (or the figure fully under its name)' : ''}, got ${JSON.stringify(rows)}`);
     const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     check(over <= 1, `${name} at 390px scrolls sideways by ${over}px`);
     await page.screenshot({ path: path.join(artifacts, `${name}-dark-390.png`), fullPage: false });
