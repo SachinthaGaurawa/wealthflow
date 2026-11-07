@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createCipheriv, pbkdf2Sync } from 'node:crypto';
 import { runStatementSync } from '../statement-sync.js';
+import { readStatement } from '../statement-reader.mjs';
+import { learnCloudLayout, proposeCloudLayouts } from '../statement-layout.mjs';
+import { confirmedKeys } from '../statement-owner-confirmed.mjs';
+import { createHash } from 'node:crypto';
 import { settleStatement } from '../statement-ledger.mjs';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
@@ -39,7 +43,7 @@ function database(initial) {
         return result;
     } };
 }
-function simulation({ disagree = false, unavailable = false, items = 1, noVault = false, unencrypted = false, subscriptions = [], vault = null } = {}) {
+function simulation({ disagree = false, unavailable = false, items = 1, noVault = false, unencrypted = false, subscriptions = [], vault = null, body = null, sourceExtra = {}, extraDocs = {} } = {}) {
     const owner = { uid: 'u', email: 'owner@example.com' }, sender = 'statements@nationstrust.com';
     const senders = [{ id: sender, kind: 'address', status: 'approved' }];
     const messageFor = id => ({ id, internalDate: '1789000000000', snippet: 'Your monthly card statement', payload: {
@@ -56,11 +60,12 @@ function simulation({ disagree = false, unavailable = false, items = 1, noVault 
     const initial = {
         'users/u': { expenses: [], cconetime: [], ccPayments: [], incomeRecv: [], subscriptions },
         'wf-mail/owner_example_com': { uid: 'u', email: owner.email, refresh_token: 'synthetic-refresh', autonomous: true, senders },
-        ...Object.fromEntries(sourcePaths.map((path, i) => [path, { uid: 'u', bank: 'NTB', from: sender, filename: 'AMEX_Statement_2026Sep.html', messageId: messageIds[i], status: 'pending', cursor: 0, filed: false }])),
+        ...Object.fromEntries(sourcePaths.map((path, i) => [path, { uid: 'u', bank: 'NTB', from: sender, filename: 'AMEX_Statement_2026Sep.html', messageId: messageIds[i], status: 'pending', cursor: 0, filed: false, ...sourceExtra }])),
+        ...extraDocs,
     };
     if (!noVault) initial['wf-statement-vault/u'] = { uid: 'u', savedAt: 100 };
     const db = database(initial);
-    const ciphertexts = new Map(messageIds.map((id, i) => [id, unencrypted ? Buffer.from(plainFor(i)) : encryptedHtml(i)]));
+    const ciphertexts = new Map(messageIds.map((id, i) => [id, unencrypted ? Buffer.from(body ?? plainFor(i)) : encryptedHtml(i)]));
     const f = vi.fn(async url => {
         if (url === 'https://oauth2.googleapis.com/token') return { ok: true, json: async () => ({ access_token: 'synthetic-access' }) };
         if (url === 'https://gmail.googleapis.com/gmail/v1/users/me/profile') return { ok: true, json: async () => ({ emailAddress: owner.email, historyId: '100' }) };
@@ -298,5 +303,36 @@ describe('a locked emailed statement is opened by ANY saved password, whatever b
         const source = setup.db.docs.get(setup.sourcePath);
         expect(source).toMatchObject({ status: 'needs_review', reviewReason: 'PASSWORD_FAILED', filed: false });
         expect(JSON.stringify([...setup.db.docs.entries()])).not.toMatch(/not-it-|01\/02\/1990|01021990/);
+    });
+
+    describe('"Map statement layout" -> "Yes, read it this way" files the statement (invented card statement, no balance column, no CR marks)', () => {
+        const lines = ['CREDIT CARD STATEMENT', 'Card Number 4000 00XX XXXX 5678', 'Credit Limit 500,000.00', 'Statement Date 30.07.2026',
+            '02.07.2026 SAMPLE SUPERMARKET COLOMBO 4,250.00', '03.07.2026 PAYMENT RECEIVED THANK YOU 20,000.00', '05.07.2026 SAMPLE TELECOM 8,430.50', '09.07.2026 SAMPLE RIDE TRIP 1,250.00'];
+        const body = `<html><body>${lines.join('\n')}</body></html>`;
+        async function ownerConfirmedSetup({ keepConfirmation }) {
+            const cold = await readStatement({ bytes: Buffer.from(body), filename: 's.html' });
+            const offered = await proposeCloudLayouts(cold.text, { bank: 'NTB' });
+            const confirmed = offered[0].rows.map(row => ({ date: row.date, amount: row.amount, direction: row.direction }));
+            const learned = await learnCloudLayout(cold.text, confirmed, { bank: 'NTB' });
+            const docId = createHash('sha256').update(JSON.stringify(['NTB', learned.template.id])).digest('hex');
+            return simulation({ noVault: true, unencrypted: true, body,
+                sourceExtra: { learnedTemplate: docId, ...(keepConfirmation ? { ownerConfirmed: confirmedKeys(confirmed) } : {}) },
+                extraDocs: { ['users/u/statementLayouts/' + docId]: { uid: 'u', bank: 'NTB', template: learned.template, savedAt: 1 } } });
+        }
+        it('files every row on the card tabs only, with nothing left in Open reviews', async () => {
+            const setup = await ownerConfirmedSetup({ keepConfirmation: true });
+            expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 1, status: 'filed', filed: 4 });
+            const user = setup.db.docs.get('users/u');
+            expect(user.cconetime).toHaveLength(3); expect(user.ccPayments).toHaveLength(1);
+            expect(user.expenses).toEqual([]); expect(user.incomeRecv).toEqual([]);
+            expect([...setup.db.docs.keys()].filter(path => path.startsWith('users/u/statementReview/'))).toHaveLength(0);
+            expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ filed: true, cursor: 4 });
+        });
+        it('control: without the owner\'s confirmation the same statement does not file (the bug the owner reported)', async () => {
+            const setup = await ownerConfirmedSetup({ keepConfirmation: false });
+            const result = await runStatementSync(setup.args);
+            expect(result.filed || 0).toBeLessThan(4);
+            expect(setup.db.docs.get('users/u').cconetime.length + setup.db.docs.get('users/u').ccPayments.length).toBeLessThan(4);
+        });
     });
 });

@@ -28605,9 +28605,21 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const tr = document.createElement('tr');
                     tr.appendChild(el('td', 'padding:9px 12px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,.05);font-variant-numeric:tabular-nums;', row.date || ''));
                     tr.appendChild(el('td', 'padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);', row.narration || row.description || ''));
-                    const dir = row.direction === 'credit' ? 'In' : (row.direction === 'debit' ? 'Out' : 'Not stated');
-                    tr.appendChild(el('td', 'padding:9px 12px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,.05);'
-                        + 'opacity:' + (row.direction ? '1' : '.6') + ';', dir));
+                    /* A ROW THE PAGE DOES NOT MARK IS CHOSEN BY THE OWNER, HERE. "Not stated" used to be confirmed as it was and the server then refused the whole layout
+                     * (a row without a direction cannot be learned from), so "Yes" ended in "Cloud layout saving was not completed". The owner looks at the statement and picks
+                     * In or Out; that choice travels with the confirmation and is the proof the row is filed on (statement-owner-confirmed.mjs). */
+                    const known = row.direction === 'credit' || row.direction === 'debit';
+                    const dirCell = el('td', 'padding:9px 12px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,.05);');
+                    if (known) dirCell.textContent = row.direction === 'credit' ? 'In' : 'Out';
+                    else {
+                        const pick = document.createElement('select');
+                        pick.setAttribute('aria-label', 'Money in or out for ' + (row.date || 'this row'));
+                        pick.style.cssText = 'min-height:36px;border-radius:8px;padding:4px 8px;background:transparent;color:inherit;border:1px solid rgba(234,179,8,.6);';
+                        [['', 'Choose…'], ['debit', 'Out'], ['credit', 'In']].forEach(([value, label]) => { const o = document.createElement('option'); o.value = value; o.textContent = label; o.style.color = '#111'; pick.appendChild(o); });
+                        pick.addEventListener('change', () => { row.direction = pick.value; row.directionSource = pick.value ? 'marker' : row.directionSource; row.valid = !!pick.value || row.valid; });
+                        dirCell.appendChild(pick);
+                    }
+                    tr.appendChild(dirCell);
                     tr.appendChild(el('td', 'padding:9px 12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;'
                         + 'border-bottom:1px solid rgba(255,255,255,.05);', money(row.amount)));
                     tb.appendChild(tr);
@@ -28638,7 +28650,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             };
 
             const yes = btn('Yes, read it this way', true);
-            yes.addEventListener('click', () => close(true));
+            yes.addEventListener('click', () => {
+                const open = (Array.isArray((readings[at] || {}).rows) ? readings[at].rows : []).filter(r => r && r.direction !== 'credit' && r.direction !== 'debit');
+                if (open.length) { notify('Choose In or Out for the ' + open.length + ' row' + (open.length === 1 ? '' : 's') + ' marked "Choose…" (check the statement), then confirm.', 'warn'); return; }
+                close(true);
+            });
             const other = btn('Read it differently');
             other.addEventListener('click', () => { at = (at + 1) % readings.length; draw(); });
             const skip = btn('Not now');

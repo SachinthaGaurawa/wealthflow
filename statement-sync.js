@@ -15,6 +15,7 @@ import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } 
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
 import { lineIdsWithBankPayment } from './statement-credit-evidence.mjs';
 import { reportSuspectReading } from './wf-statement-self-report.mjs';
+import { confirmedKeys, applyOwnerConfirmed } from './statement-owner-confirmed.mjs';
 import { semanticDirection, genericBankLine, proveDirections, printedPaymentsCheck, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
@@ -2266,6 +2267,13 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             } catch (_) { /* a report never stops a sync */ }
         }
         
+        /* WHAT THE OWNER CONFIRMED ("Map statement layout" -> "Yes, read it this way") STAYS CONFIRMED (statement-owner-confirmed.mjs): they were shown each row with its In/Out and said yes, so those directions are
+         * the strongest proof there is. Without this the re-reading marked every assumed or word-based direction for review again and the statement came straight back, unfiled. Only the direction is taken from the
+         * owner; every row still passes the settlement checks and is classified as any other. */
+        if (claimed.learnedTemplate && Array.isArray(claimed.ownerConfirmed) && claimed.ownerConfirmed.length && parsed?.layout?.learnedTemplate === claimed.learnedTemplate && Array.isArray(parsed.rows)) {
+            const confirmed = applyOwnerConfirmed(parsed.rows, claimed.ownerConfirmed);
+            if (confirmed.applied) { parsed = { ...parsed, rows: confirmed.rows }; diag.ownerConfirmed = confirmed.applied; }
+        }
         /* THE ROWS THE PAGE LEFT UNMARKED ARE PROVEN BY THE STATEMENT, OR BY THEIR WORDS, BEFORE ANYONE IS ASKED (statement-direction.mjs): when the printed opening and closing
          * balances are reached to the cent the parser's "assumed debit" for every unmarked row cannot have been wrong anywhere, and a charge, a POS purchase or a salary says which way it went. */
         if (parsed && Array.isArray(parsed.rows) && parsed.rows.some(row => row && row.needsReview === true)) {
@@ -2443,7 +2451,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 claimed = again;
             }
             outcome = { ...outcome, ...total };
-            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules', ...(diag.directions ? { directions: diag.directions } : {}), read: readShape(parsed), ...(diag.selfReport ? { selfReport: diag.selfReport } : {}), ...(diag.repaired ? { repaired: diag.repaired } : {}),
+            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules', ...(diag.directions ? { directions: diag.directions } : {}), read: readShape(parsed), ...(diag.selfReport ? { selfReport: diag.selfReport } : {}), ...(diag.ownerConfirmed ? { ownerConfirmed: diag.ownerConfirmed } : {}), ...(diag.repaired ? { repaired: diag.repaired } : {}),
                 ...(replayed?.healed ? { healed: replayed.healed } : {}), ...(total.dateShifted ? { dateShifted: total.dateShifted } : {}),
                 account: account.state, ...(account.via ? { accountVia: account.via } : {}), ...(account.conflict ? { accountConflict: true } : {}) });
         }
@@ -3156,7 +3164,7 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         for (const doc of ledger.docs) {
             if (doc.data().status === 'review') tx.set(doc.ref, { status: 'superseded_by_layout', supersededAt: now, templateId }, { merge: true });
         }
-        tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, ...(source.renderedText && source.renderedVersion === RENDERED_VERSION ? { renderedConfirmed: true } : {}), updatedAt: Date.now() }, { merge: true });
+        tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, ownerConfirmed: confirmedKeys(rows), ...(source.renderedText && source.renderedVersion === RENDERED_VERSION ? { renderedConfirmed: true } : {}), updatedAt: Date.now() }, { merge: true });
     });
     
     try {
