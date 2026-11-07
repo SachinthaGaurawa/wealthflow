@@ -14,6 +14,7 @@ import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs'
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
 import { lineIdsWithBankPayment } from './statement-credit-evidence.mjs';
+import { reportSuspectReading } from './wf-statement-self-report.mjs';
 import { semanticDirection, genericBankLine, proveDirections, printedPaymentsCheck, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
@@ -2256,6 +2257,14 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 await rememberLayout(db, uid, claimed.bank || '', text, parsed);
             } else if (ai.reason !== 'ai-unavailable') await noteAdaptiveFailure(sourceRef, claimed, ai, adaptiveNow);
         }
+        /* A READING THAT STILL CONTRADICTS THE STATEMENT'S OWN PRINTED TOTAL (after the model's second opinion, or with none to be had) IS REPORTED TO THE FIX AGENT BY THE READER ITSELF:
+         * one issue per kind, counts and fixed words only (wf-statement-self-report.mjs: the repository is public). Bounded, never fatal, and silent when the deployment cannot file issues. */
+        if (readingIsSuspect(parsed)) {
+            try {
+                const sent = await Promise.race([reportSuspectReading('printed-total-differs', { bank: claimed.bank || '', shape: readShape(parsed), rows: parsed.rows.length, secondOpinion: claimed.adaptiveResult?.reason || (claimed.adaptiveTries ? 'tried' : '') }), new Promise(resolve => { const t = setTimeout(() => resolve({ filed: false, reason: "slow" }), 4000); if (t.unref) t.unref(); })]);
+                diag.selfReport = sent.reason;
+            } catch (_) { /* a report never stops a sync */ }
+        }
         
         /* THE ROWS THE PAGE LEFT UNMARKED ARE PROVEN BY THE STATEMENT, OR BY THEIR WORDS, BEFORE ANYONE IS ASKED (statement-direction.mjs): when the printed opening and closing
          * balances are reached to the cent the parser's "assumed debit" for every unmarked row cannot have been wrong anywhere, and a charge, a POS purchase or a salary says which way it went. */
@@ -2434,7 +2443,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 claimed = again;
             }
             outcome = { ...outcome, ...total };
-            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules', ...(diag.directions ? { directions: diag.directions } : {}), read: readShape(parsed), ...(diag.repaired ? { repaired: diag.repaired } : {}),
+            logItem({ bank: claimed.bank || '?', status: outcome?.status || '', rows: parsed.rows.length, cursor: outcome?.cursor ?? 0, slices, how: parsed.adaptive ? 'adaptive' : 'rules', ...(diag.directions ? { directions: diag.directions } : {}), read: readShape(parsed), ...(diag.selfReport ? { selfReport: diag.selfReport } : {}), ...(diag.repaired ? { repaired: diag.repaired } : {}),
                 ...(replayed?.healed ? { healed: replayed.healed } : {}), ...(total.dateShifted ? { dateShifted: total.dateShifted } : {}),
                 account: account.state, ...(account.via ? { accountVia: account.via } : {}), ...(account.conflict ? { accountConflict: true } : {}) });
         }
