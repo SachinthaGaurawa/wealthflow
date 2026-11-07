@@ -1,0 +1,48 @@
+name: Vision probe (free)
+
+# Does the screenshot reader really read a picture with the run's own token (GitHub Models)? #535 claimed it; nothing proved it.
+# This renders invented words in a real browser and asks the reader for them (autonomy/vision-probe.mjs). Only GITHUB_TOKEN is
+# passed, so a pass can only mean GitHub Models read it. Red = it did not, with the HTTP status of each model in the log.
+# Read-only: it changes nothing in the repository.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'   # weekly, so a retired model is noticed before an owner's screenshot goes unread
+
+permissions:
+  contents: read
+  models: read
+
+concurrency:
+  group: wf-vision-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Chromium
+        run: npx playwright install chromium
+
+      - name: Render a picture of invented words and read it
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTIONS: 'true'
+        run: node autonomy/vision-probe.mjs
