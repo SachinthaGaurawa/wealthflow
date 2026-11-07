@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import { loadParser } from './statement-fixtures.mjs';
+import { printedSummaryCheck } from '../statement-direction.mjs';
+import { readingIsSuspect, secondOpinionAgrees } from '../statement-sync.js';
 
 const P = loadParser(fs);
 // An invented card statement in the shape a Sri Lankan card issuer prints: a summary strip, then rows with a post date and a transaction date that carry NO year ("12 AUG 12 AUG"), a currency column, and Dr/Cr after the LKR amount.
@@ -37,5 +39,59 @@ describe('a card statement with year-less post and transaction dates and a summa
     it('a row misread by a cent is caught by the strip', () => {
         const out = read(STRIP, ROWS.map(line => line.replace('668.30 668.30', '668.31 668.31')));
         expect(out.reconciliation.ok).toBe(false);
+    });
+});
+
+describe('the summary strip against the rows read', () => {
+    const rowsOf = (out) => out.rows.map((r) => ({ ...r, valid: true }));
+    it('agrees when credits, debits and interest all add up to the strip', () => {
+        const out = read();
+        expect(printedSummaryCheck({ ...out, rows: rowsOf(out) })).toEqual({ status: 'agree', differs: [] });
+        expect(readingIsSuspect({ ...out, rows: rowsOf(out) })).toBe(false);
+    });
+    it('catches a charge and a credit of one amount that were read twice, which the opening/closing sum cannot see (both move it by nothing)', () => {
+        const out = read();
+        const doubled = [...rowsOf(out), { ...rowsOf(out).find((r) => r.narration === 'STAMP DUTY') }, { ...rowsOf(out).find((r) => r.narration === 'STAMP DUTY'), direction: 'credit' }];
+        const check = printedSummaryCheck({ ...out, rows: doubled });
+        expect(check.status).toBe('differs');
+        expect(check.differs).toEqual(expect.arrayContaining(['credits', 'debits']));
+        expect(readingIsSuspect({ ...out, rows: doubled })).toBe(true);
+    });
+    it('catches an interest line whose amount is not the interest the bank printed', () => {
+        const out = read();
+        const wrong = rowsOf(out).map((r) => (r.narration === 'DEBIT INTEREST' ? { ...r, amount: 668.03 } : r));
+        const check = printedSummaryCheck({ ...out, rows: wrong });
+        expect(check.status).toBe('differs');
+        expect(check.differs).toContain('interest');
+    });
+    it('says nothing when the statement prints no strip', () => {
+        const out = P.parseStatement(['Sample Bank Card', '12/08/2026 SAMPLE PLATE 1,600.00'].join('\n'));
+        expect(printedSummaryCheck(out)).toEqual({ status: 'none', differs: [] });
+    });
+    it('believes a second opinion only when it agrees with the strip the first reading contradicted', () => {
+        const out = read();
+        const good = { ...out, rows: rowsOf(out) };
+        const bad = { ...out, rows: rowsOf(out).map((r) => (r.narration === 'DEBIT INTEREST' ? { ...r, amount: 668.03 } : r)) };
+        expect(secondOpinionAgrees(bad, good)).toBe(true);
+        expect(secondOpinionAgrees(bad, bad)).toBe(false);
+        expect(secondOpinionAgrees(bad, { rows: [] })).toBe(false);
+    });
+});
+
+describe('a PDF whose text layer is scrambled', () => {
+    // An invented page: every letter and digit swapped for another character, as a font without a text map does. Dates and money are gone, so it is read like a scan, with a reason that says so.
+    const swap = (t) => t.replace(/[A-Za-z0-9]/g, (c) => String.fromCharCode(33 + ((c.charCodeAt(0) * 7) % 14)));
+    const page = Array.from({ length: 40 }, (_, i) => `12 AUG 12 AUG SAMPLE SHOP NUMBER ${i} LKR ${1000 + i}.00 Dr`).join('\n');
+    it('is not an unseen layout to confirm; it goes to the image scanner', () => {
+        const out = P.parseStatement(swap(page));
+        expect(out.verdict).toBe('no-text');
+        expect(out.garbled).toBe(true);
+        expect(out.understood).toBe(false);
+        expect(out.reason).toMatch(/scrambled/);
+    });
+    it('does not catch a statement that is readable', () => {
+        const out = read();
+        expect(out.garbled).toBe(false);
+        expect(out.verdict).toBe('parsed');
     });
 });
