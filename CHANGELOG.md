@@ -1,5 +1,17 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.62 — 2026-11-07
+
+**What changed for you**
+
+- Layout overlap on phones: liquidity (#546)
+
+**Under the hood**
+
+- Discovery also walks 320px phones and 1024px laptops (#545)
+- A word that wraps after its hyphen is not a broken word (fixes a false finding in the new layout discovery) (#543)
+- Discovery files phone layout problems it measures, before the owner has to report them (#540)
+
 ## v7.69.61 — 2026-11-07
 
 **What changed for you**
