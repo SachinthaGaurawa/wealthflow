@@ -1,5 +1,21 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.64 — 2026-11-07
+
+**What changed for you**
+
+- Layout overlap on phones: dashboard (#556)
+- Statement categories: Travel, Personal Care, Pets, Kids & Family, Charity, tax (#558)
+
+**Under the hood**
+
+- Show the fix agent the standing rules earlier failures taught (#557)
+- Sign every release with verifiable build provenance (#555)
+- Judge layout fixes and agent tests harder (probe false positive, hidden columns, sabotage check) (#553)
+- Stop the false red X on "Enable auto-merge" (#552)
+- Pipeline matrix: every owner-confirmed statement kind files on the right tabs (#550)
+- Layout findings name their own screen so the words they quote cannot pick the page (#549)
+
 ## v7.69.63 — 2026-11-07
 
 **What changed for you**
