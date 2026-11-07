@@ -1,5 +1,16 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.67 — 2026-11-07
+
+**What changed for you**
+
+- Update system: set dead providers aside, fit the charter to tight limits, show the board every file (#568)
+- Interest lines filed as instalment plans move to Card One-Time, one Service Fee per month at its printed amount (#567)
+
+**Under the hood**
+
+- Apply the owner's whole elite-expert prompt (all 26 parts), fitted to the update system (#566)
+
 ## v7.69.66 — 2026-11-07
 
 **What changed for you**
