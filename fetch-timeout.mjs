@@ -162,9 +162,21 @@ export async function readBody(response, kind, ms = DEFAULT_TIMEOUT_MS) {
             reject(timeoutError('response body read', budget));
         }, budget);
     });
-    const read = reader ? drain(reader).then((text) => (kind === 'json' ? JSON.parse(text) : text)) : response[kind]();
+    const read = reader ? drain(reader).then((text) => (kind === 'json' ? parseJsonBody(text) : text)) : response[kind]();
     try { return await Promise.race([read, stalled]); }
     finally { clearTimeout(timer); }
+}
+
+/** `JSON.parse` for a body read off the wire: a body that is not JSON rejects with a message that says so, and keeps the parser's
+ *  own error as `cause`. It still rejects (as `Response.json()` does), because a caller must not treat garbage as data. */
+function parseJsonBody(text) {
+    try {
+        return JSON.parse(text);
+    } catch (cause) {
+        const error = new SyntaxError(`response body is not valid JSON (${String(text).length} characters)`);
+        error.cause = cause;
+        throw error;
+    }
 }
 
 /** The whole body as text (UTF-8, a leading BOM dropped, as `Response.text()` does). */

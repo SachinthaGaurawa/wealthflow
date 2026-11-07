@@ -195,3 +195,19 @@ export function isSizeError(err) {
     const req = /\bRequested\s+(\d+)/i.exec(msg);
     return Boolean(lim && req && /tokens/i.test(msg) && Number(req[1]) > Number(lim[1]));
 }
+
+/**
+ * A per-minute allowance that the request takes MORE THAN HALF of, from the provider's own words. The request fits once, but
+ * nothing else can run in the same minute, so every second call is answered "rate limit" (probe 2026-11-07: Groq, Limit 8000,
+ * Requested about 6700, failed 11 times in a row). The charter is the part this module can shrink, so it walks one size down
+ * exactly as it does for a request that is too large. Nothing is assumed about a provider that did not say its limit.
+ */
+export function isTightFit(err) {
+    if (!err) return false;
+    const msg = String(err.message || err);
+    const lim = /\bLimit\s+(\d+)/i.exec(msg);
+    const req = /\bRequested\s+(\d+)/i.exec(msg);
+    if (!lim || !req || !/tokens/i.test(msg)) return false;
+    const L = Number(lim[1]), R = Number(req[1]);
+    return L > 0 && R <= L && R > L / 2;
+}

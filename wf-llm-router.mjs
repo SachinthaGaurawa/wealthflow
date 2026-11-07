@@ -29,7 +29,7 @@
  * ===========================================================================*/
 
 import { DEFAULT_MODEL as DEFAULT_GEMINI_MODEL, geminiGenerate } from './gemini-client.mjs';
-import { fitCharter, tierForProvider, learnProviderTier, lowerTier, isSizeError } from './wf-charter.mjs';
+import { fitCharter, tierForProvider, learnProviderTier, lowerTier, isSizeError, isTightFit } from './wf-charter.mjs';
 
 const DEFAULT_TIMEOUT_MS = 90_000;
 
@@ -573,14 +573,65 @@ async function healModel(provider, opts) {
     return to;
 }
 
+// ── a provider that cannot answer for a PERMANENT reason is not asked again for a while ──────────────────────────
+// Probe 2026-11-07 (run 42363243397): Gemini answered "402 payment required" on every one of about twelve calls and OpenRouter
+// "this model is unavailable for free" on every call, so each call to the router paid for two certain failures (Gemini's
+// ended in a 20 second deadline) before reaching a provider that could answer. Only answers that cannot change within minutes
+// count: a refused key (401, 403), a payment demand (402), a model with no free version and no replacement in the provider's own
+// list. A rate limit or a timeout is NOT one of them. The bench is per process and expires, so a fixed key or a paid-up account
+// is used again without a deploy, and a long-lived server process never keeps a provider off for hours.
+
+const BENCH_MS = 10 * 60_000;
+const _benched = new Map();       // provider id → { reason, until }
+
+/** Why a provider should be skipped for now, or null. Expired entries are dropped. */
+function benchedReason(id, now = Date.now()) {
+    const b = _benched.get(id);
+    if (!b) return null;
+    if (b.until <= now) { _benched.delete(id); return null; }
+    return b.reason;
+}
+
+/** The reason an error is permanent for this process, or null. */
+export function permanentReason(status, text) {
+    const s = String(text || '');
+    if (status === 402) return 'it asks for payment (HTTP 402)';
+    if (status === 401 || status === 403) return `it refused the key (HTTP ${status})`;
+    if (status === 404 && /unavailable for free|not available for free|no free (version|model|tier)/i.test(s)) return 'its model has no free version';
+    return null;
+}
+
+function benchProvider(id, reason) {
+    if (!reason || _benched.has(id)) return;
+    _benched.set(id, { reason, until: Date.now() + BENCH_MS });
+    // eslint-disable-next-line no-console
+    console.warn(`[llm-router] ${id} is set aside for ${BENCH_MS / 60000} minutes: ${reason}`);
+}
+
+/** What is set aside right now, for logs and the status endpoint. */
+export function benchedProviders() {
+    const now = Date.now();
+    return [..._benched.keys()].map((id) => ({ provider: id, reason: benchedReason(id, now) })).filter((x) => x.reason);
+}
+
+/** Tests only. */
+export function _resetBench() { _benched.clear(); }
+
 /** One provider; if its model has been retired, one replacement is found and the call is made once more. */
 async function callProvider(provider, opts) {
     try {
         return await callProviderOnce(provider, opts);
     } catch (e) {
-        if (provider.kind !== 'openai' || !isRetiredModelError(e && e.status, e && e.message)) throw e;
+        const retired = provider.kind === 'openai' && isRetiredModelError(e && e.status, e && e.message);
+        if (!retired) {
+            benchProvider(provider.id, permanentReason(e && e.status, e && e.message));
+            throw e;
+        }
         const to = await healModel(provider, opts);
-        if (!to) throw e;
+        if (!to) {
+            benchProvider(provider.id, permanentReason(e && e.status, e && e.message));
+            throw e;
+        }
         return callProviderOnce(provider, opts);
     }
 }
@@ -626,6 +677,8 @@ export async function chat(o) {
 
     const attempts = [];
     for (const provider of order) {
+        const aside = benchedReason(provider.id);
+        if (aside) { attempts.push({ provider: provider.id, error: `skipped: ${aside}` }); continue; }
         try {
             // The operating charter (wf-charter.mjs) starts at the size this provider has been seen to take. If the provider
             // answers that the REQUEST is too large, the same request goes again one charter tier lower and the tier is
@@ -637,10 +690,10 @@ export async function chat(o) {
                     res = await callProvider(provider, { prompt, system: fitCharter(system, tier), maxTokens, temperature, timeoutMs, env });
                     break;
                 } catch (e) {
-                    const lower = isSizeError(e) ? lowerTier(tier) : null;
+                    const lower = (isSizeError(e) || isTightFit(e)) ? lowerTier(tier) : null;
                     if (!lower) throw e;
                     // eslint-disable-next-line no-console
-                    console.warn(`[llm-router] ${provider.id} says the request is too large → charter ${tier} → ${lower}`);
+                    console.warn(`[llm-router] ${provider.id} says the request is ${isSizeError(e) ? 'too large' : 'most of its minute'} → charter ${tier} → ${lower}`);
                     tier = lower;
                     learnProviderTier(provider.id, tier);
                 }
