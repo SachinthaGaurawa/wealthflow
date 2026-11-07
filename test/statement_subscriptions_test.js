@@ -96,6 +96,8 @@ describe('a payment that is plainly a subscription starts its own entry', () => 
     it('a brand that is bought by subscription', () => {
         expect(subscriptionToCreate(D('ANTHROPIC SAN FRANCISCO CA', 5200))).toMatchObject({ name: 'Anthropic (Claude)', category: 'Software' });
         expect(subscriptionToCreate(D('NETFLIX.COM', 1500))).toMatchObject({ name: 'Netflix', category: 'Streaming' });
+        expect(subscriptionToCreate(D('ICLOUD STORAGE', 450))).toMatchObject({ category: 'Software' });
+        expect(subscriptionToCreate(D('APPLE.COM/BILL', 450))).toBeNull();            // as often an app bought once: it finds an entry the owner tracks, but starts none
     });
     it('a mobile number being paid', () => {
         expect(subscriptionToCreate(D('DIALOG 0771234567', 1800))).toMatchObject({ name: 'Dialog 077 123 4567', category: 'Telecom', merchantKeys: ['mobile:0771234567'] });

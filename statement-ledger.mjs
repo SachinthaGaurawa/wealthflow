@@ -150,7 +150,7 @@ function applySubscriptionPayment(sub, row, sourcePath, index, bank, last4, now)
     const month = row.date.slice(0, 7);
     sub.history = sub.history || [];
     const earlier = sub.history.filter(payment => payment && payment.month === month && payment.source === 'statement').reduce((total, payment) => total + amountCents(payment.amount), 0);
-    const monthTotal = earlier ? (earlier + amountCents(row.amount)) / 100 : row.amount;
+    const monthTotal = (earlier + amountCents(row.amount)) / 100;
     sub.history.push({ month, amount: row.amount, date: row.date, source: 'statement', statementKey: sourcePath, statementRow: index, ref: String(row.ref || ''), bank, card_last4: last4 });
     sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: monthTotal };
     sub.amount = monthTotal; sub._ut = now;

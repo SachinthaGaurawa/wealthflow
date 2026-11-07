@@ -56,7 +56,7 @@ export const manualPhoneKey = (key) => `mobile:0${key}`;
 const BRANDS = [
     { key: 'anthropic', name: 'Anthropic (Claude)', category: 'Software', aliases: ['anthropic', 'claude ai', 'claudeai', 'claude pro', 'claude max', 'claude team', 'claude subscription'] },
     { key: 'openai', name: 'OpenAI (ChatGPT)', category: 'Software', aliases: ['openai', 'open ai', 'chatgpt', 'chat gpt'] },
-    { key: 'apple', name: 'Apple (iCloud / App Store)', category: 'Software', aliases: ['apple com bill', 'itunes', 'icloud', 'apple music', 'apple tv', 'apple one'] },
+    { key: 'apple', name: 'Apple (iCloud / App Store)', category: 'Software', aliases: ['apple com bill', 'itunes', 'icloud', 'apple music', 'apple tv', 'apple one'], weak: ['apple com bill', 'itunes'] },
     { key: 'google', name: 'Google (One / YouTube Premium)', category: 'Software', aliases: ['google one', 'google storage', 'google workspace', 'youtube premium', 'youtubepremium', 'youtube music'] },
     { key: 'microsoft', name: 'Microsoft 365', category: 'Software', aliases: ['microsoft 365', 'microsoft365', 'office 365', 'office365', 'xbox game pass', 'onedrive'] },
     { key: 'adobe', name: 'Adobe', category: 'Software', aliases: ['adobe'] },
@@ -84,14 +84,15 @@ const BRANDS = [
     { key: 'airtel', name: 'Airtel', category: 'Telecom', telecom: true, aliases: ['airtel'] },
     { key: 'lankabell', name: 'Lanka Bell', category: 'Telecom', telecom: true, aliases: ['lanka bell', 'lankabell'] },
 ];
-const ALIAS = BRANDS.flatMap((brand) => brand.aliases.map((phrase) => ({ brand, phrase, spaced: ` ${phrase} `, fused: glue(phrase) }))).sort((a, b) => b.fused.length - a.fused.length);
+/* `weak` aliases find an entry the owner already tracks, but never start one: "APPLE.COM/BILL" is as often an app bought once as a subscription. */
+const ALIAS = BRANDS.flatMap((brand) => brand.aliases.map((phrase) => ({ brand, phrase, weak: (brand.weak || []).includes(phrase), spaced: ` ${phrase} `, fused: glue(phrase) }))).sort((a, b) => b.fused.length - a.fused.length);
 export const BRAND_KEYS = BRANDS.map((brand) => brand.key);
 
 /** The brands a text names (the bank's words, a subscription's own name, a stored merchant key), each once. A long one-word alias also matches when the bank ran the words together. */
-export function brandsOf(text) {
+export function brandsOf(text, { strongOnly = false } = {}) {
     const spaced = ` ${words(text)} `, fused = glue(text), found = [];
     for (const a of ALIAS) {
-        if (found.includes(a.brand)) continue;
+        if (found.includes(a.brand) || (strongOnly && a.weak)) continue;
         if (spaced.includes(a.spaced) || (a.phrase.indexOf(' ') < 0 && a.fused.length >= 7 && fused.includes(a.fused))) found.push(a.brand);
     }
     return found;
@@ -122,7 +123,7 @@ const BILL_WORDS = /\b(?:bill|reload|recharge|top\s*up|topup|airtime|data|packag
  */
 export function subscriptionToCreate(row) {
     if (!row || row.direction !== 'debit') return null;
-    const { phones, brands, text } = evidenceOf(row);
+    const { phones, text } = evidenceOf(row), brands = brandsOf(text, { strongOnly: true });
     const operator = brands.find((b) => b.telecom), recurring = brands.filter((b) => !b.telecom);
     if (phones.length > 1) return null;                            // two numbers on one line: not guessed between
     if (phones.length === 1) {
