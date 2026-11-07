@@ -107,7 +107,7 @@ const SEED = `(() => {
 })()`;
 
 /** Runs in the page: what is wrong inside `boxSel`. */
-function measureInPage(boxSel) {
+export function measureInPage(boxSel) {
     const box = document.querySelector(boxSel);
     if (!box) return { missing: true, overflowPx: 0, overlaps: [], clipped: [], misaligned: [], spilled: [], squeezed: [], pinnedCover: 0 };
     const vw = document.documentElement.clientWidth;
@@ -160,7 +160,8 @@ function measureInPage(boxSel) {
             if (out > 2 && r.width < vw) spilled.push(label(el) + ' "' + textOf(el) + '" runs ' + Math.round(out) + 'px outside its box');
         }
         if (own && !control && squeezed.length < 8) {
-            const words = (el.innerText || '').trim().split(/\s+/).filter(Boolean).length;
+            // A hyphen or slash is a place a browser may break a line: "one-time" wrapping after the hyphen is two pieces, not a broken word.
+            const words = (el.innerText || '').trim().split(/[\s\-\u2010-\u2015/]+/).filter(Boolean).length;
             const brokenWord = words > 0 && rects.length > words;
             const sliver = r.width < 48 && rects.length >= 2 && textOf(el).replace(/\s/g, '').length >= 8;
             if (brokenWord || sliver) {
