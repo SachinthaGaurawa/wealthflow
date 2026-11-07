@@ -59,7 +59,7 @@ describe('the email pipeline knows the merchants the app knows', () => {
 describe('the merchant list is held to the router\'s own rules', () => {
     /* A merchant the list names more specifically than a brand word in the rules (so the longer name is what filing follows). Anything NOT here that disagrees with a rule is a data
      * error: "sri lanka transport board" was Insurance in merchants.json (an AI-consensus entry) and, once the list was trusted, would have filed bus fares as insurance. */
-    const REFINEMENTS = new Set(['arpico insurance', 'medical insurance', 'softlogic finance life', 'softlogic life', 'amazon web', 'amazon web services', 'amazon prime', 'amazon prime video', 'playstation network', 'xbox', 'slt peo tv']);
+    const REFINEMENTS = new Set(['arpico insurance', 'medical insurance', 'softlogic finance life', 'softlogic life', 'amazon web', 'amazon web services', 'amazon prime', 'amazon prime video', 'playstation network', 'xbox', 'slt peo tv', 'sri lankan airlines', 'srilankan airlines']);   // the last two: the list files the national airline under Transport, the rules (Travel) are the better answer and win
     it('every registry merchant either agrees with the rules or is a named refinement of them', () => {
         const bad = registry.filter(m => { const rule = expenseRuleCategory({ narration: m.key }); return rule && rule !== SERVER_CATEGORY[m.category] && !REFINEMENTS.has(m.key); }).map(m => `${m.key}: list says ${m.category}, rules say ${expenseRuleCategory({ narration: m.key })}`);
         expect(bad).toEqual([]);

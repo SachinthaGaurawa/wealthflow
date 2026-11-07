@@ -122,7 +122,7 @@ describe('the owner\'s history counts both names as one category', () => {
         await classifySlice([row('POS Transaction QUIET CORNER STORES')], ctx([exp('QUIET CORNER STORES', 'Food & Groceries')]), { board });
         expect(board.mock.calls[0][0]).toContain('"categoryUsedBefore":"Groceries"');
         board.mockClear();
-        await classifySlice([row('POS Transaction QUIET CORNER STORES')], ctx([exp('QUIET CORNER STORES', 'Pets')]), { board });
+        await classifySlice([row('POS Transaction QUIET CORNER STORES')], ctx([exp('QUIET CORNER STORES', 'Shopping (Fashion)')]), { board });
         expect(board.mock.calls[0][0]).not.toContain('categoryUsedBefore');   // a name the board is not allowed to answer with is not put in front of it
     });
 });

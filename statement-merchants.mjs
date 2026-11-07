@@ -46,6 +46,10 @@ export const REGISTRY_CATEGORIES = Object.freeze([...new Set(Object.values(SERVE
 /* Short single-word keys are the ones that are also ordinary words or somebody else's initials ("box", "bus", "gold", "plc", "sap", "avg", "tex"). Only these well-known
  * names are trusted at four letters or fewer; the rest are left to the router's own rules, to the owner's history and to the owner. */
 const SHORT_KEYS_TRUSTED = new Set(['kfc', 'ioc', 'lioc', 'aia', 'aig', 'axa', 'ebay', 'nike', 'odel', 'oppo', 'temu', 'xbox', 'xero', 'zoho', 'zoom', 'hbo', 'hulu', 'viu', 'dazn', 'uber', 'ceb', 'leco', 'wasa', 'slt', 'rda', 'ctb', 'sltb', 'aws', 'ibm', 'jira', 'nibm', 'nsbm', 'ousl', 'mpcs', 'spar', 'koko', 'yego', 'bata']);
+/* Single words that are the name of a software product or a company in the list AND an ordinary word on a bank line: "office" (Microsoft Office) filed "POST OFFICE" as a
+ * Subscription; "total", "united", "premier", "guardian" and "continental" are in front of a hundred other names. As a whole key they identify nothing, so a narration is placed by
+ * the longer keys ("microsoft office", "total energies") or by the router's rules, and otherwise goes to the owner. */
+const GENERIC_SINGLE_KEYS = new Set(['office', 'total', 'united', 'premier', 'guardian', 'continental']);
 /* Same family = one recurring bill under two names. */
 const FAMILY = { Telecom: 'net', Internet: 'net' };
 const familyOf = (category) => FAMILY[category] || category;
@@ -93,6 +97,7 @@ const index = new Map();      // "key words joined" → { key, category (server)
         const words = trimTail(merchantWords(entry.key));
         if (!words.length || words.length > MAX_KEY_WORDS) continue;
         if (words.length === 1 && words[0].length <= 4 && !SHORT_KEYS_TRUSTED.has(words[0])) continue;
+        if (words.length === 1 && GENERIC_SINGLE_KEYS.has(words[0])) continue;
         const joined = words.join(' ');
         const old = index.get(joined);
         if (old && old.category !== mapped) { index.set(joined, { key: joined, category: null, source: entry.category, words: words.length, conflict: true }); continue; }   // the list disagrees with itself: trusted by nobody
