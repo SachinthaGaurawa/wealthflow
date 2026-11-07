@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.63 — 2026-11-07
+
+**What changed for you**
+
+- Map statement layout → Yes: the owner's confirmed directions stay confirmed, so the statement files (#544)
+
+**Under the hood**
+
+- Discovery wakes the fix agent right after it files (#548)
+
 ## v7.69.62 — 2026-11-07
 
 **What changed for you**
