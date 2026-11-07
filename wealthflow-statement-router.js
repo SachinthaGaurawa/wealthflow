@@ -20,12 +20,18 @@ const EXPENSE_CATEGORY_RULES = [
   ['Telecom', /\b(dialog(?:\s+axiata)?|mobitel|slt(?:\s+mobitel)?|hutch|airtel|lanka\s*bell|reload|recharge|airtime|phone\s+bill)\b/i],
   ['Utilities', /\b(ceb|leco|ceylon\s+electricity|electricity|water\s+board|nwsdb|water\s+bill|litro|laugfs\s+gas|gas\s+bill)\b/i],
   ['Fuel', /\b(fuel|petrol|diesel|filling\s+station|ceypetco|lanka\s+ioc|sinopec|petroleum)\b/i],
+  /* TRAVEL: flights, hotels, booking sites. No bare "hotel" (in Sri Lanka as often an eatery as a lodging), "tour", "villa" or "airport". */
+  ['Travel', /\b(?:airlines?|airways|air\s*(?:arabia|asia|india|canada|france)|fly\s*dubai|flydubai|fitsair|emirates\s+(?:airlines?|skywards|holidays)|etihad|cathay|turkish\s+air\w*|booking\W*com|agoda|airbnb|expedia|trip\W*com|tripadvisor|skyscanner|makemytrip|hostel|resorts?|cruise|travels?|jetwing|shangri\s*la|hilton|marriott|hyatt|heritance|amari|anantara|cinnamon\s+(?:grand|lakeside|red|bentota|lodge|citadel|wild|hotels?|bey))\b/i],
   ['Transport', /\b(uber|pick\s*me|taxi|railway|parking|toll|expressway|interchange|\brda\b|highway|car\s+wash|vehicle\s+service|transport)\b/i],
+  ['Pets', /\b(?:veterinary|vets?|pet\s+(?:shop|food|care|mart|world|supplies))\b/i],
   ['Health', /\b(pharmacy|hospital|medical|clinic|channelling|doc990|nawaloka|asiri|hemas|durdans|healthguard|dental|laboratory)\b/i],
   ['Education', /\b(school|tuition|university|campus|course|institute|academy|college|book\s*(?:shop|store)|sarasavi|vijitha\s+yapa)\b/i],
   ['Insurance', /\b(insur\w*|assurance|takaful|policy\s+premium|aia|ceylinco|allianz|janashakthi|fairfirst)\b/i],
-  ['Government', /\b(inland\s+revenue|motor\s+traffic|immigration|passport|municipal\s+council|government|license\s+fee)\b/i],
-  ['Shopping', /\b(daraz|amazon|aliexpress|odel|nolimit|fashion|clothing|textiles?|tex|singer|abans|softlogic|damro|electronics|furniture|hardware|gift\s+shop)\b/i],
+  ['Government', /\b(inland\s+revenue|motor\s+traffic|immigration|passport|municipal\s+council|government|license\s+fee|income\s+tax|tax\s+(?:payment|pymt)|\bird\b|municipal\s+rates?|tv\s+licen[cs]e)\b/i],
+  ['Personal Care', /\b(?:salons?|barbers?|beauty|parlou?rs?|spa|cosmetics?)\b/i],
+  ['Kids & Family', /\b(?:toy\s+(?:shop|world|mart|zone|store)|baby\s+(?:shop|care|world|mart|wear)|kids\s+(?:shop|wear|world|mart)|creche)\b/i],
+  ['Charity', /\b(?:donations?|charity|temple|kovil|church|mosque|devale)\b/i],
+  ['Shopping', /\b(daraz|amazon|phone\s+(?:bar|shop|zone|world|house|mart)|mobile\s+(?:shop|phones?|world|zone)|aliexpress|odel|nolimit|fashion|clothing|textiles?|tex|singer|abans|softlogic|damro|electronics|furniture|hardware|gift\s+shop)\b/i],
   ['Subscriptions', /\b(github|openai|chatgpt|adobe|microsoft\s*365|office\s*365|notion|canva|dropbox|vercel|cloudflare)\b/i],
   ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube\s+premium|playstation|xbox|concert|bowling)\b/i],
 ];
@@ -51,7 +57,7 @@ export function expenseCategoryFor(row) {
   /* A SPECIFIC NAME BEATS A BRAND WORD. The rules below know "amazon" as Shopping; the merchant list knows "amazon prime" as Streaming. When the list names a business in
    * two words or more and the rules say something else, the longer name is the better evidence ("AMAZON PRIME" was being filed as Shopping). */
   const byRule = EXPENSE_CATEGORY_RULES.find(([, pattern]) => pattern.test(desc));
-  if (listed && listed.category && listed.basis === 'registry' && listed.words >= 2 && (!byRule || byRule[0] !== listed.category) && !(byRule && byRule[0] === 'Bank Charges')) return listed.category;
+  if (listed && listed.category && listed.basis === 'registry' && listed.words >= 2 && (!byRule || byRule[0] !== listed.category) && !(byRule && (byRule[0] === 'Bank Charges' || byRule[0] === 'Travel'))) return listed.category;
   if (listed && listed.ambiguous) return 'Other';   // two known merchants (or two kinds of business) on one line: not picked between, whatever one brand word in the rules says
   if (byRule) return byRule[0];
   /* What the rules do not name, the merchant list the app already carries (merchants.json, 950 businesses) and the words for what a business sells may: the same words, the
