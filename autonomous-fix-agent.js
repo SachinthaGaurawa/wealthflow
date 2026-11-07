@@ -58,6 +58,8 @@ import { withTranslation } from './autonomy/feedback-language.mjs';
 import { recoveryBrief } from './autonomy/pr-recovery.mjs';
 import { lessonsBrief, lessonsFor } from './autonomy/lessons.mjs';
 import { evidenceLedger } from './autonomy/evidence-ledger.mjs';
+import { taskCard, cardMarkdown } from './autonomy/task-card.mjs';
+import { runAnalysis, analysisMarkdown } from './autonomy/analysis-pass.mjs';
 import * as Q from './autonomy/work-queue.mjs';
 
 const MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
@@ -257,6 +259,22 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null, le
     ].join('\n');
 }
 
+/**
+ * The three program-written sections at the end of an agent pull request: the task card (what the work was held to), the
+ * independent analysis (a model's opinion, labelled), and the evidence ledger (what a program verified, with the computed
+ * confidence and the decision record). Never throws: a failure here must not lose the pull request.
+ */
+export function ledgerFor({ result = {}, laneName = 'swarm', kind = 'bug', issue = {}, shot = null, translation = null, testWritten = null, rulesShown = [] } = {}) {
+    let card = result.card || null;
+    try { card = card || taskCard({ issue, role: kind, lane: laneName, file: result.file || '', text: `${issue.title || ''}` }); } catch (_) { card = null; }
+    const analysis = result.analysis || null;
+    let ledger = '';
+    try {
+        ledger = evidenceLedger({ result, shot: shot && shot.status === 'none' ? null : shot, translation, testWritten, rules: rulesShown, card, analysis, reportText: `${issue.title || ''}\n${(shot && shot.body) || issue.body || ''}` }).markdown;
+    } catch (_) { ledger = '### Evidence ledger\n_The ledger could not be written; read the checks above._'; }
+    return [card ? cardMarkdown(card) : '', analysis ? analysisMarkdown(analysis) : '', ledger].filter(Boolean).join('\n\n');
+}
+
 async function main() {
     // ── preflight: prove we can actually work, and say so plainly ──────────
     const llm = describeAvailability();
@@ -420,11 +438,12 @@ async function main() {
 
         let result;
         let rulesShown = [];
+        let laneName = 'swarm';
         try {
             // A report about how a screen LOOKS (overlap, cut-off, a phone width) has no JavaScript to fix or to
             // test, so it goes to the layout lane: CSS only, measured in a real browser before and after.
             const lane = layoutLaneFor({ title: issue.title, body: shot.body });
-            if (lane.applies) log(`#${number} goes to the layout lane (${lane.why})`);
+            if (lane.applies) { laneName = 'layout'; log(`#${number} goes to the layout lane (${lane.why})`); }
             // A NEW idea is talked through by several AIs first (user-friendliness first); their brief joins the request, and
             // the discussion is posted once on the issue. It never blocks: the owner's request is the decision.
             let laneBody = shot.body;
@@ -452,16 +471,20 @@ async function main() {
             if (lane.applies) {
                 result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body + retryBrief + standing }, repoDir: REPO_DIR, log });
             } else if (build.applies) {
+                laneName = 'build';
                 log(`#${number} goes to the build lane (${build.why})`);
                 result = await buildIt();
             } else {
                 result = await runSwarm({
                     issue: { number, title: issue.title, body: laneBody, kind },
                     repoDir: REPO_DIR, log,
+                    // an independent second mind on the cause, the alternatives and the ways it could fail (part 9, 14 of the owner's prompt)
+                    analyse: (ctx) => runAnalysis({ ...ctx, log }),
                 });
                 if (!result.ok && kind === 'feature' && (result.stage === 'select' || result.stage === 'author')) {
                     log(`#${number} no existing module could take it (${result.stage}) — trying the build lane`);
                     const built = await buildIt();
+                    if (built.ok) laneName = 'build';
                     result = built.ok ? built : { ...result, reason: `${result.reason} | build lane: ${built.reason}` };
                 }
             }
@@ -543,7 +566,7 @@ async function main() {
             issue: number,
             role: result.role,
             providers: provs,
-            body: prBody({ issue, number, result, testWritten, ledger: evidenceLedger({ result, shot: shot.status === 'none' ? null : shot, translation, testWritten, rules: rulesShown }).markdown }) + (wiringNote ? `\n\n### Wiring\n${wiringNote}\n` : ''),
+            body: prBody({ issue, number, result, testWritten, ledger: ledgerFor({ result, laneName, kind, issue, shot, translation, testWritten, rulesShown }) }) + (wiringNote ? `\n\n### Wiring\n${wiringNote}\n` : ''),
         };
         fs.writeFileSync(OUTPUT, JSON.stringify(pr, null, 2) + '\n');
 

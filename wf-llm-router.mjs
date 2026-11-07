@@ -29,6 +29,7 @@
  * ===========================================================================*/
 
 import { DEFAULT_MODEL as DEFAULT_GEMINI_MODEL, geminiGenerate } from './gemini-client.mjs';
+import { fitCharter, tierForProvider, learnProviderTier, lowerTier, isSizeError } from './wf-charter.mjs';
 
 const DEFAULT_TIMEOUT_MS = 90_000;
 
@@ -626,9 +627,26 @@ export async function chat(o) {
     const attempts = [];
     for (const provider of order) {
         try {
-            const res = await callProvider(provider, { prompt, system, maxTokens, temperature, timeoutMs, env });
+            // The operating charter (wf-charter.mjs) starts at the size this provider has been seen to take. If the provider
+            // answers that the REQUEST is too large, the same request goes again one charter tier lower and the tier is
+            // remembered for the rest of the run. Nothing about a provider's limit is guessed in advance.
+            let tier = tierForProvider(provider.id, env);
+            let res;
+            for (;;) {
+                try {
+                    res = await callProvider(provider, { prompt, system: fitCharter(system, tier), maxTokens, temperature, timeoutMs, env });
+                    break;
+                } catch (e) {
+                    const lower = isSizeError(e) ? lowerTier(tier) : null;
+                    if (!lower) throw e;
+                    // eslint-disable-next-line no-console
+                    console.warn(`[llm-router] ${provider.id} says the request is too large → charter ${tier} → ${lower}`);
+                    tier = lower;
+                    learnProviderTier(provider.id, tier);
+                }
+            }
             report({ provider: provider.id, outcome: 'ok', retryAfterSec: 0 });
-            return { ...res, attempts };
+            return { ...res, attempts, charterTier: tier };
         } catch (e) {
             attempts.push({ provider: provider.id, error: String(e && e.message || e).slice(0, 300) });
             report({

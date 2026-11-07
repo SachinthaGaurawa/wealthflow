@@ -30,6 +30,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { chat, stripFences } from './llm-router.mjs';
+import { taskCard, cardPrompt } from './task-card.mjs';
+import { fenceUntrusted } from './untrusted-text.mjs';
 import { ROLES, reviewPrompt, parseVerdict, reviewSeesWholeChange } from './agent-swarm.mjs';
 import { probeLayout, describeProbe, sweepScreens, anyScreenFor, screenFromReading, screenKeyOfPage, screenDef, WIDTHS } from './layout-probe.mjs';
 
@@ -373,7 +375,7 @@ export function layoutPrompt({ issueText, screen, scope, measured, ctx, sample, 
     return [
         'A person using a personal-finance web app on a phone reported a LAYOUT problem. You fix it with CSS only.',
         '',
-        'REPORT (their words):', issueText,
+        'REPORT (their words):', fenceUntrusted('report', issueText, 4000),
         '',
         `SCREEN: ${screen} (its container is ${scope})`,
         '',
@@ -457,7 +459,7 @@ export async function runLayoutLane({
     let css = '', after = null, judged = null, authored = null, remaining = '', tried = [];
     for (let round = 1; round <= MAX_ROUNDS; round++) {
         const a = await chatImpl({
-            system: role.system.replace(/ABSOLUTE CONSTRAINTS[\s\S]*$/, '').trim() + '\nYou write CSS only.',
+            system: role.system.replace(/ABSOLUTE CONSTRAINTS[\s\S]*$/, '').trim() + '\nYou write CSS only.\n\n' + cardPrompt(taskCard({ issue, role: 'ui', lane: 'layout', file: `${screen} screen`, text: issueText })),
             prompt: layoutPrompt({ issueText, screen, scope, measured, ctx, sample: before.sample, previousCss: css, remaining }),
             prefer: role.prefer, maxTokens: 2500, temperature: round === 1 ? 0.1 : 0.3, env,
         }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));

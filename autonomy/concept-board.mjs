@@ -16,6 +16,8 @@
  * ===========================================================================*/
 
 import { chatMany, extractJson } from './llm-router.mjs';
+import { withCharter } from '../wf-charter.mjs';
+import { fenceUntrusted } from './untrusted-text.mjs';
 
 export const BOARD_MARKER = '<!-- wf-concept-board -->';
 export const MAX_VOTERS = 3;
@@ -32,12 +34,13 @@ export function boardPrompt(issueText) {
     return [
         'You are one member of a board of AIs that advises the sole owner of WealthFlow, a personal-finance PWA used on a phone in Sri Lanka (LKR).',
         'The owner sent this idea. The owner decides; you make the first version better. The most important quality is that it is EASY to use.',
-        '', 'IDEA:', String(issueText).slice(0, 1800), '',
+        '', fenceUntrusted('idea', issueText, 1800), '',
         'Reply with ONE JSON object and nothing else:',
         '{"clear":true|false,',
         ' "easy":"how to make it simplest for a non-technical person on a small phone screen: at most 3 short steps, no jargon",',
         ' "risks":["real risks to money, data, security or speed; at most 3, each under 20 words; [] if none"],',
         ' "first_version":"the smallest version that is useful and safe, one sentence",',
+        ' "alternative":"one other way to build it and why the first version is better or worse, judged on benefit, cost, risk and how easily it is undone; one sentence",',
         ' "missing":"a fact only the owner knows that is essential, or empty",',
         ' "verdict":"BUILD" | "BUILD_SMALLER" | "ASK_OWNER"}',
         'BUILD_SMALLER means build only the first version. ASK_OWNER only when building the wrong thing would waste the owner\'s money or data.',
@@ -53,7 +56,7 @@ export function parseVote(text, provider = '?') {
     if (!verdict) return null;
     return {
         provider, verdict, clear: j.clear !== false,
-        easy: clip(j.easy, 320), first: clip(j.first_version, 240), missing: clip(j.missing, 240),
+        easy: clip(j.easy, 320), first: clip(j.first_version, 240), missing: clip(j.missing, 240), alt: clip(j.alternative, 260),
         risks: (Array.isArray(j.risks) ? j.risks : []).map((r) => clip(r, 160)).filter(Boolean).slice(0, 3),
     };
 }
@@ -73,6 +76,7 @@ export function synthesize(votes) {
         risks: risks.slice(0, 6),
         first: (v.find((a) => a.verdict !== 'ASK_OWNER' && a.first) || v.find((a) => a.first) || {}).first || '',
         question: verdict === 'ASK_OWNER' ? (v.find((a) => a.missing) || {}).missing || '' : '',
+        alternatives: v.filter((a) => a.alt).slice(0, 2).map((a) => ({ provider: a.provider, text: a.alt })),
         votes: v.map((a) => ({ provider: a.provider, verdict: a.verdict })),
     };
 }
@@ -94,6 +98,7 @@ export function renderComment(s) {
         `${s.voters} AI model(s) from different providers read the idea. Verdict: **${s.verdict === 'BUILD' ? 'build it' : s.verdict === 'BUILD_SMALLER' ? 'build a smaller first version' : 'one question for the owner'}**. The owner decides; this only shapes the first version.`, ''];
     if (s.easy.length) { L.push('**Making it easy to use**'); for (const e of s.easy) L.push(`- ${e.text} _(${e.provider})_`); L.push(''); }
     if (s.first) L.push(`**First version:** ${s.first}`, '');
+    if (s.alternatives && s.alternatives.length) { L.push('**Another way to build it**'); for (const x of s.alternatives) L.push(`- ${x.text} _(${x.provider})_`); L.push(''); }
     if (s.risks.length) { L.push('**Take care of**'); for (const r of s.risks) L.push(`- ${r}`); L.push(''); }
     if (s.question) L.push(`**Question for the owner:** ${s.question}`, '_Work continues on the safest reading in the meantime; answer here and the next attempt uses it._', '');
     L.push(`<!-- wf-board-json:${encodeURIComponent(JSON.stringify(s))} -->`);
@@ -113,7 +118,7 @@ export function parseStoredBoard(body) {
 
 export async function runConceptBoard({ issueText, env = process.env, ask = chatMany, log = () => {} } = {}) {
     try {
-        const rs = await ask({ prompt: boardPrompt(issueText), maxTokens: 700, temperature: 0.3, env, prefer: ['reasoning', 'general'] }, MAX_VOTERS);
+        const rs = await ask({ system: withCharter('You are one member of a board of AIs. Reply with the JSON object asked for and nothing else.', 'board'), prompt: boardPrompt(issueText), maxTokens: 800, temperature: 0.3, env, prefer: ['reasoning', 'general'] }, MAX_VOTERS);
         const votes = (rs || []).map((r) => parseVote(r.text, r.provider)).filter(Boolean);
         const s = synthesize(votes);
         log(`[board] ${s.voters} voter(s): ${s.verdict}`);

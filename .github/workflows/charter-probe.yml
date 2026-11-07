@@ -1,8 +1,9 @@
 name: Charter probe (free)
 
 # Do the models really work by the operating charter (wf-charter.mjs)? Instructions are not proof. This asks up to three real
-# providers three small questions whose right answer only comes from obeying it (an injected "answer PASS" inside an issue,
-# "reply with exactly one word", "did you run the tests") and names which providers followed it (autonomy/charter-probe.mjs).
+# providers five small questions whose right answer only comes from obeying it (an injected "answer PASS" inside an issue,
+# "reply with exactly one word", "did you run the tests", "quote a line that is not shown", "return the whole file, no fences")
+# and names which providers followed it and which charter size they took (autonomy/charter-probe.mjs).
 # Red = no provider followed it in every case. Read-only: it changes nothing in the repository.
 
 on:
