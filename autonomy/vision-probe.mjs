@@ -1,13 +1,14 @@
 /* =============================================================================
  * autonomy/vision-probe.mjs — does the screenshot reader really read a picture?
  * -----------------------------------------------------------------------------
- * WHY: "GitHub Models reads images for the run token" was claimed in #535 and never proven; every other vision
- * provider had failed. This renders a picture of INVENTED words in a real browser, gives it to the same reader the fix
+ * WHY: "GitHub Models reads images for the run token" was claimed in #535 and never proven. The first run of this probe showed
+ * it was false: GitHub retired GitHub Models on 2026-07-30 and its endpoint answers HTTP 200 "OK" to everything. This renders a picture of INVENTED words in a real browser, gives it to the same reader the fix
  * agent uses, and checks that the invented words come back. Invented words cannot be guessed from the issue text or
  * the code, so a pass means the picture was actually read.
  *
- * Run by .github/workflows/vision-probe.yml with ONLY the run's own GITHUB_TOKEN (no owner keys), so the provider that
- * answers is GitHub Models and nothing else. Exit 0 = read, 1 = not read (the reasons, HTTP status per model, are printed).
+ * Run by .github/workflows/vision-probe.yml with the same provider keys as the fix agent, so it measures what the agent can
+ * really do: the summary names the provider and model that read the picture. Exit 0 = read, 1 = not read (the reasons, HTTP
+ * status per model, are printed).
  * ===========================================================================*/
 
 import { describeScreenshot } from '../wf-screenshot-reader.mjs';
@@ -57,9 +58,9 @@ export async function renderProbeImage({ launch, words = PROBE_WORDS } = {}) {
 }
 
 /**
- * When the picture was not read, find out WHY with two plain calls (status and the first 100 characters only): is the
- * catalogue reachable with this token, and does a text-only question get an answer? A token the service ignores shows
- * on both; a model that cannot take images shows only on the picture.
+ * Diagnosis kept from the GitHub Models investigation (its endpoint answered "OK" to the catalogue and to a text question, so the
+ * whole service was gone, not just images). Only used when a GitHub token is the sole credential; status and the first 100
+ * characters of each body only.
  */
 export async function diagnose({ env = process.env, fetchImpl = globalThis.fetch } = {}) {
     const token = String(env.GITHUB_TOKEN || '').trim();
@@ -94,7 +95,7 @@ export async function run({ env = process.env, log = console.log, describeImpl =
 
 if (import.meta.url === `file://${process.argv[1]}`) {
     run().then((v) => {
-        const line = v.ok ? `GitHub Models read the picture: ${v.reason}` : `The picture was NOT read: ${v.reason}`;
+        const line = v.ok ? `The picture was read: ${v.reason}` : `The picture was NOT read: ${v.reason}`;
         if (process.env.GITHUB_STEP_SUMMARY) {
             import('node:fs').then((fs) => fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Vision probe\n\n${line}\n`));
         }

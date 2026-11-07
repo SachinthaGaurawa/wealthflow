@@ -57,12 +57,14 @@ describe('vision probe: does the reader read a picture', () => {
         expect(url.length).toBeGreaterThan(3000);
     });
 
-    it('the workflow passes only the run token, asks for models:read and changes nothing', () => {
+    it('the workflow is read-only, uses the fix agent\'s vision keys and no retired GitHub Models permission', () => {
         const y = fs.readFileSync('.github/workflows/vision-probe.yml', 'utf8');
-        expect(y).toMatch(/models:\s*read/);
         expect(y).toMatch(/contents:\s*read/);
-        expect(y).not.toMatch(/secrets\.(?!GITHUB_TOKEN)/);
+        expect(y).not.toMatch(/^\s*models:/m);
+        expect(y).not.toMatch(/contents:\s*write/);
+        expect(y).toMatch(/GEMINI_API_KEY: \$\{\{ secrets\.GEMINI_API_KEY \}\}/);
         expect(y).toMatch(/node autonomy\/vision-probe\.mjs/);
+        expect(fs.readFileSync('.github/workflows/autonomous-fix.yml', 'utf8')).not.toMatch(/^\s*models:\s*read/m);
     });
 });
 

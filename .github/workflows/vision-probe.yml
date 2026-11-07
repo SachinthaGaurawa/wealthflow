@@ -1,8 +1,9 @@
 name: Vision probe (free)
 
-# Does the screenshot reader really read a picture with the run's own token (GitHub Models)? #535 claimed it; nothing proved it.
-# This renders invented words in a real browser and asks the reader for them (autonomy/vision-probe.mjs). Only GITHUB_TOKEN is
-# passed, so a pass can only mean GitHub Models read it. Red = it did not, with the HTTP status of each model in the log.
+# Does the screenshot reader really read a picture? An earlier claim (#535) said the run's own token could, through GitHub Models;
+# the first run of this probe showed that was false: GitHub retired GitHub Models on 2026-07-30 and its endpoint answers 200 "OK".
+# This renders invented words in a real browser and asks the reader for them (autonomy/vision-probe.mjs), with the same provider
+# keys the fix agent receives, so the summary names the provider and model that really read the picture. Red = none did.
 # Read-only: it changes nothing in the repository.
 
 on:
@@ -12,7 +13,6 @@ on:
 
 permissions:
   contents: read
-  models: read
 
 concurrency:
   group: wf-vision-probe
@@ -43,6 +43,12 @@ jobs:
 
       - name: Render a picture of invented words and read it
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ACTIONS: 'true'
+          # The same provider keys the fix agent receives (autonomous-fix.yml). Only the vision-capable ones matter here.
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          WealthFlow_API_Key: ${{ secrets.WealthFlow_API_Key }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: node autonomy/vision-probe.mjs

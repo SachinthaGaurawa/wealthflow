@@ -49,9 +49,8 @@ export function visionModels(providerId, env = process.env) {
     if (providerId === 'groq') return pick(env.GROQ_VISION_MODEL, ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.2-90b-vision-preview']);
     if (providerId === 'mistral') return pick(env.MISTRAL_VISION_MODEL, ['mistral-small-latest', 'pixtral-large-latest']);
     if (providerId === 'openrouter') return pick(env.OPENROUTER_VISION_MODEL, ['meta-llama/llama-3.2-11b-vision-instruct:free']);
-    // GitHub Models reads images with no key of the owner's: inside GitHub Actions the run's own GITHUB_TOKEN works when the workflow
-    // grants `models: read`. It is the one vision route that does not depend on a free-tier quota the owner has to keep alive.
-    if (providerId === 'github-models') return pick(env.GITHUB_MODELS_VISION_MODEL, ['openai/gpt-4.1', 'openai/gpt-4o', 'meta/Llama-3.2-90B-Vision-Instruct', 'openai/gpt-4o-mini']);
+    // GitHub Models is NOT a route any more: GitHub retired it on 2026-07-30 (https://github.blog/changelog/2026-07-30-github-models-is-now-retired/).
+    // #535 built the reader around it; the vision probe (autonomy/vision-probe.mjs) showed every model answering HTTP 200 with the body "OK".
     if (providerId === 'together') return pick(env.TOGETHER_VISION_MODEL, ['meta-llama/Llama-Vision-Free']);
     if (providerId === 'nvidia') return pick(env.NVIDIA_VISION_MODEL, ['meta/llama-3.2-90b-vision-instruct', 'meta/llama-3.2-11b-vision-instruct']);
     return [];
@@ -121,10 +120,7 @@ async function postJson(fetchImpl, url, headers, body) {
 }
 
 async function askOpenAiStyle(provider, key, model, dataUrl, prompt, fetchImpl) {
-    // GitHub's endpoint wants its own Accept and API-version headers (api/ai.js sends them); without them the probe on 2026-11-07
-    // got HTTP 200 and no answer from all four models.
-    const extra = provider.id === 'github-models' ? { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } : {};
-    const r = await postJson(fetchImpl, provider.url, { Authorization: 'Bearer ' + key, ...extra }, {
+    const r = await postJson(fetchImpl, provider.url, { Authorization: 'Bearer ' + key }, {
         model, temperature: 0.2, max_tokens: 900,
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: dataUrl } }] }],
     });
@@ -151,14 +147,11 @@ async function askGemini(key, dataUrl, prompt, fetchImpl, env, forModel = '') {
  * Ask each provider that has a key and a vision model, in order, until one reads the image.
  * @returns {{ ok:boolean, text?:string, provider?:string, model?:string, tried:string[] }}
  */
-const HEAL_NAME = { groq: 'Groq', mistral: 'Mistral', openrouter: 'OpenRouter', together: 'Together', nvidia: 'NVIDIA', gemini: 'Gemini', 'github-models': 'GitHubModels' };
+const HEAL_NAME = { groq: 'Groq', mistral: 'Mistral', openrouter: 'OpenRouter', together: 'Together', nvidia: 'NVIDIA', gemini: 'Gemini' };
 
-/** A provider's credential for READING a picture. Inside GitHub Actions the run's own token is a GitHub Models credential when the workflow grants `models: read`. */
+/** A provider's credential for READING a picture: the owner's own key for that provider, or null. */
 export function visionKey(id, provider, env = process.env) {
-    const k = provider && keyFor(provider, env);
-    if (k) return k;
-    if (id === 'github-models' && env.GITHUB_ACTIONS === 'true' && env.GITHUB_TOKEN && String(env.GITHUB_TOKEN).trim()) return { name: 'GITHUB_TOKEN', value: String(env.GITHUB_TOKEN).trim() };
-    return null;
+    return (provider && keyFor(provider, env)) || null;
 }
 
 /**
@@ -177,7 +170,7 @@ async function liveVisionModel(id, provider, key, fetchImpl, exclude) {
     } catch (_) { return ''; }
 }
 
-const VISION_ORDER = ['github-models', 'gemini', 'mistral', 'groq', 'nvidia', 'openrouter', 'together'];
+const VISION_ORDER = ['gemini', 'mistral', 'groq', 'nvidia', 'openrouter', 'together'];
 
 /**
  * Ask each provider that has a key and a vision model, in order, until one answers `prompt` about the image.

@@ -51,31 +51,10 @@ describe('the pages open just before a report are written into the issue', () =>
     });
 });
 
-describe('screenshot reader: GitHub Models', () => {
-    const ENV = { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 'tok' };
-
-    it('sends the GitHub Accept and API-version headers (HTTP 200 and no answer without them on 2026-11-07)', async () => {
-        const seen = [];
-        const fetchImpl = async (url, init = {}) => { seen.push({ url: String(url), headers: init.headers }); return res(200, { choices: [{ message: { content: 'SCREEN: Dashboard' } }] }); };
-        const r = await describeScreenshot({ dataUrl: PNG, verify: false, env: ENV, fetchImpl });
-        expect(r.ok).toBe(true);
-        expect(r.provider).toBe('github-models');
-        expect(seen[0].url).toBe('https://models.github.ai/inference/chat/completions');
-        expect(seen[0].headers.Accept).toBe('application/vnd.github+json');
-        expect(seen[0].headers['X-GitHub-Api-Version']).toBe('2022-11-28');
-        expect(seen[0].headers.Authorization).toBe('Bearer tok');
-    });
-
-    it('other providers do not get the GitHub headers', async () => {
-        const seen = [];
-        const fetchImpl = async (url, init = {}) => { seen.push(init.headers); return res(200, { choices: [{ message: { content: 'SCREEN: Dashboard' } }] }); };
-        await describeScreenshot({ dataUrl: PNG, verify: false, env: { MISTRAL_API_KEY: 'k' }, fetchImpl });
-        expect(seen[0].Accept).toBeUndefined();
-    });
-
-    it('a 200 with no answer says what the body carried instead of looking like success', async () => {
+describe('screenshot reader: an answerless 200', () => {
+    it('says what the body carried instead of looking like success', async () => {
         const fetchImpl = async () => ({ ok: true, status: 200, json: async () => { throw new Error('not json'); }, text: async () => 'OK' });
-        const r = await describeScreenshot({ dataUrl: PNG, verify: false, env: ENV, fetchImpl });
+        const r = await describeScreenshot({ dataUrl: PNG, verify: false, env: { MISTRAL_API_KEY: 'k' }, fetchImpl });
         expect(r.ok).toBe(false);
         expect(r.tried.join(' ')).toMatch(/HTTP 200 no answer in the body: OK/);
     });
