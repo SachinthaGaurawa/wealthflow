@@ -33,7 +33,6 @@ async function fetchWithTimeout(url, options, timeoutMs = 20000) {
 
 export default async function handler(req, res) {
     // CORS — same pattern as the rest of the app's API routes
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 

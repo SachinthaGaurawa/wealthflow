@@ -60,9 +60,7 @@ function _applyCommonHeaders(req, res) {
     try {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        // No cookies are ever involved, so reflecting the origin (or *) is safe.
-        const origin = (req && req.headers && req.headers.origin) || '';
-        res.setHeader('Access-Control-Allow-Origin', origin || '*');
+        // CORS is the router's job (api/router.js, wf-cors.mjs): only allow-listed WealthFlow origins, never a reflected one or `*`.
         res.setHeader('Vary', 'Origin');
         res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type');

@@ -44,7 +44,6 @@ async function fetchWithTimeout(url, options, timeoutMs = 25000) {
 
 export default async function handler(req, res) {
     // CORS (same-origin in prod, permissive for safety)
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     if (req.method === 'OPTIONS') return res.status(204).end();

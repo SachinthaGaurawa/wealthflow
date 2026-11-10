@@ -42,7 +42,7 @@ describe('vercel.json serves the swapped layout', () => {
         expect(rule('/app').destination).toBe('/app.html');
         expect(rule('/privacy').destination).toBe('/privacy.html');
         expect(rule('/terms').destination).toBe('/terms.html');
-        const catchAll = src.indexOf('/(.*)');
+        const catchAll = VERCEL.rewrites.findIndex((r) => r.destination === '/app.html' && r.source !== '/app');   // its source now names the probe paths it refuses
         expect(catchAll).toBe(src.length - 1);
         expect(VERCEL.rewrites[catchAll].destination).toBe('/app.html');
         for (const s of ['/app', '/privacy', '/terms']) expect(src.indexOf(s)).toBeLessThan(catchAll);
