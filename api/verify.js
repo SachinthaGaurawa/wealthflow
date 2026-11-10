@@ -72,6 +72,7 @@ function mapIndustry() {
 const SEARCH_TIMEOUT_MS = 8000;    // research: hard-abort the search at 8s
 import { geminiGenerate, geminiKeyOf } from '../gemini-client.mjs';
 import { applyCors } from '../wf-cors.mjs';
+import { guardApi } from '../wf-api-guard.mjs';
 
 const LLM_TIMEOUT_MS = 12000;
 const MAX_MERCHANT_LEN = 120;
@@ -263,6 +264,7 @@ export default async function handler(req, res) {
     applyCors(req, res, { methods: 'POST, OPTIONS', headers: 'Content-Type, Authorization, x-wf-token' });
     if (req.method === 'OPTIONS') return res.status(200).end();
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+    if (!guardApi(req, res, 'verify')) return;
 
     // Optional lock so a stranger cannot burn your Serper credits.
     if (process.env.WF_VERIFY_TOKEN && req.headers['x-wf-token'] !== process.env.WF_VERIFY_TOKEN) {
