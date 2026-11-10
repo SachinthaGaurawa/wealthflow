@@ -43,6 +43,7 @@
 // ============================================================================
 
 import { applyCors, lockCors, isCorsHeader } from '../wf-cors.mjs';
+import { guardApi } from '../wf-api-guard.mjs';
 
 export const config = { maxDuration: 60 }; // Hobby max; covers deep multi-engine AI
 
@@ -387,6 +388,9 @@ export default async function handler(req, res) {
             reason: 'this deployment has no /api/' + name + ' endpoint.',
         });
     }
+
+    // The endpoints that spend provider quota: another website's browser is refused, and one caller is limited (wf-api-guard.mjs).
+    if (!guardApi(req, res, name)) return;
 
     var stopWatch = watchSlow(name, req.method);
     try {
