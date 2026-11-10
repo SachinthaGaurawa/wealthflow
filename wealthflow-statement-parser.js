@@ -217,11 +217,14 @@
     var CHEQUE_TOKEN_RE = /^(?:\d+|(?:cheques?|chq|chque|cheq|chk|check|cq|pdc)\d+)$/i;
     // A Sri Lankan phone number written as one token (0771234567, 94771234567, 0112345678) is WHAT THE PAYMENT IS FOR, not a reference number: it says which phone bill this is, so it stays in the narration.
     var PHONE_TOKEN_RE = /^(?:\+?94|0094|0)(?:7[0-8]\d{7}|(?:11|2[1-7]|3[1-8]|41|45|47|5[12457]|6[3567]|81|91)\d{7})$/;
+    // The account reference at the end of an internet-banking BILL PAYMENT ("Ib Bill Payment Asp931097") is WHICH BILL it pays, as a phone number is: it stays in the narration, so two bills are
+    // two entries and not one "Ib Bill Payment". Only after the words "bill payment" (kept in step with billRefOf in wealthflow-sub-identity.js).
+    var BILL_PAYMENT_RE = /\b(?:ib\s+)?bill\s*pay(?:ment|ments)?\s*$/i;
     function cleanNarration(n) {
         n = String(n || '').trim();
         var cheque = namesCheque(n);
         n = n.replace(/^([A-Za-z]{1,4}\d{5,}[A-Za-z]?)\s+/, function (all, tok) { return (cheque && CHEQUE_TOKEN_RE.test(tok)) || PHONE_TOKEN_RE.test(tok) ? all : ''; });
-        n = n.replace(/\s+([A-Za-z]{0,4}\d{5,}[A-Za-z]?)\s*$/, function (all, tok) { return (cheque && CHEQUE_TOKEN_RE.test(tok)) || PHONE_TOKEN_RE.test(tok) ? all : ''; });
+        n = n.replace(/\s+([A-Za-z]{0,4}\d{5,}[A-Za-z]?)\s*$/, function (all, tok, off) { return (cheque && CHEQUE_TOKEN_RE.test(tok)) || PHONE_TOKEN_RE.test(tok) || BILL_PAYMENT_RE.test(n.slice(0, off)) ? all : ''; });
         n = n.replace(/\b(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)\s*$/i, '');
         n = n.replace(/[\s|,;:.\-(]+$/, '');
         n = n.replace(/^[\s|,;:.\-)]+/, '');

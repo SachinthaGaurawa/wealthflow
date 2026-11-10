@@ -700,6 +700,8 @@
     <script src="wealthflow-format.js" defer></script>
     <script src="wealthflow-vision-ocr.js" defer></script>
     <script src="wealthflow-crib.js" defer></script>
+    <!-- Which entry does a statement payment belong to (a number, a bill reference, a brand)? ONE rule, shared with the email worker (statement-subscriptions.mjs re-exports it). A module: deferred, and in order before the engine below. -->
+    <script type="module" src="wealthflow-sub-identity.js"></script>
     <!-- Subscription auto-routing: recurring bills → Subscriptions tab, auto-create + remember -->
     <script src="wealthflow-subscriptions.js" defer></script>
     <script src="wealthflow-notifications.js" defer></script>
@@ -33977,6 +33979,8 @@ Be direct and use real numbers. Avoid generic advice.`;
                     if (_sh) window.WFInsights.renderInto(_sh, window.WFInsights.subs(), { title: 'Subscription intelligence' });
                 }
             } catch (_) {}
+            // a month that holds several payments shows their TOTAL (an earlier version kept only the last one): corrected here, once, and saved
+            try { if (window.WFSubs && window.WFSubs.healAll) { const _all = DB.get('subscriptions') || []; if (window.WFSubs.healAll(_all)) { DB.set('subscriptions', _all); if (typeof setDirty === 'function') setDirty(); } } } catch (_) {}
             const subs = DB.get('subscriptions') || [];
             const now = new Date();
             const day = now.getDate();
@@ -37616,7 +37620,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             try {
                                 const res = window.WFSubs.apply({ description: desc, amount, direction: 'debit', date }, routeInfo);
                                 sub++; if (res && res.created) subCreated++;
-                                if (_batch && res && res.paymentAdded) WFBatch.recordSub(_batch, { subId: res.subId, paymentDate: res.paymentDate || date, amount: res.amount != null ? res.amount : amount, prevAmount: res.prevAmount, previousLifecycle: res.previousLifecycle, createdSub: !!res.created });
+                                if (_batch && res && res.paymentAdded) WFBatch.recordSub(_batch, { subId: res.subId, paymentDate: res.paymentDate || date, amount: res.amount != null ? res.amount : amount, prevAmount: res.prevAmount, previousLifecycle: res.previousLifecycle, createdSub: !!res.created, moved: res.moved && res.moved.length ? res.moved : undefined });
                             }
                             catch (e) { console.warn('[WFSubs] apply failed:', e); skipped++; }
                         } else { skipped++; }
