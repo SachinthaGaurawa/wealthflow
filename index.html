@@ -11075,7 +11075,12 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         }
 
         // --- OCR.space Third-Party API Fallback ---
+        // PRIVACY: this sends the receipt photo to a third party on a shared demo key. It used to run silently after every AI
+        // failure; now it runs only when the person has switched it on (localStorage wf_cloud_ocr = '1'). Without it the scan
+        // goes on to Tesseract, which reads the photo on this device.
+        function _cloudOcrAllowed() { try { return localStorage.getItem('wf_cloud_ocr') === '1'; } catch (_) { return false; } }
         async function _tryOCRSpace(base64Img) {
+            if (!_cloudOcrAllowed()) return null;
             try {
                 const formData = new FormData();
                 formData.append('apikey', 'helloworld');
@@ -12388,7 +12393,7 @@ Be conversational and precise.`;
 
                     // ===== TIER 2b: OCR.space (Dedicated 3rd Party API) =====
                     try {
-                        if (isExpense) {
+                        if (isExpense && _cloudOcrAllowed()) {
                             _showScanOverlay('Reading with cloud OCR…', 'Using the OCR.space online reader', 50, 'cloud');
                             const { base64: ocrImg } = await _compressImageToBase64(file, 1600, 0.85, true);
                             const ocrText = await _tryOCRSpace(ocrImg);
