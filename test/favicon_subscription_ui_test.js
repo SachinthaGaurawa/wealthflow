@@ -19,7 +19,7 @@ describe('browser identity assets', () => {
     it('routes favicon requests to an image before the app-shell catch-all', () => {
         const config = JSON.parse(read('vercel.json'));
         const iconAt = config.rewrites.findIndex((r) => r.source === '/favicon.ico');
-        const catchAllAt = config.rewrites.findIndex((r) => r.source === '/(.*)');
+        const catchAllAt = config.rewrites.findIndex((r) => r.destination === '/app.html' && r.source !== '/app');
         expect(iconAt).toBeGreaterThanOrEqual(0);
         expect(iconAt).toBeLessThan(catchAllAt);
         expect(config.rewrites[iconAt].destination).toMatch(/^https:\/\/.+\.ico$/);

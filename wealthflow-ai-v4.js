@@ -101,6 +101,7 @@
                 console.log('[' + V + '] loading PDF.js from', src.lib);
                 var s = document.createElement('script');
                 s.src = src.lib;
+                if (window.wfApplySri) window.wfApplySri(s, src.lib);
                 s.onload = function () {
                     try {
                         if (window.pdfjsLib && window.pdfjsLib.getDocument) {

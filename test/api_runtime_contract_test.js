@@ -596,13 +596,14 @@ describe('the Node ⇄ Web bridge', () => {
     });
 
     it('sets CORS headers on a Web handler\'s response too', async () => {
-        const r = await call('ios-shortcut', { method: 'GET' });
+        const r = await call('ios-shortcut', { method: 'GET', headers: { origin: 'https://www.wealthflow.lk' } });
         // `answered` and `status` first: setCors() runs before dispatch, so the
         // header is present even when the handler's Response was thrown away.
         // Asserting the header alone made this pass against the broken router.
+        // The header is now the allow-listed origin, never `*` (wf-cors.mjs).
         expect(r.answered).toBe(true);
         expect(r.status).toBe(200);
-        expect(r.headers['access-control-allow-origin']).toBe('*');
+        expect(r.headers['access-control-allow-origin']).toBe('https://www.wealthflow.lk');
         expect(String(r.headers['content-type'] || '')).toMatch(/json/);
     });
 });

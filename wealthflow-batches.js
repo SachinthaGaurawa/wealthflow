@@ -206,9 +206,31 @@
                 var idx = sub.history.findIndex(function (h) { return h.date === s.paymentDate && Math.abs((h.amount || 0) - (s.amount || 0)) < 0.01; });
                 if (idx > -1) {
                     sub.history.splice(idx, 1);
-                    if (s.paymentDate) { var ym = String(s.paymentDate).slice(0, 7); if (sub.monthOverrides) delete sub.monthOverrides[ym]; }
+                    if (s.paymentDate) {
+                        // the month holds what was paid in it in total: take this payment out of the total (the other payments of the month stay)
+                        var ym = String(s.paymentDate).slice(0, 7);
+                        if (sub.monthOverrides) {
+                            var left = (sub.history || []).filter(function (h) { return h && h.source === 'statement' && (h.month === ym || String(h.date || '').slice(0, 7) === ym); });
+                            if (left.length) sub.monthOverrides[ym] = left.reduce(function (t, h) { return t + Math.round((Number(h.amount) || 0) * 100); }, 0) / 100;
+                            else delete sub.monthOverrides[ym];
+                        }
+                    }
                 }
             }
+        });
+
+        // Pass 1b — a payment this batch took off a mixed entry (moveFromLumped) goes back on it, exactly as it was
+        (batch.subs || []).slice().reverse().forEach(function (s) {
+            (s.moved || []).slice().reverse().forEach(function (m) {
+                var from = subs.filter(function (x) { return x.id === m.fromSubId; })[0];
+                if (!from && m.removedSub) { from = m.removedSub; from.history = []; subs.push(from); }
+                if (!from || !m.payment) return;
+                from.history = from.history || []; from.monthOverrides = from.monthOverrides || {};
+                if (!from.history.some(function (h) { return h && h.date === m.payment.date && Math.abs((h.amount || 0) - (m.payment.amount || 0)) < 0.01; })) from.history.push(m.payment);
+                var inMonth = from.history.filter(function (h) { return h && h.source === 'statement' && (h.month === m.month || String(h.date || '').slice(0, 7) === m.month); });
+                from.monthOverrides[m.month] = inMonth.reduce(function (t, h) { return t + Math.round((Number(h.amount) || 0) * 100); }, 0) / 100;
+                if (typeof m.prevAmount === 'number') from.amount = m.prevAmount;
+            });
         });
 
         // Pass 2 — AFTER all of this batch's rows are gone, fix each touched sub's

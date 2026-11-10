@@ -326,7 +326,7 @@ describe('the door', () => {
     it('answers a pre-flight and refuses what it does not serve, always as JSON and never cached', async () => {
         const o = await call('OPTIONS');
         expect(o.code).toBe(204);
-        expect(o.headers['Access-Control-Allow-Origin']).toBe('*');
+        expect(o.headers['Access-Control-Allow-Origin']).toBeUndefined();   // never `*`: the router answers for the allow-list (wf-cors.mjs)
         expect(o.headers['Cache-Control']).toBe('no-store');
         const d = await call('DELETE');
         expect(d.code).toBe(405);

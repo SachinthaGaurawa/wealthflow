@@ -31,6 +31,9 @@
  *       WEALTHFLOW_VISION / WealthFlow_API_Key / GEMINI_API_KEY family).
  *  ===========================================================================*/
 
+import { applyCors } from '../wf-cors.mjs';
+
+
 export const config = { api: { bodyParser: { sizeLimit: '8mb' } } };
 
 function pickKey() {
@@ -124,9 +127,7 @@ async function runVision(url, image, feature, languageHints) {
 }
 
 export default async function handler(req, res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    applyCors(req, res, { methods: 'POST, OPTIONS', headers: 'Content-Type, Authorization' });
     if (req.method === 'OPTIONS') return res.status(204).end();
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'POST only' });
 

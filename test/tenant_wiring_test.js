@@ -30,7 +30,7 @@ describe('the route', () => {
         const rewrites = VERCEL.rewrites;
         const at = rewrites.findIndex((r) => r.destination === '/tenant.html');
         expect(at).toBeGreaterThan(0);
-        expect(at).toBeLessThan(rewrites.findIndex((r) => r.source === '/(.*)'));
+        expect(at).toBeLessThan(rewrites.findIndex((r) => r.destination === '/app.html' && r.source !== '/app'));
         expect(rewrites[0].source).toBe('/api/(.*)');                                   // the API is untouched
         const re = new RegExp(`^${rewrites[at].source}$`);
         for (let i = 0; i < 50; i += 1) {
@@ -81,7 +81,7 @@ describe('the route', () => {
 
     it('is a private route in the API router: no CORS headers, no answer to a pre-flight, no internal error text', () => {
         expect(ROUTER).toMatch(/PRIVATE_ROUTES = new Set\(\[[^\]]*'tenant-portal'/);
-        expect(ROUTER).toMatch(/if \(!isPrivate\) setCors\(res\)/);
+        expect(ROUTER).toMatch(/if \(!isPrivate\) setCors\(req, res\)/);
     });
 
     it('seals the rate-limit counters too, written out and not left to the default', () => {

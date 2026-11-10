@@ -94,6 +94,14 @@ export async function serveRepo(repoDir = process.cwd()) {
         fs.readFile(f, (err, buf) => {
             if (err) { res.writeHead(404); return res.end('not found'); }
             res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream' });
+            // The Firebase SDK is answered with a stub here (firebase-stub.mjs), so the production
+            // `integrity="sha384-..."` pins on those script tags can never match. They are checked
+            // against the real CDN bytes by test/security_headers_test.js (WF_SRI_VERIFY=1) and by the
+            // live canary, so the served copy drops them.
+            if (path.extname(f) === '.html') {
+                res.end(buf.toString('utf8').replace(/\s+integrity="sha(?:256|384|512)-[^"]*"/g, ''));
+                return;
+            }
             res.end(buf);
         });
     });

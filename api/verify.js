@@ -71,6 +71,7 @@ function mapIndustry() {
 
 const SEARCH_TIMEOUT_MS = 8000;    // research: hard-abort the search at 8s
 import { geminiGenerate, geminiKeyOf } from '../gemini-client.mjs';
+import { applyCors } from '../wf-cors.mjs';
 
 const LLM_TIMEOUT_MS = 12000;
 const MAX_MERCHANT_LEN = 120;
@@ -259,9 +260,7 @@ async function classify(prompt, origin) {
 
 /* ---- handler ------------------------------------------------------------ */
 export default async function handler(req, res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-wf-token');
+    applyCors(req, res, { methods: 'POST, OPTIONS', headers: 'Content-Type, Authorization, x-wf-token' });
     if (req.method === 'OPTIONS') return res.status(200).end();
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
