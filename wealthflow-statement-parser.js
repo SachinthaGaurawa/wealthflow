@@ -215,11 +215,13 @@
     var CLEARING_RE = /\b(?:clearing|clg)\b/i, ELECTRONIC_RE = /\b(?:ceft|rtgs|slips|swift|atm|pos|card|visa|mastercard|amex|lankapay)\b/i;
     function namesCheque(n) { return CHEQUE_WORD_RE.test(n) || (CLEARING_RE.test(n) && !ELECTRONIC_RE.test(n)); }
     var CHEQUE_TOKEN_RE = /^(?:\d+|(?:cheques?|chq|chque|cheq|chk|check|cq|pdc)\d+)$/i;
+    // A Sri Lankan phone number written as one token (0771234567, 94771234567, 0112345678) is WHAT THE PAYMENT IS FOR, not a reference number: it says which phone bill this is, so it stays in the narration.
+    var PHONE_TOKEN_RE = /^(?:\+?94|0094|0)(?:7[0-8]\d{7}|(?:11|2[1-7]|3[1-8]|41|45|47|5[12457]|6[3567]|81|91)\d{7})$/;
     function cleanNarration(n) {
         n = String(n || '').trim();
         var cheque = namesCheque(n);
-        n = n.replace(/^([A-Za-z]{1,4}\d{5,}[A-Za-z]?)\s+/, function (all, tok) { return cheque && CHEQUE_TOKEN_RE.test(tok) ? all : ''; });
-        n = n.replace(/\s+([A-Za-z]{0,4}\d{5,}[A-Za-z]?)\s*$/, function (all, tok) { return cheque && CHEQUE_TOKEN_RE.test(tok) ? all : ''; });
+        n = n.replace(/^([A-Za-z]{1,4}\d{5,}[A-Za-z]?)\s+/, function (all, tok) { return (cheque && CHEQUE_TOKEN_RE.test(tok)) || PHONE_TOKEN_RE.test(tok) ? all : ''; });
+        n = n.replace(/\s+([A-Za-z]{0,4}\d{5,}[A-Za-z]?)\s*$/, function (all, tok) { return (cheque && CHEQUE_TOKEN_RE.test(tok)) || PHONE_TOKEN_RE.test(tok) ? all : ''; });
         n = n.replace(/\b(?:LKR|USD|EUR|GBP|AUD|INR|SGD|Rs\.?)\s*$/i, '');
         n = n.replace(/[\s|,;:.\-(]+$/, '');
         n = n.replace(/^[\s|,;:.\-)]+/, '');
@@ -303,6 +305,49 @@
         return block;
     }
 
+    /* THE FOOT OF A CARD STATEMENT IS NOT A TRANSACTION. A card prints "Payment Due Date | Min Amt. Due | Closing Balance" as column titles and, under them, ONE line: "25 Nov 2026  6,119.81  203,993.65".
+     * That line has a date and two figures and no words, so it used to be read as a transaction with a running balance: the whole statement then looked like it had a balance column, and every real row's
+     * amount was replaced by the change between two figures (a 4,310.75 purchase became 15,689.25). The line is now taken out of the rows and kept for what it is: the date the minimum payment must reach the
+     * bank, the minimum, and the closing balance. */
+    var DUE_DATE_LABEL = /\b(?:payment\s+)?due\s+date\b/i;
+    var DUE_MIN_LABEL = /\bmin(?:imum)?\.?\s*(?:amt\.?|amount|payment|pymt)?\s*due\b|\bminimum\s+(?:amount|payment)\b/i;
+    var DUE_CLOSING_LABEL = /\b(?:closing|new|outstanding|statement)\s+balance\b/i;
+    // the titles on a line, in the order they stand: ['date', 'min', 'closing']; empty unless the line names the due date or the minimum
+    function dueLabels(line) {
+        var found = [], defs = [['date', DUE_DATE_LABEL], ['min', DUE_MIN_LABEL], ['closing', DUE_CLOSING_LABEL]];
+        for (var k = 0; k < defs.length; k++) { var at = line.search(defs[k][1]); if (at >= 0) found.push([at, defs[k][0]]); }
+        found.sort(function (a, b) { return a[0] - b[0]; });
+        var names = found.map(function (f) { return f[1]; });
+        return names.indexOf('date') >= 0 || names.indexOf('min') >= 0 ? names : [];
+    }
+    // The line under such titles: a date and figures and not a word. Returns what it says, or null when it is a real row.
+    function dueLineOf(line, d, labels, order) {
+        var bare = line.slice(0, d.start) + ' ' + line.slice(d.end), toks = moneyTokens(bare);
+        if (!toks.length) return null;
+        var letters = bare, k;
+        for (k = toks.length - 1; k >= 0; k--) letters = letters.slice(0, toks[k].start) + ' ' + letters.slice(toks[k].end);
+        if (/[A-Za-z]{3}/.test(letters.replace(/\b(?:CR|DR|LKR|Rs)\b/gi, ' '))) return null;
+        var money = labels.filter(function (x) { return x !== 'date'; }), out = { date: normDate(d.text, order) || '', minimum: null, closing: null, closingTok: null };
+        for (k = 0; k < money.length && k < toks.length; k++) {
+            if (money[k] === 'min') out.minimum = toks[k].v;
+            else if (money[k] === 'closing') { out.closing = toks[k].sv; out.closingTok = toks[k]; }
+        }
+        return out.date || out.minimum !== null || out.closing !== null ? out : null;
+    }
+    // The same two facts written beside their titles ("Minimum Payment Due 6,119.81", "Payment Due Date: 25/11/2026"), for the layouts that print them on a line of words (such a line is never a row).
+    function printedDue(text, order) {
+        var src = String(text || ''), out = { date: '', minimum: null, closing: null }, m;
+        m = /\bmin(?:imum)?\.?\s*(?:amt\.?|amount|payment|pymt)?\s*due\b[^\d\n]{0,25}(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?!\d)/i.exec(src) || /\bminimum\s+(?:amount|payment)\b[^\d\n%]{0,25}(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?!\d)/i.exec(src);
+        if (m) out.minimum = _num(m[1]);
+        m = /\b(?:payment\s+)?due\s+date\b[^\dA-Za-z\n]{0,12}(\d{1,2}[\/\-.\s]+(?:\d{1,2}|[A-Za-z]{3,9})[\/\-.\s,]+\d{2,4}|\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4})/i.exec(src);
+        if (m) out.date = normDate(m[1], order) || '';
+        // the last day of the statement: the later of the dates printed on its "Statement Period" line ("30 Sep 2026 / 31 Oct 2026")
+        var per = /statement\s+period[^\n]*/i.exec(src), best = '';
+        if (per) { var dm, dr = /(\d{1,2}[\/\-.\s]+(?:\d{1,2}|[A-Za-z]{3,9})[\/\-.\s,]+\d{2,4}|\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2})/g; while ((dm = dr.exec(per[0])) !== null) { var iso = normDate(dm[1], order); if (iso && iso > best) best = iso; } }
+        out.periodEnd = best;
+        return out;
+    }
+
     // ── layout detection ─────────────────────────────────────────────────────
     // Does the last money column behave like a running balance? Decided from the
     // statement itself rather than a per-bank template — but deliberately NOT from
@@ -355,7 +400,19 @@
 
         var ratio = testable >= 1 ? (agree / testable) : null;
         var veto = testable >= 3 && ratio < 0.34;
-        var balanceColumn = !veto && maxCols >= 2
+        /* A running balance is printed on the rows, not on one of them. When most rows carry a single figure the last column is the amount, whatever a title or an "Opening Balance" line says: the page has
+         * an opening line, so one stray line with two figures ("25 Nov 2026  6,119.81  203,993.65") used to be enough to turn every amount into the difference between two balances. A statement whose
+         * rows mostly carry two figures is still a balance column; one whose arithmetic agrees on at least two rows is too. */
+        var described = 0, multi = 0;
+        for (var rr = 0; rr < cands.length; rr++) {
+            var cr = cands[rr];
+            if (cr.opening || cr.closing || cr.acct !== undefined || !cr.block.length) continue;
+            described++;
+            if (cr.block.length >= 2) multi++;
+        }
+        var mostlyTwo = described > 0 && multi * 2 >= described;
+        var proven = testable >= 2 && ratio !== null && ratio >= 0.6;
+        var balanceColumn = !veto && maxCols >= 2 && (mostlyTwo || proven)
             && (hasBalanceLine || headerSaysBalance || (ratio !== null && ratio >= 0.6));
 
         return {
@@ -363,7 +420,7 @@
             testable: testable,
             agree: agree,
             maxColumns: maxCols,
-            evidence: { balanceLine: hasBalanceLine, header: headerSaysBalance, arithmetic: ratio, veto: veto }
+            evidence: { balanceLine: hasBalanceLine, header: headerSaysBalance, arithmetic: ratio, veto: veto, rowsWithTwoFigures: multi, rows: described }
         };
     }
 
@@ -482,6 +539,11 @@
     function parseWays(text, opts) {
         var first = parseOnce(text, opts);
         if (first.reconciliation && first.reconciliation.ok === true) return first;
+        /* A balance column that does not carry the statement to its own closing balance is a guess, and the other reading (the last figure is the amount) is tried: it is kept only when IT adds up to the cent. */
+        if (first.layout && first.layout.balanceColumn && first.reconciliation && first.reconciliation.ok === false && !(opts && opts.noBalanceColumn)) {
+            var plain = parseOnce(text, Object.assign({}, opts || {}, { noBalanceColumn: true }));
+            if (plain.reconciliation && plain.reconciliation.ok === true) return plain;
+        }
         if (!newestFirst(first.rows)) return first;
         var second = parseOnce(reversedLines(text), opts);
         var fits = second.reconciliation && second.reconciliation.ok === true;
@@ -497,12 +559,15 @@
         var lastTx = null, owed = '', wrapHead = '', cardDoc = CARD_WORDS_RE.test(src);
         // a bank balance printed "9,250.00 DR" is overdrawn; on a card statement DR is what is owed
         function signed(tok) { return !cardDoc && tok.marker === 'DR' ? -Math.abs(tok.v) : tok.sv; }
-        var invalidDates = 0, balanceMismatches = 0;
+        var invalidDates = 0, balanceMismatches = 0, dueCtx = null, dueFound = null;
 
         // pass 1 — tokenise candidate rows
         for (var i = 0; i < lines.length; i++) {
             var line = lines[i].trim();
             if (!line) continue;
+
+            // the titles of a card statement's foot (due date, minimum, closing balance): the line under them is not a row
+            if (!moneyTokens(line).length) { var titles = dueLabels(line); if (!titles.length && dueCtx && i - dueCtx.at <= 3 && DUE_CLOSING_LABEL.test(line)) titles = ['closing']; if (titles.length) { dueCtx = { at: i, labels: dueCtx && i - dueCtx.at <= 3 ? dueCtx.labels.concat(titles.filter(function (t) { return dueCtx.labels.indexOf(t) < 0; })) : titles }; var titleDate = dateAt(line); if (titleDate && !(dueFound && dueFound.date)) { dueFound = dueFound || { date: '', minimum: null, closing: null }; dueFound.date = normDate(titleDate.text, order) || ''; } continue; } }
 
             // Opening/closing balance lines carry no date, so they must be
             // recognised BEFORE the date gate. Dropping them (the old code read the
@@ -532,6 +597,15 @@
             }
 
             var d = dateAt(line);
+            if (d && dueCtx && i - dueCtx.at <= 4) {
+                var dueRow = dueLineOf(line, d, dueCtx.labels, order);
+                if (dueRow) {
+                    dueFound = { date: dueRow.date || (dueFound && dueFound.date) || '', minimum: dueRow.minimum, closing: dueRow.closing };
+                    if (dueRow.closingTok) cands.push({ line: line, date: '', rest: line, block: [dueRow.closingTok], closing: true });
+                    dueCtx = null;
+                    continue;
+                }
+            }
             // a description that wrapped: a dated line with no money, then the line that carries the money
             if (!d && wrapHead && !NOISE_RE.test(line) && moneyTokens(line).length) { line = wrapHead + ' ' + line; d = dateAt(line); }
             wrapHead = '';
@@ -572,6 +646,7 @@
         }
 
         var layout = detectLayout(cands, lines);
+        if (opts.noBalanceColumn && layout.balanceColumn) { layout.balanceColumn = false; layout.evidence.rejected = 'arithmetic'; }
 
         // pass 2 — emit rows
         var rows = [], prevBal = null, opening = null, closing = null;
@@ -786,6 +861,7 @@
             reason: garbled ? GARBLED_TEXT : (VERDICT_TEXT[verdict] || ''),
             moneyLines: moneyLines,
             printedFigures: printedFigures(String(text || '')),
+            due: (function () { var f = printedDue(src, order), g = dueFound || {}; return { date: g.date || f.date || '', minimum: g.minimum !== null && g.minimum !== undefined ? g.minimum : f.minimum, closing: g.closing !== null && g.closing !== undefined ? g.closing : f.closing, periodEnd: f.periodEnd || '' }; })(),
             candidateRows: cands.length,
             invalidDates: invalidDates,
             balanceMismatches: balanceMismatches,
