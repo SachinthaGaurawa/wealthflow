@@ -21,10 +21,27 @@
     function norm(s) { return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim(); }
     function _uid() { try { if (typeof window !== 'undefined' && typeof window.uid === 'function') return window.uid(); } catch (_) {} return 'sub_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
+    // The identity rule is ONE file the email worker reads too (wealthflow-sub-identity.js, window.WFSubIdentity): a number, a bill reference or a brand is what a payment is
+    // for, so a row is not one entry by upload and another by email. It loads as a deferred module; until it is there (or if it cannot load) the older reading below is used.
+    function _identity() { try { return (typeof window !== 'undefined' && window.WFSubIdentity) || null; } catch (_) { return null; } }
+    function _evidence(txn, routeInfo) {
+        var I = _identity(); if (!I) return null;
+        var ev = I.evidenceOf(txn || {});
+        // the router may have read the number the row prints in another spelling: it is still that number
+        if (!ev.phones.length && routeInfo && routeInfo.subPhone) ev.phones = I.phoneKeys(String(routeInfo.subPhone));
+        return ev;
+    }
+
     // A stable key that identifies the merchant REGARDLESS of the name the user
     // later gives the subscription — so re-imports always map to the same record.
     function merchantKey(txn, routeInfo) {
         routeInfo = routeInfo || {};
+        var I = _identity(), ev = _evidence(txn, routeInfo);
+        if (I && ev) {
+            if (ev.phones.length === 1) return I.manualPhoneKey(ev.phones[0]);          // "mobile:0771234567": one number, one entry
+            if (!ev.phones.length && ev.refs.length === 1) return I.refKey(ev.refs[0]);  // "ref:asp931097": one bill reference, one entry
+            if (!ev.phones.length && ev.brands.length === 1) return 'brand:' + ev.brands[0].key;
+        }
         if (routeInfo.subPhone) return 'mobile:' + routeInfo.subPhone;
         var d = norm((txn && txn.description) || '');
         var brand = d.match(/netflix|spotify|youtube|disney|hbo|hulu|prime video|amazon prime|apple music|itunes|icloud|google one|hotstar|dialog|mobitel|hutch|airtel|slt|lanka bell|ceb|leco|nwsdb|aia|ceylinco|allianz/);
@@ -36,8 +53,15 @@
         return 'desc:' + words.join('-');
     }
 
+    // The key an earlier version stored for a row with no number or brand it knew (the first words of the narration). An entry that lists it was made from rows like this one.
+    function legacyKey(txn) {
+        var d = norm((txn && txn.description) || '');
+        var words = d.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(function (w) { return w.length > 2; }).slice(0, 3);
+        return 'desc:' + words.join('-');
+    }
+
     // Find an existing subscription: first by remembered mapping, then by a
-    // confident name/phone match (so we don't create duplicates).
+    // confident name / phone match (so we don't create duplicates).
     function findExisting(txn, routeInfo, subs, map) {
         var all = subs || []; map = map || {};
         var key = merchantKey(txn, routeInfo);
@@ -49,6 +73,19 @@
             if (!_oneTime(s && s.cycle) || !(s.paid === true || s.completed === true) || s.reopened === true) return true;
             return (s.history || []).some(function (h) { return h && h.date === tDate && Math.abs((h.amount || 0) - tAmt) < 0.01; });
         });
+        var I = _identity(), ev = _evidence(txn, routeInfo);
+        if (I && ev && (ev.phones.length || ev.refs.length)) {
+            /* A NUMBER OR A BILL REFERENCE IS THE IDENTITY. The entry that carries it is the entry, for any amount; an entry that carries a different one is never it, whatever its name says; and a
+             * number nobody tracks yet is a new entry — never "the nearest name". */
+            var want = ev.phones.length ? ev.phones : ev.refs, field = ev.phones.length ? 'phones' : 'refs';
+            var owners = subs.filter(function (s) { var id = I.identityOf(s)[field]; return want.some(function (n) { return id.indexOf(n) >= 0; }); });
+            if (owners.length === 1) return { sub: owners[0], key: key, via: field === 'phones' ? 'number' : 'reference' };
+            if (owners.length > 1) {   // two entries carry it: the remembered one, else the first (never a guess across different numbers)
+                var mapped = map[key] ? owners.filter(function (s) { return s.id === map[key]; })[0] : null;
+                return { sub: mapped || owners[0], key: key, via: 'number' };
+            }
+            return { sub: null, key: key, via: null };
+        }
         if (map[key]) {
             var byMap = subs.filter(function (s) { return s.id === map[key]; })[0];
             if (byMap) return { sub: byMap, key: key, via: 'memory' };
@@ -56,11 +93,14 @@
         // a subscription that already lists this key
         var byKey = subs.filter(function (s) { return (s.merchantKeys || []).indexOf(key) >= 0; })[0];
         if (byKey) return { sub: byKey, key: key, via: 'merchantKeys' };
-        // confident name / phone match
+        // an entry that names the same business in other words (Claude / Anthropic, ChatGPT / OpenAI) — never one that carries a number or a reference of its own
+        if (I && ev && ev.brands.length === 1) {
+            var byBrand = subs.filter(function (s) { var id = I.identityOf(s); return !id.phones.length && !id.refs.length && id.brands.indexOf(ev.brands[0].key) >= 0; })[0];
+            if (byBrand) return { sub: byBrand, key: key, via: 'brand' };
+        }
+        // confident name match
         var wantName = norm((routeInfo && routeInfo.subName) || (txn && txn.description) || '');
-        var phone = routeInfo && routeInfo.subPhone;
         var byName = subs.filter(function (s) {
-            if (phone && (s.name || '').replace(/[\s-]/g, '').indexOf(phone) >= 0) return true;
             var n = norm(s.name);
             return n && wantName && (n === wantName || (wantName.length > 4 && (n.indexOf(wantName) >= 0 || wantName.indexOf(n) >= 0)));
         })[0];
@@ -145,9 +185,22 @@
 
     function buildSubscription(routeInfo, txn) {
         routeInfo = routeInfo || {}; txn = txn || {};
+        var name = (routeInfo.subName || (txn.description || 'Subscription')).toString().replace(/\s+/g, ' ').trim().slice(0, 40), keys = [];
+        // a number or a bill reference names its entry ("Mobile 076 576 4382", "Bill payment ASP931097"), so two of them are two entries a reader can tell apart
+        var I = _identity();
+        if (I) {
+            var spec = I.subscriptionToCreate({ direction: 'debit', description: (txn.description || '') });
+            var ev = _evidence(txn, routeInfo);
+            if (spec && ev && (ev.phones.length === 1 || ev.refs.length === 1)) {
+                var digits = String(name).replace(/\D/g, '');
+                if (ev.refs.length === 1 || !ev.phones.length || digits.indexOf(ev.phones[0]) < 0) name = spec.name;
+                keys = spec.merchantKeys.slice();
+            } else if (ev && ev.refs.length === 1 && !ev.phones.length) { name = 'Bill payment ' + ev.refs[0]; keys = [I.refKey(ev.refs[0])]; }
+            else if (ev && ev.phones.length === 1) keys = [I.manualPhoneKey(ev.phones[0])];
+        }
         return {
             id: _uid(),
-            name: (routeInfo.subName || (txn.description || 'Subscription')).toString().replace(/\s+/g, ' ').trim().slice(0, 40),
+            name: name,
             category: routeInfo.category || 'Other',
             amount: Math.abs(txn.amount) || 0,
             dueDay: _dayOf(txn.date),
@@ -158,9 +211,36 @@
             monthOverrides: {},
             createdAt: new Date().toISOString(),
             autoCreated: true,
-            merchantKeys: []
+            merchantKeys: keys
         };
     }
+
+    // The cents a month holds: every statement payment recorded in it, added as whole cents.
+    function _cents(n) { return Math.round((Number(n) || 0) * 100); }
+    function monthTotal(sub, month) {
+        var cents = (sub.history || []).reduce(function (t, h) { return t + ((h && h.source === 'statement' && (h.month === month || _monthOf(h.date) === month)) ? _cents(h.amount) : 0); }, 0);
+        return cents / 100;
+    }
+    function latestStatementMonth(sub) {
+        return (sub.history || []).reduce(function (m, h) { var hm = h && h.source === 'statement' ? (h.month || _monthOf(h.date)) : ''; return hm && hm > m ? hm : m; }, '');
+    }
+    /* A month that holds several statement payments but shows only ONE of them (an earlier version kept the last payment of the month) is corrected to their total. A figure the owner typed
+     * is left alone: it is only touched when it is exactly one of the payments. Returns the months it changed. */
+    function healMonths(sub) {
+        var changed = [];
+        if (!sub || !Array.isArray(sub.history) || !sub.monthOverrides) return changed;
+        var months = {};
+        sub.history.forEach(function (h) { if (h && h.source === 'statement') { var m = h.month || _monthOf(h.date); if (m) (months[m] = months[m] || []).push(_cents(h.amount)); } });
+        Object.keys(months).forEach(function (m) {
+            var list = months[m]; if (list.length < 2 || typeof sub.monthOverrides[m] !== 'number') return;
+            var shown = _cents(sub.monthOverrides[m]), total = list.reduce(function (a, b) { return a + b; }, 0);
+            if (shown !== total && list.indexOf(shown) >= 0) { sub.monthOverrides[m] = total / 100; sub._ut = Date.now(); changed.push(m); }
+        });
+        if (changed.length) { var latest = latestStatementMonth(sub); if (latest && changed.indexOf(latest) >= 0) sub.amount = monthTotal(sub, latest); }
+        return changed;
+    }
+    /** Heal every entry in the list; true when any month changed (the caller saves). */
+    function healAll(subs) { var any = false; (subs || []).forEach(function (s) { if (healMonths(s).length) any = true; }); return any; }
 
     // Record one statement payment on a subscription (idempotent for re-imports).
     function recordPayment(sub, txn) {
@@ -172,8 +252,13 @@
         var dup = sub.history.some(function (h) { return h.date === date && Math.abs((h.amount || 0) - amt) < 0.01; });
         if (!dup) {
             sub.history.push({ month: month, amount: amt, date: date, source: 'statement' });
-            if (month) sub.monthOverrides[month] = amt; // variable-bill actual for that month
-            if (amt) sub.amount = amt;                  // keep the headline amount current
+            /* A MONTH HOLDS WHAT WAS PAID IN IT, IN TOTAL. A phone reloaded on the 1st, the 10th and the 25th is three payments and one month: the month shows the three added together (in cents,
+             * so the total is exact), and each payment stays in the list beside it. It used to keep only the last one. */
+            if (month) { sub.monthOverrides[month] = monthTotal(sub, month); }
+            if (amt) {                                  // keep the headline amount current: the latest month's total
+                var latest = latestStatementMonth(sub);
+                if (!latest || month >= latest) sub.amount = month ? monthTotal(sub, month) : amt;
+            }
         }
         // an exact re-import of a payment already on the bill is not a new payment: it must not close a bill the owner has since reopened
         if (_oneTime(sub.cycle) && (!dup || !sub.reopened)) {
@@ -195,8 +280,38 @@
         if (sub.merchantKeys.indexOf(found.key) < 0) sub.merchantKeys.push(found.key);
         var pay = recordPayment(sub, txn);
         map[found.key] = sub.id; // remember for next time
+        var moved = pay.added && !/^desc:/.test(found.key) ? moveFromLumped(txn, sub, subs, map, found.key) : [];
         return { subscriptions: subs, map: map, subId: sub.id, name: sub.name, created: created, paymentAdded: pay.added,
-            prevAmount: pay.prevAmount, previousLifecycle: pay.previousLifecycle, via: found.via };
+            prevAmount: pay.prevAmount, previousLifecycle: pay.previousLifecycle, via: found.via, moved: moved };
+    }
+
+    /* A PAYMENT FILED BEFORE THE ENTRY KNEW ITS NUMBER. An earlier version put every "IB BILL PAYMENT <number>" on one entry called "Ib Bill Payment" (it matched the name and ignored the
+     * number). When the same row is read again and now has its own entry, the copy on that mixed entry is taken off it (and the mixed entry's month is added up again), so the payment is
+     * counted once, on the right entry. Only an entry that lists this row's own old key is touched, and only the payment with the same date and amount. Every change is returned so the
+     * upload's Undo can put it back exactly. */
+    function moveFromLumped(txn, sub, subs, map, key) {
+        var lk = legacyKey(txn), date = (txn && txn.date) || '', amt = Math.abs(txn && txn.amount) || 0, out = [];
+        if (!lk || lk === key || lk === 'desc:' || !date) return out;
+        subs.slice().forEach(function (L) {
+            if (!L || L === sub || (L.merchantKeys || []).indexOf(lk) < 0 || !Array.isArray(L.history)) return;
+            var idx = L.history.findIndex(function (h) { return h && h.source === 'statement' && h.date === date && Math.abs((h.amount || 0) - amt) < 0.01; });
+            if (idx < 0) return;
+            var month = L.history[idx].month || _monthOf(date), before = { amount: L.amount, override: L.monthOverrides ? L.monthOverrides[month] : undefined };
+            var payment = L.history.splice(idx, 1)[0];
+            L.monthOverrides = L.monthOverrides || {};
+            var total = monthTotal(L, month);
+            if (total > 0) L.monthOverrides[month] = total; else delete L.monthOverrides[month];
+            var latest = latestStatementMonth(L);
+            if (latest) L.amount = monthTotal(L, latest);
+            var entry = { fromSubId: L.id, payment: payment, month: month, prevAmount: before.amount, prevOverride: before.override };
+            if (!L.history.length && L.autoCreated === true) {
+                var at = subs.indexOf(L); if (at > -1) subs.splice(at, 1);
+                Object.keys(map).forEach(function (k) { if (map[k] === L.id) delete map[k]; });
+                entry.removedSub = L;
+            }
+            out.push(entry);
+        });
+        return out;
     }
 
     // Live path: read from DB, apply, write back. Returns a small summary.
@@ -207,7 +322,7 @@
         var r = applyToArrays(txn, routeInfo, subs, map);
         if (DB && DB.set) { DB.set('subscriptions', r.subscriptions); DB.set('subMerchantMap', r.map); }
         return { subId: r.subId, name: r.name, created: r.created, paymentAdded: r.paymentAdded, prevAmount: r.prevAmount,
-            previousLifecycle: r.previousLifecycle, via: r.via, paymentDate: (txn && txn.date) || '', amount: Math.abs((txn && txn.amount) || 0) };
+            previousLifecycle: r.previousLifecycle, via: r.via, moved: r.moved, paymentDate: (txn && txn.date) || '', amount: Math.abs((txn && txn.amount) || 0) };
     }
 
     window.WFSubs = {
@@ -215,8 +330,12 @@
         findExisting: findExisting,
         buildSubscription: buildSubscription,
         recordPayment: recordPayment,
+        monthTotal: monthTotal,
+        healMonths: healMonths,
+        healAll: healAll,
         legacyDueDate: legacyDueDate,
         occurrence: occurrence,
+        moveFromLumped: moveFromLumped,
         applyToArrays: applyToArrays,
         apply: apply
     };

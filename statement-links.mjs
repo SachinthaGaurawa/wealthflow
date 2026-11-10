@@ -11,7 +11,7 @@
 
 import { sameBank } from './wealthflow-institutions.js';
 import { installmentInfo } from './wealthflow-statement-router.js';
-import { evidenceOf, identityOf } from './statement-subscriptions.mjs';
+import { evidenceOf, identityOf, isTelecomBrand } from './statement-subscriptions.mjs';
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const arr = (v) => (Array.isArray(v) ? v : []);
 const low = (v) => String(v == null ? '' : v).toLowerCase();
@@ -115,13 +115,18 @@ const sharesNumber = (a, b) => a.some((n) => b.includes(n));
 export function matchSubscriptionForDebit(row, subs) {
     const amount = num(row && row.amount), text = words(row && (row.description || row.narration)), ym = ymOf(row && row.date);
     if (!(amount > 0) || !text || !ym) return null;
-    const seen = evidenceOf(row), byNumber = [], byName = [];
+    const seen = evidenceOf(row), byNumber = [], byCompany = [], byName = [];
     for (const sub of arr(subs)) {
         if (!sub || !sub.id || !subscriptionCountedIn(sub, ym)) continue;
         // a one-time bill that is already paid is finished: a later charge from the same merchant is a new payment, not that bill (reopening it is the owner's call)
         if (/^(once|one-time|onetime)$/.test(low(sub.cycle)) && (sub.paid || sub.completed)) continue;
         const identity = identityOf(sub);
         if (seen.phones.length && sharesNumber(seen.phones, identity.phones)) { byNumber.push(sub); continue; }
+        // a bill's account reference is its identity as a number is: that entry, for any amount, and every payment of the month is added to it
+        if (seen.refs.length && sharesNumber(seen.refs, identity.refs)) { byNumber.push(sub); continue; }
+        // a phone company paid with no number on the line (a card reload at DIALOG AXIATA): the company's own entry, for any amount, and every reload of the month is added to it. A line that names a number or a
+        // bill reference is never put on a company-wide entry: it belongs to that number's own.
+        if (!seen.phones.length && !seen.refs.length && seen.brands.some((b) => isTelecomBrand(b) && identity.brands.includes(b.key)) && !identity.phones.length && !identity.refs.length) { byCompany.push(sub); continue; }
         // the subscription's month holds ONE amount: a second charge in the same month is its own payment and is filed as one
         if (arr(sub.history).some((h) => h && h.month === ym && h.source === 'statement')) continue;
         const name = words(sub.name);
@@ -133,6 +138,7 @@ export function matchSubscriptionForDebit(row, subs) {
         byName.push({ sub, expected });
     }
     if (byNumber.length) return byNumber.length === 1 ? byNumber[0] : null;     // the number is the identity: two entries with it are not guessed between
+    if (byCompany.length) return byCompany.length === 1 ? byCompany[0] : null;
     if (byName.length === 1) return byName[0].sub;
     const close = byName.filter((hit) => hit.expected > 0 && Math.abs(amount - hit.expected) <= hit.expected * 0.02);
     return byName.length > 1 && close.length === 1 ? close[0].sub : null;
