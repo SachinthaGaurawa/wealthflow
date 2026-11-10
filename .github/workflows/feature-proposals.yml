@@ -1,45 +1,37 @@
-name: Feature proposals — ideas only, never code
+name: Self-ideation — the system thinks of its own improvements
 
 # =============================================================================
-# THE ONE PART OF THE PIPELINE THAT DOES NOT DECIDE ANYTHING.
+# THE SYSTEM THINKS OF ITS OWN IMPROVEMENTS   (owner, 2026-11-07: "nothing may need my hand")
 #
-# Every other automated job here answers a question that has a right answer:
-# is this CVE real, does this button call a function that exists, did anything
-# substantive change since the last release. Each carries evidence a machine can
-# check, which is what makes it safe to act on automatically.
+# Every day it studies the app (the measured roadmap and gaps in docs/superior-system-research.md, real feedback, what became of its
+# earlier ideas, what already shipped), thinks of at most ONE improvement, and decides on it with rules a machine can check
+# (autonomy/ideas.mjs): the idea must cite its evidence, give its if/then reasoning and score itself with user-friendliness first,
+# must not touch sign-in, encryption, money arithmetic, paid services or new dependencies, and independent AIs on different providers
+# must raise no objection (one objection stops it). An approved idea is filed with `approved-feature`, and the fix agent is woken to
+# build it as an ordinary pull request through the usual tests, reviews and policy gate. A refused idea is filed closed, so it is
+# remembered and never proposed again.
 #
-# "Should WealthFlow have feature X?" has no such answer. A model asked for
-# feature ideas will always produce fluent, plausible ones — that is what it is
-# for — and they will pass CI, because tests prove a thing WORKS, never that it
-# was WANTED. Wired to auto-merge, that drifts the app one reasonable-sounding
-# addition at a time away from the one its owner actually built.
+# DAILY, with at most 2 ideas in the pipeline at once (the cap, not the calendar, keeps it from flooding). The owner said updates are
+# never held back for weeks; an idea that is ready is not held for a Monday either.
 #
-# So this job's only power is to OPEN AN ISSUE. It cannot write code, cannot
-# open a pull request, cannot merge. A proposal becomes work only when the owner
-# adds `approved-feature`, and autonomy/work-queue.mjs::isWorkable refuses to
-# pick up a proposal that lacks it. The owner keeps strategic control; the
-# machine takes the labour once a direction is chosen.
-#
-# WEEKLY, NOT DAILY
-#   Ideas are not urgent, and an idea generator running every night produces an
-#   inbox. An inbox you stop reading is indistinguishable from a system that
-#   proposes nothing, so the cadence is deliberately slow and the module caps
-#   itself at 2 undecided proposals regardless.
+# Switch off with the repository variable WF_IDEAS_AUTO=0: it then files the old kind of idea that waits for the owner's label.
 # =============================================================================
 
 on:
   schedule:
-    - cron: '0 9 * * 1'          # Mondays 09:00 UTC — once a week, start of week
+    - cron: '30 2 * * *'         # every day 02:30 UTC (08:00 in Colombo), before the 04:00 scan
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Draft a proposal and print it, but file nothing'
+        description: 'Think of an idea and decide on it, but file nothing'
         type: boolean
         default: false
 
 permissions:
   contents: read
   issues: write
+  pull-requests: read   # to read what already shipped
+  actions: write        # to wake the fix agent after an idea is approved
 
 concurrency:
   group: wealthflow-proposals
@@ -48,7 +40,7 @@ concurrency:
 jobs:
   propose:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: step-security/harden-runner@v2
         with:
@@ -64,7 +56,8 @@ jobs:
       - name: Install deps
         run: npm ci || npm install
 
-      - name: Draft at most one proposal
+      - name: Think of at most one improvement and decide on it
+        id: ideate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -86,35 +79,17 @@ jobs:
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DRY_RUN: ${{ inputs.dry_run }}
-        run: |
-          set -euo pipefail
-          node -e '
-            import("./autonomy/propose.mjs").then(async (m) => {
-              const dry = process.env.DRY_RUN === "true";
-              const r = await m.proposeOnce({ dryRun: dry });
-              const fs = await import("node:fs");
-              let md;
-              if (r.filed) {
-                console.log("proposed #" + r.filed.number + ": " + r.filed.title);
-                md = "### 💡 Proposal filed\n\n#" + r.filed.number + " — " + r.filed.title
-                   + "\n\nNothing will be built from it unless you add `approved-feature`.\n";
-              } else {
-                // Declining is a SUCCESS, not a failure. A generator that must
-                // produce something every week produces filler.
-                console.log("no proposal this run: " + r.reason);
-                md = "### 💡 No proposal this run\n\n" + r.reason + "\n";
-                if (r.proposal) md += "\n<details><summary>dry-run draft</summary>\n\n```json\n"
-                   + JSON.stringify(r.proposal, null, 2) + "\n```\n</details>\n";
-              }
-              if (process.env.GITHUB_STEP_SUMMARY) {
-                try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + "\n"); } catch (e) {}
-              }
-            }).catch((e) => {
-              // The least important job on the schedule must never be the one
-              // that turns the Actions tab red.
-              console.warn("proposer error (non-fatal): " + e.message);
-            });
-          '
+          WF_IDEAS_AUTO: ${{ vars.WF_IDEAS_AUTO }}
+        run: node autonomy/ideate.mjs
 
-      - name: Prove the containment rules still hold
-        run: npx vitest run test/propose_test.js
+      # An issue filed with the run's own token starts no workflow by itself, so the fix agent is woken here. If nothing was approved it is not.
+      - name: Wake the fix agent
+        if: steps.ideate.outputs.approved == 'true' && inputs.dry_run != true
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run autonomous-fix.yml --ref "$DEFAULT_BRANCH"
+
+      - name: Prove the rules still hold
+        run: npx vitest run test/propose_test.js test/ideas_test.js

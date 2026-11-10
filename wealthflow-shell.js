@@ -649,7 +649,8 @@
     /* A switch is a focusable control: Space and Enter flip it, as a screen reader and a keyboard user expect. */
     function onSwitchKey(e) {
         var el = e.target;
-        if ((e.key === ' ' || e.key === 'Enter') && el && el.getAttribute && el.getAttribute('role') === 'switch' && !/^(INPUT|BUTTON)$/.test(el.tagName)) { e.preventDefault(); el.click(); }
+        /* A `.toggle` switch already has its own key handler in index.html; a second one here flipped it twice, so the key did nothing (found by test/e2e/settings-runtime.mjs). Only switches without that class are handled here. */
+        if ((e.key === ' ' || e.key === 'Enter') && el && el.getAttribute && el.getAttribute('role') === 'switch' && !/^(INPUT|BUTTON)$/.test(el.tagName) && !(el.classList && el.classList.contains('toggle'))) { e.preventDefault(); el.click(); }
     }
     function installAccess() {
         var main = doc.querySelector('.main'), a;

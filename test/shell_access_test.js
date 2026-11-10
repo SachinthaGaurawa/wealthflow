@@ -9,6 +9,7 @@ const HTML = `
   <div class="page" id="page-settings">
     <div class="setting-row"><div class="setting-info"><div class="setting-label">Haptic feedback</div></div><div class="toggle on" role="switch" tabindex="0" aria-checked="true" id="t1"></div></div>
     <div class="setting-row"><div class="setting-info"><div class="setting-label">Already named</div></div><div class="toggle" role="switch" aria-label="Own name" id="t2"></div></div>
+    <div class="setting-row"><div class="setting-info"><div class="setting-label">Custom switch</div></div><div class="custom-switch" role="switch" tabindex="0" aria-checked="false" id="t3"></div></div>
     <div class="setting-row"><div class="setting-info"><div class="setting-label">Display currency</div></div><select class="fi" id="cur"></select></div>
     <div class="fg"><label class="fl">Projection Years</label><input class="fi" id="mcYears"></div>
     <div class="fg"><label for="named">Has a real label</label><input id="named"></div>
@@ -49,15 +50,22 @@ describe('names for controls that have none', () => {
 });
 
 describe('the keyboard', () => {
-    it('Space and Enter flip a focused switch, other keys do not', () => {
+    const press = (t, id, key) => { const e = new t.window.Event('keydown', { bubbles: true, cancelable: true }); e.key = key; t.byId(id).dispatchEvent(e); return e.defaultPrevented; };
+    it('Space and Enter flip a focused custom switch, other keys do not', () => {
+        const t = boot();
+        let clicks = 0;
+        t.byId('t3').addEventListener('click', () => { clicks++; });
+        expect(press(t, 't3', ' ')).toBe(true);
+        expect(press(t, 't3', 'Enter')).toBe(true);
+        expect(press(t, 't3', 'a')).toBe(false);
+        expect(clicks).toBe(2);
+    });
+    it('leaves a `.toggle` switch to the page\'s own key handler: a second handler flipped it twice, so the key did nothing (settings-runtime e2e)', () => {
         const t = boot();
         let clicks = 0;
         t.byId('t1').addEventListener('click', () => { clicks++; });
-        const press = (key) => { const e = new t.window.Event('keydown', { bubbles: true, cancelable: true }); e.key = key; t.byId('t1').dispatchEvent(e); return e.defaultPrevented; };
-        expect(press(' ')).toBe(true);
-        expect(press('Enter')).toBe(true);
-        expect(press('a')).toBe(false);
-        expect(clicks).toBe(2);
+        expect(press(t, 't1', ' ')).toBe(false);
+        expect(clicks).toBe(0);
     });
     it('there is a skip link first on the page, and it points at the main area', () => {
         const t = boot();
