@@ -917,7 +917,7 @@
                 '<div class="setting-desc">v' + _esc(d.v) + ' · ' + (d.isThis ? 'open now' : 'seen ' + _esc(_ago(d.at))) + '</div></div>' +
                 '<span class="badge" style="background:' + (d.behind ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)') + ';color:' + (d.behind ? '#f59e0b' : '#10b981') + ';padding:6px 12px;border-radius:999px;font-weight:700;">' + (d.behind ? 'Behind' : 'Newest') + '</span></div>';
         }).join('') : '<div class="setting-row"><div class="setting-info"><div class="setting-desc">Your other devices show here after they open WealthFlow with this account.</div></div></div>';
-        return '<div class="setting-row" style="border-top:1px solid var(--border);margin-top:8px;padding-top:12px;"><div class="setting-info"><div class="setting-label">Your devices</div><div class="setting-desc">' +
+        return '<div class="setting-row" style="border-top:1px solid var(--border);margin-top:8px;padding-top:12px;"><div class="setting-info"><div class="setting-label" data-wf-new="2026-11-07" data-wf-new-id="update-your-devices">Your devices</div><div class="setting-desc">' +
             (f && f.act === 'install' ? 'Your ' + _esc(f.from.name) + ' is already on v' + _esc(f.account) + '. This device will install it when you are not using the app, or tap Update now.' : 'Devices signed in to this account, and the version each one runs.') + '</div></div></div>' + rows +
             _toggleRow('wfFollow', 'Keep my devices on the same version', 'When you update one device, your other devices install the same version when you are not using them. A backup is taken first. A device that is closed updates the next time you open WealthFlow. Skipping a version on a device is respected.', _followOn(), 'setFollow');
     }

@@ -8278,6 +8278,8 @@
              * reaches the others (wealthflow-update-system.js, "One account, several devices"). Every leaf is one string: a leaf written by one
              * device is never half overwritten by another. DECLARED HERE, or the hydration loops never read it back. */
             updateSync: {},
+            /* The first time this person saw each NEW-tagged thing, so its 7 days are counted from their first look and agree on every device (wealthflow-new-badge.js). Leaves are numbers (ms); the earliest wins. DECLARED HERE, or the hydration loops never read it back. */
+            newSeen: {},
             cribReports: [], cribAnalyses: {},
             // Money moved out of the current account into a deposit or savings.
             // A record here is NOT a second subtraction from the balance — the

@@ -16,6 +16,8 @@ on:
       - test/e2e/settings-runtime.mjs
       - test/e2e/update-journey.mjs
       - test/e2e/update-follow.mjs
+      - test/e2e/new-seen-sync.mjs
+      - wealthflow-new-badge.js
       - wealthflow-update-policy.js
       - test/e2e/diagnosis.mjs
       - wealthflow-diagnosis.js
@@ -85,3 +87,5 @@ jobs:
       # One account, several devices: three browsers share one cloud document; an update installed on one is seen by the second (pill and
       # Settings name the first), started by itself after a quiet minute, and ignored by the third where following is switched off.
       - run: node test/e2e/update-follow.mjs
+      # The NEW label counts its 7 days from the first time the PERSON sees a thing (not from the day it shipped), and two devices of one account agree on that day.
+      - run: node test/e2e/new-seen-sync.mjs

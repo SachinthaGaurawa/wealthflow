@@ -50,18 +50,34 @@ check(created && created.left === '7', `a tag starts at 7 days left, got ${creat
 check(created && created.stamped, 'the first sighting of a new screen should be stamped');
 check(created && created.right <= 16, `the tag sits at the right edge of the row, ${created && created.right}px from it`);
 
-// An option: dated elements. Today and 6 days ago show; 8 days ago and a malformed date do not.
+// An option: dated elements. The week is counted from the person's FIRST LOOK, not from the day it shipped (owner, 2026-11-07).
+// A person who began a month ago and comes back: an option that shipped today or 6 days ago shows its full 7 days; one that shipped
+// before they began (40 days ago) is not new to them; a malformed date shows nothing; a row that has not been on screen has not started its week.
 await page.evaluate(() => {
+    const began = Date.now() - 30 * 86400000;
+    const all = JSON.parse(localStorage.getItem('wf_new_seen_v1') || '{}'); all._since = began; localStorage.setItem('wf_new_seen_v1', JSON.stringify(all));
+    const acct = DB.getObj('newSeen', {}); DB.set('newSeen', { ...acct, _since: began });
     const day = (d) => new Date(Date.now() - d * 86400000).toISOString().slice(0, 10);
     const host = document.querySelector('#page-settings') || document.body;
-    host.insertAdjacentHTML('beforeend', ['0', '6', '8', 'soon'].map((d) => `<div class="tst-opt" id="tstOpt${d}" data-wf-new="${d === 'soon' ? 'soon' : day(+d)}">Option ${d}</div>`).join(''));
+    host.insertAdjacentHTML('beforeend', ['0', '6', '40', 'soon'].map((d) => `<div class="tst-opt" id="tstOpt${d}" data-wf-new="${d === 'soon' ? 'soon' : day(+d)}" style="display:block;min-height:20px">Option ${d}</div>`).join('')
+        + `<div class="tst-opt" id="tstOptHidden" data-wf-new="${day(2)}" style="display:none">Option hidden</div>`);
+    document.querySelectorAll('.tst-opt').forEach((e) => { e.style.display = e.id === 'tstOptHidden' ? 'none' : 'block'; });
+    // the settings page itself may not be the open one: show the host so the rows are really on screen
+    if (host.id === 'page-settings') { host.style.display = 'block'; }
 });
 await page.waitForTimeout(900);
-const opts = await page.evaluate(() => Object.fromEntries(['0', '6', '8', 'soon'].map((d) => { const p = document.querySelector(`#tstOpt${d} > .wf-new`); return [d, p ? p.getAttribute('data-left') : null]; })));
-check(opts['0'] === '7' || opts['0'] === '6', `an option dated today shows (7 days left, or 6 near a day boundary), got ${opts['0']}`);
-check(opts['6'] === '1' || opts['6'] === '2', `an option dated 6 days ago has about 1 day left, got ${opts['6']}`);
-check(opts['8'] === null, 'an option dated 8 days ago must not show');
+const opts = await page.evaluate(() => Object.fromEntries(['0', '6', '40', 'soon', 'Hidden'].map((d) => { const p = document.querySelector(`#tstOpt${d} > .wf-new`); return [d, p ? p.getAttribute('data-left') : null]; })));
+check(opts['0'] === '7', `an option dated today shows its full 7 days from the first look, got ${opts['0']}`);
+check(opts['6'] === '7', `an option that shipped 6 days ago, first seen now, still shows 7 days (not 1), got ${opts['6']}`);
+check(opts['40'] === null, 'an option that shipped before the person began must not show');
 check(opts.soon === null, 'a malformed date must not show a tag');
+check(opts.Hidden === null, 'a row that has not been on screen has not started its week');
+await page.evaluate(() => { document.getElementById('tstOptHidden').style.display = 'block'; });
+await page.waitForTimeout(1200);
+const revealed = await page.evaluate(() => { const p = document.querySelector('#tstOptHidden > .wf-new'); return p ? p.getAttribute('data-left') : null; });
+check(revealed === '7', `once the hidden row is opened its week starts: 7 days left, got ${revealed}`);
+const kept = await page.evaluate(() => ({ local: Object.keys(JSON.parse(localStorage.getItem('wf_new_seen_v1') || '{}')).filter((k) => k.startsWith('f:')).length, account: Object.keys(DB.getObj('newSeen', {})).filter((k) => k.startsWith('f:')).length }));
+check(kept.local >= 3 && kept.account >= 3, `each first look is kept on the device (${kept.local}) and on the account (${kept.account})`);
 
 // The phone: the More sheet shows the same tag, and a NEW tag is not "needs attention".
 await page.setViewportSize({ width: 390, height: 844 });
@@ -118,7 +134,7 @@ const after = await page.evaluate(() => {
     return out;
 });
 check(after.screen === false, 'a new screen must lose its tag 7 days on');
-check(after.options === 0, 'dated options must lose their tags 7 days on');
+check(after.options === 0, 'dated options must lose their tags 7 days after the first look');
 check(after.threeDays === '4', `a screen first seen 3 days ago has 4 days left, got ${after.threeDays}`);
 
 // Reduced motion: the tag appears without animating.
