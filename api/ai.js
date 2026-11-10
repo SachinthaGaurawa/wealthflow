@@ -21,6 +21,7 @@ import { askChat, chatError } from '../ai-chat.mjs';
 import { getAdminDb, withDeadline } from '../admin-db.mjs';
 import { resetHealthMemory, serveHealth } from '../ai-health.mjs';
 import { OFFICIAL_ORIGIN } from '../wealthflow-public-identity.mjs';
+import { applyCors } from '../wf-cors.mjs';
 
 /* What each provider serves NOW, remembered for hours: a retired model is replaced by one the provider itself lists (ai-models.mjs).
  * One book for the whole process: Gemini's slots are shared with every other endpoint that asks Gemini (gemini-client.mjs). */
@@ -141,10 +142,8 @@ function isFinancialTask(task) {
 export { resetHealthMemory };
 
 export default async function handler(req, res) {
-    // CORS — allow the public Vercel deployment to be called from anywhere
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    // CORS — only the allow-listed WealthFlow origins may read the answer (wf-cors.mjs); never `*`.
+    applyCors(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, Authorization' });
 
     if (req.method === 'OPTIONS') return res.status(200).end();
     // the AI asked on demand: GET ?canary=1 / ?health=1 (ai-health.mjs); anything else is not a GET this endpoint answers

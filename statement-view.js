@@ -52,7 +52,6 @@ async function decompressHtml(base64Data) {
 
 export default async function handler(req, res) {
     if (!_requireFirebaseKey(res)) return;
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 

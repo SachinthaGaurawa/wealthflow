@@ -40,7 +40,6 @@ function send(res, body, status = 200) {
     const headers = {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store, max-age=0, must-revalidate',
-        'Access-Control-Allow-Origin': '*',
     };
     try {
         if (res && res.status) {

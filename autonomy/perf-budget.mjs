@@ -364,7 +364,7 @@ export const BUDGETS = {
     // (the two 2026-11-03 changes above were each measured alone; together on one tree they measure 2,379,564, so the ceiling is set on the combined tree: 2_378_800 -> 2_380_000.)
     // 2026-11-03 (index.html: one script tag and one launch call for the data-migration runner, on top of main's 2,379,564; measured 2,380,038 + ~0.007% headroom): 2_380_000 -> 2_380_200.
     // 2026-11-04: 2_380_200 -> 2_380_500 (the <link> that loads wf-agent-fixes.css, where the fix agent's measured layout fixes live; measured 2,380,238 + ~0.01% headroom).
-    htmlBytes: 2_387_000, // 2026-11-04: raised from 2380500 for wealthflow-crash-report.js (build lane); measured 2380575
+    htmlBytes: 2_390_500, // 2026-11-10: raised from 2387000 (measured 2388824, +1,824) for the subresource-integrity registry and hash attributes on the Firebase tags in index.html (every CDN script now carries a hash). // 2026-11-04: raised from 2380500 for wealthflow-crash-report.js (build lane); measured 2380575
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

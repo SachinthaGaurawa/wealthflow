@@ -58,13 +58,17 @@ describe('the tenant portal through the API router', () => {
         }
     });
 
-    it('is the only route that does this: the others still answer a pre-flight and send CORS, as the app relies on', async () => {
-        const pre = await through('version', { method: 'OPTIONS' });
+    it('is the only route that does this: the others still answer a pre-flight and send CORS to WealthFlow\'s own pages, as the app relies on (never `*`)', async () => {
+        const own = { origin: 'https://www.wealthflow.lk' };
+        const pre = await through('version', { method: 'OPTIONS', headers: own });
         expect(pre.status).toBe(204);
-        expect(pre.headers['access-control-allow-origin']).toBe('*');
-        const get = await through('version', { method: 'GET' });
+        expect(pre.headers['access-control-allow-origin']).toBe('https://www.wealthflow.lk');
+        const get = await through('version', { method: 'GET', headers: own });
         expect(get.status).toBe(200);
-        expect(get.headers['access-control-allow-origin']).toBe('*');
+        expect(get.headers['access-control-allow-origin']).toBe('https://www.wealthflow.lk');
+        const other = await through('version', { method: 'GET', headers: { origin: 'https://evil.example' } });
+        expect(other.status).toBe(200);
+        expect(other.headers['access-control-allow-origin']).toBeUndefined();
     });
 
     it('never tells a caller why it failed to load: the error text stays in the log', async () => {

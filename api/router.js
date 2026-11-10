@@ -42,6 +42,8 @@
 //  every other "machinery present, signal absent" bug in this repo.
 // ============================================================================
 
+import { applyCors, lockCors, isCorsHeader } from '../wf-cors.mjs';
+
 export const config = { maxDuration: 60 }; // Hobby max; covers deep multi-engine AI
 
 // Static import map → Vercel bundles each handler; lazy so only the matched
@@ -143,6 +145,8 @@ const HANDLERS = {
     // The tenant statement page's one public endpoint: NIC, one-time code, session, statement. See tenant-portal.mjs.
     'tenant-portal': () => import('../tenant-portal.js'),
     // One statement, filed once: the manual-upload door of the statement registry (statement-registry.mjs).
+    // Where a browser reports what the Content-Security-Policy refused (vercel.json). One safe log line per report; nothing stored. See csp-report.js.
+    'csp-report': () => import('../csp-report.js'),
     'statement-guard': () => import('../statement-guard.js'),
     'statement-store': () => import('../statement-store.js'),
     'statement-view': () => import('../statement-view.js'),
@@ -159,11 +163,12 @@ const HANDLERS = {
 // internal error message: a caller learns that it failed, not why.
 const PRIVATE_ROUTES = new Set(['tenant-portal']);
 
-function setCors(res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    res.setHeader('Access-Control-Max-Age', '86400');
+// CORS is decided HERE, once, from an allow-list (wf-cors.mjs): an allow-listed website gets its own origin echoed back,
+// every other website gets nothing, and `*` is never sent. Handlers written before that rule set `*` for themselves, so
+// the response is locked against Access-Control-* writes after the router has set the right ones.
+function setCors(req, res) {
+    applyCors(req, res);
+    lockCors(res);
 }
 
 // ── Node ⇄ Web calling-convention bridge ─────────────────────────────────────
@@ -305,6 +310,8 @@ async function sendWebResponse(webRes, res) {
         // set-cookie is handled separately because forEach comma-joins it, which
         // is invalid for cookies.
         if (k === 'content-length' || k === 'content-encoding' || k === 'set-cookie') return;
+        // CORS belongs to the router (wf-cors.mjs); a Web handler's own `Access-Control-Allow-Origin: *` is dropped.
+        if (isCorsHeader(k)) return;
         try { res.setHeader(key, value); } catch (_) {}
     });
     if (cookies.length) { try { res.setHeader('Set-Cookie', cookies); } catch (_) {} }
@@ -363,7 +370,7 @@ function watchSlow(name, method) {
 export default async function handler(req, res) {
     var name = resolveName(req);
     var isPrivate = PRIVATE_ROUTES.has(name);
-    if (!isPrivate) setCors(res);
+    if (!isPrivate) setCors(req, res);
     if (req.method === 'OPTIONS') {
         if (isPrivate) { res.setHeader('Allow', 'POST'); res.status(405).end(); return; }
         res.status(204).end(); return;

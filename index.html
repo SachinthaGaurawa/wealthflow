@@ -286,9 +286,33 @@
          needs them no longer runs during parsing — see _wfInitFirebase() below.
          Adding `defer` here WITHOUT that change throws "firebase is not defined"
          and takes the whole app down, so the two edits belong together. -->
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js" defer></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js" defer></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js" defer></script>
+    <!-- SUBRESOURCE INTEGRITY. Every script this page takes from somebody else's server runs with full access to the books, the
+         session token and the vault, so a CDN that is breached or an account that is hijacked would be a breach of every user.
+         The browser refuses any of these whose bytes differ from the hash below. The hashes are of exact, pinned versions
+         (a floating `@5` cannot be hashed), and test/csp_headers_test.js fails if a CDN URL in the code has no hash here.
+         Loaders that add a script at run time call wfApplySri(element, url). -->
+    <script>
+    window.WF_SRI = {
+        'https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js': 'sha384-4gq9w/AGf72FXdNQ3Kn3EqWP7633NbCMjpYHt8YCZyXf23o2opcuAr4cif41tLrC',
+        'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js': 'sha384-Qgqc/HETq5lqJnRDqWnV1AZGw3pgMYNUVaqLLN1W/55XuWK94epwbCQrOvdoh1Zo',
+        'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js': 'sha384-xtdq4MQqPj1dB5DQsuw9O7dh4kHhMP/Wp5u8O1jiaWiou13ZfJIgiccjtVK2pBhL',
+        'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js': 'sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F',
+        'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js': 'sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD',
+        'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js': 'sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H',
+        'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js': 'sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk',
+        'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js': 'sha384-lQXOAyZwHXE55JFyrOMB7nY2Wv+m5ZWNtJcHrd1rceRQXAYNLak8ukN5TjBTcIwz',
+        'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js': 'sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e',
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js': 'sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e',
+        'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js': 'sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e'
+    };
+    window.wfApplySri = function (el, src) {
+        try { var h = window.WF_SRI[src || el.src]; if (h) { el.integrity = h; el.crossOrigin = 'anonymous'; } } catch (_) {}
+        return el;
+    };
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js" integrity="sha384-4gq9w/AGf72FXdNQ3Kn3EqWP7633NbCMjpYHt8YCZyXf23o2opcuAr4cif41tLrC" crossorigin="anonymous" defer></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js" integrity="sha384-Qgqc/HETq5lqJnRDqWnV1AZGw3pgMYNUVaqLLN1W/55XuWK94epwbCQrOvdoh1Zo" crossorigin="anonymous" defer></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js" integrity="sha384-xtdq4MQqPj1dB5DQsuw9O7dh4kHhMP/Wp5u8O1jiaWiou13ZfJIgiccjtVK2pBhL" crossorigin="anonymous" defer></script>
     <!-- Chart.js, jsPDF and jspdf-autotable used to be fetched HERE, on every
          single startup, from three separate CDN connections. Measured on a
          mid-range phone (4x CPU throttle, Fast 3G, gzip on as Vercel serves it)
@@ -308,7 +332,8 @@
          screen — see below. Nothing here blocks a chart from appearing; it
          appears a moment later, on a device that became usable sooner. -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="https://js.puter.com/v2/" defer></script>
+    <!-- js.puter.com/v2 used to be loaded here. Nothing in this app ever called it (no `puter.` anywhere), yet it ran on every page with full
+         access to the user's financial data and session. A third-party script that does no work is all risk, so it is gone. -->
     <!-- v7.9.0 — Tesseract.js & TensorFlow.js are LAZY-loaded on demand (see
          _wfLazyScript / ensureTesseract / ensureTF). Loading them at boot pushed
          iOS near its web-process memory limit, so any extra allocation could
@@ -11570,7 +11595,9 @@ Keep total under 200 words. No markdown, no asterisks.`;
         // --- TensorFlow.js GPU-Accelerated Image Enhancement for OCR ---
         function _enhanceForOCR(canvas) {
             // If TensorFlow.js is available, use GPU-accelerated processing
-            if (typeof tf !== 'undefined') {
+            // tf.min.js needs eval, which the Content-Security-Policy does not allow (and should not): there it loads but stays an empty shell,
+            // so `tf` existing is not enough. Without it the canvas-based auto-levels below does the job.
+            if (typeof tf !== 'undefined' && typeof tf.tidy === 'function') {
                 try {
                     return tf.tidy(() => {
                         const tensor = tf.browser.fromPixels(canvas);
@@ -11930,6 +11957,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
             window._wfLoadedLibs[key] = new Promise((resolve, reject) => {
                 const s = document.createElement('script');
                 s.src = src; s.async = true;
+                if (window.wfApplySri) window.wfApplySri(s, src);
                 s.onload = () => resolve(true);
                 s.onerror = () => { window._wfLoadedLibs[key] = null; reject(new Error('Failed to load ' + key)); };
                 document.head.appendChild(s);
@@ -11938,7 +11966,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
         }
         window.ensureTesseract = function () {
             if (typeof Tesseract !== 'undefined') return Promise.resolve(true);
-            return _wfLazyScript('tesseract', 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js');
+            return _wfLazyScript('tesseract', 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
         };
         /**
          * Chart.js, when something actually needs to draw.
@@ -12017,13 +12045,11 @@ Keep total under 200 words. No markdown, no asterisks.`;
             else setTimeout(go, 400);
         };
 
+        // TensorFlow.js (1.4 MB from a CDN, and it needs eval) was fetched on desktop just to sharpen a photo before OCR. Under the
+        // Content-Security-Policy it cannot start, and a library that runs with the books in reach is a cost without a matching gain,
+        // so it is no longer loaded: _enhanceForOCR's canvas auto-levels is the path. Kept as a function so the callers stay valid.
         window.ensureTF = function () {
-            if (typeof tf !== 'undefined') return Promise.resolve(true);
-            // Skip TF on memory-constrained mobile/iOS — sharpening is optional and
-            // mobile is exactly where the crash happens.
-            var mobile = /iphone|ipad|ipod|android/i.test(navigator.userAgent || '') || (window.innerWidth && window.innerWidth < 820);
-            if (mobile) return Promise.resolve(false);
-            return _wfLazyScript('tf', 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js').then(() => true).catch(() => false);
+            return Promise.resolve(typeof tf !== 'undefined' && typeof tf.tidy === 'function');
         };
 
         // --- Tesseract.js OCR Fallback (runs 100% in browser, no API needed) ---
@@ -22069,6 +22095,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const loadScript = (src) => new Promise((resolve, reject) => {
                     const s = document.createElement('script');
                     s.src = src; s.async = true;
+                    if (window.wfApplySri) window.wfApplySri(s, src);
                     s.onload = () => resolve();
                     s.onerror = () => reject(new Error('Failed to load ' + src));
                     document.head.appendChild(s);
@@ -22377,6 +22404,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return new Promise((resolve, reject) => {
                 const s = document.createElement('script');
                 s.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js';
+                if (window.wfApplySri) window.wfApplySri(s, s.src);
                 s.async = true;
                 s.onload = () => { _qrLibLoaded = true; resolve(); };
                 s.onerror = () => reject(new Error('QR lib load failed'));

@@ -258,10 +258,6 @@
         {
           "key": "Content-Type",
           "value": "application/json"
-        },
-        {
-          "key": "Access-Control-Allow-Origin",
-          "value": "*"
         }
       ]
     },
@@ -282,7 +278,7 @@
         },
         {
           "key": "Permissions-Policy",
-          "value": "camera=(self), microphone=(self), geolocation=(), payment=(), usb=(), bluetooth=(), accelerometer=(), gyroscope=(), magnetometer=(), interest-cohort=()"
+          "value": "camera=(self), microphone=(self), geolocation=(), payment=(), usb=(), bluetooth=(), accelerometer=(), gyroscope=(), magnetometer=(), display-capture=(), midi=(), serial=(), hid=(), xr-spatial-tracking=(), browsing-topics=(), interest-cohort=()"
         },
         {
           "key": "Strict-Transport-Security",
@@ -295,6 +291,40 @@
         {
           "key": "X-DNS-Prefetch-Control",
           "value": "off"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.gstatic.com/firebasejs/ https://apis.google.com https://accounts.google.com/gsi/ https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/ https://cdn.jsdelivr.net/npm/tesseract.js@v5.1.1/ https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.1.1/ https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/ https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/ https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/ https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/ https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/ https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/ https://unpkg.com/pdfjs-dist@3.11.174/; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://res.cloudinary.com https://image.pollinations.ai https://*.googleusercontent.com https://www.gstatic.com; connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://oauth2.googleapis.com https://firebaseinstallations.googleapis.com https://accounts.google.com https://wealthflow-6dffb.firebaseapp.com https://generativelanguage.googleapis.com https://api.ocr.space https://open.er-api.com https://ipwho.is https://ipapi.co https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://tessdata.projectnaptha.com https://tmpfiles.org https://dpaste.com; worker-src 'self' blob: https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; frame-src 'self' blob: https://wealthflow-6dffb.firebaseapp.com https://accounts.google.com; media-src 'self' blob: data:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com; frame-ancestors 'self'; upgrade-insecure-requests; report-uri /api/csp-report"
+        },
+        {
+          "key": "Cross-Origin-Resource-Policy",
+          "value": "same-site"
+        },
+        {
+          "key": "X-Permitted-Cross-Domain-Policies",
+          "value": "none"
+        }
+      ]
+    },
+    {
+      "source": "/((?!api/).*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "https://www.wealthflow.lk"
+        },
+        {
+          "key": "Vary",
+          "value": "Origin"
+        }
+      ]
+    },
+    {
+      "source": "/(api|r)/(.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow, noarchive"
         }
       ]
     },
@@ -419,6 +449,10 @@
       "destination": "/manifest.json"
     },
     {
+      "source": "/.well-known/assetlinks.json",
+      "destination": "/assetlinks.json"
+    },
+    {
       "source": "/merchants.json",
       "destination": "/merchants.json"
     },
@@ -439,7 +473,7 @@
       "destination": "/terms.html"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!(?:admin|administrator|wp-admin|wp-login|wp-content|wp-includes|wordpress|xmlrpc|phpmyadmin|pma|adminer|cpanel|webmail|cgi-bin|server-status|server-info|actuator|phpinfo|manager/html|solr|jenkins|console)(?:/|\\.|$)|\\.(?:env|git|svn|hg|htaccess|htpasswd|ssh|aws|ds_store)|\\.well-known/(?!assetlinks\\.json$)|.*\\.(?:php|asp|aspx|jsp|cgi|sql|bak|old|swp|ini|log)$).*)",
       "destination": "/app.html"
     }
   ],

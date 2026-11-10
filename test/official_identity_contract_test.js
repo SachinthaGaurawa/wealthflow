@@ -30,7 +30,7 @@ describe('Vercel legacy-host redirects', () => {
     });
 
     it('keeps redirects distinct from the SPA rewrite and does not redirect the official host', () => {
-        expect(VERCEL.rewrites).toContainEqual({ source: '/(.*)', destination: '/app.html' });
+        expect(VERCEL.rewrites.filter((r) => r.destination === '/app.html' && r.source !== '/app' && /^\/\(/.test(r.source)).length).toBe(1);   // the catch-all (its source now names the probe paths it refuses)
         expect(VERCEL.redirects || []).not.toEqual(expect.arrayContaining([
             expect.objectContaining({ has: [expect.objectContaining({ value: 'www.wealthflow.lk' })] }),
         ]));

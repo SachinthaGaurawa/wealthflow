@@ -88,7 +88,6 @@ export default async function handler(req) {
         status: 200,
         headers: {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
         }
     });
 }

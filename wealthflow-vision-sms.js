@@ -60,6 +60,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
             if (window.Tesseract) return resolve(window.Tesseract);
             const s = document.createElement('script');
             s.src = TESSERACT_CDN;
+            if (window.wfApplySri) window.wfApplySri(s, TESSERACT_CDN);
             s.async = true;
             s.onload = () => window.Tesseract ? resolve(window.Tesseract) : reject(new Error('Tesseract failed to expose global'));
             s.onerror = () => reject(new Error('Could not load OCR engine (offline?)'));
