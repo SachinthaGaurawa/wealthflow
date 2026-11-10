@@ -121,6 +121,11 @@ describe('the repaint that happens once however many writes there were', () => {
         expect(s.touch('aiChats')).toBe(false);
         f.tick();
         expect(paints).toBe(0);
+        /* Timer-written bookkeeping must never repaint the screen the person is using. */
+        expect(s.touch('updateSync')).toBe(false);
+        expect(s.touch('newSeen')).toBe(false);
+        f.tick();
+        expect(paints).toBe(0);
         /* A key wrongly listed here is a screen that stops updating. Every
          * money-bearing store must be absent from it. */
         for (const k of ['income', 'incomeRecv', 'incomeReceived', 'expenses', 'loans',

@@ -31,6 +31,19 @@ Only then is the issue filed with `feature-proposal`, `approved-feature` and `au
 
 The fix agent builds an approved idea like any other feature (`roleFor` sends every `feature-proposal` to the feature lane, then the build lane if no module can take it): a normal pull request through the tests, the cross-provider review, the policy gate and the usual rollback. A new option or screen shows the NEW tag, which counts 7 days from the person's first look (`docs/design-system.md`).
 
+## What still stands between an invented idea and production
+
+The text rules above are a filter, not a proof: a model can paraphrase. They are the first of several layers, and the later ones do not read the idea's wording at all.
+
+1. The fix agent can only edit plain root `.js` modules; `isSensitive` (`autonomy/agent-swarm.mjs`) refuses `index.html`, `sw.js`, anything with auth, crypto, OAuth, OTP, allocation, reconcile, migrations, rules, `package.json`, `.github/`, `autonomy/` and the test harness, whatever the issue says. `test/ideas_test.js` pins that every file the idea rules name as human-only is also refused there.
+2. The change is a normal pull request: an independent review by AIs on other providers (one objection blocks), the policy gate, the unit and browser suites, the size budgets.
+3. A pull request that touches a sensitive path needs a person's `human-approved` label after its last push, so an idea that slips past the words still cannot change sign-in, the rules or the money core by itself.
+4. After merge the health watchdog can roll the release back.
+
+Found while writing that test: `wealthflow-vault.js` (the bank-password vault) was on none of the path lists, so the fix agent could have edited it; it is now refused (`/vault/i` in `isSensitive`). The CI risk-gate lists (`wealthflow-ci.yml`, `auto-merge.yml`, `policy/`, `CODEOWNERS`) still do not name it, so a person's own pull request to the vault is not asked for `human-approved`; widening those mirrors is a separate, reviewed change.
+
+The remaining risk is a harmful change to an ordinary module that every layer above misses. That is the same risk any fix-agent pull request carries; the owner can remove it for ideas alone with `WF_IDEAS_AUTO=0`.
+
 ## How the owner can still steer (optional, never required)
 
 - Close an idea's issue before its pull request merges: it is not built.

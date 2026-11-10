@@ -52,6 +52,7 @@ const SENSITIVE = [
     /^package(-lock)?\.json$/i,
     /^sw\.js$/i,                   // a bad service worker can brick every install
     /auth/i, /oauth/i, /crypto/i,
+    /vault/i,                      // the bank-password vault and the statement vaults: what is stored and how it is kept is a person's call (2026-11-10: it was missing from this list)
     /fifo-reconcile/i, /allocator/i,
     /wealthflow-migrations/i,      // rewrites the shape of the books on the owner's device; a person decides what is added
     /approve-release/i, /release-brain/i, /release\.cjs$/i,

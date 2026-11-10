@@ -56,6 +56,11 @@
  * this file exists to remove. Everything not named repaints. */
 export const NO_REPAINT = Object.freeze([
     'aiHistory', 'aiChats', 'memory', 'aiMemory',
+    /* Bookkeeping the person never looks at while it happens: which devices of the account run which version (wealthflow-update-system.js)
+     * and when each NEW tag was first seen (wealthflow-new-badge.js). Each is written by a timer or a scan, so without this every write
+     * repainted every screen and rebuilt Settings under a finger (settings-runtime failed 2 runs in 3 on a random switch). Screens that
+     * show them read them when they are drawn. */
+    'updateSync', 'newSeen',
 ]);
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };

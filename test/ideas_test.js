@@ -220,3 +220,17 @@ describe('the schedule', () => {
         expect(y).toMatch(/actions: write/);
     });
 });
+
+describe('the words are not the only guard', () => {
+    it('every file the idea rules call human-only is also refused by the fix agent, whatever the issue says', async () => {
+        const { isSensitive } = await import('../autonomy/agent-swarm.mjs');
+        const named = ['wealthflow-auth.js', 'wealthflow-crypto.js', 'wealthflow-vault.js',
+            'firestore.rules', 'vercel.json', 'package.json', 'package-lock.json', '.github/workflows/x.yml', 'autonomy/ideas.mjs'];
+        for (const f of named) {
+            expect(I.guardIdea({ title: 'ok', proposal: 'ok', scope: f }).ok, f + ' named in scope').toBe(false);
+            expect(isSensitive(f), f + ' edited by the agent').toBe(true);
+        }
+        // and the ones whose NAMES the words can miss are still refused as files
+        for (const f of ['index.html', 'sw.js', 'fifo-reconcile.js', 'wealthflow-migrations.js', 'send-otp.js', 'wealthflow-vault.js', 'statement-cloud-vault.mjs']) expect(isSensitive(f), f).toBe(true);
+    });
+});
