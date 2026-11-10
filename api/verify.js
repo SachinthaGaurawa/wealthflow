@@ -73,6 +73,7 @@ const SEARCH_TIMEOUT_MS = 8000;    // research: hard-abort the search at 8s
 import { geminiGenerate, geminiKeyOf } from '../gemini-client.mjs';
 import { applyCors } from '../wf-cors.mjs';
 import { guardApi } from '../wf-api-guard.mjs';
+import { secretEquals } from '../cron-auth.mjs';
 
 const LLM_TIMEOUT_MS = 12000;
 const MAX_MERCHANT_LEN = 120;
@@ -267,7 +268,7 @@ export default async function handler(req, res) {
     if (!guardApi(req, res, 'verify')) return;
 
     // Optional lock so a stranger cannot burn your Serper credits.
-    if (process.env.WF_VERIFY_TOKEN && req.headers['x-wf-token'] !== process.env.WF_VERIFY_TOKEN) {
+    if (process.env.WF_VERIFY_TOKEN && !secretEquals(String(req.headers['x-wf-token'] || ''), process.env.WF_VERIFY_TOKEN)) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
 

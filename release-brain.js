@@ -49,6 +49,7 @@
    ============================================================================ */
 
 import fs from 'node:fs';
+import { publicClusters } from './wf-redact.mjs';
 import { secretEquals, bearerOf } from './cron-auth.mjs';
 
 /* =============================================================================
@@ -486,10 +487,12 @@ export default async function handler(req, res) {
             rsnap.forEach(d => ritems.push(d.data()));
         } catch (e) { out.note += ' feedback read failed;'; }
         const rclusters = enrichClusters(analyse(ritems));
+        // the system collection is public-read: what a user typed is shown with e-mail, links and long numbers removed (wf-redact.mjs)
+        const rpublic = publicClusters(rclusters);
         const rcritical = rclusters.filter(c => c.priority === 'critical' && (c.category === 'security' || c.category === 'crash'));
         try {
             await db.collection('system').doc('feedbackPriority').set({
-                clusters: rclusters, totalReports: ritems.length, critical: rcritical.length,
+                clusters: rpublic, totalReports: ritems.length, critical: rcritical.length,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
             out.wrote.push('feedbackPriority(rerank)');
@@ -508,8 +511,8 @@ export default async function handler(req, res) {
                 await db.collection('system').doc('pendingRelease').set({
                     suggestedVersion: nextV, basedOn: curV, urgent: true,
                     shouldRelease: true, reason: 'critical-feedback',
-                    notes: buildNotes(nextV, rclusters, true),
-                    proposedChanges: proposedChangesFrom(rclusters),
+                    notes: buildNotes(nextV, rpublic, true),
+                    proposedChanges: proposedChangesFrom(rpublic),
                     approval: { required: true, approved: false },
                     generatedAt: admin.firestore.FieldValue.serverTimestamp()
                 });
@@ -529,11 +532,13 @@ export default async function handler(req, res) {
     const clusters = analyse(items);
     const critical = clusters.filter(c => c.priority === 'critical' && (c.category === 'security' || c.category === 'crash'));
     const enriched = enrichClusters(clusters);
+    const enrichedPublic = publicClusters(enriched);   // public-read doc: no e-mail, link or long number from a user's words
+    const clustersPublic = publicClusters(clusters);
 
     // 3. write the ranked board (read by the in-app Prioritised Feedback view)
     try {
         await db.collection('system').doc('feedbackPriority').set({
-            clusters: enriched, totalReports: items.length, critical: critical.length,
+            clusters: enrichedPublic, totalReports: items.length, critical: critical.length,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
         out.wrote.push('feedbackPriority');
@@ -559,8 +564,8 @@ export default async function handler(req, res) {
     // current deployed version (read from manifest if present, else default)
     const curVersion = await currentVersion(db);
     const nextVersion = bumpPatch(curVersion);
-    const notes = buildNotes(nextVersion, clusters, isUrgent);
-    const proposedChanges = proposedChangesFrom(clusters);
+    const notes = buildNotes(nextVersion, clustersPublic, isUrgent);
+    const proposedChanges = proposedChangesFrom(clustersPublic);
 
     try {
         await db.collection('system').doc('pendingRelease').set({
