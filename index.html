@@ -6270,6 +6270,8 @@
                     </div>
                     <!-- Per-card / per-bank filter (shown by renderCCOT only when the
                          user has cards from more than one bank). -->
+                    <!-- The minimum payment each card statement asks for, and its date (renderCCDuePanel): not a charge, so it is not in the table below. -->
+                    <div id="ccotDuePanel"></div>
                     <div id="ccotFilterBar" style="display:none;"></div>
                     <!-- v7.27.0 — Card payments / credits + auto-@checkCircle@ reconciliation summary.
                          Populated by renderCCOT(): lists every payment made TO the card and
@@ -8256,6 +8258,8 @@
         // ==================== STATE MANAGEMENT ====================
         let appData = {
             auth: {}, income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
+            /* The minimum payment each card statement asks for, one record per statement (statement-due.mjs). A record list with ids, so it sits in _WF_RECORD_KEYS; DECLARED HERE or it is never read back. */
+            cardDues: [],
             cheques: [], expenses: [], targets: [], subscriptions: [], subMerchantMap: {},
             incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
             /* The verification queue's three answers. `incomeReceived` was
@@ -8346,7 +8350,7 @@
         // by recency (newest wins) with tombstones removing deleted rows. This merge
         // is commutative + idempotent, so every device converges to the union of the
         // newest records — no whole-document clobber, deletes included.
-        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps', 'pawns', 'debtors', 'people', 'payAccounts'];
+        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cardDues', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps', 'pawns', 'debtors', 'people', 'payAccounts'];
         const _WF_TOMB_TTL = 100 * 24 * 3600 * 1000;   // keep tombstones ~100 days, then prune
 
         // A record's effective update time: explicit _ut, else parsed createdAt, else 0.
@@ -9301,7 +9305,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.68';
+        var WF_APP_VERSION = '7.69.70';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -23517,6 +23521,28 @@ table.amort tbody tr { page-break-inside: avoid; }
         window.openCCPaymentModal = openCCPaymentModal;
 
         // Per-card payments + auto-match summary panel (shown above the charges table).
+        /* THE MINIMUM PAYMENT DUE, above the charges: the least each card's latest statement asks for and the date by when (wealthflow-card-tabs.js `dues`). Always every card, whatever tab is chosen below: a date the
+         * bank sets does not depend on which card the owner is looking at. */
+        function renderCCDuePanel() {
+            const host = $('ccotDuePanel');
+            if (!host) return;
+            try {
+                const t = new Date(), today = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+                const list = window.WFCardTabs && window.WFCardTabs.dues ? window.WFCardTabs.dues(DB.get('cardDues') || [], DB.get('ccPayments') || [], { today, canonBank: _canonBank, shown: _bankShown }) : [];
+                host.innerHTML = window.WFCardTabs && window.WFCardTabs.renderDues ? window.WFCardTabs.renderDues(list, { fmt }) : '';
+                if (!host.__wfDueWired) {
+                    host.__wfDueWired = true;
+                    host.addEventListener('click', ev => { const b = ev.target && ev.target.closest ? ev.target.closest('[data-due-paid]') : null; if (b) markCardDuePaid(b.getAttribute('data-due-paid')); });
+                }
+            } catch (e) { host.innerHTML = ''; try { console.warn('[CC due panel]', e && e.message); } catch (_) {} }
+        }
+        function markCardDuePaid(id) {
+            const arr = DB.get('cardDues') || [], i = arr.findIndex(x => x && x.id === id);
+            if (i < 0) return;
+            arr[i] = { ...arr[i], paidManually: true, paidAt: Date.now(), _ut: Date.now() };
+            DB.set('cardDues', arr); if (typeof setDirty === 'function') setDirty(true);
+            renderCCDuePanel(); notify('Marked as paid.');
+        }
         function _renderCCReconcilePanel(model) {
             const host = $('ccotReconcilePanel');
             if (!host) return;
@@ -23574,6 +23600,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const model = _ccotModel();
             if (_ccotBankFilter !== 'all' && !(model && model.tabs.length > 1 && model.tabs.some(t => t.key === _ccotBankFilter))) _ccotBankFilter = 'all';   // a card that is gone, or the only card left
             _renderCCReconcilePanel(model);
+            renderCCDuePanel();
 
             // ── One tab per credit card ────────────────────────────────────────
             // A person may hold several cards, of different banks or of one. With more than one, a tab per card (bank, last four digits, rows, what is due) lists each on its own;
@@ -31199,8 +31226,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.68</span> is installed on this device.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.68</span>
+                <div class="setting-info"><div class="setting-label">App version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.70</span> is installed on this device.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.70</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page crashes, misbehaves, or a statement is stuck in "Needs review", tap Copy diagnostics right afterwards and share the result. It captures the latest errors with technical detail (stack, page, memory) and the reasons statements are stuck (counts, bank names, and why "Map statement layout" could not read one). No date, amount or transaction detail is ever included.</div></div>
@@ -33840,9 +33867,12 @@ Be direct and use real numbers. Avoid generic advice.`;
                     ? `<span title="Unusual — outside the ±2σ band of your last 12 months" style="color:var(--accent);font-weight:700;margin-left:6px;">@alert@ unusual</span>`
                     : '';
                 const cur = m.isCurrent ? '<span style="font-size:10px;background:rgba(212,175,55,.18);color:var(--accent);padding:2px 7px;border-radius:8px;margin-left:6px;font-weight:700;">THIS MONTH</span>' : '';
+                // what the bank statements say was paid this month, one line per payment (a phone bill paid twice shows both; the month holds the total)
+                const _pays = (s.history || []).filter(h => h && h.month === m.ym && h.source === 'statement' && Number.isFinite(Number(h.amount)));
+                const paysNote = _pays.length ? `<div style="font-size:10px;color:var(--text3);font-weight:500;margin-top:3px;">From your statements: ${_pays.map(h => `${_wfEsc(String(h.date || '').slice(8, 10))} · ${fmt(Number(h.amount))}`).join(' + ')}</div>` : '';
                 return `
                     <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg2);border-radius:10px;margin-bottom:8px;border:1px solid var(--border);">
-                        <div style="font-weight:700;font-size:13px;min-width:110px;">${_wfEsc(m.label)}${cur}</div>
+                        <div style="font-weight:700;font-size:13px;min-width:110px;">${_wfEsc(m.label)}${cur}${paysNote}</div>
                         <input type="text" class="sm-amount money-input" data-ym="${m.ym}"
                                value="${v === '' ? '' : v.toFixed(2)}"
                                placeholder="${placeholder}"
@@ -36577,7 +36607,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const _wipeStamp = Date.now();
             appData = {
                 auth: currentAuth,
-                income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
+                income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [], cardDues: [],
                 cheques: [], expenses: [], targets: [], subscriptions: [], importBatches: [],
                 cribReports: [], sessions: [], subMerchantMap: {}, incomeReceived: {},
                 incomeDelayed: {}, billPaid: {}, billDelayed: {}, pawns: [], debtors: [], people: [], payAccounts: [],

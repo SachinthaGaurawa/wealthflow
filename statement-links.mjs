@@ -11,6 +11,7 @@
 
 import { sameBank } from './wealthflow-institutions.js';
 import { installmentInfo } from './wealthflow-statement-router.js';
+import { evidenceOf, identityOf } from './statement-subscriptions.mjs';
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const arr = (v) => (Array.isArray(v) ? v : []);
 const low = (v) => String(v == null ? '' : v).toLowerCase();
@@ -102,26 +103,39 @@ export function subscriptionCountedIn(sub, ym) {
     }
     return true;
 }
-/** The one subscription whose name is in the narration and whose amount is about right; null when none or when two fit. */
+/** Do two phone-number lists share a number? */
+const sharesNumber = (a, b) => a.some((n) => b.includes(n));
+/**
+ * The one subscription a debit is a payment of, or null when none or when two fit. Evidence, strongest first (statement-subscriptions.mjs):
+ *   · a phone NUMBER in the narration that an entry carries — that entry, for any amount (a phone bill changes every month), and a second payment in the same month is added to it;
+ *   · a BRAND the narration and an entry both name (Anthropic / Claude, OpenAI / ChatGPT, …), or the entry's own NAME in the narration — an amount about right (a different
+ *     charge from the same merchant is not its payment), and one statement payment a month.
+ * Two entries that fit are told apart by an amount within 2% of what each expects; if that does not settle it, the row is not guessed.
+ */
 export function matchSubscriptionForDebit(row, subs) {
     const amount = num(row && row.amount), text = words(row && (row.description || row.narration)), ym = ymOf(row && row.date);
     if (!(amount > 0) || !text || !ym) return null;
-    const hits = [];
+    const seen = evidenceOf(row), byNumber = [], byName = [];
     for (const sub of arr(subs)) {
         if (!sub || !sub.id || !subscriptionCountedIn(sub, ym)) continue;
         // a one-time bill that is already paid is finished: a later charge from the same merchant is a new payment, not that bill (reopening it is the owner's call)
         if (/^(once|one-time|onetime)$/.test(low(sub.cycle)) && (sub.paid || sub.completed)) continue;
+        const identity = identityOf(sub);
+        if (seen.phones.length && sharesNumber(seen.phones, identity.phones)) { byNumber.push(sub); continue; }
         // the subscription's month holds ONE amount: a second charge in the same month is its own payment and is filed as one
         if (arr(sub.history).some((h) => h && h.month === ym && h.source === 'statement')) continue;
         const name = words(sub.name);
-        if (name.length < 4) continue;
-        const named = text.includes(name) || (tokens(name).length > 0 && tokens(name).every((t) => text.includes(t)));
+        const named = (name.length >= 4 && (text.includes(name) || (tokens(name).length > 0 && tokens(name).every((t) => text.includes(t)))))
+            || seen.brands.some((b) => identity.brands.includes(b.key));
         if (!named) continue;
         const expected = num((sub.monthOverrides && sub.monthOverrides[ym]) || sub.amount);
         if (expected > 0 && (amount < expected * 0.5 || amount > expected * 1.6)) continue;     // a different charge from the same merchant
-        hits.push(sub);
+        byName.push({ sub, expected });
     }
-    return hits.length === 1 ? hits[0] : null;
+    if (byNumber.length) return byNumber.length === 1 ? byNumber[0] : null;     // the number is the identity: two entries with it are not guessed between
+    if (byName.length === 1) return byName[0].sub;
+    const close = byName.filter((hit) => hit.expected > 0 && Math.abs(amount - hit.expected) <= hit.expected * 0.02);
+    return byName.length > 1 && close.length === 1 ? close[0].sub : null;
 }
 
 /* ── 3. A CHEQUE THE OWNER ISSUED ──────────────────────────────────────────────────────────────────────────────────────────────────────────

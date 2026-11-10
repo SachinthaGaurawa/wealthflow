@@ -1,5 +1,18 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.70 — 2026-11-07
+
+**What changed for you**
+
+- Subscription and phone-bill payments land on their own Subscriptions entry, month by month (#572)
+
+## v7.69.69 — 2026-11-07
+
+**What changed for you**
+
+- Update model: user choices, priority, staged rollout, per-device features, same-day feedback grouping (#570)
+- Check a card's rows against its own printed summary strip; scrambled PDFs go to the image scanner (#571)
+
 ## v7.69.68 — 2026-11-07
 
 **What changed for you**

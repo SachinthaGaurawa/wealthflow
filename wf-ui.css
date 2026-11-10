@@ -1302,3 +1302,35 @@ button:focus-visible, .btn:focus-visible, .gf-btn:focus-visible, [role="switch"]
 /* Accent-coloured headings and counters were drawn with one colour for both themes: 2.0:1 to 3.3:1 on the light page. Darkening the
    same hue keeps each heading its own colour and makes it readable. */
 :root[data-theme="light"] .settings-title, :root[data-theme="light"] #wfIntelMemCount, :root[data-theme="light"] #wfIntelReviewCount { filter: brightness(.62); }
+
+/* ==========================================================================
+   32. MINIMUM PAYMENT DUE (wealthflow-card-tabs.js renderDues)
+   The section at the top of CC One-Time: what each card's latest statement asks the owner to pay at the very least, and by when. It is deliberately not a table row (it is not a charge): a plain card with the
+   amount large, the date under it, and one chip that says how close it is. Quiet while there is time (gold hairline), amber in the last five days, red once the date has passed; green once the payments since
+   the statement cover it. The state is always written in words too, never colour alone.
+   ========================================================================== */
+.wf-due { margin: 0 0 var(--wf-s4); }
+.wf-due-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--wf-s3); margin: 0 0 var(--wf-s2); }
+.wf-due-title { margin: 0; font: 700 14px/1.3 var(--wf-font); color: var(--wf-text); }
+.wf-due-sub { font: 500 12px/1.4 var(--wf-font); color: var(--wf-text-3); }
+.wf-due-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--wf-s3); }
+.wf-due-card { display: grid; gap: 3px; padding: var(--wf-s4); border: 1px solid var(--wf-accent-line); border-left-width: 4px; border-radius: var(--wf-r-md); background: var(--wf-card); font-variant-numeric: tabular-nums; }
+.wf-due-top { display: flex; align-items: center; justify-content: space-between; gap: var(--wf-s2); }
+.wf-due-who { font: 600 13px/1.3 var(--wf-font); color: var(--wf-text-2); overflow-wrap: anywhere; }
+.wf-due-chip { flex: none; font: 600 11px/1.3 var(--wf-font); padding: 2px 8px; border-radius: var(--wf-r-pill); color: var(--wf-text-2); background: var(--wf-card-3); white-space: nowrap; }
+.wf-due-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--wf-s2); margin-top: 2px; }
+.wf-due-lbl { font: 500 12px/1.3 var(--wf-font); color: var(--wf-text-3); }
+.wf-due-amt { font: 700 22px/1.2 var(--wf-font); color: var(--wf-text); letter-spacing: -.01em; }
+.wf-due-when { font: 500 12.5px/1.4 var(--wf-font); color: var(--wf-text-2); }
+.wf-due-note { margin-top: 4px; font: 500 12px/1.5 var(--wf-font); color: var(--wf-text-3); }
+.wf-due-act { margin-top: var(--wf-s2); }
+.wf-due-act .btn { min-height: 44px; }
+.wf-due-card.is-soon { border-color: var(--wf-warn); background: var(--wf-warn-soft); }
+.wf-due-card.is-soon .wf-due-chip { color: var(--wf-warn); background: transparent; border: 1px solid var(--wf-warn); }
+.wf-due-card.is-late { border-color: var(--wf-neg); background: var(--wf-neg-soft); }
+.wf-due-card.is-late .wf-due-chip { color: var(--wf-neg); background: transparent; border: 1px solid var(--wf-neg); }
+.wf-due-card.is-late .wf-due-amt { color: var(--wf-neg); }
+.wf-due-card.is-covered, .wf-due-card.is-paid { border-color: var(--wf-pos); }
+.wf-due-card.is-covered .wf-due-chip, .wf-due-card.is-paid .wf-due-chip { color: var(--wf-pos); background: var(--wf-pos-soft); }
+@media (max-width: 640px) { .wf-due-list { grid-template-columns: 1fr; } }
+@media (forced-colors: active) { .wf-due-card { border-color: CanvasText; } .wf-due-card.is-late, .wf-due-card.is-soon { border-color: Highlight; } }

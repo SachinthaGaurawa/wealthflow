@@ -1842,7 +1842,7 @@ export async function removeOwnTransferRecords({ db, mailRef, uid, now = Date.no
  * Records the owner typed, and records of any other statement, are never touched (a record is found by the statement's own key). Counts only are logged. */
 export const EXACT_SENDER_VERSION = 1;
 const RELEASE_VIAS = ['sibling', 'series', 'evidence'];
-const BOOK_LISTS = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'];
+const BOOK_LISTS = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments', 'cardDues'];
 export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
     await releaseStatement({ db, uid, ref: itemRef.path }).catch(() => 0);      // what it held in the statement registry goes back: the statement may be added again
     const userRef = db.collection('users').doc(uid), path = itemRef.path, CAP = 400;
@@ -1870,14 +1870,21 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
         const plans = stripped(user.ccinstall, 'payments', row => row && row.statementKey === path);
         if (!changes.ccinstall && touched(user.ccinstall, plans)) changes.ccinstall = plans; else if (changes.ccinstall) changes.ccinstall = stripped(changes.ccinstall, 'payments', row => row && row.statementKey === path);
         const droppedMonths = new Map((Array.isArray(user.subscriptions) ? user.subscriptions : []).filter(sub => sub && Array.isArray(sub.history)).map(sub => [sub.id, sub.history.filter(row => row && row.statementKey === path).map(row => row.month)]));
-        /* the month's amount the statement wrote goes with the statement, unless another statement payment still stands behind that month */
+        /* the month's amount the statement wrote goes with the statement, unless another statement payment still stands behind that month; when one does, the month is what those payments add up to
+         * (a phone bill paid twice in a month holds both), unless the owner wrote an amount of their own into that month */
         const withoutStatementOverrides = sub => {
-            const months = (droppedMonths.get(sub && sub.id) || []).filter(month => month && sub.monthOverrides && Object.prototype.hasOwnProperty.call(sub.monthOverrides, month) && !(Array.isArray(sub.history) && sub.history.some(row => row && row.month === month)));
+            const months = (droppedMonths.get(sub && sub.id) || []).filter(month => month && sub.monthOverrides && Object.prototype.hasOwnProperty.call(sub.monthOverrides, month));
             if (!months.length) return sub;
             const monthOverrides = { ...sub.monthOverrides };
-            for (const month of months) delete monthOverrides[month];
-            return { ...sub, monthOverrides, _ut: now };
+            let changed = false;
+            for (const month of months) {
+                const left = (Array.isArray(sub.history) ? sub.history : []).filter(row => row && row.month === month);
+                if (!left.length) { delete monthOverrides[month]; changed = true; }
+                else if (left.every(row => row.source === 'statement')) { monthOverrides[month] = left.reduce((total, row) => total + Math.round(Number(row.amount) * 100), 0) / 100; changed = true; }
+            }
+            return changed ? { ...sub, monthOverrides, _ut: now } : sub;
         };
+        const droppedSubs = [];
         const subs = stripped(user.subscriptions, 'history', row => row && row.statementKey === path).map(withoutStatementOverrides).map(sub => {
             if (!sub || sub.paidSource !== 'statement' || sub.paidStatementKey !== path) return sub;
             const remaining = Array.isArray(sub.history) ? sub.history.filter(row => row && row.source === 'statement') : [];
@@ -1889,7 +1896,14 @@ export async function unfileStatement({ db, uid, itemRef, now = Date.now() }) {
             const clean = { ...sub };
             delete clean.paid; delete clean.completed; delete clean.paidAt; delete clean.paidSource; delete clean.paidStatementKey;
             return clean;
+        }).filter(sub => {
+            /* an entry this statement STARTED (statement-ledger.mjs startedSubscription) and that holds no payment of any other statement leaves with it, tombstoned; one the owner edited or typed into stays */
+            const startedHere = sub && sub.autoCreated === true && sub.source === 'statement' && sub.createdByStatement === path;
+            const empty = !(Array.isArray(sub && sub.history) && sub.history.length) && !Object.keys((sub && sub.monthOverrides) || {}).length;
+            if (startedHere && empty) { droppedSubs.push(String(sub.id)); return false; }
+            return true;
         });
+        if (droppedSubs.length) tomb.subscriptions = { ...(tomb.subscriptions && typeof tomb.subscriptions === 'object' ? tomb.subscriptions : {}), ...Object.fromEntries(droppedSubs.map(id => [id, now])) };
         if (touched(user.subscriptions, subs)) changes.subscriptions = subs;
         const loans = stripped(user.loans, 'payments', row => row && row.source === 'statement' && gone.has(String(row.expenseId)));
         if (touched(user.loans, loans)) changes.loans = loans;
@@ -2281,6 +2295,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
         let { parsed } = result;
         const { text } = result;
+        const printedDue = parsed && parsed.due ? parsed.due : null;      // the minimum payment and its date, from the first reading: a later reading (saved layout, AI board) does not lose them
         /* A STATEMENT THAT MISSES ITS CLOSING BALANCE BY WHAT ONE ROW COULD EXPLAIN IS PROVEN BY THAT ROW (statement-repair.mjs): when exactly one correction of one row makes the printed
          * balances add up to the cent, it is the only reading the figures allow. DFCC Aug 26: "a difference of -80,735.16. A row may be missing" was a debit of 50,000.00 read as 30,735.16 in. */
         const fixed = repairByArithmetic(parsed);
@@ -2510,7 +2525,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 const { rows } = sliceRows(parsed.rows, cursor, allocations, settledRows);
                 const here = settledRows ? new Set(rows.map((_, at) => at).filter(at => settledRows.has(cursor + at))) : null;
                 const decisions = await classifySlice(rows, allocations, { board, settled: here });
-                outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType, cardRegistry: user.settings?.cardRegistry || {}, ownTails: allocations.own,
+                outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType, cardRegistry: user.settings?.cardRegistry || {}, ownTails: allocations.own, due: printedDue,
                     mailRef, vaultRef, vaultSavedAt, vaultExpected: vaultSnap.exists });
                 slices += 1;
                 for (const key of Object.keys(total)) total[key] += Number(outcome?.[key]) || 0;
