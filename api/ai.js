@@ -22,6 +22,8 @@ import { getAdminDb, withDeadline } from '../admin-db.mjs';
 import { resetHealthMemory, serveHealth } from '../ai-health.mjs';
 import { OFFICIAL_ORIGIN } from '../wealthflow-public-identity.mjs';
 import { applyCors } from '../wf-cors.mjs';
+import { guardApi } from '../wf-api-guard.mjs';
+import { guardApi } from '../wf-api-guard.mjs';
 
 /* What each provider serves NOW, remembered for hours: a retired model is replaced by one the provider itself lists (ai-models.mjs).
  * One book for the whole process: Gemini's slots are shared with every other endpoint that asks Gemini (gemini-client.mjs). */
@@ -149,9 +151,12 @@ export default async function handler(req, res) {
     // the AI asked on demand: GET ?canary=1 / ?health=1 (ai-health.mjs); anything else is not a GET this endpoint answers
     if (req.method === 'GET') return serveHealth(req, res, { run: handler, getDb: getAdminDb, withDeadline });
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+    if (!guardApi(req, res, 'ai')) return;
 
     const { prompt, image, temperature, maxTokens, preferredProvider } = req.body || {};
     if (typeof prompt !== 'string' || !prompt.trim()) return res.status(400).json({ error: 'Missing prompt' });
+    // A prompt is a few thousand characters; nothing the app builds is near this. Refused before any provider is asked.
+    if (prompt.length > 400000) return res.status(413).json({ error: 'Prompt too large' });
     // Financial consumers declare their intent explicitly. Conservative legacy
     // detection also prevents JSON/category callers from bypassing the board
     // through wording changes or a fastest-mode override.

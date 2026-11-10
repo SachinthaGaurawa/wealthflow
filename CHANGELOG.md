@@ -1,5 +1,12 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.72 — 2026-11-10
+
+**What changed for you**
+
+- Security batch 1: CSP, strict CORS allow-list, probe-path 404s, CDN integrity hashes (#575)
+- A month holds the total of its payments; a number, a bill reference or a company is one entry (#576)
+
 ## v7.69.71 — 2026-11-10
 
 **What changed for you**
