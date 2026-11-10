@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.71 — 2026-11-10
+
+**What changed for you**
+
+- Card statements: footer is not a transaction, amounts stay as printed, minimum payment shown on CC One-Time (#574)
+
 ## v7.69.70 — 2026-11-07
 
 **What changed for you**
