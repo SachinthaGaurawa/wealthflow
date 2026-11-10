@@ -23,7 +23,6 @@ import { resetHealthMemory, serveHealth } from '../ai-health.mjs';
 import { OFFICIAL_ORIGIN } from '../wealthflow-public-identity.mjs';
 import { applyCors } from '../wf-cors.mjs';
 import { guardApi } from '../wf-api-guard.mjs';
-import { guardApi } from '../wf-api-guard.mjs';
 
 /* What each provider serves NOW, remembered for hours: a retired model is replaced by one the provider itself lists (ai-models.mjs).
  * One book for the whole process: Gemini's slots are shared with every other endpoint that asks Gemini (gemini-client.mjs). */
