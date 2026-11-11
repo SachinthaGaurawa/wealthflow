@@ -44,6 +44,16 @@ const KINDS = {
         why: 'One or more rows read as money going out say refund, reversal, cashback, salary, payroll or dividend. Money that comes in may be filed as spending: a direction read the wrong way, or a credit marker the reader missed. It can also be benign (salary paid out to staff); it is reported once so it can be checked.',
         todo: 'Look at how this kind of statement marks credits (a CR before or after the amount, a separate column, a minus sign, a reversal wording) and make the direction rules read it, on both the email worker and the manual upload. Add a test with an INVENTED statement; never copy real numbers, names or lines into this public repository.',
     },
+    'garbled-text': {
+        title: 'Statement reader: a statement\'s descriptions look scrambled (damaged text layer or poor OCR)',
+        why: 'Nearly a third of the rows of one statement (six or more rows) have descriptions that look scrambled: replacement characters, digits inside words, or mostly symbols. The text layer of the PDF may be damaged (a font the reader could not map) or an OCR pass was poor, so merchants, categories and directions read from those lines are guesses. The reader noticed this by itself.',
+        todo: 'Find what damaged the text (a custom font encoding, a two-column page read in the wrong order, a scanned page) and recover it: try the second text extractor, the page image through the vision readers, or a repair of the glyph map. Keep the rows in review rather than filed while the text is damaged. Add a test with an INVENTED scrambled line; never copy a real statement into the repository.',
+    },
+    'card-credit-unrecognised': {
+        title: 'Statement reader: a card credit has no payment, refund, waiver or cashback wording',
+        why: 'One or more credits on a card statement carry none of the words of a payment, a refund, a reversal, a waiver or a cashback. The router files every card credit as a payment, so an unrecognised kind of credit (a reward, an offer, a statement adjustment) may be lowering what the card owes without being a payment. The reader noticed this by itself.',
+        todo: 'Find the wording of this kind of credit and decide what it is: a payment (keep it), a reward or offer like a cashback (skip it, as isCardCashback does), a refund or waiver (net it against the charge). Teach the router, the email worker and the manual upload the same rule, and add a test with an INVENTED statement line; never copy a real one.',
+    },
 };
 
 const clean = value => String(value == null ? '' : value).replace(/[^A-Za-z _-]/g, '').replace(/ {2,}/g, ' ').trim().slice(0, 40);

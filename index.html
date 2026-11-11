@@ -9335,7 +9335,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.83';
+        var WF_APP_VERSION = '7.69.84';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -23404,7 +23404,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const pays = DB.get('ccPayments') || [];
                 const groups = {};
                 charges.forEach(c => { const k = _ccKey(c); (groups[k] = groups[k] || { d: [], c: [] }).d.push(c); });
-                pays.forEach(p => { const k = _ccKey(p); (groups[k] = groups[k] || { d: [], c: [] }).c.push(p); });
+                pays.forEach(p => { if (window.WFReconcile && window.WFReconcile.isCashbackCredit && window.WFReconcile.isCashbackCredit(p)) return; const k = _ccKey(p); (groups[k] = groups[k] || { d: [], c: [] }).c.push(p); });   // a cashback shown among the payments is a reward, never money paid to the card
                 let changed = false;
                 Object.keys(groups).forEach(k => {
                     const g = groups[k];
@@ -23599,7 +23599,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const scoped = _ccotBankFilter === 'all' ? charges : charges.filter(inTab);
             // the three figures are summed in whole cents (never as floats) and turned back to rupees once, so they agree with the walk to the cent
             const _WR = window.WFReconcile, _c = v => (_WR && _WR.toCents ? _WR.toCents(v) : Math.round((parseFloat(v) || 0) * 100));
-            const totalPaid = pays.reduce((s, p) => s + _c(p.amount), 0) / 100;
+            const totalPaid = pays.reduce((s, p) => s + (_WR && _WR.isCashbackCredit && _WR.isCashbackCredit(p) ? 0 : _c(p.amount)), 0) / 100;
             const totalCharged = scoped.reduce((s, c) => s + (c.combinedTotal != null ? _c(c.combinedTotal) : _c(c.amount) + _c(c.serviceFee)), 0) / 100;
             const settledCount = scoped.filter(c => c.autoPaid).length;
             const addBtn = `<button class="btn btn-success" style="padding:7px 14px;font-size:12px;" onclick="openCCPaymentModal()"><i data-wfi="plus"></i> Record payment</button>`;
@@ -31314,8 +31314,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.83</span> is installed on this device.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.83</span>
+                <div class="setting-info"><div class="setting-label">App version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.84</span> is installed on this device.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.84</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page crashes, misbehaves, or a statement is stuck in "Needs review", tap Copy diagnostics right afterwards and share the result. It captures the latest errors with technical detail (stack, page, memory) and the reasons statements are stuck (counts, bank names, and why "Map statement layout" could not read one). No date, amount or transaction detail is ever included.</div></div>
@@ -37129,6 +37129,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             };
             _routeAll();
             // a purchase turned into an instalment plan is printed as a credit and a debit of the same amount and words: they cancel, so neither is spending nor a payment (statement-conversion.mjs)
+            /* CASHBACK ON A CARD IS A REWARD, NOT A PAYMENT (isCardCashback): it is left out of the card's books so it never lowers what the card owes or the minimum; the bank account that receives it files it as income */
+            try { const _R = window.WFStatementRouter; if (_acctType === 'credit_card' && _R && _R.isCardCashback) txns.forEach((t) => { if (t && t.direction === 'credit' && (t._dest === 'cc_payment' || !t._dest) && _R.isCardCashback(t.description)) { t._dest = 'skip'; t._cashback = 1; t.type = ''; } }); } catch (_) {}
             try { const _R = window.WFStatementRouter; if (_acctType === 'credit_card' && _R && _R.conversionLegs) { const _legs = _R.conversionLegs(txns, [], () => true); txns.forEach((t) => { if (_legs.has(t)) { t._dest = 'skip'; t._conversion = 1; t.type = ''; } }); } } catch (_) {}
             // ── v7.61.0 — REAL-TIME merchant discovery. Every merchant this statement
             //    contains that nothing could identify is sent to your OWN /api/ai, where

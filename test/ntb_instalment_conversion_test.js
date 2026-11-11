@@ -147,8 +147,8 @@ describe('end to end: a statement with a purchase turned into a plan', () => {
         /* spending: the purchases, interest and stamp duty; NOT the 120,000 that was taken back and charged again */
         expect(user.cconetime.map(r => r.amount).sort((a, b) => a - b)).toEqual([275, 2000, 3000, 3500, 6000, 7000]);
         expect(sum(user.cconetime)).toBe(21775);
-        /* payments and credits: what reached the card; NOT the 120,000 reversal */
-        expect(user.ccPayments.map(r => [r.desc, r.amount]).sort((a, b) => a[1] - b[1])).toEqual([['CASHBACK ON YOUR SEP NETFLIX SUBSCRIPTION', 1000], ['CASH PAYMENT-FINACLE', 50000]]);
+        /* payments: what reached the card; NOT the 120,000 reversal, and NOT the 1,000 cashback (a reward the bank pays into the owner's bank account, never money paid to the card: it must not lower what the card owes) */
+        expect(user.ccPayments.map(r => [r.desc, r.amount]).sort((a, b) => a[1] - b[1])).toEqual([['CASH PAYMENT-FINACLE', 50000]]);
         /* the plan: named after the shop, the real total from the statement's table, one instalment paid */
         expect(user.ccinstall).toHaveLength(1);
         expect(user.ccinstall[0]).toMatchObject({ product: 'SINGER', duration: 12, total: 120000, totalEstimated: false, monthly: 10000, paid: 1, remaining: 11, installmentNo: 1, installmentOf: 12, planRef: 'ntb-singer-12000000', rate: 0, rateUnknown: false, outstanding: 110000, outstandingAt: expect.stringMatching(/^2026-10-/) });
