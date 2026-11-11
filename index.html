@@ -37825,6 +37825,16 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 });
                 if (cc) DB.set('cconetime', ccArr);
                 if (ccPay) DB.set('ccPayments', ccPayArr);
+                /* The minimum payment this card statement asks for is kept as its own ask (cardDues), the way the e-mail worker keeps it; it is not a row and not a payment. Never fatal: a statement that prints no
+                 * minimum, or one read as a bank account, files nothing here. */
+                try {
+                    const _CT = window.WFCardTabs;
+                    if (_CT && _CT.dueFromStatement && _acctType === 'credit_card' && parsed && parsed.due) {
+                        const _dueRec = _CT.dueFromStatement({ due: parsed.due, isCard: true, bank: bank || parsed.bank || '', last4: _last4 || (parsed.due && parsed.due.last4) || '', canonBank: _canonBank });
+                        const _dueList = _CT.withDue(DB.get('cardDues') || [], _dueRec);
+                        if (_dueList) { DB.set('cardDues', _dueList); try { if (typeof renderCCOT === 'function') renderCCOT(); } catch (_) {} }
+                    }
+                } catch (_) {}
                 if (exp || _expLinked) DB.set('expenses', expArr);
                 if (inc) DB.set('incomeRecv', incRecvArr);
                 if (_loansDirty) DB.set('loans', loanArr);

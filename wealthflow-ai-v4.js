@@ -1222,6 +1222,18 @@
         return (bank || network || last4.length === 4) ? { bank: bank, network: network, last4: last4.length === 4 ? last4 : '' } : null;
     }
     /** -> the detector's answer ({ok, name, lockName, product, basis, note, …}) or null when the detector is not loaded. Never throws. */
+    /* The minimum payment a card statement asks for (date, minimum, closing) is read off the same text the rows came from, so the page files it as its own ask (cardDues) like the e-mail worker does.
+     * Null when the parser cannot be reached or the text prints none; never fatal. */
+    function _wfDueOf(text) {
+        try {
+            var SP = window.WFStatementParser;
+            var r = SP && SP.parseStatement && text ? SP.parseStatement(String(text)) : null;
+            var d = r && r.due;
+            if (!(d && d.date && d.minimum)) return null;
+            var tok = String(text).match(/\b\d{4,6}[xX*\u2022\-]{2,}\s?\d{4}(?!\d)/);      // the masked card number printed on the statement (376657XXXXX0276): its last four name the card when the page's own reading had none
+            return Object.assign({}, d, tok ? { last4: tok[0].slice(-4) } : {});
+        } catch (_) { return null; }
+    }
     async function _wfResolveBank(ctx) {
         var D = window.WFBankDetect; if (!D || typeof D.detect !== 'function') return null;
         var name = (ctx.file && ctx.file.name) || '';
@@ -1353,7 +1365,8 @@
                                 _directionSource: r.directionSource || ''
                             };
                         }),
-                        card_last4: '', currency: 'LKR', statement_period: ''
+                        card_last4: '', currency: 'LKR', statement_period: '',
+                        due: _wfDueOf(_hres && _hres.text)
                     };
                     P.stage('bank', 'Identifying the bank…', _htx.length + ' transactions read', 'bank');
                     _wfBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _hres && _hres.text });
@@ -1456,7 +1469,8 @@
                             }),
                             card_last4: (_cardTok.match(/\d{4}$/) || [''])[0],
                             currency: 'LKR',
-                            statement_period: (_res.text.match(/Statement Period[:\s]*([\d/]+\s*-\s*[\d/]+)/i) || [])[1] || ''
+                            statement_period: (_res.text.match(/Statement Period[:\s]*([\d/]+\s*-\s*[\d/]+)/i) || [])[1] || '',
+                            due: _wfDueOf(_res.text)
                         };
                         P.stage('bank', 'Identifying the bank…', _rows.length + ' transactions found', 'bank');
                         _wfBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _res.text, meta: _res.meta });
