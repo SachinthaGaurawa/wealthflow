@@ -52,8 +52,9 @@ const settle = () => page.waitForTimeout(450);
 const quiet = () => page.evaluate(() => { const h = document.getElementById('notifs'); if (h) { if (h._wfQ) h._wfQ.length = 0; h.replaceChildren(); } });
 
 /** What a person sees: is the list there, readable, inside the screen and on top of everything else? */
+/* Only what is on screen counts: the frame (wealthflow-shell.js) names every closed pop-up a dialog too, and a closed one is display:none. */
 const seen = () => page.evaluate(() => {
-    const o = document.querySelector('.wf-statement-review, body > [role="dialog"][aria-modal]');
+    const o = [...document.querySelectorAll('.wf-statement-review, body > [role="dialog"][aria-modal]')].filter((e) => getComputedStyle(e).display !== 'none')[0] || null;
     const md = o && o.querySelector('.md');
     if (!md) return { present: !!o };
     const r = md.getBoundingClientRect(), cs = getComputedStyle(md);
@@ -71,7 +72,7 @@ const seen = () => page.evaluate(() => {
 });
 /** Clear whatever a failed step left on screen, so one finding does not hide the next. */
 const clear = () => page.evaluate(() => {
-    document.querySelectorAll('.wf-statement-review, body > [role="dialog"][aria-modal]').forEach((o) => o.remove());
+    [...document.querySelectorAll('.wf-statement-review, body > [role="dialog"][aria-modal]')].filter((e) => getComputedStyle(e).display !== 'none').forEach((o) => o.remove());
     document.querySelectorAll('.mo.open').forEach((o) => o.classList.remove('open'));
 });
 /** Press a button the way a person would. A button that cannot be pressed is a finding, not a hang. */
@@ -82,7 +83,7 @@ const tap = async (locator, what) => {
 const open = (at) => tap(page.locator('#_ms_reviews'), `${at}: the Open reviews button`);
 const press = (name, at) => tap(page.locator('.wf-statement-review .md button', { hasText: name }), `${at}: the ${name} button`);
 const nothingLeft = () => page.evaluate(() => ({
-    list: !!document.querySelector('.wf-statement-review, body > [role="dialog"][aria-modal]'),
+    list: [...document.querySelectorAll('.wf-statement-review, body > [role="dialog"][aria-modal]')].some((e) => getComputedStyle(e).display !== 'none'),
     open: document.querySelectorAll('.mo.open').length,
 }));
 
