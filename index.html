@@ -23404,7 +23404,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const pays = DB.get('ccPayments') || [];
                 const groups = {};
                 charges.forEach(c => { const k = _ccKey(c); (groups[k] = groups[k] || { d: [], c: [] }).d.push(c); });
-                pays.forEach(p => { const k = _ccKey(p); (groups[k] = groups[k] || { d: [], c: [] }).c.push(p); });
+                pays.forEach(p => { if (window.WFReconcile && window.WFReconcile.isCashbackCredit && window.WFReconcile.isCashbackCredit(p)) return; const k = _ccKey(p); (groups[k] = groups[k] || { d: [], c: [] }).c.push(p); });   // a cashback shown among the payments is a reward, never money paid to the card
                 let changed = false;
                 Object.keys(groups).forEach(k => {
                     const g = groups[k];
@@ -23599,7 +23599,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const scoped = _ccotBankFilter === 'all' ? charges : charges.filter(inTab);
             // the three figures are summed in whole cents (never as floats) and turned back to rupees once, so they agree with the walk to the cent
             const _WR = window.WFReconcile, _c = v => (_WR && _WR.toCents ? _WR.toCents(v) : Math.round((parseFloat(v) || 0) * 100));
-            const totalPaid = pays.reduce((s, p) => s + _c(p.amount), 0) / 100;
+            const totalPaid = pays.reduce((s, p) => s + (_WR && _WR.isCashbackCredit && _WR.isCashbackCredit(p) ? 0 : _c(p.amount)), 0) / 100;
             const totalCharged = scoped.reduce((s, c) => s + (c.combinedTotal != null ? _c(c.combinedTotal) : _c(c.amount) + _c(c.serviceFee)), 0) / 100;
             const settledCount = scoped.filter(c => c.autoPaid).length;
             const addBtn = `<button class="btn btn-success" style="padding:7px 14px;font-size:12px;" onclick="openCCPaymentModal()"><i data-wfi="plus"></i> Record payment</button>`;
@@ -37086,6 +37086,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             };
             _routeAll();
             // a purchase turned into an instalment plan is printed as a credit and a debit of the same amount and words: they cancel, so neither is spending nor a payment (statement-conversion.mjs)
+            /* CASHBACK ON A CARD IS A REWARD, NOT A PAYMENT (isCardCashback): it is left out of the card's books so it never lowers what the card owes or the minimum; the bank account that receives it files it as income */
+            try { const _R = window.WFStatementRouter; if (_acctType === 'credit_card' && _R && _R.isCardCashback) txns.forEach((t) => { if (t && t.direction === 'credit' && (t._dest === 'cc_payment' || !t._dest) && _R.isCardCashback(t.description)) { t._dest = 'skip'; t._cashback = 1; t.type = ''; } }); } catch (_) {}
             try { const _R = window.WFStatementRouter; if (_acctType === 'credit_card' && _R && _R.conversionLegs) { const _legs = _R.conversionLegs(txns, [], () => true); txns.forEach((t) => { if (_legs.has(t)) { t._dest = 'skip'; t._conversion = 1; t.type = ''; } }); } } catch (_) {}
             // ── v7.61.0 — REAL-TIME merchant discovery. Every merchant this statement
             //    contains that nothing could identify is sent to your OWN /api/ai, where

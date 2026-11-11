@@ -98,12 +98,14 @@ export const chargeCents = record => (record && record.combinedTotal != null ? t
  * @param {object} user the owner's document (`cconetime` charges, `ccPayments` credits)
  * @returns {{cards: {key:string, charges:number, credits:number, settled:number, pending:number, carryCents:number, blocked:null|object}[], want: Map<object, boolean>}}
  */
+/** A recorded "payment" that is really a cashback (a reward, not money paid to the card) never fills the pool. Same words as isCardCashback in wealthflow-statement-router.js (test/card_cashback_test.js keeps them equal). */
+export const isCashbackCredit = record => { if (!record) return false; if (record.cashback === true) return true; const text = String(record.desc || record.description || record.name || ''); return /\b(?:cash\s*back|cashback|rebate)\b/i.test(text) && !/\b(?:payments?|pymt|repayment|thank\s*you|settlement|top\s*-?\s*up)\b/i.test(text); };
 export function settleCards(user, { canon = canonicalBank } = {}) {
     const list = key => (Array.isArray(user && user[key]) ? user[key] : []).filter(Boolean);
     const groups = new Map();
     const group = key => { if (!groups.has(key)) groups.set(key, { charges: [], credits: [] }); return groups.get(key); };
     for (const record of list('cconetime')) group(cardKey(record, canon)).charges.push(record);
-    for (const record of list('ccPayments')) group(cardKey(record, canon)).credits.push(record);
+    for (const record of list('ccPayments')) if (!isCashbackCredit(record)) group(cardKey(record, canon)).credits.push(record);
     const want = new Map(), cards = [];
     for (const [key, g] of groups) {
         const inPool = g.charges.filter(record => !record.paidManually);                          // a charge the owner settled by hand is outside the pool

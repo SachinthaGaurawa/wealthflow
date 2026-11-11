@@ -171,6 +171,12 @@
      * @param {{today:string, canonBank?:function(string):string, shown?:function(string):string}} ctx today as 'YYYY-MM-DD'
      * @returns {Array<{id,key,bank,last4,label,minimum,closing,dueDate,statementEnd,daysLeft,paid,short,state}>} state: late (past the date, minimum not covered) | soon (5 days or fewer) | open | covered | paid (the owner said so)
      */
+    function isCashback(r) {
+        if (!r) return false;
+        if (r.cashback === true) return true;
+        var text = String(r.desc || r.description || r.name || '');
+        return /\b(?:cash\s*back|cashback|rebate)\b/i.test(text) && !/\b(?:payments?|pymt|repayment|thank\s*you|settlement|top\s*-?\s*up)\b/i.test(text);
+    }
     function dues(records, payments, ctx) {
         ctx = ctx || {};
         var today = dayNum(ctx.today);
@@ -194,6 +200,7 @@
             (Array.isArray(payments) ? payments : []).forEach(function (p) {
                 var d = p ? dayNum(p.date) : NaN;
                 if (isNaN(d) || d <= from || d > today) return;
+                if (isCashback(p)) return;   // a cashback is a reward, not money paid to the card: it never lowers the minimum
                 var pl = last4Of(p), same = x.l4 && pl ? pl === x.l4 : !!x.bank && bankOf(p) === x.bank;
                 if (same) paid += cents(p.amount);
             });

@@ -110,6 +110,12 @@ const PLAN_WORDS_CLEAN = new RegExp(PLAN_WORDS.source.replace(/^\\b/, '').replac
 const PLAN_LENGTH = /\b(\d{1,2})\s*(?:months?|mths?|mnths?|instal+ments?|instl?mts?)\b/i;
 /** A line whose own words say it is a fee, tax or interest. */
 export const isCardFeeWording = (raw) => RE.fee.test(String(raw || ''));
+
+/* A CARD LINE THAT SAYS "CASHBACK" IS A REWARD, NOT A PAYMENT. The bank pays the cashback into the owner's bank account (that statement files it as income); where a card statement prints it too, it did not pay the card:
+ * it must never fill the payment pool, lower what the card owes or its minimum, or settle a charge. A line that also says payment, thank you, settlement or top-up is a payment whatever else it says.
+ * (cc-fifo.mjs, wealthflow-cc-reconcile.js and wealthflow-card-tabs.js read the same words; test/card_cashback_test.js keeps the four equal.) */
+const CARD_CASHBACK = /\b(?:cash\s*back|cashback|rebate)\b/i, CARD_PAYMENT_WORDS = /\b(?:payments?|pymt|repayment|thank\s*you|settlement|top\s*-?\s*up)\b/i;
+export const isCardCashback = (raw) => { const text = String(raw || ''); return CARD_CASHBACK.test(text) && !CARD_PAYMENT_WORDS.test(text); };
 /* NATIONS TRUST'S PLAN LINE: "SINGER 24M NATIONS PAY INST 1 - REM BAL - 120040.83 - <1/24>" is the 1st of 24 instalments of the Singer plan (the "24M" is the plan's length, "REM BAL" what is still owed, "<1/24>" which month).
  * It says "INST", not "instalment", so the words above never saw it, and it was filed as a one-time Shopping purchase. The three parts must agree (the number after INST is the number in "<n/m>") before it is a plan line. */
 const NTB_PLAN_LINE = /^(.*?)\binst(?:l|alment)?\s*(\d{1,2})\b[\s\-\u2013]*rem(?:aining)?\.?\s*bal\w*[\s\-\u2013:]*([\d,]+(?:\.\d+)?)[\s\-\u2013]*<\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*>/i;
@@ -218,7 +224,10 @@ export function routeRow(row, ctx = {}) {
     // (including an "interest credit") settles the card; it is not cash income.
     // Narration alone never makes a BANK account's credit a card payment ("settlement", "online payment" are common on a bank account): the card's own statement carries card payments.
     // "Payment received" with a word that names where the money came from (freelance, invoice, rent, salary...) is income, not a card payment: the account type decides when it is known, the words when it is not
-    if (onCard || (RE.ccPayment.test(desc) && !isBankAccountRow(row, ctx) && incomeCategoryFor(row) === 'Other')) {
+    if (onCard && isCardCashback(rawDesc)) {
+      // a reward on the card is not a payment: it is left out of the card's books (the bank account that receives the cashback files it as income)
+      module = 'skip'; tabLabel = 'Cashback (not a payment)'; subtype = 'cashback'; confidence = 0.9;
+    } else if (onCard || (RE.ccPayment.test(desc) && !isBankAccountRow(row, ctx) && incomeCategoryFor(row) === 'Other')) {
       module = 'cc_payment'; tabLabel = 'CC Payment → FIFO reconcile'; confidence = 0.92;
     } else if (RE.salary.test(desc)) {
       module = 'income'; tabLabel = 'Income & Investments'; confidence = 0.9; category = incomeCategoryFor(row);
@@ -387,7 +396,7 @@ export function conversionLegs(rows, planTable = [], isCard = () => true) {
   return out;
 }
 
-const API = { routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs };
+const API = { routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs, isCardCashback };
 
 if (typeof window !== 'undefined') window.WFStatementRouter = API;
 

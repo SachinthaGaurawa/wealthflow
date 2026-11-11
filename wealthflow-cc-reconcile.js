@@ -169,6 +169,13 @@
         };
     }
 
-    window.WFReconcile = { reconcileCard: reconcileCard, parseCardSms: parseCardSms, toCents: toCents, fromCents: fromCents, _dateMs: _dateMs };
+    // A recorded "payment" that is really a cashback is a reward, never money paid to the card (same words as isCardCashback in wealthflow-statement-router.js)
+    function isCashbackCredit(r) {
+        if (!r) return false;
+        if (r.cashback === true) return true;
+        var text = String(r.desc || r.description || r.name || '');
+        return /\b(?:cash\s*back|cashback|rebate)\b/i.test(text) && !/\b(?:payments?|pymt|repayment|thank\s*you|settlement|top\s*-?\s*up)\b/i.test(text);
+    }
+    window.WFReconcile = { reconcileCard: reconcileCard, parseCardSms: parseCardSms, toCents: toCents, fromCents: fromCents, _dateMs: _dateMs, isCashbackCredit: isCashbackCredit };
     try { console.log('[WFReconcile] @info@ credit-card auto-@checkCircle@ reconciliation ready'); } catch (_) {}
 })();

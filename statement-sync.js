@@ -32,7 +32,7 @@ import { runSteps } from './statement-budget.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
 import { bankAgrees } from './wealthflow-institutions.js';
-import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow, installmentInfo, isCardFeeWording } from './wealthflow-statement-router.js';
+import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow, installmentInfo, isCardFeeWording, isCardCashback } from './wealthflow-statement-router.js';
 import { readPlanTable, planFor } from './statement-plan-table.mjs';
 import { conversionLegs } from './statement-conversion.mjs';
 import { PROPOSAL, REVIEW, decisionProblem, agreedRows, approvedRows, reviewPrompt, proposalPrompt, inVocabulary } from './statement-board.mjs';
@@ -333,6 +333,8 @@ export function deterministicDecision(row, allocations = {}) {
     const description = String(row?.narration || row?.description || '');
     /* THE TWO LEGS OF A PURCHASE TURNED INTO AN INSTALMENT PLAN cancel each other (statement-conversion.mjs): left out of the books, the plan's instalments carry the money */
     if (allocations.conversionRows && row && allocations.conversionRows.has(row)) return { module: 'skip', category: 'Instalment conversion', allocationId: '', verified: true, deterministic: true, conversion: true };
+    /* CASHBACK ON A CARD IS A REWARD, NOT A PAYMENT (isCardCashback): left out of the card's books so it never lowers what the card owes; the bank account that receives it files it as income */
+    if (row && row.direction === 'credit' && isCreditCardRow(row, allocations) && isCardCashback(description)) return { module: 'skip', category: 'Card cashback', allocationId: '', verified: true, deterministic: true, cashback: true };
     /* THE OWNER'S OWN CARD IN A BANK ROW IS THE OWNER'S OWN MONEY (wealthflow-own-money.js, the same rule the manual upload applies): "Cash advance cr 376657******0276" is money drawn on the AMEX arriving in
      * the account, not income; the card statement carries the advance. It is decided from the Cards & Accounts registry and the owner's own statements before any wording of a transfer is asked for. */
     const own = ownMoney({ description, direction: row?.direction, isCard: isCreditCardRow(row || {}, allocations), registry: allocations.cardRegistry, tails: allocations.own });
@@ -412,6 +414,7 @@ export function fallbackDecision(row, allocations = {}) {
     const autoDecided = proven ? 'rules-fallback' : 'rules-words';
     const card = isCreditCardRow(row, allocations);
     if (row.direction === 'debit') return { module: card ? 'cconetime' : 'expenses', category: card ? (/\b(?:fees?|charges?|tax|interest)\b/i.test(String(row.narration || row.description || '')) ? 'Card Fee' : namedCardCategory(expenseCategoryFor(row))) : (expenseCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
+    if (row.direction === 'credit' && card && isCardCashback(String(row.narration || row.description || ''))) return { module: 'skip', category: 'Card cashback', allocationId: '', verified: true, autoDecided, cashback: true };
     if (row.direction === 'credit') return { module: card ? 'ccPayments' : 'incomeRecv', category: card ? 'Card Payment' : (incomeCategoryFor(row) || 'Other'), allocationId: '', verified: true, autoDecided };
     return null;
 }
@@ -1768,7 +1771,7 @@ export async function reopenSkippedTransfers({ db, uid, limit = 3, until = Infin
     const by = new Map();
     for (const doc of found.docs) {
         const entry = doc.data() || {};
-        if (entry.uid !== uid || entry.module !== 'skip' || entry.reason === 'instalment-conversion' || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(entry.sourcePath || ''))) continue;
+        if (entry.uid !== uid || entry.module !== 'skip' || entry.reason === 'instalment-conversion' || entry.reason === 'card-cashback' || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(entry.sourcePath || ''))) continue;
         if (!by.has(entry.sourcePath)) by.set(entry.sourcePath, []);
         by.get(entry.sourcePath).push(doc.id);
     }
