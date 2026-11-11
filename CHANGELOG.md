@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.81 — 2026-11-11
+
+**What changed for you**
+
+- Card statements: a purchase turned into an instalment plan is not spending twice; Nations Trust plan lines are plans (#590)
+
 ## v7.69.80 — 2026-11-11
 
 **What changed for you**
