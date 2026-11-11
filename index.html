@@ -14504,7 +14504,7 @@ window._wfCapMore = _wfCapMore;
 /* ── completed records are permanent ──────────────────────────────────────────
  * A plan or tracked item that has been finished (investment settled or ended,
  * loan paid off, instalment complete, card charge paid, cheque cleared, debtor
- * settled, pawn redeemed, savings target reached) is part of the owner's history. It is never deleted
+ * settled (a debtor can still be deleted: see _deleteDebtor), pawn redeemed, savings target reached) is part of the owner's history. It is never deleted
  * from the app: the Delete button on it only explains that, and every list
  * keeps these records on screen in their own "Completed" section. Edit, re-open
  * and undo still work, so a record marked done by mistake can be put right. */
@@ -14527,7 +14527,7 @@ function _wfIsDone(kind, rec) {
 }
 function _wfKeepDone(kind, rec) {
     if (!_wfIsDone(kind, rec)) return false;
-    notify('Completed records are kept for good. You can still edit it' + (kind === 'investment' || kind === 'debtor' ? ' or re-open it.' : '.'), 'info');
+    notify('Completed records are kept for good. You can still edit it' + (kind === 'investment' ? ' or re-open it.' : '.'), 'info');
     return true;
 }
 /* The Completed header every list shares: what it is, how many, and why Delete is off. */
@@ -25876,17 +25876,60 @@ table.amort tbody tr { page-break-inside: avoid; }
             );
         }
 
+        /* DELETING A DEBTOR. Reported 2026-11-11 (a settled debtor with nothing lent, "Menika"): "Delete එක වැඩ නෑ". It did nothing because
+         * a settled debtor was one of the "completed records are permanent" kinds: the trash button answered with a one-line toast and
+         * never asked, so it looked broken. A debtor is the owner's own list of people, so any of them can be deleted, open or settled.
+         * Three things make that safe instead of just possible:
+         *   1. it always asks first, and says what goes with it (the repayment history, the texts, the portal page);
+         *   2. it is found by id, and when a legacy debtor has none, by the object itself, so one delete can never take a neighbour with it;
+         *   3. it can be taken back for ten seconds. The restored record loses its old stamp: a record that comes back with its OLD _ut would
+         *      be older than the deletion's tombstone and every other device would delete it again. */
+        const _debtorSame = (a, b) => { if (!a || !b) return false; if (a === b) return true; if (a.id != null || b.id != null) return a.id === b.id; try { return JSON.stringify(a) === JSON.stringify(b); } catch (_) { return false; } };   // an id-less legacy debtor is matched by its whole content, so a reload (new object) still finds it
+        function _wfUndoBar(msg, label, onUndo) {
+            try {
+                const old = document.getElementById('wfUndoBar'); if (old) old.remove();
+                const bar = document.createElement('div');
+                bar.id = 'wfUndoBar'; bar.setAttribute('role', 'status'); bar.setAttribute('aria-live', 'polite');
+                bar.style.cssText = 'position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:100000;max-width:calc(100vw - 24px);display:flex;align-items:center;gap:14px;padding:11px 14px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:var(--r);box-shadow:0 8px 28px rgba(0,0,0,.35);font-size:13.5px;font-weight:500;';
+                const t = document.createElement('span'); t.textContent = msg;
+                const b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-secondary btn-sm'; b.id = 'wfUndoBtn'; b.textContent = label;
+                const gone = () => { try { bar.remove(); } catch (_) {} };
+                b.onclick = () => { gone(); try { onUndo(); } catch (e) { try { console.error('[undo]', e && e.message); } catch (_) {} } };
+                bar.appendChild(t); bar.appendChild(b); document.body.appendChild(bar);
+                setTimeout(gone, 10000);
+            } catch (_) {}
+        }
         function _deleteDebtor(d) {
             if (!d) return;
-            if (_wfKeepDone('debtor', d)) return;
+            const who = d.name || 'this debtor';
+            const texted = d.sms_notifications_enabled === true;
             showConfirm(
-                'trash', 'Delete this debtor?',
-                'This removes ' + (d.name || 'the debtor') + ' and their whole repayment history from WealthFlow. It cannot be undone.',
+                'trash', 'Delete ' + who + '?',
+                'This removes ' + who + ' and their whole repayment history from WealthFlow' + (texted ? ', and stops every text to them' : '') + '. You can take it back for a few seconds afterwards; after that it is gone.',
                 'btn-danger', 'Delete',
                 () => {
-                    DB.set('debtors', (DB.get('debtors') || []).filter((x) => x && x.id !== d.id));
-                    notify('Debtor deleted.', 'success');
+                    const list = (DB.get('debtors') || []).slice();
+                    const at = list.findIndex((x) => _debtorSame(x, d));
+                    if (at < 0) { notify('That debtor is already gone.', 'info'); renderLiquidity(); return; }
+                    const removed = list[at];
+                    list.splice(at, 1);
+                    DB.set('debtors', list);
+                    /* Proved, not assumed: read it back. The store can refuse a removal (its bulk-delete guard does), and a toast that says
+                     * "deleted" over a record that is still there is the exact bug that was reported. */
+                    if ((DB.get('debtors') || []).some((x) => _debtorSame(x, removed))) { notify('Could not delete ' + who + '. Nothing was changed.', 'error'); renderLiquidity(); return; }
+                    try { triggerHaptic('light'); } catch (_) {}
                     renderLiquidity();
+                    try { renderDash(); } catch (_) {}
+                    _wfUndoBar(who + ' deleted', 'Undo delete', () => {
+                        const back = (DB.get('debtors') || []).slice();
+                        if (back.some((x) => _debtorSame(x, removed))) return;
+                        const rest = Object.assign({}, removed); delete rest._ut;
+                        back.splice(Math.min(at, back.length), 0, rest);
+                        DB.set('debtors', back);
+                        renderLiquidity();
+                        try { renderDash(); } catch (_) {}
+                        notify(who + ' is back.', 'success');
+                    });
                 },
             );
         }

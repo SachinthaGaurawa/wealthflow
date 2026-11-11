@@ -20,6 +20,7 @@ on:
       - test/e2e/ui-finance.mjs
       - test/e2e/ui-tools.mjs
       - test/e2e/completed-records.mjs
+      - test/e2e/debtor-delete.mjs
       - test/e2e/ui-toolbars.mjs
       - test/e2e/ui-overlays.mjs
       - test/e2e/ui-controls.mjs
@@ -72,6 +73,8 @@ jobs:
         run: node test/e2e/ui-tools.mjs
       - name: Verify completed records are kept and shown in their own section
         run: node test/e2e/completed-records.mjs
+      - name: Verify a debtor can be deleted (open or settled), with a question first and an Undo
+        run: node test/e2e/debtor-delete.mjs
       - name: Verify page toolbars, the top bar and sliding tables at phone, tablet, laptop and desktop widths
         run: node test/e2e/ui-toolbars.mjs
         env:

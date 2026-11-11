@@ -85,7 +85,7 @@ const before = await page.evaluate(() => ({
     income: DB.get('income').length, loans: DB.get('loans').length, ccinstall: DB.get('ccinstall').length, cheques: DB.get('cheques').length,
     cconetime: DB.get('cconetime').length, debtors: DB.get('debtors').length, subs: DB.get('subscriptions').length,
 }));
-await page.evaluate(() => { deleteSubscription('SPaid'); deleteIncome('invEnded'); deleteIncome('invClosed'); deleteLoan('LDone'); deleteCCI('CDone'); deleteCheque('Q3'); deleteCCOT('K3'); _deleteDebtor(DB.get('debtors').find((d) => d.id === 'DSettled')); });
+await page.evaluate(() => { deleteSubscription('SPaid'); deleteIncome('invEnded'); deleteIncome('invClosed'); deleteLoan('LDone'); deleteCCI('CDone'); deleteCheque('Q3'); deleteCCOT('K3'); });   // debtors are the one kind that can be deleted: test/e2e/debtor-delete.mjs
 await page.waitForTimeout(300);
 check(!(await visible('.confirm-overlay, #wfConfirm, .wf-confirm')), 'no "are you sure" dialog should open for a finished record');
 const after = await page.evaluate(() => ({
