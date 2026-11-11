@@ -478,6 +478,23 @@ describe('the server handlers this build must never break', () => {
 
     afterAll(() => { if (dir) fs.rmSync(dir, { recursive: true, force: true }); });
 
+    it('THE DEPLOY COMMAND PASSES: publish-layout accepts the built tree and swaps it (this failed production once)', () => {
+        /* #583 moved the app's inline scripts into files, and publish-layout looked for
+         * `firebaseConfig` in index.html itself, so the real deploy command died after the
+         * build with "index.html does not look like the app". The build alone was green in
+         * every test, which is why no test saw it. This runs the second half of
+         * `node build.mjs --write && node publish-layout.mjs` too, on a copy. */
+        const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-layout-'));
+        try {
+            fs.cpSync(dir, copy, { recursive: true });
+            const out = execFileSync(process.execPath, [path.join(copy, 'publish-layout.mjs')],
+                { cwd: copy, encoding: 'utf8', timeout: 60000 });
+            expect(out).toMatch(/app\.html is the app/);
+            const app = fs.readFileSync(path.join(copy, 'app.html'), 'utf8');
+            expect(inlineScriptsLeft(app)).toEqual([]);
+        } finally { fs.rmSync(copy, { recursive: true, force: true }); }
+    }, 90000);
+
     it('every one of them still imports a wealthflow-*.js/mjs module (or this list is stale)', () => {
         /* Guards the guard: if nobody imports these any more, the regression
          * test below would pass by having nothing left to check. */
