@@ -737,6 +737,7 @@
      * It reports back by postMessage carrying a per-run nonce. The parent never
      * reaches into the frame; it only reads the string the frame chose to send.
      * ------------------------------------------------------------------------ */
+    var _SANDBOX_URL = '/wf-sandbox.html';
     var _SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; "
         + "style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; "
         + "form-action 'none'; base-uri 'none'; frame-src 'none'; child-src 'none'";
@@ -851,7 +852,15 @@
                 frame.setAttribute('tabindex', '-1');
                 frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:1024px;'
                     + 'height:900px;opacity:0;pointer-events:none;border:0;';
-                frame.srcdoc = _buildSandboxDoc(html, nonce, budget);
+                /* NOT `srcdoc`: a srcdoc document inherits the policy of this page, which does not allow inline
+                 * script, and the statement's rows are drawn by its own inline scripts. The frame loads the sandbox
+                 * page, whose response carries its own policy (vercel.json), and is handed the document to run
+                 * once it has loaded. The bootstrap, the nonce and the report are unchanged. */
+                var sandboxDoc = _buildSandboxDoc(html, nonce, budget);
+                frame.addEventListener('load', function () {
+                    try { frame.contentWindow.postMessage({ __wfhs_doc: 1, doc: sandboxDoc }, '*'); } catch (_) { finish(''); }
+                });
+                frame.src = _SANDBOX_URL;
                 (doc.body || doc.documentElement).appendChild(frame);
             } catch (_) { finish(''); }
         });

@@ -84,7 +84,7 @@ const MIME = {
 };
 
 /** A local static server for the repo. Returns { url, close }. */
-export async function serveRepo(repoDir = process.cwd()) {
+export async function serveRepo(repoDir = process.cwd(), { headers = null } = {}) {
     const server = http.createServer((req, res) => {
         let p = decodeURIComponent((req.url || '/').split('?')[0]);
         if (p === '/') p = '/index.html';
@@ -93,7 +93,9 @@ export async function serveRepo(repoDir = process.cwd()) {
         if (!f.startsWith(path.resolve(repoDir))) { res.writeHead(403); return res.end('forbidden'); }
         fs.readFile(f, (err, buf) => {
             if (err) { res.writeHead(404); return res.end('not found'); }
-            res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream' });
+            // `headers(pathname)` lets a test serve what vercel.json would (a Content-Security-Policy per path).
+            const extra = (headers && headers(p)) || {};
+            res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', ...extra });
             // The Firebase SDK is answered with a stub here (firebase-stub.mjs), so the production
             // `integrity="sha384-..."` pins on those script tags can never match. They are checked
             // against the real CDN bytes by test/security_headers_test.js (WF_SRI_VERIFY=1) and by the
@@ -257,8 +259,8 @@ export async function installChartJs(page, file = 'node_modules/chart.js/dist/ch
     return true;
 }
 
-export async function bootApp({ repoDir = process.cwd(), pin = '123456', headless = true, userAgent = '', initScript = null } = {}) {
-    const server = await serveRepo(repoDir);
+export async function bootApp({ repoDir = process.cwd(), pin = '123456', headless = true, userAgent = '', initScript = null, headers = null } = {}) {
+    const server = await serveRepo(repoDir, { headers });
     const browser = await launchChromium({ headless });
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, ...(userAgent ? { userAgent } : {}) });
     if (initScript) await page.addInitScript(initScript);       // runs before the page's own scripts: lets a test pre-set storage
