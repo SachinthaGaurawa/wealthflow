@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.85 — 2026-11-11
+
+**What changed for you**
+
+- Any debtor can be deleted, with a question first and an Undo (#597)
+
 ## v7.69.84 — 2026-11-11
 
 **What changed for you**
