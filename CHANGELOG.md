@@ -1,5 +1,12 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.79 — 2026-11-11
+
+**What changed for you**
+
+- CSP phase 2, step 3b: the statement reader sandbox moves to its own route (#584)
+- Publish-layout finds the app's firebaseConfig in the moved inline files (#586)
+
 ## v7.69.78 — 2026-11-11
 
 **What changed for you**
