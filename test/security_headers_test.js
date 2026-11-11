@@ -239,23 +239,28 @@ describe('robots.txt and probe paths (findings 3 and 4)', () => {
         expect(headersFor('/t/(.*)')['X-Robots-Tag']).toMatch(/noindex/);
     });
 
-    // path-to-regexp hands a parenthesised group to RegExp unchanged, so the catch-all's source can be tried directly.
-    const catchAll = VERCEL.rewrites.find((r) => r.destination === '/app.html' && r.source !== '/app');
-    const re = new RegExp('^' + catchAll.source + '$');
+    /* Does any rewrite answer this path? Plain sources match literally, the rest are regular expressions
+     * (path-to-regexp hands a parenthesised group to RegExp unchanged). Static files are served before
+     * rewrites, so a path no rewrite answers and no file exists for is a real 404. */
+    const answered = (p) => VERCEL.rewrites.some((r) => (/[(:*]/.test(r.source) ? new RegExp('^' + r.source + '$').test(p) : r.source === p));
+    const files = (p) => !/^\/\./.test(p) && fs.existsSync(path.join(ROOT, p.replace(/^\//, '')));   // a dot path (.git, .env) is never shipped
 
-    it('answers scanner probe paths with a 404 (no rewrite matches) instead of the app with a 200', () => {
+    it('answers any path the app does not own with a 404, never the app with a 200', () => {
         for (const p of ['/admin', '/admin/login', '/administrator', '/wp-admin/', '/wp-login.php', '/phpmyadmin', '/.env', '/.env.production', '/.git/config',
             '/.htaccess', '/server-status', '/actuator/health', '/phpinfo.php', '/anything/shell.php', '/db.sql', '/backup.bak', '/cgi-bin/test', '/.well-known/security.txt',
-            '/admin-panel', '/admin_panel', '/adminpanel', '/administration', '/backend', '/panel', '/manager', '/controlpanel', '/control-panel', '/moderator', '/root', '/wp-json/wp/v2/users']) {
-            expect(re.test(p), p + ' must not be served the app').toBe(false);
+            '/admin-panel', '/admin_panel', '/adminpanel', '/administration', '/backend', '/panel', '/manager', '/controlpanel', '/control-panel', '/moderator', '/root', '/wp-json/wp/v2/users',
+            // the ones a scanner found answering 200 after the blacklist (2026-11-11)
+            '/_admin', '/account', '/accounts', '/admin1', '/admin2', '/backstage', '/control', '/cp', '/dbadmin', '/debug', '/internal', '/manage', '/management', '/owner',
+            '/portal', '/private', '/secure', '/staff', '/superadmin', '/system', '/user', '/users', '/vendor', '/webadmin', '/anything-else', '/robots-not-here']) {
+            expect(answered(p) || files(p), p + ' must be a 404').toBe(false);
         }
     });
 
-    it('still serves the app for every real path', () => {
-        for (const p of ['/', '/app', '/app/', '/anything-else', '/administrators-guide-nothing', '/robots-not-here', '/panels-of-glass', '/rootless']) {
-            // '/administrators-guide-nothing' starts with the word admin but is not the admin path
-            expect(re.test(p), p + ' must still reach the app').toBe(true);
+    it('still serves every path the product owns', () => {
+        for (const p of ['/app', '/app/', '/privacy', '/terms', '/r/abcd1234', '/t/abcdefghijklmnop', '/api/ai', '/manifest.json', '/sw.js', '/.well-known/assetlinks.json', '/merchants.json']) {
+            expect(answered(p), p + ' must still be answered').toBe(true);
         }
+        for (const p of ['/', '/robots.txt', '/404.html', '/share-target.html']) expect(files(p === '/' ? '/index.html' : p), p).toBe(true);
     });
 
     it('sends the words a person may type (login, dashboard) to the app by redirect, not by serving it under an admin-looking path', () => {
@@ -270,6 +275,5 @@ describe('robots.txt and probe paths (findings 3 and 4)', () => {
     it('serves the real assetlinks.json instead of the app', () => {
         const rw = VERCEL.rewrites.find((r) => r.source === '/.well-known/assetlinks.json');
         expect(rw && rw.destination).toBe('/assetlinks.json');
-        expect(VERCEL.rewrites.indexOf(rw)).toBeLessThan(VERCEL.rewrites.indexOf(catchAll));
     });
 });

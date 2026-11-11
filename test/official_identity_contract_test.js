@@ -30,7 +30,8 @@ describe('Vercel legacy-host redirects', () => {
     });
 
     it('keeps redirects distinct from the SPA rewrite and does not redirect the official host', () => {
-        expect(VERCEL.rewrites.filter((r) => r.destination === '/app.html' && r.source !== '/app' && /^\/\(/.test(r.source)).length).toBe(1);   // the catch-all (its source now names the probe paths it refuses)
+        // the app answers only /app and /app/ (there is no catch-all: an unknown path is a 404, not the app)
+        expect(VERCEL.rewrites.filter((r) => r.destination === '/app.html').map((r) => r.source)).toEqual(['/app', '/app/']);
         expect(VERCEL.redirects || []).not.toEqual(expect.arrayContaining([
             expect.objectContaining({ has: [expect.objectContaining({ value: 'www.wealthflow.lk' })] }),
         ]));
