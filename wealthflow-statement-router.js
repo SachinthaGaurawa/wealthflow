@@ -396,7 +396,18 @@ export function conversionLegs(rows, planTable = [], isCard = () => true) {
   return out;
 }
 
-const API = { routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs, isCardCashback };
+/* The category a card line may keep: one the rules or the merchant list really named (never "Other", "Needs Review" or a "Card ..." label), else the plain "Card Purchase" the merchant review settles. */
+export const namedCardCategory = category => (category && !/^(?:other|needs review|card\s)/i.test(String(category)) && CLASSIFY_CATEGORIES.includes(category) ? category : 'Card Purchase');
+/* THE CATEGORY OF A CARD CHARGE, for both doors (the e-mail worker's deterministicDecision and the page's manual upload): a fuel line is Fuel, a fee Card Fee, a cash advance Cash Advance, a recurring merchant
+ * the name the list gave it, a purchase the category the rules named ("KEELLS SUPER" is Groceries, "UBER" is Transport) and otherwise "Card Purchase". `routed` is routeRow's answer for the row. */
+export function cardChargeCategory(row, routed) {
+  const r = routed || {};
+  return r.subtype === 'fuel' ? 'Fuel' : r.subtype === 'fee' ? 'Card Fee' : r.subtype === 'cash_advance' ? 'Cash Advance'
+    : r.subtype === 'subscription' ? namedCardCategory(expenseCategoryFor(row) !== 'Other' ? expenseCategoryFor(row) : r.category)
+    : r.subtype === 'purchase' && r.category && !/^(?:other|needs review|card\s)/i.test(String(r.category)) && CLASSIFY_CATEGORIES.includes(r.category) ? r.category : 'Card Purchase';
+}
+
+const API = { namedCardCategory, cardChargeCategory, routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs, isCardCashback };
 
 if (typeof window !== 'undefined') window.WFStatementRouter = API;
 
