@@ -206,16 +206,26 @@ describe('robots.txt and probe paths (findings 3 and 4)', () => {
 
     it('answers scanner probe paths with a 404 (no rewrite matches) instead of the app with a 200', () => {
         for (const p of ['/admin', '/admin/login', '/administrator', '/wp-admin/', '/wp-login.php', '/phpmyadmin', '/.env', '/.env.production', '/.git/config',
-            '/.htaccess', '/server-status', '/actuator/health', '/phpinfo.php', '/anything/shell.php', '/db.sql', '/backup.bak', '/cgi-bin/test', '/.well-known/security.txt']) {
+            '/.htaccess', '/server-status', '/actuator/health', '/phpinfo.php', '/anything/shell.php', '/db.sql', '/backup.bak', '/cgi-bin/test', '/.well-known/security.txt',
+            '/admin-panel', '/admin_panel', '/adminpanel', '/administration', '/backend', '/panel', '/manager', '/controlpanel', '/control-panel', '/moderator', '/root', '/wp-json/wp/v2/users']) {
             expect(re.test(p), p + ' must not be served the app').toBe(false);
         }
     });
 
     it('still serves the app for every real path', () => {
-        for (const p of ['/', '/app', '/app/', '/dashboard', '/anything-else', '/administrators-guide-nothing', '/robots-not-here']) {
+        for (const p of ['/', '/app', '/app/', '/anything-else', '/administrators-guide-nothing', '/robots-not-here', '/panels-of-glass', '/rootless']) {
             // '/administrators-guide-nothing' starts with the word admin but is not the admin path
             expect(re.test(p), p + ' must still reach the app').toBe(true);
         }
+    });
+
+    it('sends the words a person may type (login, dashboard) to the app by redirect, not by serving it under an admin-looking path', () => {
+        const rd = VERCEL.redirects.find((r) => /login/.test(r.source));
+        expect(rd && rd.destination).toBe('/app');
+        expect(rd.permanent).toBe(false);
+        const rx = new RegExp('^' + rd.source + '$');
+        for (const p of ['/login', '/signin', '/sign-in', '/dashboard']) expect(rx.test(p), p).toBe(true);
+        expect(rx.test('/loginx')).toBe(false);
     });
 
     it('serves the real assetlinks.json instead of the app', () => {
