@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.86 — 2026-11-11
+
+**What changed for you**
+
+- Manual upload keeps a card statement's minimum-payment ask, like the email worker (#600)
+
 ## v7.69.85 — 2026-11-11
 
 **What changed for you**
