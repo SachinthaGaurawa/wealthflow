@@ -61,7 +61,7 @@ export async function run({ keep = false } = {}) {
         stage(dir);
         const { build, verifyParses } = await import(path.join(ROOT, 'build.mjs'));
         const out = await build({ root: dir, write: true, hash: true });
-        await verifyParses({ root: dir, files: out.modules.map((f) => out.renames.get(f) || f) });
+        await verifyParses({ root: dir, files: [...out.modules.map((f) => out.renames.get(f) || f), ...out.inline.files.map((x) => x.name)] });
 
         const app = await bootApp({ repoDir: dir, headless: true });
         try {
@@ -142,6 +142,26 @@ export async function run({ keep = false } = {}) {
                 if (h.injected) failures.push('a handler that was not shipped RAN (the shape check is not working)');
                 console.log('  handlers: ' + h.carriers + ' elements carry one, ' + out.csp.shapes + ' shapes allowed, ' + h.checked + ' rendered ones verified, ' + h.navs + ' nav entries opened pages, foreign text refused');
             } else console.log('  handlers left inline: ' + (out.csp && out.csp.skipped));
+
+            /* INLINE SCRIPTS (build.mjs step 3a). No shipped page carries an inline script body, the app still booted
+             * with them as files (the dashboard rendered and every module ran above), and every page that had one now points at a file
+             * that exists. Skipped only if the build left them inline. */
+            if (out.inline && out.inline.applied) {
+                const { inlineScriptsLeft } = await import(path.join(ROOT, 'wf-inline-extract.mjs'));
+                const pages = ['index.html', 'landing.html', 'share-target.html', '404.html', 'privacy.html', 'terms.html'];
+                for (const f of pages) {
+                    const text = fs.readFileSync(path.join(dir, f), 'utf8');
+                    const left = inlineScriptsLeft(text);
+                    if (left.length) failures.push(f + ' still has ' + left.length + ' inline script(s): ' + left[0]);
+                    for (const m of text.matchAll(/src="\/(wealthflow-inline-[A-Za-z0-9-]+\.js)"/g)) {
+                        if (!fs.existsSync(path.join(dir, m[1]))) failures.push(f + ' loads ' + m[1] + ' which was not written');
+                    }
+                }
+                const live = await app.page.evaluate(() => [...document.scripts].filter((s) => !s.src && s.textContent.trim() && (!s.type || /javascript/.test(s.type))).length);
+                if (live) failures.push('the booted page has ' + live + ' inline script element(s)');
+                if (out.inline.files.length < 5) failures.push('only ' + out.inline.files.length + ' inline script files were made');
+                console.log('  inline scripts: ' + out.inline.files.length + ' files, no page carries one');
+            } else console.log('  inline scripts left inline: ' + (out.inline && out.inline.skipped));
 
             /* Every module tag must be asking for a HASHED name. An unhashed one
              * means a reference the build did not rewrite, which would be served
