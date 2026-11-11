@@ -58,7 +58,11 @@ export function inspect(root) {
         problems.push('index.html is already the landing page (publish-layout.mjs has run on this tree)');
     }
     if (!landing.includes(LANDING_MARKER)) problems.push('landing.html lacks the wf-landing marker');
-    if (!/firebaseConfig/.test(app)) problems.push('index.html does not look like the app (no firebaseConfig)');
+    // The build moves the app's inline scripts into /wealthflow-inline-index-<n>-<hash>.js files, so
+    // the Firebase config is no longer in index.html itself: look in the files it loads as well.
+    let appText = app;
+    for (const m of app.matchAll(/<script[^>]*\ssrc="\/(wealthflow-inline-index-[A-Za-z0-9-]+\.js)"/g)) appText += '\n' + (read(m[1]) || '');
+    if (!/firebaseConfig/.test(appText)) problems.push('index.html does not look like the app (no firebaseConfig)');
     if (fs.existsSync(path.join(root, 'app.html'))) problems.push('app.html already exists');
 
     // The public pages must be reachable without the app: no script that sends everyone to the login wall.
