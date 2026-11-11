@@ -175,12 +175,3 @@ describe('gitFacts counts work that arrived by a merge commit', () => {
         } finally { fs.rmSync(dir, { recursive: true, force: true }); }
     });
 });
-
-describe('the app shell probe follows the scripts the build moved out of the page (CSP phase 2)', () => {
-  it('finds the inline-script files the page loads, same-origin only', async () => {
-    const { inlineScriptPaths } = await import('../autonomy/release-flow.mjs');
-    const html = '<script src="/wealthflow-inline-app-0-abc123.js"></script><script src="https://evil.example/wealthflow-inline-x-1-aaa.js"></script><script src="//cdn.example/wealthflow-inline-y-1-bbb.js"></script><script src="/other.js"></script><script src="/wealthflow-inline-app-0-abc123.js"></script>';
-    expect(inlineScriptPaths(html)).toEqual(['/wealthflow-inline-app-0-abc123.js']);
-    expect(inlineScriptPaths('')).toEqual([]);
-  });
-});

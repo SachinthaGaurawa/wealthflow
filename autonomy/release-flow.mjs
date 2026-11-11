@@ -29,6 +29,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { shellText, shellVersion } from './shell-version.mjs';
 
 const require = createRequire(import.meta.url);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -211,32 +212,19 @@ async function getText(url, ms = 20_000, tries = 2) {
     return null;
 }
 
-/* THE SHELL NO LONGER CARRIES ITS OWN SCRIPTS (CSP phase 2, #583): the build moves every inline script into a hashed file, `/wealthflow-inline-<page>-<n>-<hash>.js`, that the page loads with <script src>. The version marker lives
- * in one of those, so reading only the page's text found nothing and this probe called a healthy production "BROKEN" (Pipeline liveness failed on main for it). Same-origin, relative or absolute-path sources only. */
-export function inlineScriptPaths(html) {
-    const out = [];
-    for (const m of String(html || '').matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']*wealthflow-inline-[^"']+\.js)(?:\?[^"']*)?["']/gi)) if (!/^[a-z][a-z0-9+.-]*:|^\/\//i.test(m[1]) && !out.includes(m[1])) out.push(m[1]);
-    return out.slice(0, 8);
-}
-
 export async function deployedFacts(base) {
     const b = String(base).replace(/\/+$/, '');
     const q = `?_=${Date.now()}`;
-    const [api, man, appPage, sw] = await Promise.all([
-        getText(`${b}/api/version${q}`), getText(`${b}/version.json${q}`), getText(`${b}/app${q}`, 30_000), getText(`${b}/sw.js${q}`),
+    const [api, man, app, sw] = await Promise.all([
+        getText(`${b}/api/version${q}`), getText(`${b}/version.json${q}`), shellText(b, (u) => getText(u, 30_000), q), getText(`${b}/sw.js${q}`),
     ]);
-    let app = appPage;
-    if (appPage && !/WF_APP_VERSION\s*=\s*'/.test(appPage)) {
-        const files = await Promise.all(inlineScriptPaths(appPage).map(src => getText(`${b}/${src.replace(/^\.?\//, '')}`, 20_000)));
-        app = [appPage, ...files.filter(Boolean)].join('\n');
-    }
     if (!api && !man && !app && !sw) return null;
     let a = {}, m = {};
     try { a = JSON.parse(api || '{}'); } catch { /* not json */ }
     try { m = JSON.parse(man || '{}'); } catch { /* not json */ }
     return {
         version: a.version || null, sha: a.sha || null, manifest: m.latest || null,
-        shell: first(/WF_APP_VERSION\s*=\s*'(\d+\.\d+\.\d+)'/, app || ''),
+        shell: shellVersion(app),
         sw: first(/CACHE_NAME\s*=\s*'wealthflow-v(\d+\.\d+\.\d+)'/, sw || ''),
     };
 }
