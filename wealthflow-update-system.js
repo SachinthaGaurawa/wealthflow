@@ -597,7 +597,7 @@
 
     function _toggleRow(id, label, desc, on, fn) {
         return '<div class="setting-row"><div class="setting-info"><div class="setting-label">' + _esc(label) + '</div><div class="setting-desc">' + _esc(desc) + '</div></div>' +
-            '<div class="toggle' + (on ? ' on' : '') + '" id="' + id + '" role="switch" tabindex="0" aria-label="' + _esc(label) + '" aria-checked="' + (on ? 'true' : 'false') + '" onclick="wfUpdate.' + fn + '(!this.classList.contains(\'on\'))"></div></div>';
+            '<div class="toggle' + (on ? ' on' : '') + '" id="' + id + '" role="switch" tabindex="0" aria-label="' + _esc(label) + '" aria-checked="' + (on ? 'true' : 'false') + '" onclick="wfUpdate[\'' + fn + '\'](!this.classList.contains(\'on\'))"></div></div>';
     }
     function _fmtDate(ms) { try { return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); } catch (_) { return ''; } }
     /** Said only while a staged rollout has not reached this device, and only about what is true. */

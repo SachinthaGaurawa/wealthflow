@@ -5898,7 +5898,7 @@
                             style="font-family:var(--mono);font-size:22px;letter-spacing:8px;text-align:center;"></div>
                     <button class="auth-btn" onclick="verifyRecoveryOTP()">@checkCircle@ Verify code</button>
                     <button class="auth-btn ghost"
-                        onclick="$('recovOtpStep2').style.display='none';$('recovOtpStep1').style.display='block';">←
+                        onclick="document.getElementById('recovOtpStep2').style.display='none';document.getElementById('recovOtpStep1').style.display='block';">←
                         Resend or change email</button>
                 </div>
             </div>
@@ -10514,6 +10514,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (abs >= 100000) return c + ' ' + Math.round(n).toLocaleString('en-US');
             return c + ' ' + fmtN(n);
         };
+        window.fmtS = fmtS;   // a handler in the page names it (`fmtS(this.value)`); handlers are looked up on window, a `const` is not on it
 
         /* The exact figure under an abbreviated one ("LKR 3.50M" -> "LKR 3,500,000.00"); '' under a figure that is already written out, so a card never says the same number twice. */
         const fmtExact = (n) => (_wfDisplayPrefs().hide || Math.abs(parseFloat(n) || 0) >= 1000000) ? fmt(n) : '';
@@ -29022,7 +29023,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 '<div><label>' + label + '</label>'
                 + '<input type="number" step="0.1" min="0" placeholder="%" value="'
                 + (rates[k] != null ? _wfEsc(rates[k]) : '')
-                + '" onchange="wfSweeperSetRate(' + "'" + k + "'" + ', this.value)"></div>';
+                + '" onchange="wfSweeperSetRate(\'' + k + '\', this.value)"></div>';
 
             const gain = p.projectedAnnualGain != null
                 ? '<div class="wf-sw-sub" style="margin-top:10px;">At those rates this earns about <b>'
