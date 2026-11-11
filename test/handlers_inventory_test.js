@@ -118,4 +118,19 @@ describe('extraction and renaming', () => {
         }
         expect(left).toEqual([]);
     });
+
+    it('puts no handler attribute inside a page the app writes into ANOTHER window', () => {
+        // The delegator lives in the app document. A generated page (the loan statement popup, written with
+        // document.write) is a different document: a renamed attribute there would do nothing, and an inline one
+        // would need 'unsafe-inline' because that page inherits the app's policy. Its buttons are wired from the
+        // opener (`btn.onclick = fn`), so the template must carry none.
+        const text = fs.readFileSync(root + 'index.html', 'utf8');
+        const from = text.indexOf('function _buildLoanStatementHTML');
+        const to = text.indexOf('function openLoanStatement');
+        expect(from).toBeGreaterThan(0);
+        expect(to).toBeGreaterThan(from);
+        expect(extractHandlers(text.slice(from, to)).map((h) => h.code)).toEqual([]);
+        expect(text.slice(from, to)).toContain('id="btnPrint"');
+        expect(text).toContain("bind('btnClose', () => w.close())");
+    });
 });

@@ -21905,9 +21905,9 @@ table.amort tbody tr { page-break-inside: avoid; }
 <div class="toolbar no-print">
     <h2>${WFIcon.inline('fileText')}Loan Statement — ${esc(l.name)}</h2>
     <div style="display:flex;gap:8px;">
-        <button onclick="window.print()" id="btnPrint" title="Print or save as PDF (use 'Save as PDF' destination)">${WFIcon.inline('fileText')}Print / Save PDF</button>
-        <button onclick="window.__wfShareStatement && window.__wfShareStatement()" id="btnShare" class="btn-secondary" title="Share this statement">${WFIcon.inline('link')}Share</button>
-        <button onclick="window.close()" class="btn-secondary">${WFIcon.inline('x')}Close</button>
+        <button id="btnPrint" title="Print or save as PDF (use 'Save as PDF' destination)">${WFIcon.inline('fileText')}Print / Save PDF</button>
+        <button id="btnShare" class="btn-secondary" title="Share this statement">${WFIcon.inline('link')}Share</button>
+        <button id="btnClose" class="btn-secondary">${WFIcon.inline('x')}Close</button>
     </div>
 </div>
 
@@ -22041,6 +22041,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 // otherwise copies a text summary to the clipboard. This works without any
                 // server — the URL fallback only exists if Web Share supports url+files.
                 w.__wfShareStatement = () => _shareLoanStatement(w, l);
+                // The toolbar buttons are wired from here, not by inline onclick="..." in the generated page: this
+                // document inherits the app's Content-Security-Policy, which must not need 'unsafe-inline' for them.
+                const bind = (id, fn) => { const b = w.document.getElementById(id); if (b) b.onclick = fn; };
+                bind('btnPrint', () => w.print());
+                bind('btnShare', () => w.__wfShareStatement());
+                bind('btnClose', () => w.close());
                 w.focus();
                 notify('Statement opened — use Print / Save PDF to export.', 'success');
                 return;
