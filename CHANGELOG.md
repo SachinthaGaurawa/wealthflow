@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.77 — 2026-11-11
+
+**What changed for you**
+
+- CSP phase 2, step 2: the build makes the shipped page CSP-ready (handlers renamed, shapes allow-listed) (#582)
+
 ## v7.69.76 — 2026-11-11
 
 **What changed for you**
