@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.78 — 2026-11-11
+
+**What changed for you**
+
+- CSP phase 2, step 3: the build moves every inline script into a file (#583)
+
 ## v7.69.77 — 2026-11-11
 
 **What changed for you**
