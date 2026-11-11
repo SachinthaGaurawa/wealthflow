@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.74 — 2026-11-11
+
+**What changed for you**
+
+- Admin-looking paths 404, login and dashboard redirect to the app (#579)
+
 ## v7.69.73 — 2026-11-10
 
 **What changed for you**
