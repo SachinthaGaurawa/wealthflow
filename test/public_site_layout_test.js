@@ -36,16 +36,16 @@ describe('vercel.json serves the swapped layout', () => {
         expect(VERCEL.buildCommand).toBe('node build.mjs --write && node publish-layout.mjs');
     });
 
-    it('routes /app, /privacy and /terms before the catch-all, and the catch-all serves the app', () => {
-        const src = VERCEL.rewrites.map((r) => r.source);
+    it('routes /app, /privacy and /terms; there is no catch-all that answers an unknown path with the app', () => {
         const rule = (s) => VERCEL.rewrites.find((r) => r.source === s);
         expect(rule('/app').destination).toBe('/app.html');
+        expect(rule('/app/').destination).toBe('/app.html');
         expect(rule('/privacy').destination).toBe('/privacy.html');
         expect(rule('/terms').destination).toBe('/terms.html');
-        const catchAll = VERCEL.rewrites.findIndex((r) => r.destination === '/app.html' && r.source !== '/app');   // its source now names the probe paths it refuses
-        expect(catchAll).toBe(src.length - 1);
-        expect(VERCEL.rewrites[catchAll].destination).toBe('/app.html');
-        for (const s of ['/app', '/privacy', '/terms']) expect(src.indexOf(s)).toBeLessThan(catchAll);
+        /* The app lives at /app only. A rewrite that served it for every other path made /account, /portal,
+         * /staff and a hundred more answer 200, which a scanner reads as "an admin panel is reachable". */
+        const toApp = VERCEL.rewrites.filter((r) => r.destination === '/app.html').map((r) => r.source);
+        expect(toApp.sort()).toEqual(['/app', '/app/']);
     });
 
     it('keeps the app document revalidating exactly like the old index.html', () => {

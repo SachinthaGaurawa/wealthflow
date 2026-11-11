@@ -26,11 +26,10 @@ describe('the route', () => {
         expect(read('tenant-portal.mjs')).toContain('Path=/api/tenant-portal');
     });
 
-    it('rewrites exactly the link a text carries to the page, ahead of the catch-all', () => {
+    it('rewrites exactly the link a text carries to the page', () => {
         const rewrites = VERCEL.rewrites;
         const at = rewrites.findIndex((r) => r.destination === '/tenant.html');
         expect(at).toBeGreaterThan(0);
-        expect(at).toBeLessThan(rewrites.findIndex((r) => r.destination === '/app.html' && r.source !== '/app'));
         expect(rewrites[0].source).toBe('/api/(.*)');                                   // the API is untouched
         const re = new RegExp(`^${rewrites[at].source}$`);
         for (let i = 0; i < 50; i += 1) {
