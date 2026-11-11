@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.83 — 2026-11-11
+
+**What changed for you**
+
+- Statement reader self-audit: category gap and credit wording on a debit (#596)
+
 ## v7.69.82 — 2026-11-11
 
 **What changed for you**
