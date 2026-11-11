@@ -187,11 +187,21 @@ export default async function handler(req, res) {
         res.setHeader('Cache-Control', 'public, max-age=300');
         res.setHeader('X-Statement-Name', encodeURIComponent(name));
         res.setHeader('X-Statement-Views', String(parseInt(views, 10) + 1));
-        return res.status(200).send(html);
+        return res.status(200).send(withToolbarScript(html));
     } catch (e) {
         console.error('[statement-view] error:', e.message);
         return res.status(500).json({ error: 'server_error', detail: e.message });
     }
+}
+
+/* The page's own toolbar buttons are wired by one same-origin file, not by inline handlers that the
+ * Content-Security-Policy (no 'unsafe-inline' in script-src) would block. Added to every statement
+ * served, old ones included. A stored document's own scripts stay blocked. */
+export function withToolbarScript(html) {
+    const tag = '<script src="/wf-stmt-toolbar.js"></script>';
+    const s = String(html == null ? '' : html);
+    const i = s.search(/<\/body\s*>/i);
+    return i === -1 ? s + tag : s.slice(0, i) + tag + s.slice(i);
 }
 
 async function _incrementViewCount(collection, docId, currentViews) {

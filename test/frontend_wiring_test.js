@@ -15,6 +15,7 @@ const html = read('index.html');
 
 const NOT_LOADED = {
     'HANDLEAISCAN_PATCH.js': 'a patch dump to paste into index.html, not a module (autonomy/agent-swarm.mjs ignores it too)',
+    'wf-stmt-toolbar.js': 'loaded by the shared statement page (/r/<id>) that statement-view.js serves, not by the app; test/statement_view_toolbar_test.js covers it',
     'pwa-updater.js': 'a second update poller; index.html loads wealthflow-live-update.js for that job — only its own test references this one',
 };
 

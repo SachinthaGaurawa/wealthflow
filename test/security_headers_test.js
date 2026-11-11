@@ -68,6 +68,17 @@ describe('Content-Security-Policy (finding 1)', () => {
         }
     });
 
+    it('scripts run only from files: no inline script, no inline handler, no eval (finding 1, phase 2)', () => {
+        /* The build moves every inline script into a hashed file and ships handlers as data-wf-on-*
+         * attributes that wealthflow-handlers.js runs without eval. With both in place the keyword is
+         * unnecessary, and an injected <script> or onclick= stays inert. test/e2e/strict-csp.mjs boots
+         * the built app under exactly this policy. */
+        expect(CSP['script-src']).not.toContain("'unsafe-inline'");
+        expect(CSP['script-src']).not.toContain("'unsafe-eval'");
+        expect(CSP['script-src']).toContain("'self'");
+        expect(CSP['script-src']).toContain("'wasm-unsafe-eval'");
+    });
+
     it('lets a CDN supply only the exact packages the app loads', () => {
         const cdn = CSP['script-src'].filter((x) => /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com/.test(x));
         expect(cdn.length).toBeGreaterThan(0);
