@@ -207,6 +207,7 @@
          0 errors while you were living through repeated crashes. -->
     <script src="wealthflow-stability.js"></script>
     <script src="wealthflow-icons.js"></script>
+    <script type="module" src="wealthflow-handlers.js"></script>
     <!-- v7.5.5 — user-scalable=no + maximum-scale=1 prevents the iOS Safari
          "address-bar collapses when user pinches" behaviour that was
          showing up as a sudden full app refresh. Tap-to-zoom on form
@@ -30756,7 +30757,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const userPhoto = currentUser && currentUser.photoURL ? currentUser.photoURL : '';
             const bioData = getDeviceBiometric();
             const bioRegistered = !!(bioData && bioData.rawId);
-            const settingSwitch = (key, on, id, action) => `<div${id ? ` id="${id}"` : ''} class="toggle${on ? ' on' : ''}" data-setting="${key}" role="switch" tabindex="0" aria-checked="${on}" onclick="${action || `toggleSetting('${_wfJsAttr(key)}',${!on},this)`}"></div>`;
+            const settingSwitch = (key, on, id, themeToggle) => `<div${id ? ` id="${id}"` : ''} class="toggle${on ? ' on' : ''}" data-setting="${key}" role="switch" tabindex="0" aria-checked="${on}" ${themeToggle ? `onclick="toggleTheme(this)"` : `onclick="toggleSetting('${_wfJsAttr(key)}',${!on},this)"`}></div>`;
 
             // Calculate data stats
             const totalIncome = DB.get('income').length;
@@ -30814,7 +30815,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--accent);">Appearance</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Dark theme</div><div class="setting-desc">Switch between light and dark appearance.</div></div>
-                ${settingSwitch('theme', s.theme === 'dark', '', 'toggleTheme(this)')}
+                ${settingSwitch('theme', s.theme === 'dark', '', true)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Haptic feedback</div><div class="setting-desc">Gentle vibration when you tap, confirm or receive an alert. No sound.</div></div>

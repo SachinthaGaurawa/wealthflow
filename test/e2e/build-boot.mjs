@@ -80,6 +80,69 @@ export async function run({ keep = false } = {}) {
             if (!seen.dash) failures.push('the dashboard did not render');
             if (seen.missing.length) failures.push('modules did not run: ' + seen.missing.join(', '));
 
+            /* THE HANDLERS (build.mjs step 1b). The shipped page has no inline handler left, the delegator runs
+             * the same ones, and text it was not shipped is refused. Skipped only if the build left handlers inline. */
+            if (out.csp && out.csp.applied) {
+                const h = await app.page.evaluate(async () => {
+                    const q = (sel) => document.querySelectorAll(sel).length;
+                    const res = { inline: q('[onclick],[onchange],[oninput],[onerror],[onkeydown],[onsubmit]'), carriers: q('[data-wf-on-click]'), api: !!(window.WFHandlers && window.WFHandlers.shapes) };
+                    // 1. a sidebar entry opens its page, as `onclick="showPage('x', this)"` did
+                    const navs = [...document.querySelectorAll('.sb-nav .nav-item[data-wf-on-click*="showPage("]')];
+                    res.navs = navs.length;
+                    const opened = [];
+                    for (const n of navs.slice(0, 6)) {
+                        n.click();
+                        const m = /showPage\('([a-z0-9_-]+)'/i.exec(n.getAttribute('data-wf-on-click') || '');
+                        const pg = m && document.getElementById('page-' + m[1]);
+                        opened.push(!!(pg && pg.classList.contains('active')));
+                    }
+                    res.opened = opened;
+                    // 2. a modal opens and closes through openModal(...) / closeModal(...)
+                    const op = document.querySelector('[data-wf-on-click^="openModal(\'mdExpense\')"], [data-wf-on-click^="openModal(\'mdIncome\')"]');
+                    if (op) {
+                        const id = /openModal\('([A-Za-z]+)'/.exec(op.getAttribute('data-wf-on-click'))[1];
+                        op.click();
+                        const el = document.getElementById(id);
+                        res.modalOpen = !!(el && (el.classList.contains('open') || el.classList.contains('show') || el.classList.contains('active') || getComputedStyle(el).display !== 'none'));
+                        const cl = el && el.querySelector('[data-wf-on-click^="closeModal("]');
+                        if (cl) cl.click();
+                        res.modalClosed = !!(el && !(el.classList.contains('open') || el.classList.contains('show') || el.classList.contains('active')));
+                    }
+                    // 2b. every handler on every screen just visited is a shipped shape whose names exist on window (nothing is run)
+                    const allNavs = [...document.querySelectorAll('.sb-nav .nav-item[data-wf-on-click*="showPage("]')];
+                    for (const n of allNavs) n.click();
+                    const known = new Set(['document', 'window', 'parseInt', 'parseFloat', 'Math', 'Number', 'String', 'JSON', 'Date', 'setTimeout', 'navigator', 'location', 'history', 'console']);
+                    res.checked = 0; res.notShipped = []; res.missingNames = [];
+                    for (const el of document.querySelectorAll('*')) {
+                        for (const a of el.attributes) {
+                            if (!a.name.startsWith('data-wf-on-')) continue;
+                            res.checked += 1;
+                            if (!window.WFHandlers.allowed(a.value)) { res.notShipped.push(a.value.slice(0, 60)); continue; }
+                            for (const r of window.WFHandlers.roots(a.value)) if (!known.has(r) && !(r in window)) res.missingNames.push(r + ' in ' + a.value.slice(0, 50));
+                        }
+                    }
+                    // 3. text that was not shipped is refused, and does nothing
+                    window.__wfInjected = 0;
+                    const evil = document.createElement('div');
+                    evil.setAttribute('data-wf-on-click', 'window.__wfInjected = 1');
+                    document.body.appendChild(evil);
+                    evil.click();
+                    res.injected = window.__wfInjected;
+                    evil.remove();
+                    return res;
+                });
+                if (h.inline) failures.push('the built page still has ' + h.inline + ' inline handler attribute(s)');
+                if (!h.api) failures.push('wealthflow-handlers.js did not install (no window.WFHandlers)');
+                if (h.carriers < 50) failures.push('only ' + h.carriers + ' elements carry a handler: the rename did not happen');
+                if (h.navs < 3 || h.opened.some((x) => !x)) failures.push('sidebar entries did not open their pages through the delegator: ' + JSON.stringify(h.opened));
+                if (h.modalOpen === false || h.modalClosed === false) failures.push('a modal did not open and close through the delegator: ' + JSON.stringify({ open: h.modalOpen, closed: h.modalClosed }));
+                if (h.notShipped.length) failures.push(h.notShipped.length + ' rendered handler(s) have a shape that was not shipped, e.g. ' + h.notShipped.slice(0, 3).join(' | '));
+                if (h.missingNames.length) failures.push('rendered handlers name something not on window: ' + [...new Set(h.missingNames)].slice(0, 6).join(' | '));
+                if (h.checked < 100) failures.push('only ' + h.checked + ' rendered handlers were checked');
+                if (h.injected) failures.push('a handler that was not shipped RAN (the shape check is not working)');
+                console.log('  handlers: ' + h.carriers + ' elements carry one, ' + out.csp.shapes + ' shapes allowed, ' + h.checked + ' rendered ones verified, ' + h.navs + ' nav entries opened pages, foreign text refused');
+            } else console.log('  handlers left inline: ' + (out.csp && out.csp.skipped));
+
             /* Every module tag must be asking for a HASHED name. An unhashed one
              * means a reference the build did not rewrite, which would be served
              * — and then cached for a year under a name that says nothing about
