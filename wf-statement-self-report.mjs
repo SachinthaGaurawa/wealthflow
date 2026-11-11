@@ -34,6 +34,16 @@ const KINDS = {
         why: 'The statement\'s own plan table lists instalment plans, yet no charge line was read as a plan line or matched to a table row, so the plans may be missing from CC Installments or their charges filed as purchases. This may be benign (the month\'s charge was not due yet); it is reported once so it can be checked.',
         todo: 'Compare how the statement prints the plan\'s monthly charge with what installmentInfo, planFor and the plan table expect (a different instalment amount, a charge without plan words, a table in another layout) and make the rules read it. Add a test with an INVENTED statement; never copy real numbers, names or lines into the repository.',
     },
+    'category-gap': {
+        title: 'Statement reader: most of a statement\'s spending fell into the catch-all category',
+        why: 'At least half of the spending rows of one statement (eight or more rows) were filed under "Other": neither the category rules nor the merchant list recognise most of this statement\'s merchants. The reader noticed this by itself. It may be a new bank\'s wording, a language the rules do not cover, or text garbled by the PDF.',
+        todo: 'Find the pattern in how this kind of statement words its merchants (a prefix or gateway code, another language, a transliteration, a garbled text layer) and teach the category rules and the merchant list to read it, on both the email worker and the manual upload. Add a test with INVENTED merchant names; never copy real names or lines into this public repository.',
+    },
+    'credit-wording-on-debit': {
+        title: 'Statement reader: a debit row carries credit wording (refund, reversal, cashback, salary)',
+        why: 'One or more rows read as money going out say refund, reversal, cashback, salary, payroll or dividend. Money that comes in may be filed as spending: a direction read the wrong way, or a credit marker the reader missed. It can also be benign (salary paid out to staff); it is reported once so it can be checked.',
+        todo: 'Look at how this kind of statement marks credits (a CR before or after the amount, a separate column, a minus sign, a reversal wording) and make the direction rules read it, on both the email worker and the manual upload. Add a test with an INVENTED statement; never copy real numbers, names or lines into this public repository.',
+    },
 };
 
 const clean = value => String(value == null ? '' : value).replace(/[^A-Za-z _-]/g, '').replace(/ {2,}/g, ' ').trim().slice(0, 40);
