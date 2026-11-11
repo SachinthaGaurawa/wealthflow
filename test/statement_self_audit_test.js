@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { statementSelfAudit } from '../wf-statement-self-audit.mjs';
+import { statementSelfAudit, looksGarbled } from '../wf-statement-self-audit.mjs';
 import { reportBody, reportSuspectReading } from '../wf-statement-self-report.mjs';
 import { readPlanTable } from '../statement-plan-table.mjs';
 
@@ -37,11 +37,28 @@ describe('the reader notices what its own rules did not understand', () => {
         expect(statementSelfAudit({ rows })).toEqual([{ kind: 'credit-wording-on-debit', count: 2 }]);
     });
     it('the report for the new kinds holds no statement text or long numbers', () => {
-        for (const kind of ['plan-like-line-unread', 'plan-table-unmatched', 'category-gap', 'credit-wording-on-debit']) {
+        for (const kind of ['plan-like-line-unread', 'plan-table-unmatched', 'category-gap', 'credit-wording-on-debit', 'garbled-text', 'card-credit-unrecognised']) {
             const body = reportBody(kind, { bank: 'NTB 4000 0000 0000 0001', rows: 12 });
             expect(body).toContain(kind);
             expect(body).not.toMatch(/\d{4,}/);
         }
+    });
+    it('scrambled descriptions are recognised, ordinary and abbreviated ones are not', () => {
+        for (const bad of ['S1NGER K3ELLS M4RKET C0LOMBO', 'AB\uFFFD\uFFFDCD EF\uFFFDGH', '@@#$ %^&* !!~~ ((**))', 'PAY\u0003MENT\u0007 DUE\u0001']) expect(looksGarbled(bad), bad).toBe(true);
+        for (const ok of ['KEELLS SUPER COLOMBO 03', 'ONLINE PYMT THANK YOU', 'TXN12AB45 UBER TRIP', 'CEFT TRF REF 00123456', '7ELEVEN FORT', 'SLT-MOBITEL BILL', 'ශ්\u200dරී ලංකා ටෙලිකොම්', 'ATM', '']) expect(looksGarbled(ok), ok).toBe(false);
+    });
+    it('a statement whose descriptions are mostly scrambled is a finding; a few damaged lines or a short statement are not', () => {
+        const bad = (n) => Array.from({ length: n }, (_, i) => dr('S1NGER K3ELLS M4RKET ' + i, 100 + i));
+        const good = (n) => Array.from({ length: n }, () => dr('KEELLS SUPER COLOMBO', 1500));
+        expect(statementSelfAudit({ rows: [...bad(4), ...good(6)] }).find(f => f.kind === 'garbled-text')).toEqual({ kind: 'garbled-text', count: 4 });
+        expect(statementSelfAudit({ rows: [...bad(2), ...good(10)] }).find(f => f.kind === 'garbled-text')).toBeUndefined();
+        expect(statementSelfAudit({ rows: bad(4) }).find(f => f.kind === 'garbled-text')).toBeUndefined();     // too few rows to say
+    });
+    it('a card credit with no payment, refund, waiver or cashback wording is a finding (only on a card statement)', () => {
+        const cr = (d, a = 1000) => ({ description: d, amount: a, direction: 'credit', date: '2026-10-22' });
+        const rows = [cr('CASH PAYMENT-FINACLE', 50000), cr('MERCHANT REFUND 123'), cr('ANNUAL FEE WAIVER'), cr('CASHBACK ON YOUR OCT NETFLIX SUBSCRIPTION'), cr('INST 1 - REM BAL - 110000.00 - <1/12> CONVERSION', 10000), cr('AMEX SPECIAL OFFER ZXQ', 2500), dr('KEELLS SUPER', 1500)];
+        expect(statementSelfAudit({ rows, card: true })).toEqual([{ kind: 'card-credit-unrecognised', count: 1 }]);
+        expect(statementSelfAudit({ rows })).toEqual([]);                                                       // a bank account's credits are income: not this audit's business
     });
     it('does nothing when the deployment cannot file issues', async () => {
         expect(await reportSuspectReading('plan-like-line-unread', {}, { env: {} })).toEqual({ filed: false, reason: 'not-configured' });
