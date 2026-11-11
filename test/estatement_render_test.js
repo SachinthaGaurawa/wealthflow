@@ -72,6 +72,14 @@ function makeDom(html) {
 }
 
 /** A document/window pair that records every frame and can deliver a message. */
+/** The nonce of a frame: the sandbox page loads, then the parent posts it the document to run. */
+function nonceOf(f) {
+    if (!f.contentWindow.posted.length && f.listeners.load) f.listeners.load();
+    const doc = f.contentWindow.posted[0] && f.contentWindow.posted[0].doc;
+    expect(doc, 'the document to run was never posted to the frame').toBeTruthy();
+    return (String(doc).match(/var N="([^"]+)"/) || [])[1];
+}
+
 function makeEnv() {
     const msgFns = [];
     const created = [];
@@ -93,8 +101,9 @@ function makeEnv() {
         body,
         createElement() {
             const el = {
-                style: {}, attrs: {}, parentNode: null, srcdoc: '',
-                contentWindow: { id: created.length },
+                style: {}, attrs: {}, parentNode: null, srcdoc: '', src: '', listeners: {},
+                contentWindow: { id: created.length, posted: [], postMessage(m) { this.posted.push(m); } },
+                addEventListener(t, fn) { el.listeners[t] = fn; },
                 setAttribute(k, v) { el.attrs[k] = String(v); },
                 getAttribute(k) { return Object.prototype.hasOwnProperty.call(el.attrs, k) ? el.attrs[k] : null; },
             };
@@ -110,7 +119,7 @@ function makeEnv() {
         /** The frame's own answer: right nonce, right source. */
         answer(html, idx = 0) {
             const f = created[idx];
-            const nonce = (f.srcdoc.match(/var N="([^"]+)"/) || [])[1];
+            const nonce = nonceOf(f);
             expect(nonce, 'the bootstrap does not carry a nonce').toBeTruthy();
             this.deliver({ __wfhs: nonce, html }, f.contentWindow);
             return nonce;
@@ -222,6 +231,21 @@ describe('the frame is contained', () => {
         await p;
     });
 
+    it('loads the sandbox PAGE (its own policy), not a srcdoc that would inherit the app\'s', async () => {
+        const env = makeEnv();
+        const p = W.renderInSandbox('<p>x</p>', { document: env.doc, window: env.win, timeoutMs: 30 });
+        const f = env.created[0];
+        expect(f.src).toBe('/wf-sandbox.html');
+        expect(f.srcdoc, 'a srcdoc document inherits the app policy, which has no inline script').toBe('');
+        expect(f.contentWindow.posted, 'the document was posted before the page had loaded').toHaveLength(0);
+        f.listeners.load();
+        expect(f.contentWindow.posted).toHaveLength(1);
+        expect(f.contentWindow.posted[0].__wfhs_doc).toBe(1);
+        expect(f.contentWindow.posted[0].doc).toContain('<p>x</p>');
+        env.answer('<p>y</p>');
+        await p;
+    });
+
     it('sends no referrer and is out of the tab order', async () => {
         const env = makeEnv();
         const p = W.renderInSandbox('<p>x</p>', { document: env.doc, window: env.win, timeoutMs: 30 });
@@ -263,7 +287,7 @@ describe('the frame answers, or it is torn down', () => {
     it('ignores the right nonce arriving from the wrong window', async () => {
         const env = makeEnv();
         const p = W.renderInSandbox(SHELL, { document: env.doc, window: env.win, timeoutMs: 30 });
-        const nonce = (env.created[0].srcdoc.match(/var N="([^"]+)"/) || [])[1];
+        const nonce = nonceOf(env.created[0]);
         env.deliver({ __wfhs: nonce, html: RENDERED }, { id: 'someone else' });
         expect(await p).toBe('');
     });
@@ -545,7 +569,7 @@ describe('what the frame reported reaches the diagnostic', () => {
     /** Answer as the frame would, with an arbitrary payload. */
     function answerWith(env, payload, idx = 0) {
         const f = env.created[idx];
-        const nonce = (f.srcdoc.match(/var N="([^"]+)"/) || [])[1];
+        const nonce = nonceOf(f);
         env.deliver(Object.assign({ __wfhs: nonce }, payload), f.contentWindow);
     }
 

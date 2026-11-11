@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>WealthFlow statement sandbox</title>
+</head>
+<body>
+<!--
+  The page the statement reader runs a bank statement in (wealthflow-html-statement.js, renderInSandbox).
+
+  WHY A PAGE OF ITS OWN. A statement is an application: its rows are drawn by its own inline scripts, so the frame
+  that runs it must allow inline script. The app itself must not (its Content-Security-Policy has no
+  'unsafe-inline'), and a document written with `srcdoc` inherits the policy of the page that holds it. So the frame
+  loads THIS file, whose response carries its own, separate policy (vercel.json, "/wf-sandbox.html"): no network, no
+  frames, inline script allowed. The frame is sandboxed with allow-scripts and nothing else, so it has an opaque
+  origin and cannot reach the app's storage, DOM or session whatever the statement does.
+
+  It is inert until its parent sends the document to run: one message, from the parent window only, which is
+  written into this page. Opened by itself it does nothing.
+-->
+<script>
+(function () {
+    'use strict';
+    var done = false;
+    window.addEventListener('message', function (e) {
+        if (done || e.source !== window.parent) return;
+        var d = e.data;
+        if (!d || typeof d !== 'object' || d.__wfhs_doc !== 1 || typeof d.doc !== 'string') return;
+        done = true;
+        document.open();
+        document.write(d.doc);
+        document.close();
+    });
+})();
+</script>
+</body>
+</html>

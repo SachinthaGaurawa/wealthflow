@@ -105,6 +105,34 @@ describe('Content-Security-Policy (finding 1)', () => {
     });
 });
 
+describe('the statement reader sandbox page', () => {
+    // The statement reader runs a bank statement (an application with its own inline scripts) in a frame. A srcdoc frame
+    // would inherit the app's policy, so the frame loads wf-sandbox.html, whose response carries a policy of its own.
+    const sb = parseCsp(headersFor('/wf-sandbox.html')['Content-Security-Policy']);
+    it('is its own rule, later than the global one, so its policy replaces the app policy for that path', () => {
+        const order = VERCEL.headers.map((r) => r.source);
+        expect(order.indexOf('/wf-sandbox.html')).toBeGreaterThan(order.indexOf('/(.*)'));
+        expect(fs.existsSync(path.join(ROOT, 'wf-sandbox.html'))).toBe(true);
+    });
+    it('allows inline script and nothing that reaches the network', () => {
+        expect(sb['default-src']).toEqual(["'none'"]);
+        expect(sb['script-src']).toEqual(["'unsafe-inline'", "'unsafe-eval'"]);
+        for (const k of ['connect-src', 'frame-src', 'form-action']) {
+            const v = sb[k] || sb['default-src'];
+            expect(v, k).toEqual(["'none'"]);
+        }
+        expect(sb['img-src']).toEqual(['data:']);
+        expect(sb['frame-ancestors']).toEqual(["'self'"]);
+        expect(headersFor('/wf-sandbox.html')['X-Frame-Options']).toBe('SAMEORIGIN');
+    });
+    it('is the same policy the document the frame is handed declares for itself', () => {
+        const m = /_SANDBOX_CSP = ((?:"[^"]*"\s*\+?\s*)+);/.exec(read('wealthflow-html-statement.js'));
+        expect(m, 'the in-document policy was not found').toBeTruthy();
+        const inDoc = parseCsp(m[1].split('+').map((x) => x.trim().replace(/^"|"$/g, '')).join(''));
+        for (const k of Object.keys(inDoc)) expect(sb[k], k).toEqual(inDoc[k]);
+    });
+});
+
 describe('subresource integrity for CDN scripts', () => {
     const html = read('index.html');
     const reg = (() => {

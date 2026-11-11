@@ -65,6 +65,9 @@ function _isAppShell(url) {
         || p === '/app'
         || p === '/app.html'
         || p === '/manifest.json'
+        // The page the statement reader runs a bank statement in. Without it an offline upload of an
+        // HTML statement could not be read (the frame has nothing to load).
+        || p === '/wf-sandbox.html'
         || /^\/wealthflow-[a-zA-Z0-9-]+\.js$/.test(p)
         // The design system. Without these an offline cold start would render the
         // app with its own inline defaults: working, but not the interface that was
