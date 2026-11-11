@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.87 — 2026-11-11
+
+**What changed for you**
+
+- Manual upload files a card statement like the email worker (card type, card category, card subscription charge) (#601)
+
 ## v7.69.86 — 2026-11-11
 
 **What changed for you**
