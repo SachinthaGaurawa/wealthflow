@@ -29,6 +29,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { shellText, shellVersion } from './shell-version.mjs';
 
 const require = createRequire(import.meta.url);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -215,7 +216,7 @@ export async function deployedFacts(base) {
     const b = String(base).replace(/\/+$/, '');
     const q = `?_=${Date.now()}`;
     const [api, man, app, sw] = await Promise.all([
-        getText(`${b}/api/version${q}`), getText(`${b}/version.json${q}`), getText(`${b}/app${q}`, 30_000), getText(`${b}/sw.js${q}`),
+        getText(`${b}/api/version${q}`), getText(`${b}/version.json${q}`), shellText(b, (u) => getText(u, 30_000), q), getText(`${b}/sw.js${q}`),
     ]);
     if (!api && !man && !app && !sw) return null;
     let a = {}, m = {};
@@ -223,7 +224,7 @@ export async function deployedFacts(base) {
     try { m = JSON.parse(man || '{}'); } catch { /* not json */ }
     return {
         version: a.version || null, sha: a.sha || null, manifest: m.latest || null,
-        shell: first(/WF_APP_VERSION\s*=\s*'(\d+\.\d+\.\d+)'/, app || ''),
+        shell: shellVersion(app),
         sw: first(/CACHE_NAME\s*=\s*'wealthflow-v(\d+\.\d+\.\d+)'/, sw || ''),
     };
 }

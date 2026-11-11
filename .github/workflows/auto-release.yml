@@ -417,7 +417,7 @@ jobs:
       # ── A RELEASE IS NOT DONE WHEN IT IS PUSHED. IT IS DONE WHEN IT IS LIVE. ──
       # Poll the real production endpoints until they serve the new version in all
       # three places a device reads it: /api/version, /version.json and the app shell
-      # itself (/app carries WF_APP_VERSION). Anything else files an issue and fails
+      # itself (/app, or the inline-script file it loads: WF_APP_VERSION lives there since the strict CSP). Anything else files an issue and fails
       # the run, so "version bumped but nothing shipped" can never read as green again.
       - name: Confirm the new version is LIVE in production
         if: steps.due.outputs.due == 'yes' && steps.gates.outputs.ok == 'yes' && steps.release.outputs.declined != 'yes' && steps.release.outputs.moved != 'yes'
@@ -437,7 +437,8 @@ jobs:
             i=$((i+1))
             A=$(curl -sL --max-time 15 "$BASE/api/version?_=$i" | node -pe "try{JSON.parse(require('fs').readFileSync(0,'utf8')).version}catch(e){''}")
             B=$(curl -sL --max-time 15 "$BASE/version.json?_=$i" | node -pe "try{JSON.parse(require('fs').readFileSync(0,'utf8')).latest}catch(e){''}")
-            C=$(curl -sL --max-time 20 "$BASE/app?_=$i" | grep -o "WF_APP_VERSION = '[0-9.]*'" | head -1 | grep -o "[0-9][0-9.]*")
+            # C is WF_APP_VERSION as the browser sees it: from /app or from the inline-script file the page loads
+            C=$(node autonomy/shell-version.mjs "$BASE/app?_=$i")
             echo "try $i: api=$A version.json=$B app=$C"
             if [ "$A" = "$V" ] && [ "$B" = "$V" ] && [ "$C" = "$V" ]; then LIVE=yes; break; fi
             sleep 20
