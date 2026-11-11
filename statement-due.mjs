@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import { canonicalBank } from './wealthflow-institutions.js';
 
-const cents = value => { const n = Number(value); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null; };
+const cents = value => { if (value === null || value === undefined || value === '') return null; const n = Number(value); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null; };
 const isDay = value => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || '')); if (!m) return false; const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])); return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3]; };
 export const isCardStatement = statementType => String(statementType || '').toLowerCase().replace(/[^a-z]/g, '') === 'creditcard';
 

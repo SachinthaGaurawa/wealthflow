@@ -37085,6 +37085,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 });
             };
             _routeAll();
+            // a purchase turned into an instalment plan is printed as a credit and a debit of the same amount and words: they cancel, so neither is spending nor a payment (statement-conversion.mjs)
+            try { const _R = window.WFStatementRouter; if (_acctType === 'credit_card' && _R && _R.conversionLegs) { const _legs = _R.conversionLegs(txns, [], () => true); txns.forEach((t) => { if (_legs.has(t)) { t._dest = 'skip'; t._conversion = 1; t.type = ''; } }); } } catch (_) {}
             // ── v7.61.0 — REAL-TIME merchant discovery. Every merchant this statement
             //    contains that nothing could identify is sent to your OWN /api/ai, where
             //    TWO independent passes must AGREE and both score >= 0.95 before it is

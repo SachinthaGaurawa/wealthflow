@@ -33,6 +33,7 @@ import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
 import { bankAgrees } from './wealthflow-institutions.js';
 import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow, installmentInfo, isCardFeeWording } from './wealthflow-statement-router.js';
 import { readPlanTable, planFor } from './statement-plan-table.mjs';
+import { conversionLegs } from './statement-conversion.mjs';
 import { PROPOSAL, REVIEW, decisionProblem, agreedRows, approvedRows, reviewPrompt, proposalPrompt, inVocabulary } from './statement-board.mjs';
 import { healLoanLinks } from './loan-link.mjs';
 import { manualTwin, markTwin } from './statement-links.mjs';
@@ -329,6 +330,8 @@ async function askBoard(rows, rules, allocations, board) {
 export const namedCardCategory = category => (category && !/^(?:other|needs review|card\s)/i.test(String(category)) && CLASSIFY_CATEGORIES.includes(category) ? category : 'Card Purchase');
 export function deterministicDecision(row, allocations = {}) {
     const description = String(row?.narration || row?.description || '');
+    /* THE TWO LEGS OF A PURCHASE TURNED INTO AN INSTALMENT PLAN cancel each other (statement-conversion.mjs): left out of the books, the plan's instalments carry the money */
+    if (allocations.conversionRows && row && allocations.conversionRows.has(row)) return { module: 'skip', category: 'Instalment conversion', allocationId: '', verified: true, deterministic: true, conversion: true };
     /* THE OWNER'S OWN CARD IN A BANK ROW IS THE OWNER'S OWN MONEY (wealthflow-own-money.js, the same rule the manual upload applies): "Cash advance cr 376657******0276" is money drawn on the AMEX arriving in
      * the account, not income; the card statement carries the advance. It is decided from the Cards & Accounts registry and the owner's own statements before any wording of a transfer is asked for. */
     const own = ownMoney({ description, direction: row?.direction, isCard: isCreditCardRow(row || {}, allocations), registry: allocations.cardRegistry, tails: allocations.own });
@@ -1764,7 +1767,7 @@ export async function reopenSkippedTransfers({ db, uid, limit = 3, until = Infin
     const by = new Map();
     for (const doc of found.docs) {
         const entry = doc.data() || {};
-        if (entry.uid !== uid || entry.module !== 'skip' || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(entry.sourcePath || ''))) continue;
+        if (entry.uid !== uid || entry.module !== 'skip' || entry.reason === 'instalment-conversion' || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(entry.sourcePath || ''))) continue;
         if (!by.has(entry.sourcePath)) by.set(entry.sourcePath, []);
         by.get(entry.sourcePath).push(doc.id);
     }
@@ -2500,6 +2503,8 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 const hit = said.isInstallment ? planFor(planTable, row.amount, said.of) : null;
                 if (hit) row.plan = hit;
             }
+            /* A PURCHASE TURNED INTO A PLAN is printed as a credit and a debit of the same amount and words on one day (statement-conversion.mjs): they cancel, so neither is spending and neither is a payment */
+            Object.defineProperty(allocations, 'conversionRows', { value: conversionLegs(parsed.rows, planTable, row => isCreditCardRow(row, allocations)), enumerable: false });
             /* A STATEMENT BEING RESUMED (resumePartialStatements) is replayed from its first row: the rows the ledger already holds are
              * checked against this reading by fingerprint inside the settlement, and cost no classification here. */
             /* THE COMPOSITE KEY, TAKEN BEFORE A ROW IS FILED: bank + account + the statement's month (+ the file's bytes). If the owner's upload (or another
