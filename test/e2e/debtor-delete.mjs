@@ -63,7 +63,7 @@ const t1 = await tomb();
 check(typeof t1.DMenika === 'number' && t1.DMenika > 0, `the deletion is tombstoned so no other device brings it back: ${JSON.stringify(t1)}`);
 
 // 3. the Undo bar brings it back, and wins over the tombstone on every device
-check(await page.locator('#wfUndoBar #wfUndoBtn').count() === 1, 'an Undo button is offered after a delete');
+check(await page.locator('#wfUndoBar #wfUndoBtn').count() === 1 && /Undo delete/.test(await page.locator('#wfUndoBtn').innerText()), 'an "Undo delete" button is offered after a delete');
 await page.locator('#wfUndoBtn').click();
 await page.waitForTimeout(400);
 check(JSON.stringify(await ids()) === '["DKeep","DMenika","DOpen","DSettled"]', 'Undo restores the debtor');

@@ -25884,7 +25884,7 @@ table.amort tbody tr { page-break-inside: avoid; }
          *   2. it is found by id, and when a legacy debtor has none, by the object itself, so one delete can never take a neighbour with it;
          *   3. it can be taken back for ten seconds. The restored record loses its old stamp: a record that comes back with its OLD _ut would
          *      be older than the deletion's tombstone and every other device would delete it again. */
-        const _debtorSame = (a, b) => !!a && !!b && (a === b || (a.id != null && a.id === b.id));
+        const _debtorSame = (a, b) => { if (!a || !b) return false; if (a === b) return true; if (a.id != null || b.id != null) return a.id === b.id; try { return JSON.stringify(a) === JSON.stringify(b); } catch (_) { return false; } };   // an id-less legacy debtor is matched by its whole content, so a reload (new object) still finds it
         function _wfUndoBar(msg, label, onUndo) {
             try {
                 const old = document.getElementById('wfUndoBar'); if (old) old.remove();
@@ -25920,7 +25920,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     try { triggerHaptic('light'); } catch (_) {}
                     renderLiquidity();
                     try { renderDash(); } catch (_) {}
-                    _wfUndoBar(who + ' deleted', 'Undo', () => {
+                    _wfUndoBar(who + ' deleted', 'Undo delete', () => {
                         const back = (DB.get('debtors') || []).slice();
                         if (back.some((x) => _debtorSame(x, removed))) return;
                         const rest = Object.assign({}, removed); delete rest._ut;

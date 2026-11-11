@@ -40,8 +40,11 @@ describe('the delete handler', () => {
         expect(fn).toMatch(/some\(\(x\) => _debtorSame\(x, removed\)\)\) \{ notify\('Could not delete/);
     });
     it('offers an Undo that restores the record WITHOUT its old stamp, or every other device would delete it again', () => {
-        expect(fn).toContain("_wfUndoBar(who + ' deleted', 'Undo'");
+        expect(fn).toContain("_wfUndoBar(who + ' deleted', 'Undo delete'");
         expect(fn).toContain('delete rest._ut');
+    });
+    it('an id-less legacy debtor is still found after a reload, by its whole content', () => {
+        expect(body('_deleteDebtor') + HTML.slice(HTML.indexOf('const _debtorSame'), HTML.indexOf('const _debtorSame') + 400)).toContain('JSON.stringify(a) === JSON.stringify(b)');
     });
     it('the trash button on every debtor row is wired to it', () => {
         expect(HTML).toContain('data-liq-ddel');
