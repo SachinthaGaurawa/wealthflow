@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.76 — 2026-11-11
+
+**What changed for you**
+
+- CSP phase 2, step 1: handler interpreter (no eval), extractor, inventory tests (#580)
+
+**Under the hood**
+
+- Self-ideation: an idea nobody picked up no longer holds the cap for ever (#581)
+
 ## v7.69.75 — 2026-11-11
 
 **What changed for you**
