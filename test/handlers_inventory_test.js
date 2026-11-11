@@ -16,8 +16,8 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import { stripJs, stripHtml } from '../build-strip.mjs';
-import { extractHandlers, renameHandlerAttributes, normalizeHandler } from '../wf-handler-extract.mjs';
-import { parseHandler, handlerShape } from '../wealthflow-handlers.js';
+import { extractHandlers, renameHandlerAttributes, normalizeHandler, HANDLER_EVENTS } from '../wf-handler-extract.mjs';
+import { parseHandler, handlerShape, EVENTS } from '../wealthflow-handlers.js';
 
 const root = new URL('..', import.meta.url).pathname;
 const browserJs = fs.readdirSync(root).filter((f) => /^wealthflow-.*\.js$/.test(f));
@@ -77,6 +77,21 @@ describe('the handlers the page ships', () => {
     });
 });
 
+describe('every event name is covered', () => {
+    it('the build and the delegator listen for the same events', () => {
+        expect([...EVENTS].sort()).toEqual([...HANDLER_EVENTS].sort());
+    });
+    it('no handler attribute in the shipped text has a name the build would not rename', () => {
+        const unknown = new Map();
+        const re = /[\s'"`]on([a-z]{3,})\s*=\s*\\?["']/g;
+        for (const [file, text] of shipped) {
+            let m;
+            while ((m = re.exec(text))) if (!HANDLER_EVENTS.includes(m[1])) unknown.set('on' + m[1], file);
+        }
+        expect([...unknown].map(([n, f]) => n + ' (' + f + ')')).toEqual([]);
+    });
+});
+
 describe('extraction and renaming', () => {
     it('reads a handler as the browser would', () => {
         expect(normalizeHandler("selectAILanguage(\\'' + code + '\\')")).toBe("selectAILanguage('X')");
@@ -102,5 +117,20 @@ describe('extraction and renaming', () => {
             if (extractHandlers(out).length) left.push(file);
         }
         expect(left).toEqual([]);
+    });
+
+    it('puts no handler attribute inside a page the app writes into ANOTHER window', () => {
+        // The delegator lives in the app document. A generated page (the loan statement popup, written with
+        // document.write) is a different document: a renamed attribute there would do nothing, and an inline one
+        // would need 'unsafe-inline' because that page inherits the app's policy. Its buttons are wired from the
+        // opener (`btn.onclick = fn`), so the template must carry none.
+        const text = fs.readFileSync(root + 'index.html', 'utf8');
+        const from = text.indexOf('function _buildLoanStatementHTML');
+        const to = text.indexOf('function openLoanStatement');
+        expect(from).toBeGreaterThan(0);
+        expect(to).toBeGreaterThan(from);
+        expect(extractHandlers(text.slice(from, to)).map((h) => h.code)).toEqual([]);
+        expect(text.slice(from, to)).toContain('id="btnPrint"');
+        expect(text).toContain("bind('btnClose', () => w.close())");
     });
 });

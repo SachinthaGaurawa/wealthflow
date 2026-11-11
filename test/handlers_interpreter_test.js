@@ -88,10 +88,11 @@ describe('the interpreter equals the engine on every shape the page uses', () =>
 
 describe('shape: what may run', () => {
     it('blanks literals and keeps the program', () => {
-        expect(handlerShape("closeModal('mdLoan')")).toBe('closeModal(S)');
-        expect(handlerShape("closeModal('other')")).toBe('closeModal(S)');
-        expect(handlerShape("toggleSetting('a', this.value); x(3)")).toBe('toggleSetting(S,this.value);x(N)');
-        expect(handlerShape("if(event.key==='Enter'){go()}")).toBe('if((event.key===S)){go()}');
+        expect(handlerShape("closeModal('mdLoan')")).toBe('closeModal(L)');
+        expect(handlerShape("closeModal('other')")).toBe('closeModal(L)');
+        expect(handlerShape("toggleSetting('a', this.value); x(3)")).toBe('toggleSetting(L,this.value);x(L)');
+        expect(handlerShape("toggleSetting('a', false, this)")).toBe(handlerShape("toggleSetting('b', 0, this)"));
+        expect(handlerShape("if(event.key==='Enter'){go()}")).toBe('if((event.key===L)){go()}');
     });
     it('gives attacker text a different shape from the app text', () => {
         const shipped = new Set([handlerShape("closeModal('a')")]);

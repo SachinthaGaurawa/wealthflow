@@ -237,9 +237,9 @@ function shapeOf(n) {
         case 'if': return 'if(' + shapeOf(n.test) + ')' + shapeOf(n.yes) + (n.no ? ' else ' + shapeOf(n.no) : '');
         case 'ret': return 'return ' + shapeOf(n.arg);
         case 'expr': return shapeOf(n.e);
-        case 'num': return 'N';
-        case 'str': return 'S';
-        case 'lit': return String(n.v);
+        // one placeholder for every string, number and boolean: a template hole such as `${!on}` is data, and may be any of them
+        case 'num': case 'str': return 'L';
+        case 'lit': return typeof n.v === 'boolean' ? 'L' : String(n.v);
         case 'this': return 'this';
         case 'id': return n.n;
         case 'chain': return shapeOf(n.e);
@@ -387,13 +387,27 @@ export function runProgram(ast, { self, event, root = globalThis } = {}) {
 }
 
 export const parseHandler = parse;
+
+/** The names a handler reads from the page (not its own parameters), so a test can ask whether each exists. */
+export function handlerRoots(src) {
+    const names = new Set();
+    const walk = (n, bound) => {
+        if (!n || typeof n !== 'object') return;
+        if (Array.isArray(n)) { n.forEach((x) => walk(x, bound)); return; }
+        if (n.t === 'fn') { const b = new Set([...bound, ...n.params]); walk(n.body, b); walk(n.expr, b); return; }
+        if (n.t === 'id' && !bound.has(n.n)) names.add(n.n);
+        for (const k of Object.keys(n)) if (k !== 't' && k !== 'n') walk(n[k], bound);
+    };
+    walk(parse(src), new Set(['event']));
+    return [...names];
+}
 export const handlerShape = (srcOrAst) => shapeOf(typeof srcOrAst === 'string' ? parse(srcOrAst) : srcOrAst);
 export { HandlerError };
 
 /* ---- the installer ----------------------------------------------------------- */
-const EVENTS = ['click', 'change', 'input', 'submit', 'keydown', 'keyup', 'keypress', 'blur', 'focus', 'error', 'load', 'scroll', 'pointerdown', 'pointerup', 'contextmenu', 'dblclick', 'paste', 'touchstart', 'touchend', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'drop', 'dragover', 'toggle', 'wheel', 'resize'];
-// these do not bubble, so they are caught on the way down
-const CAPTURE = new Set(['blur', 'focus', 'error', 'load', 'scroll', 'mouseenter', 'mouseleave', 'toggle']);
+export const EVENTS = ['click', 'dblclick', 'auxclick', 'contextmenu', 'mousedown', 'mouseup', 'mousemove', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'pointerdown', 'pointerup', 'pointermove', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave', 'pointercancel', 'gotpointercapture', 'lostpointercapture', 'touchstart', 'touchend', 'touchmove', 'touchcancel', 'keydown', 'keyup', 'keypress', 'input', 'change', 'beforeinput', 'submit', 'reset', 'invalid', 'select', 'focus', 'blur', 'focusin', 'focusout', 'scroll', 'wheel', 'resize', 'error', 'load', 'abort', 'copy', 'cut', 'paste', 'drag', 'dragstart', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop', 'toggle', 'animationstart', 'animationend', 'animationiteration', 'transitionend', 'play', 'pause', 'ended', 'canplay', 'loadeddata', 'loadedmetadata'];
+// these do not bubble (or fire on the element only), so they are caught on the way down
+const CAPTURE = new Set(['blur', 'focus', 'error', 'load', 'abort', 'scroll', 'mouseenter', 'mouseleave', 'pointerenter', 'pointerleave', 'toggle', 'invalid', 'play', 'pause', 'ended', 'canplay', 'loadeddata', 'loadedmetadata', 'resize']);
 const cache = new Map();
 
 /**
@@ -448,4 +462,13 @@ export function installHandlers(doc, allowed, root = globalThis) {
     return () => { for (const [t, f] of listeners) doc.removeEventListener(t, f, CAPTURE.has(t)); };
 }
 
-export default { parseHandler, handlerShape, runProgram, runAttribute, installHandlers, HandlerError };
+export default { parseHandler, handlerShape, handlerRoots, runProgram, runAttribute, installHandlers, HandlerError };
+
+/* The build (build.mjs, step 1b) fills this with the shapes it found in the shipped page and renames the
+ * page's handler attributes. In a tree that was not built it stays as written and nothing is installed:
+ * the inline handlers there are ordinary attributes the browser runs itself. */
+const WF_HANDLER_SHAPES = ['@@WF_SHAPES@@'];
+if (typeof document !== 'undefined' && WF_HANDLER_SHAPES[0] !== '@@WF_SHAPES@@') {
+    installHandlers(document, new Set(WF_HANDLER_SHAPES));
+    try { window.WFHandlers = { shapes: WF_HANDLER_SHAPES.length, allowed: (code) => { try { return new Set(WF_HANDLER_SHAPES).has(handlerShape(code)); } catch (_) { return false; } }, roots: handlerRoots }; } catch (_) { /* no window */ }
+}

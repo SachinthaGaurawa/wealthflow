@@ -207,6 +207,7 @@
          0 errors while you were living through repeated crashes. -->
     <script src="wealthflow-stability.js"></script>
     <script src="wealthflow-icons.js"></script>
+    <script type="module" src="wealthflow-handlers.js"></script>
     <!-- v7.5.5 — user-scalable=no + maximum-scale=1 prevents the iOS Safari
          "address-bar collapses when user pinches" behaviour that was
          showing up as a sudden full app refresh. Tap-to-zoom on form
@@ -21904,9 +21905,9 @@ table.amort tbody tr { page-break-inside: avoid; }
 <div class="toolbar no-print">
     <h2>${WFIcon.inline('fileText')}Loan Statement — ${esc(l.name)}</h2>
     <div style="display:flex;gap:8px;">
-        <button onclick="window.print()" id="btnPrint" title="Print or save as PDF (use 'Save as PDF' destination)">${WFIcon.inline('fileText')}Print / Save PDF</button>
-        <button onclick="window.__wfShareStatement && window.__wfShareStatement()" id="btnShare" class="btn-secondary" title="Share this statement">${WFIcon.inline('link')}Share</button>
-        <button onclick="window.close()" class="btn-secondary">${WFIcon.inline('x')}Close</button>
+        <button id="btnPrint" title="Print or save as PDF (use 'Save as PDF' destination)">${WFIcon.inline('fileText')}Print / Save PDF</button>
+        <button id="btnShare" class="btn-secondary" title="Share this statement">${WFIcon.inline('link')}Share</button>
+        <button id="btnClose" class="btn-secondary">${WFIcon.inline('x')}Close</button>
     </div>
 </div>
 
@@ -22040,6 +22041,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 // otherwise copies a text summary to the clipboard. This works without any
                 // server — the URL fallback only exists if Web Share supports url+files.
                 w.__wfShareStatement = () => _shareLoanStatement(w, l);
+                // The toolbar buttons are wired from here, not by inline onclick="..." in the generated page: this
+                // document inherits the app's Content-Security-Policy, which must not need 'unsafe-inline' for them.
+                const bind = (id, fn) => { const b = w.document.getElementById(id); if (b) b.onclick = fn; };
+                bind('btnPrint', () => w.print());
+                bind('btnShare', () => w.__wfShareStatement());
+                bind('btnClose', () => w.close());
                 w.focus();
                 notify('Statement opened — use Print / Save PDF to export.', 'success');
                 return;
@@ -30756,7 +30763,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const userPhoto = currentUser && currentUser.photoURL ? currentUser.photoURL : '';
             const bioData = getDeviceBiometric();
             const bioRegistered = !!(bioData && bioData.rawId);
-            const settingSwitch = (key, on, id, action) => `<div${id ? ` id="${id}"` : ''} class="toggle${on ? ' on' : ''}" data-setting="${key}" role="switch" tabindex="0" aria-checked="${on}" onclick="${action || `toggleSetting('${_wfJsAttr(key)}',${!on},this)`}"></div>`;
+            const settingSwitch = (key, on, id, themeToggle) => `<div${id ? ` id="${id}"` : ''} class="toggle${on ? ' on' : ''}" data-setting="${key}" role="switch" tabindex="0" aria-checked="${on}" ${themeToggle ? `onclick="toggleTheme(this)"` : `onclick="toggleSetting('${_wfJsAttr(key)}',${!on},this)"`}></div>`;
 
             // Calculate data stats
             const totalIncome = DB.get('income').length;
@@ -30814,7 +30821,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--accent);">Appearance</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Dark theme</div><div class="setting-desc">Switch between light and dark appearance.</div></div>
-                ${settingSwitch('theme', s.theme === 'dark', '', 'toggleTheme(this)')}
+                ${settingSwitch('theme', s.theme === 'dark', '', true)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Haptic feedback</div><div class="setting-desc">Gentle vibration when you tap, confirm or receive an alert. No sound.</div></div>

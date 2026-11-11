@@ -214,6 +214,20 @@ describe('the real build over a real copy of this repository', () => {
         expect(after).toBeLessThan(before * 0.8);
     }, 120000);
 
+    it('CSP-READY: the shipped page has no inline handler, and the module that runs them knows their shapes', () => {
+        expect(out.csp.applied, out.csp.skipped).toBe(true);
+        expect(out.csp.renamed).toBeGreaterThan(400);
+        const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+        expect(/\son(?:click|change|input|error|keydown|submit)\s*=/.test(html)).toBe(false);
+        expect(html).toContain('data-wf-on-click=');
+        const handlers = fs.readdirSync(dir).find((f) => /^wealthflow-handlers-[0-9a-f]{8}\.js$/.test(f));
+        expect(handlers).toBeTruthy();
+        const text = fs.readFileSync(path.join(dir, handlers), 'utf8');
+        expect(text).not.toContain("['@@WF_SHAPES@@']");
+        expect(text).toContain('closeModal(L)');
+        expect(html).toMatch(/<script type="module" src="wealthflow-handlers-[0-9a-f]{8}\.js">/);
+    });
+
     it('every module now carries the hash of its own contents', () => {
         const written = fs.readdirSync(dir).filter((f) => /^wealthflow-.*\.(js|mjs)$/.test(f));
         expect(written.length).toBe(out.modules.length);
@@ -222,7 +236,7 @@ describe('the real build over a real copy of this repository', () => {
         expect(new Set(written).size).toBe(written.length);
     });
 
-    it('THE NAME CHANGES WHEN A DEPENDENCY CHANGES, not only its own bytes', () => {
+    it('THE NAME CHANGES WHEN A DEPENDENCY CHANGES, not only its own bytes', async () => {
         /* The property the whole year-long cache rests on, and the one a naive
          * hash-your-own-bytes build does not have: change
          * wealthflow-institutions.js and wealthflow-mail-ingest.mjs, which
@@ -245,21 +259,22 @@ describe('the real build over a real copy of this repository', () => {
             const leaf = 'wealthflow-institutions.js';
             fs.appendFileSync(path.join(b, leaf), '\nexport const __probe = 1;\n');
 
-            return Promise.all([
+            /* AWAITED. This used to `return` the promise from inside try/finally, so the directories were removed
+             * before the builds had read them; it passed only because a build read everything before its first await. */
+            const [ra, rb] = await Promise.all([
                 build({ root: a, write: false, hash: true, log: () => {} }),
                 build({ root: b, write: false, hash: true, log: () => {} }),
-            ]).then(([ra, rb]) => {
-                expect(rb.renames.get(leaf), 'the changed file kept its name')
-                    .not.toBe(ra.renames.get(leaf));
-                const importer = 'wealthflow-mail-ingest.mjs';
-                expect(fs.readFileSync(path.join(ROOT, importer), 'utf8'),
-                    importer + ' no longer imports ' + leaf + ' — pick another pair').toContain(leaf);
-                expect(rb.renames.get(importer), 'the importer kept its name while its dependency changed')
-                    .not.toBe(ra.renames.get(importer));
-                /* And a module that depends on neither is untouched, or the
-                 * hash would just be a build counter. */
-                expect(rb.renames.get('wealthflow-when.js')).toBe(ra.renames.get('wealthflow-when.js'));
-            });
+            ]);
+            expect(rb.renames.get(leaf), 'the changed file kept its name')
+                .not.toBe(ra.renames.get(leaf));
+            const importer = 'wealthflow-mail-ingest.mjs';
+            expect(fs.readFileSync(path.join(ROOT, importer), 'utf8'),
+                importer + ' no longer imports ' + leaf + ' — pick another pair').toContain(leaf);
+            expect(rb.renames.get(importer), 'the importer kept its name while its dependency changed')
+                .not.toBe(ra.renames.get(importer));
+            /* And a module that depends on neither is untouched, or the
+             * hash would just be a build counter. */
+            expect(rb.renames.get('wealthflow-when.js')).toBe(ra.renames.get('wealthflow-when.js'));
         } finally {
             fs.rmSync(a, { recursive: true, force: true });
             fs.rmSync(b, { recursive: true, force: true });
@@ -554,4 +569,45 @@ describe('Vercel actually runs it, and the headers are safe if it does not', () 
         expect(m, 'the app-shell test in sw.js changed shape — check it still matches a hashed name').toBeTruthy();
         expect(/^\/wealthflow-[a-zA-Z0-9-]+\.js$/.test('/wealthflow-when-1a2b3c4d.js')).toBe(true);
     });
+});
+
+describe('the CSP-ready step fails open and can be switched off', () => {
+    function tree(mutate) {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-csp-'));
+        for (const f of fs.readdirSync(ROOT)) {
+            if (!MODULE_RE.test(f) && f !== 'index.html' && f !== 'sw.js' && f !== 'package.json') continue;
+            fs.copyFileSync(path.join(ROOT, f), path.join(dir, f));
+        }
+        if (mutate) mutate(dir);
+        return dir;
+    }
+    it('a handler the interpreter cannot read leaves every handler inline (the page keeps working)', async () => {
+        const dir = tree((d) => {
+            const f = path.join(d, 'index.html');
+            fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('<body', '<body data-x="1"').replace('</body>', '<button onclick="a b c">x</button></body>'));
+        });
+        try {
+            const out = await build({ root: dir, write: false, hash: true, log: () => {} });
+            expect(out.csp.applied).toBe(false);
+            expect(out.csp.skipped).toMatch(/cannot read/);
+            expect(/\sonclick\s*=/.test(out.htmlOut)).toBe(true);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }, 120000);
+    it('handlers: false (WF_HANDLERS=inline) leaves them inline', async () => {
+        const dir = tree();
+        try {
+            const out = await build({ root: dir, write: false, hash: true, log: () => {}, handlers: false });
+            expect(out.csp.applied).toBe(false);
+            expect(out.csp.skipped).toMatch(/switched off/);
+            expect(/\sonclick\s*=/.test(out.htmlOut)).toBe(true);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }, 120000);
+    it('a tree without the module loads nothing and renames nothing', async () => {
+        const dir = tree((d) => { for (const f of fs.readdirSync(d)) if (/^wealthflow-handlers/.test(f)) fs.rmSync(path.join(d, f)); });
+        try {
+            const out = await build({ root: dir, write: false, hash: true, log: () => {} });
+            expect(out.csp.applied).toBe(false);
+            expect(/\sonclick\s*=/.test(out.htmlOut)).toBe(true);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }, 120000);
 });
