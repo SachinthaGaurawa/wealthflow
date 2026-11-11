@@ -1,5 +1,16 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.82 — 2026-11-11
+
+**What changed for you**
+
+- Admin Panel finding: unknown paths return 404, not the app (#595)
+- CC Instalments + statement self-audit: bank's REM BAL, plan rate, owed amount, unread plan lines reported (#592)
+
+**Under the hood**
+
+- Release check reads the app shell like a browser (fixes red Auto Release #255-#258) (#594)
+
 ## v7.69.81 — 2026-11-11
 
 **What changed for you**
