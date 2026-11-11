@@ -437,7 +437,15 @@ jobs:
             i=$((i+1))
             A=$(curl -sL --max-time 15 "$BASE/api/version?_=$i" | node -pe "try{JSON.parse(require('fs').readFileSync(0,'utf8')).version}catch(e){''}")
             B=$(curl -sL --max-time 15 "$BASE/version.json?_=$i" | node -pe "try{JSON.parse(require('fs').readFileSync(0,'utf8')).latest}catch(e){''}")
-            C=$(curl -sL --max-time 20 "$BASE/app?_=$i" | grep -o "WF_APP_VERSION = '[0-9.]*'" | head -1 | grep -o "[0-9][0-9.]*")
+            PAGE=$(curl -sL --max-time 20 "$BASE/app?_=$i")
+            C=$(printf '%s' "$PAGE" | grep -o "WF_APP_VERSION *= *'[0-9.]*'" | head -1 | grep -o "[0-9][0-9.]*")
+            # CSP phase 2 (#583): the build moved the page's inline scripts into /wealthflow-inline-<page>-<n>-<hash>.js files, so the marker is in one of those, not in the page text
+            if [ -z "$C" ]; then
+              for S in $(printf '%s' "$PAGE" | grep -o 'src="/wealthflow-inline-[^"?]*\.js' | sed 's/^src="//' | head -8); do
+                C=$(curl -sL --max-time 20 "$BASE$S" | grep -o "WF_APP_VERSION *= *'[0-9.]*'" | head -1 | grep -o "[0-9][0-9.]*")
+                [ -n "$C" ] && break
+              done
+            fi
             echo "try $i: api=$A version.json=$B app=$C"
             if [ "$A" = "$V" ] && [ "$B" = "$V" ] && [ "$C" = "$V" ]; then LIVE=yes; break; fi
             sleep 20
