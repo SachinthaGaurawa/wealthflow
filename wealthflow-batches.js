@@ -22,7 +22,7 @@
  *  an op too — { id, prev, status } — and undo puts the cheque back exactly as it
  *  was, unless the owner has changed it since (then it is left alone).
  *
- *  window.WFBatch = { begin, tag, record, recordSub, recordLoan, recordCheque, recordTwin, commit, list, undo, _key }
+ *  window.WFBatch = { begin, tag, record, recordSub, recordPlan, recordLoan, recordCheque, recordTwin, commit, list, undo, _key }
  */
 (function () {
     'use strict';
@@ -30,7 +30,7 @@
     var MAX = 6;
     // Every top-level array a batch can create rows in. Undo removes by recorded
     // id OR by the _batch tag (belt and braces) from each of these.
-    var TABS = ['cconetime', 'expenses', 'incomeRecv', 'ccPayments', 'cheques'];
+    var TABS = ['cconetime', 'ccinstall', 'expenses', 'incomeRecv', 'ccPayments', 'cheques'];
 
     function _db() { return (typeof window !== 'undefined' && window.DB) ? window.DB : null; }
     function _uid() { try { if (window.uid) return window.uid(); } catch (_) {} return 'b_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -49,6 +49,7 @@
             at: new Date().toISOString(),
             counts: counts,
             ids: ids,
+            plans: [],   // [{ planId, month, prev, sig }] — card instalment plans this batch added a month's payment to (prev = the plan as it was)
             loans: [],   // [{ loanId, month, prev }]  — loan instalments this batch wrote
             cheques: [], // [{ id, prev, status }]    — tracked cheques this batch cleared / bounced (prev = the record as it was)
             subs: []     // [{ subId, paymentDate, amount, createdSub: bool }]
@@ -65,6 +66,16 @@
         if (batch.counts[tab] == null) batch.counts[tab] = 0;
         batch.ids[tab].push(id);
         batch.counts[tab]++;
+    }
+    // The plan as the owner could have changed it: everything but the bookkeeping stamp the store moves on every save.
+    function _planSig(plan) { var c = {}; Object.keys(plan || {}).forEach(function (k) { if (k !== '_ut') c[k] = plan[k]; }); return JSON.stringify(c); }
+    // Note a payment this batch added to a card instalment plan the owner already had, so undo can take it off again. `prev` is the plan as it was; `now` the plan as the import left it.
+    function recordPlan(batch, info) {
+        if (!batch || !info || !info.planId || !info.month) return;
+        if (!batch.plans) batch.plans = [];
+        batch.plans.push({ planId: info.planId, month: info.month, prev: info.prev || null, sig: info.now ? _planSig(info.now) : '' });
+        if (batch.counts.ccinstall == null) batch.counts.ccinstall = 0;
+        batch.counts.ccinstall++;
     }
     // Note a loan-instalment op so undo can remove (or restore the replaced) entry.
     function recordLoan(batch, info) {
@@ -134,6 +145,28 @@
             changed = true;
         });
         if (changed) db.set('loans', loans);
+    }
+
+    /* A payment the import added to a card instalment plan goes again: the plan is put back as it was when the owner has not touched it since (it is as the import left it), else only the payment
+     * this import wrote (tagged with the batch) is taken off and the plan's own figures are left as the owner has them. */
+    function _undoPlans(batch, removed) {
+        var db = _db(); if (!db) return;
+        var ops = batch.plans || [];
+        if (!ops.length) return;
+        var plans = db.get('ccinstall') || [];
+        var changed = false;
+        ops.forEach(function (op) {
+            var i = plans.findIndex(function (p) { return p && p.id === op.planId; });
+            if (i < 0) return;
+            var plan = plans[i];
+            var mine = (plan.payments || []).some(function (p) { return p && p.month === op.month && p._batch === batch.id; });
+            if (!mine) return;
+            if (op.prev && op.sig && _planSig(plan) === op.sig) plans[i] = op.prev;
+            else plan.payments = (plan.payments || []).filter(function (p) { return !(p && p.month === op.month && p._batch === batch.id); });
+            removed.ccinstall = (removed.ccinstall || 0) + 1;
+            changed = true;
+        });
+        if (changed) db.set('ccinstall', plans);
     }
 
     function _undoCheques(batch, removed) {
@@ -286,7 +319,7 @@
         var arr = list();
         var batch = arr.filter(function (b) { return b.id === batchId; })[0];
         if (!batch) return null;
-        var removed = { cconetime: 0, expenses: 0, incomeRecv: 0, ccPayments: 0, cheques: 0, loans: 0, subscription: 0 };
+        var removed = { cconetime: 0, ccinstall: 0, expenses: 0, incomeRecv: 0, ccPayments: 0, cheques: 0, loans: 0, subscription: 0 };
 
         TABS.forEach(function (tab) {
             var ids = (batch.ids && batch.ids[tab]) || [];
@@ -299,6 +332,7 @@
             if (next.length !== before) { removed[tab] = before - next.length; db.set(tab, next); }
         });
 
+        _undoPlans(batch, removed);
         _undoLoans(batch, removed);
         _undoCheques(batch, removed);
         _undoTwins(batch);
@@ -313,6 +347,6 @@
         return { label: batch.label, removed: removed };
     }
 
-    window.WFBatch = { begin: begin, tag: tag, record: record, recordSub: recordSub, recordLoan: recordLoan, recordCheque: recordCheque, recordTwin: recordTwin, commit: commit, list: list, undo: undo, _key: KEY, MAX: MAX };
+    window.WFBatch = { begin: begin, tag: tag, record: record, recordSub: recordSub, recordPlan: recordPlan, recordLoan: recordLoan, recordCheque: recordCheque, recordTwin: recordTwin, commit: commit, list: list, undo: undo, _key: KEY, MAX: MAX };
     try { console.log('[WFBatch] @info@ statement import-batch + full undo ready (v7.49.0 — subscription headline restore on undo)'); } catch (_) {}
 })();

@@ -1094,6 +1094,19 @@
         });
     }
 
+    /* The statement as LINES (one per table row / paragraph), for what is read line by line: the plan table a card statement prints ("SINGER 24M NATIONS PAY 125,260.00 120,040.83 23/24 5,219.17" is one row).
+     * htmlToText flattens a detached document to one line, which is right for finding words and wrong for a table. */
+    function htmlToLines(html) {
+        return String(html || '')
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<\/(tr|div|p|li|h[1-6]|table)>/gi, '\n')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
+            .replace(/[ \t\u00a0]+/g, ' ')
+            .split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean).join('\n');
+    }
     /* ONE place that turns a document into a result, so the render, the text
      * fallback and the diagnostic can never end up describing different documents
      * — which is how a confident report about work that never happened starts. */
@@ -1112,6 +1125,7 @@
                 encrypted: !!encrypted,
                 html: html,
                 text: text,
+                rowText: (function () { try { return htmlToLines(r.renderedHtml && r.renderedHtml.length > html.length ? r.renderedHtml : html); } catch (_) { return ''; } })(),
                 transactions: r.transactions,
                 meta: _metaFromText(text),
                 diag: diagnose(html, {
@@ -1218,6 +1232,7 @@
         ensureCryptoJS: ensureCryptoJS,
         decrypt: decrypt,
         htmlToText: htmlToText,
+        htmlToLines: htmlToLines,
         htmlToTransactions: htmlToTransactions,
         htmlToTransactionsAsync: htmlToTransactionsAsync,
         renderInSandbox: renderInSandbox,

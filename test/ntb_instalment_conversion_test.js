@@ -174,7 +174,7 @@ describe('end to end: a statement with a purchase turned into a plan', () => {
 describe('the manual upload reads the same rule', () => {
     const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     it('a credit-card upload leaves the two legs of a conversion out, through the router both doors share', () => {
-        expect(html).toContain("_R.conversionLegs(txns, [], () => true)");
+        expect(html).toContain("_R.conversionLegs(txns, parsed.planTable || [], () => true)");      // with the statement's own plan table, as the worker does
         expect(html).toMatch(/_acctType === 'credit_card' && _R && _R\.conversionLegs/);
     });
 });
