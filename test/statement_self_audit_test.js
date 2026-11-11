@@ -23,8 +23,21 @@ describe('the reader notices what its own rules did not understand', () => {
         expect(statementSelfAudit({ rows: [{ description: 'REM BAL refund', amount: 5, direction: 'credit' }] })).toEqual([]);
         expect(statementSelfAudit()).toEqual([]);
     });
+    it('most spending in the catch-all category is a finding, a few odd merchants are not', () => {
+        const odd = (n) => Array.from({ length: n }, (_, i) => dr('ZXQ ' + 'VWXYZ'.repeat(2) + ' ' + i, 100 + i));
+        const known = Array.from({ length: 6 }, () => dr('KEELLS SUPER COLOMBO', 1500));
+        expect(statementSelfAudit({ rows: [...odd(9), ...known] }).find(f => f.kind === 'category-gap')).toEqual({ kind: 'category-gap', count: 9 });
+        expect(statementSelfAudit({ rows: [...odd(3), ...known] }).find(f => f.kind === 'category-gap')).toBeUndefined();   // a few odd ones
+        expect(statementSelfAudit({ rows: odd(5) }).find(f => f.kind === 'category-gap')).toBeUndefined();                  // too few rows to say
+        const payments = Array.from({ length: 10 }, () => dr('ONLINE PAYMENT THANK YOU', 500));
+        expect(statementSelfAudit({ rows: payments })).toEqual([]);                                                          // payments are not spending
+    });
+    it('credit wording on a debit is a finding; the same wording on a credit is not', () => {
+        const rows = [dr('MERCHANT REFUND 123', 400), dr('CASHBACK ADJUSTMENT', 20), { description: 'SALARY OCT', amount: 90000, direction: 'credit', date: '2026-10-25' }, dr('KEELLS SUPER', 1500)];
+        expect(statementSelfAudit({ rows })).toEqual([{ kind: 'credit-wording-on-debit', count: 2 }]);
+    });
     it('the report for the new kinds holds no statement text or long numbers', () => {
-        for (const kind of ['plan-like-line-unread', 'plan-table-unmatched']) {
+        for (const kind of ['plan-like-line-unread', 'plan-table-unmatched', 'category-gap', 'credit-wording-on-debit']) {
             const body = reportBody(kind, { bank: 'NTB 4000 0000 0000 0001', rows: 12 });
             expect(body).toContain(kind);
             expect(body).not.toMatch(/\d{4,}/);
