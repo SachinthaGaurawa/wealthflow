@@ -130,9 +130,9 @@ console.log(`\n${diffs.length} of ${ROWS.length} rows are filed differently by t
 console.log('page errors:', app.pageErrors.filter(e => !/Chart|cdn|fetch/i.test(e)).slice(0, 3));
 await app.close();
 _setAdminModule(null);
-/* The two doors file every row alike, with ONE known difference: a recurring bill of a BANK account (an electricity bill, a broadband bill, an insurance premium) is a Subscription on the page and an
- * Expense at the e-mail worker, which starts a Subscription only for a brand or a phone number (statement-subscriptions.mjs). The owner decides which way it should go (open: bill account numbers). */
-const KNOWN = WHICH === 'bank' ? new Set(['CEB ELECTRICITY BILL', 'SLT BROADBAND', 'INSURANCE PREMIUM AIA']) : new Set();
+/* The two doors file every row alike. (A recurring bill of a bank account — electricity, broadband, an insurance premium — was a Subscription on the page and an Expense at the worker, which starts a
+ * Subscription only for a brand, a phone number or a bill reference; the page now follows the worker, so nothing is allowed to differ.) */
+const KNOWN = new Set();
 const unexpected = diffs.filter(d => !KNOWN.has(d.words));
 assert.deepEqual(unexpected, [], `the two doors file every ${WHICH} statement row alike`);
 if (WHICH === 'card') {

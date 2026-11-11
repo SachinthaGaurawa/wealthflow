@@ -37124,6 +37124,18 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             }
                         } catch (_) {}
                     }
+                    /* A ROW IS A SUBSCRIPTION ONLY WHEN THE OWNER TRACKS IT OR THE EVIDENCE IS PLAIN — the e-mail worker's rule (statement-subscriptions.mjs, the one WFSubIdentity file both doors read): an entry the owner
+                     * already has for it (its number, reference, brand or name), or a brand / phone number / bill reference that is unmistakably recurring. An electricity bill, a broadband bill or an insurance premium
+                     * with no entry is the expense it also is (a card charge on a card), not a new Subscriptions entry per bill; the owner can still switch the row to Subscription in "Goes to". */
+                    if (t._dest === 'subscription' && !t._subKeep) {
+                        try {
+                            const _SI = window.WFSubIdentity, _S = window.WFSubs;
+                            if (_SI && _S && _SI.subscriptionToCreate && _S.findExisting) {
+                                const _have = _S.findExisting({ description: t.description, amount: t.amount, direction: 'debit', date: t.date }, { subName: t._subName, subKind: t._subKind, subPhone: t._subPhone, category: t._cat }, DB.get('subscriptions') || [], DB.get('subMerchantMap') || {});
+                                if (!(_have && _have.sub) && !_SI.subscriptionToCreate({ description: t.description, direction: 'debit' })) t._dest = _acctType === 'credit_card' ? 'cconetime' : 'expenses';
+                            }
+                        } catch (_) { /* the router's answer stands */ }
+                    }
                     if ((t._dest === 'cc_payment' || t._dest === 'cconetime') && _bankSideOwnCard(t.description)) {
                         const _named = window.WFRoute.ownCardNamed(t.description);
                         t._dest = 'skip'; t._ownMoney = t._ownMoney || 'card-payment-out'; t._ownCard = t._ownCard || (_named ? _named.last4 : '');
