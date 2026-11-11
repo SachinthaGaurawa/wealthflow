@@ -1,5 +1,18 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.85 — 2026-11-11
+
+**What changed for you**
+
+- Any debtor can be deleted, with a question first and an Undo (#597)
+
+## v7.69.84 — 2026-11-11
+
+**What changed for you**
+
+- Self-thinking: scrambled text, unrecognised card credits, and a daily AI board watch (#599)
+- Card cashback is a reward, not a payment (#598)
+
 ## v7.69.83 — 2026-11-11
 
 **What changed for you**
