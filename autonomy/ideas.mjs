@@ -93,12 +93,22 @@ export function outcomesOf(issues) {
         let state;
         if (i.state === 'closed') state = i.state_reason === 'completed' ? 'built' : 'declined';
         else state = hasLabel(i, 'approved-feature') ? 'building' : 'waiting';
-        out.push({ number: i.number, title, state });
+        out.push({ number: i.number, title, state, created: i.created_at || null });
     }
     return out;
 }
 
-export function inFlight(outcomes) { return (outcomes || []).filter((o) => o.state === 'building' || o.state === 'waiting').length; }
+/**
+ * Ideas in the pipeline: the cap that stops the system flooding the repository. An idea that nobody picked up does not hold the cap for ever.
+ * Found on the first real run (2026-11-11): two ideas filed by the OLD weekly engine had waited 3 and 4 weeks for an owner label that
+ * the owner said he will never give by hand, and they blocked every new idea. A waiting idea counts for 3 days (a human who has switched
+ * the gate back on still has time to look); an approved idea counts for 14 days (a build that long stuck is the pull-request watchers' job).
+ */
+export const WAITING_DAYS = 3, BUILDING_DAYS = 14;
+export function inFlight(outcomes, now = Date.now()) {
+    const young = (o, days) => { const t = Date.parse(o.created); return !Number.isFinite(t) || now - t < days * 86400000; };
+    return (outcomes || []).filter((o) => (o.state === 'building' && young(o, BUILDING_DAYS)) || (o.state === 'waiting' && young(o, WAITING_DAYS))).length;
+}
 
 // ── one numbered list of evidence the model must cite ──────────────────────────────────────────
 
