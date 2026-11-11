@@ -31,6 +31,11 @@
       "permanent": true
     },
     {
+      "source": "/(login|signin|sign-in|dashboard)",
+      "destination": "/app",
+      "permanent": false
+    },
+    {
       "source": "/index.html",
       "destination": "/",
       "permanent": true
@@ -473,7 +478,7 @@
       "destination": "/terms.html"
     },
     {
-      "source": "/((?!(?:admin|administrator|wp-admin|wp-login|wp-content|wp-includes|wordpress|xmlrpc|phpmyadmin|pma|adminer|cpanel|webmail|cgi-bin|server-status|server-info|actuator|phpinfo|manager/html|solr|jenkins|console)(?:/|\\.|$)|\\.(?:env|git|svn|hg|htaccess|htpasswd|ssh|aws|ds_store)|\\.well-known/(?!assetlinks\\.json$)|.*\\.(?:php|asp|aspx|jsp|cgi|sql|bak|old|swp|ini|log)$).*)",
+      "source": "/((?!(?:admin|administrator|administration|admin-panel|admin_panel|adminpanel|admin-login|admincp|siteadmin|sysadmin|backend|controlpanel|control-panel|panel|manager|moderator|root|wp-admin|wp-login|wp-content|wp-includes|wp-json|wordpress|xmlrpc|phpmyadmin|pma|adminer|cpanel|webmail|cgi-bin|server-status|server-info|actuator|phpinfo|solr|jenkins|console)(?:/|\\.|$)|\\.(?:env|git|svn|hg|htaccess|htpasswd|ssh|aws|ds_store)|\\.well-known/(?!assetlinks\\.json$)|.*\\.(?:php|asp|aspx|jsp|cgi|sql|bak|old|swp|ini|log)$).*)",
       "destination": "/app.html"
     }
   ],
