@@ -112,17 +112,17 @@ const PLAN_LENGTH = /\b(\d{1,2})\s*(?:months?|mths?|mnths?|instal+ments?|instl?m
 export const isCardFeeWording = (raw) => RE.fee.test(String(raw || ''));
 /* NATIONS TRUST'S PLAN LINE: "SINGER 24M NATIONS PAY INST 1 - REM BAL - 120040.83 - <1/24>" is the 1st of 24 instalments of the Singer plan (the "24M" is the plan's length, "REM BAL" what is still owed, "<1/24>" which month).
  * It says "INST", not "instalment", so the words above never saw it, and it was filed as a one-time Shopping purchase. The three parts must agree (the number after INST is the number in "<n/m>") before it is a plan line. */
-const NTB_PLAN_LINE = /^(.*?)\binst(?:l|alment)?\s*(\d{1,2})\b[\s\-\u2013]*rem(?:aining)?\.?\s*bal\w*[\s\-\u2013:]*[\d,]+(?:\.\d+)?[\s\-\u2013]*<\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*>/i;
+const NTB_PLAN_LINE = /^(.*?)\binst(?:l|alment)?\s*(\d{1,2})\b[\s\-\u2013]*rem(?:aining)?\.?\s*bal\w*[\s\-\u2013:]*([\d,]+(?:\.\d+)?)[\s\-\u2013]*<\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*>/i;
 const NTB_PLAN_BRAND = /\b\d{1,2}\s*m\b|\bnations\s*pay\b|\bnations\s*easy\s*pay\b/gi;
 export function installmentInfo(raw) {
   const text = String(raw || '');
   const none = { isInstallment: false, no: 0, of: 0, length: 0, name: '' };
   const ntb = NTB_PLAN_LINE.exec(text);
   if (ntb) {
-    const no = Number(ntb[3]), of = Number(ntb[4]);
+    const no = Number(ntb[4]), of = Number(ntb[5]), remaining = Math.round(parseFloat(String(ntb[3]).replace(/,/g, '')) * 100) / 100;
     if (Number(ntb[2]) !== no || of < 2 || no < 1 || no > of) return none;
     const name = ntb[1].replace(NTB_PLAN_BRAND, ' ').replace(/[^A-Za-z0-9&' .-]+/g, ' ').replace(/\s+/g, ' ').replace(/^[\s.-]+|[\s.-]+$/g, '').trim();
-    return { isInstallment: true, no, of, length: of, name: name.length >= 3 ? name.slice(0, 60) : '' };
+    return { isInstallment: true, no, of, length: of, name: name.length >= 3 ? name.slice(0, 60) : '', ...(Number.isFinite(remaining) ? { remaining } : {}) };   // `remaining`: the REM BAL the bank prints after this instalment
   }
   if (!PLAN_WORDS.test(text) || PLAN_FEE.test(text)) return none;
   const m = PLAN_ORDINAL.exec(text);

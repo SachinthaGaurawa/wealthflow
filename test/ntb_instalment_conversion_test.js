@@ -151,7 +151,7 @@ describe('end to end: a statement with a purchase turned into a plan', () => {
         expect(user.ccPayments.map(r => [r.desc, r.amount]).sort((a, b) => a[1] - b[1])).toEqual([['CASHBACK ON YOUR SEP NETFLIX SUBSCRIPTION', 1000], ['CASH PAYMENT-FINACLE', 50000]]);
         /* the plan: named after the shop, the real total from the statement's table, one instalment paid */
         expect(user.ccinstall).toHaveLength(1);
-        expect(user.ccinstall[0]).toMatchObject({ product: 'SINGER', duration: 12, total: 120000, totalEstimated: false, monthly: 10000, paid: 1, remaining: 11, installmentNo: 1, installmentOf: 12, planRef: 'ntb-singer-12000000' });
+        expect(user.ccinstall[0]).toMatchObject({ product: 'SINGER', duration: 12, total: 120000, totalEstimated: false, monthly: 10000, paid: 1, remaining: 11, installmentNo: 1, installmentOf: 12, planRef: 'ntb-singer-12000000', rate: 0, rateUnknown: false, outstanding: 110000, outstandingAt: expect.stringMatching(/^2026-10-/) });
         /* subscriptions keep their own entries, in the card's own amount (rupees, not dollars) */
         expect(user.subscriptions.map(s => [s.name, s.amount]).sort()).toEqual([['Anthropic (Claude)', 7000], ['Netflix', 3500]]);
         /* the legs are on the ledger as decided, not missing, and say why */
@@ -165,7 +165,7 @@ describe('end to end: a statement with a purchase turned into a plan', () => {
         const first = await file({}, OCT, Date.parse('2026-11-11T05:00:00Z'));
         const second = await file(first.user, NOV, Date.parse('2026-12-11T05:00:00Z'));
         expect(second.user.ccinstall).toHaveLength(1);
-        expect(second.user.ccinstall[0]).toMatchObject({ product: 'SINGER', paid: 2, remaining: 10, installmentNo: 2 });
+        expect(second.user.ccinstall[0]).toMatchObject({ product: 'SINGER', paid: 2, remaining: 10, installmentNo: 2, outstanding: 100000 });
         expect(second.user.ccinstall[0].payments.map(p => p.month)).toEqual(['2026-10', '2026-11']);
         expect(second.user.cconetime).toHaveLength(6);
     });

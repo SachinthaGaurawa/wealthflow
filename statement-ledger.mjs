@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow, expenseEntryName, installmentInfo } from './wealthflow-statement-router.js';
 import { canonicalBank } from './wealthflow-institutions.js';
+import { planEconomics } from './statement-plan-table.mjs';
 import { ownMoney } from './wealthflow-own-money.js';
 import { bankKeyOf } from './statement-coverage.mjs';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
@@ -202,7 +203,16 @@ function makeRecord(row, decision, context, id, now) {
         /* the statement's own plan table (statement-plan-table.mjs) names the plan and prints its real total: "Instalment Principle - 3/12" is one of its rows, not a plan called "Principle" */
         const shape = { ...planFromLine({ amount: row.amount, date: row.date, no: plan.no || (table ? table.months - table.remainingMonths : 0), length: plan.length || (table ? table.months : 0) }),
             ...(table ? { total: table.total, totalEstimated: false, planRef: table.ref } : {}) };
-        return { ...base, desc, product: (table ? table.name : plan.name || desc).slice(0, 60), bank: canonicalBank(context.bank || ''), buyer: 'Self', rate: 0, rateUnknown: true, ...shape, completed: false, skipped: [], notes: `Card installment charge of ${row.date}${ofText}`,
+        /* WHAT THE STATEMENT PROVES ABOUT THE PLAN'S MONEY, and no more. The plan table's original amount with its instalment and months says the rate (0% is a proof when they tally; an APR when the instalments repay more).
+         * Without a table, the line's own REM BAL after instalment n of m gives the total paid back (REM BAL + n instalments) - exact when it equals m instalments, but not the rate: the original amount is not printed there. */
+        const eco = table && table.monthly ? planEconomics({ principal: table.total, monthly: table.monthly, months: table.months }) : null;
+        const owed = table && Number.isFinite(table.remainingAmount) ? table.remainingAmount : (Number.isFinite(plan.remaining) ? plan.remaining : null);
+        if (eco) Object.assign(shape, { rate: eco.rate, rateUnknown: false, ...(eco.interest > 0 ? { interest: eco.interest } : {}) });
+        else if (!table && Number.isFinite(plan.remaining) && plan.no && plan.of >= 2) {
+            const payable = Math.round((plan.remaining + row.amount * plan.no) * 100) / 100;
+            if (Math.abs(payable - row.amount * plan.of) <= plan.of * 0.01 + 0.01) Object.assign(shape, { total: payable, totalEstimated: false });
+        }
+        return { ...base, desc, product: (table ? table.name : plan.name || desc).slice(0, 60), bank: canonicalBank(context.bank || ''), buyer: 'Self', rate: 0, rateUnknown: true, ...shape, ...(owed != null ? { outstanding: owed, outstandingAt: row.date } : {}), completed: false, skipped: [], notes: `Card installment charge of ${row.date}${ofText}`,
             monthly: row.amount, startDate: row.date, category: decision.category, payments: [{ month: row.date.slice(0, 7), paid: true, amount: row.amount, paidAt: Date.parse(`${row.date}T00:00:00Z`) || now, source: 'statement', statementKey: context.sourcePath, statementRow: context.index }],
             ...(plan.no && plan.of ? { installmentNo: plan.no, installmentOf: plan.of } : {}) };
     }
