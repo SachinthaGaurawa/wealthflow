@@ -207,6 +207,7 @@
          0 errors while you were living through repeated crashes. -->
     <script src="wealthflow-stability.js"></script>
     <script src="wealthflow-icons.js"></script>
+    <script type="module" src="wealthflow-handlers.js"></script>
     <!-- v7.5.5 — user-scalable=no + maximum-scale=1 prevents the iOS Safari
          "address-bar collapses when user pinches" behaviour that was
          showing up as a sudden full app refresh. Tap-to-zoom on form
@@ -5898,7 +5899,7 @@
                             style="font-family:var(--mono);font-size:22px;letter-spacing:8px;text-align:center;"></div>
                     <button class="auth-btn" onclick="verifyRecoveryOTP()">@checkCircle@ Verify code</button>
                     <button class="auth-btn ghost"
-                        onclick="$('recovOtpStep2').style.display='none';$('recovOtpStep1').style.display='block';">←
+                        onclick="document.getElementById('recovOtpStep2').style.display='none';document.getElementById('recovOtpStep1').style.display='block';">←
                         Resend or change email</button>
                 </div>
             </div>
@@ -8305,6 +8306,12 @@
             /* The saved-people book (who the owner lends to or invests with, saved once) and the owner's bank accounts for statements. Record arrays
              * with ids, so they sit in _WF_RECORD_KEYS and merge per record across devices. DECLARED HERE, or the hydration loops never read them back. */
             people: [], payAccounts: [],
+            /* Which devices of this account run which version, and the newest version the owner installed on purpose, so one device's update
+             * reaches the others (wealthflow-update-system.js, "One account, several devices"). Every leaf is one string: a leaf written by one
+             * device is never half overwritten by another. DECLARED HERE, or the hydration loops never read it back. */
+            updateSync: {},
+            /* The first time this person saw each NEW-tagged thing, so its 7 days are counted from their first look and agree on every device (wealthflow-new-badge.js). Leaves are numbers (ms); the earliest wins. DECLARED HERE, or the hydration loops never read it back. */
+            newSeen: {},
             cribReports: [], cribAnalyses: {},
             // Money moved out of the current account into a deposit or savings.
             // A record here is NOT a second subtraction from the balance — the
@@ -9328,7 +9335,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.71';
+        var WF_APP_VERSION = '7.69.80';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -10508,6 +10515,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             if (abs >= 100000) return c + ' ' + Math.round(n).toLocaleString('en-US');
             return c + ' ' + fmtN(n);
         };
+        window.fmtS = fmtS;   // a handler in the page names it (`fmtS(this.value)`); handlers are looked up on window, a `const` is not on it
 
         /* The exact figure under an abbreviated one ("LKR 3.50M" -> "LKR 3,500,000.00"); '' under a figure that is already written out, so a card never says the same number twice. */
         const fmtExact = (n) => (_wfDisplayPrefs().hide || Math.abs(parseFloat(n) || 0) >= 1000000) ? fmt(n) : '';
@@ -11075,7 +11083,12 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         }
 
         // --- OCR.space Third-Party API Fallback ---
+        // PRIVACY: this sends the receipt photo to a third party on a shared demo key. It used to run silently after every AI
+        // failure; now it runs only when the person has switched it on (localStorage wf_cloud_ocr = '1'). Without it the scan
+        // goes on to Tesseract, which reads the photo on this device.
+        function _cloudOcrAllowed() { try { return localStorage.getItem('wf_cloud_ocr') === '1'; } catch (_) { return false; } }
         async function _tryOCRSpace(base64Img) {
+            if (!_cloudOcrAllowed()) return null;
             try {
                 const formData = new FormData();
                 formData.append('apikey', 'helloworld');
@@ -12388,7 +12401,7 @@ Be conversational and precise.`;
 
                     // ===== TIER 2b: OCR.space (Dedicated 3rd Party API) =====
                     try {
-                        if (isExpense) {
+                        if (isExpense && _cloudOcrAllowed()) {
                             _showScanOverlay('Reading with cloud OCR…', 'Using the OCR.space online reader', 50, 'cloud');
                             const { base64: ocrImg } = await _compressImageToBase64(file, 1600, 0.85, true);
                             const ocrText = await _tryOCRSpace(ocrImg);
@@ -21892,9 +21905,9 @@ table.amort tbody tr { page-break-inside: avoid; }
 <div class="toolbar no-print">
     <h2>${WFIcon.inline('fileText')}Loan Statement — ${esc(l.name)}</h2>
     <div style="display:flex;gap:8px;">
-        <button onclick="window.print()" id="btnPrint" title="Print or save as PDF (use 'Save as PDF' destination)">${WFIcon.inline('fileText')}Print / Save PDF</button>
-        <button onclick="window.__wfShareStatement && window.__wfShareStatement()" id="btnShare" class="btn-secondary" title="Share this statement">${WFIcon.inline('link')}Share</button>
-        <button onclick="window.close()" class="btn-secondary">${WFIcon.inline('x')}Close</button>
+        <button id="btnPrint" title="Print or save as PDF (use 'Save as PDF' destination)">${WFIcon.inline('fileText')}Print / Save PDF</button>
+        <button id="btnShare" class="btn-secondary" title="Share this statement">${WFIcon.inline('link')}Share</button>
+        <button id="btnClose" class="btn-secondary">${WFIcon.inline('x')}Close</button>
     </div>
 </div>
 
@@ -22028,6 +22041,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 // otherwise copies a text summary to the clipboard. This works without any
                 // server — the URL fallback only exists if Web Share supports url+files.
                 w.__wfShareStatement = () => _shareLoanStatement(w, l);
+                // The toolbar buttons are wired from here, not by inline onclick="..." in the generated page: this
+                // document inherits the app's Content-Security-Policy, which must not need 'unsafe-inline' for them.
+                const bind = (id, fn) => { const b = w.document.getElementById(id); if (b) b.onclick = fn; };
+                bind('btnPrint', () => w.print());
+                bind('btnShare', () => w.__wfShareStatement());
+                bind('btnClose', () => w.close());
                 w.focus();
                 notify('Statement opened — use Print / Save PDF to export.', 'success');
                 return;
@@ -29011,7 +29030,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 '<div><label>' + label + '</label>'
                 + '<input type="number" step="0.1" min="0" placeholder="%" value="'
                 + (rates[k] != null ? _wfEsc(rates[k]) : '')
-                + '" onchange="wfSweeperSetRate(' + "'" + k + "'" + ', this.value)"></div>';
+                + '" onchange="wfSweeperSetRate(\'' + k + '\', this.value)"></div>';
 
             const gain = p.projectedAnnualGain != null
                 ? '<div class="wf-sw-sub" style="margin-top:10px;">At those rates this earns about <b>'
@@ -30744,7 +30763,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const userPhoto = currentUser && currentUser.photoURL ? currentUser.photoURL : '';
             const bioData = getDeviceBiometric();
             const bioRegistered = !!(bioData && bioData.rawId);
-            const settingSwitch = (key, on, id, action) => `<div${id ? ` id="${id}"` : ''} class="toggle${on ? ' on' : ''}" data-setting="${key}" role="switch" tabindex="0" aria-checked="${on}" onclick="${action || `toggleSetting('${_wfJsAttr(key)}',${!on},this)`}"></div>`;
+            const settingSwitch = (key, on, id, themeToggle) => `<div${id ? ` id="${id}"` : ''} class="toggle${on ? ' on' : ''}" data-setting="${key}" role="switch" tabindex="0" aria-checked="${on}" ${themeToggle ? `onclick="toggleTheme(this)"` : `onclick="toggleSetting('${_wfJsAttr(key)}',${!on},this)"`}></div>`;
 
             // Calculate data stats
             const totalIncome = DB.get('income').length;
@@ -30802,7 +30821,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--accent);">Appearance</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Dark theme</div><div class="setting-desc">Switch between light and dark appearance.</div></div>
-                ${settingSwitch('theme', s.theme === 'dark', '', 'toggleTheme(this)')}
+                ${settingSwitch('theme', s.theme === 'dark', '', true)}
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Haptic feedback</div><div class="setting-desc">Gentle vibration when you tap, confirm or receive an alert. No sound.</div></div>
@@ -30842,7 +30861,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- System Integration / Gemini API Key removed from UI per security best practice. Backend keys are managed via Vercel ENV. -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(66, 133, 244, 0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#4285F4;">AI status</div>
+            <div class="settings-title wf-ink-info">AI status</div>
             <div class="setting-row">
                 <div class="setting-info">
                     <div class="setting-label">AI services</div>
@@ -30862,7 +30881,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ISSUE 3 FIX — AI Language & Voice settings -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#818cf8;">AI and language</div>
+            <div class="settings-title wf-ink-violet">AI and language</div>
             <!-- v7.10.0 — SMS Paste mount point. The wealthflow-sms-paste.js
                  module auto-injects the "Paste Bank SMS" banner here. -->
             <div id="wfSmsPasteMount" style="margin-bottom:14px;"></div>
@@ -31252,8 +31271,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.71</span> is installed on this device.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.71</span>
+                <div class="setting-info"><div class="setting-label">App version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.80</span> is installed on this device.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.80</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page crashes, misbehaves, or a statement is stuck in "Needs review", tap Copy diagnostics right afterwards and share the result. It captures the latest errors with technical detail (stack, page, memory) and the reasons statements are stuck (counts, bank names, and why "Map statement layout" could not read one). No date, amount or transaction detail is ever included.</div></div>
@@ -33660,7 +33679,7 @@ ${buildTable('Section III — Expenses and Card Instalments', combinedExp.length
                             <div class="score-factor" style="margin-bottom:6px;">
                                 <div style="min-width:160px;"><div style="font-size:13px;font-weight:600;">${factorIcons[i]} ${_wfEsc(f.label)}</div><div style="font-size:10px;color:var(--text3);">${f.score} / ${f.max} pts</div></div>
                                 <div class="score-factor-bar"><div class="score-factor-fill" style="width:${(f.score / f.max * 100).toFixed(0)}%;background:${factorColors[i]};"></div></div>
-                                <div style="font-size:14px;font-weight:700;font-family:var(--mono);min-width:50px;text-align:right;color:${factorColors[i]};">${f.score}</div>
+                                <div style="font-size:14px;font-weight:700;font-family:var(--mono);min-width:50px;text-align:right;color:var(--text);">${f.score}</div>
                             </div>
                             <div style="font-size:11px;color:var(--text3);padding-left:160px;line-height:1.6;">${factorTips[i]}</div>
                         </div>
@@ -35609,8 +35628,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 </div>
                             </div>
 
-                            <div style="font-size:10px;color:var(--text3);font-family:var(--mono);opacity:.8;background:rgba(0,0,0,0.2);padding:4px 8px;border-radius:4px;display:inline-block;">
-                                <span style="color:var(--text2);">IP:</span> ${s.ip || 'Unknown'} <span style="margin:0 6px;">|</span> <span style="color:var(--text2);">ID:</span> ${s.id.substring(0, 10)}…
+                            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);background:var(--card3);padding:4px 8px;border-radius:4px;display:inline-block;">
+                                <span style="color:var(--text2);">IP:</span> ${s.ip || 'Unknown'} <span style="margin:0 6px;" aria-hidden="true">|</span> <span style="color:var(--text2);">ID:</span> ${s.id.substring(0, 10)}…
                             </div>
                         </div>
                     `}).join('')}${window._capSessions ? window._capSessions.bar : ''}

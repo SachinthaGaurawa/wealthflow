@@ -32,6 +32,7 @@
  *  ===========================================================================*/
 
 import { applyCors } from '../wf-cors.mjs';
+import { guardApi } from '../wf-api-guard.mjs';
 
 
 export const config = { api: { bodyParser: { sizeLimit: '8mb' } } };
@@ -130,6 +131,7 @@ export default async function handler(req, res) {
     applyCors(req, res, { methods: 'POST, OPTIONS', headers: 'Content-Type, Authorization' });
     if (req.method === 'OPTIONS') return res.status(204).end();
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'POST only' });
+    if (!guardApi(req, res, 'vision')) return;
 
     const key = pickKey();
     if (!key) return res.status(503).json({ ok: false, error: 'Cloud Vision key not configured (set GOOGLE_VISION_API_KEY in Vercel).' });

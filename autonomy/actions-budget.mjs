@@ -76,7 +76,7 @@ const JOB_MINUTES = {
     'autonomous-fix.yml': 4,        // agent swarm: several sequential model calls
     'autonomous-discover.yml': 2,   // npm audit + scanners
     'auto-release.yml': 2,          // build + tag + release notes
-    'feature-proposals.yml': 2,     // one model call
+    'feature-proposals.yml': 3,     // npm ci + one idea + up to three board calls, once a day
     'consensus-review.yml': 2,      // three model calls, now in parallel
 };
 

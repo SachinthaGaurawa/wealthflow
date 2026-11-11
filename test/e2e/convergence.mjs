@@ -65,6 +65,11 @@ try {
     });
 
     await check('3. the same snapshot delivered again and again changes nothing and writes nothing', async () => {
+        // Each device tells the account once what it runs (updateSync.devices, first heartbeat within 5 s of opening, then at most every 12 h:
+        // reportDevice returns the same object when nothing needs saving). That one-time registration is a real write but is not caused by a
+        // delivery, so let all three land before taking the snapshot this check compares against.
+        const registered = await waitFor(() => Object.keys((w.cloud.doc.updateSync || {}).devices || {}).length >= 3, 15000);
+        if (!registered) return { ok: false, detail: 'the three devices never registered with the account' };
         await sleep(1500);
         const before = JSON.stringify(w.cloud.doc);
         const writesBefore = w.cloud.log.length;

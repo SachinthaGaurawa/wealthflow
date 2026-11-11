@@ -53,3 +53,19 @@ A short report is expanded into a task card with a depth level; an independent s
 1. **Required updates never block.** If the owner wants Android's blocking behaviour for the highest priority, it is one rule in `wealthflow-update-policy.js` (`announce` / `canSkip`), but a failed install would then leave no way into the data.
 2. **Staged rollout is symbolic with one person.** It matters when the owner has several devices: switch Early access on the phone that tries things first.
 3. **Per-feature flags have no consumer yet.** Nothing in the app is behind a flag today; the build lane can now ship a risky feature dark.
+
+## One account, several devices (2026-11-07, added after the owner's request)
+
+Request: when the same account is signed in on a phone and a laptop and the person updates one, the other should end up updated too.
+
+**What the research found.** Android and iOS update per device and per app; Apple and Google both also offer "automatic updates" that run when the device is idle and on Wi-Fi (not re-verified in this pass). Neither shares "I updated here" between a person's devices; they share only the setting. WealthFlow can do better because the account already syncs between devices, so the fact "this version was taken" can travel with the books.
+
+**What was built.** The synced books gain one declared key, `updateSync`, with one fact per leaf so the ordinary per-field merge (`docs/sync-architecture.md`) cannot half-overwrite it:
+
+- `devices[deviceId] = "version|at|name"`: what each device runs and when it last said so.
+- `wanted = "version|by|at"`: the newest version the person installed **on purpose** on a device that is not on early access. It only moves up.
+- `agreed[major.minor] = at`: the agreement accepted on any device counts on all.
+
+A device that runs an older build than `wanted`, was not the one that set it, and has following on (default; a per-device switch) treats the newest build the server offers as its target, ignoring the staged-rollout share (the person already took it elsewhere) but respecting its own skip or "later" for that version, Wi-Fi only, halted versions and the retry limit (one try per 30 minutes, three at most). It installs only when the person is not using the app (60 s idle, no open dialog), after the restore point, with the same rollback as every install; otherwise the pill says "Your <device> is on v… — update to match" and Settings lists the devices.
+
+**Not verified / not possible here.** Real iOS Safari and Android Chrome behaviour (background tabs, suspended pages); a device that is closed cannot install anything; Apple and Google automatic-update details are from memory.

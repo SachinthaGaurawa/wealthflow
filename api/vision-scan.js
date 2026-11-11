@@ -16,6 +16,7 @@ import { geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
 import { fetchWithBodyDeadline } from '../fetch-timeout.mjs';
 import { askProvider, PROVIDERS } from '../ai-provider-call.mjs';
 import { applyCors } from '../wf-cors.mjs';
+import { guardApi } from '../wf-api-guard.mjs';
 
 export const config = {
     maxDuration: 60,
@@ -599,6 +600,7 @@ export default async function handler(req, res) {
     applyCors(req, res, { methods: 'POST, OPTIONS', headers: 'Content-Type, Authorization' });
     if (req.method === 'OPTIONS') return res.status(200).end();
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+    if (!guardApi(req, res, 'vision-scan')) return;
 
     const startedAt = Date.now();
     const body = req.body || {};

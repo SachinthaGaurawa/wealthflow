@@ -34,6 +34,7 @@ import {
     build, hashOf, hashedName, rewriteRefs, rewriteImportsOnly, survivors, survivorsInImports,
     MODULE_RE, HASHED_RE, vercelIgnoreRules, ignoredBy, localJsFiles,
 } from '../build.mjs';
+import { inlineScriptsLeft } from '../wf-inline-extract.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -214,15 +215,42 @@ describe('the real build over a real copy of this repository', () => {
         expect(after).toBeLessThan(before * 0.8);
     }, 120000);
 
+    it('CSP-READY: the shipped page has no inline handler, and the module that runs them knows their shapes', () => {
+        expect(out.csp.applied, out.csp.skipped).toBe(true);
+        expect(out.csp.renamed).toBeGreaterThan(400);
+        const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+        expect(/\son(?:click|change|input|error|keydown|submit)\s*=/.test(html)).toBe(false);
+        expect(html).toContain('data-wf-on-click=');
+        const handlers = fs.readdirSync(dir).find((f) => /^wealthflow-handlers-[0-9a-f]{8}\.js$/.test(f));
+        expect(handlers).toBeTruthy();
+        const text = fs.readFileSync(path.join(dir, handlers), 'utf8');
+        expect(text).not.toContain("['@@WF_SHAPES@@']");
+        expect(text).toContain('closeModal(L)');
+        expect(html).toMatch(/<script type="module" src="wealthflow-handlers-[0-9a-f]{8}\.js">/);
+    });
+
+    it('INLINE SCRIPTS: the shipped page carries none; each block is a file loaded in the same place', () => {
+        expect(out.inline.applied, out.inline.skipped).toBe(true);
+        expect(out.inline.files.length).toBeGreaterThanOrEqual(5);
+        const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+        expect(inlineScriptsLeft(html)).toEqual([]);
+        const tags = [...html.matchAll(/<script src="\/(wealthflow-inline-index-\d+-[0-9a-f]{8}\.js)"><\/script>/g)].map((m) => m[1]);
+        expect(tags.length).toBe(out.inline.files.length);
+        for (const t of tags) expect(fs.existsSync(path.join(dir, t)), t).toBe(true);
+        // order is kept: the boot guard (first) and the SRI table come before the app script
+        expect(tags[0]).toMatch(/-1-/);
+        expect(fs.readFileSync(path.join(dir, tags[1]), 'utf8')).toContain('WF_SRI');
+    });
+
     it('every module now carries the hash of its own contents', () => {
-        const written = fs.readdirSync(dir).filter((f) => /^wealthflow-.*\.(js|mjs)$/.test(f));
+        const written = fs.readdirSync(dir).filter((f) => /^wealthflow-.*\.(js|mjs)$/.test(f) && !/^wealthflow-inline-/.test(f));
         expect(written.length).toBe(out.modules.length);
         for (const f of written) expect(HASHED_RE.test(f), f + ' was not hashed').toBe(true);
         /* No two modules share a name. */
         expect(new Set(written).size).toBe(written.length);
     });
 
-    it('THE NAME CHANGES WHEN A DEPENDENCY CHANGES, not only its own bytes', () => {
+    it('THE NAME CHANGES WHEN A DEPENDENCY CHANGES, not only its own bytes', async () => {
         /* The property the whole year-long cache rests on, and the one a naive
          * hash-your-own-bytes build does not have: change
          * wealthflow-institutions.js and wealthflow-mail-ingest.mjs, which
@@ -245,21 +273,22 @@ describe('the real build over a real copy of this repository', () => {
             const leaf = 'wealthflow-institutions.js';
             fs.appendFileSync(path.join(b, leaf), '\nexport const __probe = 1;\n');
 
-            return Promise.all([
+            /* AWAITED. This used to `return` the promise from inside try/finally, so the directories were removed
+             * before the builds had read them; it passed only because a build read everything before its first await. */
+            const [ra, rb] = await Promise.all([
                 build({ root: a, write: false, hash: true, log: () => {} }),
                 build({ root: b, write: false, hash: true, log: () => {} }),
-            ]).then(([ra, rb]) => {
-                expect(rb.renames.get(leaf), 'the changed file kept its name')
-                    .not.toBe(ra.renames.get(leaf));
-                const importer = 'wealthflow-mail-ingest.mjs';
-                expect(fs.readFileSync(path.join(ROOT, importer), 'utf8'),
-                    importer + ' no longer imports ' + leaf + ' — pick another pair').toContain(leaf);
-                expect(rb.renames.get(importer), 'the importer kept its name while its dependency changed')
-                    .not.toBe(ra.renames.get(importer));
-                /* And a module that depends on neither is untouched, or the
-                 * hash would just be a build counter. */
-                expect(rb.renames.get('wealthflow-when.js')).toBe(ra.renames.get('wealthflow-when.js'));
-            });
+            ]);
+            expect(rb.renames.get(leaf), 'the changed file kept its name')
+                .not.toBe(ra.renames.get(leaf));
+            const importer = 'wealthflow-mail-ingest.mjs';
+            expect(fs.readFileSync(path.join(ROOT, importer), 'utf8'),
+                importer + ' no longer imports ' + leaf + ' — pick another pair').toContain(leaf);
+            expect(rb.renames.get(importer), 'the importer kept its name while its dependency changed')
+                .not.toBe(ra.renames.get(importer));
+            /* And a module that depends on neither is untouched, or the
+             * hash would just be a build counter. */
+            expect(rb.renames.get('wealthflow-when.js')).toBe(ra.renames.get('wealthflow-when.js'));
         } finally {
             fs.rmSync(a, { recursive: true, force: true });
             fs.rmSync(b, { recursive: true, force: true });
@@ -449,6 +478,23 @@ describe('the server handlers this build must never break', () => {
 
     afterAll(() => { if (dir) fs.rmSync(dir, { recursive: true, force: true }); });
 
+    it('THE DEPLOY COMMAND PASSES: publish-layout accepts the built tree and swaps it (this failed production once)', () => {
+        /* #583 moved the app's inline scripts into files, and publish-layout looked for
+         * `firebaseConfig` in index.html itself, so the real deploy command died after the
+         * build with "index.html does not look like the app". The build alone was green in
+         * every test, which is why no test saw it. This runs the second half of
+         * `node build.mjs --write && node publish-layout.mjs` too, on a copy. */
+        const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-layout-'));
+        try {
+            fs.cpSync(dir, copy, { recursive: true });
+            const out = execFileSync(process.execPath, [path.join(copy, 'publish-layout.mjs')],
+                { cwd: copy, encoding: 'utf8', timeout: 60000 });
+            expect(out).toMatch(/app\.html is the app/);
+            const app = fs.readFileSync(path.join(copy, 'app.html'), 'utf8');
+            expect(inlineScriptsLeft(app)).toEqual([]);
+        } finally { fs.rmSync(copy, { recursive: true, force: true }); }
+    }, 90000);
+
     it('every one of them still imports a wealthflow-*.js/mjs module (or this list is stale)', () => {
         /* Guards the guard: if nobody imports these any more, the regression
          * test below would pass by having nothing left to check. */
@@ -554,4 +600,65 @@ describe('Vercel actually runs it, and the headers are safe if it does not', () 
         expect(m, 'the app-shell test in sw.js changed shape — check it still matches a hashed name').toBeTruthy();
         expect(/^\/wealthflow-[a-zA-Z0-9-]+\.js$/.test('/wealthflow-when-1a2b3c4d.js')).toBe(true);
     });
+});
+
+describe('the CSP-ready step fails open and can be switched off', () => {
+    function tree(mutate) {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-csp-'));
+        for (const f of fs.readdirSync(ROOT)) {
+            if (!MODULE_RE.test(f) && f !== 'index.html' && f !== 'sw.js' && f !== 'package.json') continue;
+            fs.copyFileSync(path.join(ROOT, f), path.join(dir, f));
+        }
+        if (mutate) mutate(dir);
+        return dir;
+    }
+    it('a handler the interpreter cannot read leaves every handler inline (the page keeps working)', async () => {
+        const dir = tree((d) => {
+            const f = path.join(d, 'index.html');
+            fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('<body', '<body data-x="1"').replace('</body>', '<button onclick="a b c">x</button></body>'));
+        });
+        try {
+            const out = await build({ root: dir, write: false, hash: true, log: () => {} });
+            expect(out.csp.applied).toBe(false);
+            expect(out.csp.skipped).toMatch(/cannot read/);
+            expect(/\sonclick\s*=/.test(out.htmlOut)).toBe(true);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }, 120000);
+    it('handlers: false (WF_HANDLERS=inline) leaves them inline', async () => {
+        const dir = tree();
+        try {
+            const out = await build({ root: dir, write: false, hash: true, log: () => {}, handlers: false });
+            expect(out.csp.applied).toBe(false);
+            expect(out.csp.skipped).toMatch(/switched off/);
+            expect(/\sonclick\s*=/.test(out.htmlOut)).toBe(true);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }, 120000);
+    it('inlineScripts: false (WF_INLINE_SCRIPTS=keep) leaves every script inline', async () => {
+        const dir = tree();
+        try {
+            const out = await build({ root: dir, write: false, hash: true, log: () => {}, inlineScripts: false });
+            expect(out.inline.applied).toBe(false);
+            expect(out.inline.skipped).toMatch(/switched off/);
+            expect(inlineScriptsLeft(out.htmlOut).length).toBeGreaterThanOrEqual(5);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }, 120000);
+    it('an inline script that does not parse on its own keeps every page inline', async () => {
+        const dir = tree((d) => {
+            const f = path.join(d, 'index.html');
+            fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('</body>', '<script>var x = ;</script></body>'));
+        });
+        try {
+            const out = await build({ root: dir, write: false, hash: true, log: () => {} });
+            expect(out.inline.applied).toBe(false);
+            expect(out.inline.skipped).toMatch(/do not parse/);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }, 120000);
+    it('a tree without the module loads nothing and renames nothing', async () => {
+        const dir = tree((d) => { for (const f of fs.readdirSync(d)) if (/^wealthflow-handlers/.test(f)) fs.rmSync(path.join(d, f)); });
+        try {
+            const out = await build({ root: dir, write: false, hash: true, log: () => {} });
+            expect(out.csp.applied).toBe(false);
+            expect(/\sonclick\s*=/.test(out.htmlOut)).toBe(true);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }, 120000);
 });

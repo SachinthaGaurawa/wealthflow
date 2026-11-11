@@ -617,8 +617,60 @@
         setInterval(paint, 300000);
     }
 
+    /* ───────── names for the controls that have none ─────────
+       Found by test/e2e/a11y-audit.mjs on 2026-11-07: 84 on/off switches and 13 fields had no name a screen reader could say, the switches
+       could not be flipped from the keyboard, 10 pop-ups were not announced as dialogs, and there was no way past the sidebar. The screens
+       draw their own markup, so the frame names what is on screen from what is already written beside it, and does nothing to a control
+       that already has a name. */
+    var FIELD_NAMES = { dashYear: 'Year', mpYear: 'Year', incRecvMonth: 'Month', expMonth: 'Month', dscrAddExistingLoan: 'Add an existing loan', debtDemoSlider: 'Extra monthly payment', cf3dPeriod: 'Period' };
+    function plain(el) { return el ? (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80) : ''; }
+    function nameControls() {
+        var i, el, t, box, list = doc.querySelectorAll('[role="switch"]:not([aria-label]):not([aria-labelledby])');
+        for (i = 0; i < list.length; i++) {
+            el = list[i]; box = el.closest('.setting-row, .fg, .card, [class*="row"]');
+            t = plain(box && box.querySelector('.setting-label, label, .sl, [class*="label"]')) || el.getAttribute('title') || '';
+            if (t) el.setAttribute('aria-label', t);
+        }
+        list = doc.querySelectorAll('input:not([type=hidden]):not([aria-label]):not([aria-labelledby]), select:not([aria-label]):not([aria-labelledby]), textarea:not([aria-label]):not([aria-labelledby])');
+        for (i = 0; i < list.length; i++) {
+            el = list[i];
+            if (el.closest('label') || (el.id && doc.querySelector('label[for="' + el.id + '"]'))) continue;
+            box = el.closest('.fg, .setting-row');
+            t = FIELD_NAMES[el.id] || plain(box && box.querySelector('label, .setting-label')) || el.getAttribute('title') || el.getAttribute('placeholder') || '';
+            if (t) el.setAttribute('aria-label', t);
+        }
+        list = doc.querySelectorAll('.mo:not([role]), .modal-overlay:not([role])');
+        for (i = 0; i < list.length; i++) {
+            el = list[i]; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
+            t = plain(el.querySelector('.modal-title, .mo-title, h2, h3'));
+            if (t) el.setAttribute('aria-label', t);
+        }
+    }
+    /* A switch is a focusable control: Space and Enter flip it, as a screen reader and a keyboard user expect. */
+    function onSwitchKey(e) {
+        var el = e.target;
+        /* A `.toggle` switch already has its own key handler in index.html; a second one here flipped it twice, so the key did nothing (found by test/e2e/settings-runtime.mjs). Only switches without that class are handled here. */
+        if ((e.key === ' ' || e.key === 'Enter') && el && el.getAttribute && el.getAttribute('role') === 'switch' && !/^(INPUT|BUTTON)$/.test(el.tagName) && !(el.classList && el.classList.contains('toggle'))) { e.preventDefault(); el.click(); }
+    }
+    function installAccess() {
+        var main = doc.querySelector('.main'), a;
+        if (main && !main.getAttribute('role')) { main.setAttribute('role', 'main'); if (!main.id) main.id = 'wfMainContent'; }
+        if (main && !doc.querySelector('.wf-skip')) {
+            a = doc.createElement('a'); a.className = 'wf-skip'; a.href = '#' + main.id; a.textContent = 'Skip to main content';
+            a.addEventListener('click', function (e) { e.preventDefault(); main.setAttribute('tabindex', '-1'); main.focus(); });
+            doc.body.insertBefore(a, doc.body.firstChild);
+        }
+        nameControls();
+        doc.addEventListener('keydown', onSwitchKey);
+        if (window.MutationObserver) {
+            var t = 0, host = doc.querySelector('.content') || doc.body;
+            new MutationObserver(function () { if (!t) t = setTimeout(function () { t = 0; nameControls(); }, 120); }).observe(host, { childList: true, subtree: true });
+        }
+    }
+
     /* ───────── boot ───────── */
     function init() {
+        installAccess();
         installHeader();
         installGreeting();
         installBrandPanel();

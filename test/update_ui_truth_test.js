@@ -130,8 +130,10 @@ describe('the hardcoded release history is gone', () => {
         // Raised from 122_700 (measured 143,081, 2026-11-07): the update policy screens (later / skip / install when idle, rollout
         // note, update history, per-device features, Wi-Fi only, patch-style download with a measured size). The rules themselves
         // live in wealthflow-update-policy.js; this file only draws them.
+        // Raised from 143_500 (measured 153,2xx, 2026-11-07): the devices of one account follow each other's update (devices list and
+        // switch in Settings, the pill that names the other device, the follow install with its retry limit; about 9 KB, a third comments).
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(143_500);
+        expect(bytes).toBeLessThan(154_000);
     });
 });
 

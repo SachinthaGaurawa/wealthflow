@@ -117,7 +117,7 @@ describe('wiring is mechanical and honest', () => {
     it('refuses a name that is not a module', () => { expect(L.wireModule({ repoDir: repo(), name: '../etc.js' }).ok).toBe(false); });
     it('raises a ceiling only when the measured value is over it, to the measured value', () => {
         const d = repo();
-        fs.writeFileSync(path.join(d, 'wealthflow-big.js'), 'x'.repeat(3_000_000));   // over totalJsBytes
+        fs.writeFileSync(path.join(d, 'wealthflow-big.js'), 'x'.repeat(3_100_000));   // over totalJsBytes
         const r = L.wireModule({ repoDir: d, name: 'wealthflow-loan-check.js', issue: 7 });
         expect(r.ok).toBe(true);
         expect(r.raised.join(' ')).toMatch(/totalJsBytes/);

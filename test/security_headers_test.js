@@ -68,6 +68,17 @@ describe('Content-Security-Policy (finding 1)', () => {
         }
     });
 
+    it('scripts run only from files: no inline script, no inline handler, no eval (finding 1, phase 2)', () => {
+        /* The build moves every inline script into a hashed file and ships handlers as data-wf-on-*
+         * attributes that wealthflow-handlers.js runs without eval. With both in place the keyword is
+         * unnecessary, and an injected <script> or onclick= stays inert. test/e2e/strict-csp.mjs boots
+         * the built app under exactly this policy. */
+        expect(CSP['script-src']).not.toContain("'unsafe-inline'");
+        expect(CSP['script-src']).not.toContain("'unsafe-eval'");
+        expect(CSP['script-src']).toContain("'self'");
+        expect(CSP['script-src']).toContain("'wasm-unsafe-eval'");
+    });
+
     it('lets a CDN supply only the exact packages the app loads', () => {
         const cdn = CSP['script-src'].filter((x) => /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com/.test(x));
         expect(cdn.length).toBeGreaterThan(0);
@@ -102,6 +113,34 @@ describe('Content-Security-Policy (finding 1)', () => {
         const t = parseCsp(headersFor('/t/(.*)')['Content-Security-Policy']);
         expect(t['script-src']).toEqual(["'self'"]);
         expect(t['connect-src']).toEqual(["'self'"]);
+    });
+});
+
+describe('the statement reader sandbox page', () => {
+    // The statement reader runs a bank statement (an application with its own inline scripts) in a frame. A srcdoc frame
+    // would inherit the app's policy, so the frame loads wf-sandbox.html, whose response carries a policy of its own.
+    const sb = parseCsp(headersFor('/wf-sandbox.html')['Content-Security-Policy']);
+    it('is its own rule, later than the global one, so its policy replaces the app policy for that path', () => {
+        const order = VERCEL.headers.map((r) => r.source);
+        expect(order.indexOf('/wf-sandbox.html')).toBeGreaterThan(order.indexOf('/(.*)'));
+        expect(fs.existsSync(path.join(ROOT, 'wf-sandbox.html'))).toBe(true);
+    });
+    it('allows inline script and nothing that reaches the network', () => {
+        expect(sb['default-src']).toEqual(["'none'"]);
+        expect(sb['script-src']).toEqual(["'unsafe-inline'", "'unsafe-eval'"]);
+        for (const k of ['connect-src', 'frame-src', 'form-action']) {
+            const v = sb[k] || sb['default-src'];
+            expect(v, k).toEqual(["'none'"]);
+        }
+        expect(sb['img-src']).toEqual(['data:']);
+        expect(sb['frame-ancestors']).toEqual(["'self'"]);
+        expect(headersFor('/wf-sandbox.html')['X-Frame-Options']).toBe('SAMEORIGIN');
+    });
+    it('is the same policy the document the frame is handed declares for itself', () => {
+        const m = /_SANDBOX_CSP = ((?:"[^"]*"\s*\+?\s*)+);/.exec(read('wealthflow-html-statement.js'));
+        expect(m, 'the in-document policy was not found').toBeTruthy();
+        const inDoc = parseCsp(m[1].split('+').map((x) => x.trim().replace(/^"|"$/g, '')).join(''));
+        for (const k of Object.keys(inDoc)) expect(sb[k], k).toEqual(inDoc[k]);
     });
 });
 
@@ -206,16 +245,26 @@ describe('robots.txt and probe paths (findings 3 and 4)', () => {
 
     it('answers scanner probe paths with a 404 (no rewrite matches) instead of the app with a 200', () => {
         for (const p of ['/admin', '/admin/login', '/administrator', '/wp-admin/', '/wp-login.php', '/phpmyadmin', '/.env', '/.env.production', '/.git/config',
-            '/.htaccess', '/server-status', '/actuator/health', '/phpinfo.php', '/anything/shell.php', '/db.sql', '/backup.bak', '/cgi-bin/test', '/.well-known/security.txt']) {
+            '/.htaccess', '/server-status', '/actuator/health', '/phpinfo.php', '/anything/shell.php', '/db.sql', '/backup.bak', '/cgi-bin/test', '/.well-known/security.txt',
+            '/admin-panel', '/admin_panel', '/adminpanel', '/administration', '/backend', '/panel', '/manager', '/controlpanel', '/control-panel', '/moderator', '/root', '/wp-json/wp/v2/users']) {
             expect(re.test(p), p + ' must not be served the app').toBe(false);
         }
     });
 
     it('still serves the app for every real path', () => {
-        for (const p of ['/', '/app', '/app/', '/dashboard', '/anything-else', '/administrators-guide-nothing', '/robots-not-here']) {
+        for (const p of ['/', '/app', '/app/', '/anything-else', '/administrators-guide-nothing', '/robots-not-here', '/panels-of-glass', '/rootless']) {
             // '/administrators-guide-nothing' starts with the word admin but is not the admin path
             expect(re.test(p), p + ' must still reach the app').toBe(true);
         }
+    });
+
+    it('sends the words a person may type (login, dashboard) to the app by redirect, not by serving it under an admin-looking path', () => {
+        const rd = VERCEL.redirects.find((r) => /login/.test(r.source));
+        expect(rd && rd.destination).toBe('/app');
+        expect(rd.permanent).toBe(false);
+        const rx = new RegExp('^' + rd.source + '$');
+        for (const p of ['/login', '/signin', '/sign-in', '/dashboard']) expect(rx.test(p), p).toBe(true);
+        expect(rx.test('/loginx')).toBe(false);
     });
 
     it('serves the real assetlinks.json instead of the app', () => {

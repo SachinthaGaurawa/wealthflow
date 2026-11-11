@@ -146,6 +146,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripJs, stripHtml, tidy } from './build-strip.mjs';
+import { extractHandlers, renameHandlerAttributes } from './wf-handler-extract.mjs';
+import { extractInlineScripts } from './wf-inline-extract.mjs';
+import vm from 'node:vm';
 
 /** Files the browser is served and that carry comments worth removing. */
 export const MODULE_RE = /^wealthflow-[a-zA-Z0-9-]+\.(?:js|mjs)$/;
@@ -311,9 +314,12 @@ export function localJsFiles(root, rules) {
     return out;
 }
 
+/* The other pages that ship an inline script. They are not rewritten by anything else in this build. */
+const INLINE_PAGES = ['landing.html', 'share-target.html', '404.html', 'privacy.html', 'terms.html'];
+
 const kb = (n) => (n / 1024).toFixed(0).padStart(6) + ' KB';
 
-export async function build({ root = process.cwd(), write = false, hash = true, log = console.log } = {}) {
+export async function build({ root = process.cwd(), write = false, hash = true, log = console.log, handlers = process.env.WF_HANDLERS !== 'inline', inlineScripts = process.env.WF_INLINE_SCRIPTS !== 'keep' } = {}) {
     const all = fs.readdirSync(root);
     const modules = all.filter((f) => MODULE_RE.test(f) && !HASHED_RE.test(f)).sort();
     if (!modules.length) throw new Error('no modules found in ' + root + ' — wrong directory?');
@@ -336,6 +342,57 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
         const again = stripJs(text);
         if (again.comments !== 0) problems.push(f + ': stripping is not idempotent (' + again.comments + ' left)');
     }
+
+    /* ── 1b. CSP-READY HANDLERS ────────────────────────────────────────────
+     *
+     * The page's `script-src` cannot lose 'unsafe-inline' while it carries ~460 inline handlers
+     * (`onclick="closeModal('x')"`). In the COPY THAT SHIPS, the attribute name is renamed
+     * (`onclick=` -> `data-wf-on-click=`, which the browser does not run) and wealthflow-handlers.js
+     * runs the value itself, without eval, and only when its shape was found here. The repository
+     * keeps the ordinary inline form: nothing an author writes changes, and an unbuilt tree still works.
+     *
+     * FAILS OPEN. If a handler cannot be read by the interpreter, or the module is missing, nothing
+     * is renamed and the page keeps working with inline handlers; the build says so loudly and
+     * test/handlers_inventory_test.js is what stops such a handler reaching main. A broken deploy of
+     * a personal-finance app is worse than a CSP that still lists 'unsafe-inline'.
+     * `WF_HANDLERS=inline` in the build environment switches this off (no code change needed).
+     */
+    const htmlPath = path.join(root, 'index.html');
+    const html = fs.readFileSync(htmlPath, 'utf8');
+    let htmlStripped = tidy(stripHtml(html).text);
+    const csp = { applied: false, handlers: 0, shapes: 0, renamed: 0, skipped: '' };
+    const HANDLER_MODULE = 'wealthflow-handlers.js';
+    if (!handlers) csp.skipped = 'switched off (WF_HANDLERS=inline)';
+    else if (!stripped.has(HANDLER_MODULE)) csp.skipped = HANDLER_MODULE + ' is not in this tree';
+    else if (!/<script[^>]*src="wealthflow-handlers\.js"/.test(htmlStripped)) csp.skipped = 'index.html does not load ' + HANDLER_MODULE;
+    else {
+        // the module's own (stripped) text, imported from memory: no file name for the hashing step below to rename, and no import specifier for the reference check to trip over
+        const core = await import('data:text/javascript;base64,' + Buffer.from(stripped.get(HANDLER_MODULE)).toString('base64'));
+        const texts = [['index.html', htmlStripped], ...modules.map((f) => [f, stripped.get(f)])];
+        const shapes = new Set(); const unreadable = [];
+        for (const [name, text] of texts) {
+            for (const h of extractHandlers(text)) {
+                csp.handlers += 1;
+                try { shapes.add(core.handlerShape(h.code)); } catch (e) { unreadable.push(name + ': ' + h.code.slice(0, 70) + ' (' + e.message + ')'); }
+            }
+        }
+        const holder = stripped.get(HANDLER_MODULE);
+        if (!holder.includes("['@@WF_SHAPES@@']")) csp.skipped = HANDLER_MODULE + ' has no place for the shapes';
+        else if (unreadable.length) csp.skipped = unreadable.length + ' handler(s) the interpreter cannot read, first: ' + unreadable[0];
+        else {
+            const hr = renameHandlerAttributes(htmlStripped);
+            htmlStripped = hr.text; csp.renamed += hr.renamed;
+            for (const f of modules) {
+                const r = renameHandlerAttributes(stripped.get(f));
+                stripped.set(f, r.text); csp.renamed += r.renamed;
+            }
+            csp.shapes = shapes.size;
+            stripped.set(HANDLER_MODULE, stripped.get(HANDLER_MODULE).replace("['@@WF_SHAPES@@']", JSON.stringify([...shapes].sort())));
+            csp.applied = true;
+        }
+    }
+    log('  handlers     ' + (csp.applied ? 'CSP-ready: ' + csp.renamed + ' attributes renamed, ' + csp.shapes + ' shapes allowed'
+        : 'left inline: ' + csp.skipped));
 
     /* ── 2. hash, and work out the new names ──────────────────────────────
      *
@@ -381,11 +438,46 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
     }
 
     /* ── 3. index.html and sw.js ──────────────────────────────────────────── */
-    const htmlPath = path.join(root, 'index.html');
-    const html = fs.readFileSync(htmlPath, 'utf8');
     before.html = Buffer.byteLength(html);
-    let htmlOut = tidy(stripHtml(html).text);
+    let htmlOut = htmlStripped;
     htmlOut = rewriteRefs(htmlOut, renames);
+
+    /* ── 3a. INLINE SCRIPTS INTO FILES ─────────────────────────────────────
+     *
+     * The second half of dropping 'unsafe-inline' from `script-src`: no page may carry an inline
+     * `<script>` body. Each block becomes `/wealthflow-inline-<page>-<n>-<hash>.js`, loaded by a
+     * plain `<script src>` IN THE SAME PLACE, so order and global scope are exactly as before
+     * (wf-inline-extract.mjs). It runs on the text AFTER the module names were rewritten, so a name
+     * the page builds at run time still points at what ships. The repository source is untouched.
+     *
+     * FAILS OPEN like 1b: if a block does not parse as a script on its own, or the switch
+     * `WF_INLINE_SCRIPTS=keep` is set, every page keeps its inline scripts and the build says so.
+     */
+    const inline = { applied: false, files: [], pages: new Map(), skipped: '' };
+    if (!inlineScripts) inline.skipped = 'switched off (WF_INLINE_SCRIPTS=keep)';
+    else {
+        const pagesIn = [['index.html', htmlOut]];
+        for (const f of INLINE_PAGES) {
+            const fp = path.join(root, f);
+            if (fs.existsSync(fp)) pagesIn.push([f, fs.readFileSync(fp, 'utf8')]);
+        }
+        const done = []; const seen = new Set(); const bad = [];
+        for (const [f, text] of pagesIn) {
+            const r = extractInlineScripts(text, { page: f, hashOf: (t) => hashOf(t).slice(0, 8) });
+            for (const file of r.files) {
+                try { new vm.Script(file.text, { filename: file.name }); } catch (e) { bad.push(f + ': ' + String(e.message).slice(0, 100)); }
+                if (!seen.has(file.name)) { seen.add(file.name); inline.files.push(file); }
+            }
+            done.push([f, r.html]);
+        }
+        if (bad.length) inline.skipped = bad.length + ' inline script(s) do not parse alone, first: ' + bad[0];
+        else {
+            for (const [f, out2] of done) { if (f === 'index.html') htmlOut = out2; else inline.pages.set(f, out2); }
+            inline.applied = true;
+        }
+    }
+    log('  inline JS    ' + (inline.applied ? 'moved into ' + inline.files.length + ' files'
+        : 'left inline: ' + inline.skipped));
     after.html = Buffer.byteLength(htmlOut);
 
     const swPath = path.join(root, 'sw.js');
@@ -432,6 +524,7 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
         const originals = modules;
         const check = [['index.html', htmlOut, survivors], ...(swOut === null ? [] : [['sw.js', swOut, survivors]]),
             ...modules.map((f) => [f, stripped.get(f), survivors]),
+            ...inline.files.map((x) => [x.name, x.text, survivors]),
             /* Every OTHER shipped .js/.mjs file, changed or not — a file this
              * rewrite pass never touched must still be checked, because "it
              * references nothing renamed" and "the rewrite silently failed to
@@ -468,6 +561,8 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
          * to the SAME path it already lives at — it is not renamed, it is not
          * hashed, only the one broken line inside it changes. */
         for (const [rel, text] of otherFiles) fs.writeFileSync(path.join(root, rel), text);
+        for (const x of inline.files) fs.writeFileSync(path.join(root, x.name), x.text);
+        for (const [rel, text] of inline.pages) fs.writeFileSync(path.join(root, rel), text);
     }
 
     const total = { before: before.html + before.js, after: after.html + after.js };
@@ -485,7 +580,7 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
     log(write ? '  written in place' : '  DRY RUN — nothing written (pass --write)');
     log('');
 
-    return { modules, renames, before, after, htmlOut, swOut, stripped, otherFiles };
+    return { modules, renames, before, after, htmlOut, swOut, stripped, otherFiles, csp, inline };
 }
 
 /**
@@ -512,7 +607,7 @@ export async function verifyParses({ root, files, log = console.log }) {
         });
     })));
     if (bad.length) throw new Error('stripped modules do not parse:\n  ' + bad.join('\n  '));
-    log('  ' + files.length + ' modules parse after stripping');
+    log('  ' + files.length + ' files parse after stripping');
     return true;
 }
 
@@ -531,7 +626,7 @@ if (invokedDirectly) {
         if (write) {
             await verifyParses({
                 root: process.cwd(),
-                files: out.modules.map((f) => out.renames.get(f) || f),
+                files: [...out.modules.map((f) => out.renames.get(f) || f), ...out.inline.files.map((x) => x.name)],
             });
         }
         process.exit(0);

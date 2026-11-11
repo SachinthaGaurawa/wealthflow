@@ -1,5 +1,69 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.80 — 2026-11-11
+
+**What changed for you**
+
+- CSP phase 2, step 4: script-src no longer allows 'unsafe-inline' (#587)
+
+## v7.69.79 — 2026-11-11
+
+**What changed for you**
+
+- CSP phase 2, step 3b: the statement reader sandbox moves to its own route (#584)
+- Publish-layout finds the app's firebaseConfig in the moved inline files (#586)
+
+## v7.69.78 — 2026-11-11
+
+**What changed for you**
+
+- CSP phase 2, step 3: the build moves every inline script into a file (#583)
+
+## v7.69.77 — 2026-11-11
+
+**What changed for you**
+
+- CSP phase 2, step 2: the build makes the shipped page CSP-ready (handlers renamed, shapes allow-listed) (#582)
+
+## v7.69.76 — 2026-11-11
+
+**What changed for you**
+
+- CSP phase 2, step 1: handler interpreter (no eval), extractor, inventory tests (#580)
+
+**Under the hood**
+
+- Self-ideation: an idea nobody picked up no longer holds the cap for ever (#581)
+
+## v7.69.75 — 2026-11-11
+
+**What changed for you**
+
+- Devices follow each other's update; NEW label counts from first look; the system proposes its own ideas; accessibility fixes (#573)
+
+## v7.69.74 — 2026-11-11
+
+**What changed for you**
+
+- Admin-looking paths 404, login and dashboard redirect to the app (#579)
+
+## v7.69.73 — 2026-11-10
+
+**What changed for you**
+
+- Security batch 3 + hotfix: /api/ai duplicate import, redact public feedback text, opt-in cloud OCR, dependency fixes (#578)
+
+**Under the hood**
+
+- Security batch 2: limits and cross-site refusal on the AI/vision endpoints (#577)
+
+## v7.69.72 — 2026-11-10
+
+**What changed for you**
+
+- Security batch 1: CSP, strict CORS allow-list, probe-path 404s, CDN integrity hashes (#575)
+- A month holds the total of its payments; a number, a bill reference or a company is one entry (#576)
+
 ## v7.69.71 — 2026-11-10
 
 **What changed for you**
