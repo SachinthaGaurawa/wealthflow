@@ -63,6 +63,21 @@ describe('what the system studies', () => {
     });
 });
 
+describe('the cap does not hold for ever on ideas nobody picked up (found on the first real run)', () => {
+    const day = 86400000, now = Date.parse('2026-11-11T05:00:00Z');
+    const at = (days) => new Date(now - days * day).toISOString();
+    const mk = (n, labels, days) => ({ number: n, title: '[PROPOSAL] y' + n, state: 'open', created_at: at(days), labels: labels.map((name) => ({ name })) });
+    it('a waiting idea counts for 3 days, an approved one for 14', () => {
+        const o = I.outcomesOf([mk(1, [PROPOSAL_LABEL], 2), mk(2, [PROPOSAL_LABEL], 4), mk(3, [PROPOSAL_LABEL, APPROVED_LABEL], 13), mk(4, [PROPOSAL_LABEL, APPROVED_LABEL], 15)]);
+        expect(I.inFlight(o, now)).toBe(2);
+        expect(o.map((x) => x.state)).toEqual(['waiting', 'waiting', 'building', 'building']);   // all four still count as earlier ideas (no repeats)
+    });
+    it('two old waiting ideas no longer stop the engine, and are still remembered as earlier ideas', async () => {
+        const issues = [mk(443, [PROPOSAL_LABEL], 23), mk(430, [PROPOSAL_LABEL], 30)];
+        expect(I.inFlight(I.outcomesOf(issues), now)).toBe(0);
+    });
+});
+
 describe('repeats', () => {
     const past = [{ number: 40, title: 'Show a running balance column in the expenses table', state: 'declined' }];
     it('refuses a near-copy of an earlier idea, even one that was declined', () => {

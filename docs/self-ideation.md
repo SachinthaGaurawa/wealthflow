@@ -44,6 +44,10 @@ Found while writing that test: `wealthflow-vault.js` (the bank-password vault) w
 
 The remaining risk is a harmful change to an ordinary module that every layer above misses. That is the same risk any fix-agent pull request carries; the owner can remove it for ideas alone with `WF_IDEAS_AUTO=0`.
 
+## The cap on ideas in flight
+
+At most 2 ideas are in the pipeline at once, so the system cannot flood the repository. An idea that nobody picked up does not hold the cap for ever: a waiting idea (open, no `approved-feature`) counts for 3 days, an approved idea for 14 (`WAITING_DAYS`, `BUILDING_DAYS` in `autonomy/ideas.mjs`). All of them still count as earlier ideas, so none is proposed again. Found on the first real run (a dry run on 2026-11-11): two ideas the old weekly engine filed on 12 and 19 October, still waiting for a label, blocked every new idea.
+
 ## How the owner can still steer (optional, never required)
 
 - Close an idea's issue before its pull request merges: it is not built.
