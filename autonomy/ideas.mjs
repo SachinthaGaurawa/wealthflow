@@ -46,7 +46,7 @@ const clip = (s, n) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().sl
 export function parseRoadmap(markdown) {
     const rows = [];
     for (const line of String(markdown || '').split('\n')) {
-        const m = /^\|\s*(\d{1,2})\s*\|(.+)\|\s*$/.exec(line);
+        const m = /^\|\s*(\d{1,2})\s*\|(.+?)\|?\s*$/.exec(line);   // the closing pipe is optional: a row without one still counts
         if (!m) continue;
         const cells = m[2].split('|').map((c) => c.trim());
         if (cells.length < 3) continue;
@@ -144,7 +144,7 @@ export function isRepeat(title, outcomes, threshold = 0.6) {
 const RULES = [
     ['sign-in or security', /\b(log-?in|sign-?in|sign-?out|passcode|password|pin code|otp|two-?factor|2fa|session token|authenticat\w*|authoriz\w*|biometric)\b/i],
     ['encryption', /\b(encrypt\w*|decrypt\w*|cipher|aes-?gcm|vault|key derivation|private key)\b/i],
-    ['money arithmetic', /\b(rounding|round(s|ed)? (to|the) (nearest|cent|rupee)|currency conversion|exchange rate|interest (calculation|formula)|change how (amounts?|totals?|balances?) (is|are)? ?(added|summed|calculated|stored|rounded))\b/i],
+    ['money arithmetic', /\b(rounding|round(s|ed)? (to|the) (nearest|cent|rupee)|currency conversion|exchange rate|interest (calculation|formula)|(change|alter|adjust|modify|rework|tweak|fix) how (the |your |each |every )?(amounts?|totals?|balances?|sums?|figures?) (is|are)? ?(added|summed|calculated|computed|stored|rounded|worked out|converted))\b/i],
     ['a paid service', /\b(paid (plan|tier|api|service)|subscription fee|stripe|paypal|billing|payment gateway|premium plan|monthly (fee|bill|cost)|credit card required)\b/i],
     ['a new dependency', /\b(npm install|new (npm |third-party |external )?(library|package|dependency|sdk|framework)|add(ing)? (a )?(library|package|dependency|sdk|framework))\b/i],
     ['sending data somewhere new', /\b(send|upload|share|post|export|sync)\w* (the )?(your |their |user'?s? )?(money |financial |transaction |account )?(data|records|transactions|balances|statements) (to|with|via) (a |an |the )?(new |external |third|cloud|server|service|api|website|email)/i],
@@ -152,9 +152,12 @@ const RULES = [
 ];
 const FORBIDDEN_FILES = /(^|[\s,/])(wealthflow-(auth|crypto|vault|passcode|login)[a-z-]*\.js|firestore\.rules|vercel\.json|package(-lock)?\.json|\.github\/|api\/|autonomy\/)/i;
 
-/** What the idea would build (title, proposal, scope): never its "risks" text, which names dangers on purpose. */
+/**
+ * Everything the fix agent will be given to build from: title, problem, prompt, proposal, scope and why-now (the issue body carries all of
+ * them, so a harmful instruction hidden in any one is read). Never the "risks" text, which names dangers on purpose.
+ */
 export function guardIdea(p) {
-    const what = `${p?.title || ''}\n${p?.proposal || ''}`;
+    const what = [p?.title, p?.problem, p?.prompt, p?.proposal, p?.scope, p?.whyNow].map((x) => String(x || '')).join('\n');
     const reasons = [];
     for (const [name, re] of RULES) if (re.test(what)) reasons.push(name);
     if (FORBIDDEN_FILES.test(String(p?.scope || ''))) reasons.push('a file that only a human may change');

@@ -312,7 +312,9 @@ export async function proposeOnce({
     let board = null;
     if (verdict.act === 'ask-board' && autoApprove) {
         const ask = (o, n) => chatMany({ ...o, only: allowed, onAttempt }, n);
-        board = await (boardImpl || runConceptBoard)({ issueText: Ideas.boardTextFor(p), env, ask });
+        // The board must never take the run down: a throw is "no AI could be reached", which `decide` turns into retry, never into approval.
+        try { board = await (boardImpl || runConceptBoard)({ issueText: Ideas.boardTextFor(p), env, ask }); }
+        catch { board = { voters: 0, votes: [] }; }
         verdict = Ideas.decide({ idea: p, signals, outcomes, board });
     }
     budget.saveLedger(ledger);
@@ -326,7 +328,9 @@ export async function proposeOnce({
     for (const l of labels) await queue.ensureLabel(l, l === Ideas.IDEA_LABELS.declined ? 'CCCCCC' : 'C2E0C6', 'Machine-authored idea', { env }).catch(() => {});
     await queue.ensureLabel(APPROVED_LABEL, '0E8A16', 'The idea may be built by the agent', { env }).catch(() => {});
 
-    const issue = await queue.createIssue({ title, body, labels, env });
+    let issue;
+    try { issue = await queue.createIssue({ title, body, labels, env }); }
+    catch (e) { return { filed: null, reason: `could not file the idea: ${e.message}; tried again next run`, proposal: p }; }
     if (issue?.number && board && board.voters && !dryRun) await queue.comment(issue.number, boardComment(board), { env }).catch(() => {});
     if (outcome && outcome.declined && issue?.number) await queue.closeIssue(issue.number, { env, reason: 'not_planned' }).catch(() => {});
     return {
