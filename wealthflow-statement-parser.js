@@ -889,7 +889,27 @@
     // Unchanged contract for existing callers.
     function parseStatementText(text) { return parseStatement(text).rows; }
 
+    /* WHAT THE STATEMENT SAYS IT IS, in the words the e-mail worker's reader uses (statement-reader.mjs): a card statement is told by its HEADER (a line with a date and an amount is a transaction, never a header),
+     * and the account's last four digits are the ones printed after "Card Number" / "Account No". The page used to leave both blank on an HTML statement and guess card-or-bank from the row mix, so a card
+     * statement with a payment on it was filed as a bank account (its charges as Expenses, its payment as Income). One reading for both doors: test/manual_upload_identity_test.js holds them equal. */
+    var IDENT_DATE = /\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b|\b\d{1,2}[\s-]+[A-Za-z]{3}[A-Za-z]*\.?(?:[\s-]+\d{2,4})?\b/;
+    var IDENT_AMOUNT = /\d[\d,]*\.\d{2}\b/;
+    /* opts.before: the words of the statement's first transaction. An HTML e-statement reaches the page as ONE line, which the line rule would throw away whole (it holds dates and amounts), so the header is
+     * everything before that first row; with no such words, or none found, the line rule applies as it does at the worker. */
+    function identityOf(text, opts) {
+        var t = String(text || '');
+        var cut = opts && opts.before ? t.indexOf(String(opts.before)) : -1;
+        var header = cut > 0 ? t.slice(0, cut) : t.split('\n').filter(function (line) { return !(IDENT_DATE.test(line) && IDENT_AMOUNT.test(line)); }).join('\n');
+        var card = t.match(/(?:card|account)\s*(?:number|no\.?|#)?\s*[:\s]*([\dXx* -]{8,30})/i);
+        var digits = card ? card[1].replace(/\D/g, '') : '';
+        return {
+            statementType: /american express|amex|credit card|cardholder|credit limit/i.test(header) ? 'credit-card' : '',
+            accountLast4: digits.length >= 4 ? digits.slice(-4) : ''
+        };
+    }
+
     window.WFStatementParser = {
+        identityOf: identityOf,
         parseStatementText: parseStatementText,
         parseStatement: parseStatement,
         hasTextLayer: hasTextLayer,

@@ -32,7 +32,7 @@ import { runSteps } from './statement-budget.mjs';
 import { continueChain, parseHeader, withHardDeadline, platformWaitUntil, HEADER as CHAIN_HEADER } from './statement-chain.mjs';
 import { inquiryFor, REGISTRY_SIZE } from './statement-merchants.mjs';
 import { bankAgrees } from './wealthflow-institutions.js';
-import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow, installmentInfo, isCardFeeWording, isCardCashback } from './wealthflow-statement-router.js';
+import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow, installmentInfo, isCardFeeWording, isCardCashback, namedCardCategory, cardChargeCategory } from './wealthflow-statement-router.js';
 import { readPlanTable, planFor } from './statement-plan-table.mjs';
 import { conversionLegs } from './statement-conversion.mjs';
 import { PROPOSAL, REVIEW, decisionProblem, agreedRows, approvedRows, reviewPrompt, proposalPrompt, inVocabulary } from './statement-board.mjs';
@@ -328,7 +328,7 @@ async function askBoard(rows, rules, allocations, board) {
 }
 
 /* The category a card line may keep: one the rules or the merchant list really named (never "Other", "Needs Review" or a "Card ..." label), else the plain "Card Purchase" the merchant review settles. */
-export const namedCardCategory = category => (category && !/^(?:other|needs review|card\s)/i.test(String(category)) && CLASSIFY_CATEGORIES.includes(category) ? category : 'Card Purchase');
+export { namedCardCategory };      // the rule lives in the shared router (wealthflow-statement-router.js), which the page's manual upload reads too
 export function deterministicDecision(row, allocations = {}) {
     const description = String(row?.narration || row?.description || '');
     /* THE TWO LEGS OF A PURCHASE TURNED INTO AN INSTALMENT PLAN cancel each other (statement-conversion.mjs): left out of the books, the plan's instalments carry the money */
@@ -379,9 +379,7 @@ export function deterministicDecision(row, allocations = {}) {
         cc_payment: { module: 'ccPayments', category: 'Card Payment' },
         /* A CARD PURCHASE KEEPS THE CATEGORY THE RULES GAVE IT ("KEELLS SUPER" is Groceries, "UBER" is Transport): the router named it, and filing every card line as "Card Purchase" left the whole statement
          * uncategorised until the app was opened and the merchant autopilot swept it. A merchant the rules could not place ("Other") is still filed as a Card Purchase, and the autopilot and the owner settle it. */
-        cconetime: { module: 'cconetime', category: routed.subtype === 'fuel' ? 'Fuel' : routed.subtype === 'fee' ? 'Card Fee' : routed.subtype === 'cash_advance' ? 'Cash Advance'
-            : routed.subtype === 'subscription' ? namedCardCategory(expenseCategoryFor(row) !== 'Other' ? expenseCategoryFor(row) : routed.category)
-            : routed.subtype === 'purchase' && routed.category && !/^(?:other|needs review|card\s)/i.test(String(routed.category)) && CLASSIFY_CATEGORIES.includes(routed.category) ? routed.category : 'Card Purchase' },
+        cconetime: { module: 'cconetime', category: cardChargeCategory(row, routed) },
         ccinstall: { module: 'ccinstall', category: 'Installment' },
     };
     const decision = decisions[routed.module];

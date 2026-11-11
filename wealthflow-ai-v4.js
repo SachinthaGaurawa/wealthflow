@@ -1234,6 +1234,16 @@
             return Object.assign({}, d, tok ? { last4: tok[0].slice(-4) } : {});
         } catch (_) { return null; }
     }
+    /* What the statement says it is (a credit card or not) and which account it is for, read the way the e-mail worker reads them (WFStatementParser.identityOf), so the review files a card
+     * statement as a card whatever mix of charges and payments it holds, and Settings > Cards and accounts is asked about the right number. A number the page already had is kept. */
+    function _wfIdentify(parsed, text, bank) {
+        try {
+            var SP = window.WFStatementParser, first = parsed && parsed.transactions && parsed.transactions[0], id = SP && SP.identityOf ? SP.identityOf(text, { before: first && first.description }) : null;
+            if (!parsed) return;
+            if (id && id.statementType) parsed.statementType = id.statementType;
+            if (!parsed.card_last4) parsed.card_last4 = (id && id.accountLast4) || (bank && bank.tail) || '';
+        } catch (_) { /* the row mix decides, as before */ }
+    }
     async function _wfResolveBank(ctx) {
         var D = window.WFBankDetect; if (!D || typeof D.detect !== 'function') return null;
         var name = (ctx.file && ctx.file.name) || '';
@@ -1372,6 +1382,7 @@
                     _wfBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _hres && _hres.text });
                     ccotBank = _wfBank && _wfBank.ok ? _wfBank.name : '';
                     _parsedH._wfBank = _wfBank;
+                    _wfIdentify(_parsedH, _hres && _hres.text, _wfBank);
                     P.stage('guard', 'Checking your books…', 'Making sure this statement is not already added', 'shield');
                     if (await _wfGuardParsed(_parsedH, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', text: _hres && _hres.text, force: _wfForce, redo: _wfRedo })) { inputEl.value = ''; return; }
                     P.end();
@@ -1476,6 +1487,7 @@
                         _wfBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _res.text, meta: _res.meta });
                         ccotBank = _wfBank && _wfBank.ok ? _wfBank.name : '';
                         _parsed._wfBank = _wfBank;
+                        _wfIdentify(_parsed, _res.text, _wfBank);
                         P.stage('guard', 'Checking your books…', 'Making sure this statement is not already added', 'shield');
                         if (await _wfGuardParsed(_parsed, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', last4: _parsed.card_last4, text: _res.text, force: _wfForce, redo: _wfRedo })) { inputEl.value = ''; return; }
                         P.end();
@@ -1826,6 +1838,8 @@
                  * same statement (statement-registry.mjs): it needs the bank (the ISSUER label, as ever; nothing when the bank is not identified), the account's last four (the AI
                  * read it off the page) and the transactions' dates. Fail open, as the others do. */
                 var _parsedS = { transactions: normalised, statement_period: '', _wfBank: _wfBank };
+                _wfIdentify(_parsedS, _ocrText, _wfBank);
+                if (!_parsedS.card_last4 && _aiBank && _aiBank.last4) _parsedS.card_last4 = _aiBank.last4;      // the number the AI read off the photo
                 P.stage('guard', 'Found ' + normalised.length + ' transaction' + (normalised.length > 1 ? 's' : '') + '…', 'Checking them against your books', 'checkCircle');
                 if (await _wfGuardParsed(_parsedS, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', last4: (_aiBank && _aiBank.last4) || '', text: _ocrText, force: _wfForce, redo: _wfRedo })) { inputEl.value = ''; return; }
                 P.end();

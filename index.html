@@ -37009,11 +37009,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             // any row's destination in the "Goes to" column.
             const _last4 = (parsed && (parsed.card_last4 || parsed.last4)) || '';
             const _regType = (window.WFRoute && _last4) ? window.WFRoute.accountTypeForLast4(_last4) : null;   // what Settings > Cards and accounts says this statement's own number is
-            let _acctType = (window.WFRoute && (_regType || window.WFRoute.inferAccountType(parsed.transactions))) || 'credit_card';
+            /* What the statement says about itself comes first, as at the e-mail worker (identifyAccount: "the document's own words win over a registry entry"): a card statement that carries a payment has
+             * credits AND debits, and the row mix alone read it as a bank account (charges to Expenses, the payment to Income). */
+            const _docType = /^creditcard$/.test(String((parsed && parsed.statementType) || '').toLowerCase().replace(/[^a-z]/g, '')) ? 'credit_card' : '';
+            let _acctType = (window.WFRoute && (_docType || _regType || window.WFRoute.inferAccountType(parsed.transactions))) || 'credit_card';
             /* Settings > Cards and accounts is the truth about what a number is. A statement whose own number the registry does not list is read from its rows, and a page of a bank statement that holds only
              * withdrawals reads as "a card" (all debits). A row worded as a transfer that names one of the owner's registered credit cards (another card than this statement's own) can only be a bank
              * account paying that card, so such a statement is a bank statement, whatever the row mix said. */
-            if (!_regType && _acctType === 'credit_card' && window.WFRoute && window.WFRoute.ownCardNamed) {
+            if (!_regType && !_docType && _acctType === 'credit_card' && window.WFRoute && window.WFRoute.ownCardNamed) {
                 try {
                     if (txns.some((t) => { const c = /\b(?:ceft|slips|transfer|inward|outward)\b/i.test(t.description || '') && window.WFRoute.ownCardNamed(t.description); return c && c.last4 !== _last4; })) _acctType = 'bank_account';
                 } catch (_) { /* the row mix decided, as before */ }
@@ -37120,6 +37123,18 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 t._review = true; // surface it so the user SEES the allocation before commit
                             }
                         } catch (_) {}
+                    }
+                    /* A ROW IS A SUBSCRIPTION ONLY WHEN THE OWNER TRACKS IT OR THE EVIDENCE IS PLAIN — the e-mail worker's rule (statement-subscriptions.mjs, the one WFSubIdentity file both doors read): an entry the owner
+                     * already has for it (its number, reference, brand or name), or a brand / phone number / bill reference that is unmistakably recurring. An electricity bill, a broadband bill or an insurance premium
+                     * with no entry is the expense it also is (a card charge on a card), not a new Subscriptions entry per bill; the owner can still switch the row to Subscription in "Goes to". */
+                    if (t._dest === 'subscription' && !t._subKeep) {
+                        try {
+                            const _SI = window.WFSubIdentity, _S = window.WFSubs;
+                            if (_SI && _S && _SI.subscriptionToCreate && _S.findExisting) {
+                                const _have = _S.findExisting({ description: t.description, amount: t.amount, direction: 'debit', date: t.date }, { subName: t._subName, subKind: t._subKind, subPhone: t._subPhone, category: t._cat }, DB.get('subscriptions') || [], DB.get('subMerchantMap') || {});
+                                if (!(_have && _have.sub) && !_SI.subscriptionToCreate({ description: t.description, direction: 'debit' })) t._dest = _acctType === 'credit_card' ? 'cconetime' : 'expenses';
+                            }
+                        } catch (_) { /* the router's answer stands */ }
                     }
                     if ((t._dest === 'cc_payment' || t._dest === 'cconetime') && _bankSideOwnCard(t.description)) {
                         const _named = window.WFRoute.ownCardNamed(t.description);
@@ -37645,6 +37660,38 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const _batch = (window.WFBatch ? WFBatch.begin((parsed && parsed.fileName) || (bank ? (_bankShown(bank) + ' statement') : 'Statement'), 'statement') : null);
                 const _identical = new Map();
                 rows.forEach((t) => { const k = (t.date || today()) + '|' + Math.round((Number(t.amount) || 0) * 100) + '|' + _nz(String(t.description || '').trim()); _identical.set(k, (_identical.get(k) || 0) + 1); t._nth = _identical.get(k); });
+                /* A CHARGE ON A CARD STATEMENT is filed the same way whichever way the row was routed: a plain purchase, and a recurring merchant (Netflix, a phone bill) that is ALSO tracked as a subscription — the card
+                 * owes the money either way, exactly as the e-mail worker files it. Returns false when the books already hold that charge. */
+                const _fileCardCharge = (t, date, amount, desc, type, _source) => {
+                if (_dupIn(ccArr, date, amount, desc, 'amount', _source)) { dup++; return false; }   // e.g. re-imported ATM/CEFT fee
+                const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
+                // Statement imports carry the bank's REAL mandatory charges
+                // (ATM withdrawal fee, CEFT charge, fuel surcharge…) as their
+                // own statement lines — we save those lines as-is and NEVER
+                // add a synthetic auto-fee here. Auto-fees remain only for
+                // manual entry where no statement exists. → no duplication.
+                // A charge on a CC statement is money the user OWES and must
+                // repay within 50 days — NOT a repayment. It is unpaid until
+                // the user actually settles it, no matter how old the charge
+                // is (an old one simply shows as Pending or Overdue). The
+                // previous `paid: past` wrongly marked EVERY imported charge
+                // "Paid" because statement dates are always in the past.
+                const serviceFee = 0, feeMeta = { source: 'statement' }, combinedTotal = amount;
+                /* THE CATEGORY A CARD CHARGE CARRIES is the one the e-mail worker files it under (WFStatementRouter.cardChargeCategory: Fuel, Card Fee, Cash Advance, or the category the rules name — "KEELLS SUPER" is
+                 * Groceries). The Type the owner picked in this review wins for the three that are types; a merchant the rules left as a plain "Card Purchase" takes the category the merchant list gave it. */
+                let _ccCat = 'Card Purchase';
+                try {
+                    const _R = window.WFStatementRouter, _row = { description: desc, narration: desc, amount, direction: 'debit', date, card_last4: _source.card_last4 };
+                    if (type === 'fuel') _ccCat = 'Fuel'; else if (type === 'service_fee') _ccCat = 'Card Fee'; else if (type === 'cash_advance') _ccCat = 'Cash Advance';
+                    else if (_R && _R.routeRow && _R.cardChargeCategory) _ccCat = _R.cardChargeCategory(_row, _R.routeRow(_row, { statementType: 'credit-card', card_last4: _source.card_last4, reviewThreshold: 0.7 }));
+                    if (_ccCat === 'Card Purchase' && _R && _R.namedCardCategory && t && t._cat) _ccCat = _R.namedCardCategory(t._cat);
+                } catch (_) { /* uncategorised is still filed */ }
+                const _rec = { id: uid(), desc, ..._source, type: (type === 'fuel') ? 'fuel' : type, category: _ccCat, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: _noteFor(date, desc, amount), paid: false, createdAt: new Date().toISOString() };
+                if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'cconetime', _rec.id); }
+                ccArr.push(_rec);
+                cc++;
+                return true;
+                };
                 rows.forEach((t) => {
                     if (!t._keep) { if (t._have) dup++; else skipped++; return; }
                     _curNth = t._nth || 1;
@@ -37663,24 +37710,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         ...(_uploadClaim ? { uploadClaim: _uploadClaim } : {}) };      // names the upload that filed it: the registry gives the statement back once none of these remain
 
                     if (dest === 'cconetime') {
-                        if (_dupIn(ccArr, date, amount, desc, 'amount', _source)) { dup++; return; }   // e.g. re-imported ATM/CEFT fee
-                        const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
-                        // Statement imports carry the bank's REAL mandatory charges
-                        // (ATM withdrawal fee, CEFT charge, fuel surcharge…) as their
-                        // own statement lines — we save those lines as-is and NEVER
-                        // add a synthetic auto-fee here. Auto-fees remain only for
-                        // manual entry where no statement exists. → no duplication.
-                        // A charge on a CC statement is money the user OWES and must
-                        // repay within 50 days — NOT a repayment. It is unpaid until
-                        // the user actually settles it, no matter how old the charge
-                        // is (an old one simply shows as Pending or Overdue). The
-                        // previous `paid: past` wrongly marked EVERY imported charge
-                        // "Paid" because statement dates are always in the past.
-                        const serviceFee = 0, feeMeta = { source: 'statement' }, combinedTotal = amount;
-                        const _rec = { id: uid(), desc, ..._source, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: _noteFor(date, desc, amount), paid: false, createdAt: new Date().toISOString() };
-                        if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'cconetime', _rec.id); }
-                        ccArr.push(_rec);
-                        cc++;
+                        if (!_fileCardCharge(t, date, amount, desc, type, _source)) return;
                     } else if (dest === 'expenses') {
                         if (_dupIn(expArr, date, amount, desc, 'amount', _source)) { dup++; return; }
                         const _mt = t || {};
@@ -37703,6 +37733,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         incRecvArr.push(_rec);
                         inc++;
                     } else if (dest === 'subscription') {
+                        if (_acctType === 'credit_card' && !_fileCardCharge(t, date, amount, desc, type || 'purchase', _source)) return;      // the card still owes it
                         // Recurring bill → Subscriptions tab. Match existing (remembers
                         // the merchant even if renamed) else auto-create, then record
                         // this month's payment. WFSubs de-dupes payments internally.
