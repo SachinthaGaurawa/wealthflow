@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.80 — 2026-11-11
+
+**What changed for you**
+
+- CSP phase 2, step 4: script-src no longer allows 'unsafe-inline' (#587)
+
 ## v7.69.79 — 2026-11-11
 
 **What changed for you**
