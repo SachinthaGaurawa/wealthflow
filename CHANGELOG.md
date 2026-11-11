@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.75 — 2026-11-11
+
+**What changed for you**
+
+- Devices follow each other's update; NEW label counts from first look; the system proposes its own ideas; accessibility fixes (#573)
+
 ## v7.69.74 — 2026-11-11
 
 **What changed for you**
