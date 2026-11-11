@@ -240,7 +240,37 @@
         return '<section class="wf-due" role="region" aria-labelledby="wfDueTitle"><div class="wf-due-h"><h3 class="wf-due-title" id="wfDueTitle">Minimum payment due</h3><span class="wf-due-sub">The least each card statement asks for, and the date the bank must have it by. These are not charges.</span></div><div class="wf-due-list">' + cards + '</div></section>';
     }
 
-    var API = { build: build, render: render, wire: wire, reveal: reveal, dues: dues, renderDues: renderDues, initials: initials, keyParts: function (key) { var i = String(key).indexOf('|'); return i < 0 ? { bankKey: String(key), last4: '' } : { bankKey: key.slice(0, i), last4: key.slice(i + 1) }; } };
+    /* ── THE SAME ASK, FROM A STATEMENT THE OWNER UPLOADED BY HAND ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     * The email worker files one `cardDues` record per statement (statement-due.mjs). A statement uploaded on the page used to file the charges and payments but never this ask, so the CC One-Time page said
+     * nothing about the minimum until the same statement came by e-mail. Same fields, but the id comes from the card and the date (no hash module in a browser): reading the same statement again, or its
+     * e-mail twin, names the same ask, and `dues` shows one per card anyway (the latest date wins). Only a CREDIT CARD statement that prints a minimum above zero and a real date makes one. */
+    var isDayIso = function (v) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v || '')); if (!m) return false; var d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])); return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3]; };
+    function dueFromStatement(o) {
+        o = o || {};
+        var due = o.due;
+        if (!due || !o.isCard) return null;
+        var min = Number(due.minimum), minC = isFinite(min) && min > 0 ? Math.round(min * 100) : 0;
+        if (!minC || !isDayIso(due.date)) return null;
+        var canon = typeof o.canonBank === 'function' ? o.canonBank : function (b) { return String(b || '').trim(); };
+        var bank = String(canon(o.bank) || '').trim(), l4 = String(o.last4 || '').replace(/\D/g, '').slice(-4);
+        var close = Number(due.closing), now = typeof o.now === 'number' ? o.now : Date.now();
+        var slug = (bank.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + l4 + '-' + due.date).replace(/^-+/, '');
+        var rec = { id: 'due-up-' + slug, bank: bank, card_last4: l4, minimum: minC / 100, dueDate: due.date, statementKey: 'upload:' + slug, source: 'upload', createdAt: new Date(now).toISOString(), _ut: now };
+        if (isFinite(close) && due.closing !== null && due.closing !== undefined && due.closing !== '' && close >= 0) rec.closing = Math.round(close * 100) / 100;
+        if (isDayIso(due.periodEnd)) rec.statementEnd = due.periodEnd;
+        return rec;
+    }
+    /** Add the ask to the owner's list; the same one read again is replaced (a better reading corrects it), never doubled, and one the owner already marked paid is never reopened. null = nothing to write. */
+    function withDue(list, rec) {
+        if (!rec) return null;
+        var have = Array.isArray(list) ? list : [];
+        var same = have.filter(function (e) { return e && e.id === rec.id; })[0];
+        if (same && same.paidManually) return null;
+        if (same && same.minimum === rec.minimum && same.dueDate === rec.dueDate && same.closing === rec.closing && same.statementEnd === rec.statementEnd && same.card_last4 === rec.card_last4 && same.bank === rec.bank) return null;
+        return have.filter(function (e) { return !e || e.id !== rec.id; }).concat([same ? Object.assign({}, rec, { createdAt: same.createdAt || rec.createdAt }) : rec]);
+    }
+
+    var API = { build: build, render: render, wire: wire, reveal: reveal, dues: dues, renderDues: renderDues, dueFromStatement: dueFromStatement, withDue: withDue, initials: initials, keyParts: function (key) { var i = String(key).indexOf('|'); return i < 0 ? { bankKey: String(key), last4: '' } : { bankKey: key.slice(0, i), last4: key.slice(i + 1) }; } };
     root.WFCardTabs = API;
     if (typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof window !== 'undefined' ? window : globalThis);
