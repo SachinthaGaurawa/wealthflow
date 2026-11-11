@@ -24,6 +24,16 @@ const KINDS = {
         why: 'The credit lines with payment words, as read, do not sum to the "Total Payment" the statement itself prints, and the model\'s second reading did not reach it either. The layout convention was closed for that statement, so its lines wait for review.',
         todo: 'Find what the reader misses on this kind of statement (a marker before or after the amount, a foreign-currency column, an instalment or conversion line, a total that counts something else) and make the rules read it. Add a test with an INVENTED statement; never copy real numbers, names or merchants into this public repository.',
     },
+    'plan-like-line-unread': {
+        title: 'Statement reader: a card line carries an instalment plan\'s marks but was not read as a plan',
+        why: 'One or more card debits carry the marks of a plan line ("REM BAL" or a "<n/m>" month) that the instalment reader does not accept, so they were filed as plain purchases and CC Installments misses the plan. The reader noticed this by itself.',
+        todo: 'Find the wording or arrangement (a different bank\'s plan line, an instalment number that does not match the month, a REM BAL in another place) and teach installmentInfo and the plan table to read it, on both the email worker and the manual upload. Add a test with an INVENTED statement; never copy real numbers, names or lines into the repository.',
+    },
+    'plan-table-unmatched': {
+        title: 'Statement reader: a statement lists instalment plans but no charge was read as one of them',
+        why: 'The statement\'s own plan table lists instalment plans, yet no charge line was read as a plan line or matched to a table row, so the plans may be missing from CC Installments or their charges filed as purchases. This may be benign (the month\'s charge was not due yet); it is reported once so it can be checked.',
+        todo: 'Compare how the statement prints the plan\'s monthly charge with what installmentInfo, planFor and the plan table expect (a different instalment amount, a charge without plan words, a table in another layout) and make the rules read it. Add a test with an INVENTED statement; never copy real numbers, names or lines into the repository.',
+    },
 };
 
 const clean = value => String(value == null ? '' : value).replace(/[^A-Za-z _-]/g, '').replace(/ {2,}/g, ' ').trim().slice(0, 40);
