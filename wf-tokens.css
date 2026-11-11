@@ -124,7 +124,7 @@
     --wf-line-3: #566380;          /* a form control's edge: 3:1 against its field (WCAG 1.4.11) */
     --wf-text: #eef1f7;
     --wf-text-2: #aab3c5;
-    --wf-text-3: #8591a8;
+    --wf-text-3: #8f9bb1;
     --wf-accent: var(--wf-gold-400);
     --wf-accent-fill: var(--wf-gold-400);
     --wf-accent-fill-2: var(--wf-gold-500);
@@ -167,16 +167,16 @@
     --wf-line-3: #818ca2;
     --wf-text: #0f1420;
     --wf-text-2: #444e61;
-    --wf-text-3: #636e82;
-    --wf-accent: #8a6609;
+    --wf-text-3: #566074;
+    --wf-accent: #7a5a08;
     --wf-accent-fill: var(--wf-gold-400);
     --wf-accent-fill-2: var(--wf-gold-500);
     --wf-accent-ink: #1a1405;
     --wf-accent-soft: rgba(185, 139, 43, .12);
     --wf-accent-line: rgba(138, 102, 9, .4);
-    --wf-pos: #08794a;
+    --wf-pos: #066b40;
     --wf-pos-soft: rgba(11, 138, 82, .1);
-    --wf-neg: #cf2a40;
+    --wf-neg: #b81f33;
     --wf-neg-soft: rgba(207, 42, 64, .09);
     --wf-warn: #965608;
     --wf-warn-soft: rgba(217, 130, 20, .12);
@@ -212,12 +212,12 @@
         --wf-line-3: #818ca2;
         --wf-text: #0f1420;
         --wf-text-2: #444e61;
-        --wf-text-3: #636e82;
-        --wf-accent: #8a6609;
+        --wf-text-3: #566074;
+        --wf-accent: #7a5a08;
         --wf-accent-soft: rgba(185, 139, 43, .12);
         --wf-accent-line: rgba(138, 102, 9, .4);
-        --wf-pos: #08794a;
-        --wf-neg: #cf2a40;
+        --wf-pos: #066b40;
+        --wf-neg: #b81f33;
         --wf-warn: #965608;
         --wf-info: #1f5fd6;
         --wf-overlay: rgba(15, 20, 32, .46);

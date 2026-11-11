@@ -1274,6 +1274,44 @@ input.fi, input[type="search"], input[type="text"] { text-overflow: ellipsis; }
     .wf-ctab.is-on::after { background: Highlight; }
 }
 
+/* ---------------------------------------------------------------------------
+ * 31. READABLE AND REACHABLE (test/e2e/a11y-audit.mjs, 2026-11-07)
+ * Found by measuring every screen in both themes: text under 4.5:1 (3:1 for large text), controls whose focus
+ * ring vanished against their own fill, and no way past the sidebar. Colours that are tokens were changed in
+ * wf-tokens.css (light: --wf-neg, --wf-accent, --wf-text-3, --wf-pos; dark: --wf-text-3); what is left here is
+ * what a token cannot reach.
+ * ------------------------------------------------------------------------- */
+/* The focus ring is drawn twice: the soft glow above, and a solid line that a coloured fill cannot hide. */
+button:focus-visible, .btn:focus-visible, .gf-btn:focus-visible, [role="switch"]:focus-visible, [role="tab"]:focus-visible, select:focus-visible, a:focus-visible {
+    outline: 2px solid var(--wf-info);
+    outline-offset: 2px;
+}
+.wf-skip {
+    position: fixed; left: 12px; top: -64px; z-index: 10000;
+    padding: 10px 16px; border-radius: 10px; font-weight: 700; font-size: 14px;
+    background: var(--wf-text); color: var(--wf-bg); border: 2px solid var(--wf-info); text-decoration: none;
+    transition: top .15s ease;
+}
+.wf-skip:focus { top: calc(env(safe-area-inset-top, 0px) + 12px); }
+@media (prefers-reduced-motion: reduce) { .wf-skip { transition: none; } }
+/* White on amber, light blue or grey was 1.7:1 to 3.2:1. */
+:root:not([data-theme="light"]) .debt-item .debt-priority { color: var(--wf-bg); }
+/* The 3D cash-flow canvas is dark in both themes, so the words laid over it must be light in both. */
+#cf3dCanvasWrap > div, #cf3dCanvasWrap #cf3dLegend, #cf3dCanvasWrap > div span { color: rgba(231, 235, 244, .9) !important; }
+:root[data-theme="light"] .wf-sw-chip.c-moderate { color: var(--wf-accent); border-color: var(--wf-accent); }
+/* Accent-coloured headings and counters were drawn with one colour for both themes: 2.0:1 to 3.3:1 on the light page. Darkening the
+   same hue keeps each heading its own colour and makes it readable. */
+:root[data-theme="light"] .settings-title, :root[data-theme="light"] #wfIntelMemCount, :root[data-theme="light"] #wfIntelReviewCount { filter: brightness(.62); }
+
+/* ---------------------------------------------------------------------------
+ * Accent-coloured text that used to carry a hard-coded colour (Settings headings and counters). The same four hues, from the theme's tokens,
+ * so each reads at 4.5:1 or better on both themes. Doubled class on purpose: it must beat a single-class colour in the page's own styles.
+ * ------------------------------------------------------------------------- */
+.wf-ink-info.wf-ink-info { color: var(--wf-info); }
+.wf-ink-violet.wf-ink-violet { color: var(--wf-violet); }
+.wf-ink-pos.wf-ink-pos { color: var(--wf-pos); }
+.wf-ink-warn.wf-ink-warn { color: var(--wf-warn); }
+
 /* ==========================================================================
    32. MINIMUM PAYMENT DUE (wealthflow-card-tabs.js renderDues)
    The section at the top of CC One-Time: what each card's latest statement asks the owner to pay at the very least, and by when. It is deliberately not a table row (it is not a charge): a plain card with the

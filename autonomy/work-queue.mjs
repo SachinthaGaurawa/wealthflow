@@ -97,6 +97,9 @@ export function roleFor(issue) {
     const labels = (issue?.labels || []).map((l) => String(l.name || l).toLowerCase());
     const text = `${issue?.title || ''} ${issue?.body || ''}`.toLowerCase();
 
+    // An idea the system filed itself is a feature by definition, whatever words its text happens to contain ("error", "leak" in its risks).
+    if (labels.includes('feature-proposal')) return 'feature';
+
     // Order matters, and it is deliberately severity-first.
     //   1. Security beats everything.
     //   2. Then CRASHES — before UI. "white screen", "blank screen" and
@@ -238,13 +241,10 @@ export function isWorkable(issue, claimed = new Set()) {
     if (labels.includes('wontfix')) return false;
     if (claimed.has(issue.number)) return false;          // already has an open fix PR
 
-    // A machine-authored feature proposal is an IDEA, not work. Building it
-    // without the owner's approval would turn propose-then-approve into
-    // propose-then-build-anyway, which is the entire thing the design exists to
-    // prevent: every other detector answers a question with a right answer,
-    // while "should this app have feature X?" is a judgement only the owner can
-    // make. The `approved-feature` label is that judgement, and nothing else
-    // substitutes for it.
+    // A machine-authored feature proposal is an IDEA, not work, until it carries `approved-feature`.
+    // Since 2026-11-07 that label is put on by the idea engine itself, and only after autonomy/ideas.mjs::decide said yes
+    // (grounded, reasoned, safe by rule, no objection from the cross-provider board); before, only the owner could add it.
+    // Nothing else substitutes for the label: a proposal without it is never built.
     if (labels.includes('feature-proposal') && !labels.includes('approved-feature')) return false;
 
     return true;
@@ -305,6 +305,12 @@ export async function allIssues({ env = process.env, pages = 5 } = {}) {
  * Ensure a label exists before it is applied — GitHub 422s on unknown labels
  * when creating an issue, which is a silent-failure trap in the old code.
  */
+/** Titles of the most recently merged pull requests (what already shipped), newest first. */
+export async function mergedPrTitles({ env = process.env, limit = 12 } = {}) {
+    const prs = await gh(`/pulls?state=closed&sort=updated&direction=desc&per_page=${Math.min(50, limit * 3)}`, { env });
+    return (prs || []).filter((p) => p.merged_at).slice(0, limit).map((p) => String(p.title || '').slice(0, 140));
+}
+
 export async function ensureLabel(name, color = 'ededed', description = '', { env = process.env } = {}) {
     try {
         await gh(`/labels/${encodeURIComponent(name)}`, { env });

@@ -39,7 +39,7 @@ try {
         const tag = `[${width}px]`;
         await page.setViewportSize({ width, height: width < 600 ? 800 : 860 });
         // The agreement is shown once per major.minor line (2026-11-07), so the second width starts as a device that never accepted it.
-        await page.evaluate(() => { try { localStorage.removeItem('wf_claim'); localStorage.removeItem('wf_update_eula_ok'); } catch (_) {} });
+        await page.evaluate(() => { try { localStorage.removeItem('wf_claim'); localStorage.removeItem('wf_update_eula_ok'); DB.set('updateSync', {}, true); } catch (_) {} });
 
         // ── 7. nothing is offered or installed until a newer version exists, and nothing installs by itself
         await page.evaluate(() => { wfUpdate.simulate(false); showPage('dashboard'); });

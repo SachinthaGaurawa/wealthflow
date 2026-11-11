@@ -36,10 +36,15 @@ Sinhala is not in Geist; the stack falls through to Noto Sans Sinhala.
 
 A screen or an option that is new wears a small gold NEW pill for exactly 7 days, then it goes away by itself. Nothing is written by hand to turn it on or off.
 
-- **A new screen** (a new entry in the sidebar, i.e. a `showPage('x', this)` id that is not in the script's `BASELINE`) is picked up automatically: the first time a device sees it, it is stamped and tagged for 7 days. Do not add it to `BASELINE`.
-- **A new option, button or card** (Settings or anywhere else): put `data-wf-new="YYYY-MM-DD"` (the day it ships, UTC) on the element. The script appends the pill and removes it 7 days after that date, on every device alike.
+**The 7 days are counted from the day the person first SEES the thing, not from the day it shipped** (owner, 2026-11-07). Someone who has not opened the app for a month comes back to the full week, not to a label that ended three weeks ago.
+
+- **A new screen** (a new entry in the sidebar, i.e. a `showPage('x', this)` id that is not in the script's `BASELINE`) is picked up automatically: the first time the account sees it, it is stamped and tagged for 7 days. Do not add it to `BASELINE`.
+- **A new option, button or card** (Settings or anywhere else): put `data-wf-new="YYYY-MM-DD"` (the day it ships, UTC) on the element. Add `data-wf-new-id="short-name"` when the element has no `id` and its words may change. The week starts the first time the element is actually on screen (a Settings row nobody has opened has not been seen).
+- **Not new to everyone:** the account remembers the day it began (`_since`). A thing dated before that day is part of the app the person started with, so a fresh install is not covered in labels.
+- **One first look per account:** the stamp is kept on the device (`localStorage` `wf_new_seen_v1`) and on the account (`appData.newSeen`, carried by the field-by-field sync); the earliest wins, so the laptop shows 3 days left on the day the phone's week has 3 left. The decoy books are never written.
 - The pill never counts as "needs attention" (the red dot on More) and never changes the element's own text; the phone More sheet shows it on the tile.
-- Run `npx vitest run test/new_badge_test.js` and `node test/e2e/new-badge.mjs`.
+- Run `npx vitest run test/new_badge_test.js`, `node test/e2e/new-badge.mjs` and, for the two-device rule, `node test/e2e/new-seen-sync.mjs`.
+- Known limit: if a brand-new browser of an old account writes before the cloud copy has arrived, its later `_since` can briefly replace the earlier one; any older device writes the earlier day back on its next look.
 
 ## Rules the tests enforce
 

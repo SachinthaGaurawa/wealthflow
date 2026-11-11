@@ -25,14 +25,14 @@
 
     const CARD_HTML = `
       <div class="settings-section" id="wfIntelPanel" style="background:linear-gradient(145deg,rgba(16,185,129,0.05),var(--card));border:1px solid var(--border2);">
-        <div class="settings-title" style="color:#10b981;">AI automation</div>
+        <div class="settings-title wf-ink-pos">AI automation</div>
         <div class="setting-row">
           <div class="setting-info"><div class="setting-label">Learned merchants</div><div class="setting-desc">Shops and services whose category WealthFlow remembers. Each one you confirm is filed automatically next time.</div></div>
-          <div style="text-align:right;"><div id="wfIntelMemCount" style="font-weight:900;font-size:18px;color:#10b981;">—</div><button class="btn btn-ghost btn-sm" id="wfIntelForget" style="margin-top:4px;">Reset</button></div>
+          <div style="text-align:right;"><div id="wfIntelMemCount" class="wf-ink-pos" style="font-weight:900;font-size:18px;">—</div><button class="btn btn-ghost btn-sm" id="wfIntelForget" style="margin-top:4px;">Reset</button></div>
         </div>
         <div class="setting-row">
           <div class="setting-info"><div class="setting-label">Needs review</div><div class="setting-desc">Transactions the AI was not sure about. They wait here for your decision and stay until you decide.</div></div>
-          <div style="text-align:right;"><div id="wfIntelReviewCount" style="font-weight:900;font-size:18px;color:#f59e0b;">—</div><button class="btn btn-secondary btn-sm" id="wfIntelReview" style="margin-top:4px;">Review</button></div>
+          <div style="text-align:right;"><div id="wfIntelReviewCount" class="wf-ink-warn" style="font-weight:900;font-size:18px;">—</div><button class="btn btn-secondary btn-sm" id="wfIntelReview" style="margin-top:4px;">Review</button></div>
         </div>
         <div class="setting-row">
           <div class="setting-info"><div class="setting-label">Duplicate scanner</div><div class="setting-desc">Finds the same transaction filed twice, for example from a statement and an SMS, by matching amount, day, merchant and card. It removes nothing unless the match is certain.</div></div>

@@ -8305,6 +8305,12 @@
             /* The saved-people book (who the owner lends to or invests with, saved once) and the owner's bank accounts for statements. Record arrays
              * with ids, so they sit in _WF_RECORD_KEYS and merge per record across devices. DECLARED HERE, or the hydration loops never read them back. */
             people: [], payAccounts: [],
+            /* Which devices of this account run which version, and the newest version the owner installed on purpose, so one device's update
+             * reaches the others (wealthflow-update-system.js, "One account, several devices"). Every leaf is one string: a leaf written by one
+             * device is never half overwritten by another. DECLARED HERE, or the hydration loops never read it back. */
+            updateSync: {},
+            /* The first time this person saw each NEW-tagged thing, so its 7 days are counted from their first look and agree on every device (wealthflow-new-badge.js). Leaves are numbers (ms); the earliest wins. DECLARED HERE, or the hydration loops never read it back. */
+            newSeen: {},
             cribReports: [], cribAnalyses: {},
             // Money moved out of the current account into a deposit or savings.
             // A record here is NOT a second subtraction from the balance — the
@@ -30847,7 +30853,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- System Integration / Gemini API Key removed from UI per security best practice. Backend keys are managed via Vercel ENV. -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(66, 133, 244, 0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#4285F4;">AI status</div>
+            <div class="settings-title wf-ink-info">AI status</div>
             <div class="setting-row">
                 <div class="setting-info">
                     <div class="setting-label">AI services</div>
@@ -30867,7 +30873,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ISSUE 3 FIX — AI Language & Voice settings -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#818cf8;">AI and language</div>
+            <div class="settings-title wf-ink-violet">AI and language</div>
             <!-- v7.10.0 — SMS Paste mount point. The wealthflow-sms-paste.js
                  module auto-injects the "Paste Bank SMS" banner here. -->
             <div id="wfSmsPasteMount" style="margin-bottom:14px;"></div>
@@ -33665,7 +33671,7 @@ ${buildTable('Section III — Expenses and Card Instalments', combinedExp.length
                             <div class="score-factor" style="margin-bottom:6px;">
                                 <div style="min-width:160px;"><div style="font-size:13px;font-weight:600;">${factorIcons[i]} ${_wfEsc(f.label)}</div><div style="font-size:10px;color:var(--text3);">${f.score} / ${f.max} pts</div></div>
                                 <div class="score-factor-bar"><div class="score-factor-fill" style="width:${(f.score / f.max * 100).toFixed(0)}%;background:${factorColors[i]};"></div></div>
-                                <div style="font-size:14px;font-weight:700;font-family:var(--mono);min-width:50px;text-align:right;color:${factorColors[i]};">${f.score}</div>
+                                <div style="font-size:14px;font-weight:700;font-family:var(--mono);min-width:50px;text-align:right;color:var(--text);">${f.score}</div>
                             </div>
                             <div style="font-size:11px;color:var(--text3);padding-left:160px;line-height:1.6;">${factorTips[i]}</div>
                         </div>
@@ -35614,8 +35620,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 </div>
                             </div>
 
-                            <div style="font-size:10px;color:var(--text3);font-family:var(--mono);opacity:.8;background:rgba(0,0,0,0.2);padding:4px 8px;border-radius:4px;display:inline-block;">
-                                <span style="color:var(--text2);">IP:</span> ${s.ip || 'Unknown'} <span style="margin:0 6px;">|</span> <span style="color:var(--text2);">ID:</span> ${s.id.substring(0, 10)}…
+                            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);background:var(--card3);padding:4px 8px;border-radius:4px;display:inline-block;">
+                                <span style="color:var(--text2);">IP:</span> ${s.ip || 'Unknown'} <span style="margin:0 6px;" aria-hidden="true">|</span> <span style="color:var(--text2);">ID:</span> ${s.id.substring(0, 10)}…
                             </div>
                         </div>
                     `}).join('')}${window._capSessions ? window._capSessions.bar : ''}

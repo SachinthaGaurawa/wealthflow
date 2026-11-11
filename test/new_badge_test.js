@@ -1,13 +1,15 @@
 /* =============================================================================
  * test/new_badge_test.js — the NEW tag puts itself on a new screen or option and takes itself off after 7 days
  * -----------------------------------------------------------------------------
+ * Owner, 2026-11-07: the 7 days are counted from the day the PERSON first sees the thing, not from the day it shipped, so someone who comes back after a month still gets the full week; the first sighting is kept on the account so every device agrees.
  * Owner, 2026-10-21: the AI Advisor wore a NEW tag that had been put there by hand and never came off. A NEW tag must come from the date a thing shipped (or from the first time a screen is seen), and end
  * after exactly 7 days with nobody editing anything. The page side (the pill in the sidebar and in the More sheet, expiry on a page that stays open) is driven in a real browser by test/e2e/new-badge.mjs.
  * ===========================================================================*/
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DAYS, BASELINE, parseDay, daysLeft, fresh, newScreens } from '../wealthflow-new-badge.js';
+import { parseHTML } from 'linkedom';
+import { DAYS, BASELINE, SINCE, parseDay, daysLeft, fresh, newScreens, mergeSeen, sameSeen, canBeNew, dayStart, scan } from '../wealthflow-new-badge.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -84,5 +86,129 @@ describe('the page', () => {
     it('does not count as needing attention: the More dot reads badge, never the NEW tag', () => {
         const shell = read('wealthflow-shell.js');
         expect(shell).toMatch(/return p\.badge && !MAIN_TABS/);
+    });
+});
+
+// ── counted from the first sighting (owner, 2026-11-07) ──────────────────────
+describe('the first sighting is kept, and the earliest one wins', () => {
+    it('merges two maps with the earliest stamp per key and drops anything that is not a time', () => {
+        expect(mergeSeen({ a: 5, b: 9, c: 'x', d: -1 }, { a: 3, b: 11, e: 7, f: NaN })).toEqual({ a: 3, b: 9, e: 7 });
+        expect(mergeSeen(null, undefined)).toEqual({});
+    });
+    it('is the same map when nothing differs, whatever the order of the keys', () => {
+        expect(sameSeen({ a: 1, b: 2 }, { b: 2, a: 1 })).toBe(true);
+        expect(sameSeen({ a: 1 }, { a: 2 })).toBe(false);
+        expect(sameSeen({ a: 1 }, { a: 1, b: 2 })).toBe(false);
+    });
+    it('can only be new when it shipped on the day the account began, or later', () => {
+        const began = Date.UTC(2026, 10, 7, 15, 30);
+        expect(canBeNew(parseDay('2026-11-07'), began)).toBe(true);
+        expect(canBeNew(parseDay('2026-11-20'), began)).toBe(true);
+        expect(canBeNew(parseDay('2026-11-06'), began)).toBe(false);      // part of the app the person started with
+        expect(canBeNew(NaN, began)).toBe(false);
+        expect(canBeNew(parseDay('2026-11-07'), NaN)).toBe(false);         // a label that cannot be justified is not shown
+        expect(dayStart(began)).toBe(Date.UTC(2026, 10, 7));
+    });
+});
+
+describe('scan: 7 days from when the person first sees it', () => {
+    const NOW = Date.UTC(2026, 11, 20, 9, 0);          // the person comes back on 20 Dec
+    function page({ shown = true, day = '2026-12-01', extra = '' } = {}) {
+        const { document, window } = parseHTML('<html><body><div id="app" class="show"></div><div class="opt" data-wf-new="' + day + '"' + extra + '>Weekly digest</div></body></html>');
+        const el = document.querySelector('.opt');
+        Object.defineProperty(el, 'offsetWidth', { get: () => (shown ? 120 : 0), configurable: true });
+        window._isDecoyMode = false;                         // parseHTML windows share their prototype chain; start every page clean
+        const store = {};
+        window.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
+        const cloud = {};
+        window.DB = { getObj: (k, d) => (cloud[k] !== undefined ? JSON.parse(JSON.stringify(cloud[k])) : d), set: (k, v) => { cloud[k] = JSON.parse(JSON.stringify(v)); } };
+        return { document, window, el, store, cloud };
+    }
+    const KEY = 'f:2026-12-01-weekly-digest';
+    const left = (p) => { const x = p.el.querySelector('.wf-new'); return x ? x.getAttribute('data-left') : null; };
+    const beganOn = (p, ms) => { p.window.localStorage.setItem('wf_new_seen_v1', JSON.stringify({ [SINCE]: ms })); };
+
+    it('gives a person who was away for weeks the full 7 days when they first see a feature that shipped weeks ago', () => {
+        const p = page({ day: '2026-12-01' });
+        beganOn(p, Date.UTC(2026, 9, 1));                 // began in October
+        scan(p.document, p.window, NOW);
+        expect(left(p)).toBe('7');                         // shipped 19 days ago, first seen today
+        scan(p.document, p.window, NOW + 2 * DAY);
+        expect(left(p)).toBe('5');
+        scan(p.document, p.window, NOW + 7 * DAY);
+        expect(left(p)).toBeNull();                        // and it does not come back
+        scan(p.document, p.window, NOW + 30 * DAY);
+        expect(left(p)).toBeNull();
+    });
+    it('does not start the week for something that has not been on screen', () => {
+        const p = page({ shown: false });
+        beganOn(p, Date.UTC(2026, 9, 1));
+        scan(p.document, p.window, NOW);
+        expect(left(p)).toBeNull();
+        expect(Object.keys(JSON.parse(p.store.wf_new_seen_v1)).filter((k) => k.startsWith('f:'))).toEqual([]);
+        Object.defineProperty(p.el, 'offsetWidth', { get: () => 120, configurable: true });   // opened later
+        scan(p.document, p.window, NOW + 3 * DAY);
+        expect(left(p)).toBe('7');
+    });
+    it('does not call something new that shipped before the person began', () => {
+        const p = page({ day: '2026-09-15' });
+        beganOn(p, Date.UTC(2026, 9, 1));
+        scan(p.document, p.window, NOW);
+        expect(left(p)).toBeNull();
+    });
+    it('does not cover a fresh install in labels: the first run only notes the day it began', () => {
+        const p = page({ day: '2026-12-01' });
+        scan(p.document, p.window, NOW);                   // no earlier stamp anywhere
+        expect(left(p)).toBeNull();
+        expect(JSON.parse(p.store.wf_new_seen_v1)[SINCE]).toBe(NOW);
+        const q = page({ day: '2026-12-20' });             // shipped the same day the account began
+        scan(q.document, q.window, NOW);
+        expect(left(q)).toBe('7');
+    });
+    it('keeps the first sighting on the account, and another device counts from it, not from its own first look', () => {
+        const phone = page();
+        beganOn(phone, Date.UTC(2026, 9, 1));
+        scan(phone.document, phone.window, NOW);
+        expect(Object.keys(phone.cloud.newSeen).sort()).toEqual([KEY, SINCE].sort());
+        expect(phone.cloud.newSeen[KEY]).toBe(NOW);
+        const laptop = page();                             // a different browser, same account
+        laptop.cloud.newSeen = JSON.parse(JSON.stringify(phone.cloud.newSeen));
+        scan(laptop.document, laptop.window, NOW + 4 * DAY);
+        expect(left(laptop)).toBe('3');                    // 7 - 4, not a fresh 7
+        expect(JSON.parse(laptop.store.wf_new_seen_v1)[KEY]).toBe(NOW);
+    });
+    it('takes the earlier of the device and the account, and writes the earlier one back', () => {
+        const p = page();
+        beganOn(p, Date.UTC(2026, 9, 1));
+        p.window.localStorage.setItem('wf_new_seen_v1', JSON.stringify({ [SINCE]: Date.UTC(2026, 9, 1), [KEY]: NOW - 5 * DAY }));
+        p.cloud.newSeen = { [SINCE]: Date.UTC(2026, 9, 1), [KEY]: NOW - DAY };
+        scan(p.document, p.window, NOW);
+        expect(left(p)).toBe('2');
+        expect(p.cloud.newSeen[KEY]).toBe(NOW - 5 * DAY);
+    });
+    it('writes nothing to the account when nothing changed, when signed out, or in the decoy books', () => {
+        const p = page();
+        beganOn(p, Date.UTC(2026, 9, 1));
+        scan(p.document, p.window, NOW);
+        let writes = 0; const set = p.window.DB.set; p.window.DB.set = (k, v) => { writes++; set(k, v); };
+        scan(p.document, p.window, NOW + 1000);
+        expect(writes).toBe(0);
+        const out = page(); beganOn(out, Date.UTC(2026, 9, 1)); out.document.getElementById('app').className = '';
+        scan(out.document, out.window, NOW);
+        expect(out.cloud.newSeen).toBeUndefined();
+        expect(left(out)).toBe('7');                       // still labelled on this device
+        const decoy = page(); beganOn(decoy, Date.UTC(2026, 9, 1)); decoy.window._isDecoyMode = true;
+        scan(decoy.document, decoy.window, NOW);
+        expect(decoy.cloud.newSeen).toBeUndefined();
+    });
+    it('names a thing without an id by its date and words, with only letters, digits and dashes (safe as a field name)', () => {
+        const p = page({ extra: ' data-wf-new-id="Weekly Digest ~ v2!"' });
+        beganOn(p, Date.UTC(2026, 9, 1));
+        scan(p.document, p.window, NOW);
+        expect(Object.keys(p.cloud.newSeen)).toContain('f:weekly-digest-v2');
+        expect(Object.keys(p.cloud.newSeen).every((k) => /^[A-Za-z0-9:_-]+$/.test(k))).toBe(true);
+    });
+    it('declares the account field, so the app reads it back after a refresh', () => {
+        expect(read('index.html')).toMatch(/^\s+newSeen: \{\},/m);
     });
 });
