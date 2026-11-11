@@ -9334,7 +9334,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.72';
+        var WF_APP_VERSION = '7.69.73';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -11081,7 +11081,12 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         }
 
         // --- OCR.space Third-Party API Fallback ---
+        // PRIVACY: this sends the receipt photo to a third party on a shared demo key. It used to run silently after every AI
+        // failure; now it runs only when the person has switched it on (localStorage wf_cloud_ocr = '1'). Without it the scan
+        // goes on to Tesseract, which reads the photo on this device.
+        function _cloudOcrAllowed() { try { return localStorage.getItem('wf_cloud_ocr') === '1'; } catch (_) { return false; } }
         async function _tryOCRSpace(base64Img) {
+            if (!_cloudOcrAllowed()) return null;
             try {
                 const formData = new FormData();
                 formData.append('apikey', 'helloworld');
@@ -12394,7 +12399,7 @@ Be conversational and precise.`;
 
                     // ===== TIER 2b: OCR.space (Dedicated 3rd Party API) =====
                     try {
-                        if (isExpense) {
+                        if (isExpense && _cloudOcrAllowed()) {
                             _showScanOverlay('Reading with cloud OCR…', 'Using the OCR.space online reader', 50, 'cloud');
                             const { base64: ocrImg } = await _compressImageToBase64(file, 1600, 0.85, true);
                             const ocrText = await _tryOCRSpace(ocrImg);
@@ -31258,8 +31263,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.72</span> is installed on this device.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.72</span>
+                <div class="setting-info"><div class="setting-label">App version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.73</span> is installed on this device.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.73</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page crashes, misbehaves, or a statement is stuck in "Needs review", tap Copy diagnostics right afterwards and share the result. It captures the latest errors with technical detail (stack, page, memory) and the reasons statements are stuck (counts, bank names, and why "Map statement layout" could not read one). No date, amount or transaction detail is ever included.</div></div>

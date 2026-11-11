@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.73 — 2026-11-10
+
+**What changed for you**
+
+- Security batch 3 + hotfix: /api/ai duplicate import, redact public feedback text, opt-in cloud OCR, dependency fixes (#578)
+
+**Under the hood**
+
+- Security batch 2: limits and cross-site refusal on the AI/vision endpoints (#577)
+
 ## v7.69.72 — 2026-11-10
 
 **What changed for you**
