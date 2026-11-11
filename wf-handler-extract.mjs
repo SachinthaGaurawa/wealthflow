@@ -17,7 +17,7 @@
  * Pure and dependency-free. Never imports autonomy/ (it is .vercelignored).
  * ===========================================================================*/
 
-export const HANDLER_EVENTS = ['click', 'change', 'input', 'submit', 'keydown', 'keyup', 'keypress', 'blur', 'focus', 'error', 'load', 'scroll', 'pointerdown', 'pointerup', 'contextmenu', 'dblclick', 'paste', 'touchstart', 'touchend', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'drop', 'dragover', 'toggle', 'wheel', 'resize'];
+export const HANDLER_EVENTS = ['click', 'dblclick', 'auxclick', 'contextmenu', 'mousedown', 'mouseup', 'mousemove', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'pointerdown', 'pointerup', 'pointermove', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave', 'pointercancel', 'gotpointercapture', 'lostpointercapture', 'touchstart', 'touchend', 'touchmove', 'touchcancel', 'keydown', 'keyup', 'keypress', 'input', 'change', 'beforeinput', 'submit', 'reset', 'invalid', 'select', 'focus', 'blur', 'focusin', 'focusout', 'scroll', 'wheel', 'resize', 'error', 'load', 'abort', 'copy', 'cut', 'paste', 'drag', 'dragstart', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop', 'toggle', 'animationstart', 'animationend', 'animationiteration', 'transitionend', 'play', 'pause', 'ended', 'canplay', 'loadeddata', 'loadedmetadata'];
 
 const ATTR = new RegExp('(\\son)(' + HANDLER_EVENTS.join('|') + ')(\\s*=\\s*)(\\\\?)(["\'])', 'g');
 

@@ -405,9 +405,9 @@ export const handlerShape = (srcOrAst) => shapeOf(typeof srcOrAst === 'string' ?
 export { HandlerError };
 
 /* ---- the installer ----------------------------------------------------------- */
-const EVENTS = ['click', 'change', 'input', 'submit', 'keydown', 'keyup', 'keypress', 'blur', 'focus', 'error', 'load', 'scroll', 'pointerdown', 'pointerup', 'contextmenu', 'dblclick', 'paste', 'touchstart', 'touchend', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'drop', 'dragover', 'toggle', 'wheel', 'resize'];
-// these do not bubble, so they are caught on the way down
-const CAPTURE = new Set(['blur', 'focus', 'error', 'load', 'scroll', 'mouseenter', 'mouseleave', 'toggle']);
+export const EVENTS = ['click', 'dblclick', 'auxclick', 'contextmenu', 'mousedown', 'mouseup', 'mousemove', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'pointerdown', 'pointerup', 'pointermove', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave', 'pointercancel', 'gotpointercapture', 'lostpointercapture', 'touchstart', 'touchend', 'touchmove', 'touchcancel', 'keydown', 'keyup', 'keypress', 'input', 'change', 'beforeinput', 'submit', 'reset', 'invalid', 'select', 'focus', 'blur', 'focusin', 'focusout', 'scroll', 'wheel', 'resize', 'error', 'load', 'abort', 'copy', 'cut', 'paste', 'drag', 'dragstart', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop', 'toggle', 'animationstart', 'animationend', 'animationiteration', 'transitionend', 'play', 'pause', 'ended', 'canplay', 'loadeddata', 'loadedmetadata'];
+// these do not bubble (or fire on the element only), so they are caught on the way down
+const CAPTURE = new Set(['blur', 'focus', 'error', 'load', 'abort', 'scroll', 'mouseenter', 'mouseleave', 'pointerenter', 'pointerleave', 'toggle', 'invalid', 'play', 'pause', 'ended', 'canplay', 'loadeddata', 'loadedmetadata', 'resize']);
 const cache = new Map();
 
 /**
