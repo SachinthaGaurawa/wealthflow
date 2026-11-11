@@ -56,6 +56,7 @@ export function validateSettlementRow(row, decision, ctx = {}) {
     /* A transfer row is left out of the books only when it is the owner's own money moving between the owner's own accounts (statement-transfers.mjs decides that, before this);
      * money to or from someone else is spending or income like any other row and takes the checks below. */
     /* …or the owner's own card named in a bank row (wealthflow-own-money.js: a cash advance arriving in the account, money from or to the owner's own card) */
+    if (module === 'skip' && decision.conversion === true) return card && row.direction && Number(row.amount) > 0 ? null : 'conversion-requires-card-row';
     if (module === 'skip') return transferEvidence(row) || ownMoney({ description: row.description || row.narration, direction: row.direction, isCard: card, registry: ctx.cardRegistry, tails: ctx.ownTails }) ? null : 'skip-requires-transfer-evidence';
     if (module === 'incomeRecv' && (row.direction !== 'credit' || card)) return 'income-direction-conflict';
     if (module === 'ccPayments' && (row.direction !== 'credit' || !card)) return 'card-payment-context-required';
@@ -263,7 +264,7 @@ async function settledRowVerdict({ entry, row, user, sourcePath, index, id, read
         if (!found) return entry.status === 'filed' && (tombstoned(user, entry.module, id) || outsideWindow(entry, user, at)) ? 'same' : 'no-record';
         return compareMoney(moneyOf(found), now);
     }
-    if (entry.status === 'skipped') return isPhantomRow(row) || isZeroAmountLine(row) || transferEvidence(row) ? 'same' : 'skipped-then-a-transaction';
+    if (entry.status === 'skipped') return entry.reason === 'instalment-conversion' || isPhantomRow(row) || isZeroAmountLine(row) || transferEvidence(row) ? 'same' : 'skipped-then-a-transaction';
     if (entry.status === 'review') return compareMoney(moneyOf((await readReview())?.row), now);
     return 'unknown-status';
 }
@@ -438,7 +439,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 }]);
             } else if (module !== 'skip') outcome.filed++;
             
-            writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: reason ? 'review' : module === 'skip' ? 'skipped' : 'filed', module: module || '', fingerprint: hash(rowIdentity(row, context)), settledAt: now }]);
+            writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: reason ? 'review' : module === 'skip' ? 'skipped' : 'filed', module: module || '', ...(!reason && module === 'skip' && decision.conversion === true ? { reason: 'instalment-conversion' } : {}), fingerprint: hash(rowIdentity(row, context)), settledAt: now }]);
         }
         
         const hasReview = source.hasReview === true || outcome.review > 0;

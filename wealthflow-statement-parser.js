@@ -342,6 +342,9 @@
         var src = String(text || ''), out = { date: '', minimum: null, closing: null }, m;
         m = /\bmin(?:imum)?\.?\s*(?:amt\.?|amount|payment|pymt)?\s*due\b[^\d\n]{0,25}(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?!\d)/i.exec(src) || /\bminimum\s+(?:amount|payment)\b[^\d\n%]{0,25}(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?!\d)/i.exec(src);
         if (m) out.minimum = _num(m[1]);
+        // what is owed in all, printed beside its own title ("Total Outstanding Due 105,138.42"): the figure the minimum is a share of
+        m = /\btotal\s+outstanding(?:\s+due)?\b[^\d\n]{0,25}(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?!\d)/i.exec(src);
+        if (m) out.closing = _num(m[1]);
         m = /\b(?:payment\s+)?due\s+date\b[^\dA-Za-z\n]{0,12}(\d{1,2}[\/\-.\s]+(?:\d{1,2}|[A-Za-z]{3,9})[\/\-.\s,]+\d{2,4}|\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4})/i.exec(src);
         if (m) out.date = normDate(m[1], order) || '';
         // the last day of the statement: the later of the dates printed on its "Statement Period" line ("30 Sep 2026 / 31 Oct 2026")

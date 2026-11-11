@@ -110,9 +110,20 @@ const PLAN_WORDS_CLEAN = new RegExp(PLAN_WORDS.source.replace(/^\\b/, '').replac
 const PLAN_LENGTH = /\b(\d{1,2})\s*(?:months?|mths?|mnths?|instal+ments?|instl?mts?)\b/i;
 /** A line whose own words say it is a fee, tax or interest. */
 export const isCardFeeWording = (raw) => RE.fee.test(String(raw || ''));
+/* NATIONS TRUST'S PLAN LINE: "SINGER 24M NATIONS PAY INST 1 - REM BAL - 120040.83 - <1/24>" is the 1st of 24 instalments of the Singer plan (the "24M" is the plan's length, "REM BAL" what is still owed, "<1/24>" which month).
+ * It says "INST", not "instalment", so the words above never saw it, and it was filed as a one-time Shopping purchase. The three parts must agree (the number after INST is the number in "<n/m>") before it is a plan line. */
+const NTB_PLAN_LINE = /^(.*?)\binst(?:l|alment)?\s*(\d{1,2})\b[\s\-\u2013]*rem(?:aining)?\.?\s*bal\w*[\s\-\u2013:]*[\d,]+(?:\.\d+)?[\s\-\u2013]*<\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*>/i;
+const NTB_PLAN_BRAND = /\b\d{1,2}\s*m\b|\bnations\s*pay\b|\bnations\s*easy\s*pay\b/gi;
 export function installmentInfo(raw) {
   const text = String(raw || '');
   const none = { isInstallment: false, no: 0, of: 0, length: 0, name: '' };
+  const ntb = NTB_PLAN_LINE.exec(text);
+  if (ntb) {
+    const no = Number(ntb[3]), of = Number(ntb[4]);
+    if (Number(ntb[2]) !== no || of < 2 || no < 1 || no > of) return none;
+    const name = ntb[1].replace(NTB_PLAN_BRAND, ' ').replace(/[^A-Za-z0-9&' .-]+/g, ' ').replace(/\s+/g, ' ').replace(/^[\s.-]+|[\s.-]+$/g, '').trim();
+    return { isInstallment: true, no, of, length: of, name: name.length >= 3 ? name.slice(0, 60) : '' };
+  }
   if (!PLAN_WORDS.test(text) || PLAN_FEE.test(text)) return none;
   const m = PLAN_ORDINAL.exec(text);
   const no = m ? Number(m[1]) : 0, of = m ? Number(m[2]) : 0;
@@ -351,7 +362,32 @@ export function relabelUndo(records) {
   return { records: restored.length ? out : list, changes: restored };
 }
 
-const API = { routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo };
+
+/* ── A PURCHASE TURNED INTO AN INSTALMENT PLAN (the rule is written out in statement-conversion.mjs; it lives here so the email worker and the manual upload read it from one place) ── */
+const convCents = value => Math.round(Math.abs(Number(value)) * 100);
+const convWords = text => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const convText = row => String((row && (row.narration || row.description)) || '');
+const convDay = date => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(date || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000 : NaN; };
+export const CONVERSION_WORDS = /\b\d{1,2}\s*m\b.*\b(?:nations\s*(?:easy\s*)?pay|easy\s*pay|instal+ments?|epp|plan)\b|\b(?:nations\s*pay|easy\s*pay|instal+ments?|epp)\b/i;
+export function conversionLegs(rows, planTable = [], isCard = () => true) {
+  const list = Array.isArray(rows) ? rows : [], out = new WeakSet(), taken = new Set();
+  const totals = new Set((Array.isArray(planTable) ? planTable : []).map(plan => convCents(plan && plan.total)).filter(Boolean));
+  list.forEach((row, i) => {
+    if (!row || taken.has(i) || row.valid === false || row.direction !== 'debit' || !(Number(row.amount) > 0) || !isCard(row)) return;
+    const key = convWords(convText(row)), amount = convCents(row.amount);
+    if (!key || !(CONVERSION_WORDS.test(convText(row)) || totals.has(amount))) return;
+    let best = -1, bestGap = Infinity;
+    list.forEach((other, j) => {
+      if (j === i || taken.has(j) || !other || other.valid === false || other.direction !== 'credit' || convCents(other.amount) !== amount || convWords(convText(other)) !== key || !isCard(other)) return;
+      const gap = Math.abs(convDay(row.date) - convDay(other.date));
+      if (gap <= 1 && gap < bestGap) { best = j; bestGap = gap; }
+    });
+    if (best >= 0) { taken.add(i); taken.add(best); out.add(row); out.add(list[best]); }
+  });
+  return out;
+}
+
+const API = { routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs };
 
 if (typeof window !== 'undefined') window.WFStatementRouter = API;
 
