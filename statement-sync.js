@@ -15,6 +15,7 @@ import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } 
 import { lostFiledRows, settleStatement, resolveReview, transferEvidence, isZeroAmountLine, crossSourceMatches, rowIdentity, PROVEN_DIRECTION } from './statement-ledger.mjs';
 import { lineIdsWithBankPayment } from './statement-credit-evidence.mjs';
 import { reportSuspectReading } from './wf-statement-self-report.mjs';
+import { statementSelfAudit } from './wf-statement-self-audit.mjs';
 import { confirmedKeys, applyOwnerConfirmed } from './statement-owner-confirmed.mjs';
 import { semanticDirection, genericBankLine, proveDirections, printedPaymentsCheck, printedSummaryCheck, cardCreditWords, cardCreditWordName, proveByTotals, explainMiss } from './statement-direction.mjs';
 import aiHandler from './api/ai.js';
@@ -2347,7 +2348,14 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 diag.selfReport = sent.reason;
             } catch (_) { /* a report never stops a sync */ }
         }
-        
+        /* THE READER ALSO ASKS ITSELF WHAT IT DID NOT UNDERSTAND (wf-statement-self-audit.mjs): a line with an instalment plan's own marks that was not read as a plan, a plan table with no charge read as one of its plans. Counts only, one issue per kind, never fatal. */
+        try {
+            for (const finding of statementSelfAudit({ rows: parsed.rows, planTable: readPlanTable(text) })) {
+                const sent = await Promise.race([reportSuspectReading(finding.kind, { bank: claimed.bank || '', shape: readShape(parsed), rows: parsed.rows.length }), new Promise(resolve => { const t = setTimeout(() => resolve({ filed: false, reason: 'timeout' }), 4000); if (t.unref) t.unref(); })]);
+                diag.selfAudit = [...(diag.selfAudit || []), `${finding.kind}:${sent.reason}`];
+            }
+        } catch (_) { /* an audit never stops a sync */ }
+
         /* WHAT THE OWNER CONFIRMED ("Map statement layout" -> "Yes, read it this way") STAYS CONFIRMED (statement-owner-confirmed.mjs): they were shown each row with its In/Out and said yes, so those directions are
          * the strongest proof there is. Without this the re-reading marked every assumed or word-based direction for review again and the statement came straight back, unfiled. Only the direction is taken from the
          * owner; every row still passes the settlement checks and is classified as any other. */

@@ -222,6 +222,9 @@ export function applyPlanPayment(plan, row, sourcePath, index, now, info = null)
         const no = info ? Math.floor(num(info.no)) : 0;
         /* a plan that never said how long it is grows by the month the statement shows */
         if (plan.durationUnknown === true) { const index = monthIndex(plan.date, month); if (index >= num(plan.duration)) { plan.duration = index + 1; plan.months = plan.duration; plan.total = round2(num(plan.monthly) * plan.duration); } }
+        /* the bank's own figure for what is still owed, from the latest statement that printed one (REM BAL on the line, or the plan table's outstanding) */
+        const owed = info && Number.isFinite(Number(info.remaining)) && info.remaining !== null && info.remaining !== undefined ? Number(info.remaining) : (row.plan && Number.isFinite(row.plan.remainingAmount) ? row.plan.remainingAmount : null);
+        if (owed != null && owed >= 0 && row.date >= String(plan.outstandingAt || '')) { plan.outstanding = round2(owed); plan.outstandingAt = row.date; }
         if (no >= 1) { plan.installmentNo = Math.max(Math.floor(num(plan.installmentNo)), no); if (!plan.installmentOf && num(info.of) >= 2) plan.installmentOf = Math.floor(num(info.of)); }
         const done = Math.max(Math.floor(num(plan.installmentNo)), arr(plan.payments).filter((p) => p && p.paid).length), length = Math.floor(num(plan.duration));
         plan.paid = length > 0 ? Math.min(done, length) : done; plan.remaining = Math.max(0, length - plan.paid);

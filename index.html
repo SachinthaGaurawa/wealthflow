@@ -23218,7 +23218,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td><div style="font-weight:600;">${_wfEsc(item.product)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
             <td>${_wfEsc(item.buyer || 'Self')}</td>
             <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
-            <td class="td-a">${fmt(item.total)}${item.totalEstimated ? '<div class="td-m" style="font-size:10px;">estimate</div>' : item.durationUnknown ? '<div class="td-m" style="font-size:10px;">months seen so far</div>' : ''}</td>
+            <td class="td-a">${fmt(item.total)}${item.totalEstimated ? '<div class="td-m" style="font-size:10px;">estimate</div>' : item.durationUnknown ? '<div class="td-m" style="font-size:10px;">months seen so far</div>' : ''}${item.outstanding != null && !finished ? `<div class="td-m" style="font-size:10px;">bank says ${fmt(item.outstanding)} still owed</div>` : ''}</td>
             <td class="td-mono">${item.rate > 0 ? item.rate + '%' : item.rateUnknown ? '<span class="td-m" style="font-size:10px;">not stated</span>' : '0% Free'}</td>
             <td class="td-r">${fmt(item.monthly)}</td>
             <td class="td-mono">${item.durationUnknown ? item.duration + 'M+<div class="td-m" style="font-size:10px;">length not stated</div>' : item.duration + 'M'}${skipCount > 0 ? `<br><span style="font-size:10px;color:var(--accent);">${skipCount} skipped</span>` : ''}</td>
