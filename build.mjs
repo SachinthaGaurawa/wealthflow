@@ -147,6 +147,8 @@ import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripJs, stripHtml, tidy } from './build-strip.mjs';
 import { extractHandlers, renameHandlerAttributes } from './wf-handler-extract.mjs';
+import { extractInlineScripts } from './wf-inline-extract.mjs';
+import vm from 'node:vm';
 
 /** Files the browser is served and that carry comments worth removing. */
 export const MODULE_RE = /^wealthflow-[a-zA-Z0-9-]+\.(?:js|mjs)$/;
@@ -312,9 +314,12 @@ export function localJsFiles(root, rules) {
     return out;
 }
 
+/* The other pages that ship an inline script. They are not rewritten by anything else in this build. */
+const INLINE_PAGES = ['landing.html', 'share-target.html', '404.html', 'privacy.html', 'terms.html'];
+
 const kb = (n) => (n / 1024).toFixed(0).padStart(6) + ' KB';
 
-export async function build({ root = process.cwd(), write = false, hash = true, log = console.log, handlers = process.env.WF_HANDLERS !== 'inline' } = {}) {
+export async function build({ root = process.cwd(), write = false, hash = true, log = console.log, handlers = process.env.WF_HANDLERS !== 'inline', inlineScripts = process.env.WF_INLINE_SCRIPTS !== 'keep' } = {}) {
     const all = fs.readdirSync(root);
     const modules = all.filter((f) => MODULE_RE.test(f) && !HASHED_RE.test(f)).sort();
     if (!modules.length) throw new Error('no modules found in ' + root + ' — wrong directory?');
@@ -436,6 +441,43 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
     before.html = Buffer.byteLength(html);
     let htmlOut = htmlStripped;
     htmlOut = rewriteRefs(htmlOut, renames);
+
+    /* ── 3a. INLINE SCRIPTS INTO FILES ─────────────────────────────────────
+     *
+     * The second half of dropping 'unsafe-inline' from `script-src`: no page may carry an inline
+     * `<script>` body. Each block becomes `/wealthflow-inline-<page>-<n>-<hash>.js`, loaded by a
+     * plain `<script src>` IN THE SAME PLACE, so order and global scope are exactly as before
+     * (wf-inline-extract.mjs). It runs on the text AFTER the module names were rewritten, so a name
+     * the page builds at run time still points at what ships. The repository source is untouched.
+     *
+     * FAILS OPEN like 1b: if a block does not parse as a script on its own, or the switch
+     * `WF_INLINE_SCRIPTS=keep` is set, every page keeps its inline scripts and the build says so.
+     */
+    const inline = { applied: false, files: [], pages: new Map(), skipped: '' };
+    if (!inlineScripts) inline.skipped = 'switched off (WF_INLINE_SCRIPTS=keep)';
+    else {
+        const pagesIn = [['index.html', htmlOut]];
+        for (const f of INLINE_PAGES) {
+            const fp = path.join(root, f);
+            if (fs.existsSync(fp)) pagesIn.push([f, fs.readFileSync(fp, 'utf8')]);
+        }
+        const done = []; const seen = new Set(); const bad = [];
+        for (const [f, text] of pagesIn) {
+            const r = extractInlineScripts(text, { page: f, hashOf: (t) => hashOf(t).slice(0, 8) });
+            for (const file of r.files) {
+                try { new vm.Script(file.text, { filename: file.name }); } catch (e) { bad.push(f + ': ' + String(e.message).slice(0, 100)); }
+                if (!seen.has(file.name)) { seen.add(file.name); inline.files.push(file); }
+            }
+            done.push([f, r.html]);
+        }
+        if (bad.length) inline.skipped = bad.length + ' inline script(s) do not parse alone, first: ' + bad[0];
+        else {
+            for (const [f, out2] of done) { if (f === 'index.html') htmlOut = out2; else inline.pages.set(f, out2); }
+            inline.applied = true;
+        }
+    }
+    log('  inline JS    ' + (inline.applied ? 'moved into ' + inline.files.length + ' files'
+        : 'left inline: ' + inline.skipped));
     after.html = Buffer.byteLength(htmlOut);
 
     const swPath = path.join(root, 'sw.js');
@@ -482,6 +524,7 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
         const originals = modules;
         const check = [['index.html', htmlOut, survivors], ...(swOut === null ? [] : [['sw.js', swOut, survivors]]),
             ...modules.map((f) => [f, stripped.get(f), survivors]),
+            ...inline.files.map((x) => [x.name, x.text, survivors]),
             /* Every OTHER shipped .js/.mjs file, changed or not — a file this
              * rewrite pass never touched must still be checked, because "it
              * references nothing renamed" and "the rewrite silently failed to
@@ -518,6 +561,8 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
          * to the SAME path it already lives at — it is not renamed, it is not
          * hashed, only the one broken line inside it changes. */
         for (const [rel, text] of otherFiles) fs.writeFileSync(path.join(root, rel), text);
+        for (const x of inline.files) fs.writeFileSync(path.join(root, x.name), x.text);
+        for (const [rel, text] of inline.pages) fs.writeFileSync(path.join(root, rel), text);
     }
 
     const total = { before: before.html + before.js, after: after.html + after.js };
@@ -535,7 +580,7 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
     log(write ? '  written in place' : '  DRY RUN — nothing written (pass --write)');
     log('');
 
-    return { modules, renames, before, after, htmlOut, swOut, stripped, otherFiles, csp };
+    return { modules, renames, before, after, htmlOut, swOut, stripped, otherFiles, csp, inline };
 }
 
 /**
@@ -562,7 +607,7 @@ export async function verifyParses({ root, files, log = console.log }) {
         });
     })));
     if (bad.length) throw new Error('stripped modules do not parse:\n  ' + bad.join('\n  '));
-    log('  ' + files.length + ' modules parse after stripping');
+    log('  ' + files.length + ' files parse after stripping');
     return true;
 }
 
@@ -581,7 +626,7 @@ if (invokedDirectly) {
         if (write) {
             await verifyParses({
                 root: process.cwd(),
-                files: out.modules.map((f) => out.renames.get(f) || f),
+                files: [...out.modules.map((f) => out.renames.get(f) || f), ...out.inline.files.map((x) => x.name)],
             });
         }
         process.exit(0);
