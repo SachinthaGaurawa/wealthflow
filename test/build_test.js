@@ -34,6 +34,7 @@ import {
     build, hashOf, hashedName, rewriteRefs, rewriteImportsOnly, survivors, survivorsInImports,
     MODULE_RE, HASHED_RE, vercelIgnoreRules, ignoredBy, localJsFiles,
 } from '../build.mjs';
+import { inlineScriptsLeft } from '../wf-inline-extract.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -228,8 +229,21 @@ describe('the real build over a real copy of this repository', () => {
         expect(html).toMatch(/<script type="module" src="wealthflow-handlers-[0-9a-f]{8}\.js">/);
     });
 
+    it('INLINE SCRIPTS: the shipped page carries none; each block is a file loaded in the same place', () => {
+        expect(out.inline.applied, out.inline.skipped).toBe(true);
+        expect(out.inline.files.length).toBeGreaterThanOrEqual(5);
+        const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+        expect(inlineScriptsLeft(html)).toEqual([]);
+        const tags = [...html.matchAll(/<script src="\/(wealthflow-inline-index-\d+-[0-9a-f]{8}\.js)"><\/script>/g)].map((m) => m[1]);
+        expect(tags.length).toBe(out.inline.files.length);
+        for (const t of tags) expect(fs.existsSync(path.join(dir, t)), t).toBe(true);
+        // order is kept: the boot guard (first) and the SRI table come before the app script
+        expect(tags[0]).toMatch(/-1-/);
+        expect(fs.readFileSync(path.join(dir, tags[1]), 'utf8')).toContain('WF_SRI');
+    });
+
     it('every module now carries the hash of its own contents', () => {
-        const written = fs.readdirSync(dir).filter((f) => /^wealthflow-.*\.(js|mjs)$/.test(f));
+        const written = fs.readdirSync(dir).filter((f) => /^wealthflow-.*\.(js|mjs)$/.test(f) && !/^wealthflow-inline-/.test(f));
         expect(written.length).toBe(out.modules.length);
         for (const f of written) expect(HASHED_RE.test(f), f + ' was not hashed').toBe(true);
         /* No two modules share a name. */
@@ -600,6 +614,26 @@ describe('the CSP-ready step fails open and can be switched off', () => {
             expect(out.csp.applied).toBe(false);
             expect(out.csp.skipped).toMatch(/switched off/);
             expect(/\sonclick\s*=/.test(out.htmlOut)).toBe(true);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }, 120000);
+    it('inlineScripts: false (WF_INLINE_SCRIPTS=keep) leaves every script inline', async () => {
+        const dir = tree();
+        try {
+            const out = await build({ root: dir, write: false, hash: true, log: () => {}, inlineScripts: false });
+            expect(out.inline.applied).toBe(false);
+            expect(out.inline.skipped).toMatch(/switched off/);
+            expect(inlineScriptsLeft(out.htmlOut).length).toBeGreaterThanOrEqual(5);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }, 120000);
+    it('an inline script that does not parse on its own keeps every page inline', async () => {
+        const dir = tree((d) => {
+            const f = path.join(d, 'index.html');
+            fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('</body>', '<script>var x = ;</script></body>'));
+        });
+        try {
+            const out = await build({ root: dir, write: false, hash: true, log: () => {} });
+            expect(out.inline.applied).toBe(false);
+            expect(out.inline.skipped).toMatch(/do not parse/);
         } finally { fs.rmSync(dir, { recursive: true, force: true }); }
     }, 120000);
     it('a tree without the module loads nothing and renames nothing', async () => {
