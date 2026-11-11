@@ -2353,7 +2353,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
         /* THE READER ALSO ASKS ITSELF WHAT IT DID NOT UNDERSTAND (wf-statement-self-audit.mjs): a line with an instalment plan's own marks that was not read as a plan, a plan table with no charge read as one of its plans. Counts only, one issue per kind, never fatal. */
         try {
-            for (const finding of statementSelfAudit({ rows: parsed.rows, planTable: readPlanTable(text) })) {
+            for (const finding of statementSelfAudit({ rows: parsed.rows, planTable: readPlanTable(text), card: String(parsed.layout?.statementType || '').toLowerCase().replace(/[^a-z]/g, '') === 'creditcard' })) {
                 const sent = await Promise.race([reportSuspectReading(finding.kind, { bank: claimed.bank || '', shape: readShape(parsed), rows: parsed.rows.length }), new Promise(resolve => { const t = setTimeout(() => resolve({ filed: false, reason: 'timeout' }), 4000); if (t.unref) t.unref(); })]);
                 diag.selfAudit = [...(diag.selfAudit || []), `${finding.kind}:${sent.reason}`];
             }
