@@ -1,0 +1,67 @@
+# =============================================================================
+# Pacemaker — wakes a scheduled job that GitHub delayed or dropped
+# -----------------------------------------------------------------------------
+# WHY: GitHub does not promise to run a `schedule:`. Its documentation says a
+# scheduled run "can be delayed during periods of high loads" and that "some
+# queued jobs may be dropped". Measured here on 2026-11-12 04:41Z: 5 of the 11
+# scheduled jobs had been skipped (the fix agent for 4 h 16 min, the idea engine
+# for 2 h 11 min) and 4 more had run 2 to 9 hours late. Nothing was red.
+#
+# WHAT: autonomy/pacemaker.mjs reads every workflow's own cron lines, asks GitHub
+# when each last really ran, and starts the ones whose slot passed with no run.
+#
+# TRIGGERS (any one is enough, and they do not share one clock):
+#   - every 20 minutes, off the hour: 72 chances a day instead of one
+#   - whenever a deploy check or a release finishes: real events, not a schedule
+#
+# COST: one small job, about 15 seconds, no install step. The repository is
+# public, so the minutes are not billed; autonomy/actions-budget.mjs still counts
+# them against the planning ceiling and a test fails if the schedule outgrows it.
+# =============================================================================
+name: Pacemaker (wakes scheduled jobs GitHub skipped)
+
+on:
+  schedule:
+    - cron: '7,27,47 * * * *'
+  workflow_run:
+    workflows:
+      - 'Health watchdog + auto-rollback (free)'
+      - 'Auto Release (WealthFlow)'
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report which jobs were skipped, but start nothing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write        # to start a workflow whose slot was skipped
+
+concurrency:
+  group: wealthflow-pacemaker
+  cancel-in-progress: false
+
+jobs:
+  beat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Start every scheduled job whose slot passed with no run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: node autonomy/pacemaker.mjs

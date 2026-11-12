@@ -237,8 +237,11 @@ describe('css lane: wired into the agent and its workflow', () => {
     const agent = fs.readFileSync('autonomous-fix-agent.js', 'utf8');
     const wf = fs.readFileSync('.github/workflows/autonomous-fix.yml', 'utf8');
     it('the agent sends a layout report to the lane instead of the JavaScript swarm', () => {
-        expect(agent).toMatch(/layoutLaneFor\(\{ title: issue\.title, body: shot\.body \}\)/);
+        expect(agent).toMatch(/layoutLaneFor\(\{ title: issue\.title, body: shot\.body, labels: issue\.labels \}\)/);
         expect(agent).toMatch(/if \(lane\.applies\) \{\s*result = await runLayoutLane\(/);
+        // 2026-11-12 (#559): a lane an earlier try already measured clean is not taken again, and a defect report with a layout word continues as code
+        expect(agent).toMatch(/laneRuledOut\(trail, 'layout'\)/);
+        expect(agent).toMatch(/nothingToMeasure\(result\) && !lane\.marked && kind !== 'ui'/);
     });
     it('the workflow installs Chromium and does not run node --check on a CSS file', () => {
         expect(wf).toMatch(/npx playwright install chromium/);

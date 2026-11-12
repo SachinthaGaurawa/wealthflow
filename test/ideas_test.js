@@ -267,3 +267,120 @@ describe('the words are not the only guard', () => {
         for (const f of ['index.html', 'sw.js', 'fifo-reconcile.js', 'wealthflow-migrations.js', 'send-otp.js', 'wealthflow-vault.js', 'statement-cloud-vault.mjs']) expect(isSensitive(f), f).toBe(true);
     });
 });
+
+// =============================================================================
+// Every AI proposes; a program chooses (owner, 2026-11-12: "all AIs contribute", "the thinking must be strong").
+// Both live runs of the one-proposer engine (2026-11-11) ended with one refused idea and nothing for the day.
+// =============================================================================
+describe('every AI proposes, a program chooses', () => {
+    const good = idea();
+    const other = idea({ title: 'Remember the last filter on the expenses list', proposal: 'When the person returns to the expenses list, show it with the same filter and sort they last used on this device.', scores: { ease: 4, value: 3, small: 4, risk: 1 } });
+    const risky = idea({ title: 'Predict next month spending with a model', scores: { ease: 4, value: 4, small: 3, risk: 4 } });
+    const unsafe = idea({ title: 'Faster passcode entry on the lock screen', proposal: 'Let the passcode screen remember the last digits so signing in is quicker for the person each morning.' });
+
+    it('refuses the ideas that break a rule and keeps the ones that pass, best first', () => {
+        const r = I.rankCandidates([{ idea: risky, by: 'groq' }, { idea: other, by: 'mistral' }, { idea: good, by: 'deepseek' }, { idea: unsafe, by: 'nvidia' }], { signals, outcomes: [] });
+        expect(r.passed.map((p) => p.by)).toEqual(['deepseek', 'mistral']);              // the higher own-score first
+        expect(r.refused.map((x) => x.by).sort()).toEqual(['groq', 'nvidia']);
+        expect(r.refused.find((x) => x.by === 'groq').why).toMatch(/too risky/);
+        expect(r.refused.find((x) => x.by === 'nvidia').why).toMatch(/sign-in or security/);
+    });
+    it('two AIs proposing the same thing independently lifts it above a lone idea, and it is one idea, not two', () => {
+        const same = idea({ title: 'One-tap undo after marking a bill as paid', scores: { ease: 4, value: 3, small: 3, risk: 2 } });   // scores itself LOWER than `other`
+        const alone = I.rankCandidates([{ idea: same, by: 'groq' }, { idea: other, by: 'mistral' }], { signals, outcomes: [] });
+        expect(alone.passed[0].by).toBe('mistral');
+        const agreed = I.rankCandidates([{ idea: same, by: 'groq' }, { idea: other, by: 'mistral' }, { idea: idea({ scores: { ease: 4, value: 3, small: 3, risk: 2 } }), by: 'deepseek' }], { signals, outcomes: [] });
+        expect(agreed.passed).toHaveLength(2);                                            // the two undo ideas are one
+        expect(likenessOf(agreed.passed[0].idea.title)).toBe(true);
+        expect(agreed.passed[0].agree).toHaveLength(1);
+        expect(agreed.passed[0].priority).toBeGreaterThan(alone.passed.find((p) => p.by === 'groq').priority);
+    });
+    const likenessOf = (t) => I.likeness(t, good.title) >= 0.6;
+    it('the same AI repeating itself is not agreement', () => {
+        const r = I.rankCandidates([{ idea: good, by: 'groq' }, { idea: idea(), by: 'groq' }], { signals, outcomes: [] });
+        expect(r.passed).toHaveLength(1);
+        expect(r.passed[0].agree).toEqual([]);
+    });
+    it('the second round is told each refused idea and the rule that refused it', () => {
+        const brief = I.refusalBrief([{ idea: risky, by: 'groq', why: 'too risky (risk 4/5)' }, { idea: unsafe, by: 'nvidia', why: 'it touches sign-in or security, which only a human may change' }]);
+        expect(brief).toMatch(/"Predict next month spending with a model": refused because too risky \(risk 4\/5\)/);
+        expect(brief).toMatch(/sign-in or security/);
+        expect(brief).toMatch(/DIFFERENT idea/);
+        expect(I.refusalBrief([])).toBe('');
+    });
+    it('knows an idea was already filed today, and ignores one with no date or an old one', () => {
+        const now = Date.parse('2026-11-12T08:00:00Z');
+        expect(I.thoughtRecently([{ number: 5, title: 'x', created: '2026-11-12T03:00:00Z' }], now).number).toBe(5);
+        expect(I.thoughtRecently([{ number: 5, title: 'x', created: '2026-11-11T08:00:00Z' }], now)).toBe(null);
+        expect(I.thoughtRecently([{ number: 5, title: 'x', created: null }], now)).toBe(null);
+    });
+});
+
+describe('proposeOnce with several AIs proposing (models and GitHub faked)', () => {
+    const env = { GROQ_API_KEY: 'x', GITHUB_TOKEN: 't', GITHUB_REPOSITORY: 'o/r' };
+    const budget = { LANES: { BACKGROUND: 'b' }, RESERVE_FOR_CRITICAL: 2, loadLedger: () => ({}), availableFor: () => ['groq', 'mistral', 'deepseek'], record: (l) => l, saveLedger: () => {} };
+    const reply = (provider, over) => ({ provider, text: JSON.stringify({ worthProposing: true, ...idea(over) }) });
+    const riskyR = (p) => reply(p, { title: 'Predict next month spending with a model', scores: { ease: 4, value: 4, small: 3, risk: 4 } });
+    const otherR = (p) => reply(p, { title: 'Remember the last filter on the expenses list', proposal: 'When the person returns to the expenses list, show it with the same filter and sort they last used on this device.', scores: { ease: 4, value: 3, small: 4, risk: 1 } });
+    const rig = (issues = []) => {
+        const filed = [], closed = [], asked = [];
+        const queue = { allIssues: async () => issues, createIssue: async (x) => { filed.push(x); return { number: 200 + filed.length }; }, ensureLabel: async () => true, comment: async () => {}, closeIssue: async (n, o) => { closed.push([n, o.reason]); }, mergedPrTitles: async () => [] };
+        return { filed, closed, asked, run: (o = {}) => proposeOnce({ env, repoDir: ROOT, queue, budget, boardImpl: async ({ issueText }) => { asked.push(issueText); return board(['BUILD', 'BUILD', 'BUILD_SMALLER']); }, ...o }) };
+    };
+
+    it('one AI proposes something too risky, another something good: the good one is built (the old engine filed nothing that day)', async () => {
+        const r = rig();
+        const out = await r.run({ proposeImpl: async () => [riskyR('groq'), reply('mistral'), otherR('deepseek')] });
+        expect(out.approved).toBe(true);
+        expect(r.filed).toHaveLength(1);
+        expect(r.filed[0].title).toMatch(/one-tap undo/i);
+        expect(r.filed[0].labels).toContain(APPROVED_LABEL);
+        expect(out.thinking).toMatchObject({ proposed: 3, passed: 2, rounds: 1 });
+        expect(out.thinking.proposers).toEqual(['groq', 'mistral', 'deepseek']);
+        expect(out.thinking.refused[0]).toMatchObject({ by: 'groq', why: 'too risky (risk 4/5)' });
+        expect(out.reason).toMatch(/proposed by mistral/);
+        expect(out.reason).toMatch(/3 idea\(s\) from 3 AI\(s\) were weighed/);
+    });
+    it('the board is asked about the best survivor first, and about the next one only if it refuses the first', async () => {
+        const r = rig(); let n = 0;
+        const out = await r.run({ proposeImpl: async () => [reply('mistral'), otherR('deepseek')], boardImpl: async ({ issueText }) => { r.asked.push(issueText); return ++n === 1 ? board(['BUILD', 'ASK_OWNER', 'BUILD']) : board(['BUILD', 'BUILD', 'BUILD']); } });
+        expect(r.asked).toHaveLength(2);
+        expect(r.asked[0]).toMatch(/one-tap undo/i);
+        expect(r.asked[1]).toMatch(/last filter/i);
+        expect(out.approved).toBe(true);
+        expect(r.filed[0].title).toMatch(/last filter/i);
+    });
+    it('when every idea breaks a rule the AIs are shown why and asked once more, and a passing idea from the second round is built', async () => {
+        const r = rig(); const prompts = [];
+        const out = await r.run({ proposeImpl: async (q) => { prompts.push(q.prompt); return prompts.length === 1 ? [riskyR('groq'), riskyR('mistral')] : [reply('groq')]; } });
+        expect(prompts).toHaveLength(2);
+        expect(prompts[1]).toMatch(/REFUSED BY THE RULES/);
+        expect(prompts[1]).toMatch(/too risky \(risk 4\/5\)/);
+        expect(out.approved).toBe(true);
+        expect(out.thinking.rounds).toBe(2);
+    });
+    it('when both rounds fail, ONE refused idea is kept closed so it is remembered, not one per AI', async () => {
+        const r = rig();
+        const out = await r.run({ proposeImpl: async () => [riskyR('groq'), riskyR('mistral'), riskyR('deepseek')] });
+        expect(out.approved).toBe(false);
+        expect(r.filed).toHaveLength(1);
+        expect(r.filed[0].labels).toContain('idea-declined');
+        expect(r.closed).toEqual([[201, 'not_planned']]);
+        expect(r.asked).toEqual([]);                                                       // the board is never spent on a refused idea
+    });
+    it('does not think of a second idea on the same day (the pacemaker and a late slot may both start the job)', async () => {
+        const now = Date.parse('2026-11-12T09:00:00Z');
+        const earlier = [{ number: 7, title: '[PROPOSAL] Something else entirely', state: 'closed', state_reason: 'not_planned', created_at: '2026-11-12T03:10:00Z', labels: [{ name: PROPOSAL_LABEL }] }];
+        const r = rig(earlier); let called = 0;
+        const out = await r.run({ now, proposeImpl: async () => { called++; return [reply('mistral')]; } });
+        expect(called).toBe(0);
+        expect(out.filed).toBeNull();
+        expect(out.reason).toMatch(/already thought of an idea in the last 18 hours \(#7/);
+        const dry = await r.run({ now, dryRun: true, proposeImpl: async () => [reply('mistral')] });
+        expect(dry.reason).toMatch(/^dry run/);                                            // a dry run may still be used to look
+    });
+    it('no AI answering is reported as that, and files nothing', async () => {
+        const r = rig(); const out = await r.run({ proposeImpl: async () => [] });
+        expect(out.reason).toMatch(/model unavailable: no AI answered/); expect(r.filed).toEqual([]);
+    });
+});

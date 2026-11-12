@@ -23,6 +23,8 @@
  *   GITHUB_REPOSITORY  e.g. "SachinthaGaurawa/wealthflow"  (set by Actions)
  * ===========================================================================*/
 
+import { systemRole, fromStranger } from './route.mjs';
+
 const API = 'https://api.github.com';
 
 /** Labels the pipeline uses to drive itself. */
@@ -100,6 +102,12 @@ export function roleFor(issue) {
     // An idea the system filed itself is a feature by definition, whatever words its text happens to contain ("error", "leak" in its risks).
     if (labels.includes('feature-proposal')) return 'feature';
 
+    // A report a PROGRAM filed says what it is with a label or a marker; its sentences come from a template and are not a
+    // routing signal. #559 (statement reader) said "the layout convention was closed" and was sent to the look-and-feel
+    // agent for the word "layout". Words are read for people only. See autonomy/route.mjs.
+    const declared = systemRole(issue);
+    if (declared) return declared;
+
     // Order matters, and it is deliberately severity-first.
     //   1. Security beats everything.
     //   2. Then CRASHES — before UI. "white screen", "blank screen" and
@@ -158,7 +166,8 @@ export function attemptsFrom(comments) {
         // they say nothing about whether the improved lane can do it. Only OWNER/MEMBER/COLLABORATOR comments count,
         // so a stranger cannot reopen the budget on a public issue.
         if (/<!--\s*wf-agent-reset\s*-->/.test(body) && /^(OWNER|MEMBER|COLLABORATOR)$/.test(String((c && c.author_association) || ''))) { n = 0; continue; }
-        if (/<!--\s*wf-agent-attempt\s*-->/.test(body)) n++;
+        // A stranger who types the agent's marker on a public issue must not spend the agent's three tries.
+        if (/<!--\s*wf-agent-attempt\s*-->/.test(body) && !fromStranger(c)) n++;
     }
     return n;
 }
@@ -174,7 +183,7 @@ export function attemptsFrom(comments) {
 export function lastAttemptAgeMs(comments, now = Date.now()) {
     let newest = null;
     for (const c of comments || []) {
-        if (!/<!--\s*wf-agent-attempt\s*-->/.test(String(c.body || ''))) continue;
+        if (!/<!--\s*wf-agent-attempt\s*-->/.test(String(c.body || '')) || fromStranger(c)) continue;
         const t = Date.parse(c.created_at || c.updated_at || '');
         if (Number.isFinite(t) && (newest === null || t > newest)) newest = t;
     }

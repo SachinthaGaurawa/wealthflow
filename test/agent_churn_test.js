@@ -39,7 +39,7 @@ import {
 } from '../autonomy/agent-swarm.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const attempt = (n) => Array.from({ length: n }, () => ({ body: '<!-- wf-agent-attempt -->\n### 🤖 Autonomous attempt' }));
+const attempt = (n) => Array.from({ length: n }, () => ({ user: { login: 'github-actions[bot]' }, author_association: 'CONTRIBUTOR', body: '<!-- wf-agent-attempt -->\n### 🤖 Autonomous attempt' }));   // as GitHub sends the agent's own comment
 
 describe('the attempt count survives a failed run', () => {
     it('counts the agent\'s own comment trail', () => {

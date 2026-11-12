@@ -61,6 +61,7 @@ import { evidenceLedger } from './autonomy/evidence-ledger.mjs';
 import { taskCard, cardMarkdown } from './autonomy/task-card.mjs';
 import { runAnalysis, analysisMarkdown } from './autonomy/analysis-pass.mjs';
 import * as Q from './autonomy/work-queue.mjs';
+import { attemptTrail, attemptBrief, laneRuledOut, nothingToMeasure } from './autonomy/route.mjs';
 import { siblingsOf, groupTitle } from './autonomy/feedback-group.mjs';
 
 const MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
@@ -444,8 +445,17 @@ async function main() {
         // The author is told, so the retry changes its approach instead of repeating the failure. The routing below keeps
         // reading the report's own words, so a check name in that text cannot send the issue to a different lane.
         let retryBrief = '';
-        try { retryBrief = recoveryBrief(await Q.issueComments(number)); } catch (_) { /* no trail, no brief */ }
+        // What the earlier tries on this report did and where each stopped (autonomy/route.mjs). #559 was tried three times
+        // in the same lane with the same result, because the second try was never told what the first had ruled out.
+        let trail = [];
+        try {
+            const comments = await Q.issueComments(number);
+            retryBrief = recoveryBrief(comments);
+            trail = attemptTrail(comments);
+        } catch (_) { /* no trail, no brief */ }
         if (retryBrief) log(`#${number} an earlier fix failed in CI — the author is shown why`);
+        const triedBrief = attemptBrief(trail);
+        if (triedBrief) log(`#${number} ${trail.length} earlier ${trail.length === 1 ? 'try is' : 'tries are'} shown to the author so this one differs`);
 
         let result;
         let rulesShown = [];
@@ -453,7 +463,14 @@ async function main() {
         try {
             // A report about how a screen LOOKS (overlap, cut-off, a phone width) has no JavaScript to fix or to
             // test, so it goes to the layout lane: CSS only, measured in a real browser before and after.
-            const lane = layoutLaneFor({ title: issue.title, body: shot.body });
+            const lane = layoutLaneFor({ title: issue.title, body: shot.body, labels: issue.labels });
+            // A measurement that found nothing is evidence. If an earlier try already measured the pages and found no layout
+            // problem, the layout lane cannot end differently this time, so the report is worked as code instead
+            // (a finding the system measured itself keeps its lane: its marker names the screen).
+            if (lane.applies && !lane.marked && laneRuledOut(trail, 'layout')) {
+                log(`#${number} an earlier try measured the pages and found nothing to fix in the layout — working it as code this time`);
+                lane.applies = false;
+            }
             if (lane.applies) { laneName = 'layout'; log(`#${number} goes to the layout lane (${lane.why})`); }
             // A NEW idea is talked through by several AIs first (user-friendliness first); their brief joins the request, and
             // the discussion is posted once on the issue. It never blocks: the owner's request is the decision.
@@ -473,25 +490,37 @@ async function main() {
             // build lane first; and a feature the one-file swarm could not place falls through to it as well.
             const build = buildLaneFor({ title: issue.title, body: shot.body });
             laneBody += retryBrief;   // why an earlier fix failed in CI, if one did (autonomy/pr-recovery.mjs)
+            laneBody += triedBrief;   // what the earlier tries ruled out, so this one does not repeat them
             // Rules this repository already paid for (autonomy/lessons.mjs): shown to the author, never used for routing.
             const standing = lessonsBrief(`${issue.title}\n${String(shot.body).slice(0, 6000)}${retryBrief}`);
             rulesShown = lessonsFor(`${issue.title}\n${String(shot.body).slice(0, 6000)}${retryBrief}`).map((l) => l.id);
             if (standing) log(`#${number} standing rules shown: ${rulesShown.join(', ')}`);
             laneBody += standing;
             const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, repoDir: REPO_DIR, log });
+            const asCode = () => runSwarm({
+                issue: { number, title: issue.title, body: laneBody, kind },
+                repoDir: REPO_DIR, log,
+                // an independent second mind on the cause, the alternatives and the ways it could fail (part 9, 14 of the owner's prompt)
+                analyse: (ctx) => runAnalysis({ ...ctx, log }),
+            });
             if (lane.applies) {
-                result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body + retryBrief + standing }, repoDir: REPO_DIR, log });
+                result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body + retryBrief + triedBrief + standing }, repoDir: REPO_DIR, log });
+                // The words sounded like a layout complaint, the pages were measured, and nothing is wrong with the layout.
+                // If the report reads as a defect or a request ("on my phone the total is wrong"), the layout word was
+                // incidental: work it as code in this same try instead of spending the next two on the same measurement.
+                if (nothingToMeasure(result) && !lane.marked && kind !== 'ui') {
+                    log(`#${number} the pages show no layout problem and the report reads as "${kind}" — working it as code in this same try`);
+                    const measured = result.reason;
+                    laneName = 'swarm';
+                    result = await asCode();
+                    if (!result.ok) result = { ...result, reason: `${result.reason} | layout lane first: ${String(measured).slice(0, 160)}` };
+                }
             } else if (build.applies) {
                 laneName = 'build';
                 log(`#${number} goes to the build lane (${build.why})`);
                 result = await buildIt();
             } else {
-                result = await runSwarm({
-                    issue: { number, title: issue.title, body: laneBody, kind },
-                    repoDir: REPO_DIR, log,
-                    // an independent second mind on the cause, the alternatives and the ways it could fail (part 9, 14 of the owner's prompt)
-                    analyse: (ctx) => runAnalysis({ ...ctx, log }),
-                });
+                result = await asCode();
                 if (!result.ok && kind === 'feature' && (result.stage === 'select' || result.stage === 'author')) {
                     log(`#${number} no existing module could take it (${result.stage}) — trying the build lane`);
                     const built = await buildIt();
@@ -514,6 +543,7 @@ async function main() {
                 await Q.comment(number,
                     `<!-- wf-agent-attempt -->\n` +
                     `### [AI] Autonomous attempt ${state.attempts}/${MAX_ATTEMPTS} — no change made\n\n` +
+                    `**Lane:** \`${laneName}\`\n` +
                     `**Stopped at:** \`${result.stage}\`\n` +
                     `**Why:** ${result.reason}\n` +
                     (result.file ? `**File considered:** \`${result.file}\`\n` : '') +

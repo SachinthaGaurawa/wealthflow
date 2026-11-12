@@ -255,3 +255,64 @@ export function decide({ idea, signals, outcomes, board }) {
     if (b.retry) return { act: 'retry', why: b.why };
     return b.ok ? { act: 'approve', why: b.why, priority: sc.priority } : { act: 'decline', why: b.why };
 }
+
+// ── every AI proposes; a program chooses ────────────────────────────────────────────────────────
+//
+// WHY (measured, 2026-11-11/12): one model was asked for one idea a day. Both live runs ended the same way: that one
+// idea broke a rule ("too risky (risk 4/5)", then "touches sign-in or security, a new dependency") and the day
+// produced nothing. The owner (2026-11-12): every AI must contribute, and the thinking must be strong.
+//
+// HOW, and why this shape: the published comparisons of multi-model methods agree on one thing, that independent
+// answers from DIFFERENT models are worth more than models talking each other round, and that what decides the
+// result is how the winner is chosen. So each available AI proposes on its own (none sees another's idea), a
+// PROGRAM applies the rules to every proposal, two AIs landing on the same idea independently counts in its favour,
+// and only then does the cross-provider board vote on the best survivor. If none survives, the AIs are shown why
+// each idea was refused and asked once more.
+
+/** How many different AIs are asked for an idea in one run, and how many survivors the board may be asked about. */
+export const MAX_PROPOSERS = 4, MAX_BOARDS = 2;
+
+/** Two AIs proposing the same thing independently is evidence it is a real need: worth this much priority each. */
+export const AGREEMENT_BONUS = 3;
+
+/**
+ * Judge every proposal by the rules (no board yet) and order the survivors.
+ * @param {{idea:object, by:string}[]} candidates
+ * @returns {{ passed: {idea, by, priority, agree:string[]}[], refused: {idea, by, act, why}[] }}
+ */
+export function rankCandidates(candidates, { signals, outcomes }) {
+    const judged = (candidates || []).filter((c) => c && c.idea).map((c) => ({ ...c, verdict: decide({ idea: c.idea, signals, outcomes, board: null }) }));
+    const passed = [];
+    for (const j of judged.filter((x) => x.verdict.act === 'ask-board')) {
+        const agree = [...new Set(judged.filter((o) => o !== j && o.by !== j.by && likeness(o.idea.title, j.idea.title) >= 0.6).map((o) => o.by))];
+        passed.push({ idea: j.idea, by: j.by, agree, priority: j.verdict.priority + AGREEMENT_BONUS * agree.length });
+    }
+    passed.sort((a, b) => b.priority - a.priority);
+    // Two survivors that are the same idea are one idea: keep the stronger, so the board is not asked twice about it.
+    const unique = [];
+    for (const p of passed) if (!unique.some((u) => likeness(u.idea.title, p.idea.title) >= 0.6)) unique.push(p);
+    const refused = judged.filter((x) => x.verdict.act !== 'ask-board').map((x) => ({ idea: x.idea, by: x.by, act: x.verdict.act, why: x.verdict.why }));
+    return { passed: unique, refused };
+}
+
+/** What the AIs are shown before the second round: each refused idea and the rule that refused it. */
+export function refusalBrief(refused) {
+    const rows = (refused || []).slice(0, 6);
+    if (!rows.length) return '';
+    return [
+        '',
+        '',
+        'THESE IDEAS WERE JUST PROPOSED AND REFUSED BY THE RULES. Do not propose them again, and do not propose anything refused for the same reason:',
+        ...rows.map((r) => `- "${clip(r.idea.title, 90)}": refused because ${r.why}`),
+        'Propose a DIFFERENT idea that passes every hard rule: easy to use (ease 4 or 5), low risk (risk 1 or 2), small, grounded in the evidence ids, and nowhere near sign-in, encryption, money arithmetic, paid services, new dependencies or sending data anywhere new.',
+    ].join('\n');
+}
+
+/**
+ * An idea was already filed in the last `hours` hours. The pacemaker may start the idea engine for a slot GitHub
+ * skipped and GitHub may then run the late slot as well; the second run must not think of a second idea that day.
+ */
+export const THINK_AGAIN_HOURS = 18;
+export function thoughtRecently(outcomes, now = Date.now(), hours = THINK_AGAIN_HOURS) {
+    return (outcomes || []).find((o) => { const t = Date.parse(o.created); return Number.isFinite(t) && now - t >= 0 && now - t < hours * 3600000; }) || null;
+}
