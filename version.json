@@ -1,6 +1,6 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.69.92",
+  "latest": "7.69.93",
   "mandatory": [
     "7.16.0",
     "7.16.1"
@@ -1596,6 +1596,18 @@
           "items": [
             "AI router: a withdrawn model is replaced from a list of unknown names, and a replacement that cannot be called is followed by the next (#611)",
             "Update system, second round: a pacemaker every finished job wakes, a board that knows what ships, ideas that name real files (#610)"
+          ]
+        }
+      ]
+    },
+    "7.69.93": {
+      "headline": "What's New",
+      "date": "2026-11-12",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "App AI board: a name is matched as a name, a slow model is set aside, a refused replacement is followed, roles of one account never share a model (#613)"
           ]
         }
       ]

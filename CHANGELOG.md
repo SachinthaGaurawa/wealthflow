@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.93 — 2026-11-12
+
+**What changed for you**
+
+- App AI board: a name is matched as a name, a slow model is set aside, a refused replacement is followed, roles of one account never share a model (#613)
+
 ## v7.69.92 — 2026-11-12
 
 **What changed for you**
