@@ -121,8 +121,17 @@ export function readWorkflows(dir = '.github/workflows') {
 
 /** The latest slot of a workflow: the most recent time any of its cron lines was due. null when it has none. */
 export function dueOf(w, now = Date.now()) {
-    const dues = (w.crons || []).map((c) => lastDue(c, now)).filter((t) => t !== null);
+    // One cron line this parser cannot read must not stop the beat for every other job: that line is set aside
+    // (cronProblems names it in the table) and the workflow's other lines still count.
+    const dues = (w.crons || []).map((c) => { try { return lastDue(c, now); } catch { return null; } }).filter((t) => t !== null);
     return dues.length ? Math.max(...dues) : null;
+}
+
+/** The cron lines of a workflow that could not be read, each with the reason. Empty when all are fine. */
+export function cronProblems(w) {
+    const bad = [];
+    for (const c of (w && w.crons) || []) { try { parseCron(c); } catch (e) { bad.push(`"${c}": ${String(e.message).replace(/^pacemaker:\s*/, '')}`); } }
+    return bad;
 }
 
 /**
@@ -149,6 +158,9 @@ export function plan({ workflows, runs, now = Date.now(), graceMin = GRACE_MIN, 
     for (const w of workflows || []) {
         if (w.file === SELF) continue;
         const due = dueOf(w, now);
+        const bad = cronProblems(w);
+        // A schedule that cannot be read is shown, never silently dropped: nobody is watching that job's clock.
+        if (bad.length) rows.push({ file: w.file, name: w.name, due: null, ranAt: null, lateMin: null, state: 'unreadable', wake: false, why: bad.join('; ') });
         if (due === null) continue;
         const starts = (runs?.[w.file] || []).map((t) => (typeof t === 'number' ? t : Date.parse(t))).filter(Number.isFinite);
         const inSlot = starts.filter((t) => t >= due - tolMin * 60000).sort((a, b) => a - b);
@@ -177,6 +189,7 @@ const hhmm = (ms) => new Date(ms).toISOString().slice(5, 16).replace('T', ' ') +
 /** The table for the run summary. */
 export function report(rows, { dry = false, results = {} } = {}) {
     const line = (r) => {
+        if (r.state === 'unreadable') return `| \`${r.file}\` | — | — | its schedule could not be read, so this line is NOT watched: ${r.why} |`;
         const what = r.state === 'ran' ? (r.lateMin > GRACE_MIN ? `ran ${r.lateMin} min late` : 'ran on time')
             : r.state === 'waiting' ? 'due just now, GitHub may still run it'
                 : r.wake ? (dry ? `SKIPPED by GitHub (${r.lateMin} min) — would be started` : `SKIPPED by GitHub (${r.lateMin} min) — ${results[r.file] || 'started by the pacemaker'}`)

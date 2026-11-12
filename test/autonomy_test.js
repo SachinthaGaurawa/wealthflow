@@ -477,8 +477,8 @@ describe('work-queue: triage', () => {
     it('counts attempts from the agent\'s own comment marker only', () => {
         expect(attemptsFrom([
             { body: 'a human comment' },
-            { body: '<!-- wf-agent-attempt -->\nattempt 1' },
-            { body: '<!-- wf-agent-attempt -->\nattempt 2' },
+            { user: { login: 'github-actions[bot]' }, body: '<!-- wf-agent-attempt -->\nattempt 1' },
+            { user: { login: 'github-actions[bot]' }, body: '<!-- wf-agent-attempt -->\nattempt 2' },
         ])).toBe(2);
         expect(attemptsFrom([])).toBe(0);
     });

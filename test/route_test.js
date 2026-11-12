@@ -1,6 +1,7 @@
 // Who filed a report, and what the earlier tries already ruled out (autonomy/route.mjs).
 // The fixture is issue #559 as it was really filed (counts and fixed words only, already public).
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
 import { isSystemFiled, systemRole, layoutAllowed, attemptTrail, laneRuledOut, attemptBrief, nothingToMeasure, fromStranger } from '../autonomy/route.mjs';
 import { roleFor, attemptsFrom, lastAttemptAgeMs } from '../autonomy/work-queue.mjs';
 import { layoutLaneFor } from '../autonomy/css-lane.mjs';
@@ -19,7 +20,7 @@ const READER_559 = {
 };
 const MEASURE_WHY = 'No overlap, overflow or cut-off text was found at 320, 360, 390, 430, 600, 768, 1024px wide. There is nothing to prove a CSS change against, so no change was made.';
 const attempt = (n, { lane = '', stage = 'measure', why = MEASURE_WHY } = {}) => ({
-    author_association: 'NONE',
+    user: { login: 'github-actions[bot]', type: 'Bot' }, author_association: 'CONTRIBUTOR',   // as GitHub sends the agent's own comment (read from #559)
     body: `<!-- wf-agent-attempt -->\n### [AI] Autonomous attempt ${n}/3 — no change made\n\n${lane ? `**Lane:** \`${lane}\`\n` : ''}**Stopped at:** \`${stage}\`\n**Why:** ${why}\n\nNothing was committed.`,
 });
 
@@ -91,7 +92,7 @@ describe('a try is told what the earlier tries ruled out', () => {
     });
     it('the brief names each earlier try and tells the author to differ; with no tries it is empty', () => {
         expect(attemptBrief([])).toBe('');
-        const b = attemptBrief(attemptTrail([attempt(1, { lane: 'swarm', stage: 'author', why: 'wealthflow-cards.js: model returned no change' }), { body: '<!-- wf-agent-attempt -->\n### [AI] Fix drafted (attempt 2/3)\n\nI changed `wealthflow-cards.js`.' }]));
+        const b = attemptBrief(attemptTrail([attempt(1, { lane: 'swarm', stage: 'author', why: 'wealthflow-cards.js: model returned no change' }), { user: { login: 'github-actions[bot]' }, body: '<!-- wf-agent-attempt -->\n### [AI] Fix drafted (attempt 2/3)\n\nI changed `wealthflow-cards.js`.' }]));
         expect(b).toMatch(/Try 1 \(swarm lane\) stopped at `author`/);
         expect(b).toMatch(/Try 2 stopped at `drafted`/);
         expect(b).toMatch(/do NOT repeat/);
@@ -116,6 +117,10 @@ describe("a stranger's comment on a public issue is not the agent's trail", () =
         expect(fromStranger(STRANGER)).toBe(true);
         expect(fromStranger({ user: { login: 'drive-by' }, author_association: 'CONTRIBUTOR' })).toBe(true);   // merged a PR once: still no say
         expect(fromStranger({ user: { login: 'github-actions[bot]x' }, author_association: 'NONE' })).toBe(true);
+        // closed by default: a comment that does not say who wrote it is nobody's evidence
+        expect(fromStranger({ body: 'x' })).toBe(true);
+        expect(fromStranger({ user: null, author_association: 'NONE' })).toBe(true);
+        expect(fromStranger(null)).toBe(true);
     });
 
     it('a forged attempt rules no lane out and puts no words in front of the author', () => {
@@ -131,12 +136,27 @@ describe("a stranger's comment on a public issue is not the agent's trail", () =
     });
 
     it("the agent's real comments still count, between forged ones", () => {
-        const real = { ...AGENT, created_at: '2026-11-12T06:00:00Z', ...attempt(1, { lane: 'layout' }), author_association: 'CONTRIBUTOR' };
+        const real = { ...attempt(1, { lane: 'layout' }), created_at: '2026-11-12T06:00:00Z' };
         const trail = attemptTrail([forged, real, forged]);
         expect(trail.length).toBe(1);
         expect(trail[0].n).toBe(1);
         expect(laneRuledOut(trail, 'layout')).toBe(true);
         expect(attemptsFrom([forged, real, forged])).toBe(1);
         expect(lastAttemptAgeMs([forged, real], Date.parse('2026-11-12T07:00:00Z'))).toBe(3600000);
+    });
+});
+
+describe("the agent's comments must come from the account the trail trusts", () => {
+    it('every workflow hands its jobs the repository token, so the agent comments as github-actions[bot]', () => {
+        // If a workflow ever ran the agent under another token, its attempt comments would come from another account,
+        // would read as a stranger's, and the three-try limit would never be reached. This pins the assumption.
+        const odd = [];
+        for (const f of fs.readdirSync('.github/workflows').filter((x) => /\.ya?ml$/.test(x))) {
+            const text = fs.readFileSync(`.github/workflows/${f}`, 'utf8');
+            for (const m of text.matchAll(/^\s*(GITHUB_TOKEN|GH_TOKEN):\s*(.+?)\s*$/gm)) {
+                if (!/secrets\.GITHUB_TOKEN|github\.token/.test(m[2])) odd.push(`${f}: ${m[1]}: ${m[2]}`);
+            }
+        }
+        expect(odd).toEqual([]);
     });
 });

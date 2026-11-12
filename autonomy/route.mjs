@@ -69,15 +69,13 @@ const AGENT_LOGIN = 'github-actions[bot]';
 
 /**
  * Is this comment from somebody who has no say here? The repository is public, so anyone may comment on an issue and
- * anyone may type the agent's marker. A comment that says who wrote it, and that writer is neither the agent's own
- * account nor a maintainer, is not the agent's trail: it must not count as a try, rule a lane out, or put its words
- * in front of the author model. (A comment with no author at all only exists in tests; GitHub always sends one.)
+ * anyone may type the agent's marker. Only two writers count: the agent's own account, and a maintainer. Everything
+ * else, including a comment that does not say who wrote it, is not the agent's trail: it must not count as a try, rule
+ * a lane out, or put its words in front of the author model. (Closed by default: an unknown writer is a stranger.)
  */
 export function fromStranger(c) {
-    const login = String((c && c.user && c.user.login) || '');
-    if (!login) return false;
-    if (login === AGENT_LOGIN) return false;
-    return !TRUSTED.test(String((c && c.author_association) || ''));
+    if (TRUSTED.test(String((c && c.author_association) || ''))) return false;
+    return String((c && c.user && c.user.login) || '') !== AGENT_LOGIN;
 }
 const RESET = /<!--\s*wf-agent-reset\s*-->/;
 const field = (body, name) => ((body.match(new RegExp('\\*\\*' + name + ':\\*\\*\\s*`?([^`\\n]+?)`?\\s*(?:\\n|$)')) || [])[1] || '').trim();

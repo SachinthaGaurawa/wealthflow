@@ -77,7 +77,7 @@ describe('telling the agent why it failed, without looping', () => {
     it('the hand-back comment adds NO attempt of its own (the draft comment already spent one), so it cannot loop', () => {
         const c = handbackComment({ prNumber: 7, reason: 'still failing', digest });
         expect(c).toContain(RECOVERY_MARKER);
-        expect(attemptsFrom([{ body: '<!-- wf-agent-attempt -->\nFix drafted', author_association: 'NONE' }, { body: c }])).toBe(1);
+        expect(attemptsFrom([{ user: { login: 'github-actions[bot]' }, body: '<!-- wf-agent-attempt -->\nFix drafted', author_association: 'CONTRIBUTOR' }, { body: c }])).toBe(1);
     });
     it('the next try is shown the newest failure first, and an issue with no history gets nothing', () => {
         const c = handbackComment({ prNumber: 7, reason: 'still failing', digest });

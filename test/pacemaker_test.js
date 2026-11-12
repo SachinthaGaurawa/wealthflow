@@ -2,7 +2,7 @@
 // The times in "what really happened" are this repository's own run history of 2026-11-11/12.
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
-import { parseField, parseCron, cronMatches, lastDue, cronsIn, hasDispatch, nameOf, readWorkflows, dueOf, countsAsRun, plan, report, beat, GRACE_MIN, MAX_WAKES, SELF, WAKE_INPUTS } from '../autonomy/pacemaker.mjs';
+import { parseField, parseCron, cronMatches, lastDue, cronsIn, hasDispatch, nameOf, readWorkflows, dueOf, cronProblems, countsAsRun, plan, report, beat, GRACE_MIN, MAX_WAKES, SELF, WAKE_INPUTS } from '../autonomy/pacemaker.mjs';
 import { cronsIn as budgetCrons } from '../autonomy/actions-budget.mjs';
 
 const T = (iso) => Date.parse(iso);
@@ -181,5 +181,45 @@ describe('the real workflow files', () => {
             const text = fs.readFileSync(`.github/workflows/${file}`, 'utf8');
             for (const key of Object.keys(inputs)) expect(text, `${file} input ${key}`).toMatch(new RegExp(`^\\s{6}${key}:\\s*$`, 'm'));
         }
+    });
+});
+
+describe('one cron line it cannot read does not stop the beat for the others', () => {
+    const now = Date.parse('2026-11-12T05:10:00Z');   // 45 minutes after the 04:25 slot
+    const good = { file: 'autonomous-fix.yml', name: 'Fix agent', crons: ['25 */4 * * *'], dispatch: true };
+    const bad = { file: 'odd.yml', name: 'Odd', crons: ['@daily'], dispatch: true };
+    const half = { file: 'half.yml', name: 'Half', crons: ['99 * * * *', '0 */6 * * *'], dispatch: true };
+
+    it('names the line and the reason, and still reads the other lines of the same file', () => {
+        expect(cronProblems(good)).toEqual([]);
+        expect(cronProblems(bad)[0]).toMatch(/@daily/);
+        expect(cronProblems(half).length).toBe(1);
+        expect(dueOf(bad, now)).toBe(null);
+        expect(dueOf(half, now)).toBe(Date.parse('2026-11-12T00:00:00Z'));
+        expect(cronProblems(null)).toEqual([]);
+    });
+
+    it('the plan shows the unreadable schedule and still wakes the job that was skipped', () => {
+        const rows = plan({ workflows: [bad, good, half], runs: {}, now });
+        expect(rows.find((r) => r.file === 'odd.yml').state).toBe('unreadable');
+        expect(rows.find((r) => r.file === 'odd.yml').wake).toBe(false);
+        const fix = rows.find((r) => r.file === 'autonomous-fix.yml');
+        expect(fix.state).toBe('skipped');
+        expect(fix.wake).toBe(true);
+        expect(rows.filter((r) => r.file === 'half.yml').map((r) => r.state).sort()).toEqual(['skipped', 'unreadable']);
+        const text = report(rows, { dry: true });
+        expect(text).toMatch(/odd\.yml.*NOT watched/);
+        expect(text).toMatch(/autonomous-fix\.yml.*would be started/);
+    });
+
+    it('a whole beat with a bad file in the folder still starts the skipped job', async () => {
+        const dir = fs.mkdtempSync('/tmp/pacemaker-bad-');
+        fs.writeFileSync(dir + '/odd.yml', "name: Odd\non:\n  schedule:\n    - cron: '61 * * * *'\n  workflow_dispatch:\n");
+        fs.writeFileSync(dir + '/fix.yml', "name: Fix\non:\n  schedule:\n    - cron: '25 */4 * * *'\n  workflow_dispatch:\n");
+        const started = [];
+        const out = await beat({ dir, now, log: () => {}, fetchRuns: async () => [], dispatch: async (f) => { started.push(f); } });
+        expect(started).toEqual(['fix.yml']);
+        expect(out.failed).toEqual([]);
+        expect(out.rows.some((r) => r.file === 'odd.yml' && r.state === 'unreadable')).toBe(true);
     });
 });

@@ -129,7 +129,7 @@ describe('feedback-triage: room for the picture', () => {
 });
 
 describe('work-queue: attempt cooldown', () => {
-    const at = (ms) => ({ body: '<!-- wf-agent-attempt -->\nAttempt', created_at: new Date(ms).toISOString() });
+    const at = (ms) => ({ user: { login: 'github-actions[bot]' }, body: '<!-- wf-agent-attempt -->\nAttempt', created_at: new Date(ms).toISOString() });
     it('returns null with no attempts and the age of the newest one otherwise', () => {
         const now = Date.now();
         expect(lastAttemptAgeMs([], now)).toBeNull();
