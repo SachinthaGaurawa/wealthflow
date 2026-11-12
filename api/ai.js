@@ -17,7 +17,7 @@
 import * as Matrix from './ai-matrix.mjs';
 import { isModelGone, loadModels } from '../ai-models.mjs';
 import { geminiBook, geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
-import { askChat, chatError } from '../ai-chat.mjs';
+import { askChat, chatError, setAsideSlowModel } from '../ai-chat.mjs';
 import { getAdminDb, withDeadline } from '../admin-db.mjs';
 import { resetHealthMemory, serveHealth } from '../ai-health.mjs';
 import { OFFICIAL_ORIGIN } from '../wealthflow-public-identity.mjs';
@@ -328,7 +328,7 @@ export default async function handler(req, res) {
     // them all; Cohere uses its own shape below. Each fires in parallel with
     // the rest and contributes to fastest/consensus selection.
     function makeOAI(opts) {
-        return async function () {
+        const ask = async function () {
             if (!opts.key) throw new Error(opts.name + ' key not configured');
             if (image && !opts.visionModel) throw new Error(opts.name + ' skipped (text-only)');
             const slot = `${opts.name}:${image ? 'vision' : 'text'}`;
@@ -356,6 +356,9 @@ export default async function handler(req, res) {
                 return { reply: out.text, provider: out.model === dflt ? opts.provider : `${opts.provider}:${out.model}` };
             } catch (e) { throw chatError(opts.name, e); }
         };
+        // told by runWithin when this provider missed the board's deadline again: the model in use is set aside (ai-chat.mjs)
+        ask.tooSlow = (strikes) => setAsideSlowModel({ book: modelBook, slot: `${opts.name}:${image ? 'vision' : 'text'}`, defaultModel: image ? opts.visionModel : opts.textModel, strikes, hasList: Boolean(opts.list && opts.key) });
+        return ask;
     }
 
     // mistral-large-latest is paid-tier only (confirmed live: 403 "not available in
@@ -512,6 +515,10 @@ export default async function handler(req, res) {
             .then(r => { deadlineStrikes.delete(engine.name); return { ok: true, name: engine.name, reply: r.reply, provider: r.provider, ms: Date.now() - started }; }), deadline])
             .catch(e => {
                 coolProvider(engine.name, e);
+                if (/deadline|timed?\s*out|abort/i.test(String(e && e.message)) && typeof engine.fn.tooSlow === 'function') {   // the same words coolProvider counts as a miss
+                    const aside = engine.fn.tooSlow((deadlineStrikes.get(engine.name) || {}).strikes || 0);
+                    if (aside) console.info(JSON.stringify({ evt: 'ai-slow-model', provider: engine.name, model: aside, note: 'set aside after repeated deadline misses; the next call asks the list for another' }));
+                }
                 console.warn(`[AI] ${engine.name} failed:`, e.message);
                 errorLog.push(`${engine.name}: ${e.message}`);
                 return { ok: false, name: engine.name, error: e.message, ms: Date.now() - started };
