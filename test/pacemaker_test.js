@@ -2,7 +2,7 @@
 // The times in "what really happened" are this repository's own run history of 2026-11-11/12.
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
-import { parseField, parseCron, cronMatches, lastDue, cronsIn, hasDispatch, nameOf, readWorkflows, dueOf, cronProblems, countsAsRun, plan, report, beat, GRACE_MIN, MAX_WAKES, SELF, WAKE_INPUTS } from '../autonomy/pacemaker.mjs';
+import { parseField, parseCron, cronMatches, lastDue, cronsIn, hasDispatch, nameOf, readWorkflows, dueOf, cronProblems, countsAsRun, plan, report, beat, GRACE_MIN, MAX_WAKES, SELF, WAKE_INPUTS, escapeFilter, beatTriggerNames, workflowRunNames, readJson } from '../autonomy/pacemaker.mjs';
 import { cronsIn as budgetCrons } from '../autonomy/actions-budget.mjs';
 
 const T = (iso) => Date.parse(iso);
@@ -172,7 +172,8 @@ describe('the real workflow files', () => {
         const listed = [...text.matchAll(/^\s{6}- '([^']+)'\s*$/gm)].map((m) => m[1]);
         expect(listed.length).toBeGreaterThanOrEqual(2);
         const names = fs.readdirSync('.github/workflows').map((f) => nameOf(fs.readFileSync(`.github/workflows/${f}`, 'utf8')));
-        for (const n of listed) expect(names, n).toContain(n);
+        // an escaped spelling (see 'every scheduled job that finishes is a beat') stands for the same real name
+        for (const n of listed) expect(names, n).toContain(n.replace(/\\([+?*[\]\\])/g, '$1'));
         expect(hasDispatch(text)).toBe(true);
         expect(text).toMatch(/actions: write/);
     });
@@ -221,5 +222,81 @@ describe('one cron line it cannot read does not stop the beat for the others', (
         expect(started).toEqual(['fix.yml']);
         expect(out.failed).toEqual([]);
         expect(out.rows.some((r) => r.file === 'odd.yml' && r.state === 'unreadable')).toBe(true);
+    });
+});
+
+// MEASURED 2026-11-12 08:07Z to 12:45Z: the pacemaker's own cron was due 14 times and GitHub started it 0 times, and the two
+// workflows it listened to were not among the 3 scheduled jobs that did run. Its clock must not be one GitHub schedule.
+describe('every scheduled job that finishes is a beat', () => {
+    const yml = () => fs.readFileSync('.github/workflows/pacemaker.yml', 'utf8');
+
+    it('pacemaker.yml lists every scheduled workflow under workflow_run, by its real name', () => {
+        const listed = workflowRunNames(yml());
+        const scheduled = readWorkflows().filter((w) => w.file !== SELF);
+        expect(scheduled.length).toBeGreaterThan(8);
+        for (const w of scheduled) expect(listed, `${w.file} ("${w.name}") finishing would not wake the pacemaker`).toContain(w.name);
+        expect(listed).not.toContain(nameOf(yml()));          // it never wakes itself
+    });
+
+    it('a name that holds a filter-pattern character is listed as written AND escaped', () => {
+        // The watchdog finished three times that day and the pacemaker never started; a finished release did start it.
+        // The two names differ by a `+`, which GitHub's filter patterns do not read as a plain character.
+        expect(escapeFilter('Health watchdog + auto-rollback (free)')).toBe('Health watchdog \\+ auto-rollback (free)');
+        expect(escapeFilter('Pipeline liveness (is the autonomy real?)')).toBe('Pipeline liveness (is the autonomy real\\?)');
+        expect(escapeFilter('Auto Release (WealthFlow)')).toBe('Auto Release (WealthFlow)');     // brackets and a dash are plain
+        const want = beatTriggerNames(readWorkflows());
+        const listed = workflowRunNames(yml());
+        expect(want.filter((n) => !listed.includes(n))).toEqual([]);
+        expect(listed.filter((n) => !want.includes(n))).toEqual([]);                             // and nothing that is not a real workflow
+        expect(listed).toContain('Health watchdog \\+ auto-rollback (free)');
+        expect(listed).toContain('Health watchdog + auto-rollback (free)');
+    });
+
+    it('the list is built from the files, so a new scheduled workflow cannot be forgotten', () => {
+        const names = beatTriggerNames([{ file: 'a.yml', name: 'Plain name' }, { file: 'b.yml', name: 'Odd + name?' }, { file: SELF, name: 'Pacemaker' }, { file: 'c.yml', name: '' }]);
+        expect(names).toEqual(['Plain name', 'Odd + name?', 'Odd \\+ name\\?']);
+    });
+
+    it('reads a workflow_run list written inline or as a block, and nothing from a file without one', () => {
+        expect(workflowRunNames('on:\n  workflow_run:\n    workflows: ["WealthFlow CI (free)"]\n    types: [completed]\n  schedule:\n')).toEqual(['WealthFlow CI (free)']);
+        expect(workflowRunNames("on:\n  workflow_run:\n    workflows:\n      - 'A + b'\n      - 'A \\+ b'\n    types: [completed]\n  workflow_dispatch:\n")).toEqual(['A + b', 'A \\+ b']);
+        expect(workflowRunNames('on:\n  push:\n')).toEqual([]);
+    });
+
+    it('a watched job that was skipped or cancelled is not a beat (the watchdog skips six runs per preview deploy)', () => {
+        const text = yml();
+        expect(text).toMatch(/github\.event_name != 'workflow_run'/);
+        expect(text).toMatch(/workflow_run\.conclusion == 'success'/);
+        expect(text).toMatch(/workflow_run\.conclusion == 'failure'/);
+        expect(text).not.toMatch(/conclusion == 'skipped'/);
+    });
+});
+
+// #608 (filed by the system's own discovery scan): the answer from GitHub was parsed with nothing around it.
+describe('an answer from GitHub that is not JSON', () => {
+    it('an empty body is null (a dispatch answers 204 with nothing)', () => {
+        expect(readJson('')).toBe(null);
+        expect(readJson(null)).toBe(null);
+        expect(readJson('  \n')).toBe(null);
+    });
+    it('JSON is read', () => {
+        expect(readJson('{"workflow_runs":[]}')).toEqual({ workflow_runs: [] });
+    });
+    it('anything else is an error that names what was asked and what came back', () => {
+        expect(() => readJson('<html><body>502 Bad Gateway</body></html>', 'GET /actions/workflows/x.yml/runs'))
+            .toThrow(/GET \/actions\/workflows\/x\.yml\/runs answered with something that is not JSON: <html>/);
+        expect(() => readJson('{"workflow_runs":[', 'GET /x')).toThrow(/not JSON/);
+    });
+    it('a beat that gets such an answer for one job leaves that job alone and still starts the others', async () => {
+        const started = [];
+        const out = await beat({
+            dir: '.github/workflows', now: T('2026-11-12T05:10:00Z'), log: () => {},
+            fetchRuns: async (file) => { if (file === 'autonomous-discover.yml') return readJson('<html>gateway</html>', `GET runs of ${file}`); return []; },
+            dispatch: async (file) => { started.push(file); },
+        });
+        expect(out.unknown).toEqual(['autonomous-discover.yml']);
+        expect(started).not.toContain('autonomous-discover.yml');
+        expect(started.length).toBeGreaterThan(0);
+        expect(out.failed).toEqual([]);
     });
 });

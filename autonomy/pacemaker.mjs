@@ -109,6 +109,47 @@ export function nameOf(text) {
     return m ? m[1].replace(/^['"]|['"]$/g, '') : '';
 }
 
+/**
+ * A workflow name as a GitHub filter pattern that matches that name and nothing else.
+ * MEASURED 2026-11-12: `workflow_run` listed 'Health watchdog + auto-rollback (free)' and 'Auto Release (WealthFlow)'. The release
+ * finishing started this workflow (08:52Z). The watchdog finishing did not, three times (08:07Z, 12:46Z, 12:48Z). The names differ
+ * in one way: the `+`, which GitHub's filter patterns read as "one or more of the character before". So a name that holds a pattern
+ * character is listed TWICE, as written and escaped, and whichever way GitHub reads the list, one of the two is that workflow.
+ */
+const PATTERN_CHARS = /[+?*[\]\\]/g;
+export function escapeFilter(name) {
+    return String(name).replace(PATTERN_CHARS, '\\$&');
+}
+
+/**
+ * The names pacemaker.yml must list under `workflow_run`, so that EVERY scheduled job finishing is a beat.
+ * WHY: the pacemaker's own clock is a GitHub schedule too. Measured 2026-11-12 08:07Z to 12:45Z: its cron was due 14 times and
+ * GitHub started it 0 times, while 3 other scheduled jobs did run (1 to 8 hours late). A job that runs is a real event, so each
+ * one now wakes the pacemaker, which then starts the others that are overdue.
+ */
+export function beatTriggerNames(workflows) {
+    const out = [];
+    for (const w of workflows || []) {
+        if (!w || w.file === SELF || !w.name) continue;
+        out.push(w.name);
+        const esc = escapeFilter(w.name);
+        if (esc !== w.name) out.push(esc);
+    }
+    return out;
+}
+
+/** The names a workflow file lists under `on.workflow_run.workflows` (block list or inline list). */
+export function workflowRunNames(text) {
+    const m = String(text).match(/^\s*workflow_run\s*:\s*\n([\s\S]*?)(?=^\s{0,2}\S)/m);
+    if (!m) return [];
+    const block = m[1];
+    const inline = block.match(/workflows\s*:\s*\[([^\]]*)\]/);
+    const unq = (v) => v.trim().replace(/^'(.*)'$/s, '$1').replace(/^"(.*)"$/s, (_, x) => x.replace(/\\\\/g, '\\'));
+    if (inline) return inline[1].split(',').map(unq).filter(Boolean);
+    const list = block.match(/workflows\s*:\s*\n((?:\s*-\s.*\n?)+)/);
+    return list ? list[1].split('\n').map((l) => l.replace(/^\s*-\s/, '')).map(unq).filter(Boolean) : [];
+}
+
 /** Every scheduled workflow in the checkout: { file, name, crons, dispatch }. */
 export function readWorkflows(dir = '.github/workflows') {
     let files = [];
@@ -201,6 +242,18 @@ export function report(rows, { dry = false, results = {} } = {}) {
 
 // ── the network ────────────────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * GitHub's answer as JSON. An empty body (a 204 after a dispatch) is null. A body that is not JSON (a proxy's error page, a
+ * half-sent answer) is an error that says so, with where it came from: the caller already treats an error as "unknown, leave it
+ * alone this beat", which is right, and a bare SyntaxError said neither what was asked nor what came back (#608).
+ */
+export function readJson(raw, where = '') {
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text) return null;
+    try { return JSON.parse(text); }
+    catch { throw new Error(`pacemaker: GitHub ${where} answered with something that is not JSON: ${text.slice(0, 120)}`); }
+}
+
 async function gh(pathname, { method = 'GET', body, env = process.env } = {}) {
     const token = env.GITHUB_TOKEN || env.GH_TOKEN;
     const repo = env.GITHUB_REPOSITORY;
@@ -212,7 +265,7 @@ async function gh(pathname, { method = 'GET', body, env = process.env } = {}) {
     });
     const raw = await r.text();
     if (!r.ok) { const e = new Error(`GitHub ${method} ${pathname} -> ${r.status}: ${raw.slice(0, 200)}`); e.status = r.status; throw e; }
-    return raw ? JSON.parse(raw) : null;
+    return readJson(raw, `${method} ${pathname}`);
 }
 
 /**

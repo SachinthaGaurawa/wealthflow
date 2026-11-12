@@ -174,6 +174,63 @@ export function guardIdea(p) {
     return { ok: reasons.length === 0, reasons };
 }
 
+// ── the scope is checked against the files that exist ──────────────────────────────────────────────────────────
+
+/**
+ * MEASURED 2026-11-12, idea #607 (the first one this engine approved): its "Likely scope" named
+ * `src/screens/settings/software-update.js` and `src/i18n/en.json`. Neither exists; this app has no `src/` folder. The fix agent
+ * ranks files by the words of the issue, so two invented paths are noise at the top of its search, and a "small" score given
+ * to an idea whose files were imagined was never measured against anything.
+ *
+ * So a program reads the scope: a file that exists is kept (a bare name is completed to its real path), a file that does not is
+ * named as such, and for each missing one the real files with the same words in their name are offered. No model is asked.
+ * A file only a human may change is never offered. Text with no file name in it is returned as it was.
+ */
+const FILE_TOKEN = /(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:js|mjs|cjs|ts|tsx|jsx|html|css|json|md|yml|yaml)\b/g;
+const NAME_NOISE = new Set(['index', 'main', 'screen', 'screens', 'page', 'pages', 'view', 'views', 'component', 'components', 'util', 'utils', 'helper', 'helpers', 'wealthflow', 'test', 'tests', 'json', 'src', 'app', 'lib', 'module', 'modules']);
+const NOT_APP = /^(test|tests|autonomy|docs|policy|native|node_modules|\.github)\//;
+// the words of the whole invented path: `src/screens/settings/software-update.js` says "settings" as well as "update"
+const wordsOfName = (f) => [...new Set(String(f).replace(/\.[a-z]+$/i, '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !NAME_NOISE.has(w)))];
+
+export function closestFiles(missing, files, k = 3) {
+    const want = wordsOfName(missing);
+    if (!want.length) return [];
+    const scored = [];
+    for (const f of files || []) {
+        if (NOT_APP.test(f) || FORBIDDEN_FILES.test(f) || /\.(md|json|ya?ml|map)$/i.test(f)) continue;
+        const name = f.split('/').pop().toLowerCase();
+        const hit = want.filter((w) => name.includes(w)).length;
+        if (hit) scored.push({ f, hit });
+    }
+    return scored.sort((a, b) => b.hit - a.hit || a.f.length - b.f.length || a.f.localeCompare(b.f)).slice(0, k).map((x) => x.f);
+}
+
+export function groundScope(scope, files) {
+    const text = String(scope || '').trim();
+    const all = [...new Set(files || [])];
+    const named = [...new Set(text.match(FILE_TOKEN) || [])];
+    if (!text || !all.length || !named.length) return { text, real: [], missing: [], closest: [], changed: false };
+    const real = [], missing = [];
+    for (const n of named) {
+        const clean = n.replace(/^\.?\//, '');
+        if (all.includes(clean)) { real.push(clean); continue; }
+        const base = clean.split('/').pop();
+        const same = all.filter((f) => f.split('/').pop() === base && !NOT_APP.test(f));
+        if (same.length === 1) real.push(same[0]); else missing.push(n);
+    }
+    const uniq = (xs) => [...new Set(xs)];
+    const closest = uniq(missing.flatMap((m) => closestFiles(m, all))).filter((f) => !real.includes(f)).slice(0, 4);
+    if (!missing.length) return { text, real: uniq(real), missing, closest: [], changed: false };
+    const tick = (xs) => xs.map((f) => `\`${f}\``).join(', ');
+    const lines = [];
+    if (real.length) lines.push(`Files that exist: ${tick(uniq(real))}.`);
+    lines.push(`Named by the idea but NOT in this repository (checked by a program; do not look for ${missing.length === 1 ? 'it' : 'them'}): ${tick(missing)}.`);
+    lines.push(closest.length
+        ? `Real files with the same words in their name, where the work most likely belongs: ${tick(closest)}.`
+        : 'No real file has those words in its name, so the place for this work has to be found from what the proposal says, not from a file name.');
+    return { text: lines.join('\n'), real: uniq(real), missing, closest, changed: true };
+}
+
 // ── what the model must give back ──────────────────────────────────────────────────────────────
 
 const score = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.max(1, Math.min(5, Math.round(n))) : null; };

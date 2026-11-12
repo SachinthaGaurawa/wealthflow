@@ -88,6 +88,13 @@ export function appContext(repoDir = process.cwd()) {
     return { modules, sections };
 }
 
+/** Every tracked file of the checkout: what an idea's "scope" is checked against (Ideas.groundScope). Empty outside git. */
+export function repoFiles(repoDir = process.cwd()) {
+    try {
+        return execFileSync('git', ['ls-files'], { cwd: repoDir, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\n').filter(Boolean);
+    } catch { return []; }
+}
+
 /** Open issues that came from the in-app feedback form. */
 export async function recentFeedback({ env = process.env, limit = 8, queue = Q } = {}) {
     try {
@@ -131,7 +138,7 @@ const SYSTEM = [
     ' "scores": {"ease": 1-5, "value": 1-5, "small": 1-5, "risk": 1-5},',
     ' "prompt": "what led you here, in words",',
     ' "proposal": "what to build, specifically, in the fewest taps",',
-    ' "scope": "which files would likely change",',
+    ' "scope": "the files that would change, by their REAL names: a module \\"x\\" in the evidence is the file wealthflow-x.js, the screens are in index.html, and there is no src/ folder. A program checks every name against the repository",',
     ' "whyNow": "why this beats other work",',
     ' "risks": "what could go wrong or annoy the user"}',
 ].join('\n');
@@ -264,6 +271,7 @@ export async function proposeOnce({
 
     // ── STUDY THE APP: the measured roadmap, the measured gaps, real feedback, what became of earlier ideas, what already shipped ──
     const { modules, sections } = appContext(repoDir);
+    const files = repoFiles(repoDir);
     const feedback = await recentFeedback({ env, queue });
     const research = Ideas.readResearch(repoDir);
     const shipped = await recentlyShipped({ env, queue });
@@ -371,6 +379,10 @@ export async function proposeOnce({
 
     const outcome = verdict.act === 'approve' ? { approved: true, why: verdict.why, priority: verdict.priority }
         : verdict.act === 'decline' ? { declined: true, why: verdict.why } : null;
+    // The scope is checked against the files that exist (the first approved idea named two that do not: Ideas.groundScope).
+    // After the safety rules, which read the scope as the model wrote it.
+    const grounded = Ideas.groundScope(p.scope, files);
+    if (grounded.changed) p = { ...p, scope: grounded.text };
     const { title, body, labels } = renderProposal(p, outcome);
     for (const l of labels) await queue.ensureLabel(l, l === Ideas.IDEA_LABELS.declined ? 'CCCCCC' : 'C2E0C6', 'Machine-authored idea', { env }).catch(() => {});
     await queue.ensureLabel(APPROVED_LABEL, '0E8A16', 'The idea may be built by the agent', { env }).catch(() => {});

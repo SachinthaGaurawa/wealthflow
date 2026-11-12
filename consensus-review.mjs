@@ -45,6 +45,14 @@ import * as Budget from './autonomy/provider-budget.mjs';
 import { redact } from './autonomy/secret-scan.mjs';
 import { withCharter } from './wf-charter.mjs';
 import { fenceUntrusted } from './autonomy/untrusted-text.mjs';
+import { parseIgnore, userFactsBlock, seesWhatNeverShips, shippedPartOf } from './autonomy/ships.mjs';
+
+/* The deploy list, read once. Everything on it is never served to the person's device, which is a FACT the user-impact
+ * seat is told and an objection is checked against (see autonomy/ships.mjs for the two false blocks on #605 that made
+ * this a computed fact instead of something each model works out for itself). Unreadable = empty = nothing is concluded. */
+export const DEPLOY_IGNORE = (() => {
+    try { return parseIgnore(fs.readFileSync(new URL('./.vercelignore', import.meta.url), 'utf8')); } catch { return []; }
+})();
 
 const MAX_DIFF = 60_000;
 
@@ -369,7 +377,9 @@ export const REVIEWERS = [
 // The owner's operating charter (wf-charter.mjs) is read by every reviewer before its own seat.
 for (const r of REVIEWERS) r.system = withCharter(r.system, 'reviewer');
 
-function prompt(reviewer, diff, truncated) {
+export function prompt(reviewer, diff, truncated, deployIgnore = DEPLOY_IGNORE) {
+    // Only the user-impact seat is asked what the person will SEE, so only it is told which files they receive.
+    const facts = reviewer.name === 'user-impact' ? userFactsBlock(diff, deployIgnore) : '';
     return [
         `Review this pull request as the ${reviewer.name} reviewer.`,
         '',
@@ -379,6 +389,7 @@ function prompt(reviewer, diff, truncated) {
         ...(reviewer.rules && reviewer.rules.length
             ? ['RULES FOR THIS REVIEWER:', ...reviewer.rules.map((r) => `  - ${r}`), '']
             : []),
+        ...(facts ? [facts, ''] : []),
         // ── READ THE CODE, NOT THE PROSE ──────────────────────────────────
         // A real false positive from this board's first live run: the security
         // reviewer read comments describing the BUG BEING FIXED ("the agent
@@ -890,7 +901,7 @@ export function reasonIsGeneric(reason, diff) {
 export const GENERIC_REPLACEMENT =
     'Reviewer gave a reason that names nothing in this diff; the vote stands and the stated reason does not.';
 
-export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAttempt = null) {
+export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAttempt = null, deployIgnore = DEPLOY_IGNORE) {
     const r = lane.role;
     // Own providers first, then — only once those are exhausted — providers
     // reserved by other lanes. A verdict reached on a shared provider is marked
@@ -916,7 +927,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
             for (let attempt = 0; attempt < 3; attempt++) {
                 res = await chatImpl({
                     system: r.system,
-                    prompt: prompt(r, diff, truncated) + (attempt ? '\n\nReturn STRICTLY the one JSON object described above and nothing else.' : ''),
+                    prompt: prompt(r, diff, truncated, deployIgnore) + (attempt ? '\n\nReturn STRICTLY the one JSON object described above and nothing else.' : ''),
                     only: [pid],          // pinned to this lane — never another reviewer's model
                     maxTokens: 1200,
                     temperature: 0,
@@ -952,7 +963,10 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                         ? NON_EXECUTABLE_WHY[nonExec]
                         : (claimsNovelty(parsed.reason) && evidenceIsGlyphSwap(evidence, diff))
                             ? 'the reason calls something new, but the cited line REPLACED one reading the same words'
-                            : null;
+                            // A fifth kind, user-impact only: "the user will see X", said of a line in a file that
+                            // is never served to them (a workflow name, a row in a document). #605 was blocked six
+                            // times this way. Narrow by design: see seesWhatNeverShips.
+                            : (r.name === 'user-impact' ? seesWhatNeverShips(parsed.reason, evidence, diff, deployIgnore) : null);
                 if (why) {
                     rejectedFinding = { reason: redact(String(parsed.reason || '')).slice(0, 300), evidence: redact(evidence), why };
                     finalVote = 'pass';
@@ -979,7 +993,9 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
              * requests that made this a code check rather than a prompt line. */
             let correctedReason = null;
             let correctionWhy = '';
-            if (finalVote === 'pass' && deniesVisibleChange(parsed.reason, diff)) {
+            // Interface code in a test fixture or an agent script is not the interface: only files the person receives count.
+            const served = shippedPartOf(diff, deployIgnore);
+            if (finalVote === 'pass' && deniesVisibleChange(parsed.reason, served)) {
                 correctedReason = redact(String(parsed.reason || '')).slice(0, 300);
                 correctionWhy = DENIAL_REPLACEMENT;
                 console.log('      [WARNING] REASON CORRECTED — reviewer denied a user-facing change that the diff makes.');
@@ -988,7 +1004,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                         * change genuinely has no user-facing part, and "no
                         * user-facing changes" is then the correct review — the
                         * check must not punish a reviewer for being right. */
-                       && addsUserVisibleSurface(diff)
+                       && addsUserVisibleSurface(served)
                        && reasonIsGeneric(parsed.reason, diff)) {
                 correctedReason = redact(String(parsed.reason || '')).slice(0, 300);
                 correctionWhy = GENERIC_REPLACEMENT;

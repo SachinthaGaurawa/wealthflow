@@ -12,7 +12,19 @@
 #
 # TRIGGERS (any one is enough, and they do not share one clock):
 #   - every 20 minutes, off the hour: 72 chances a day instead of one
-#   - whenever a deploy check or a release finishes: real events, not a schedule
+#   - whenever ANY scheduled job finishes, however it was started: a real event, not a schedule
+#
+# WHY THE SECOND ONE COVERS EVERY JOB (measured 2026-11-12, 08:07Z to 12:45Z): this workflow's own cron was due 14
+# times and GitHub started it 0 times. In the same hours 3 other scheduled jobs did run, 1 to 8 hours late, and none
+# of them was on the list below, so nothing woke the pacemaker. Its clock is a GitHub schedule like any other. Now
+# every job that does run wakes it, and it starts the ones that are overdue. Their finishing wakes it again, so one
+# late job is enough to catch the whole system up.
+#
+# WHY SOME NAMES ARE LISTED TWICE: the list is read as filter patterns, where `+` and `?` are not plain characters.
+# Measured: a finished release started this workflow, a finished 'Health watchdog + auto-rollback (free)' did not
+# (08:07Z, 12:46Z and 12:48Z). A name holding such a character is listed as written and escaped; one of the two matches.
+# autonomy/pacemaker.mjs (beatTriggerNames) builds this list and test/pacemaker_test.js fails when a scheduled
+# workflow is missing from it.
 #
 # COST: one small job, about 15 seconds, no install step. The repository is
 # public, so the minutes are not billed; autonomy/actions-budget.mjs still counts
@@ -25,8 +37,20 @@ on:
     - cron: '7,27,47 * * * *'
   workflow_run:
     workflows:
-      - 'Health watchdog + auto-rollback (free)'
       - 'Auto Release (WealthFlow)'
+      - 'Autonomous discovery — find the work (free)'
+      - 'Autonomous fix agent (free)'
+      - 'Autonomous PR recovery (free)'
+      - 'Charter probe (free)'
+      - 'Self-ideation — the system thinks of its own improvements'
+      - 'Health watchdog + auto-rollback (free)'
+      - 'Health watchdog \+ auto-rollback (free)'
+      - 'Merchant List Sync (WealthFlow)'
+      - 'Pipeline liveness (is the autonomy real?)'
+      - 'Pipeline liveness (is the autonomy real\?)'
+      - 'Security updates (urgent daily + full monthly)'
+      - 'Security updates (urgent daily \+ full monthly)'
+      - 'Vision probe (free)'
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -45,6 +69,12 @@ concurrency:
 
 jobs:
   beat:
+    # A watched job that was skipped or cancelled did no work (the watchdog answers every preview deploy with a skipped
+    # run, six or more per push), so it is not a beat: this job is skipped too and costs no runner.
+    if: >-
+      github.event_name != 'workflow_run'
+      || github.event.workflow_run.conclusion == 'success'
+      || github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
