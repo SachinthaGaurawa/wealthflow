@@ -163,7 +163,12 @@ describe('the gate can actually fail', () => {
         const after = projectSchedule().scheduledMinutes;
         // 2026-11-07: /8 became /7 when autonomous-fix.yml gained its one-minute `gather` job (124 more scheduled minutes a month,
         // see FLOOR_JOBS in autonomy/actions-budget.mjs). The schedule is still far under a seventh of what it used to be.
-        expect(after).toBeLessThan(before / 7);
+        // 2026-11-12: /7 became /2. The repository is public (minutes are not billed; the planning ceiling in
+        // autonomy/actions-budget.mjs is what holds the schedule), and the pacemaker now beats every 20 minutes ON PURPOSE:
+        // GitHub was measured skipping more than half of this repository's scheduled slots, and 72 small beats a day is
+        // what starts the skipped ones (autonomy/pacemaker.mjs). The schedule is still under half of what it used to be,
+        // and `stays inside the budget` above still fails the build if it outgrows the ceiling.
+        expect(after).toBeLessThan(before / 2);
     });
 });
 

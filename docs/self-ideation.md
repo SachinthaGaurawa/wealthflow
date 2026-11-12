@@ -60,3 +60,16 @@ At most 2 ideas are in the pipeline at once, so the system cannot flood the repo
 - The free-tier providers decide how many AIs can be reached on a given day; the idea engine uses only the background share left after the pull-request review reservation (`provider-budget.mjs`).
 - The first real run can only happen after this is merged to the default branch (scheduled workflows run from there). Until then it is proven by `test/ideas_test.js` with the models and GitHub faked.
 - The roadmap rows are read from one document. When all of them are built, the engine falls back to gaps, feedback and the screens, and says "nothing worth building" if none of that yields an idea.
+
+## Every AI proposes; a program chooses (2026-11-12)
+
+The first two live runs each asked one model for one idea, the idea broke a rule, and the day produced nothing. Since 2026-11-12:
+
+1. **Up to four different AIs are asked the same question**, each on its own. None sees another's idea.
+2. **A program applies the rules to every proposal** (grounded, if/then, safety rules, own scores). The survivors are ordered by their own scores, plus 3 for each other AI that independently proposed the same thing.
+3. **If no proposal survives**, the AIs are shown each refused idea with the rule that refused it and asked once more for a different one.
+4. **The board votes on the best survivor.** If one member says ASK_OWNER, the next survivor is put to the board (at most two per run).
+5. One approved idea is filed for the fix agent. If nothing is approved, at most ONE refused idea is kept (closed) so it is remembered, never one per AI.
+6. **One idea a day**, even when the job is started twice (the pacemaker may start it for a slot GitHub skipped, and GitHub may run the late slot as well).
+
+The run summary now shows how the AIs shared the thinking: who proposed, how many passed the rules, and why each refused idea was refused. The research behind this shape is in `docs/update-system-reliability-research.md`, section 2.

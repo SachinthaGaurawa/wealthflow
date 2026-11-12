@@ -243,6 +243,8 @@ export async function proposeOnce({
     // the same trap as a wiring test whose regex also matched the function
     // definition it was meant to prove was called.
     queue = Q, chatImpl = chat, budget = Budget, boardImpl = null,
+    proposeImpl = null,        // async (question) => [{ text, provider }]: stands in for "ask every AI" in a test
+    now = Date.now(),
     autoApprove = String(env.WF_IDEAS_AUTO ?? '1') !== '0',
 } = {}) {
     const avail = describeAvailability(env);
@@ -252,10 +254,13 @@ export async function proposeOnce({
     try { issues = await queue.allIssues({ env }); } catch { return { filed: null, reason: 'could not read the queue' }; }
 
     const outcomes = Ideas.outcomesOf(issues);
-    const waiting = Ideas.inFlight(outcomes);
+    const waiting = Ideas.inFlight(outcomes, now);
     if (waiting >= MAX_OPEN_PROPOSALS) {
         return { filed: null, reason: `${waiting} idea(s) already in the pipeline (waiting or being built)` };
     }
+    // One idea a day. The pacemaker may start this job for a slot GitHub skipped, and GitHub may run the late slot too.
+    const recent = dryRun ? null : Ideas.thoughtRecently(outcomes, now);
+    if (recent) return { filed: null, reason: `already thought of an idea in the last ${Ideas.THINK_AGAIN_HOURS} hours (#${recent.number}: ${recent.title})` };
 
     // ── STUDY THE APP: the measured roadmap, the measured gaps, real feedback, what became of earlier ideas, what already shipped ──
     const { modules, sections } = appContext(repoDir);
@@ -285,42 +290,84 @@ export async function proposeOnce({
     }
     const onAttempt = (info) => { ledger = budget.record(ledger, { ...info, lane: budget.LANES.BACKGROUND }); };
 
-    let reply;
-    try {
-        reply = await chatImpl({
-            system: withCharter(SYSTEM, 'board'),
-            prompt: buildPrompt({ modules, sections, feedback, signals }),
-            env,
-            only: allowed,          // never a provider the critical path is holding
-            maxTokens: 1100,
-            temperature: 0.4,   // ideas need a little room; verdicts do not
-            onAttempt,
-        });
-    } catch (e) {
+    // ── EVERY AI PROPOSES, INDEPENDENTLY (autonomy/ideas.mjs "every AI proposes; a program chooses") ──
+    // Each available background provider is asked the same question and none sees another's answer. With a chat
+    // function injected (tests) there is one proposer, which is the old behaviour.
+    const question = {
+        system: withCharter(SYSTEM, 'board'),
+        prompt: buildPrompt({ modules, sections, feedback, signals }),
+        env,
+        only: allowed,          // never a provider the critical path is holding
+        maxTokens: 1100,
+        temperature: 0.4,   // ideas need a little room; verdicts do not
+        onAttempt,
+    };
+    const askAll = proposeImpl || (chatImpl !== chat ? async (o) => [await chatImpl(o)] : (o) => chatMany(o, Math.min(Ideas.MAX_PROPOSERS, allowed.length)));
+    const candidatesFrom = (replies) => (replies || []).map((r) => ({ idea: parseProposal(r?.text ?? r), by: String(r?.provider || 'an AI') })).filter((c) => c.idea);
+
+    let replies;
+    try { replies = await askAll(question); }
+    catch (e) {
         // Spend is recorded even on failure: a rate limit is exactly the thing the
         // ledger needs to remember, and it is only learned by being refused.
         budget.saveLedger(ledger);
         return { filed: null, reason: `model unavailable: ${e.message}` };
     }
+    if (!replies || !replies.length) { budget.saveLedger(ledger); return { filed: null, reason: 'model unavailable: no AI answered' }; }
 
-    const p = parseProposal(reply?.text ?? reply);
-    if (!p) { budget.saveLedger(ledger); return { filed: null, reason: 'the model declined to propose anything, or returned nothing usable' }; }
+    let candidates = candidatesFrom(replies);
+    if (!candidates.length) { budget.saveLedger(ledger); return { filed: null, reason: 'the model declined to propose anything, or returned nothing usable' }; }
 
-    // ── DECIDE: rules first (free), the board only for an idea that passed them ──
-    let verdict = Ideas.decide({ idea: p, signals, outcomes, board: null });
-    if (verdict.act === 'skip') { budget.saveLedger(ledger); return { filed: null, reason: verdict.why, proposal: p }; }
-    let board = null;
-    if (verdict.act === 'ask-board' && autoApprove) {
+    // ── A PROGRAM CHOOSES: rules first (free). If every idea broke a rule, the AIs are told why and asked once more. ──
+    let weighed = Ideas.rankCandidates(candidates, { signals, outcomes });
+    let rounds = 1;
+    if (!weighed.passed.length && weighed.refused.some((r) => r.act === 'decline')) {
+        rounds = 2;
+        try {
+            const again = candidatesFrom(await askAll({ ...question, prompt: question.prompt + Ideas.refusalBrief(weighed.refused), temperature: 0.6 }));
+            if (again.length) {
+                candidates = [...candidates, ...again];
+                weighed = Ideas.rankCandidates(candidates, { signals, outcomes });
+            }
+        } catch { /* the first round's answer stands */ }
+    }
+    const thinking = {
+        proposers: [...new Set(candidates.map((c) => c.by))], rounds,
+        proposed: candidates.length, passed: weighed.passed.length,
+        refused: weighed.refused.map((r) => ({ by: r.by, title: r.idea.title, why: r.why })),
+    };
+
+    // ── THE BOARD: only for an idea that passed the rules, best first, at most MAX_BOARDS of them ──
+    let p = null, verdict = null, board = null, by = '';
+    if (!weighed.passed.length) {
+        // Nothing survived. A near-copy of an earlier idea is skipped; otherwise the best-scored refused idea is kept (closed) so it is remembered.
+        const declined = weighed.refused.filter((r) => r.act === 'decline');
+        const pick = declined[0] || weighed.refused[0];
+        p = pick.idea; by = pick.by; verdict = { act: pick.act, why: pick.why };
+        if (verdict.act === 'skip') { budget.saveLedger(ledger); return { filed: null, reason: verdict.why, proposal: p, thinking }; }
+    } else if (!autoApprove) {
+        ({ idea: p, by } = weighed.passed[0]);
+        verdict = { act: 'wait', why: 'automatic approval is switched off' };   // WF_IDEAS_AUTO=0: the old human gate
+    } else {
         const ask = (o, n) => chatMany({ ...o, only: allowed, onAttempt }, n);
-        // The board must never take the run down: a throw is "no AI could be reached", which `decide` turns into retry, never into approval.
-        try { board = await (boardImpl || runConceptBoard)({ issueText: Ideas.boardTextFor(p), env, ask }); }
-        catch { board = { voters: 0, votes: [] }; }
-        verdict = Ideas.decide({ idea: p, signals, outcomes, board });
+        for (const cand of weighed.passed.slice(0, Ideas.MAX_BOARDS)) {
+            // The board must never take the run down: a throw is "no AI could be reached", which `decide` turns into retry, never into approval.
+            let b;
+            try { b = await (boardImpl || runConceptBoard)({ issueText: Ideas.boardTextFor(cand.idea), env, ask }); }
+            catch { b = { voters: 0, votes: [] }; }
+            const v = Ideas.decide({ idea: cand.idea, signals, outcomes, board: b });
+            // The first idea the board was asked about is the one reported, unless a later one is approved.
+            if (!p || v.act === 'approve') { p = cand.idea; by = cand.by; verdict = v; board = b; }
+            if (v.act === 'approve' || v.act === 'retry') break;
+        }
+        if (verdict.act === 'approve') {
+            const agree = (weighed.passed.find((c) => c.idea === p) || {}).agree || [];
+            verdict = { ...verdict, why: `${verdict.why}; proposed by ${by}${agree.length ? `, and ${agree.join(' and ')} proposed the same thing independently` : ''}; ${thinking.proposed} idea(s) from ${thinking.proposers.length} AI(s) were weighed` };
+        }
     }
     budget.saveLedger(ledger);
-    if (verdict.act === 'retry') return { filed: null, reason: `not decided: ${verdict.why}; tried again next run`, proposal: p };
-    if (verdict.act === 'ask-board') verdict = { act: 'wait', why: 'automatic approval is switched off' };   // WF_IDEAS_AUTO=0: the old human gate
-    if (dryRun) return { filed: null, reason: `dry run (${verdict.act}: ${verdict.why || 'ok'})`, proposal: p, verdict };
+    if (verdict.act === 'retry') return { filed: null, reason: `not decided: ${verdict.why}; tried again next run`, proposal: p, thinking };
+    if (dryRun) return { filed: null, reason: `dry run (${verdict.act}: ${verdict.why || 'ok'})`, proposal: p, verdict, thinking };
 
     const outcome = verdict.act === 'approve' ? { approved: true, why: verdict.why, priority: verdict.priority }
         : verdict.act === 'decline' ? { declined: true, why: verdict.why } : null;
@@ -334,6 +381,7 @@ export async function proposeOnce({
     if (issue?.number && board && board.voters && !dryRun) await queue.comment(issue.number, boardComment(board), { env }).catch(() => {});
     if (outcome && outcome.declined && issue?.number) await queue.closeIssue(issue.number, { env, reason: 'not_planned' }).catch(() => {});
     return {
+        thinking,
         filed: { number: issue?.number, title },
         approved: !!(outcome && outcome.approved),
         reason: outcome ? (outcome.approved ? `approved by the system: ${outcome.why}` : `declined by the system: ${outcome.why}`) : 'proposed',

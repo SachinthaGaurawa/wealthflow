@@ -61,6 +61,10 @@ on:
         description: "What's-new text (optional)"
         required: false
         type: string
+      auto:
+        description: 'Started by the pacemaker: behave like the schedule (release only if something real is waiting)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -68,22 +72,84 @@ permissions:
   attestations: write            # store the signed statement of what this release is
   issues: write                  # a blocked or unconfirmed release files an issue instead of staying silent
 
-# Shared with every workflow that pushes to the default branch, so two bots can
-# never push at the same moment and lose a race.
-concurrency:
-  group: wealthflow-main-push
-  cancel-in-progress: false
-
 jobs:
+  # ── SEVERAL CHANGES RIDE IN ONE UPDATE ─────────────────────────────────────
+  # Every merge used to cut its own release within minutes: 2026-11-11 produced
+  # v7.69.78 to v7.69.88, eleven updates on the owner's phone in one day. The
+  # owner (2026-11-12): updates are collected and sent together, like Android/iOS.
+  #
+  # This job is the wait. autonomy/release-gather.mjs says how long: until no new
+  # merge has landed for 45 minutes, never more than 2 hours after the oldest
+  # waiting change, and not at all for a hotfix, a security or crash fix, or a
+  # release a person starts by hand. A newer merge starts a newer run whose
+  # `gather` cancels this one (same group, cancel-in-progress), so the newest
+  # merge always holds the timer and the older run releases nothing.
+  #
+  # It is deliberately OUTSIDE the `wealthflow-main-push` lock below: a job that
+  # sleeps inside that lock would block every other workflow that pushes to main.
+  # It fails open: if the timer cannot be read, nothing is held.
+  gather:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    concurrency:
+      group: wealthflow-release-gather
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0         # the waiting commits are counted from the last release tag
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Wait for the line to go quiet
+        env:
+          EVENT: ${{ github.event_name }}
+          AUTO: ${{ inputs.auto && '1' || '' }}
+          QUIET_MIN: ${{ vars.WF_RELEASE_QUIET_MIN }}
+          MAX_HOLD_MIN: ${{ vars.WF_RELEASE_MAX_HOLD_MIN }}
+        run: |
+          OUT=$(node autonomy/release-gather.mjs || true)
+          echo "$OUT"
+          SECS=$(printf '%s\n' "$OUT" | sed -n 's/^hold_seconds=//p' | head -1)
+          WHY=$(printf '%s\n' "$OUT" | sed -n 's/^reason=//p' | head -1)
+          case "$SECS" in ''|*[!0-9]*) SECS=0 ;; esac
+          if [ "$SECS" -gt 7500 ]; then SECS=7500; fi
+          {
+            echo "### Gathering changes into one update"
+            echo ""
+            if [ "$SECS" -gt 0 ]; then
+              echo "Waiting $((SECS / 60)) minute(s): ${WHY}."
+              echo ""
+              echo "A merge that lands meanwhile joins this update and takes over the wait (this run is then cancelled, which is expected)."
+            else
+              echo "Not waiting: ${WHY:-nothing to wait for}."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          sleep "$SECS"
+
   release:
+    needs: gather
+    # Runs when the wait finished, and also when the timer itself broke (a late release is worse than an ungathered
+    # one). It never runs when the wait was cancelled: the newer run that cancelled it releases everything.
+    if: ${{ !cancelled() && (needs.gather.result == 'success' || needs.gather.result == 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 40          # install + full suite (~3 min) + release + up to 12 min waiting for the deploy; a hung npm still cannot burn GitHub's 6h default
+    # Shared with every workflow that pushes to the default branch, so two bots can
+    # never push at the same moment and lose a race.
+    concurrency:
+      group: wealthflow-main-push
+      cancel-in-progress: false
     env:
       HAS_FIREBASE: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+      # A start by the pacemaker (`auto`) is a schedule tick, not a person asking for a release.
+      RELEASE_EVENT: ${{ (github.event_name == 'workflow_dispatch' && inputs.auto) && 'schedule' || github.event_name }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0         # full history + tags (the "due" check needs them)
+          # After the wait, release the head of the branch as it is NOW (merges that joined, a merchant refresh), not
+          # the commit that started the timer. Empty for a schedule or a dispatch, which already read the branch head.
+          ref: ${{ github.event_name == 'push' && github.ref || '' }}
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -124,7 +190,7 @@ jobs:
         id: due
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          EVENT: ${{ github.event_name }}
+          EVENT: ${{ env.RELEASE_EVENT }}
         run: |
           if [ "$EVENT" = "workflow_dispatch" ]; then
             echo "due=yes" >> "$GITHUB_OUTPUT"
@@ -311,7 +377,7 @@ jobs:
         if: steps.due.outputs.due == 'yes' && steps.gates.outputs.ok == 'yes'
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          EVENT: ${{ github.event_name }}
+          EVENT: ${{ env.RELEASE_EVENT }}
           IN_VERSION: ${{ inputs.version }}
           IN_BUMP: ${{ inputs.bump }}
           IN_URGENT: ${{ inputs.urgent }}

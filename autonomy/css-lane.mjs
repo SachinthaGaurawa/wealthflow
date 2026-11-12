@@ -32,6 +32,7 @@ import path from 'node:path';
 import { chat, stripFences } from './llm-router.mjs';
 import { taskCard, cardPrompt } from './task-card.mjs';
 import { fenceUntrusted } from './untrusted-text.mjs';
+import { layoutAllowed } from './route.mjs';
 import { ROLES, reviewPrompt, parseVerdict, reviewSeesWholeChange } from './agent-swarm.mjs';
 import { probeLayout, describeProbe, sweepScreens, anyScreenFor, screenFromReading, screenKeyOfPage, screenDef, WIDTHS } from './layout-probe.mjs';
 
@@ -117,8 +118,12 @@ export function layoutLaneFor(issue) {
     // was sent to CC Instalments, measured clean there, and the agent stopped with "nothing to prove a change against".
     const marked = String((issue && issue.body) || '').match(/<!--\s*wf-layout-screen:\s*([a-z0-9-]+)\s*(?:width=(\d+))?\s*-->/i);
     if (marked && screenDef(marked[1].toLowerCase())) {
-        return { applies: true, screen: marked[1].toLowerCase(), why: `layout finding the system measured on ${marked[1].toLowerCase()}`, width: marked[2] ? Number(marked[2]) : 0 };
+        return { applies: true, marked: true, screen: marked[1].toLowerCase(), why: `layout finding the system measured on ${marked[1].toLowerCase()}`, width: marked[2] ? Number(marked[2]) : 0 };
     }
+    // A report a program filed (the statement reader, the discovery scan) reaches this lane only through the marker above: its
+    // wording is a template's, and one word of it ("the layout convention was closed", #559) spent three tries measuring pages.
+    const allowed = layoutAllowed(issue);
+    if (!allowed.ok) return { applies: false, screen: '', why: allowed.why };
     const said = userWords(issue) + '\n' + englishReading(issue);
     const reading = screenshotReading(issue);
     const problemLine = (reading.match(/PROBLEM:\s*([^\n]+(?:\n(?![A-Z]+:)[^\n]+)*)/i) || [])[1] || '';

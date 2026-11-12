@@ -23,6 +23,8 @@
  *   GITHUB_REPOSITORY  e.g. "SachinthaGaurawa/wealthflow"  (set by Actions)
  * ===========================================================================*/
 
+import { systemRole } from './route.mjs';
+
 const API = 'https://api.github.com';
 
 /** Labels the pipeline uses to drive itself. */
@@ -99,6 +101,12 @@ export function roleFor(issue) {
 
     // An idea the system filed itself is a feature by definition, whatever words its text happens to contain ("error", "leak" in its risks).
     if (labels.includes('feature-proposal')) return 'feature';
+
+    // A report a PROGRAM filed says what it is with a label or a marker; its sentences come from a template and are not a
+    // routing signal. #559 (statement reader) said "the layout convention was closed" and was sent to the look-and-feel
+    // agent for the word "layout". Words are read for people only. See autonomy/route.mjs.
+    const declared = systemRole(issue);
+    if (declared) return declared;
 
     // Order matters, and it is deliberately severity-first.
     //   1. Security beats everything.

@@ -60,9 +60,9 @@ describe('standing rules from earlier failures', () => {
         const src = fs.readFileSync(new URL('../autonomous-fix-agent.js', import.meta.url), 'utf8');
         expect(src).toMatch(/import \{ lessonsBrief, lessonsFor \} from '\.\/autonomy\/lessons\.mjs'/);
         expect(src).toMatch(/laneBody \+= standing/);
-        expect(src).toMatch(/body: shot\.body \+ retryBrief \+ standing/);
-        // routing reads the report's own words
-        expect(src).toMatch(/layoutLaneFor\(\{ title: issue\.title, body: shot\.body \}\)/);
+        expect(src).toMatch(/body: shot\.body \+ retryBrief \+ triedBrief \+ standing/);
+        // routing reads the report's own words (and its labels, since 2026-11-12: a program-filed report is routed by label), never the briefs
+        expect(src).toMatch(/layoutLaneFor\(\{ title: issue\.title, body: shot\.body, labels: issue\.labels \}\)/);
         expect(src).toMatch(/buildLaneFor\(\{ title: issue\.title, body: shot\.body \}\)/);
     });
 });
