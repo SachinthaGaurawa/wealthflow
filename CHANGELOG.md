@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.88 — 2026-11-12
+
+**What changed for you**
+
+- Manual upload: CC Instalments plan routing, same as the email worker (#602)
+
 ## v7.69.87 — 2026-11-11
 
 **What changed for you**
