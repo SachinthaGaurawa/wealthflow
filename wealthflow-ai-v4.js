@@ -1274,6 +1274,26 @@
     /* THE UPLOAD OVERLAY'S BAR (wealthflow-scan-progress.js). Every stage below says what it is doing, and the bar moves only by work that was counted — pages read of N, pages the AI has
      * answered of N — and holds, counting seconds aloud, while it waits on something with no unit (a registry call, one AI answer). The weights decide how the bar's length is shared
      * between the stages; they say nothing about progress inside one. A scan that falls back to reading pictures redraws the plan from where the bar stands, so it never goes back. */
+    /* The second reading of a PDF whose text layer is scrambled in a few rows: draw its pages, read them with the on-device OCR (Tesseract, no network for the words), parse that text with the same statement parser, and let the router
+     * mend the scrambled rows from rows that match on date, amount and direction. Gives up quietly after 90 s. Returns the router's { rows, repaired, stillBad } or null. */
+    async function _wfRereadDamaged(file, rows, bad) {
+        var R = window.WFStatementRouter, SP = window.WFStatementParser;
+        if (!R || typeof R.repairDamagedRows !== 'function' || !SP || typeof SP.parseStatement !== 'function' || typeof window.ensureTesseract !== 'function') return null;
+        var work = (async function () {
+            var bundle = await fileToImagesV4(file, { maxPages: 5, maxBytes: 3.8 * 1024 * 1024, maxDim: 2600, enhance: false });
+            await window.ensureTesseract();
+            if (typeof Tesseract === 'undefined') return null;
+            var text = '';
+            for (var k = 0; k < bundle.images.length; k++) {
+                var res = await Tesseract.recognize('data:image/jpeg;base64,' + bundle.images[k], 'eng');
+                text += '\n' + ((res && res.data && res.data.text) || '');
+            }
+            var other = SP.parseStatement(text);
+            return R.repairDamagedRows(rows, (other && other.rows) || [], bad);
+        })();
+        return await Promise.race([work, new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 90000); })]);
+    }
+
     function _wfVisionPlan(isCCOT, withCheck) {
         return isCCOT
             ? [{ id: 'check', weight: withCheck ? 6 : 0 }, { id: 'render', weight: 14 }, { id: 'net', weight: 3 }, { id: 'prebank', weight: 7 }, { id: 'ai', weight: 50 }, { id: 'bank', weight: 8 }, { id: 'guard', weight: 8 }]
@@ -1473,6 +1493,15 @@
                         if (typeof window.notify === 'function') window.notify('The text inside this PDF is scrambled, so I am reading the page images instead.', 'info');
                         _rows = [];
                     }
+                    /* A FEW scrambled rows: the pages are read a second time by the on-device OCR, and a row whose date and amount appear in that reading with clean words takes those words (the amount and date stay the text layer's). */
+                    var _mended = [];
+                    if (_dmg && !_dmg.whole && _dmg.bad && _dmg.bad.length) {
+                        try {
+                            P.stage('reread', 'Reading the pages a second time…', _dmg.bad.length + ' line' + (_dmg.bad.length === 1 ? ' looks' : 's look') + ' scrambled', 'fileText');
+                            var _fix = await _wfRereadDamaged(file, _rows, _dmg.bad);
+                            if (_fix && _fix.repaired.length) { _rows = _fix.rows; _mended = _fix.repaired; _dmg = { rows: _dmg.rows, bad: _fix.stillBad, share: _fix.stillBad.length / (_dmg.rows || 1), whole: false }; }
+                        } catch (_eRe) { console.warn('[' + V + '] second reading failed:', _eRe && _eRe.message); }
+                    }
                     var _rc = _pres.reconciliation || { ok: null };
                     if (_rows && _rows.length) {
                         var _toISO = function (d) { var m = String(d).match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? (m[3] + '-' + m[2] + '-' + m[1]) : (d || ''); };
@@ -1498,6 +1527,7 @@
                             statement_period: (_res.text.match(/Statement Period[:\s]*([\d/]+\s*-\s*[\d/]+)/i) || [])[1] || '',
                             due: _wfDueOf(_res.text)
                         };
+                        _mended.forEach(function (i) { var t = _parsed.transactions[i]; if (t) { t._needsReview = true; t._reviewWhy = 'the PDF text of this line was scrambled, so its words were read again from the page picture; check them against your statement'; } });
                         if (_dmg && _dmg.bad && _dmg.bad.length) {
                             _dmg.bad.forEach(function (i) { var t = _parsed.transactions[i]; if (t) { t._needsReview = true; t._reviewWhy = 'the letters of this line look scrambled in the PDF; check the wording and the amount against your statement'; } });
                             if (typeof window.notify === 'function') window.notify(_dmg.bad.length + ' line' + (_dmg.bad.length === 1 ? '' : 's') + ' of this PDF look scrambled. They are marked for you to check.', 'warn');

@@ -28238,6 +28238,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                              * sync and the upload screen: a statement the others already hold — same bank, account and month, or the very same file — is not
                              * offered to be filed a second time. The server says who got there first and closes the mailbox item; it fails OPEN, so an
                              * unreachable server never hides a statement from its owner. */
+                            /* A text layer scrambled in a third or more of its rows cannot name a merchant, so none of its rows are offered for filing: the statement is held, and uploading the file by hand reads its page images
+                             * (the upload screen's own fallback; WFStatementRouter.textDamage is the check both use). */
+                            let _mailDmg = null;
+                            try { _mailDmg = window.WFStatementRouter && window.WFStatementRouter.textDamage ? window.WFStatementRouter.textDamage(rows) : null; } catch (_) { _mailDmg = null; }
+                            if (_mailDmg && _mailDmg.whole) {
+                                set(i, { stage: 'held', why: 'TEXT_DAMAGED', locked: false, reason: 'its text is scrambled; upload the file so its pages are read' });
+                                continue;
+                            }
                             const _guardLast4 = (d.manifest && d.manifest.card_last4)
                                 || _mailAccountTail(typeof res.text === 'string' ? res.text : '');
                             const _already = await _mailGuard('check', {
@@ -28258,7 +28266,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             const doubts = new Map();
                             /* Rows whose letters look scrambled (a damaged text layer) are kept for the owner to check, like a row the intake refused. */
                             try {
-                                const _dmg = window.WFStatementRouter && window.WFStatementRouter.textDamage ? window.WFStatementRouter.textDamage(rows) : null;
+                                const _dmg = _mailDmg;
                                 if (_dmg) _dmg.bad.forEach((i) => { const rw = rows[i]; if (rw) doubts.set(_mailRowKey(rw.date, rw.amount, rw.description || rw.narration), 'the letters of this line look scrambled in the statement; check them against it'); });
                             } catch (_) {}
                             const QT = (window.WFMailIntake && window.WFMailIntake.QUARANTINE_TEXT) || {};
