@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.91 — 2026-11-12
+
+**What changed for you**
+
+- A subscription a statement started says so, with Rename and Remove (#606)
+
+**Under the hood**
+
+- Update system: route by label, wake skipped schedules, every AI proposes, gather releases (#605)
+
 ## v7.69.90 — 2026-11-12
 
 **What changed for you**
