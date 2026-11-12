@@ -61,6 +61,23 @@ export function readChat(data) {
 const MAX_CANDIDATES = 3;
 const EMPTY_BAD_MS = 30 * 60 * 1000;
 
+/* A MODEL THAT KEEPS MISSING THE BOARD'S DEADLINE IS NOT THE PROVIDER BEING DOWN. Production, 2026-11-12: OpenRouter's Nemotron slot named
+ * a 550b model that takes longer than the board waits, so the slot missed every call for as long as that name stood, while the same
+ * account's list held quicker models. After the second miss in a row the model is set aside for half an hour; the next call finds the
+ * default set aside and asks the provider's list for another (askChat below). One miss is not enough: any model is slow once. */
+export const SLOW_STRIKES = 2;
+export const SLOW_BAD_MS = 30 * 60 * 1000;
+/**
+ * @returns {string} the model set aside, or '' when nothing was (too few misses, or a provider with no list to choose another from)
+ */
+export function setAsideSlowModel({ book, slot, defaultModel, strikes, hasList }) {
+    if (!book || !slot || !hasList || !(Number(strikes) >= SLOW_STRIKES)) return '';
+    const id = book.current(slot) || defaultModel || '';
+    if (!id || book.isBad(slot, id)) return '';
+    book.markBad(slot, id, SLOW_BAD_MS);
+    return id;
+}
+
 /**
  * Ask one provider, and make it answer.
  *
@@ -116,7 +133,7 @@ export async function askChat({ name, slot, book, defaultModel, tokens, cap = 40
         }
         const result = await tryModel(model);
         if (result.text) {
-            book.remember(slot, model);
+            book.remember(slot, model, listKey);
             // one line when a provider needed more than its first try, so production says which provider healed how
             if (trace.length || result.grew) { try { log(JSON.stringify({ evt: 'ai-chat', provider: name, model, ...(result.grew ? { grew: true } : {}), ...(trace.length ? { tried: trace } : {}) })); } catch (_) { /* advice */ } }
             return { text: result.text, model, trace };
@@ -133,6 +150,11 @@ export async function askChat({ name, slot, book, defaultModel, tokens, cap = 40
         trace.push({ model, status: fail.status });
         last = last && last.status !== 200 ? last : fail;
         if (load && isModelGone(fail.status, fail.text)) { book.markBad(slot, model); model = ''; continue; }
+        /* A REPLACEMENT THAT IS REFUSED IS NOT THE KEY BEING REFUSED. A 403 on the model this provider was asked FIRST can be the key, and
+         * stops here as before. A 403 on a model picked from the provider's own list after the first one failed is that model (a free
+         * model an account's settings do not allow, production 2026-11-12): it is set aside for a while and the next one is tried,
+         * inside the same bound of three. */
+        if (load && trace.length > 1 && fail.status === 403) { book.markBad(slot, model, EMPTY_BAD_MS); model = ''; continue; }
         break;                                                         // a quota, a key, an outage: not a retired model, nothing to heal
     }
     const error = new Error('');

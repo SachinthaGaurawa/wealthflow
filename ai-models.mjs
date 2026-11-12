@@ -79,7 +79,10 @@ const PREFER = {
     Cerebras: [/gpt-oss/, /qwen-?3.*(?:235b|32b)/, /glm/, /llama-?3\.3-70b/, /llama/, /./],
     GitHubModels: [/gpt-4\.1-mini/, /gpt-4o-mini/, /gpt-4\.1$/, /gpt-4o$/, /llama-3\.3-70b/, /gpt|llama|mistral/],
 };
-const OPENROUTER_ROLE = { Finance: [/ling|fin/, /deepseek/, /gpt-oss/, /llama-3\.3/, /gemma/, /mistral/], Qwen: [/qwen/, /deepseek/, /llama/], Nemotron: [/nemotron/, /llama/, /gpt-oss/] };
+/* The finance role's first rule used to be /ling|fin/, and "ling" is inside "inkling": production, 2026-11-12, the ling slug was withdrawn
+ * and the replacement chosen "for finance" was thinkingmachines/inkling-2-small (403), after which nothing else was tried. The name is
+ * matched as a name now: a path part that begins "ling-", or a "-fin" part, or "financ". */
+const OPENROUTER_ROLE = { Finance: [/(?:^|\/)ling-|-fin(?![a-z])|financ/, /deepseek/, /gpt-oss/, /llama-3\.3/, /gemma/, /mistral/], Qwen: [/qwen/, /deepseek/, /llama/], Nemotron: [/nemotron/, /llama/, /gpt-oss/] };
 const VISION_PREFER = {
     Mistral: [/pixtral-large-latest/, /pixtral.*-latest$/, /pixtral/, /^mistral-small-latest$/, /^mistral-medium-latest$/, /mistral-(?:small|medium)/, /mistral-large/],
     NVIDIA: [/llama-3\.2-90b-vision/, /llama-3\.2-11b-vision/, /llama-4/, /gemma-?4/, /phi-.*(?:vision|multimodal)/, /gemma-?3/, /vision|vl|omni/],
@@ -139,17 +142,32 @@ export function createModelBook({ now = Date.now } = {}) {
     const chosen = new Map();      // slot → { id, at }
     const bad = new Map();         // slot → Map(id → until)
     const lists = new Map();       // provider → { at, models, pending }
+    const listOf = new Map();      // slot → the list it chooses from (OpenRouter's three roles choose from one account's list)
+    const picked = new Map();      // slot → a model handed out by replacement() that has not answered or failed yet
+    const roleOf = (slot) => String(slot).split(':').pop();
+    /* TWO VOTERS ON ONE MODEL ARE ONE VOTER. Slots that choose from the same list (the same account) and answer the same kind of
+     * question never hold the same model: what another such slot is using now, or was just handed, is not offered to this one. A slot
+     * left with nothing stays out — a board that counts the same model twice looks stronger than it is. */
+    const takenBy = (slot, listKey) => {
+        const out = [], t = now();
+        for (const [other, key] of listOf) {
+            if (other === slot || key !== listKey || roleOf(other) !== roleOf(slot)) continue;
+            const c = chosen.get(other); if (c && t - c.at < TTL_MS) out.push(c.id);
+            const p = picked.get(other); if (p) out.push(p);
+        }
+        return out;
+    };
 
     const badIds = (slot) => { const m = bad.get(slot); if (!m) return []; const t = now(); const out = []; for (const [id, until] of m) { if (until > t) out.push(id); else m.delete(id); } return out; };
     return {
         /** The model remembered for this slot (a provider + text or vision), if it is still fresh. */
         current(slot) { const c = chosen.get(slot); return c && now() - c.at < TTL_MS ? c.id : ''; },
-        remember(slot, id) { chosen.set(slot, { id, at: now() }); },
+        remember(slot, id, listKey) { chosen.set(slot, { id, at: now() }); picked.delete(slot); if (listKey) listOf.set(slot, listKey); },
         forget(slot) { chosen.delete(slot); },
-        markBad(slot, id, ms = TTL_MS) { if (!id) return; if (!bad.has(slot)) bad.set(slot, new Map()); bad.get(slot).set(id, now() + ms); const c = chosen.get(slot); if (c && c.id === id) chosen.delete(slot); },
+        markBad(slot, id, ms = TTL_MS) { if (!id) return; if (!bad.has(slot)) bad.set(slot, new Map()); bad.get(slot).set(id, now() + ms); const c = chosen.get(slot); if (c && c.id === id) chosen.delete(slot); if (picked.get(slot) === id) picked.delete(slot); },
         isBad(slot, id) { return badIds(slot).includes(id); },
         /** Forget everything (a deployment's cold start, and the tests). */
-        reset() { chosen.clear(); bad.clear(); lists.clear(); },
+        reset() { chosen.clear(); bad.clear(); lists.clear(); listOf.clear(); picked.clear(); },
         badList: badIds,
         /**
          * The model to try instead of `failed`: ask the provider what it serves (cached, one request at a time per provider),
@@ -168,7 +186,10 @@ export function createModelBook({ now = Date.now } = {}) {
                 entry = lists.get(listKey);
             }
             const models = (entry && entry.models) || [];
-            return choose({ provider, vision, models, exclude: [failed, ...badIds(slot)] });
+            listOf.set(slot, listKey);
+            const id = choose({ provider, vision, models, exclude: [failed, ...badIds(slot), ...takenBy(slot, listKey)] });
+            if (id) picked.set(slot, id); else picked.delete(slot);
+            return id;
         },
     };
 }
