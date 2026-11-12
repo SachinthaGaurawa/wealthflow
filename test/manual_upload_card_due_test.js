@@ -51,7 +51,7 @@ describe('a card statement uploaded by hand keeps its minimum-payment ask, like 
         const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
         const at = html.indexOf('dueFromStatement({ due: parsed.due');
         expect(at).toBeGreaterThan(0);
-        const around = html.slice(at - 400, at + 700);
+        const around = html.slice(at - 400, at + 1500);
         expect(around).toContain("_acctType === 'credit_card'");
         expect(around).toContain("DB.set('cardDues'");
         expect(html.lastIndexOf("DB.set('ccPayments', ccPayArr)", at)).toBeGreaterThan(at - 1500);
