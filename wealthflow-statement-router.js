@@ -407,7 +407,7 @@ export function cardChargeCategory(row, routed) {
     : r.subtype === 'purchase' && r.category && !/^(?:other|needs review|card\s)/i.test(String(r.category)) && CLASSIFY_CATEGORIES.includes(r.category) ? r.category : 'Card Purchase';
 }
 
-const API = { namedCardCategory, cardChargeCategory, routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs, isCardCashback };
+const API = { installmentInfo, namedCardCategory, cardChargeCategory, routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs, isCardCashback };
 
 if (typeof window !== 'undefined') window.WFStatementRouter = API;
 

@@ -5,13 +5,13 @@ import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow, expenseEntryName, installmentInfo, isCardCashback } from './wealthflow-statement-router.js';
 import { canonicalBank } from './wealthflow-institutions.js';
-import { planEconomics } from './statement-plan-table.mjs';
+import { cardPlanRecord } from './wealthflow-card-plans.js';
 import { ownMoney } from './wealthflow-own-money.js';
 import { bankKeyOf } from './statement-coverage.mjs';
 import { matchLoanForDebit, linkExpenseToLoan } from './loan-link.mjs';
 import { subscriptionToCreate, identityOf } from './statement-subscriptions.mjs';
 import { cardDueRecord, withCardDue } from './statement-due.mjs';
-import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment, planFromLine } from './statement-links.mjs';
+import { manualTwin, markTwin, accountedCopy, matchSubscriptionForDebit, cardSettlementDebit, matchInstallmentPlan, applyPlanPayment } from './statement-links.mjs';
 import { settleCheque } from './wealthflow-cheques.js';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -197,26 +197,7 @@ function makeRecord(row, decision, context, id, now) {
     /* A card installment charge is a plan in the shape the totals and the Installments tab read (product, bank, duration, date). Its LENGTH is what the statement line says (installmentInfo: "3/12" is a twelve-month plan,
      * "6 MONTHS" six; one instalment is one month), never a number nobody printed: a line that says nothing is a one-month plan marked `durationUnknown`. The plan begins in the month its first instalment was due, and the
      * charge in hand is its first paid month. Its `date` is a month's first day: the totals count a plan from the month after a mid-month date, which would put this charge a month late. */
-    if (module === 'ccinstall') {
-        // "INSTALLMENT 03/12 ABANS" is the 3rd of 12 of the Abans plan: the plan is named after the merchant, and the note says which month this charge is
-        const plan = installmentInfo(desc), table = row.plan && row.plan.name ? row.plan : null;
-        const ofText = plan.no && plan.of ? ` (${plan.no} of ${plan.of})` : '';
-        /* the statement's own plan table (statement-plan-table.mjs) names the plan and prints its real total: "Instalment Principle - 3/12" is one of its rows, not a plan called "Principle" */
-        const shape = { ...planFromLine({ amount: row.amount, date: row.date, no: plan.no || (table ? table.months - table.remainingMonths : 0), length: plan.length || (table ? table.months : 0) }),
-            ...(table ? { total: table.total, totalEstimated: false, planRef: table.ref } : {}) };
-        /* WHAT THE STATEMENT PROVES ABOUT THE PLAN'S MONEY, and no more. The plan table's original amount with its instalment and months says the rate (0% is a proof when they tally; an APR when the instalments repay more).
-         * Without a table, the line's own REM BAL after instalment n of m gives the total paid back (REM BAL + n instalments) - exact when it equals m instalments, but not the rate: the original amount is not printed there. */
-        const eco = table && table.monthly ? planEconomics({ principal: table.total, monthly: table.monthly, months: table.months }) : null;
-        const owed = table && Number.isFinite(table.remainingAmount) ? table.remainingAmount : (Number.isFinite(plan.remaining) ? plan.remaining : null);
-        if (eco) Object.assign(shape, { rate: eco.rate, rateUnknown: false, ...(eco.interest > 0 ? { interest: eco.interest } : {}) });
-        else if (!table && Number.isFinite(plan.remaining) && plan.no && plan.of >= 2) {
-            const payable = Math.round((plan.remaining + row.amount * plan.no) * 100) / 100;
-            if (Math.abs(payable - row.amount * plan.of) <= plan.of * 0.01 + 0.01) Object.assign(shape, { total: payable, totalEstimated: false });
-        }
-        return { ...base, desc, product: (table ? table.name : plan.name || desc).slice(0, 60), bank: canonicalBank(context.bank || ''), buyer: 'Self', rate: 0, rateUnknown: true, ...shape, ...(owed != null ? { outstanding: owed, outstandingAt: row.date } : {}), completed: false, skipped: [], notes: `Card installment charge of ${row.date}${ofText}`,
-            monthly: row.amount, startDate: row.date, category: decision.category, payments: [{ month: row.date.slice(0, 7), paid: true, amount: row.amount, paidAt: Date.parse(`${row.date}T00:00:00Z`) || now, source: 'statement', statementKey: context.sourcePath, statementRow: context.index }],
-            ...(plan.no && plan.of ? { installmentNo: plan.no, installmentOf: plan.of } : {}) };
-    }
+    if (module === 'ccinstall') return cardPlanRecord({ row, desc, decision, context, base, now });
     /* a card FEE or interest line is a Service Fee on the Card One-Time tab, as the manual upload types it: "Interest" showing as a Purchase is a line that says one thing and is filed as another */
     return { ...base, desc, type: decision.category === 'Card Fee' ? 'service_fee' : row.type || 'purchase', category: decision.category, serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
 }

@@ -633,6 +633,7 @@
          it every import was deduplicated against itself only.
          window.WFStatementRouter -->
     <script type="module" src="wealthflow-statement-router.js"></script>
+    <script type="module" src="wealthflow-card-plans.js"></script>
     <!-- The device half of the mail pipeline. gmail-hook.js has been routed at
          /api/gmail-hook and this module has been written and tested since before
          either had a screen; nothing in this file referenced it, so no statement
@@ -31378,7 +31379,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const host = document.getElementById('wfBatchList'); if (!host) return;
             const batches = (window.WFBatch ? WFBatch.list() : []).slice().reverse(); // newest first
             if (!batches.length) { host.innerHTML = '<div style="font-size:11.5px;color:var(--text3);">No statement imports yet. Uploaded statements appear here so you can undo them.</div>'; return; }
-            const tabLabel = { cconetime: 'CC One-Time', expenses: 'Expenses', incomeRecv: 'Income', subscription: 'Subscriptions' };
+            const tabLabel = { cconetime: 'CC One-Time', ccinstall: 'CC Installments', expenses: 'Expenses', incomeRecv: 'Income', subscription: 'Subscriptions' };
             host.innerHTML = '<div style="font-weight:700;font-size:12.5px;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:6px;"><i data-wfi="refresh"></i> Recent imports — tap Undo to remove that statement\'s payments</div>'
                 + batches.map(b => {
                     const c = b.counts || {};
@@ -31397,7 +31398,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         function undoBatch(batchId) {
             const b = (window.WFBatch ? WFBatch.list() : []).find(x => x.id === batchId);
             if (!b) { notify('That import is no longer available.', 'warn'); return; }
-            const c = b.counts || {}; const total = (c.cconetime || 0) + (c.expenses || 0) + (c.incomeRecv || 0) + (c.ccPayments || 0) + (c.cheques || 0) + (c.subscription || 0) + ((b.loans || []).length) + ((b.cheques || []).length);
+            const c = b.counts || {}; const total = (c.cconetime || 0) + (c.ccinstall || 0) + (c.expenses || 0) + (c.incomeRecv || 0) + (c.ccPayments || 0) + (c.cheques || 0) + (c.subscription || 0) + ((b.loans || []).length) + ((b.cheques || []).length);
             showConfirm('@trash@', 'Undo this statement import?', 'This removes all ' + total + ' entr' + (total === 1 ? 'y' : 'ies') + ' this import added — across Expenses, Income, CC One-Time, Card Payments, Cheques, Loans and Subscriptions — and recalculates your dashboard. This cannot be redone.', 'btn-danger', 'Undo import', () => {
                 // Undoing an import legitimately removes every row it added, which on a
                 // year's statement is hundreds. Say so, or _wfStampAndTomb's bulk guard
@@ -37140,13 +37141,23 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         const _named = window.WFRoute.ownCardNamed(t.description);
                         t._dest = 'skip'; t._ownMoney = t._ownMoney || 'card-payment-out'; t._ownCard = t._ownCard || (_named ? _named.last4 : '');
                     }
+                    /* A CARD LINE THAT SAYS IT IS AN INSTALMENT OF A PLAN ("INSTALLMENT 03/12 ABANS", "INST 1 - REM BAL <1/24>") belongs on CC Installments, as at the e-mail worker (routeRow: installmentInfo; a plan's
+                     * instalment is read as the plan payment it is before a subscription or the word "transfer" can take it). The statement's own plan table names the plan (WFCardPlans.planFor). */
+                    t._plan = null;
+                    try {
+                        const _R = window.WFStatementRouter, _P = window.WFCardPlans;
+                        if (_acctType === 'credit_card' && _R && _R.installmentInfo && String(t.direction || '').toLowerCase() === 'debit' && !t._ownMoney && ['cconetime', 'subscription', 'skip'].includes(t._dest)) {
+                            const _said = _R.installmentInfo(String(t.description || ''));
+                            if (_said && _said.isInstallment) { t._dest = 'ccinstall'; t._plan = (_P && _P.planFor) ? _P.planFor(parsed.planTable || [], t.amount, _said.of) : null; }
+                        }
+                    } catch (_) { /* filed as a card charge, as before */ }
                 });
             };
             _routeAll();
             // a purchase turned into an instalment plan is printed as a credit and a debit of the same amount and words: they cancel, so neither is spending nor a payment (statement-conversion.mjs)
             /* CASHBACK ON A CARD IS A REWARD, NOT A PAYMENT (isCardCashback): it is left out of the card's books so it never lowers what the card owes or the minimum; the bank account that receives it files it as income */
             try { const _R = window.WFStatementRouter; if (_acctType === 'credit_card' && _R && _R.isCardCashback) txns.forEach((t) => { if (t && t.direction === 'credit' && (t._dest === 'cc_payment' || !t._dest) && _R.isCardCashback(t.description)) { t._dest = 'skip'; t._cashback = 1; t.type = ''; } }); } catch (_) {}
-            try { const _R = window.WFStatementRouter; if (_acctType === 'credit_card' && _R && _R.conversionLegs) { const _legs = _R.conversionLegs(txns, [], () => true); txns.forEach((t) => { if (_legs.has(t)) { t._dest = 'skip'; t._conversion = 1; t.type = ''; } }); } } catch (_) {}
+            try { const _R = window.WFStatementRouter; if (_acctType === 'credit_card' && _R && _R.conversionLegs) { const _legs = _R.conversionLegs(txns, parsed.planTable || [], () => true); txns.forEach((t) => { if (_legs.has(t)) { t._dest = 'skip'; t._conversion = 1; t.type = ''; } }); } } catch (_) {}
             // ── v7.61.0 — REAL-TIME merchant discovery. Every merchant this statement
             //    contains that nothing could identify is sent to your OWN /api/ai, where
             //    TWO independent passes must AGREE and both score >= 0.95 before it is
@@ -37174,6 +37185,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
             const _destOpts = (sel, row) => [
                 ['cconetime', 'CC One-Time'],
+                ['ccinstall', 'CC Installments'],
                 ['expenses', 'Expense'],
                 ['subscription', 'Subscription'],
                 ['income', 'Income'],
@@ -37181,7 +37193,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 ['loan', 'Loan Payment'],
                 ['cheque', 'Cheque'],
                 ['skip', 'Skip']
-            ].filter(([v]) => !parsed.cloudReview || !['loan', 'cheque'].includes(v)).filter(([v]) => !(row && (v === 'cc_payment' || v === 'cconetime') && _bankSideOwnCard(row.description))).map(([v, l]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${l}</option>`).join('');
+            ].filter(([v]) => !parsed.cloudReview || !['loan', 'cheque', 'ccinstall'].includes(v)).filter(([v]) => v !== 'ccinstall' || _acctType === 'credit_card').filter(([v]) => !(row && (v === 'cc_payment' || v === 'cconetime') && _bankSideOwnCard(row.description))).map(([v, l]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${l}</option>`).join('');
             /* A statement can contain hundreds of transactions. Each review row
              * owns at least five native form controls (and cloud review owns
              * eight), so putting the whole statement in one tbody still gives
@@ -37313,6 +37325,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 <option value="">— choose a destination —</option>
                                 <option value="expenses">Expenses</option>
                                 <option value="cconetime">CC One-Time</option>
+                                <option value="ccinstall">CC Installments</option>
                                 <option value="income">Income</option>
                                 <option value="subscription">Subscription</option>
                                 <option value="cc_payment">Card Payment</option>
@@ -37428,7 +37441,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 });
                 _reRenderBody();
                 if (held) notify(held + ' row' + (held > 1 ? 's' : '') + ' name one of your own credit cards and stay out of the card tabs: the card\'s own statement carries that money.', 'info');
-                const lbl = { expenses: 'Expenses', cconetime: 'CC One-Time', income: 'Income', subscription: 'Subscription', cc_payment: 'Card Payment', loan: 'Loan Payment', cheque: 'Cheque', skip: 'Skip' }[dest] || dest;
+                const lbl = { expenses: 'Expenses', cconetime: 'CC One-Time', ccinstall: 'CC Installments', income: 'Income', subscription: 'Subscription', cc_payment: 'Card Payment', loan: 'Loan Payment', cheque: 'Cheque', skip: 'Skip' }[dest] || dest;
                 notify(n ? ('Routed ' + n + ' row' + (n > 1 ? 's' : '') + ' → ' + lbl) : 'No ticked rows to route.', n ? 'success' : 'warn');
                 try { triggerHaptic(n ? 'success' : 'warn'); } catch (_) {}
             };
@@ -37606,6 +37619,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const incRecvArr = DB.get('incomeRecv');
                 const loanArr = DB.get('loans') || [];
                 const chequeArr = DB.get('cheques') || [];
+                const planArr = DB.get('ccinstall') || [];
+                let planN = 0, planNew = 0;
                 let cc = 0, ccPay = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0, dup = 0, loanCnt = 0, loanRepl = 0, chq = 0, chqNew = 0, chqCleared = 0, chqBounced = 0;
                 const chqReview = [];     // cheque rows that were settled but deserve a second look (a statement amount that differs, a wording that disagrees, two cheques that fit)
                 let _loansDirty = false;
@@ -37749,6 +37764,32 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             }
                             catch (e) { console.warn('[WFSubs] apply failed:', e); skipped++; }
                         } else { skipped++; }
+                    } else if (dest === 'ccinstall') {
+                        /* A CARD LINE THAT SAYS IT IS AN INSTALMENT OF A PLAN is the plan's payment, never a purchase: it continues the plan the owner already has (matchInstallmentPlan: the product named in the line, the plan's
+                         * monthly money, a month the plan counts), else it starts the plan as ONE record the Installments tab and the totals read — the same record the e-mail worker files (WFCardPlans.cardPlanRecord). */
+                        const _P = window.WFCardPlans, _R = window.WFStatementRouter;
+                        if (!(_P && _R && _R.installmentInfo)) { if (!_fileCardCharge(t, date, amount, desc, type || 'purchase', _source)) return; }      // no plan rules loaded: the money is still the card's
+                        else {
+                            const _info = _R.installmentInfo(desc), _row = { amount, date, description: desc, direction: 'debit', plan: (t && t._plan) || null };
+                            const _planNz = _nz(desc), _held = planArr.some(p => p && !p.mergedInto && (p.payments || []).some(pay => pay && pay.month === month && Math.abs((Number(pay.amount) || 0) - amount) < 0.01) && ((p.statementKey && _source.statementKey) ? (p.statementKey === _source.statementKey && Number(p.statementRow) === Number(_source.statementRow)) : (_nz(p.desc) === _planNz || (_nz(p.product).length >= 4 && _planNz.indexOf(_nz(p.product)) >= 0))));
+                            if (_held) { dup++; return; }
+                            const _now = Date.now();
+                            const _match = _P.matchInstallmentPlan(_row, planArr, { installment: true, bank: _source.bank || bank || '', of: _info.of });
+                            if (_match) {
+                                const _prev = JSON.parse(JSON.stringify(_match));
+                                _P.applyPlanPayment(_match, _row, _source.statementKey, _source.statementRow, _now, _info);
+                                if (_batch) { const _pay = (_match.payments || []).find(pp => pp && pp.month === month && pp.source === 'statement'); if (_pay) _pay._batch = _batch.id; }
+                                if (_batch && WFBatch.recordPlan) WFBatch.recordPlan(_batch, { planId: _match.id, month, prev: _prev, now: _match });
+                            } else {
+                                const _ctx = { bank: _source.bank || bank || '', last4: _source.card_last4 || '', sourcePath: _source.statementKey || '', index: _source.statementRow };
+                                const _base = { id: uid(), ..._source, direction: 'debit', amount, date, source: 'statement', createdAt: new Date(_now).toISOString(), _ut: _now, notes: '' };
+                                const _rec = _P.cardPlanRecord({ row: _row, desc, decision: { module: 'ccinstall', category: 'Installment' }, context: _ctx, base: _base, now: _now });
+                                if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'ccinstall', _rec.id); }
+                                planArr.push(_rec);
+                                planNew++;
+                            }
+                            planN++;
+                        }
                     } else if (dest === 'cc_payment') {
                         // A credit / payment made TO the card (e.g. "CASH PAYMENT FINACLE",
                         // "PAYMENT - THANK YOU"). Stored like a charge so it auto-settles
@@ -37855,6 +37896,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     }
                 });
                 if (cc) DB.set('cconetime', ccArr);
+                if (planN) DB.set('ccinstall', planArr);
                 if (ccPay) DB.set('ccPayments', ccPayArr);
                 /* The minimum payment this card statement asks for is kept as its own ask (cardDues), the way the e-mail worker keeps it; it is not a row and not a payment. Never fatal: a statement that prints no
                  * minimum, or one read as a bank account, files nothing here. */
@@ -37874,6 +37916,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 // Auto-@checkCircle@ match the new payments against outstanding charges (oldest first).
                 try { if (cc || ccPay) reconcileCC(); } catch (_) {}
                 try { renderCCOT(); updateCCOTBadge(); } catch (_) {}
+                try { if (planN && typeof renderCCI === 'function') renderCCI(); } catch (_) {}
                 try { if ((exp || _expLinked) && typeof renderExpenses === 'function') renderExpenses(); } catch (_) {}
                 try { if (inc && typeof renderIncRecv === 'function') renderIncRecv(); } catch (_) {}
                 try { if (_loansDirty && typeof renderLoans === 'function') renderLoans(); } catch (_) {}
@@ -37885,6 +37928,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 try { closeModal('mdCCOT'); } catch (_) {}
                 const parts = [];
                 if (cc) parts.push(cc + ' CC One-Time');
+                if (planN) parts.push(planN + ' CC Installment' + (planN > 1 ? 's' : '') + (planNew ? (planNew === planN ? '' : (' · ' + planNew + ' new plan' + (planNew > 1 ? 's' : ''))) : ' · added to your plan' + (planN > 1 ? 's' : '')));
                 if (ccPay) parts.push(ccPay + ' Card Payment' + (ccPay > 1 ? 's' : ''));
                 if (exp) parts.push(exp + ' Expense' + (exp > 1 ? 's' : ''));
                 if (inc) parts.push(inc + ' Income');
@@ -37913,13 +37957,13 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                  * is nothing left to import from it. Offering it again forever
                  * because everything in it was already known is the exact loop
                  * the owner reported. */
-                const total = cc + ccPay + exp + inc + sub + loanCnt + chq;
+                const total = cc + planN + ccPay + exp + inc + sub + loanCnt + chq;
                 let durable = false;
                 if (!skipped && total + dup > 0) {
                     try { setDirty(true); durable = (await Promise.resolve(syncToCloud())) === true; } catch (_) {}
                 }
                 if (!durable && total + dup > 0) notify('Saved on this device, but the statement remains pending until cloud sync succeeds.', 'warn');
-                try { if (durable && typeof onFiled === 'function') await onFiled({ cc, ccPay, exp, inc, sub, loanCnt, chq, dup, skipped, total, durable }); }
+                try { if (durable && typeof onFiled === 'function') await onFiled({ cc, planN, ccPay, exp, inc, sub, loanCnt, chq, dup, skipped, total, durable }); }
                 catch (_) { /* a caller's bookkeeping must not undo a good import */ }
             };
             overlay.addEventListener('click', (ev) => { if (ev.target === overlay) closeOvl(); });

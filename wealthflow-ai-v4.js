@@ -1236,7 +1236,12 @@
     }
     /* What the statement says it is (a credit card or not) and which account it is for, read the way the e-mail worker reads them (WFStatementParser.identityOf), so the review files a card
      * statement as a card whatever mix of charges and payments it holds, and Settings > Cards and accounts is asked about the right number. A number the page already had is kept. */
-    function _wfIdentify(parsed, text, bank) {
+    function _wfIdentify(parsed, text, bank, lines) {
+        try {
+            /* The plan table a card statement prints (one row per plan: shop, original amount, months, still to pay) names the plans its "INSTALMENT 3/12" lines belong to, as the e-mail worker reads it
+             * (WFCardPlans.readPlanTable). It is read from the statement's LINES when the reader kept them (an HTML e-statement's text is one flat line). */
+            if (parsed && window.WFCardPlans && window.WFCardPlans.readPlanTable) parsed.planTable = window.WFCardPlans.readPlanTable(lines || text) || [];
+        } catch (_) { /* no table: a plan line is filed from its own words, as before */ }
         try {
             var SP = window.WFStatementParser, first = parsed && parsed.transactions && parsed.transactions[0], id = SP && SP.identityOf ? SP.identityOf(text, { before: first && first.description }) : null;
             if (!parsed) return;
@@ -1382,7 +1387,7 @@
                     _wfBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _hres && _hres.text });
                     ccotBank = _wfBank && _wfBank.ok ? _wfBank.name : '';
                     _parsedH._wfBank = _wfBank;
-                    _wfIdentify(_parsedH, _hres && _hres.text, _wfBank);
+                    _wfIdentify(_parsedH, _hres && _hres.text, _wfBank, _hres && _hres.rowText);
                     P.stage('guard', 'Checking your books…', 'Making sure this statement is not already added', 'shield');
                     if (await _wfGuardParsed(_parsedH, { file: file, sha: _wfSha, bank: _wfBank && _wfBank.ok ? _wfBank.lockName : '', text: _hres && _hres.text, force: _wfForce, redo: _wfRedo })) { inputEl.value = ''; return; }
                     P.end();

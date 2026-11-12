@@ -12,6 +12,8 @@
 import { sameBank } from './wealthflow-institutions.js';
 import { installmentInfo } from './wealthflow-statement-router.js';
 import { evidenceOf, identityOf, isTelecomBrand } from './statement-subscriptions.mjs';
+import { planCountedIn, matchInstallmentPlan, applyPlanPayment, planFromLine, addMonths, monthIndex, continuesUnknown, round2, firstOfMonth } from './wealthflow-card-plans.js';
+export { planCountedIn, matchInstallmentPlan, applyPlanPayment, planFromLine };
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const arr = (v) => (Array.isArray(v) ? v : []);
 const low = (v) => String(v == null ? '' : v).toLowerCase();
@@ -169,71 +171,6 @@ export function cardSettlementDebit(row, { cardRegistry = {}, cards = [] } = {})
         || bankWords(card.bank).some((w) => text.split(' ').includes(w)));
 }
 
-/* ── 5. A CARD INSTALLMENT CHARGE FOR A PLAN THE OWNER ALREADY HAS ────────────────────────────────────────────────────────────────────────── */
-const addMonths = (iso, n) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); if (!m) return NaN; return Date.UTC(+m[1], +m[2] - 1 + n, +m[3]); };
-/** Is this installment plan counted by the monthly totals in `ym`? (the same rule getMonthlyData uses: it has started by the month's first day and not yet ended) */
-export function planCountedIn(plan, ym) {
-    const m = /^(\d{4})-(\d{2})$/.exec(String(ym || ''));
-    if (!plan || plan.completed || !m || !plan.date || !(num(plan.duration) > 0)) return false;
-    const first = Date.UTC(+m[1], +m[2] - 1, 1), start = addMonths(plan.date, 0), end = addMonths(plan.date, Math.floor(num(plan.duration)));
-    return Number.isFinite(start) && Number.isFinite(end) && start <= first && end > first;
-}
-const monthIndex = (fromIso, ym) => { const a = /^(\d{4})-(\d{2})/.exec(String(fromIso || '')), b = /^(\d{4})-(\d{2})$/.exec(String(ym || '')); return a && b ? (+b[1] - +a[1]) * 12 + (+b[2] - +a[2]) : NaN; };
-/** A plan whose line never said how long it is carries on: the month straight after the last one it has counted is its next month, not a new plan. */
-const continuesUnknown = (plan, ym) => !!plan && plan.durationUnknown === true && !plan.completed && num(plan.duration) >= 1 && monthIndex(plan.date, ym) === Math.floor(num(plan.duration));
-/** The one plan whose product is named in the narration, whose monthly amount is this charge (to 2%), and which the totals count this month. */
-export function matchInstallmentPlan(row, plans, options = {}) {
-    const amount = num(row && row.amount), text = words(row && (row.description || row.narration)), ym = ymOf(row && row.date);
-    if (!(amount > 0) || !text || !ym) return null;
-    const hits = [], byMoney = [];
-    for (const plan of arr(plans)) {
-        if (!plan || !plan.id || !(planCountedIn(plan, ym) || continuesUnknown(plan, ym)) || !(num(plan.monthly) > 0)) continue;
-        if (Math.abs(amount - num(plan.monthly)) > num(plan.monthly) * 0.02) continue;
-        if (arr(plan.payments).some((p) => p && p.month === ym && p.paid && p.source === 'statement')) continue;     // that month already has its charge: this one is another
-        const product = tokens(plan.product);
-        if (product.length && product.some((t) => text.includes(t))) hits.push(plan);
-        // the owner named the plan their own way ("Fridge"), the bank wrote the shop ("ABANS PLC"): a line the bank itself calls an installment, for this plan's money, on this plan's card bank
-        else if (options.installment && (!options.bank || !plan.bank || sameBank(plan.bank, options.bank))) byMoney.push(plan);
-    }
-    /* two plans that fit equally are told apart by the length the line states ("3/12" is a twelve-month plan), when exactly one of them is that long */
-    const longEnough = (list) => { const same = options.of >= 2 ? list.filter((p) => Math.floor(num(p.installmentOf)) === options.of || Math.floor(num(p.duration)) === options.of) : []; return same.length === 1 ? same[0] : null; };
-    if (hits.length) return hits.length === 1 ? hits[0] : longEnough(hits);
-    return byMoney.length === 1 ? byMoney[0] : byMoney.length > 1 ? longEnough(byMoney) : null;
-}
-const round2 = (v) => Math.round(num(v) * 100) / 100;
-const firstOfMonth = (iso, back = 0) => { const m = /^(\d{4})-(\d{2})/.exec(String(iso || '')); return m ? new Date(Date.UTC(+m[1], +m[2] - 1 - back, 1)).toISOString().slice(0, 10) : ''; };
-/**
- * WHAT A CARD PLAN LINE SAYS OF ITS PLAN, and nothing it does not say. "INSTALMENT 2/12" is the second month of a twelve-month plan (one instalment is one month): the plan is twelve months long, it began one month
- * before this charge, and its total is twelve of these charges (an ESTIMATE: the bank prints the month, not the total). A line that gives no length is kept as a one-month plan and says so (`durationUnknown`),
- * instead of showing a length nobody printed. The plan's own `date` is the first day of its first month: the totals count a plan from that month.
- */
-export function planFromLine({ amount, date, no = 0, length = 0 }) {
-    const long = Math.floor(num(length)) >= 2, n = Math.floor(num(no));
-    if (!long) return { duration: 1, months: 1, date: firstOfMonth(date), total: round2(amount), paid: 0, remaining: 1, durationUnknown: true };
-    const done = Math.max(1, Math.min(n || 1, length));
-    return { duration: length, months: length, date: firstOfMonth(date, n >= 1 ? n - 1 : 0), total: round2(num(amount) * length), totalEstimated: true, paid: done, remaining: length - done };
-}
-/** The plan's payment for the month, from the statement: the plan counts it (its monthly amount), the statement row does not become a second record. `info` (the line's own reading: no, of) moves a statement-made plan's progress on. */
-export function applyPlanPayment(plan, row, sourcePath, index, now, info = null) {
-    const month = ymOf(row.date);
-    plan.payments = arr(plan.payments).filter((p) => !(p && p.month === month));
-    plan.payments.push({ month, paid: true, amount: num(row.amount), paidAt: Date.parse(`${row.date}T00:00:00Z`) || now, source: 'statement', statementKey: sourcePath, statementRow: index });
-    if (plan.source === 'statement' || plan.statementKey) {
-        const no = info ? Math.floor(num(info.no)) : 0;
-        /* a plan that never said how long it is grows by the month the statement shows */
-        if (plan.durationUnknown === true) { const index = monthIndex(plan.date, month); if (index >= num(plan.duration)) { plan.duration = index + 1; plan.months = plan.duration; plan.total = round2(num(plan.monthly) * plan.duration); } }
-        /* the bank's own figure for what is still owed, from the latest statement that printed one (REM BAL on the line, or the plan table's outstanding) */
-        const owed = info && Number.isFinite(Number(info.remaining)) && info.remaining !== null && info.remaining !== undefined ? Number(info.remaining) : (row.plan && Number.isFinite(row.plan.remainingAmount) ? row.plan.remainingAmount : null);
-        if (owed != null && owed >= 0 && row.date >= String(plan.outstandingAt || '')) { plan.outstanding = round2(owed); plan.outstandingAt = row.date; }
-        if (no >= 1) { plan.installmentNo = Math.max(Math.floor(num(plan.installmentNo)), no); if (!plan.installmentOf && num(info.of) >= 2) plan.installmentOf = Math.floor(num(info.of)); }
-        const done = Math.max(Math.floor(num(plan.installmentNo)), arr(plan.payments).filter((p) => p && p.paid).length), length = Math.floor(num(plan.duration));
-        plan.paid = length > 0 ? Math.min(done, length) : done; plan.remaining = Math.max(0, length - plan.paid);
-        /* the note says the latest charge the statements showed */
-        const seen = /^Card installment charge of (\d{4}-\d{2}-\d{2})/.exec(String(plan.notes || ''));
-        if (seen && row.date > seen[1]) plan.notes = `Card installment charge of ${row.date}${no >= 1 && num(info.of) >= 2 ? ` (${no} of ${Math.floor(num(info.of))})` : ''}`;
-    }
-    plan._ut = now;
-}
 /**
  * A card installment record the statement worker filed in its own shape (description, startDate, months — no product, date or duration) is invisible to the
  * monthly totals, so a real card charge was missing from them. This gives such a record the plan's shape so it counts in its month — unless a plan the owner
