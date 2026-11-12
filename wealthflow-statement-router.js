@@ -140,6 +140,29 @@ export function textDamage(rows) {
   const share = list.length ? bad.length / list.length : 0;
   return { rows: list.length, bad, share, whole: list.length >= GARBLE_MIN_ROWS && share >= GARBLE_SHARE };
 }
+/** A second reading of the same statement (the page pictures read by OCR) mends the WORDS of the rows whose text layer is scrambled. A row is mended only by a row of the second reading with the same date, the same amount to the cent and the
+ * same direction (when both say one) whose words are not scrambled themselves; the amount and date are never taken from it, and each second-reading row is used once. Returns the rows (copies), which were mended and which are still bad. */
+export function repairDamagedRows(rows, other, bad) {
+  const list = (Array.isArray(rows) ? rows : []).map(r => (r && typeof r === 'object' ? { ...r } : r));
+  const pool = (Array.isArray(other) ? other : []).filter(o => o && typeof o === 'object');
+  const used = new Set(), repaired = [], stillBad = [];
+  const cents = v => Math.round((Number(v) || 0) * 100);
+  const words = o => String(o.narration || o.description || o.desc || '').replace(/\s+/g, ' ').trim();
+  (Array.isArray(bad) ? bad : []).forEach(i => {
+    const r = list[i];
+    if (!r) return;
+    const at = pool.findIndex((o, k) => !used.has(k) && String(o.date || '') === String(r.date || '') && cents(o.amount) === cents(r.amount) && cents(r.amount) !== 0
+      && (!o.direction || !r.direction || o.direction === r.direction) && words(o).length >= 4 && !looksGarbled(words(o)));
+    if (at < 0) { stillBad.push(i); return; }
+    used.add(at);
+    const w = words(pool[at]);
+    if ('narration' in r) r.narration = w;
+    if ('description' in r) r.description = w;
+    if (!('narration' in r) && !('description' in r)) r.narration = w;
+    repaired.push(i);
+  });
+  return { rows: list, repaired, stillBad };
+}
 /* NATIONS TRUST'S PLAN LINE: "SINGER 24M NATIONS PAY INST 1 - REM BAL - 120040.83 - <1/24>" is the 1st of 24 instalments of the Singer plan (the "24M" is the plan's length, "REM BAL" what is still owed, "<1/24>" which month).
  * It says "INST", not "instalment", so the words above never saw it, and it was filed as a one-time Shopping purchase. The three parts must agree (the number after INST is the number in "<n/m>") before it is a plan line. */
 const NTB_PLAN_LINE = /^(.*?)\binst(?:l|alment)?\s*(\d{1,2})\b[\s\-\u2013]*rem(?:aining)?\.?\s*bal\w*[\s\-\u2013:]*([\d,]+(?:\.\d+)?)[\s\-\u2013]*<\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*>/i;
@@ -431,7 +454,7 @@ export function cardChargeCategory(row, routed) {
     : r.subtype === 'purchase' && r.category && !/^(?:other|needs review|card\s)/i.test(String(r.category)) && CLASSIFY_CATEGORIES.includes(r.category) ? r.category : 'Card Purchase';
 }
 
-const API = { looksGarbled, textDamage, installmentInfo, namedCardCategory, cardChargeCategory, routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs, isCardCashback };
+const API = { looksGarbled, textDamage, repairDamagedRows, installmentInfo, namedCardCategory, cardChargeCategory, routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs, isCardCashback };
 
 if (typeof window !== 'undefined') window.WFStatementRouter = API;
 
