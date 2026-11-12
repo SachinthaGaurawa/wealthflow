@@ -14,7 +14,8 @@
  *
  * Pure: no network, no clock, no storage. Imports only the shared router and plan table (root modules: a Vercel function may import this file).
  * ===========================================================================*/
-import { installmentInfo, expenseCategoryFor, isCardFeeWording, isCardCashback } from './wealthflow-statement-router.js';
+import { installmentInfo, expenseCategoryFor, isCardFeeWording, isCardCashback, looksGarbled, GARBLE_MIN_ROWS, GARBLE_SHARE } from './wealthflow-statement-router.js';
+export { looksGarbled };
 import { planFor } from './statement-plan-table.mjs';
 
 const REM_BAL = /\brem(?:aining)?\.?\s*bal/i;
@@ -23,27 +24,21 @@ const words = (row) => String((row && (row.description != null && row.descriptio
 const CREDIT_WORDS = /\b(refund(?:ed)?|reversal|reversed|cash\s*back|cashback|salary|payroll|dividend)\b/i;
 const PAYMENT_WORDS = /\b(payment|thank\s*you|transfer|fund\s*transfer|atm|withdrawal)\b/i;
 const GAP_MIN_ROWS = 8, GAP_SHARE = 0.5;   // fewer rows say nothing; at least half the spending in "Other" is a gap, not a few odd merchants
-const GARBLE_MIN_ROWS = 6, GARBLE_SHARE = 0.3;      // a few damaged lines say nothing; nearly a third of the statement is a damaged text layer
 const KNOWN_CREDIT = /\b(payments?|pymt|repayment|thank\s*you|settlement|top\s*-?\s*up|ceft|slips|transfer|deposit|cheque|chq|online|cash|refund(?:ed)?|reversal|reversed|waiv(?:er|ed)|adjust(?:ment)?|reward|rebate|cash\s*back|cashback|chargeback|reimburs\w*|credit\s*voucher|conversion|converted)\b/i;
+const INTEREST_WORDS = /\b(?:interest|finance\s*charges?|int\.?\s*charges?)\b/i;
+const GUESS_MIN_ROWS = 6, GUESS_MIN_ROWS_GUESSED = 3, GUESS_SHARE = 0.2;   // a statement that proved most of its directions but guessed a fifth of them: those rows have no balance or marker behind them
 const isDebit = (row) => /^d/i.test(String((row && (row.direction || row.drcr)) || 'd'));
-
-/** Does this description look scrambled rather than merely unfamiliar? Conservative on purpose: a reference like "TXN12AB45" or an abbreviation like "PYMT" is not damage. */
-export function looksGarbled(raw) {
-    const text = String(raw == null ? '' : raw).trim();
-    if (text.length < 8) return false;
-    if (/[\uFFFD\uE000-\uF8FF\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(text)) return true;                  // replacement, private-use and control characters: a font the text layer could not map
-    const tokens = text.split(/\s+/).filter(Boolean);
-    const mixed = tokens.filter(t => t.length >= 4 && /[A-Za-z]\d[A-Za-z]/.test(t)).length;                              // digits inside words (S1NGER, K3ELLS)
-    if (mixed >= 3) return true;
-    const compact = text.replace(/\s/g, ''), symbols = compact.replace(/[A-Za-z0-9\u0D80-\u0DFF\u0B80-\u0BFF]/g, '').length;
-    return compact.length >= 12 && symbols / compact.length > 0.3;                                                       // mostly symbols
-}
 
 export function statementSelfAudit({ rows = [], planTable = [], card = false } = {}) {
     const found = [];
-    let unread = 0, readAsPlan = 0, matchedToTable = 0, spending = 0, generic = 0, creditWords = 0, garbled = 0, counted = 0, unrecognised = 0;
+    let unread = 0, readAsPlan = 0, matchedToTable = 0, spending = 0, generic = 0, creditWords = 0, garbled = 0, counted = 0, unrecognised = 0, guessed = 0, proven = 0, interest = 0;
     for (const row of Array.isArray(rows) ? rows : []) {
-        if (row) { counted++; if (looksGarbled(words(row))) garbled++; }
+        if (row) {
+            counted++; if (looksGarbled(words(row))) garbled++;
+            const how = String(row.directionSource || '');
+            if (how === 'assumed') guessed++; else if (how) proven++;
+        }
+        if (card && row && isDebit(row)) { const t = words(row); if (INTEREST_WORDS.test(t) && !installmentInfo(t).isInstallment) interest++; }
         if (card && row && !isDebit(row)) { const t = words(row); if (t.trim().length >= 3 && !KNOWN_CREDIT.test(t) && !isCardCashback(t) && !installmentInfo(t).isInstallment) unrecognised++; }
         if (!row || !isDebit(row)) continue;
         const text = words(row), info = installmentInfo(text);
@@ -59,6 +54,8 @@ export function statementSelfAudit({ rows = [], planTable = [], card = false } =
     if (creditWords > 0) found.push({ kind: 'credit-wording-on-debit', count: creditWords });
     if (counted >= GARBLE_MIN_ROWS && garbled / counted >= GARBLE_SHARE) found.push({ kind: 'garbled-text', count: garbled });
     if (unrecognised > 0) found.push({ kind: 'card-credit-unrecognised', count: unrecognised });
+    if (counted >= GUESS_MIN_ROWS && proven > 0 && guessed >= GUESS_MIN_ROWS_GUESSED && guessed / counted >= GUESS_SHARE) found.push({ kind: 'direction-guessed', count: guessed });
+    if (interest > 0) found.push({ kind: 'card-interest-unexplained', count: interest });
     return found;
 }
 

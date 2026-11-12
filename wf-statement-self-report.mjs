@@ -49,6 +49,16 @@ const KINDS = {
         why: 'Nearly a third of the rows of one statement (six or more rows) have descriptions that look scrambled: replacement characters, digits inside words, or mostly symbols. The text layer of the PDF may be damaged (a font the reader could not map) or an OCR pass was poor, so merchants, categories and directions read from those lines are guesses. The reader noticed this by itself.',
         todo: 'Find what damaged the text (a custom font encoding, a two-column page read in the wrong order, a scanned page) and recover it: try the second text extractor, the page image through the vision readers, or a repair of the glyph map. Keep the rows in review rather than filed while the text is damaged. Add a test with an INVENTED scrambled line; never copy a real statement into the repository.',
     },
+    'direction-guessed': {
+        title: 'Statement reader: some rows of a statement have money-in or money-out that was guessed, not proven',
+        why: 'On one statement most rows had their direction proven (a running balance or a marker) but a fifth or more (three rows at least) were only assumed. The rows without a balance or a Dr/Cr marker may be on the wrong side, which moves their money between income and spending. The reader noticed this by itself and it may be benign (a statement that prints a balance only on some lines).',
+        todo: 'Find why these rows carry no balance or marker (a wrapped line, a page break, a second column, a foreign-currency line) and make the reader pair each amount with its Dr/Cr marker or balance, on both the email worker and the manual upload. Add a test with an INVENTED statement.',
+    },
+    'card-interest-unexplained': {
+        title: 'Statement reader: a card statement charges interest that no plan explains',
+        why: 'One or more debits on a card statement are worded interest or finance charge but are not part of an instalment plan. Interest on a card means the balance was not paid in full, or a plan costs more than its table says. The reader noticed this by itself; it may be a normal charge.',
+        todo: 'Compare the interest line with the previous statement (was the whole balance paid by the due date?) and with the plan table. If it is genuine, file it as a card fee or interest so the monthly cost of the card is true; if it belongs to a plan, make the plan reader attach it. Add a test with an INVENTED statement.',
+    },
     'card-credit-unrecognised': {
         title: 'Statement reader: a card credit has no payment, refund, waiver or cashback wording',
         why: 'One or more credits on a card statement carry none of the words of a payment, a refund, a reversal, a waiver or a cashback. The router files every card credit as a payment, so an unrecognised kind of credit (a reward, an offer, a statement adjustment) may be lowering what the card owes without being a payment. The reader noticed this by itself.',

@@ -33,7 +33,7 @@ export const ALLOWED_MODULES = Object.freeze(['expenses', 'incomeRecv', 'cconeti
 
 /* Income names that are not also something a person pays for. 'Rent' and 'Gift' are in both lists on purpose: paying rent and giving a gift are
  * expenses the app has categories for; receiving them is income. (Pinned against the router's tables in test/statement_board_test.js.) */
-export const INCOME_ONLY = Object.freeze(['Salary', 'Interest', 'Dividend', 'Business', 'Pension', 'Refund', 'Income']);
+export const INCOME_ONLY = Object.freeze(['Salary', 'Interest', 'Dividend', 'Business', 'Pension', 'Refund', 'Cashback', 'Income']);
 export const INCOME_NAMES = Object.freeze([...INCOME_ONLY, 'Rent', 'Gift']);
 export const CARD_ONLY = Object.freeze(['Card Payment', 'Card Purchase', 'Card Fee', 'Cash Advance']);
 
