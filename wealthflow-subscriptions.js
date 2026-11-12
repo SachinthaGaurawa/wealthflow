@@ -325,7 +325,20 @@
             previousLifecycle: r.previousLifecycle, via: r.via, moved: r.moved, paymentDate: (txn && txn.date) || '', amount: Math.abs((txn && txn.amount) || 0) };
     }
 
+    // Was this entry started by a statement payment (and not typed in by the owner)? The card says so, and offers Rename / Remove.
+    function startedFromStatement(sub) { return !!sub && sub.autoCreated === true && sub.source !== 'manual'; }
+
+    // Take an entry away: the entry goes, and so does every remembered merchant that pointed at it, so the next statement payment is not matched to a ghost.
+    function removeEntry(subs, map, id) {
+        var gone = (subs || []).filter(function (s) { return s && s.id === id; })[0] || null;
+        var keys = Object.keys(map || {}).filter(function (k) { return map[k] === id; });
+        keys.forEach(function (k) { delete map[k]; });
+        return { subscriptions: (subs || []).filter(function (s) { return !s || s.id !== id; }), map: map || {}, removed: gone, forgot: keys.length };
+    }
+
     window.WFSubs = {
+        startedFromStatement: startedFromStatement,
+        removeEntry: removeEntry,
         merchantKey: merchantKey,
         findExisting: findExisting,
         buildSubscription: buildSubscription,

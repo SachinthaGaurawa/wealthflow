@@ -33892,6 +33892,12 @@ Be direct and use real numbers. Avoid generic advice.`;
             syncSubscriptionCycleFields();
             openModal('mdSubscription');
         }
+        // Rename opens the same edit form with the name already selected, so one tap and a few letters does it.
+        function renameSubscription(id) {
+            editSubscription(id);
+            setTimeout(() => { const n = $('sub_name'); if (n) { n.focus(); n.select(); } }, 60);
+        }
+        window.renameSubscription = renameSubscription;
         function toggleOneTimePayment(id) {
             const arr = DB.get('subscriptions') || [];
             const s = arr.find(x => x.id === id);
@@ -34062,8 +34068,17 @@ Be direct and use real numbers. Avoid generic advice.`;
         window.setSubscriptionMonthAmount = setSubscriptionMonthAmount;
         function deleteSubscription(id) {
             if (_wfKeepDone('subscription', (DB.get('subscriptions') || []).find(x => x && x.id === id))) return;
-            showConfirm('@trash@', 'Delete this subscription?', 'This cannot be undone.', 'btn-danger', 'Delete', () => {
-                DB.set('subscriptions', (DB.get('subscriptions') || []).filter(x => x.id !== id)); renderSubscriptions(); notify('Subscription deleted.', 'info');
+            const _sub = (DB.get('subscriptions') || []).find(x => x && x.id === id);
+            const _auto = !!(_sub && window.WFSubs && window.WFSubs.startedFromStatement && window.WFSubs.startedFromStatement(_sub));
+            showConfirm('@trash@', _auto ? 'Remove this entry?' : 'Delete this subscription?',
+                _auto ? 'A statement payment started it. It goes with the months it holds, and the next statement will not be matched to it. To take back a whole statement, use Undo on that statement import.' : 'This cannot be undone.',
+                'btn-danger', _auto ? 'Remove' : 'Delete', () => {
+                const _r = window.WFSubs && window.WFSubs.removeEntry
+                    ? window.WFSubs.removeEntry(DB.get('subscriptions') || [], Object.assign({}, DB.get('subMerchantMap') || {}), id)
+                    : { subscriptions: (DB.get('subscriptions') || []).filter(x => x.id !== id), map: null };
+                DB.set('subscriptions', _r.subscriptions);
+                if (_r.map) DB.set('subMerchantMap', _r.map);
+                renderSubscriptions(); notify(_auto ? 'Entry removed.' : 'Subscription deleted.', 'info');
             });
         }
         function renderSubscriptions() {
@@ -34191,6 +34206,13 @@ Be direct and use real numbers. Avoid generic advice.`;
                     ? `<div class="sub-notes" style="font-size:11.5px;color:var(--text3);margin-top:4px;line-height:1.4;word-wrap:break-word;overflow-wrap:anywhere;font-style:italic;opacity:.85;">@edit@ ${_esc(s.notes)}</div>`
                     : '';
 
+                // An entry a statement payment started on its own says so, and says how to rename it or take it away.
+                const startedBadge = (window.WFSubs && window.WFSubs.startedFromStatement && window.WFSubs.startedFromStatement(s))
+                    ? `<div class="sub-started" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:10px;color:var(--text3);margin-top:4px;">
+                        <span style="font-weight:800;color:var(--accent);">Started from your statement</span>
+                        <button type="button" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:10px;" onclick="renameSubscription('${_wfJsAttr(s.id)}')">Rename</button>
+                        <button type="button" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:10px;" onclick="deleteSubscription('${_wfJsAttr(s.id)}')">Not a subscription</button>
+                    </div>` : '';
                 return (s === _cap.firstDone ? _cap.a.bar + _wfDoneLabel(_cap.doneCount, 'one-time payments') : '') + `<div class="sub-card">
                     <div class="sub-icon">${catIcons[s.category] || '@receipt@'}</div>
                     <div style="flex:1 1 0;min-width:0;">
@@ -34198,6 +34220,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                         <div style="font-size:11px;color:var(--text3);word-wrap:break-word;">${_wfEsc(s.category)} · ${oneTime ? `Due ${_wfEsc((occ && occ.date) || s.dueDate || '')} · One-Time` : `Day ${s.dueDay} · ${_wfEsc(s.cycle)}`}</div>
                         ${notesHtml}
                         ${variableBadge}
+                        ${startedBadge}
                     </div>
                     <div class="sub-amount">
                         <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--red);">${fmt(showAmt)}</div>
