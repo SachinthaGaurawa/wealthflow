@@ -223,7 +223,7 @@
     // ── review modal ───────────────────────────────────────────────────────────
     const CATS_BY_MODULE = {
         expenses: ['Food & Groceries', 'Dining', 'Transport', 'Fuel', 'Utilities', 'Telecom', 'Healthcare', 'Education', 'Entertainment', 'Subscriptions', 'Shopping', 'Shopping (Fashion)', 'Electronics & Tech', 'Shopping (Home)', 'Insurance', 'Rent', 'Personal Care', 'Kids & Family', 'Pets', 'Travel', 'Charity', 'Government', 'Banking', 'Other'],
-        income: ['Salary', 'Business', 'Transfer In', 'Interest', 'Refund', 'Rent Income', 'Gift', 'Stock Dividend', 'Unit Trust', 'Treasury/Bond', 'Crypto', 'Forex/Trading', 'Fixed Deposit', 'Other Income'],
+        income: ['Salary', 'Business', 'Transfer In', 'Interest', 'Refund', 'Cashback', 'Rent Income', 'Gift', 'Stock Dividend', 'Unit Trust', 'Treasury/Bond', 'Crypto', 'Forex/Trading', 'Fixed Deposit', 'Other Income'],
         subscriptions: ['Streaming', 'Software', 'Telecom', 'Utilities', 'Membership', 'Cloud', 'Other'],
         cconetime: ['Shopping', 'Dining', 'Travel', 'Electronics', 'Other'],
         ccinstall: ['Electronics', 'Appliances', 'Travel', 'Other'],

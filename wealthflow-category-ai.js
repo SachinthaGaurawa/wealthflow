@@ -97,7 +97,8 @@
         ['Salary',        /salary|payroll|wages|month\s*end\s*pay|emolument|stipend/i],
         ['Business',      /sales\s*proceeds|business\s*income|invoice\s*payment|client\s*payment|settlement/i],
         ['Transfer In',   /inward|credited|received\s*from|fund\s*transfer\s*in|ceft\s*in|inward\s*ceft|transfer\s*from/i],
-        ['Refund',        /refund|reversal|cashback|cash\s*back|chargeback|reimburse/i],
+        ['Refund',        /refund|reversal|chargeback|reimburse/i],
+        ['Cashback',      /cashback|cash\s*back|rebate/i],
         ['Interest',      /interest\s*credit|fd\s*interest|savings\s*interest|deposit\s*interest/i],
         ['Rent Income',   /rent\s*received|rental\s*income/i],
     ];

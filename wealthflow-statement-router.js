@@ -7,7 +7,7 @@ const RE = {
   fee:        /\b(?:annual\s*fee|(?:membership|renewal|joining)\s*fee|late\s*(?:payment\s*)?(?:fees?|charges?)|over\s*limit(?:\s*(?:fees?|charges?))?|(?:finance|service|processing|handling|admin\w*|sms|alert|card|replacement|reissue|return|atm|withdrawal|cash\s*advance|(?:instal+ment|plan|conversion))\s*(?:fees?|charges?)|interest(?:\s*charged?|\s*charges?)?|surcharge|stamp\s*duty|debit\s*tax|vat|nbt|sscl|govt?\s*levy|government\s*levy)\b/i,
   cashAdvance:/\b(cash\s*advance|atm|withdrawal|cash\s*w\/?d)\b/i,
   fuel:       /\b(ceypetco|cargills\s*petroleum|lanka\s*ioc|\bioc\b|filling\s*station|fuel|petrol|diesel)\b/i,
-  refund:     /\b(refund|reversal|reimburs|chargeback|cashback)\b/i,
+  refund:     /\b(refund|reversal|reimburs|chargeback|cashback|rebate)\b/i,
   salary:     /\b(salary|payroll|wages|stipend|pension|dividend|interest\s*credit|profit)\b/i,
 };
 
@@ -76,7 +76,9 @@ const INCOME_CATEGORY_RULES = [
   ['Business', /\b(invoice|sales|business|merchant\s+settlement|freelance|consultancy|professional\s+fee|royalty)\b/i],
   ['Pension', /\b(pension|epf|etf|gratuity)\b/i],
   ['Gift', /\b(gift|donation|present)\b/i],
-  ['Refund', /\b(refund|reversal|chargeback|cashback|reimburse)\b/i],
+  /* A refund gives back what a purchase took; a cashback is a reward the bank pays. Both are money in, but they are not the same thing, so they carry their own names. A reversal OF a cashback is a refund. */
+  ['Refund', /\b(refund|reversal|chargeback|reimburs\w*)\b/i],
+  ['Cashback', /\b(cash\s*back|cashback|rebate)\b/i],
 ];
 
 export function incomeCategoryFor(row) {
@@ -116,6 +118,28 @@ export const isCardFeeWording = (raw) => RE.fee.test(String(raw || ''));
  * (cc-fifo.mjs, wealthflow-cc-reconcile.js and wealthflow-card-tabs.js read the same words; test/card_cashback_test.js keeps the four equal.) */
 const CARD_CASHBACK = /\b(?:cash\s*back|cashback|rebate)\b/i, CARD_PAYMENT_WORDS = /\b(?:payments?|pymt|repayment|thank\s*you|settlement|top\s*-?\s*up)\b/i;
 export const isCardCashback = (raw) => { const text = String(raw || ''); return CARD_CASHBACK.test(text) && !CARD_PAYMENT_WORDS.test(text); };
+
+/* A DAMAGED TEXT LAYER, NAMED BY ITS ROWS. The same check is used by the page when it reads a PDF, by the e-mail review and by the daily self-audit (wf-statement-self-audit.mjs), so they cannot disagree about what is scrambled. */
+export const GARBLE_MIN_ROWS = 6;      // a few damaged lines say nothing
+export const GARBLE_SHARE = 0.3;       // nearly a third of the statement is a damaged text layer
+/** Does this description look scrambled rather than merely unfamiliar? Conservative on purpose: a reference like "TXN12AB45" or an abbreviation like "PYMT" is not damage. */
+export function looksGarbled(raw) {
+    const text = String(raw == null ? '' : raw).trim();
+    if (text.length < 8) return false;
+    if (/[\uFFFD\uE000-\uF8FF\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(text)) return true;                  // replacement, private-use and control characters: a font the text layer could not map
+    const tokens = text.split(/\s+/).filter(Boolean);
+    const mixed = tokens.filter(t => t.length >= 4 && /[A-Za-z]\d[A-Za-z]/.test(t)).length;                              // digits inside words (S1NGER, K3ELLS)
+    if (mixed >= 3) return true;
+    const compact = text.replace(/\s/g, ''), symbols = compact.replace(/[A-Za-z0-9\u0D80-\u0DFF\u0B80-\u0BFF]/g, '').length;
+    return compact.length >= 12 && symbols / compact.length > 0.3;                                                       // mostly symbols
+}
+/** Which rows look scrambled, and whether so many do that the text layer cannot be trusted at all (`whole`: read the page images instead). Rows are anything with a description / narration. */
+export function textDamage(rows) {
+  const list = Array.isArray(rows) ? rows : [], bad = [];
+  list.forEach((r, i) => { if (r && looksGarbled(r.description || r.narration || r.desc || '')) bad.push(i); });
+  const share = list.length ? bad.length / list.length : 0;
+  return { rows: list.length, bad, share, whole: list.length >= GARBLE_MIN_ROWS && share >= GARBLE_SHARE };
+}
 /* NATIONS TRUST'S PLAN LINE: "SINGER 24M NATIONS PAY INST 1 - REM BAL - 120040.83 - <1/24>" is the 1st of 24 instalments of the Singer plan (the "24M" is the plan's length, "REM BAL" what is still owed, "<1/24>" which month).
  * It says "INST", not "instalment", so the words above never saw it, and it was filed as a one-time Shopping purchase. The three parts must agree (the number after INST is the number in "<n/m>") before it is a plan line. */
 const NTB_PLAN_LINE = /^(.*?)\binst(?:l|alment)?\s*(\d{1,2})\b[\s\-\u2013]*rem(?:aining)?\.?\s*bal\w*[\s\-\u2013:]*([\d,]+(?:\.\d+)?)[\s\-\u2013]*<\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*>/i;
@@ -407,7 +431,7 @@ export function cardChargeCategory(row, routed) {
     : r.subtype === 'purchase' && r.category && !/^(?:other|needs review|card\s)/i.test(String(r.category)) && CLASSIFY_CATEGORIES.includes(r.category) ? r.category : 'Card Purchase';
 }
 
-const API = { installmentInfo, namedCardCategory, cardChargeCategory, routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs, isCardCashback };
+const API = { looksGarbled, textDamage, installmentInfo, namedCardCategory, cardChargeCategory, routeRow, hashRow, occurrenceKey, classifyStatement, expenseEntryName, classifierName, relabelApply, relabelUndo, conversionLegs, isCardCashback };
 
 if (typeof window !== 'undefined') window.WFStatementRouter = API;
 

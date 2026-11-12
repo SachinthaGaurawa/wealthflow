@@ -19743,8 +19743,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
            so the dashboard / DSCR / score keep reading DB.get('income')). A
            one-time migration moves previously-filed received-income records
            (oneOff + kind:'received') out of the investments store into here. */
-        const INC_TYPES = ['Salary', 'Interest', 'Dividend', 'Rent', 'Business', 'Pension', 'Gift', 'Refund', 'Other'];
-        const incTypeBadge = { Salary: 'bg-g', Interest: 'bg-b', Dividend: 'bg-p', Rent: 'bg-a', Business: 'bg-c', Pension: 'bg-gr', Gift: 'bg-p', Refund: 'bg-b', Other: 'bg-gr' };
+        const INC_TYPES = ['Salary', 'Interest', 'Dividend', 'Rent', 'Business', 'Pension', 'Gift', 'Refund', 'Cashback', 'Other'];
+        const incTypeBadge = { Salary: 'bg-g', Interest: 'bg-b', Dividend: 'bg-p', Rent: 'bg-a', Business: 'bg-c', Pension: 'bg-gr', Gift: 'bg-p', Refund: 'bg-b', Cashback: 'bg-g', Other: 'bg-gr' };
 
         function _migrateIncomeSplit() {
             try {
@@ -28256,6 +28256,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                              * nothing was read at all, and that path never reaches
                              * here — it is the `held` branch above. */
                             const doubts = new Map();
+                            /* Rows whose letters look scrambled (a damaged text layer) are kept for the owner to check, like a row the intake refused. */
+                            try {
+                                const _dmg = window.WFStatementRouter && window.WFStatementRouter.textDamage ? window.WFStatementRouter.textDamage(rows) : null;
+                                if (_dmg) _dmg.bad.forEach((i) => { const rw = rows[i]; if (rw) doubts.set(_mailRowKey(rw.date, rw.amount, rw.description || rw.narration), 'the letters of this line look scrambled in the statement; check them against it'); });
+                            } catch (_) {}
                             const QT = (window.WFMailIntake && window.WFMailIntake.QUARANTINE_TEXT) || {};
                             for (const q of (Array.isArray(res.quarantined) ? res.quarantined : [])) {
                                 if (!q || q.scope !== 'row' || !q.row) continue;

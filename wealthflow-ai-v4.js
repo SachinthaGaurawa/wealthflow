@@ -1465,6 +1465,14 @@
                         ? window.WFStatementParser.parseStatement(_res.text)
                         : { rows: window.WFStatementParser.parseStatementText(_res.text) || [], reconciliation: { ok: null } };
                     var _rows = _pres.rows || [];
+                    /* A DAMAGED TEXT LAYER (scrambled letters in many rows): its words cannot be trusted to name a merchant, so the page images are read instead, as for a scan. A few damaged rows are
+                     * kept on the screen for the owner to check, not filed on their own (WFStatementRouter.textDamage, the same check the daily self-audit uses). */
+                    var _dmg = null;
+                    try { _dmg = window.WFStatementRouter && window.WFStatementRouter.textDamage ? window.WFStatementRouter.textDamage(_rows) : null; } catch (_) { _dmg = null; }
+                    if (_dmg && _dmg.whole) {
+                        if (typeof window.notify === 'function') window.notify('The text inside this PDF is scrambled, so I am reading the page images instead.', 'info');
+                        _rows = [];
+                    }
                     var _rc = _pres.reconciliation || { ok: null };
                     if (_rows && _rows.length) {
                         var _toISO = function (d) { var m = String(d).match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? (m[3] + '-' + m[2] + '-' + m[1]) : (d || ''); };
@@ -1490,6 +1498,10 @@
                             statement_period: (_res.text.match(/Statement Period[:\s]*([\d/]+\s*-\s*[\d/]+)/i) || [])[1] || '',
                             due: _wfDueOf(_res.text)
                         };
+                        if (_dmg && _dmg.bad && _dmg.bad.length) {
+                            _dmg.bad.forEach(function (i) { var t = _parsed.transactions[i]; if (t) { t._needsReview = true; t._reviewWhy = 'the letters of this line look scrambled in the PDF; check the wording and the amount against your statement'; } });
+                            if (typeof window.notify === 'function') window.notify(_dmg.bad.length + ' line' + (_dmg.bad.length === 1 ? '' : 's') + ' of this PDF look scrambled. They are marked for you to check.', 'warn');
+                        }
                         P.stage('bank', 'Identifying the bank…', _rows.length + ' transactions found', 'bank');
                         _wfBank = await _wfResolveBank({ file: file, sha: _wfSha, text: _res.text, meta: _res.meta });
                         ccotBank = _wfBank && _wfBank.ok ? _wfBank.name : '';
