@@ -484,7 +484,18 @@ async function callProviderOnce(provider, opts) {
 // answers (404/410, or 400 "not supported"), never on credit, rate or auth errors.
 
 const _healed = new Map();        // provider id → { from, to, at }
-const _healTried = new Set();     // provider ids already given one chance in this process
+const _healTried = new Map();     // provider id → how many replacements it has been given in this process
+const _healBad = new Map();       // provider id → Set of model ids that were chosen (or configured) and could not answer
+const _healLists = new Map();     // provider id → the provider's own list, asked for once per process
+
+/**
+ * How many replacements one provider may be given in one process. It was one. Run 43180498898 (2026-11-12): NVIDIA's
+ * configured model was gone, the one replacement chosen from its list (`deepseek-ai/deepseek-coder-6.7b-instruct`) answered
+ * 404 "Function ... Not found for account" on all three calls that followed, and NVIDIA stayed out for the whole run with a
+ * list full of models nobody tried. A listed model is not always one the key may call, so the next one is tried, and the
+ * chase still ends: three, never the whole list.
+ */
+export const MAX_HEALS = 3;
 
 /** The model a provider is asked for now: the healed one if its configured model was retired. */
 function modelOf(provider) {
@@ -498,7 +509,7 @@ export function healedModels() {
 }
 
 /** Tests only. */
-export function _resetHealedModels() { _healed.clear(); _healTried.clear(); }
+export function _resetHealedModels() { _healed.clear(); _healTried.clear(); _healBad.clear(); _healLists.clear(); }
 
 /** True for an answer that means "this model name is gone", and for nothing else. */
 export function isRetiredModelError(status, text) {
@@ -510,13 +521,36 @@ export function isRetiredModelError(status, text) {
 }
 
 /**
+ * True when a model this router CHOSE from the provider's list cannot be called: the endpoint is the provider's fixed one, so a
+ * 404 after the switch is about the model (NVIDIA words it "Function '<id>': Not found for account", with no "model" in it).
+ * Only asked about a replacement, never about the configured model, and never for a key, credit or rate answer.
+ */
+export function replacementUnusable(status) {
+    return status === 404 || status === 410;
+}
+
+/** The size a model id states, in billions of parameters (`…-550b-…` → 550, `…-6.7b-…` → 6.7), or 0 when it states none. */
+export function statedSize(id) {
+    const m = /(?:^|[-_/:.])(\d+(?:\.\d+)?)b(?=$|[-_/:.])/i.exec(String(id || ''));
+    return m ? Number(m[1]) : 0;
+}
+
+/**
  * The best chat model in a provider's own list, or null. A model is chosen only if it scores above zero: a name
  * that matches nothing we know is better left unused than guessed.
+ *
+ * ONE EXCEPTION, OpenRouter. Run 43180498898 (2026-11-12): its configured free model was withdrawn, its list held 13 free
+ * models, and none had a name this function knew (ernie, inkling, lfm, flint, nemotron, dots, north, gemma-4), so the answer
+ * was "no usable replacement" and OpenRouter sat out every run. The reason for refusing an unknown name is that it might
+ * cost money or be the wrong kind of model. On OpenRouter only ids ending ":free" are ever eligible, so a guess cannot
+ * spend; a model that turns out unusable is set aside and the next is tried (MAX_HEALS). So there, when no known name is
+ * listed, the largest free chat model is taken: by the size its id states, a stable name before a preview.
  */
-export function pickReplacement(ids, { providerId = '', current = '' } = {}) {
+export function pickReplacement(ids, { providerId = '', current = '', exclude = [] } = {}) {
     const notChat = /(embed|whisper|tts|speech|audio|moderat|guard|rerank|image|dall|diffusion|sdxl|flux|ocr|transcrib|realtime|safety|classif|vision-only)/i;
     const tiny = /(^|[-_/:.])(1b|2b|3b|4b|7b|8b|9b|mini|nano|tiny|lite|small|micro)($|[-_/:.])/i;
-    let list = (Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && id && id !== current && !notChat.test(id));
+    const bad = new Set(exclude || []);
+    let list = (Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && id && id !== current && !bad.has(id) && !notChat.test(id));
     if (providerId === 'openrouter') list = list.filter((id) => /:free$/.test(id));      // free tier only, always
     const score = (id) => {
         let n = 0;
@@ -528,12 +562,21 @@ export function pickReplacement(ids, { providerId = '', current = '' } = {}) {
         if (/mistral-(large|medium)|codestral|devstral/i.test(id)) n += 15;
         if (/(70|72|120|235|405|480)b|maverick|large/i.test(id)) n += 10;
         if (/instruct|chat|versatile|turbo/i.test(id)) n += 3;
-        if (tiny.test(id)) n -= 12;
+        const size = statedSize(id);
+        if (size > 0 && size < 10) n -= 30;      // a model that states a size under 10b loses to any large one, whatever else its name says
+        else if (tiny.test(id)) n -= 12;
         if (/preview|experimental|beta/i.test(id)) n -= 2;
         return n;
     };
     const ranked = list.map((id) => ({ id, n: score(id) })).sort((a, b) => (b.n - a.n) || a.id.localeCompare(b.id));
-    return ranked.length && ranked[0].n > 0 ? ranked[0].id : null;
+    if (ranked.length && ranked[0].n > 0) return ranked[0].id;
+    if (providerId !== 'openrouter') return null;
+    // No known name among OpenRouter's free models: the largest one that is not a small or a multi-modal-only model.
+    const small = (id) => tiny.test(id) || (statedSize(id) > 0 && statedSize(id) < 10);
+    const rest = list.filter((id) => !small(id) && !/(^|[-_/:.])(vl|omni|vision)($|[-_/:.])/i.test(id));
+    const stable = (id) => (/preview|experimental|beta/i.test(id) ? 0 : 1);
+    rest.sort((a, b) => (statedSize(b) - statedSize(a)) || (stable(b) - stable(a)) || a.localeCompare(b));
+    return rest.length ? rest[0] : null;
 }
 
 /** `GET <base>/models` for an OpenAI-compatible provider; `listUrl: null` on the provider opts out. */
@@ -556,14 +599,26 @@ async function listModelIds(provider, key, timeoutMs = 10_000) {
     } catch { return []; } finally { clearTimeout(timer); }
 }
 
-/** Give a provider whose model is gone ONE replacement, per process. Returns the new model or null. */
+/**
+ * Give a provider whose model is gone a replacement from its own list: at most MAX_HEALS per process, never one that has
+ * already failed here, and the list is asked for once. Returns the new model or null.
+ */
 async function healModel(provider, opts) {
-    if (_healTried.has(provider.id)) return null;
-    _healTried.add(provider.id);
+    const tried = _healTried.get(provider.id) || 0;
+    if (tried >= MAX_HEALS) return null;
+    _healTried.set(provider.id, tried + 1);
     const key = keyFor(provider, opts.env || process.env);
     if (!key) return null;
     const from = modelOf(provider);
-    const to = pickReplacement(await listModelIds(provider, key), { providerId: provider.id, current: from });
+    const bad = _healBad.get(provider.id) || new Set();
+    bad.add(from);
+    _healBad.set(provider.id, bad);
+    if (!_healLists.has(provider.id)) {
+        const ids = await listModelIds(provider, key);
+        if (ids.length) _healLists.set(provider.id, ids);          // an empty answer is not remembered: the list may load next time
+        else return (console.warn(`[llm-router] ${provider.id}: model ${from} is gone and its own list offered no usable replacement`), null);
+    }
+    const to = pickReplacement(_healLists.get(provider.id), { providerId: provider.id, current: from, exclude: [...bad] });
     if (!to) {
         console.warn(`[llm-router] ${provider.id}: model ${from} is gone and its own list offered no usable replacement`);
         return null;
@@ -617,23 +672,27 @@ export function benchedProviders() {
 /** Tests only. */
 export function _resetBench() { _benched.clear(); }
 
-/** One provider; if its model has been retired, one replacement is found and the call is made once more. */
+/**
+ * One provider. If its model has been retired, a replacement from its own list is tried, and if that replacement cannot be
+ * called either, the next one, MAX_HEALS at most. Any other failure (key, credit, rate, network) is thrown as it is.
+ */
 async function callProvider(provider, opts) {
-    try {
-        return await callProviderOnce(provider, opts);
-    } catch (e) {
-        const retired = provider.kind === 'openai' && isRetiredModelError(e && e.status, e && e.message);
-        if (!retired) {
-            benchProvider(provider.id, permanentReason(e && e.status, e && e.message));
-            throw e;
+    let last = null;
+    for (let i = 0; i <= MAX_HEALS; i++) {
+        try {
+            return await callProviderOnce(provider, opts);
+        } catch (e) {
+            last = e;
+            const status = e && e.status;
+            const gone = provider.kind === 'openai'
+                && (isRetiredModelError(status, e && e.message) || (_healed.has(provider.id) && replacementUnusable(status)));
+            if (!gone) break;
+            const to = await healModel(provider, opts);
+            if (!to) break;
         }
-        const to = await healModel(provider, opts);
-        if (!to) {
-            benchProvider(provider.id, permanentReason(e && e.status, e && e.message));
-            throw e;
-        }
-        return callProviderOnce(provider, opts);
     }
+    benchProvider(provider.id, permanentReason(last && last.status, last && last.message));
+    throw last;
 }
 
 /**

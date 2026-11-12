@@ -7,7 +7,7 @@
  * real ones from that log.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { chat, isRetiredModelError, pickReplacement, healedModels, _resetHealedModels, describeAvailability } from '../autonomy/llm-router.mjs';
+import { chat, isRetiredModelError, pickReplacement, healedModels, _resetHealedModels, describeAvailability, replacementUnusable, statedSize, MAX_HEALS } from '../autonomy/llm-router.mjs';
 
 describe('isRetiredModelError — only "this model is gone" counts', () => {
     const gone = [
@@ -97,11 +97,33 @@ describe('chat() replaces a retired model once, from the provider\'s own list', 
         expect(calls.filter((c) => c.method === 'GET').length).toBe(0);
     });
 
-    it('the replacement is given ONE chance: if it is gone too, the run does not chase models', async () => {
+    it('a replacement that is gone too is followed by the next one, and the chase ends when the list is used up', async () => {
         stub((url, init) => (init && init.method === 'POST' ? GONE : reply(200, { data: [{ id: 'openai/gpt-oss-120b' }, { id: 'qwen3-coder-480b' }] })));
         await expect(ask()).rejects.toThrow(/does not exist/);
-        expect(calls.filter((c) => c.method === 'GET').length).toBe(1);
-        expect(calls.filter((c) => c.method === 'POST').length).toBe(2);
+        expect(calls.filter((c) => c.method === 'GET').length).toBe(1);                 // the list is asked for once
+        const asked = calls.filter((c) => c.method === 'POST').map(postBody).map((b) => b.model);
+        expect(asked).toEqual(['llama-3.3-70b-versatile', 'qwen3-coder-480b', 'openai/gpt-oss-120b']);   // each model once, none twice
+    });
+
+    it(`never more than ${MAX_HEALS} replacements in one process, however long the list is`, async () => {
+        const many = Array.from({ length: 12 }, (_, i) => ({ id: `qwen3-coder-${100 + i}b-instruct` }));
+        stub((url, init) => (init && init.method === 'POST' ? GONE : reply(200, { data: many })));
+        await expect(ask()).rejects.toThrow(/does not exist/);
+        expect(calls.filter((c) => c.method === 'POST').length).toBe(1 + MAX_HEALS);
+        calls.length = 0;
+        await expect(ask()).rejects.toThrow();                                          // and a later call does not start the chase again
+        expect(calls.filter((c) => c.method === 'GET').length).toBe(0);
+        expect(calls.filter((c) => c.method === 'POST').length).toBe(1);
+    });
+
+    it('a replacement that answers with a rate limit or a key error is NOT chased: only "this model cannot be called" is', async () => {
+        let posts = 0;
+        stub((url, init) => {
+            if (init && init.method === 'POST') return ++posts === 1 ? GONE : reply(429, { error: { message: 'rate limit reached' } });
+            return reply(200, { data: [{ id: 'openai/gpt-oss-120b' }, { id: 'qwen3-coder-480b' }] });
+        });
+        await expect(ask()).rejects.toThrow(/rate limit/);
+        expect(posts).toBe(2);
     });
 
     it('an unreachable or useless list leaves the original failure intact', async () => {
@@ -122,5 +144,101 @@ describe('chat() replaces a retired model once, from the provider\'s own list', 
         } finally {
             if (before === undefined) delete process.env.GROQ_MODEL; else process.env.GROQ_MODEL = before;
         }
+    });
+});
+
+// Run 43180498898 (2026-11-12, the idea engine). Two providers sat out the whole run, and neither for a reason on their side:
+//   nvidia      "model qwen/qwen2.5-coder-32b-instruct is gone → using deepseek-ai/deepseek-coder-6.7b-instruct", then three times
+//               HTTP 404 "Function '…': Not found for account '…'": the one replacement could not be called and no other was tried
+//   openrouter  "model deepseek/deepseek-chat-v3.1:free is gone and its own list offered no usable replacement", with 13 free
+//               models in that list, none with a name the chooser knew
+// The board worked with 4 of 12 providers that day (#609; its floor is 5).
+describe('a replacement that cannot be called is followed by the next (NVIDIA, 2026-11-12)', () => {
+    let calls;
+    const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)), json: async () => body });
+    const ok = (t) => reply(200, { choices: [{ message: { content: t } }] });
+    const env = { NVIDIA_API_KEY: 'test-key-not-real' };
+    const EOL = reply(410, { title: 'Gone', status: 410, detail: "The model 'qwen/qwen2.5-coder-32b-instruct' has reached its end of life and is no longer available." });
+    const NO_FUNCTION = reply(404, { status: 404, title: 'Not Found', detail: "Function 'invented-function-id': Not found for account 'invented-account'" });
+    const LIST = { data: [{ id: 'deepseek-ai/deepseek-coder-6.7b-instruct' }, { id: 'nvidia/nv-embed-v1' }, { id: 'qwen/qwen3-coder-480b-a35b-instruct' }, { id: 'meta/llama-3.3-70b-instruct' }] };
+    beforeEach(() => { _resetHealedModels(); calls = []; vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+    afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+    const stub = (handler) => vi.stubGlobal('fetch', async (url, init) => { calls.push({ url: String(url), method: (init && init.method) || 'GET', init }); return handler(String(url), init); });
+    const model = (init) => JSON.parse(init.body).model;
+
+    it('the words NVIDIA uses carry no "model", so only a replacement is judged by them, never a configured model', () => {
+        expect(isRetiredModelError(404, "nvidia: HTTP 404 {\"status\":404,\"title\":\"Not Found\",\"detail\":\"Function 'x': Not found for account 'y'\"}")).toBe(false);
+        expect(replacementUnusable(404)).toBe(true);
+        expect(replacementUnusable(410)).toBe(true);
+        for (const s of [400, 401, 402, 403, 429, 500, 503, undefined]) expect(replacementUnusable(s), String(s)).toBe(false);
+    });
+
+    it('configured model gone → first replacement cannot be called → the next one answers, and is the one remembered', async () => {
+        stub((url, init) => {
+            if (!(init && init.method === 'POST')) return reply(200, LIST);
+            const m = model(init);
+            if (m === 'qwen/qwen2.5-coder-32b-instruct') return EOL;
+            if (m === 'qwen/qwen3-coder-480b-a35b-instruct') return NO_FUNCTION;         // listed, but not for this account
+            return ok('answer');
+        });
+        const r = await chat({ prompt: 'hi', only: ['nvidia'], env, maxTokens: 8 });
+        expect(r.text).toBe('answer');
+        expect(r.model).toBe('meta/llama-3.3-70b-instruct');
+        expect(healedModels()).toEqual([{ provider: 'nvidia', from: 'qwen/qwen3-coder-480b-a35b-instruct', to: 'meta/llama-3.3-70b-instruct' }]);
+        expect(calls.filter((c) => c.method === 'GET').length).toBe(1);
+        calls.length = 0;
+        await chat({ prompt: 'again', only: ['nvidia'], env, maxTokens: 8 });           // the next call goes straight to the one that answered
+        expect(calls.length).toBe(1);
+        expect(model(calls[0].init)).toBe('meta/llama-3.3-70b-instruct');
+    });
+
+    it('a 6.7b model is not chosen ahead of a large one because its name says "coder"', () => {
+        expect(statedSize('deepseek-ai/deepseek-coder-6.7b-instruct')).toBe(6.7);
+        expect(statedSize('nvidia/nemotron-3-ultra-550b-a55b:free')).toBe(550);
+        expect(statedSize('openai/gpt-oss')).toBe(0);
+        expect(pickReplacement(LIST.data.map((x) => x.id), { providerId: 'nvidia' })).toBe('qwen/qwen3-coder-480b-a35b-instruct');
+        expect(pickReplacement(['deepseek-ai/deepseek-coder-6.7b-instruct', 'meta/llama-3.3-70b-instruct'], { providerId: 'nvidia' })).toBe('meta/llama-3.3-70b-instruct');
+        expect(pickReplacement(['deepseek-ai/deepseek-coder-6.7b-instruct'], { providerId: 'nvidia' })).toBe('deepseek-ai/deepseek-coder-6.7b-instruct');   // alone, it is still better than nothing
+        expect(pickReplacement(['deepseek-ai/deepseek-coder-6.7b-instruct', 'qwen/qwen3-coder-32b-instruct'], { providerId: 'nvidia' })).toBe('qwen/qwen3-coder-32b-instruct');
+    });
+
+    it('a configured model that answers a plain 404 (a wrong address) is still not healed', async () => {
+        stub((url, init) => (init && init.method === 'POST' ? reply(404, 'page not found') : reply(200, LIST)));
+        await expect(chat({ prompt: 'hi', only: ['nvidia'], env, maxTokens: 8 })).rejects.toThrow(/404/);
+        expect(calls.filter((c) => c.method === 'GET').length).toBe(0);
+    });
+});
+
+describe('OpenRouter with a free list of names nobody knew (2026-11-12)', () => {
+    // The thirteen ids OpenRouter listed as free that day, and two paid ones.
+    const FREE = ['baidu/ernie-5.5-flash-preview:free', 'thinkingmachines/inkling-2-small:free', 'liquid/lfm-3-1.7b:free', 'recursive/flint-v1.0:free', 'nvidia/nemotron-3.5-super-vl:free',
+        'dots-studio/dots-3-note-preview:free', 'liquid/lfm-2.5-2.6b:free', 'nvidia/nemotron-3.5-lightning:free', 'cohere/north-mini-code:free', 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', 'google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free'];
+    const PAID = ['deepseek/deepseek-chat-v3.1', 'openai/gpt-oss-120b'];
+    const pick = (exclude = []) => pickReplacement([...PAID, ...FREE], { providerId: 'openrouter', current: 'deepseek/deepseek-chat-v3.1:free', exclude });
+
+    it('takes the largest free chat model instead of "no usable replacement"', () => {
+        expect(pick()).toBe('nvidia/nemotron-3-ultra-550b-a55b:free');
+    });
+    it('each one that fails is followed by the next largest, and never by a paid, small, preview-first or image-only model', () => {
+        const order = []; for (let i = 0; i < 20; i++) { const p = pick(order); if (!p) break; order.push(p); }
+        expect(order.slice(0, 3)).toEqual(['nvidia/nemotron-3-ultra-550b-a55b:free', 'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free']);
+        for (const id of order) {
+            expect(id).toMatch(/:free$/);
+            expect(id).not.toMatch(/small|mini|nano|1\.7b|2\.6b|-vl|omni/);
+        }
+        const firstPreview = order.findIndex((id) => /preview/.test(id));                       // a preview only after every stable name
+        expect(firstPreview).toBeGreaterThan(2);
+        expect(order.slice(firstPreview).every((id) => /preview/.test(id))).toBe(true);
+    });
+    it('a name the chooser knows still wins when one is listed', () => {
+        expect(pickReplacement([...FREE, 'openai/gpt-oss-120b:free'], { providerId: 'openrouter' })).toBe('openai/gpt-oss-120b:free');
+    });
+    it('every other provider keeps the old rule: an unknown name is left unused, because there a guess could cost money', () => {
+        expect(pickReplacement(FREE.map((id) => id.replace(/:free$/, '')), { providerId: 'together' })).toBe(null);
+        expect(pickReplacement(['zorblax-1', 'frobnicate-xl'], { providerId: 'groq' })).toBe(null);
+    });
+    it('a free list with only small or image models is still "nothing usable"', () => {
+        expect(pickReplacement(['liquid/lfm-3-1.7b:free', 'cohere/north-mini-code:free', 'nvidia/nemotron-3.5-super-vl:free'], { providerId: 'openrouter' })).toBe(null);
     });
 });
