@@ -69,3 +69,43 @@ Two repository variables tune the wait without a code change: `WF_RELEASE_QUIET_
 - The release wait is a sleeping job. A cancelled run is shown as "cancelled" in the Actions tab; that is the newer merge taking over, and the status readers already ignore cancelled runs.
 - Agreement between AIs is measured by the likeness of titles, which can miss two ideas that are the same in different words.
 - The idea engine's first real approval is still to be observed; this change makes the run happen and makes a survivor likely, it does not make an idea good.
+
+## 7. Second round: what the live system showed after the merge (2026-11-12, 08:07Z to 12:50Z)
+
+Sections 1 to 6 were merged at 08:07Z. This section is what the system's own records said in the hours after, and what was changed because of it. Nothing here is a forecast; every line is a run, an issue or a log that can be opened.
+
+### 7.1 What worked, with the run
+
+| Claim | Evidence |
+|---|---|
+| The pacemaker starts jobs GitHub skipped | Run 43180452315: `autonomous-discover.yml` (248 min overdue), `feature-proposals.yml` (338 min), `security-updates.yml` (158 min) were started and all three finished green |
+| The idea engine can file an idea | Run 43180498898 filed #607, the first idea it ever approved: 6 ideas from 3 AIs in 2 rounds, 2 passed the rules |
+| A release waits for the merges to settle | Run 43180330026: the `gather` job waited 45 minutes (08:07Z to 08:52Z), then the release job ran |
+| A release is not cut when the app did not change | Same run: 22 files changed, all pipeline code, so the gate said "NOT substantive. Refusing to cut a fake release" and the version stayed at v7.69.90 |
+| A program-filed report no longer goes to the layout lane | #559: attempts after the merge are in the `swarm` lane, each with a `**Lane:**` line |
+| Discovery works when woken | The woken discovery scan filed #608, a real unguarded `JSON.parse` in the pacemaker itself |
+
+### 7.2 What did not work, measured
+
+1. **The pacemaker never ran on its own clock.** From 08:07Z to 12:45Z its cron (`7,27,47 * * * *`) was due 14 times and GitHub started it 0 times. In the same hours GitHub started 3 other scheduled jobs, and the day's full count is 8 scheduled starts for about 21 due slots, arriving 22 minutes to 8 hours 22 minutes late (the 04:00Z discovery slot ran at 12:22Z). GitHub is not dropping the slots, it is delivering them hours late, and the pacemaker's clock is the same kind of slot.
+2. **The deploy check never woke it.** `workflow_run` listed `Health watchdog + auto-rollback (free)`. That workflow finished green three times after the merge (08:07Z, 12:46Z, 12:48Z) and the pacemaker did not start. A finished release did start it (08:52Z). The two listed names differ in one way: the `+`. GitHub reads the list as filter patterns, in which `+` is not a plain character.
+3. **The first idea named files that do not exist.** #607's "Likely scope" is `src/screens/settings/software-update.js` and `src/i18n/en.json`. This app has no `src/` folder. The real files with those words in their name are `pwa-updater.js`, `wealthflow-live-update.js` and `wealthflow-update-policy.js`.
+4. **The review board failed a change for screens that do not exist.** On six of the nine review rounds of the first pull request the user-impact seat wrote "the user will see a new update notice" (its evidence: a row of an ideas table in a document) and "a new screen, Pacemaker" (its evidence: the `name:` line of a workflow). No file of the app was in that change. The seat is told to name what the person will see and is forbidden to say "nothing", so with nothing to see a weaker model invented a screen.
+5. **#559 is still not fixed.** In the right lane the agent tried `wealthflow-statement-parser.js`, `statement-sync.js` and `wealthflow-ai-v4.js`; its own third attempt says the check lives in `statement-direction.mjs`. Its proving test never went from failing to passing, because the report holds counts only and the agent has no statement to reproduce the mis-reading with. This is the second item of section 5, now with a measurement behind it.
+6. **Only 4 of 12 AI providers answer** (#609, filed by the board watch). The others fail on the account side: credits used up, a model withdrawn from the free tier, a trial key's monthly limit, a wrong key. No code change can fix a key.
+
+### 7.3 What was changed
+
+| Fault | Change | Where | Proof |
+|---|---|---|---|
+| 1, 2 | Every scheduled job that finishes, however it was started, wakes the pacemaker; it then starts the ones that are overdue, and their finishing wakes it again. One late job catches the whole system up. A name holding a pattern character is listed as written and escaped, so one of the two matches whichever way the list is read. A watched job that was skipped or cancelled is not a beat and costs no runner | `.github/workflows/pacemaker.yml`, `autonomy/pacemaker.mjs` (`beatTriggerNames`, `escapeFilter`, `workflowRunNames`) | `test/pacemaker_test.js`: the list is compared with the workflow files, so a new scheduled workflow cannot be forgotten |
+| 3 | A program checks an idea's scope against the files of the repository: a real file is kept, an invented one is named as such, and the real files with the same words are offered. Proposers are told the real naming. No model is asked | `autonomy/ideas.mjs` (`groundScope`, `closestFiles`), `autonomy/propose.mjs` | `test/ideas_test.js`: replay of #607 |
+| 4 | Before it answers, the user-impact seat is given computed facts: which changed files are served to the person's device (from `.vercelignore`) and which never are. When none is served it is told that nothing on the screen changes and asked to judge the indirect effect instead. An objection that says the person will see something, about a line in a file that is never served, is set aside with the reason printed. An objection about an indirect effect, about a served file, or from another seat is untouched, and nothing is concluded when the same change edits the deploy list | `autonomy/ships.mjs`, `consensus-review.mjs` | `test/ships_test.js`: replay of both false fails, and the cases that must never be thrown out |
+| #608 | The answer from GitHub is read through `readJson`: an empty body is null, anything that is not JSON is an error naming what was asked and what came back, and the beat leaves that one job alone | `autonomy/pacemaker.mjs` | `test/pacemaker_test.js` |
+
+### 7.4 What is still open, said plainly
+
+- **A quiet day is still a risk for the background jobs.** If GitHub starts no scheduled job for hours and nothing is merged, deployed or reported, nothing wakes the pacemaker. A person's feedback is not affected: the fix agent starts on the issue itself, not on a clock. The complete cover is a tick from outside GitHub (section 5, first item); it needs one token with the right to start workflows.
+- **A slot GitHub delivers hours late runs a second time** after the pacemaker already did its work (the idea engine at 08:08Z and again at 09:58Z, discovery at 08:08Z and again at 12:22Z). The idea engine refuses the second run by its own one-a-day rule; discovery scans twice. A late run that sees its slot already served should stop at once; that is the next efficiency change.
+- **#559 and reports like it** need the masked shape of the statement in the report (section 5, second item), and the kind of report should name the code that raised it.
+- **The AI board** runs on 4 providers until the keys and credits of the other 8 are renewed (#609).

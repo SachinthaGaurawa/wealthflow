@@ -384,3 +384,74 @@ describe('proposeOnce with several AIs proposing (models and GitHub faked)', () 
         expect(out.reason).toMatch(/model unavailable: no AI answered/); expect(r.filed).toEqual([]);
     });
 });
+
+// MEASURED 2026-11-12: idea #607, the first this engine approved, named `src/screens/settings/software-update.js` and
+// `src/i18n/en.json` as its scope. Neither exists. A program now checks the scope against the files of the repository.
+describe('the scope of an idea is checked against the files that exist', () => {
+    const FILES = ['index.html', 'wealthflow-settings.js', 'wealthflow-update.js', 'wealthflow-auto-update.js', 'wealthflow-expenses.js', 'wealthflow-auth.js', 'wf-ui.css',
+        'test/update_test.js', 'autonomy/ideas.mjs', 'docs/update-system.md', 'api/ai.js', 'package.json'];
+
+    it('replays #607: both invented paths are named as missing and the real update files are offered', () => {
+        const g = I.groundScope('src/screens/settings/software-update.js, src/i18n/en.json', FILES);
+        expect(g.changed).toBe(true);
+        expect(g.real).toEqual([]);
+        expect(g.missing).toEqual(['src/screens/settings/software-update.js', 'src/i18n/en.json']);
+        expect(g.closest).toEqual(['wealthflow-update.js', 'wealthflow-settings.js', 'wealthflow-auto-update.js']);
+        expect(g.text).toMatch(/NOT in this repository/);
+        expect(g.text).toContain('`src/screens/settings/software-update.js`');
+        expect(g.text).toContain('`wealthflow-update.js`');
+        expect(g.text).not.toMatch(/Files that exist/);
+    });
+
+    it('a scope whose every file exists is left exactly as it was written', () => {
+        const g = I.groundScope('wealthflow-expenses.js, index.html', FILES);
+        expect(g).toMatchObject({ changed: false, text: 'wealthflow-expenses.js, index.html', real: ['wealthflow-expenses.js', 'index.html'], missing: [] });
+    });
+
+    it('keeps the real files and names only the invented one', () => {
+        const g = I.groundScope('Change wealthflow-settings.js and add components/BuildBadge.jsx', FILES);
+        expect(g.real).toEqual(['wealthflow-settings.js']);
+        expect(g.missing).toEqual(['components/BuildBadge.jsx']);
+        expect(g.text).toMatch(/^Files that exist: `wealthflow-settings\.js`\./);
+        expect(g.text).toMatch(/No real file has those words in its name/);
+    });
+
+    it('a real file written with a wrong folder is completed to its real path, not called missing', () => {
+        const g = I.groundScope('src/wealthflow-expenses.js', FILES);
+        expect(g).toMatchObject({ changed: false, real: ['wealthflow-expenses.js'], missing: [] });
+    });
+
+    it('never offers a file only a human may change, a test, a document or the pipeline itself', () => {
+        expect(I.closestFiles('src/auth/update-ideas.js', FILES)).toEqual(['wealthflow-update.js', 'wealthflow-auto-update.js']);
+        expect(I.closestFiles('lib/auth.js', FILES)).toEqual([]);                    // wealthflow-auth.js is the only match and it is forbidden
+        expect(I.closestFiles('src/index.js', FILES)).toEqual([]);                   // "index" says nothing about where the work is
+    });
+
+    it('text with no file name, an empty scope and an unknown file list are returned untouched', () => {
+        expect(I.groundScope('the settings screen and the update card', FILES)).toMatchObject({ changed: false, text: 'the settings screen and the update card' });
+        expect(I.groundScope('', FILES)).toMatchObject({ changed: false, text: '' });
+        expect(I.groundScope('src/a.js', [])).toMatchObject({ changed: false, text: 'src/a.js' });
+        expect(I.groundScope(null, null)).toMatchObject({ changed: false, text: '' });
+    });
+
+    it('the safety rule still reads the scope as the model wrote it (a forbidden file is refused before grounding)', () => {
+        expect(I.guardIdea({ ...idea(), scope: 'wealthflow-auth.js' }).ok).toBe(false);
+    });
+
+    it('end to end: the filed issue carries the checked scope, and the real repository has no src/ folder', async () => {
+        const env = { GROQ_API_KEY: 'x', GITHUB_TOKEN: 't', GITHUB_REPOSITORY: 'o/r' };
+        const budget = { LANES: { BACKGROUND: 'b' }, RESERVE_FOR_CRITICAL: 2, loadLedger: () => ({}), availableFor: () => ['groq', 'mistral', 'deepseek'], record: (l) => l, saveLedger: () => {} };
+        const filed = [];
+        const queue = { allIssues: async () => [], createIssue: async (x) => { filed.push(x); return { number: 201 }; }, ensureLabel: async () => true, comment: async () => {}, closeIssue: async () => {}, mergedPrTitles: async () => [] };
+        const reply = JSON.stringify({ worthProposing: true, ...idea({ scope: 'src/screens/settings/software-update.js, src/i18n/en.json' }) });
+        const out = await proposeOnce({ env, repoDir: ROOT, queue, budget, chatImpl: async () => ({ text: reply }), boardImpl: async () => board(['BUILD', 'BUILD', 'BUILD_SMALLER']) });
+        expect(out.approved).toBe(true);
+        expect(filed[0].body).toMatch(/### Likely scope\n.*NOT in this repository/);
+        expect(filed[0].body).toContain('`src/i18n/en.json`');
+        expect(fs.existsSync(path.join(ROOT, 'src'))).toBe(false);
+    });
+
+    it('the proposers are told the real naming, so fewer invented paths arrive in the first place', () => {
+        expect(read('autonomy/propose.mjs')).toMatch(/there is no src\/ folder/);
+    });
+});
