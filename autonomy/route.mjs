@@ -18,6 +18,7 @@
  * WHAT IS HERE (pure functions, no imports, no network)
  *   isSystemFiled  the report came from a program, not from a person
  *   systemRole     the role a program-filed report belongs to, from its labels and markers only
+ *   fromStranger   a comment by somebody who is neither the agent nor a maintainer (it is not evidence)
  *   attemptTrail   what each earlier try did: its lane, where it stopped and why (read from the agent's own comments)
  *   laneRuledOut   an earlier try already showed this lane has nothing to work on
  *   attemptBrief   the earlier tries, written for the author of the next one
@@ -63,6 +64,21 @@ export function layoutAllowed(issue) {
 }
 
 const ATTEMPT = /<!--\s*wf-agent-attempt\s*-->/;
+const TRUSTED = /^(OWNER|MEMBER|COLLABORATOR)$/;
+const AGENT_LOGIN = 'github-actions[bot]';
+
+/**
+ * Is this comment from somebody who has no say here? The repository is public, so anyone may comment on an issue and
+ * anyone may type the agent's marker. A comment that says who wrote it, and that writer is neither the agent's own
+ * account nor a maintainer, is not the agent's trail: it must not count as a try, rule a lane out, or put its words
+ * in front of the author model. (A comment with no author at all only exists in tests; GitHub always sends one.)
+ */
+export function fromStranger(c) {
+    const login = String((c && c.user && c.user.login) || '');
+    if (!login) return false;
+    if (login === AGENT_LOGIN) return false;
+    return !TRUSTED.test(String((c && c.author_association) || ''));
+}
 const RESET = /<!--\s*wf-agent-reset\s*-->/;
 const field = (body, name) => ((body.match(new RegExp('\\*\\*' + name + ':\\*\\*\\s*`?([^`\\n]+?)`?\\s*(?:\\n|$)')) || [])[1] || '').trim();
 
@@ -75,8 +91,8 @@ export function attemptTrail(comments) {
     let trail = [];
     for (const c of comments || []) {
         const body = String((c && c.body) || '');
-        if (RESET.test(body) && /^(OWNER|MEMBER|COLLABORATOR)$/.test(String((c && c.author_association) || ''))) { trail = []; continue; }
-        if (!ATTEMPT.test(body)) continue;
+        if (RESET.test(body) && TRUSTED.test(String((c && c.author_association) || ''))) { trail = []; continue; }
+        if (!ATTEMPT.test(body) || fromStranger(c)) continue;
         const stage = field(body, 'Stopped at');
         const drafted = /Fix drafted/.test(body);
         const lane = (field(body, 'Lane') || (stage === 'measure' ? 'layout' : '')).toLowerCase();
