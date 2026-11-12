@@ -89,6 +89,16 @@ assert.equal(again.betterLen, 1, 'a better reading replaces the ask, never doubl
 assert.equal(again.betterMin, 10100);
 assert.equal(again.reopened, null, 'an ask the owner marked paid is never reopened by a re-read');
 
+/* Undo of the import takes the ask off again: it is on the batch, not a row. */
+const undone = await page.evaluate(() => {
+    const b = (window.WFBatch.list() || []).slice(-1)[0];
+    const had = (window.DB.get('cardDues') || []).length;
+    const out = window.WFBatch.undo(b.id);
+    return { had, after: (window.DB.get('cardDues') || []).length, removed: out && out.removed && out.removed.cardDues };
+});
+console.log('4. Undo ->', JSON.stringify(undone));
+assert.deepEqual(undone, { had: 1, after: 0, removed: 1 }, 'Undo takes the minimum-payment ask off again');
+
 console.log('page errors:', app.pageErrors.filter(e => !/Chart|cdn|fetch/i.test(e)).slice(0, 3));
 await app.close();
 _setAdminModule(null);
