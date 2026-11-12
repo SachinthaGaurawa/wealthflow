@@ -28264,8 +28264,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                                     QT[q.reason] || 'the bank’s figures and the suggested category disagree',
                                 );
                             }
+                            /* The statement's own type and plan table, read the way an uploaded one is (wealthflow-ai-v4.js _wfIdentify), so the review below files a card's instalment lines as plans like the e-mail worker. */
+                            try { if (_parsed && typeof window._wfIdentifyParsed === 'function') window._wfIdentifyParsed(_parsed, typeof res.text === 'string' ? res.text : '', null, null); } catch (_) {}
                             _ready.push({
                                 key: d.id, bank, rows, doubts,
+                                planTable: (_parsed && Array.isArray(_parsed.planTable)) ? _parsed.planTable : [],
+                                statementType: (_parsed && _parsed.statementType) || '',
                                 last4: (d.manifest && d.manifest.card_last4) || '',
                                 guardLast4: _guardLast4,
                             });
@@ -28464,7 +28468,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             for (const r of (Array.isArray(ready) ? ready : [])) {
                 const bank = r.bank || 'Statement';
                 const groupKey = bank.toLowerCase() + '|' + String(r.last4 || '');
-                if (!groups.has(groupKey)) groups.set(groupKey, { bank, keys: [], rows: [], last4: r.last4 || '', omitted: 0, guards: [] });
+                if (!groups.has(groupKey)) groups.set(groupKey, { bank, keys: [], rows: [], last4: r.last4 || '', omitted: 0, guards: [], planTable: [], statementType: '' });
                 const g = groups.get(groupKey);
                 const doubts = (r.doubts instanceof Map) ? r.doubts : new Map();
                 const statementRows = (Array.isArray(r.rows) ? r.rows : []).map((row, rowIndex) => {
@@ -28492,6 +28496,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 g.guards.push({ itemId: r.key || '', bank, last4: r.guardLast4 || r.last4 || '', dates: statementRows.map((row) => row.date), amounts: statementRows.map((row) => row.amount), rows: statementRows.length });
                 g.rows.push(...statementRows);
                 if (!g.last4 && r.last4) g.last4 = r.last4;
+                if (Array.isArray(r.planTable) && r.planTable.length) g.planTable.push(...r.planTable);
+                if (!g.statementType && r.statementType) g.statementType = r.statementType;
             }
             const first = groups.values().next().value;
             if (!first || !first.rows.length) return;
@@ -28516,6 +28522,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     fileName: first.bank + ' statement' + (first.keys.length === 1 ? '' : 's'),
                     card_last4: first.last4 || '',
                     _wfMailGuard: first.guards,
+                    planTable: first.planTable,
+                    statementType: first.statementType,
                 },
                 first.bank,
                 async (filed) => {
@@ -37904,8 +37912,15 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     const _CT = window.WFCardTabs;
                     if (_CT && _CT.dueFromStatement && _acctType === 'credit_card' && parsed && parsed.due) {
                         const _dueRec = _CT.dueFromStatement({ due: parsed.due, isCard: true, bank: bank || parsed.bank || '', last4: _last4 || (parsed.due && parsed.due.last4) || '', canonBank: _canonBank });
-                        const _dueList = _CT.withDue(DB.get('cardDues') || [], _dueRec);
-                        if (_dueList) { DB.set('cardDues', _dueList); try { if (typeof renderCCOT === 'function') renderCCOT(); } catch (_) {} }
+                        const _dueHave = DB.get('cardDues') || [];
+                        const _duePrev = _dueRec ? (_dueHave.filter(e => e && e.id === _dueRec.id)[0] || null) : null;
+                        const _dueList = _CT.withDue(_dueHave, _dueRec);
+                        if (_dueList) {
+                            DB.set('cardDues', _dueList);
+                            /* Undo takes the ask off again (or puts back the one it replaced): it is on the batch, not a row. */
+                            try { if (_batch && WFBatch.recordDue) WFBatch.recordDue(_batch, { id: _dueRec.id, prev: _duePrev ? JSON.parse(JSON.stringify(_duePrev)) : null, now: (DB.get('cardDues') || []).filter(e => e && e.id === _dueRec.id)[0] }); } catch (_) {}
+                            try { if (typeof renderCCOT === 'function') renderCCOT(); } catch (_) {}
+                        }
                     }
                 } catch (_) {}
                 if (exp || _expLinked) DB.set('expenses', expArr);

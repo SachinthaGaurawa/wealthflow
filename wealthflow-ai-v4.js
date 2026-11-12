@@ -1249,6 +1249,8 @@
             if (!parsed.card_last4) parsed.card_last4 = (id && id.accountLast4) || (bank && bank.tail) || '';
         } catch (_) { /* the row mix decides, as before */ }
     }
+    /* The same identity step for any door that has a statement's text: the page's e-mail review calls it too, so a card statement read there carries its plan table and its type like an uploaded one. */
+    window._wfIdentifyParsed = _wfIdentify;
     async function _wfResolveBank(ctx) {
         var D = window.WFBankDetect; if (!D || typeof D.detect !== 'function') return null;
         var name = (ctx.file && ctx.file.name) || '';

@@ -49,6 +49,7 @@
             at: new Date().toISOString(),
             counts: counts,
             ids: ids,
+            dues: [],    // [{ id, prev, sig }] — the card's minimum-payment ask (cardDues) this batch wrote (prev = the ask as it was, null when it was new)
             plans: [],   // [{ planId, month, prev, sig }] — card instalment plans this batch added a month's payment to (prev = the plan as it was)
             loans: [],   // [{ loanId, month, prev }]  — loan instalments this batch wrote
             cheques: [], // [{ id, prev, status }]    — tracked cheques this batch cleared / bounced (prev = the record as it was)
@@ -76,6 +77,12 @@
         batch.plans.push({ planId: info.planId, month: info.month, prev: info.prev || null, sig: info.now ? _planSig(info.now) : '' });
         if (batch.counts.ccinstall == null) batch.counts.ccinstall = 0;
         batch.counts.ccinstall++;
+    }
+    // Note the minimum-payment ask (cardDues) this batch filed, so Undo can take it off again (or put back the one it replaced). It is not counted as a transaction.
+    function recordDue(batch, info) {
+        if (!batch || !info || !info.id) return;
+        if (!batch.dues) batch.dues = [];
+        batch.dues.push({ id: info.id, prev: info.prev || null, sig: info.now ? _planSig(info.now) : '' });
     }
     // Note a loan-instalment op so undo can remove (or restore the replaced) entry.
     function recordLoan(batch, info) {
@@ -123,6 +130,24 @@
         if (!_total(batch)) return;
         var arr = list(); arr.push(batch); _save(arr);
         return batch;
+    }
+
+    /* The minimum-payment ask this import filed goes again, but only while it is still as the import left it: an ask the owner has since marked paid (or edited) stays. */
+    function _undoDues(batch, removed) {
+        var db = _db(); if (!db) return;
+        var ops = batch.dues || [];
+        if (!ops.length) return;
+        var list = db.get('cardDues') || [];
+        var changed = false;
+        ops.forEach(function (op) {
+            var i = list.findIndex(function (d) { return d && d.id === op.id; });
+            if (i < 0) return;
+            if (!op.sig || _planSig(list[i]) !== op.sig) return;
+            if (op.prev) list[i] = op.prev; else list.splice(i, 1);
+            removed.cardDues = (removed.cardDues || 0) + 1;
+            changed = true;
+        });
+        if (changed) db.set('cardDues', list);
     }
 
     function _undoLoans(batch, removed) {
@@ -333,6 +358,7 @@
         });
 
         _undoPlans(batch, removed);
+        _undoDues(batch, removed);
         _undoLoans(batch, removed);
         _undoCheques(batch, removed);
         _undoTwins(batch);
@@ -347,6 +373,6 @@
         return { label: batch.label, removed: removed };
     }
 
-    window.WFBatch = { begin: begin, tag: tag, record: record, recordSub: recordSub, recordPlan: recordPlan, recordLoan: recordLoan, recordCheque: recordCheque, recordTwin: recordTwin, commit: commit, list: list, undo: undo, _key: KEY, MAX: MAX };
+    window.WFBatch = { begin: begin, tag: tag, record: record, recordSub: recordSub, recordPlan: recordPlan, recordDue: recordDue, recordLoan: recordLoan, recordCheque: recordCheque, recordTwin: recordTwin, commit: commit, list: list, undo: undo, _key: KEY, MAX: MAX };
     try { console.log('[WFBatch] @info@ statement import-batch + full undo ready (v7.49.0 — subscription headline restore on undo)'); } catch (_) {}
 })();
