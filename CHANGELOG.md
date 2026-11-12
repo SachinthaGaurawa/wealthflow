@@ -1,5 +1,16 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.92 — 2026-11-12
+
+**What changed for you**
+
+- Scrambled PDF rows: a second reading mends their words; a wholly scrambled e-mail statement is held (#612)
+
+**Under the hood**
+
+- AI router: a withdrawn model is replaced from a list of unknown names, and a replacement that cannot be called is followed by the next (#611)
+- Update system, second round: a pacemaker every finished job wakes, a board that knows what ships, ideas that name real files (#610)
+
 ## v7.69.91 — 2026-11-12
 
 **What changed for you**
