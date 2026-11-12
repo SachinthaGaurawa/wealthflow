@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.89 — 2026-11-12
+
+**What changed for you**
+
+- E-mail review files instalment plans too; Undo removes the minimum-payment ask (#603)
+
 ## v7.69.88 — 2026-11-12
 
 **What changed for you**
