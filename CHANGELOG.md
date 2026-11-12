@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.90 — 2026-11-12
+
+**What changed for you**
+
+- Cashback vs refund on bank statements, damaged text layer recovery, two more self-audit kinds (#604)
+
 ## v7.69.89 — 2026-11-12
 
 **What changed for you**
