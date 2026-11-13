@@ -64,6 +64,15 @@ jobs:
 
       - uses: actions/checkout@v7
 
+      # A scheduled run that GitHub delivers late, for a slot the pacemaker (or a person) already served, stops here and does nothing:
+      # autonomy/slot-guard.mjs. Measured 2026-11-12: this job ran twice that day (08:08Z by the pacemaker, then again by schedule hours later).
+      # Dispatch, push and manual runs are never held back; any doubt runs the job.
+      - name: Slot guard — was this slot already served?
+        if: github.event_name == 'schedule'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node autonomy/slot-guard.mjs autonomous-discover.yml
+
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
