@@ -98,7 +98,7 @@ Sections 1 to 6 were merged at 08:07Z. This section is what the system's own rec
 
 | Fault | Change | Where | Proof |
 |---|---|---|---|
-| 1, 2 | Every scheduled job that finishes, however it was started, wakes the pacemaker; it then starts the ones that are overdue, and their finishing wakes it again. One late job catches the whole system up. A name holding a pattern character is listed as written and escaped, so one of the two matches whichever way the list is read. A watched job that was skipped or cancelled is not a beat and costs no runner | `.github/workflows/pacemaker.yml`, `autonomy/pacemaker.mjs` (`beatTriggerNames`, `escapeFilter`, `workflowRunNames`) | `test/pacemaker_test.js`: the list is compared with the workflow files, so a new scheduled workflow cannot be forgotten |
+| 1, 2 | Every scheduled job that finishes wakes the pacemaker, and it then starts the ones that are overdue. (Corrected in section 8.1: a job the pacemaker itself starts does not wake it when it finishes, so the sentence first written here, "their finishing wakes it again; one late job catches the whole system up", was wrong for those.) A name holding a pattern character is listed as written and escaped, so one of the two matches whichever way the list is read. A watched job that was skipped or cancelled is not a beat and costs no runner | `.github/workflows/pacemaker.yml`, `autonomy/pacemaker.mjs` (`beatTriggerNames`, `escapeFilter`, `workflowRunNames`) | `test/pacemaker_test.js`: the list is compared with the workflow files, so a new scheduled workflow cannot be forgotten |
 | 3 | A program checks an idea's scope against the files of the repository: a real file is kept, an invented one is named as such, and the real files with the same words are offered. Proposers are told the real naming. No model is asked | `autonomy/ideas.mjs` (`groundScope`, `closestFiles`), `autonomy/propose.mjs` | `test/ideas_test.js`: replay of #607 |
 | 4 | Before it answers, the user-impact seat is given computed facts: which changed files are served to the person's device (from `.vercelignore`) and which never are. When none is served it is told that nothing on the screen changes and asked to judge the indirect effect instead. An objection that says the person will see something, about a line in a file that is never served, is set aside with the reason printed. An objection about an indirect effect, about a served file, or from another seat is untouched, and nothing is concluded when the same change edits the deploy list | `autonomy/ships.mjs`, `consensus-review.mjs` | `test/ships_test.js`: replay of both false fails, and the cases that must never be thrown out |
 | #608 | The answer from GitHub is read through `readJson`: an empty body is null, anything that is not JSON is an error naming what was asked and what came back, and the beat leaves that one job alone | `autonomy/pacemaker.mjs` | `test/pacemaker_test.js` |
@@ -109,3 +109,96 @@ Sections 1 to 6 were merged at 08:07Z. This section is what the system's own rec
 - **A slot GitHub delivers hours late runs a second time** after the pacemaker already did its work (the idea engine at 08:08Z and again at 09:58Z, discovery at 08:08Z and again at 12:22Z). The idea engine refuses the second run by its own one-a-day rule; discovery scans twice. A late run that sees its slot already served should stop at once; that is the next efficiency change.
 - **#559 and reports like it** need the masked shape of the statement in the report (section 5, second item), and the kind of report should name the code that raised it.
 - **The AI board** runs on 4 providers until the keys and credits of the other 8 are renewed (#609).
+
+## 8. Third round: what the merges showed, and one cause behind two stuck reports (2026-11-12, 13:03Z to 19:10Z)
+
+Same method: read the system's own runs, change what a run shows to be wrong, and measure again on production.
+
+### 8.1 What the live runs showed after the second round was merged
+
+| What | Measured | Run |
+|---|---|---|
+| A finished job wakes the pacemaker | Between 13:03Z and 18:41Z the pacemaker ran 9 times: 8 woken by a finished job, 1 by its own clock. Beats followed the security updates (13:54Z), the release (14:38Z), the watchdog (15:02Z) and the liveness check (15:59Z) within seconds of each finishing | 43223725714, 43224033878 and seven more |
+| A skipped job is not a beat | 5 pacemaker runs ended `skipped` with no runner, each after a watched job that was itself skipped or cancelled | the same list |
+| A job GitHub skipped is started | The merchant sync (the 12:40Z slot) was started at 13:05Z, and the PR recovery (the 15:41Z slot, 74 minutes late) at 16:54Z | 43224082328, 43263762279 |
+| The pacemaker's own clock | Fired for the first time at 16:54:37Z, about eight hours after it was merged | 43263762279 |
+| A merge of code that only the server runs cuts no release | `server-only (live already, not on the phone): wf-llm-router.mjs` → no version | 43282390887 |
+| The router's replacement rule | OpenRouter's withdrawn model was replaced from a list of unknown names and the seat's vote came from it | 43224088646 |
+
+**A correction to section 7.3.** A job the pacemaker starts does not wake the pacemaker when it finishes. The merchant sync finished at 13:06:50Z and the PR recovery at 16:55:30Z, and no beat followed either one. GitHub does not start a workflow from an event raised with the repository's own token, which is its guard against loops. So the pacemaker is woken by what GitHub, a merge, a deployment or a person starts, and not by its own work.
+
+**The quiet period was seen.** From 16:55Z to 18:41Z nothing woke the pacemaker while three slots were due (the release at 18:00Z, the watchdog at 18:10Z, the fix agent at 18:25Z). The merge at 18:41Z woke it. This is the open item of section 7.4 observed, not a new one.
+
+**The two providers the router was changed for are still unreliable, for reasons outside the code.** On the next two review runs the OpenRouter model answered with an empty completion both times. NVIDIA was asked for three replacements from its own list and each answered `Not found for account`.
+
+### 8.2 One cause behind #559 and #609
+
+Two reports the system files about itself had ended, or were about to end, as `ai-stuck`:
+
+- **#559**, the reader's printed Total Payment check: three attempts, each on a file that does not hold the check.
+- **#609**, the AI board below its floor: two attempts. The report says "read `ai-models.mjs`, `ai-chat.mjs`, `api/ai.js`", and the author model answered each time that the failures live in those files, "none of which is the file I am permitted to edit".
+
+The cause is one line. The fix agent's rule for a file it may edit was "ends in `.js`, at the top of the repository". The statement reader and the AI board are `.mjs` modules (97 of them), and `api/ai.js` is in a folder. `printedPaymentsCheck` is in `statement-direction.mjs`. So the watchers filed work the agent was not allowed to touch, and the agent spent its attempts on the nearest file it was allowed to touch.
+
+A second cause sat behind the first. The instructions for the proving test said every file "is a browser IIFE with no export" and sent the test author to a loader for browser scripts. For a module that has exports that sentence is false.
+
+### 8.3 The app's AI board, read from its own canary
+
+`GET /api/ai?canary=1` on production, 18:46Z: 4 of 12 answered, floor 5. Below the floor every statement row that needs the board keeps the rules' answer, often "Other". What each failing provider said:
+
+| Provider | What it said | Whose it is |
+|---|---|---|
+| OpenRouterFinance | asked for `inclusionai/ling-3.0-flash-fin:free` → 404, then `thinkingmachines/inkling-2-small:free` → 403 | the code: the role's first rule was `/ling|fin/`, and "ling" is inside "inkling" |
+| OpenRouterNemotron | deadline exceeded (13 s) on its 550b default, four canary runs in a row | the code: nothing moved the role to a quicker model |
+| NVIDIA | default 410, three replacements 404; in the pipeline four more models `Not found for account` | the account behind `NVIDIA_API_KEY` |
+| GitHubModels | `200 "OK"` as plain text, with a token and with none | nobody's: GitHub ended the service (section 8.6). This line first said "the token"; that was a guess from the reply alone, and it was wrong |
+| Gemini, Ollama | 402 | credit |
+| Mistral, Cohere | 429 | the provider's limit for the key |
+
+### 8.4 What was changed
+
+| Fault | Change | Where | Proof |
+|---|---|---|---|
+| The finance role took "inkling" for "ling" | The rule matches a name: a path part beginning `ling-`, a `-fin` part, or `financ` | `ai-models.mjs` | `test/ai_board_heal_2026_11_12_test.js`; production 19:05Z: the replacement asked for was `google/gemma-4-26b-a4b-it:free` |
+| A refused or busy replacement ended the search | A model chosen from the provider's list that answers 403 is set aside and the next is tried. On OpenRouter the same holds for 429: one key, the same second, one role's model answered 200 and another's 429 (`temporarily rate-limited upstream`), so the limit is the model's. The provider's own default still stops on either | `ai-chat.mjs` | the same test file, with the 19:05Z and 19:08Z answers replayed |
+| A model slower than the deadline stayed the role's model | A model that misses the board's deadline is set aside for half an hour and the list is asked for another. The first rule was "two misses in a row"; production showed it never fires, because each serverless instance counts only its own misses (19:05Z, 19:07Z, 19:09Z: three misses, no set-aside). One miss is enough | `ai-chat.mjs` (`setAsideSlowModel`), `api/ai.js` (`runWithin`) | the same test file, one case through the endpoint |
+| Roles of one account could settle on one model | A model another role of the same list is using, or was just handed, is not offered; a role left with nothing stays out. Two voters on one model are one voter | `ai-models.mjs` (`createModelBook`) | the same test file |
+| The agent could not open the files its own watchers name | `.mjs` modules are opened by name, each with its reason: `statement-direction.mjs`, `statement-merchants.mjs`, `statement-merchant-name.mjs`, `ai-models.mjs`, `ai-chat.mjs`. The other 92 stay closed (the Gmail and text senders, the tenant portal, the vault, the agent's own router) | `autonomy/reach.mjs` (`MJS_REACH`, `reachOf`), `autonomy/agent-swarm.mjs` | `test/agent_reach_test.js`: the open list is compared with the files on disk |
+| The report did not say where the code is, or the agent did not read it | A file a report names goes first and no model is asked to choose. Reader self-reports and the board watch carry a `Where the code is` section naming the file and the function | `autonomy/reach.mjs` (`namedFiles`, `ownerFiles`), `wf-statement-self-report.mjs` (`OWNERS`), `autonomy/board-watch.mjs` | replays of #559 and #609 through `runSwarm`; a test fails when a watcher names a file that does not exist, does not hold the function, or is outside the agent's reach |
+| Three attempts were spent before saying "not mine" | When a report says where the code is and the agent may open none of it, that is said at once with the reason per file. No model is asked, no attempt is counted, and the issue is handed over | `autonomy/agent-swarm.mjs` (stage `reach`), `autonomous-fix-agent.js` | `test/agent_reach_test.js` |
+| A module with exports was tested as a browser script | The proving-test instructions for an ES module say: import it, call the function with invented input | `autonomy/reach.mjs` (`moduleShape`, `esmTestGuide`), `testPrompt` | `test/agent_reach_test.js` |
+| The board watch gave the fix agent what only a person can fix | A bare `OK` in place of a completion is `service-gone` (a person reads the provider's page; no key is named); a default and three or more replacements all "not found" is `account-has-no-model`. Each line for the owner names the Vercel variable. Each line for the agent lists the models that were asked for. An open report whose text is no longer true is replaced | `autonomy/board-watch.mjs` | `test/board_watch_test.js`, with the 18:46Z canary replayed |
+
+### 8.5 What is still open, said plainly
+
+- **The board is still at 4 of 12 at the time of writing.** The two OpenRouter roles now choose correctly, and whether the models they move to answer inside the deadline is only known once production has run them. Five of the eight failures are accounts, and no change to the code reaches them: `GEMINI_API_KEY` and `OLLAMA_API_KEY` (credit), `MISTRAL_API_KEY` and `COHERE_API_KEY` (limit), `NVIDIA_API_KEY` (the account can call no model). The eighth, GitHub Models, is not an account at all (section 8.6).
+- **What each instance learns, only it knows.** A model set aside, or a replacement that answered, is remembered by the serverless instance that saw it. Another instance learns it again on its own first call. Sharing that memory needs a store both can read.
+- **The agent's reach is five modules wide.** A report about any other `.mjs` module is now refused at once with the reason, which is honest, and is not a fix. Each further module is opened by a person, by name.
+- **The quiet period and the late slot that runs twice** (section 7.4) are unchanged.
+- **A report holds counts and names of code, never statement text.** The agent now knows where the rule lives; it still cannot see the line the rule misread. The masked shape of the statement (section 5) is not built.
+
+### 8.6 GitHub Models: the seat that could never answer (2026-11-13)
+
+**What was measured.** On every production canary since 2026-10-01 GitHub Models answered `HTTP 200` with the body `OK` as `text/plain`. From the session the same address gives the same answer to any path, with a token and with none (the catalogue address and the chat address, 2026-11-13).
+
+**What it was taken for.** A token without the "Models: read" permission. On 2026-10-03 the owner added that permission to `GH_PAT` and the code was changed to send `GH_PAT` first. The reply did not change. On 2026-11-12 the board watch still told the owner that `GH_PAT` "needs the permission".
+
+**What it is.** GitHub's own page (docs.github.com/en/github-models, opened and read 2026-11-13) says: "As of July 30, 2026, GitHub Models has been fully retired. The playground, model catalog, inference API, and bring your own key (BYOK) are no longer available to any customer." The REST page for inference carries the same notice. One file in this repository already knew (`wf-screenshot-reader.mjs`, from the vision probe); the app's board, the scanner, the statement reader's roster and the pipeline's router did not.
+
+**Why the bare `OK` and not an error.** Not known. GitHub's page says the service is gone; it does not say what the old address answers. What is known is the reply itself and that it is the same for every request.
+
+**What was changed.**
+
+| Where | Before | Now |
+|---|---|---|
+| `ai-models.mjs` | nothing said a whole service can end | `RETIRED_SERVICES`: the provider, the date, the page, GitHub's sentence. One place |
+| `api/ai.js` (the app's board) | GitHub Models was a configured member whenever `GH_PAT` or `GITHUB_MODELS_TOKEN` was set: asked on every call, failed on every call | not a member. The board in production is 11 seats, and the canary no longer lists it |
+| `api/vision-scan.js` | asked in the one-after-another scan and in the ultra scan | not asked |
+| `statement-llm-router.mjs` | named in the third tier | not named |
+| `wf-llm-router.mjs` (the pipeline) | a provider whenever `GITHUB_MODELS_TOKEN` was set, and a "missing key" when it was not | marked `retired`, never asked, never listed as missing |
+| `autonomy/board-watch.mjs` | `token-not-accepted`, with `GH_PAT` named as the variable to fix | `service-gone`: read the provider's page; no variable is named |
+| `autonomous-fix-agent.js`, `AUTONOMY.md` | `GITHUB_MODELS_TOKEN` in the list of keys that start the system | removed from the list |
+
+`GH_PAT` itself is untouched: the app still files feedback issues with it. `GITHUB_MODELS_TOKEN` is still read where it only stands in as a GitHub token for issues (`autonomy/work-queue.mjs`, `feedback-status.js`); that use never reached GitHub Models.
+
+**The lesson kept.** The reply was classified from its words alone, twice, and each time the owner was handed a step that could not help. A provider's own page was one request away. `service-gone` now sends a person to that page before anything else.

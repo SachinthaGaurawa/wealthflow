@@ -45,7 +45,7 @@ when a provider rate-limits, so more is better but one is enough:
 | `WealthFlow_API_Key` | Gemini free tier | architecture, long context |
 | `DEEPSEEK_API_KEY` | cheap | code, security |
 | `MISTRAL_API_KEY` | free tier | code |
-| `TOGETHER_API_KEY` · `OPENROUTER_API_KEY` · `XAI_API_KEY` · `FIREWORKS_API_KEY` · `NVIDIA_API_KEY` · `SAMBANOVA_API_KEY` · `GITHUB_MODELS_TOKEN` · `HUGGINGFACE_API_KEY` · `COHERE_API_KEY` | free tiers | fallback |
+| `TOGETHER_API_KEY` · `OPENROUTER_API_KEY` · `XAI_API_KEY` · `FIREWORKS_API_KEY` · `NVIDIA_API_KEY` · `SAMBANOVA_API_KEY` · `HUGGINGFACE_API_KEY` · `COHERE_API_KEY` | free tiers | fallback |
 | `ANTHROPIC_API_KEY` | metered | tried last, so free keys go first |
 
 > **Set at least two.** With one provider the security reviewer has to run on the

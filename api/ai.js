@@ -15,7 +15,7 @@
 //   array) inside the `messages[].images` field for vision models.
 
 import * as Matrix from './ai-matrix.mjs';
-import { isModelGone, loadModels } from '../ai-models.mjs';
+import { isModelGone, isRetiredService, loadModels } from '../ai-models.mjs';
 import { geminiBook, geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
 import { askChat, chatError, setAsideSlowModel } from '../ai-chat.mjs';
 import { getAdminDb, withDeadline } from '../admin-db.mjs';
@@ -187,8 +187,9 @@ export default async function handler(req, res) {
     const fireworksKey  = process.env.FIREWORKS_API_KEY;
     const openrouterKey = process.env.OPENROUTER_API_KEY;
     const nvidiaKey     = process.env.NVIDIA_API_KEY;
-    // GitHub Models is paid for by the token's own "Models: read" permission. The owner's fine-grained GH_PAT (the one Vercel already holds
-    // for feedback issues) has it since 2026-10-03; GITHUB_MODELS_TOKEN does not, and answered 200 "OK" to every canary, so GH_PAT goes first.
+    // GitHub Models: GitHub ended the service on 2026-07-30 (ai-models.mjs RETIRED_SERVICES), so it holds no seat below, whichever token is
+    // set. The 200 "OK" it answered to every canary was read as a token without the "Models: read" permission (2026-10-03: GH_PAT was given
+    // it and sent first); the reply never changed, because it was never about the token. The names stay only so the seat reads in old logs.
     const githubKeyName = process.env.GH_PAT ? 'GH_PAT' : process.env.GITHUB_MODELS_TOKEN ? 'GITHUB_MODELS_TOKEN' : '';
     const githubKey     = githubKeyName ? process.env[githubKeyName] : undefined;
     const cohereKey     = process.env.COHERE_API_KEY;
@@ -472,7 +473,8 @@ export default async function handler(req, res) {
     const configured = { Gemini: geminiKey, DeepSeek: deepseekKey, Groq: groqKey, Ollama: ollamaKey,
         Mistral: mistralKey, Together: togetherKey,
         Fireworks: fireworksKey, OpenRouterFinance: openrouterKey, OpenRouterQwen: openrouterKey, OpenRouterNemotron: openrouterKey,
-        NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey,
+        // GitHub ended GitHub Models on 2026-07-30 (ai-models.mjs RETIRED_SERVICES): a seat that can never vote is not a board member
+        NVIDIA: nvidiaKey, GitHubModels: isRetiredService('GitHubModels') ? '' : githubKey, Cohere: cohereKey,
         CloudflareAI: cloudflareToken && cloudflareAccount };
     // Providers resting in a cooldown are not asked while the board has spare; below five voters plus three spare, every provider that
     // was only busy is asked anyway (boardRoster). Resting and probation are named in the board's log line below.

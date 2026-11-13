@@ -229,34 +229,31 @@ describe('through the endpoint', () => {
         expect(seen.ollama.options.num_predict).toBe(3500);
     });
 
-    it('GitHubModels: sends the headers GitHub documents; a 200 that is not JSON is named, and the provider is left alone for half an hour', async () => {
-        vi.stubEnv('GITHUB_MODELS_TOKEN', 'test');
-        let headers;
-        vi.stubGlobal('fetch', vi.fn(async (url, init) => { headers = init.headers; return { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token \'O\', "OK\r\n" is not valid JSON'); }, text: async () => 'OK\r\n' }; }));
-        const res = response(); await handler(adviceReq({ engines: ['GitHubModels'] }), res);
+    it('a 200 that is not JSON is named, and the provider is left alone for half an hour', async () => {
+        vi.stubEnv('TOGETHER_API_KEY', 'test');
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token \'O\', "OK\r\n" is not valid JSON'); }, text: async () => 'OK\r\n' })));
+        const res = response(); await handler(adviceReq({ engines: ['Together'] }), res);
         expect(res.code).toBe(503);
-        expect(res.body.details).toContain('GitHubModels returned non-JSON (HTTP 200): "OK"');
-        expect(headers.Accept).toBe('application/vnd.github+json'); expect(headers['X-GitHub-Api-Version']).toBe('2022-11-28');
-        expect(providerAvailable('GitHubModels', Date.now() + 29 * 60 * 1000)).toBe(false);
-        expect(providerAvailable('GitHubModels', Date.now() + 31 * 60 * 1000)).toBe(true);
+        expect(res.body.details).toContain('Together returned non-JSON (HTTP 200): "OK"');
+        expect(providerAvailable('Together', Date.now() + 29 * 60 * 1000)).toBe(false);
+        expect(providerAvailable('Together', Date.now() + 31 * 60 * 1000)).toBe(true);
     });
 
-    it('GitHubModels: a failure names which variable the token came from and what kind it is, and never a character of it', async () => {
+    it('GitHubModels: GitHub ended the service on 2026-07-30, so it is asked nothing, whichever token is set, and no token is ever in a reply', async () => {
         const secret = 'github_pat_11ABCDEFG0123456789_secretsecretsecret';
-        const bare = () => vi.fn(async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('not json'); }, text: async () => 'OK' }));
-        vi.stubEnv('GH_PAT', secret); vi.stubEnv('GITHUB_MODELS_TOKEN', 'ghs_old'); vi.stubGlobal('fetch', bare());
+        const fetcher = vi.fn(async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('not json'); }, text: async () => 'OK' }));
+        vi.stubEnv('GH_PAT', secret); vi.stubEnv('GITHUB_MODELS_TOKEN', 'ghs_old'); vi.stubGlobal('fetch', fetcher);
         const a = response(); await handler(adviceReq({ engines: ['GitHubModels'] }), a);
-        expect(a.body.details).toContain('returned non-JSON (HTTP 200): "OK"'); expect(a.body.details).toContain('[token GH_PAT, fine-grained]');
+        expect(a.code).toBe(503); expect(a.body.error).toBe('No AI providers configured.');
+        expect(fetcher).not.toHaveBeenCalled();
         expect(JSON.stringify(a.body)).not.toContain(secret);
-        resetProviderCooldowns(); vi.unstubAllEnvs(); vi.stubEnv('GITHUB_MODELS_TOKEN', 'ghp_classic'); vi.stubGlobal('fetch', bare());
-        const b = response(); await handler(adviceReq({ engines: ['GitHubModels'] }), b);
-        expect(b.body.details).toContain('[token GITHUB_MODELS_TOKEN, classic]'); expect(JSON.stringify(b.body)).not.toContain('ghp_classic');
+        expect(providerAvailable('GitHubModels', Date.now())).toBe(true);     // nothing was asked, so nothing rests: it is simply not a member
     });
 
     it('a real Response whose body is not JSON is read without losing the body (clone)', async () => {
-        vi.stubEnv('GITHUB_MODELS_TOKEN', 'test');
+        vi.stubEnv('TOGETHER_API_KEY', 'test');
         vi.stubGlobal('fetch', vi.fn(async () => new Response('OK\r\n', { status: 200 })));
-        const res = response(); await handler(adviceReq({ engines: ['GitHubModels'] }), res);
+        const res = response(); await handler(adviceReq({ engines: ['Together'] }), res);
         expect(res.body.details).toContain('returned non-JSON (HTTP 200): "OK"');
     });
 

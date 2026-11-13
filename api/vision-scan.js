@@ -15,6 +15,7 @@
 import { geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
 import { fetchWithBodyDeadline } from '../fetch-timeout.mjs';
 import { askProvider, PROVIDERS } from '../ai-provider-call.mjs';
+import { isRetiredService } from '../ai-models.mjs';
 import { applyCors } from '../wf-cors.mjs';
 import { guardApi } from '../wf-api-guard.mjs';
 
@@ -629,7 +630,7 @@ export default async function handler(req, res) {
         // OCR anchor for dense/small/zoomed-out text.
         visionKey: process.env.GOOGLE_VISION_API_KEY || process.env.CLOUD_VISION_API_KEY || process.env.VISION_API_KEY || process.env.WealthFlow_API_Key || process.env.GEMINI_API_KEY,
         // ---- new in v3.5 ----
-        // GH_PAT first, as api/ai.js reads it: the token carrying the "Models: read" permission is that one (GITHUB_MODELS_TOKEN answered 200 "OK" to every call)
+        // read as api/ai.js reads it; no reader is built from it any more: GitHub ended GitHub Models on 2026-07-30 (ai-models.mjs RETIRED_SERVICES)
         githubToken: process.env.GH_PAT || process.env.GITHUB_MODELS_TOKEN || process.env.GITHUB_TOKEN,
         togetherKey: process.env.TOGETHER_API_KEY,
         nvidiaKey: process.env.NVIDIA_API_KEY || process.env.NIM_API_KEY,
@@ -663,7 +664,7 @@ export default async function handler(req, res) {
         if (keys.groqKey)    engines.push({ name: 'groq', fn: reader('Groq', quick) });
         if (keys.mistralKey) engines.push({ name: 'mistral', fn: reader('Mistral', quick) });
         if (keys.togetherKey) engines.push({ name: 'together', fn: reader('Together', quick) });
-        if (keys.githubToken) engines.push({ name: 'github-models', fn: reader('GitHubModels', quick) });
+        if (keys.githubToken && !isRetiredService('GitHubModels')) engines.push({ name: 'github-models', fn: reader('GitHubModels', quick) });
         for (const e of engines) {
             const r = await runEngine(e.name, e.fn, hints);
             if (r.success) {
@@ -696,7 +697,7 @@ export default async function handler(req, res) {
     if (mode === 'ultra' || mode === 'frontier') {
         if (keys.togetherKey) engines.push({ name: 'together', fn: reader('Together', { timeoutMs: 28000 }) });
         if (keys.nvidiaKey)   engines.push({ name: 'nvidia', fn: reader('NVIDIA', { timeoutMs: 30000 }) });
-        if (keys.githubToken) engines.push({ name: 'github-models', fn: reader('GitHubModels', { timeoutMs: 30000 }) });
+        if (keys.githubToken && !isRetiredService('GitHubModels')) engines.push({ name: 'github-models', fn: reader('GitHubModels', { timeoutMs: 30000 }) });
         if (keys.xaiKey)      engines.push({ name: 'xai-grok-2-vision', fn: () => callXaiGrokVision(image, prompt, keys.xaiKey) });
         if (keys.fireworksKey) engines.push({ name: 'fireworks', fn: reader('Fireworks') });
         if (keys.hfKey)       engines.push({ name: 'huggingface-qwen2-vl', fn: () => callHuggingFaceVision(image, prompt, keys.hfKey) });

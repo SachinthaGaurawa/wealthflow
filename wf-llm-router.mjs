@@ -148,6 +148,9 @@ export const PROVIDERS = [
         model: () => process.env.GITHUB_MODELS_MODEL || 'openai/gpt-4o-mini',
         kind: 'openai',
         strengths: ['general'],
+        // GitHub ended the service on 2026-07-30 (docs.github.com/en/github-models). Kept in the list so its name still reads in old
+        // reports; never asked, and never counted as a missing key.
+        retired: '2026-07-30',
     },
     {
         id: 'huggingface',
@@ -192,7 +195,7 @@ export function keyFor(provider, env = process.env) {
 
 /** Providers that actually have a credential in this environment. */
 export function availableProviders(env = process.env) {
-    return PROVIDERS.filter((p) => keyFor(p, env));
+    return PROVIDERS.filter((p) => !p.retired && keyFor(p, env));
 }
 
 /** Human-readable diagnostic — used by /api/autonomy-status and CI summaries. */
@@ -203,7 +206,7 @@ export function describeAvailability(env = process.env) {
         providers: avail.map((p) => ({ id: p.id, label: p.label, model: p.model(), via: keyFor(p, env).name })),
         healthy: avail.length > 0,
         healed: healedModels(),
-        missing: PROVIDERS.filter((p) => !keyFor(p, env)).map((p) => p.id),
+        missing: PROVIDERS.filter((p) => !p.retired && !keyFor(p, env)).map((p) => p.id),
     };
 }
 

@@ -54,11 +54,11 @@ describe('GET /api/ai?canary=1', () => {
         expect(res.body).toMatchObject({ ok: true, cached: false, ageSec: expect.any(Number) });
         expect(res.body.verdict).toMatch(/^GOOD/);
         const names = res.body.report.providers.map((p) => p.name);
-        for (const n of ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together', 'Fireworks', 'OpenRouterFinance', 'NVIDIA', 'GitHubModels', 'Mistral', 'Cohere', 'OpenRouterQwen', 'OpenRouterNemotron']) expect(names, n).toContain(n);
+        for (const n of ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together', 'Fireworks', 'OpenRouterFinance', 'NVIDIA', 'Mistral', 'Cohere', 'OpenRouterQwen', 'OpenRouterNemotron']) expect(names, n).toContain(n);
         for (const n of ['Cerebras', 'HF']) expect(names, n).not.toContain(n);   // removed from the board on 2026-10-03 (owner): their keys are still set, they are never asked
+        expect(names).not.toContain('GitHubModels');                             // GitHub ended the service on 2026-07-30: its token is still set, it is never asked
         const by = Object.fromEntries(res.body.report.providers.map((p) => [p.name, p]));
         expect(by.Groq.ok).toBe(true);                                         // healed: reasoning budget
-        expect(by.GitHubModels.error).toMatch(/non-JSON/);
         expect(by.Mistral.error).toMatch(/429/);
         expect(by.OpenRouterNemotron.error).toMatch(/deadline/);
         expect(res.body.report.board.floor).toBe(5);

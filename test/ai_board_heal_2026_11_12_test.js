@@ -52,8 +52,40 @@ describe('a replacement that is refused is followed by the next one', () => {
         await expect(run(async (model) => { asked.push(model); return fail(403, 'forbidden'); })).rejects.toBeTruthy();
         expect(asked).toEqual(['inclusionai/ling-3.0-flash-fin:free']);
     });
-    it('a rate limit or a payment answer on a replacement is not chased', async () => {
+    it('replay 19:05Z: on OpenRouter a busy free replacement (429) is that model\'s limit, and the next free model is asked', async () => {
+        const asked = [];
+        const out = await askChat({ name: 'OpenRouterFinance', slot: 'OpenRouterFinance:text', book: createModelBook(), defaultModel: 'inclusionai/ling-3.0-flash-fin:free', tokens: 600, listKey: LIST, load: async () => FREE,
+            send: async (model) => { asked.push(model); if (model === 'inclusionai/ling-3.0-flash-fin:free') return fail(404, 'This model is unavailable for free'); if (/gemma/.test(model)) return fail(429, 'temporarily rate-limited upstream'); return ok('answer'); } });
+        expect(asked.slice(0, 3)).toEqual(['inclusionai/ling-3.0-flash-fin:free', 'google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free']);
+        expect(asked.length).toBe(4);                                    // the default and three replacements: the bound holds
+        expect(out.model).toBe(asked[3]);
+        expect(out.model).not.toMatch(/gemma|inkling-2-small$/);
+    });
+    it('replay 19:08Z: the default is already set aside, so the replacement is the first model asked in the call, and its 429 is still followed', async () => {
+        const book = createModelBook();
+        book.markBad('OpenRouterFinance:text', 'inclusionai/ling-3.0-flash-fin:free');
+        const asked = [];
+        const out = await askChat({ name: 'OpenRouterFinance', slot: 'OpenRouterFinance:text', book, defaultModel: 'inclusionai/ling-3.0-flash-fin:free', tokens: 600, listKey: LIST, load: async () => FREE,
+            send: async (model) => { asked.push(model); return model === 'google/gemma-4-26b-a4b-it:free' ? fail(429, 'google/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream') : ok('answer'); } });
+        expect(asked).toEqual(['google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free']);
+        expect(out.model).toBe('google/gemma-4-31b-it:free');
+        expect(book.isBad('OpenRouterFinance:text', 'google/gemma-4-26b-a4b-it:free')).toBe(true);
+    });
+    it('a 429 on the provider\'s own default is still the key\'s limit, on OpenRouter too', async () => {
+        const asked = [];
+        await expect(askChat({ name: 'OpenRouterFinance', slot: 'OpenRouterFinance:text', book: createModelBook(), defaultModel: 'first:free', tokens: 600, listKey: LIST, load: async () => FREE, send: async (model) => { asked.push(model); return fail(429, 'rate limit'); } })).rejects.toBeTruthy();
+        expect(asked).toEqual(['first:free']);
+    });
+    it('a provider that is not OpenRouter: a rate limit or a payment answer on a replacement is not chased', async () => {
         for (const status of [429, 402, 401, 500]) {
+            const asked = [];
+            await expect(askChat({ name: 'NVIDIA', slot: 'NVIDIA:text', book: createModelBook(), defaultModel: 'gone', tokens: 600, load: async () => [{ id: 'meta/llama-4-scout' }, { id: 'meta/llama-3.3-70b-instruct' }],
+                send: async (model) => { asked.push(model); return asked.length === 1 ? fail(404, 'model not found') : fail(status, 'no'); } })).rejects.toBeTruthy();
+            expect(asked.length, `status ${status}`).toBe(2);
+        }
+    });
+    it('on OpenRouter a payment, key or server answer on a replacement is not chased', async () => {
+        for (const status of [402, 401, 500]) {
             const asked = [];
             await expect(run(async (model) => { asked.push(model); return asked.length === 1 ? fail(404, 'model not found') : fail(status, 'no'); })).rejects.toBeTruthy();
             expect(asked.length, `status ${status}`).toBe(2);
@@ -70,16 +102,16 @@ describe('a replacement that is refused is followed by the next one', () => {
 
 describe('a model that keeps missing the deadline is set aside, and the list is asked for another', () => {
     const SLOT = 'OpenRouterNemotron:text', SLOW = 'nvidia/nemotron-3-ultra-550b-a55b:free';
-    it('one miss changes nothing: any model is slow once', () => {
+    it('no miss changes nothing', () => {
         const book = createModelBook();
-        expect(setAsideSlowModel({ book, slot: SLOT, defaultModel: SLOW, strikes: 1, hasList: true })).toBe('');
+        expect(setAsideSlowModel({ book, slot: SLOT, defaultModel: SLOW, strikes: 0, hasList: true })).toBe('');
         expect(book.isBad(SLOT, SLOW)).toBe(false);
     });
-    it('the second miss in a row sets the model aside for half an hour, not for good', () => {
+    it('one miss sets the model aside for half an hour, not for good (a rule of two never fired on production: each instance counts its own)', () => {
         let t = 1_000_000;
         const book = createModelBook({ now: () => t });
-        expect(SLOW_STRIKES).toBe(2);
-        expect(setAsideSlowModel({ book, slot: SLOT, defaultModel: SLOW, strikes: 2, hasList: true })).toBe(SLOW);
+        expect(SLOW_STRIKES).toBe(1);
+        expect(setAsideSlowModel({ book, slot: SLOT, defaultModel: SLOW, strikes: 1, hasList: true })).toBe(SLOW);
         expect(book.isBad(SLOT, SLOW)).toBe(true);
         expect(setAsideSlowModel({ book, slot: SLOT, defaultModel: SLOW, strikes: 3, hasList: true })).toBe('');   // already aside: not counted twice
         t += SLOW_BAD_MS + 1;
@@ -163,7 +195,7 @@ describe('through the endpoint: a slot whose model keeps missing the deadline mo
     const request = () => ({ method: 'POST', body: { prompt: 'read this statement', task: 'advice', engines: ['OpenRouterNemotron'], deadlineMs: 2000 } });
     const SLOW = 'nvidia/nemotron-3-ultra-550b-a55b:free';
 
-    it('replay: the 550b model stalls twice, is set aside, and the third call is answered by the quicker Nemotron from the same list', async () => {
+    it('replay: the 550b model stalls, is set aside, and the next call is answered by the quicker Nemotron from the same list', async () => {
         vi.useFakeTimers();
         vi.stubEnv('OPENROUTER_API_KEY', 'test');
         const asked = [];
@@ -178,16 +210,16 @@ describe('through the endpoint: a slot whose model keeps missing the deadline mo
         const info = vi.spyOn(console, 'info').mockImplementation(() => {});
         vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-        for (let miss = 1; miss <= 2; miss++) {
+        {
             const res = response();
             const pending = handler(request(), res);
             await vi.advanceTimersByTimeAsync(2600);
             await pending;
-            expect(res.body && res.body.reply, `miss ${miss}`).toBeFalsy();
-            expect(modelBook.isBad('OpenRouterNemotron:text', SLOW), `after miss ${miss}`).toBe(miss === 2);
-            await vi.advanceTimersByTimeAsync(miss === 1 ? 61_000 : 181_000);   // past the rest a miss earns (one minute, then three): still inside the fifteen minutes that make misses "in a row"
+            expect(res.body && res.body.reply).toBeFalsy();
+            expect(modelBook.isBad('OpenRouterNemotron:text', SLOW)).toBe(true);
+            await vi.advanceTimersByTimeAsync(61_000);                   // past the minute's rest a miss earns the provider
         }
-        expect(asked).toEqual([SLOW, SLOW]);
+        expect(asked).toEqual([SLOW]);
         expect(lists).toBe(0);                                           // a slow model is not a reason to ask the list until it is set aside
         expect(info.mock.calls.some((c) => /"evt":"ai-slow-model"/.test(String(c[0])) && String(c[0]).includes(SLOW))).toBe(true);
 
@@ -197,7 +229,7 @@ describe('through the endpoint: a slot whose model keeps missing the deadline mo
         await pending;
         expect(res.code).toBe(200);
         expect(res.body.reply).toBe('a quick answer');
-        expect(asked[2]).toBe('nvidia/nemotron-3.5-lightning:free');
+        expect(asked[1]).toBe('nvidia/nemotron-3.5-lightning:free');
         expect(lists).toBe(1);
     });
 });

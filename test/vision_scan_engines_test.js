@@ -75,11 +75,11 @@ describe('ultra scan: every engine asks a model its provider serves today', () =
         expect(by.ollama.model).not.toBe('gemma4:31b');
         expect(by.ollama.model).toMatch(/vl|gemma/);
         expect(by.nvidia).toMatchObject({ success: true, model: 'meta/llama-4-maverick-17b-128e-instruct' });
-        // a quota and a 200 "OK" are reported as what they are
+        // a quota is reported as what it is
         expect(by.mistral).toMatchObject({ success: false });
         expect(by.mistral.error).toMatch(/Mistral status 429/);
-        expect(by['github-models']).toMatchObject({ success: false });
-        expect(by['github-models'].error).toMatch(/non-JSON \(HTTP 200\): "OK"/);
+        // GitHub ended GitHub Models on 2026-07-30: it is not one of the readers any more, with either token set
+        expect(by['github-models']).toBeUndefined();
     });
 
     it('no engine is asked for a model the providers retired', async () => {
@@ -116,12 +116,12 @@ describe('ultra scan: every engine asks a model its provider serves today', () =
         for (const c of sent) expect(imageUrlOf(c)).toMatch(/^data:image\/png;base64,/);
     });
 
-    it('GitHub Models is asked with the token that carries the Models permission first (GH_PAT), not the one that answered "OK"', async () => {
-        const w = world(); vi.stubGlobal('fetch', w.fetch);
-        await scan('ultra');
-        const gh = w.log.filter((c) => /models\.github\.ai\/inference/.test(c.u));
-        expect(gh.length).toBeGreaterThan(0);
-        for (const c of gh) expect(c.headers.Authorization).toBe('Bearer pat-token');
+    it('GitHub Models (ended by GitHub on 2026-07-30) is asked nothing by any scan mode, although both of its tokens are set', async () => {
+        for (const mode of ['ultra', 'frontier', 'fast', 'universal']) {
+            const w = world(); vi.stubGlobal('fetch', w.fetch);
+            await scan(mode);
+            expect(w.log.filter((c) => /models\.github\.ai/.test(c.u)), mode).toEqual([]);
+        }
     });
 });
 

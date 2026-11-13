@@ -16,7 +16,7 @@
 export const TIERS = Object.freeze([
     Object.freeze(['Groq', 'Gemini', 'DeepSeek']),
     Object.freeze(['Mistral', 'Together', 'OpenRouterQwen']),
-    Object.freeze(['Fireworks', 'NVIDIA', 'GitHubModels', 'OpenRouterFinance', 'OpenRouterNemotron']),
+    Object.freeze(['Fireworks', 'NVIDIA', 'OpenRouterFinance', 'OpenRouterNemotron']),   // GitHubModels left on 2026-11-13: the service ended 2026-07-30 (ai-models.mjs)
     Object.freeze(['Cohere', 'CloudflareAI', 'Ollama']),
 ]);
 

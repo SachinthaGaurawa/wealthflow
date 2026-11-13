@@ -18,6 +18,25 @@ import { resolveRepo, resolveToken, isValidRepo } from './github-repo.js';
 import { fetchWithTimeout } from './fetch-timeout.mjs';
 
 export const SELF_REPORT_LABEL = 'statement-reading';
+/* WHERE THE CODE IS, PER KIND. #559 was tried three times on files that do not hold the check it reports, because the report said what
+ * was wrong and never said where the rule lives. Each kind now names the file and the function that own it, under one fixed heading the
+ * fix agent reads first. Names of code only: nothing of a statement. A test keeps every name here real (the file exists and holds the
+ * function) and within what the agent may edit. */
+export const OWNERS_HEADING = 'Where the code is';
+const DIRECTION = ['statement-direction.mjs', 'printedPaymentsCheck, proveDirections, semanticDirection, cardCreditWords'];
+const ROUTER_PLAN = ['wealthflow-statement-router.js', 'installmentInfo'];
+const PLANS = ['wealthflow-card-plans.js', 'readPlanTable, planFor'];
+export const OWNERS = Object.freeze({
+    'printed-total-differs': [DIRECTION],
+    'plan-like-line-unread': [ROUTER_PLAN, PLANS],
+    'plan-table-unmatched': [PLANS, ROUTER_PLAN],
+    'category-gap': [['statement-merchants.mjs', 'classifyMerchant, registryLookup, merchantWords'], ['statement-merchant-name.mjs', 'isolateMerchant']],
+    'credit-wording-on-debit': [DIRECTION],
+    'garbled-text': [['wealthflow-statement-router.js', 'looksGarbled']],
+    'direction-guessed': [DIRECTION],
+    'card-interest-unexplained': [ROUTER_PLAN, PLANS],
+    'card-credit-unrecognised': [['wealthflow-statement-router.js', 'isCardCashback']],
+});
 const KINDS = {
     'printed-total-differs': {
         title: 'Statement reader: a card statement\'s payments do not add up to its printed Total Payment',
@@ -103,6 +122,9 @@ export function reportBody(kind, { bank = '', shape = {}, rows = 0, secondOpinio
         '',
         '### What to do',
         k.todo,
+        '',
+        '### ' + OWNERS_HEADING,
+        ...(OWNERS[kind] || []).map(([file, names]) => '- `' + file + '`: ' + names),
         '',
         '_Filed automatically by the statement reader. It contains counts and fixed words only; there is no statement text here on purpose (public repository)._',
     ].join('\n');

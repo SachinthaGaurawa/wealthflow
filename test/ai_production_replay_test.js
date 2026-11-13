@@ -25,7 +25,8 @@ describe('the production roster of 2026-10-01', () => {
         expect(res.body.unanimous).toBe(true);
         expect(res.body.answered.length).toBeGreaterThanOrEqual(5);
         for (const name of ['Gemini', 'DeepSeek', 'Groq', 'Ollama', 'Together', 'Fireworks', 'OpenRouterFinance', 'NVIDIA']) expect(res.body.answered, name).toContain(name);
-        for (const name of ['GitHubModels', 'Mistral', 'Cohere', 'OpenRouterQwen']) expect(res.body.answered, name).not.toContain(name);   // quota / not JSON: honestly unavailable
+        for (const name of ['GitHubModels', 'Mistral', 'Cohere', 'OpenRouterQwen']) expect(res.body.answered, name).not.toContain(name);   // quota, or (GitHub Models) a service GitHub ended: honestly unavailable
+        expect(res.body.expected).not.toContain('GitHubModels');                                                                         // and since 2026-11-13 not a member at all
     });
 
     it('does not ask Cerebras or HuggingFace at all, although their keys are still set in Vercel', async () => {
@@ -49,7 +50,7 @@ describe('the production roster of 2026-10-01', () => {
         expect(board).toHaveLength(1);
         expect(board[0].ok).toBe(true);
         expect(board[0].answered.length).toBeGreaterThanOrEqual(5);
-        expect(board[0].failed.join(' ')).toMatch(/GitHubModels:GitHubModels returned non-JSON/);
+        expect(board[0].failed.join(' ')).not.toMatch(/GitHubModels/);          // not a member: nothing to fail
         expect(board[0].failed.join(' ')).toMatch(/Mistral:Mistral status 429/);
         expect(typeof board[0].ms).toBe('number');
     });
@@ -73,9 +74,8 @@ describe('the production roster of 2026-10-01', () => {
         expect(modelBook.isBad('Fireworks:text', 'accounts/fireworks/models/llama-v3p3-70b-instruct')).toBe(true);
         // NVIDIA: the retired generation was tried and set aside; the newest family answered
         expect(modelBook.current('NVIDIA:text')).toBe('meta/llama-4-maverick-17b-128e-instruct');
-        // GitHub Models: the documented headers
-        const gh = w.log.find((l) => /models\.github\.ai/.test(l.u));
-        expect(gh).toBeTruthy();
+        // GitHub Models: GitHub ended the service on 2026-07-30, so nothing is sent there any more
+        expect(w.log.filter((l) => /models\.github\.ai/.test(l.u))).toEqual([]);
     });
 
     it('the next board call asks no retired model and no thinking-only model again, and loses no provider', async () => {
