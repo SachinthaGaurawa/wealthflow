@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.94 — 2026-11-13
+
+**What changed for you**
+
+- Update system, third round: the agent can open the files its reports name; a service its owner ended holds no seat (#614)
+
 ## v7.69.93 — 2026-11-12
 
 **What changed for you**
