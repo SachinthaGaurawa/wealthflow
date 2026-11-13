@@ -233,3 +233,102 @@ describe('through the endpoint: a slot whose model keeps missing the deadline mo
         expect(lists).toBe(1);
     });
 });
+
+/* ── 2026-11-13, 02:39Z and 02:41Z on production: the deadline fell on a REPLACEMENT, and the rule looked elsewhere ──────────────────────
+ * The finance role's default answered 404 at once. A replacement from the list was asked and the board's 13 s ran out on that request.
+ * The log held `ai-slow-model` for the Nemotron role (its default was the slow one) and nothing for the finance role. */
+describe('the model set aside is the one whose request was out when the deadline fell', () => {
+    const SLOT = 'OpenRouterFinance:text';
+    const DEFAULT = 'inclusionai/ling-3.0-flash-fin:free';
+    it('a replacement in flight is the one set aside: not the remembered model, and not the default that had already failed', () => {
+        const book = createModelBook();
+        book.markBad(SLOT, DEFAULT);                                    // the 404
+        book.asking(SLOT, 'google/gemma-4-26b-a4b-it:free');            // the request that was out
+        expect(setAsideSlowModel({ book, slot: SLOT, defaultModel: DEFAULT, strikes: 1, hasList: true })).toBe('google/gemma-4-26b-a4b-it:free');
+        expect(book.isBad(SLOT, 'google/gemma-4-26b-a4b-it:free')).toBe(true);
+    });
+    it('before this rule the same state set nothing aside (the default was already bad), which is what production showed', () => {
+        const book = createModelBook();
+        book.markBad(SLOT, DEFAULT);
+        expect(setAsideSlowModel({ book, slot: SLOT, defaultModel: DEFAULT, strikes: 1, hasList: true })).toBe('');   // nothing in flight: nothing to say
+    });
+    it('a request that has come back is no longer in flight, whichever way it came back', async () => {
+        const book = createModelBook();
+        await askChat({ name: 'OpenRouterFinance', slot: SLOT, book, defaultModel: DEFAULT, tokens: 600, listKey: LIST, load: async () => FREE, send: async () => ok('fine') });
+        expect(book.flying(SLOT)).toBe('');
+        await askChat({ name: 'OpenRouterFinance', slot: SLOT + ':b', book, defaultModel: DEFAULT, tokens: 600, listKey: LIST, load: async () => FREE, send: async () => fail(500, 'down') }).catch(() => {});
+        expect(book.flying(SLOT + ':b')).toBe('');
+        await askChat({ name: 'OpenRouterFinance', slot: SLOT + ':c', book, defaultModel: DEFAULT, tokens: 600, listKey: LIST, load: async () => FREE, send: async () => { throw new Error('network'); } }).catch(() => {});
+        expect(book.flying(SLOT + ':c')).toBe('');
+    });
+    it('while a request is out the book names its model, and only its own slot', async () => {
+        const book = createModelBook();
+        let seen = '';
+        await askChat({ name: 'OpenRouterFinance', slot: SLOT, book, defaultModel: DEFAULT, tokens: 600, listKey: LIST, load: async () => FREE,
+            send: async (model) => { seen = book.flying(SLOT); expect(book.flying('OpenRouterQwen:text')).toBe(''); return model === DEFAULT ? fail(404, 'model not found') : ok('fine'); } });
+        expect(seen).not.toBe(DEFAULT);                                 // the last request sent was the replacement's
+        expect(seen).toMatch(/:free$/);
+    });
+    it('a late answer from a model that was set aside does not make it the slot\'s model again', () => {
+        const book = createModelBook();
+        book.asking(SLOT, 'google/gemma-4-26b-a4b-it:free');
+        setAsideSlowModel({ book, slot: SLOT, defaultModel: DEFAULT, strikes: 1, hasList: true });
+        book.remember(SLOT, 'google/gemma-4-26b-a4b-it:free', LIST);    // the abandoned request answers after the board walked on
+        expect(book.current(SLOT)).toBe('');
+        expect(book.isBad(SLOT, 'google/gemma-4-26b-a4b-it:free')).toBe(true);
+        book.remember(SLOT, 'meta-llama/llama-3.3-70b-instruct:free', LIST);   // a model that is not set aside is remembered as before
+        expect(book.current(SLOT)).toBe('meta-llama/llama-3.3-70b-instruct:free');
+    });
+});
+
+describe('through the endpoint, 02:39Z replayed: the finance role moves off the replacement that stalled', () => {
+    afterEach(() => { vi.useRealTimers(); modelBook.reset(); resetProviderCooldowns(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+    const response = () => ({ setHeader() {}, status(n) { this.code = n; return this; }, json(body) { this.body = body; return this; } });
+    const request = () => ({ method: 'POST', body: { prompt: 'read this statement', task: 'advice', engines: ['OpenRouterFinance'], deadlineMs: 2000 } });
+    const DEFAULT = 'inclusionai/ling-3.0-flash-fin:free';
+
+    it('the default is gone (404), the first replacement never answers, it is set aside by name, and the next call asks a different model', async () => {
+        vi.useFakeTimers();
+        vi.stubEnv('OPENROUTER_API_KEY', 'test');
+        const asked = [];
+        let stalled = '';
+        vi.stubGlobal('fetch', vi.fn((url, init) => {
+            if (String(url).endsWith('/models')) return Promise.resolve({ ok: true, json: async () => ({ data: FREE.map((m) => ({ id: m.id, pricing: { prompt: '0', completion: '0' } })) }) });
+            const model = JSON.parse(init.body).model;
+            asked.push(model);
+            if (model === DEFAULT) return Promise.resolve({ ok: false, status: 404, json: async () => ({}), text: async () => '{"error":{"message":"This model is unavailable for free."}}' });
+            if (!stalled) stalled = model;
+            if (model === stalled) return new Promise((_, reject) => { if (init.signal) init.signal.addEventListener('abort', () => reject(new Error('aborted'))); });   // never answers
+            return Promise.resolve({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'a finance answer' } }] }), text: async () => '' });
+        }));
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        info.mockClear();                                               // a spy on console.info is shared by the file: only this test's lines
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        {
+            const res = response();
+            const pending = handler(request(), res);
+            await vi.advanceTimersByTimeAsync(2600);
+            await pending;
+            expect(res.body && res.body.reply).toBeFalsy();
+            await vi.advanceTimersByTimeAsync(61_000);                   // past the minute's rest a miss earns the provider
+        }
+        expect(asked[0]).toBe(DEFAULT);
+        expect(stalled).toBeTruthy(); expect(stalled).not.toBe(DEFAULT);
+        expect(modelBook.isBad('OpenRouterFinance:text', stalled)).toBe(true);
+        const line = info.mock.calls.map((c) => String(c[0])).find((l) => /"evt":"ai-slow-model"/.test(l));
+        expect(line).toBeTruthy();
+        expect(JSON.parse(line)).toMatchObject({ provider: 'OpenRouterFinance', model: stalled });
+
+        const before = asked.length;
+        const res = response();
+        const pending = handler(request(), res);
+        await vi.advanceTimersByTimeAsync(200);
+        await pending;
+        expect(res.code).toBe(200);
+        expect(res.body.reply).toBe('a finance answer');
+        const second = asked.slice(before);
+        expect(second).not.toContain(stalled);                           // the model that stalled is not asked again
+        expect(second).not.toContain(DEFAULT);                           // and neither is the one that is gone
+    });
+});

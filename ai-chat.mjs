@@ -78,7 +78,11 @@ export const SLOW_BAD_MS = 30 * 60 * 1000;
  */
 export function setAsideSlowModel({ book, slot, defaultModel, strikes, hasList }) {
     if (!book || !slot || !hasList || !(Number(strikes) >= SLOW_STRIKES)) return '';
-    const id = book.current(slot) || defaultModel || '';
+    /* WHICH model was slow is the one whose request was out when the deadline fell. Production, 2026-11-13 02:39Z and 02:41Z: the finance
+     * role's default answered 404 at once, a replacement from the list was asked, and the deadline fell on THAT request. The rule looked
+     * at the remembered model, then the default (already set aside for the 404), found nothing to do and said nothing; the slow
+     * replacement stayed first in line for the next call. */
+    const id = (typeof book.flying === 'function' && book.flying(slot)) || book.current(slot) || defaultModel || '';
     if (!id || book.isBad(slot, id)) return '';
     book.markBad(slot, id, SLOW_BAD_MS);
     return id;
@@ -137,7 +141,11 @@ export async function askChat({ name, slot, book, defaultModel, tokens, cap = 40
             model = await book.replacement({ slot, provider: name, listKey, vision, failed: trace.length ? trace[trace.length - 1].model : defaultModel, load });
             if (!model) break;
         }
-        const result = await tryModel(model);
+        // the book is told which model the request is out to: if the board's deadline falls now, THIS is the model that was too slow
+        const asked = model;
+        if (typeof book.asking === 'function') book.asking(slot, asked);
+        let result;
+        try { result = await tryModel(asked); } finally { if (typeof book.landed === 'function') book.landed(slot, asked); }
         if (result.text) {
             book.remember(slot, model, listKey);
             // one line when a provider needed more than its first try, so production says which provider healed how

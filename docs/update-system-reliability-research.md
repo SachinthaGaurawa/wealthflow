@@ -202,3 +202,29 @@ A second cause sat behind the first. The instructions for the proving test said 
 `GH_PAT` itself is untouched: the app still files feedback issues with it. `GITHUB_MODELS_TOKEN` is still read where it only stands in as a GitHub token for issues (`autonomy/work-queue.mjs`, `feedback-status.js`); that use never reached GitHub Models.
 
 **The lesson kept.** The reply was classified from its words alone, twice, and each time the owner was handed a step that could not help. A provider's own page was one request away. `service-gone` now sends a person to that page before anything else.
+
+### 8.7 Production after the third round was merged (2026-11-13, 02:39Z to 02:41Z)
+
+Read from `GET /api/ai?canary=1` and the function's own log, deployment `dpl_A24RXgpoUqKi1LoBQ4pARdsRhCSy`.
+
+**What worked.**
+
+- The board is reported as it is: "only 4 of 11 answered". GitHub Models is not asked and not listed.
+- The one-miss rule fires. 02:39:50Z, the first call of a new instance: `{"evt":"ai-slow-model","provider":"OpenRouterNemotron","model":"nvidia/nemotron-3-ultra-550b-a55b:free"}`. With the rule of two (round before) three misses in a row left no such line.
+
+**What did not, measured.**
+
+- The finance role missed the deadline in both calls and no `ai-slow-model` line names it. Its default answers 404 at once, a replacement from the list is asked, and the 13 seconds run out on that request. The rule looked at the remembered model, then at the default; the default was already set aside for the 404, so nothing was done and the slow replacement stayed first in line.
+- The two calls landed on two instances (both show Fireworks and the Qwen role healing from their first model again). The second instance set the same Nemotron model aside a second time. What one instance learns, another still learns again (section 8.5).
+- The board did not come back above its floor. 4 answer: DeepSeek, Groq, Fireworks, the Qwen role. Cohere now also misses the deadline instead of answering 429.
+
+**What was changed for the first of these.**
+
+| Fault | Change | Where | Proof |
+|---|---|---|---|
+| The deadline fell on a replacement and the rule set nothing aside | The asker tells the book which model its request is out to. The model set aside is that one | `ai-models.mjs` (`asking`, `landed`, `flying`), `ai-chat.mjs` (`setAsideSlowModel`) | `test/ai_board_heal_2026_11_12_test.js`: the 02:39Z call replayed through the endpoint; the log line names the model that stalled and the next call asks neither it nor the one that is gone |
+| A request the board walked away from is not cancelled; when it answers late it was remembered as the slot's model again | A model that is set aside is not remembered | `ai-models.mjs` (`remember`) | the same file |
+| The proving-test instructions for a module with only a default export showed an import of a made-up name (the review board's note on #614) | Such a module is imported as a default | `autonomy/reach.mjs` (`moduleShape`, `esmTestGuide`) | `test/agent_reach_test.js` |
+
+Whether the finance and Nemotron roles then land on a model that answers inside 13 seconds is not known until production has run it; that is the next measurement, not a claim.
+

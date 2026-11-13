@@ -92,7 +92,7 @@ export function outOfReachReason(files) {
 
 /**
  * Is this source an ES module, and what does it export? A file with `export` is tested by importing it.
- * @returns {{ esm:boolean, exports:string[] }}
+ * @returns {{ esm:boolean, exports:string[], hasDefault:boolean }}
  */
 export function moduleShape(source) {
     const src = String(source || '');
@@ -102,7 +102,7 @@ export function moduleShape(source) {
     for (const m of src.matchAll(/^[ \t]*export\s+(?:const|let|var|class)\s+([A-Za-z_$][\w$]*)/gm)) add(m[1]);
     for (const m of src.matchAll(/^[ \t]*export\s*\{([^}]*)\}/gm)) for (const part of m[1].split(',')) add(part.split(/\s+as\s+/).pop());
     const esm = names.length > 0 || /^[ \t]*export\s+default\b/m.test(src) || /^[ \t]*import\s[^'"\n]*from\s*['"]/m.test(src);
-    return { esm, exports: names.slice(0, 40) };
+    return { esm, exports: names.slice(0, 40), hasDefault: /^[ \t]*export\s+default\b/m.test(src) };
 }
 
 /** What the proving-test author is told about a module that has exports (in place of the browser-script instructions). */
@@ -111,8 +111,10 @@ export function esmTestGuide(filename, shape) {
     return [
         `  · ${filename} is an ES MODULE. It is not a browser script: there is no \`window\` global to read`,
         '    and the shared loader cannot load it. Import what you test straight from the file.',
-        names.length ? `  · Its named exports: ${names.join(', ')}.` : '  · Read its exports from the code below.',
-        `      import { ${names[0] || 'theFunction'} } from "../${filename}";`,
+        names.length ? `  · Its named exports: ${names.join(', ')}.` : (shape && shape.hasDefault) ? '  · It has a default export and no named ones.' : '  · Read its exports from the code below.',
+        // (built with `+` so the repository's import scan does not read these instruction lines as imports of this file)
+        '      import ' + (names.length ? '{ ' + names[0] + ' }' : (shape && shape.hasDefault) ? 'theModule' : '{ theFunction }') + ' from ' + JSON.stringify('../' + filename) + ';'
+            + (names.length || (shape && shape.hasDefault) ? '' : '   // replace theFunction with a name the code really exports'),
         '    Your test file lives in test/, so the path is exactly the one shown above.',
         '  · It runs in Node. There is no `document` and none is needed: call the exported function with',
         '    an input you INVENT and assert on what it returns.',

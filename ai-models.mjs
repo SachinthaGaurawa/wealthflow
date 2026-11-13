@@ -160,6 +160,7 @@ export function createModelBook({ now = Date.now } = {}) {
     const lists = new Map();       // provider → { at, models, pending }
     const listOf = new Map();      // slot → the list it chooses from (OpenRouter's three roles choose from one account's list)
     const picked = new Map();      // slot → a model handed out by replacement() that has not answered or failed yet
+    const inFlight = new Map();    // slot → the model whose request is out right now (set by the asker just before it sends)
     const roleOf = (slot) => String(slot).split(':').pop();
     /* TWO VOTERS ON ONE MODEL ARE ONE VOTER. Slots that choose from the same list (the same account) and answer the same kind of
      * question never hold the same model: what another such slot is using now, or was just handed, is not offered to this one. A slot
@@ -178,12 +179,20 @@ export function createModelBook({ now = Date.now } = {}) {
     return {
         /** The model remembered for this slot (a provider + text or vision), if it is still fresh. */
         current(slot) { const c = chosen.get(slot); return c && now() - c.at < TTL_MS ? c.id : ''; },
-        remember(slot, id, listKey) { chosen.set(slot, { id, at: now() }); picked.delete(slot); if (listKey) listOf.set(slot, listKey); },
+        /* A model that is set aside is not remembered. The board gives a provider a deadline and walks on; the request it left behind is
+         * not cancelled, and when that request answers late it must not put back, as this slot's model, the one just set aside for
+         * being late. */
+        remember(slot, id, listKey) { picked.delete(slot); if (listKey) listOf.set(slot, listKey); if (badIds(slot).includes(id)) return; chosen.set(slot, { id, at: now() }); },
+        /** The asker says which model it is sending to, and when that request has come back (any way). */
+        asking(slot, id) { if (id) inFlight.set(slot, id); },
+        landed(slot, id) { if (inFlight.get(slot) === id) inFlight.delete(slot); },
+        /** The model whose request is out for this slot right now: the one a deadline was really spent on. '' when none is. */
+        flying(slot) { return inFlight.get(slot) || ''; },
         forget(slot) { chosen.delete(slot); },
         markBad(slot, id, ms = TTL_MS) { if (!id) return; if (!bad.has(slot)) bad.set(slot, new Map()); bad.get(slot).set(id, now() + ms); const c = chosen.get(slot); if (c && c.id === id) chosen.delete(slot); if (picked.get(slot) === id) picked.delete(slot); },
         isBad(slot, id) { return badIds(slot).includes(id); },
         /** Forget everything (a deployment's cold start, and the tests). */
-        reset() { chosen.clear(); bad.clear(); lists.clear(); listOf.clear(); picked.clear(); },
+        reset() { chosen.clear(); bad.clear(); lists.clear(); listOf.clear(); picked.clear(); inFlight.clear(); },
         badList: badIds,
         /**
          * The model to try instead of `failed`: ask the provider what it serves (cached, one request at a time per provider),

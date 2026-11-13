@@ -519,7 +519,7 @@ export default async function handler(req, res) {
                 coolProvider(engine.name, e);
                 if (/deadline|timed?\s*out|abort/i.test(String(e && e.message)) && typeof engine.fn.tooSlow === 'function') {   // the same words coolProvider counts as a miss
                     const aside = engine.fn.tooSlow((deadlineStrikes.get(engine.name) || {}).strikes || 0);
-                    if (aside) console.info(JSON.stringify({ evt: 'ai-slow-model', provider: engine.name, model: aside, note: 'set aside after repeated deadline misses; the next call asks the list for another' }));
+                    if (aside) console.info(JSON.stringify({ evt: 'ai-slow-model', provider: engine.name, model: aside, note: 'its request was out when the deadline fell: set aside for half an hour; the next call asks the list for another' }));
                 }
                 console.warn(`[AI] ${engine.name} failed:`, e.message);
                 errorLog.push(`${engine.name}: ${e.message}`);
