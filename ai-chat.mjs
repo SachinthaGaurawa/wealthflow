@@ -73,6 +73,16 @@ const BUSY_BAD_MS = 2 * 60 * 1000;
  * hour on another model of the same role, then the first is asked again), so one full-deadline miss sets the model aside. */
 export const SLOW_STRIKES = 1;
 export const SLOW_BAD_MS = 30 * 60 * 1000;
+
+/* A REQUEST STILL OUT AFTER 5 SECONDS IS ASKED OF A SECOND MODEL TOO, AND THE FIRST ANSWER WINS. Production, 2026-11-13 08:42Z and 08:44Z,
+ * after the in-flight rule shipped: the finance and Nemotron roles each stalled to the 13-second deadline and were set aside by name (the
+ * log said so), yet the board stayed at 4 of 11, because a set-aside lives in ONE serverless instance and the next call landed on another.
+ * A shared memory needs a store; a hedged request does not: it spends the board's 13 seconds on two models instead of one, on every
+ * instance, from the first call. The slow model is set aside only when the other one answers first (it was beaten), never merely for
+ * having been hedged. One hedge per ask; hedgeMs 0 turns it off. A provider that cannot list its models has no second model to ask and
+ * is never hedged. Off unless the caller turns it on (`hedgeMs`): only a caller with a deadline can say how long a second request has to
+ * answer, and a request begun after its caller has walked away is quota spent for nothing. */
+export const HEDGE_MS = 5000;
 /**
  * @returns {string} the model set aside, or '' when nothing was (too few misses, or a provider with no list to choose another from)
  */
@@ -82,6 +92,8 @@ export function setAsideSlowModel({ book, slot, defaultModel, strikes, hasList }
      * role's default answered 404 at once, a replacement from the list was asked, and the deadline fell on THAT request. The rule looked
      * at the remembered model, then the default (already set aside for the 404), found nothing to do and said nothing; the slow
      * replacement stayed first in line for the next call. */
+    const out = typeof book.flyingAll === 'function' ? book.flyingAll(slot).filter((id) => id && !book.isBad(slot, id)) : [];
+    if (out.length) { for (const id of out) book.markBad(slot, id, SLOW_BAD_MS); return out.join(', '); }
     const id = (typeof book.flying === 'function' && book.flying(slot)) || book.current(slot) || defaultModel || '';
     if (!id || book.isBad(slot, id)) return '';
     book.markBad(slot, id, SLOW_BAD_MS);
@@ -106,7 +118,7 @@ export function setAsideSlowModel({ book, slot, defaultModel, strikes, hasList }
  * @param {(line:string)=>void} [o.log]   told once when the provider needed more than its first try
  * @returns {Promise<{ text:string, model:string, trace:object[] }>}
  */
-export async function askChat({ name, slot, book, defaultModel, tokens, cap = 4096, kind = 'openai', send, load, listKey = name, vision = false, log = () => {} }) {
+export async function askChat({ name, slot, book, defaultModel, tokens, cap = 4096, kind = 'openai', send, load, listKey = name, vision = false, hedgeMs = 0, log = () => {} }) {
     const trace = [];
     const budget = Math.max(64, Math.min(Number(tokens) || 2500, cap));
     // a provider that cannot be healed has one model: it is asked whatever the book thinks of it; one that can is moved off a bad default
@@ -143,9 +155,15 @@ export async function askChat({ name, slot, book, defaultModel, tokens, cap = 40
         }
         // the book is told which model the request is out to: if the board's deadline falls now, THIS is the model that was too slow
         const asked = model;
-        if (typeof book.asking === 'function') book.asking(slot, asked);
-        let result;
-        try { result = await tryModel(asked); } finally { if (typeof book.landed === 'function') book.landed(slot, asked); }
+        const hedge = load && hedgeMs > 0 ? async () => {
+            // the second model: never the slow one, never one the book has set aside, never one another role of this account holds
+            const alt = await book.replacement({ slot, provider: name, listKey, vision, failed: asked, load });
+            return alt && alt !== asked ? alt : '';
+        } : null;
+        const ran = await askHedged({ book, slot, asked, tryModel, hedge, hedgeMs });
+        const result = ran.result;
+        if (ran.hedgeWon) { try { log(JSON.stringify({ evt: 'ai-hedge', provider: name, slow: ran.slow, answeredBy: ran.model, afterMs: ran.afterMs })); } catch (_) { /* advice */ } }
+        model = ran.model;
         if (result.text) {
             book.remember(slot, model, listKey);
             // one line when a provider needed more than its first try, so production says which provider healed how
@@ -182,6 +200,47 @@ export async function askChat({ name, slot, book, defaultModel, tokens, cap = 40
     error.last = last;
     error.noModel = !last;              // every model of this provider is set aside right now: nothing was asked
     throw error;
+}
+
+/**
+ * Ask `asked`; if it is still out after `hedgeMs`, ask a second model as well and take the first usable answer.
+ * A request that throws (the network, an abort) before the hedge starts is passed on as it is, as before.
+ * @returns {Promise<{result:object, model:string, hedgeWon?:boolean, slow?:string, afterMs?:number}>}
+ */
+export async function askHedged({ book, slot, asked, tryModel, hedge, hedgeMs }) {
+    const started = Date.now();
+    const go = (id) => {
+        if (typeof book.asking === 'function') book.asking(slot, id);
+        return tryModel(id).then((result) => ({ id, result }), (error) => ({ id, error })).finally(() => { if (typeof book.landed === 'function') book.landed(slot, id); });
+    };
+    const first = go(asked);
+    if (!hedge) { const r = await first; if (r.error) throw r.error; return { result: r.result, model: asked }; }
+    let timer;
+    const waited = new Promise((resolve) => { timer = setTimeout(() => resolve(null), hedgeMs); });
+    const early = await Promise.race([first, waited]);
+    clearTimeout(timer);
+    if (early) { if (early.error) throw early.error; return { result: early.result, model: asked }; }
+    // still out: ask the next model too
+    // choosing it can need the provider's list (up to 8 s): the first request keeps its chance meanwhile
+    const choosing = hedge().then((id) => ({ alt: id || '' }), () => ({ alt: '' }));
+    const meanwhile = await Promise.race([first, choosing]);
+    if (meanwhile.id !== undefined) { if (meanwhile.error) throw meanwhile.error; return { result: meanwhile.result, model: asked }; }
+    const alt = meanwhile.alt;
+    if (!alt) { const r = await first; if (r.error) throw r.error; return { result: r.result, model: asked }; }
+    const second = go(alt);
+    const usable = (r) => !!(r && !r.error && r.result && r.result.text);
+    const winner = await new Promise((resolve) => {
+        let left = 2, settled = false;
+        const seen = [];
+        const done = (r) => { seen.push(r); left -= 1; if (!settled && usable(r)) { settled = true; resolve(r); } else if (left === 0 && !settled) resolve(seen.find((x) => x.id === asked) || seen[0]); };
+        first.then(done); second.then(done);
+    });
+    if (winner.error) throw winner.error;
+    if (winner.id === alt && usable(winner)) {
+        book.markBad(slot, asked, SLOW_BAD_MS);              // beaten by a model asked 5 seconds later: slow
+        return { result: winner.result, model: alt, hedgeWon: true, slow: asked, afterMs: Date.now() - started };
+    }
+    return { result: winner.result, model: winner.id };
 }
 
 /** The error a caller throws for a failed askChat, in the shapes the rest of the endpoint reads (cooldown regexes, logs, tests). */

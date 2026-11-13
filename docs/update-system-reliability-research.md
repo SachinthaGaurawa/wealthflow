@@ -228,3 +228,22 @@ Read from `GET /api/ai?canary=1` and the function's own log, deployment `dpl_A24
 
 Whether the finance and Nemotron roles then land on a model that answers inside 13 seconds is not known until production has run it; that is the next measurement, not a claim.
 
+
+### 8.8 Production after the in-flight rule was merged (2026-11-13, 08:42Z to 08:44Z), and the hedged request
+
+Read from `GET /api/ai?canary=1` and the function's own log, deployment `dpl_Ga8Qudbd6zssiq8mjuYLnVu9eHaG` (main `2d57803`, #615).
+
+**What worked.** The log names the model whose request was out when the deadline fell, for both roles: `{"evt":"ai-slow-model","provider":"OpenRouterFinance","model":"nvidia/nemotron-3.5-lightning:free","note":"its request was out when the deadline fell ..."}` and the same for `OpenRouterNemotron` (`nvidia/nemotron-3-ultra-550b-a55b:free`). The finance role, silent in section 8.7, is now named.
+
+**What did not, measured.**
+
+- Two canary calls, 08:42Z and 08:44Z, read 5 of 11 (GOOD, floor 5, Cohere answered at 7.9 s) and then 4 of 11 (below the floor). Finance and Nemotron ran into the 13-second deadline in both.
+- The cause is the one section 8.5 predicted: a set-aside lives in one serverless instance. The second call landed on an instance that had not seen the first one's miss (the log shows the function in two regions, `sin1` and `iad1`). Setting a model aside by name is right and is not enough while the memory is per instance.
+
+**What was changed.** A shared memory needs a store (not built). A hedged request does not need one. A request still out after `HEDGE_MS` (5 s, inside the 13-second board deadline) is asked of a second model of the same provider (`book.replacement`, never the slow one, never one another role of the account holds), and the first usable answer is the board's. The slow model is set aside only when the other one answers first; having been hedged is not a reason. If the deadline falls with both out, both are set aside (`flyingAll`). A provider that cannot list its models is never hedged. The cost is one extra call to a free model, only when the first is already slow.
+
+| Fault | Change | Where | Proof |
+|---|---|---|---|
+| A cold instance asks the same stalled model for the whole deadline | Hedge at 5 s with a second model; first answer wins | `ai-chat.mjs` (`askHedged`, `HEDGE_MS`), `ai-models.mjs` (`flyingAll`) | `test/ai_hedge_test.js` (9 cases: second wins and the slow one is set aside; default wins late and is not; no hedge on a fast answer, without a list, or at 0; second never the slow one or another role's; both stall and both are set aside; a thrown error is passed on) |
+
+Whether the board then holds its floor on every call is not known until production has run it; the next measurement is two canary calls 95 s apart and the `ai-hedge` log lines.
