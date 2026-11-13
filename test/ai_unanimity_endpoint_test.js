@@ -189,6 +189,7 @@ describe('parallel unanimous endpoint', () => {
     it('replaces one unavailable engine with an agreeing spare instead of failing the financial decision', async () => {
         for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'GITHUB_MODELS_TOKEN']) vi.stubEnv(key, 'test');
         vi.stubGlobal('fetch', vi.fn(async url => {
+            if (url.includes('models.github.ai')) throw new Error('GitHub Models is not a board member: the service ended 2026-07-30');
             if (url.includes('nvidia')) throw new Error('offline');
             return { ok: true, json: async () => url.includes('googleapis')
                 ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
@@ -197,12 +198,13 @@ describe('parallel unanimous endpoint', () => {
         const res = response(); await handler(request, res);
         expect(res.code).toBe(200); expect(res.body.unanimous).toBe(true);
         expect(res.body.failed).toEqual(['NVIDIA']);
-        expect(res.body.answered).toHaveLength(10);
-        expect(res.body.corroboration).toMatchObject({ agreed: 10, of: 11 });
+        expect(res.body.answered).toHaveLength(9);                       // ten until 2026-11-13: GitHub Models held a seat it could never fill
+        expect(res.body.answered).not.toContain('GitHubModels');
+        expect(res.body.corroboration).toMatchObject({ agreed: 9, of: 10 });
     });
 
-    describe('which token GitHub Models is asked with', () => {
-        const authFor = async (env) => {
+    describe('GitHub Models: the service ended on 2026-07-30, so it holds no seat', () => {
+        const askedGitHub = async (env) => {
             for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
             const seen = [];
             vi.stubGlobal('fetch', vi.fn(async (url, init) => {
@@ -211,16 +213,22 @@ describe('parallel unanimous endpoint', () => {
                     ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
                     : { choices: [{ message: { content: '{"approved":true}' } }] } };
             }));
-            await handler(request, response());
-            return seen;
+            const res = response(); await handler(request, res);
+            return { seen, body: res.body };
         };
-        it('the owner\'s GH_PAT (which has the Models permission) goes before the older GITHUB_MODELS_TOKEN (which does not)', async () => {
-            expect(await authFor({ GEMINI_API_KEY: 't', GH_PAT: 'pat-with-models', GITHUB_MODELS_TOKEN: 'old-models-token' })).toEqual(['Bearer pat-with-models']);
+        it('it is not asked with GH_PAT, with GITHUB_MODELS_TOKEN, with both, or with neither', async () => {
+            for (const env of [{ GH_PAT: 'pat-with-models' }, { GITHUB_MODELS_TOKEN: 'old-models-token' }, { GH_PAT: 'a', GITHUB_MODELS_TOKEN: 'b' }, {}]) {
+                const r = await askedGitHub({ GEMINI_API_KEY: 't', ...env });
+                expect(r.seen).toEqual([]);
+                expect(JSON.stringify(r.body)).not.toContain('GitHubModels');
+                vi.unstubAllEnvs(); vi.unstubAllGlobals(); resetProviderCooldowns();
+            }
         });
-        it('GITHUB_MODELS_TOKEN still works alone, and with neither set GitHub Models is simply not asked', async () => {
-            expect(await authFor({ GEMINI_API_KEY: 't', GITHUB_MODELS_TOKEN: 'old-models-token' })).toEqual(['Bearer old-models-token']);
-            vi.unstubAllEnvs(); vi.unstubAllGlobals(); resetProviderCooldowns();
-            expect(await authFor({ GEMINI_API_KEY: 't' })).toEqual([]);
+        it('the retirement is said once, with where GitHub published it', async () => {
+            const { RETIRED_SERVICES, isRetiredService } = await import('../ai-models.mjs');
+            expect(isRetiredService('GitHubModels')).toBe(true);
+            expect(RETIRED_SERVICES.GitHubModels).toMatchObject({ since: '2026-07-30', source: 'https://docs.github.com/en/github-models' });
+            for (const name of ['Groq', 'Gemini', 'NVIDIA', '', null, undefined, 'toString', 'constructor']) expect(isRetiredService(name), String(name)).toBe(false);
         });
     });
 

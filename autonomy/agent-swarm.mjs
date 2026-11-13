@@ -44,6 +44,7 @@ import {
 } from './swarm-patch.mjs';
 import { observeModule, describeObservation, observedNoChange, groundFacts, safeEnv } from './proof-probe.mjs';
 import { mutationCheck, weakTestReason } from './mutation-check.mjs';
+import { MJS_REACH, namedFiles, ownerFiles, reachOf, outOfReachReason, moduleShape, esmTestGuide } from './reach.mjs';
 
 // ── the mechanical safety gate (mirrors CODEOWNERS + rego + risk-gate) ───────
 const SENSITIVE = [
@@ -123,7 +124,10 @@ export const MAX_AUTHORABLE_BYTES = 32_000;
  */
 export const MAX_PATCHABLE_BYTES = 400_000;
 
-const editable = (f) => /\.js$/i.test(f) && !f.includes('/') && !isSensitive(f) && !/\.test\.js$/i.test(f);
+// ONE definition of what the agent may open (autonomy/reach.mjs): a .js module at the top of the repository, or a .mjs module that has
+// been opened by name. It used to be ".js only", which put the whole statement reader and the AI board out of reach of the reports
+// filed about them (#559, #609).
+const editable = (f) => reachOf(f, { isSensitive, opened: MJS_REACH }).ok;
 const sizeOf = (f, repoDir) => { try { return fs.statSync(path.join(repoDir, f)).size; } catch { return Infinity; } };
 
 /** Files the swarm may edit: root-level, non-sensitive, and small enough to rewrite whole. */
@@ -409,38 +413,41 @@ export function testPrompt(issue, filename, before, after, observation = '') {
         '  · `jsdom` is NOT installed and you may not add it. Importing it fails.',
         '  · The ONLY packages available are the ones already in package.json.',
         '    `vitest` and `fast-check` are available. Nothing else is.',
-        `  · ${filename} is a browser IIFE. It has NO \`export\` statement of any`,
-        '    kind, so `await import(...)` gives you a namespace with no `default`.',
-        '    `module.default.anything` is undefined and will throw.',
-        '',
-        'USE THE SHARED LOADER FIRST — it gives you a REAL DOM (linkedom is installed) and is tested:',
-        '  import * as loader from "./helpers/load-browser-module.js";',
-        `  const { window, document } = loader.loadBrowserModule(${JSON.stringify(filename)}, { html: '<div id="wfUpdateCard"></div>' });`,
-        '  // options: html (markup for <body>), localStorage ({key: value}), fetchImpl, globals, url',
-        '  // The module runs inside that window; whatever it attaches (for example window.wfUpdate)',
-        '  // is on `window`. Call its public API, then assert on `document` — the text a person sees:',
-        '  //   await window.wfUpdate.refresh();',
-        '  //   await vi.waitFor(() => expect(document.getElementById("wfUpdateCard").textContent).toContain("..."));',
-        '  // TWO FACTS THAT FAIL A CORRECT FIX IF YOU MISS THEM (seen on issue #507):',
-        '  //  1. The loader\'s own `fetch` REJECTS (offline). If the fix shows something it reads from the network,',
-        '  //     that text never appears unless YOUR test passes a `fetchImpl` answering that URL, for example',
-        '  //       fetchImpl: async (u) => ({ ok: true, status: 200, headers: { get: () => "application/json" },',
-        '  //         json: async () => (/api\\/version/.test(String(u)) ? { sha: "abc123def456" } : { latest: "1.0.0" }) })',
-        '  //  2. A change that fetches draws AGAIN after the fetch resolves, which is later than the awaited call',
-        '  //     returns. Never assert once, straight after the call: poll with `vi.waitFor` (import { vi } from "vitest").',
-        '  // Your test file lives in test/, so the import path is exactly the one shown above.',
-        '  // Do NOT hand-build `document`; a missing method on a fake is the commonest way these tests break.',
-        '  // The version shown is the build that is RUNNING (read from the file), not a value you store.',
-        '',
-        'HOW TO LOAD IT WITHOUT THE LOADER (only for pure logic):',
-        '  Read the source with `fs.readFileSync` and evaluate it with `new Function`,',
-        '  passing a hand-built fake `window`/`localStorage`, then assert against the',
-        '  API the module attached to that fake window. `test/update_ui_truth_test.js`',
-        '  does exactly this and is the worked example to follow. (`new Function` also',
-        '  gives each test a fresh module — an ESM `import` is cached, so one test',
-        '  would leak state into the next.)',
-        '  If the changed logic is pure, testing it directly is fine too — but the',
-        '  assertions must be meaningful, never tautological.',
+        // a module with exports is imported; a browser script is loaded into a window (autonomy/reach.mjs)
+        ...(moduleShape(after).esm ? esmTestGuide(filename, moduleShape(after)) : [
+            `  · ${filename} is a browser IIFE. It has NO \`export\` statement of any`,
+            '    kind, so `await import(...)` gives you a namespace with no `default`.',
+            '    `module.default.anything` is undefined and will throw.',
+            '',
+            'USE THE SHARED LOADER FIRST — it gives you a REAL DOM (linkedom is installed) and is tested:',
+            '  import * as loader from "./helpers/load-browser-module.js";',
+            `  const { window, document } = loader.loadBrowserModule(${JSON.stringify(filename)}, { html: '<div id="wfUpdateCard"></div>' });`,
+            '  // options: html (markup for <body>), localStorage ({key: value}), fetchImpl, globals, url',
+            '  // The module runs inside that window; whatever it attaches (for example window.wfUpdate)',
+            '  // is on `window`. Call its public API, then assert on `document` — the text a person sees:',
+            '  //   await window.wfUpdate.refresh();',
+            '  //   await vi.waitFor(() => expect(document.getElementById("wfUpdateCard").textContent).toContain("..."));',
+            '  // TWO FACTS THAT FAIL A CORRECT FIX IF YOU MISS THEM (seen on issue #507):',
+            '  //  1. The loader\'s own `fetch` REJECTS (offline). If the fix shows something it reads from the network,',
+            '  //     that text never appears unless YOUR test passes a `fetchImpl` answering that URL, for example',
+            '  //       fetchImpl: async (u) => ({ ok: true, status: 200, headers: { get: () => "application/json" },',
+            '  //         json: async () => (/api\\/version/.test(String(u)) ? { sha: "abc123def456" } : { latest: "1.0.0" }) })',
+            '  //  2. A change that fetches draws AGAIN after the fetch resolves, which is later than the awaited call',
+            '  //     returns. Never assert once, straight after the call: poll with `vi.waitFor` (import { vi } from "vitest").',
+            '  // Your test file lives in test/, so the import path is exactly the one shown above.',
+            '  // Do NOT hand-build `document`; a missing method on a fake is the commonest way these tests break.',
+            '  // The version shown is the build that is RUNNING (read from the file), not a value you store.',
+            '',
+            'HOW TO LOAD IT WITHOUT THE LOADER (only for pure logic):',
+            '  Read the source with `fs.readFileSync` and evaluate it with `new Function`,',
+            '  passing a hand-built fake `window`/`localStorage`, then assert against the',
+            '  API the module attached to that fake window. `test/update_ui_truth_test.js`',
+            '  does exactly this and is the worked example to follow. (`new Function` also',
+            '  gives each test a fresh module — an ESM `import` is cached, so one test',
+            '  would leak state into the next.)',
+            '  If the changed logic is pure, testing it directly is fine too — but the',
+            '  assertions must be meaningful, never tautological.',
+        ]),
         '',
         ...(observation ? [observation, ''] : []),
         String(after).length > 6000 ? 'THE CHANGE (unified diff of the new code; the file is large):' : 'RELEVANT PART OF THE NEW CODE:',
@@ -673,13 +680,33 @@ export async function runSwarm({
     const patchable = allFiles.filter((f) => editable(f) && sizeOf(f, repoDir) <= MAX_PATCHABLE_BYTES).sort();
     if (!patchable.length) return { ok: false, stage: 'select', reason: 'no editable module files' };
 
+    // A REPORT THAT NAMES ITS FILES IS BELIEVED. A report filed by one of the system's own watchers says where the code is; one written
+    // by a person often names a file too. Those go first and no model is asked to choose. And when a report says where the code is and
+    // the agent may open none of it, that is the answer: said at once, with the reason per file, instead of three attempts on the
+    // nearest file it may open (#559 and #609, 2026-11-12).
+    const exists = (f) => { try { return fs.statSync(path.join(repoDir, f)).isFile(); } catch { return false; } };
+    const reach = (f) => reachOf(f, { isSensitive, opened: MJS_REACH, size: sizeOf(f, repoDir), maxBytes: MAX_PATCHABLE_BYTES });
+    const owners = ownerFiles(issueText, { exists });
+    if (owners.length && !owners.some((f) => reach(f).ok)) {
+        const out = owners.map((f) => ({ file: f, why: reach(f).why }));
+        log(`[swarm] out of reach: ${out.map((x) => x.file).join(', ')}`);
+        return { ok: false, stage: 'reach', providers, named: owners, outOfReach: out, reason: outOfReachReason(out) };
+    }
+    const namedFirst = [...new Set([...owners, ...namedFiles(issueText, { exists })])].filter((f) => patchable.includes(f));
+
     const ranked = rankFiles(issueText, patchable, { repoDir, k: 8 });
-    const pool = ranked.length ? ranked.map((r) => r.file) : files;
-    const picked = await chat({
-        system: fitCharter(withCard(role.system), 'standard'),   // picking a file name is a small job: every part, in short form
-        prompt: ranked.length ? selectPromptRanked(issueText, ranked) : selectPrompt(issueText, files),
-        prefer: role.prefer, maxTokens: 64, temperature: 0, env,
-    });
+    const pool = [...new Set([...namedFirst, ...(ranked.length ? ranked.map((r) => r.file) : files)])];
+    let picked;
+    if (namedFirst.length) {
+        picked = { text: namedFirst[0], provider: 'the report (it names the file)' };
+        log(`[swarm] the report names ${namedFirst.join(', ')}: taken first, no model asked to choose`);
+    } else {
+        picked = await chat({
+            system: fitCharter(withCard(role.system), 'standard'),   // picking a file name is a small job: every part, in short form
+            prompt: ranked.length ? selectPromptRanked(issueText, ranked) : selectPrompt(issueText, files),
+            prefer: role.prefer, maxTokens: 64, temperature: 0, env,
+        });
+    }
     providers.select = picked.provider;
     const choice = resolvePick(picked.text, pool);
     if (!choice && /^\W*none\b/i.test(String(picked.text || '').trim())) {
@@ -881,7 +908,7 @@ export async function runSwarm({
         if (!plan.allowed) {
             return { ok: false, stage: 'proof', file, code, providers, review, reason: plan.reason };
         }
-        const tf = path.join('test', `auto-${file.replace(/\.js$/i, '')}-${issue?.number || 'x'}.test.js`);
+        const tf = path.join('test', `auto-${file.replace(/\.m?js$/i, '')}-${issue?.number || 'x'}.test.js`);
         // An injected runner exists for unit tests only; in CI the real Vitest always runs.
         const run = (runTest && !env.CI) ? runTest : undefined;
         const rounds = [];

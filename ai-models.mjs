@@ -22,6 +22,22 @@ export const TTL_MS = 6 * 3600 * 1000;
 export const QUOTA_BAD_MS = 2 * 60 * 1000;
 export const LIST_TTL_MS = 3 * 3600 * 1000;
 
+/* A SERVICE ITS OWNER HAS ENDED. Not a retired model (a list heals that) and not a key (the owner replaces that): the whole service is
+ * gone, so no key, model or retry brings an answer, and it is a member of no board. Said once, here, with the owner's own words and where
+ * they are published, so a seat is never kept for a provider that cannot answer.
+ *   GitHubModels — docs.github.com/en/github-models, read 2026-11-13: "As of July 30, 2026, GitHub Models has been fully retired. The
+ *   playground, model catalog, inference API, and bring your own key (BYOK) are no longer available to any customer." What production saw
+ *   (first on record here 2026-10-01) was HTTP 200 with the bare word OK as text/plain, with either token and with none; the report called that "the
+ *   token" and sent the owner to add a permission that could never help. */
+export const RETIRED_SERVICES = Object.freeze({
+    GitHubModels: Object.freeze({ since: '2026-07-30', source: 'https://docs.github.com/en/github-models', says: 'As of July 30, 2026, GitHub Models has been fully retired.' }),
+});
+
+/** Has the owner of this provider ended the whole service? */
+export function isRetiredService(name) {
+    return Object.prototype.hasOwnProperty.call(RETIRED_SERVICES, String(name == null ? '' : name));
+}
+
 /** Does this failure mean the MODEL is gone (as opposed to the key, the quota or the network)? */
 export function isModelGone(status, text) {
     const s = Number(status), t = String(text == null ? '' : text);

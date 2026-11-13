@@ -60,12 +60,18 @@ export function readChat(data) {
 
 const MAX_CANDIDATES = 3;
 const EMPTY_BAD_MS = 30 * 60 * 1000;
+const BUSY_BAD_MS = 2 * 60 * 1000;
 
 /* A MODEL THAT KEEPS MISSING THE BOARD'S DEADLINE IS NOT THE PROVIDER BEING DOWN. Production, 2026-11-12: OpenRouter's Nemotron slot named
  * a 550b model that takes longer than the board waits, so the slot missed every call for as long as that name stood, while the same
- * account's list held quicker models. After the second miss in a row the model is set aside for half an hour; the next call finds the
- * default set aside and asks the provider's list for another (askChat below). One miss is not enough: any model is slow once. */
-export const SLOW_STRIKES = 2;
+ * account's list held quicker models. A model that misses the deadline is set aside for half an hour; the next call finds the
+ * default set aside and asks the provider's list for another (askChat below).
+ *
+ * ONE MISS IS ENOUGH, AND THAT WAS MEASURED TOO. The first rule was "the second miss in a row". On production the misses came at 19:05Z,
+ * 19:07Z and 19:09Z and the model was never set aside: each serverless instance counts only the misses it served itself, and three calls
+ * were spread over more than one. A rule that waits for two never fires there. The cost of being wrong about one miss is small (half an
+ * hour on another model of the same role, then the first is asked again), so one full-deadline miss sets the model aside. */
+export const SLOW_STRIKES = 1;
 export const SLOW_BAD_MS = 30 * 60 * 1000;
 /**
  * @returns {string} the model set aside, or '' when nothing was (too few misses, or a provider with no list to choose another from)
@@ -154,7 +160,13 @@ export async function askChat({ name, slot, book, defaultModel, tokens, cap = 40
          * stops here as before. A 403 on a model picked from the provider's own list after the first one failed is that model (a free
          * model an account's settings do not allow, production 2026-11-12): it is set aside for a while and the next one is tried,
          * inside the same bound of three. */
-        if (load && trace.length > 1 && fail.status === 403) { book.markBad(slot, model, EMPTY_BAD_MS); model = ''; continue; }
+        const replaced = model !== defaultModel;                       // chosen from the provider's list, in this call or an earlier one
+        if (load && replaced && fail.status === 403) { book.markBad(slot, model, EMPTY_BAD_MS); model = ''; continue; }
+        /* ON OPENROUTER A FREE MODEL'S LIMIT IS THAT MODEL'S, NOT THE KEY'S. Production, 2026-11-12 19:05Z, one key, the same second: the
+         * Qwen role's model answered 200 while the finance role's replacement (a free gemma) answered 429. The limit sits with the model's
+         * upstream host. So a 429 on a replacement there is set aside for two minutes and the next free model is tried, inside the same
+         * bound. Everywhere else, and on the model asked first, a 429 is the key's limit and stops as before. */
+        if (load && replaced && fail.status === 429 && /^OpenRouter/.test(name)) { book.markBad(slot, model, BUSY_BAD_MS); model = ''; continue; }
         break;                                                         // a quota, a key, an outage: not a retired model, nothing to heal
     }
     const error = new Error('');

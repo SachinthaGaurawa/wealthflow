@@ -291,7 +291,7 @@ async function main() {
             'Set ANY ONE of these repository secrets and the system starts working:\n' +
             '`CEREBRAS_API_KEY`, `GROQ_API_KEY`, `WealthFlow_API_Key` (Gemini), `DEEPSEEK_API_KEY`, ' +
             '`MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `OPENROUTER_API_KEY`, `XAI_API_KEY`, ' +
-            '`FIREWORKS_API_KEY`, `NVIDIA_API_KEY`, `SAMBANOVA_API_KEY`, `GITHUB_MODELS_TOKEN`, ' +
+            '`FIREWORKS_API_KEY`, `NVIDIA_API_KEY`, `SAMBANOVA_API_KEY`, ' +
             '`HUGGINGFACE_API_KEY`, `COHERE_API_KEY`, `ANTHROPIC_API_KEY`.\n\n' +
             'This exact misconfiguration (a key named `WealthFlow_API_Key` while the agent read ' +
             '`GEMINI_API_KEY`) is what silently disabled the autonomous update system.'
@@ -532,6 +532,24 @@ async function main() {
             // A provider outage is not the agent's fault, but it must be visible.
             log(`#${number} swarm error: ${e.message}`);
             skipped.push(`#${number} swarm error: ${e.message.slice(0, 120)}`);
+            continue;
+        }
+
+        // OUT OF REACH IS NOT AN ATTEMPT. The report says where the code is and the agent may open none of it (autonomy/reach.mjs). No
+        // model was asked, so nothing is counted; the issue is handed over at once with the reason per file, instead of being tried
+        // again every six hours until the third "attempt" (#559 and #609 each spent three that way).
+        if (!result.ok && result.stage === 'reach') {
+            log(`#${number} is outside the agent's reach: ${result.reason}`);
+            if (!DRY) {
+                await Q.addLabels(number, [Q.LABELS.stuck]).catch(() => {});
+                await Q.comment(number,
+                    `### [AI] Not attempted: the code this report names is outside what the agent may edit\n\n` +
+                    `**Why:** ${result.reason}\n\n` +
+                    `Labelled \`${Q.LABELS.stuck}\` so it is not picked up again on every run. Remove the label once the file is opened or the change is made.\n` +
+                    FOOTER
+                ).catch(() => {});
+            }
+            skipped.push(`#${number} reach: ${String(result.reason).slice(0, 100)}`);
             continue;
         }
 
