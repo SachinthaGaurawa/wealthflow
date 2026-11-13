@@ -71,6 +71,7 @@ permissions:
   id-token: write                # sign the build provenance (Sigstore, free for a public repository)
   attestations: write            # store the signed statement of what this release is
   issues: write                  # a blocked or unconfirmed release files an issue instead of staying silent
+  actions: read                  # the waiting run looks for a newer run of this workflow (autonomy/gather-wait.mjs)
 
 jobs:
   # ── SEVERAL CHANGES RIDE IN ONE UPDATE ─────────────────────────────────────
@@ -81,9 +82,12 @@ jobs:
   # This job is the wait. autonomy/release-gather.mjs says how long: until no new
   # merge has landed for 45 minutes, never more than 2 hours after the oldest
   # waiting change, and not at all for a hotfix, a security or crash fix, or a
-  # release a person starts by hand. A newer merge starts a newer run whose
-  # `gather` cancels this one (same group, cancel-in-progress), so the newest
-  # merge always holds the timer and the older run releases nothing.
+  # release a person starts by hand. A newer merge starts a newer run; the older
+  # run notices it within a minute (autonomy/gather-wait.mjs), says so and ends
+  # with SUCCESS, and its `release` job does not run, so the newest merge always
+  # holds the timer and the older run releases nothing. It used to be cancelled
+  # through a concurrency group; GitHub draws a cancelled run as a red cross, and
+  # every merge but the last one wore it in the commit list (2026-11-13).
   #
   # It is deliberately OUTSIDE the `wealthflow-main-push` lock below: a job that
   # sleeps inside that lock would block every other workflow that pushes to main.
@@ -91,9 +95,8 @@ jobs:
   gather:
     runs-on: ubuntu-latest
     timeout-minutes: 150
-    concurrency:
-      group: wealthflow-release-gather
-      cancel-in-progress: true
+    outputs:
+      superseded: ${{ steps.wait.outputs.superseded }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -102,7 +105,9 @@ jobs:
         with:
           node-version: '24'
       - name: Wait for the line to go quiet
+        id: wait
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT: ${{ github.event_name }}
           AUTO: ${{ inputs.auto && '1' || '' }}
           QUIET_MIN: ${{ vars.WF_RELEASE_QUIET_MIN }}
@@ -120,18 +125,18 @@ jobs:
             if [ "$SECS" -gt 0 ]; then
               echo "Waiting $((SECS / 60)) minute(s): ${WHY}."
               echo ""
-              echo "A merge that lands meanwhile joins this update and takes over the wait (this run is then cancelled, which is expected)."
+              echo "A merge that lands meanwhile joins this update and takes over the wait (this run then ends here, green, and releases nothing)."
             else
               echo "Not waiting: ${WHY:-nothing to wait for}."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          sleep "$SECS"
+          node autonomy/gather-wait.mjs "$SECS"
 
   release:
     needs: gather
     # Runs when the wait finished, and also when the timer itself broke (a late release is worse than an ungathered
-    # one). It never runs when the wait was cancelled: the newer run that cancelled it releases everything.
-    if: ${{ !cancelled() && (needs.gather.result == 'success' || needs.gather.result == 'failure') }}
+    # one). It does not run when a newer run took over the timer (`superseded`): that run releases everything.
+    if: ${{ !cancelled() && (needs.gather.result == 'success' || needs.gather.result == 'failure') && needs.gather.outputs.superseded != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40          # install + full suite (~3 min) + release + up to 12 min waiting for the deploy; a hung npm still cannot burn GitHub's 6h default
     # Shared with every workflow that pushes to the default branch, so two bots can

@@ -13,8 +13,9 @@
  *   MAX_HOLD_MIN since the OLDEST change that is waiting, and it does not wait at all when any waiting change is
  *   urgent (a hotfix, a security fix, a crash fix, a rollback) or when a person starts the release by hand.
  *
- *   The wait itself is a job that sleeps (auto-release.yml, job `gather`). A newer merge starts a newer run whose
- *   `gather` job cancels the sleeping one (one concurrency group), so the timer is always held by the newest merge.
+ *   The wait itself is a job that sleeps (auto-release.yml, job `gather`). A newer merge starts a newer run; the sleeping
+ *   run sees it within a minute (autonomy/gather-wait.mjs) and ends GREEN, releasing nothing, so the timer is always held by
+ *   the newest merge. (It used to be cancelled through a concurrency group, which GitHub draws as a red cross.)
  *
  * Yesterday's ten merges under this rule: four updates instead of nine.
  * Pure decision + a small CLI that prints the number of seconds to wait. It fails OPEN: anything it cannot read

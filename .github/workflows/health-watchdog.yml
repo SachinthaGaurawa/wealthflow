@@ -36,12 +36,16 @@ permissions:
   contents: read
   issues: write
 
-concurrency:
-  group: health-watchdog
-  cancel-in-progress: false
+# The lock is on the JOB, not on the workflow. A workflow-level group is entered by every run, including the six or more
+# deployment_status runs per push whose only job is skipped; GitHub replaces an older PENDING run of a group with a newer one
+# and draws the replaced run as cancelled, a red cross in the commit list (2026-11-13: 20 such runs). A job whose `if` is false
+# never enters a job-level group, so only a probe that really runs can wait for another, and it still never overlaps one.
 
 jobs:
   watch:
+    concurrency:
+      group: health-watchdog
+      cancel-in-progress: false
     # THE COST GUARD. `deployment_status` fires for every deployment this repo
     # receives, and Vercel builds a PREVIEW for every pull-request push — so
     # without this filter the trigger above would have replaced one expensive cron
