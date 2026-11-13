@@ -57,6 +57,11 @@ export function cardCreditWordName(row) {
 }
 const isCardStatement = (parsed, ctx) => !!(ctx && ctx.card === true) || String(parsed && parsed.layout && parsed.layout.statementType || '').toLowerCase().replace(/[^a-z]/g, '') === 'creditcard';
 
+/* A line that says money came back to the card. The printed "Total Payment" is the sum of the PAYMENT lines only, so a refund, a cashback, a reversal or an adjustment is
+ * money in but is NOT a payment: counting it made the check fail on a statement whose payments were read correctly. "pmt" is the bank's own abbreviation of payment. */
+const PAYMENT_WORDS = /\b(?:payments?|pmt)\b/;
+const isPaymentLine = (row) => PAYMENT_WORDS.test(textOf(row)) && !REVERSAL.test(textOf(row)) && !/\b(?:adjust\w*|waiv\w*|rebate|rewards?|redeem\w*)\b/.test(textOf(row));
+
 /**
  * THE STATEMENT'S OWN "Total Payment" AGAINST WHAT WAS READ. A card statement that prints the money paid in must have the lines that say "payment" add up to it, to the cent. If the rows we read as credits with payment words do NOT reach it, the reading of the
  * directions is wrong somewhere (the 2026-11 HNB statement: every payment read as a purchase, found only when the owner asked why 9 items waited), so nothing on that statement is filed by the layout convention and the lines wait for the arithmetic or the owner.
@@ -66,7 +71,7 @@ export function printedPaymentsCheck(parsed) {
     const printed = parsed && parsed.printedFigures && parsed.printedFigures.payments;
     if (!(Number(printed) > 0)) return 'none';
     const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
-    const read = rows.filter((row) => row && row.valid !== false && row.direction === 'credit' && /\b(?:payments?|pmt)\b/.test(textOf(row))).reduce((sum, row) => sum + cents(row.amount), 0);
+    const read = rows.filter((row) => row && row.valid !== false && row.direction === 'credit' && isPaymentLine(row)).reduce((sum, row) => sum + cents(row.amount), 0);
     return read === Math.round(Number(printed) * 100) ? 'agree' : 'differs';
 }
 
