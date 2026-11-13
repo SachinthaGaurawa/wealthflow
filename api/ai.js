@@ -17,7 +17,7 @@
 import * as Matrix from './ai-matrix.mjs';
 import { isModelGone, isRetiredService, loadModels } from '../ai-models.mjs';
 import { geminiBook, geminiGenerate, mimeOfBase64 } from '../gemini-client.mjs';
-import { askChat, chatError, setAsideSlowModel } from '../ai-chat.mjs';
+import { askChat, chatError, setAsideSlowModel, HEDGE_MS } from '../ai-chat.mjs';
 import { getAdminDb, withDeadline } from '../admin-db.mjs';
 import { resetHealthMemory, serveHealth } from '../ai-health.mjs';
 import { OFFICIAL_ORIGIN } from '../wealthflow-public-identity.mjs';
@@ -174,6 +174,8 @@ export default async function handler(req, res) {
     const financialDecision = req.body?.financialDecision === true || (!advisory && (isFinancialTask(req.body?.task) || wantsJSON || !!image || /\bcategor(?:ize|ise|ization|isation|y|ies)\b|\broute\b[\s\S]*\btransaction/i.test(prompt)));
     const requestedDeadline = req.body?.deadlineMs;
     const deadlineMs = Number.isInteger(requestedDeadline) ? Math.max(2000, Math.min(24000, requestedDeadline)) : 24000;
+    // a second request needs time to answer: below twice the hedge time there is none, so nothing is hedged (and no request outlives its board)
+    const hedgeFor = (ms) => (ms >= 2 * HEDGE_MS ? HEDGE_MS : 0);
     const fetchWithTimeout = (url, options, timeoutMs = 22000) => transportWithTimeout(url, options, Math.min(timeoutMs, deadlineMs));
 
     // Pull keys ONLY from environment (Ollama has an embedded fallback)
@@ -284,7 +286,7 @@ export default async function handler(req, res) {
         };
         const dflt = image ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'openai/gpt-oss-120b';
         try {
-            const out = await askChat({ name: 'Groq', slot, book: modelBook, defaultModel: dflt, tokens, cap: image ? 2048 : 4096, send, vision: !!image, log: console.info,
+            const out = await askChat({ name: 'Groq', slot, book: modelBook, defaultModel: dflt, tokens, cap: image ? 2048 : 4096, send, vision: !!image, hedgeMs: hedgeFor(deadlineMs), log: console.info,
                 load: () => loadModels({ kind: 'openai', url: 'https://api.groq.com/openai/v1/models', key: groqKey, fetcher: fetchWithTimeout }) });
             return { reply: out.text, provider: out.model === dflt ? (image ? 'groq:llama-4-scout' : 'groq:gpt-oss-120b') : `groq:${out.model}` };
         } catch (e) { throw chatError('Groq', e); }
@@ -318,7 +320,7 @@ export default async function handler(req, res) {
         }));
         const dflt = image ? 'gemma4:31b' : 'gpt-oss:120b';
         try {
-            const out = await askChat({ name: 'Ollama', slot, book: modelBook, defaultModel: dflt, tokens, cap: 4096, kind: 'ollama', send, vision: !!image, log: console.info,
+            const out = await askChat({ name: 'Ollama', slot, book: modelBook, defaultModel: dflt, tokens, cap: 4096, kind: 'ollama', send, vision: !!image, hedgeMs: hedgeFor(deadlineMs), log: console.info,
                 load: () => loadModels({ kind: 'ollama', url: 'https://ollama.com/api/tags', key: ollamaKey, fetcher: fetchWithTimeout }) });
             return { reply: out.text, provider: `ollama:${out.model}` };
         } catch (e) { throw chatError('Ollama', e); }
@@ -352,7 +354,7 @@ export default async function handler(req, res) {
              * thinking model that spent its budget) is asked for little reasoning, then given room, then left for the next one. */
             const dflt = image ? opts.visionModel : opts.textModel;
             try {
-                const out = await askChat({ name: opts.name, slot, book: modelBook, defaultModel: dflt, tokens, cap: opts.maxTokens || 4096, send, vision: !!image, listKey: opts.list, log: console.info,
+                const out = await askChat({ name: opts.name, slot, book: modelBook, defaultModel: dflt, tokens, cap: opts.maxTokens || 4096, send, vision: !!image, hedgeMs: hedgeFor(deadlineMs), listKey: opts.list, log: console.info,
                     load: opts.list ? () => loadModels({ kind: 'openai', url: opts.list, key: opts.key, headers: opts.extraHeaders, fetcher: fetchWithTimeout }) : undefined });
                 return { reply: out.text, provider: out.model === dflt ? opts.provider : `${opts.provider}:${out.model}` };
             } catch (e) { throw chatError(opts.name, e); }

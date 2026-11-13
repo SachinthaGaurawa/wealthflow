@@ -160,7 +160,7 @@ export function createModelBook({ now = Date.now } = {}) {
     const lists = new Map();       // provider → { at, models, pending }
     const listOf = new Map();      // slot → the list it chooses from (OpenRouter's three roles choose from one account's list)
     const picked = new Map();      // slot → a model handed out by replacement() that has not answered or failed yet
-    const inFlight = new Map();    // slot → the model whose request is out right now (set by the asker just before it sends)
+    const inFlight = new Map();    // slot → the models whose request is out right now (set by the asker just before it sends; two while a slow one is hedged)
     const roleOf = (slot) => String(slot).split(':').pop();
     /* TWO VOTERS ON ONE MODEL ARE ONE VOTER. Slots that choose from the same list (the same account) and answer the same kind of
      * question never hold the same model: what another such slot is using now, or was just handed, is not offered to this one. A slot
@@ -184,10 +184,12 @@ export function createModelBook({ now = Date.now } = {}) {
          * being late. */
         remember(slot, id, listKey) { picked.delete(slot); if (listKey) listOf.set(slot, listKey); if (badIds(slot).includes(id)) return; chosen.set(slot, { id, at: now() }); },
         /** The asker says which model it is sending to, and when that request has come back (any way). */
-        asking(slot, id) { if (id) inFlight.set(slot, id); },
-        landed(slot, id) { if (inFlight.get(slot) === id) inFlight.delete(slot); },
-        /** The model whose request is out for this slot right now: the one a deadline was really spent on. '' when none is. */
-        flying(slot) { return inFlight.get(slot) || ''; },
+        asking(slot, id) { if (!id) return; if (!inFlight.has(slot)) inFlight.set(slot, new Set()); inFlight.get(slot).add(id); },
+        landed(slot, id) { const set = inFlight.get(slot); if (!set) return; set.delete(id); if (!set.size) inFlight.delete(slot); },
+        /** The model whose request is out for this slot right now (the first asked): the one a deadline was really spent on. '' when none is. */
+        flying(slot) { const set = inFlight.get(slot); return set && set.size ? [...set][0] : ''; },
+        /** Every model whose request is out for this slot right now (more than one only while a slow request is hedged). */
+        flyingAll(slot) { const set = inFlight.get(slot); return set ? [...set] : []; },
         forget(slot) { chosen.delete(slot); },
         markBad(slot, id, ms = TTL_MS) { if (!id) return; if (!bad.has(slot)) bad.set(slot, new Map()); bad.get(slot).set(id, now() + ms); const c = chosen.get(slot); if (c && c.id === id) chosen.delete(slot); if (picked.get(slot) === id) picked.delete(slot); },
         isBad(slot, id) { return badIds(slot).includes(id); },
