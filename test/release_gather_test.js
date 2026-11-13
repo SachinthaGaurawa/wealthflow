@@ -90,17 +90,21 @@ describe('yesterday, replayed', () => {
 
 describe('the workflow uses it the way the rule says', () => {
     const wf = fs.readFileSync('.github/workflows/auto-release.yml', 'utf8');
-    it('has a gather job whose newest run cancels an older one that is still waiting', () => {
+    it('has a gather job whose older waiting run ends green when a newer run takes over (never cancelled: a cancelled run is a red cross in the commit list)', () => {
         expect(wf).toMatch(/^  gather:\s*$/m);
         const gather = wf.slice(wf.indexOf('\n  gather:'), wf.indexOf('\n  release:'));
-        expect(gather).toMatch(/group: wealthflow-release-gather/);
-        expect(gather).toMatch(/cancel-in-progress: true/);
+        expect(gather).not.toMatch(/concurrency:/);
+        expect(gather).not.toMatch(/cancel-in-progress: true/);
         expect(gather).toMatch(/node autonomy\/release-gather\.mjs/);
+        expect(gather).toMatch(/node autonomy\/gather-wait\.mjs "\$SECS"/);
+        expect(gather).toMatch(/superseded: \$\{\{ steps\.wait\.outputs\.superseded \}\}/);
+        expect(wf).toMatch(/^  actions: read\s/m);                                  // to see the newer run
     });
-    it('the release job waits for it, still runs if the timer itself broke, and never runs when the wait was cancelled', () => {
+    it('the release job waits for it, still runs if the timer itself broke, and never runs when a newer run took over', () => {
         const release = wf.slice(wf.indexOf('\n  release:'));
         expect(release).toMatch(/needs: gather/);
         expect(release).toMatch(/needs\.gather\.result == 'success' \|\| needs\.gather\.result == 'failure'/);
+        expect(release).toMatch(/needs\.gather\.outputs\.superseded != 'true'/);
         expect(release).toMatch(/group: wealthflow-main-push/);                // the push lock is on the job that pushes, not on the wait
         expect(release).toMatch(/cancel-in-progress: false/);
     });

@@ -63,12 +63,15 @@ permissions:
   contents: read
   actions: write        # to start a workflow whose slot was skipped
 
-concurrency:
-  group: wealthflow-pacemaker
-  cancel-in-progress: false
+# The lock is on the JOB, not on the workflow, for the reason given in health-watchdog.yml: a run whose job is skipped by the `if`
+# below (most of them) must not enter the group, or it is replaced while pending and drawn as a cancelled run, a red cross in the
+# commit list (2026-11-13: 14 such runs). A beat that really runs still never overlaps another.
 
 jobs:
   beat:
+    concurrency:
+      group: wealthflow-pacemaker
+      cancel-in-progress: false
     # A watched job that was skipped or cancelled did no work (the watchdog answers every preview deploy with a skipped
     # run, six or more per push), so it is not a beat: this job is skipped too and costs no runner.
     if: >-
