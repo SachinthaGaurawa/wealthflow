@@ -1578,15 +1578,13 @@
                 uniqueMessages: Array.from(new Set(log.map(function (e) { return (e && e.msg) || ''; }).filter(Boolean))).slice(0, 15)
             };
             // most recent errors, newest first, trimmed so the payload stays small
-            d.errors = log.slice(-8).reverse().map(function (e) {
-                return {
-                    msg: String((e && e.msg) || '').slice(0, 400),
-                    stack: String((e && e.stack) || '').slice(0, 900),
-                    page: (e && e.page) || null,
-                    ver: (e && e.ver) || null,
-                    at: (e && (e.t || e.when)) || null
-                };
+            var G = window.WFDiagScrub;
+            d.errors = G && G.groupErrors ? G.groupErrors(log, { max: 8, build: build }) : log.slice(-8).reverse().map(function (e) {
+                return { msg: String((e && e.msg) || '').slice(0, 400), stack: String((e && e.stack) || '').slice(0, 900), page: (e && e.page) || null, ver: (e && e.ver) || null, at: (e && (e.t || e.when)) || null };
             });
+            d.build = build;
+            d.maskedScriptErrors = Number(localStorage.getItem('wf_masked_script_errors')) || 0;
+            var cn = navigator.connection; if (cn) d.connection = [cn.effectiveType, cn.downlink, cn.saveData ? 'save-data' : ''].filter(Boolean).join(' ');
         } catch (_) {}
         try {
             if (typeof window._wfCollectHealth === 'function') {
@@ -1642,6 +1640,8 @@
                 d._trimmed = true;
             }
         } catch (_) {}
+        // one rule for what may leave the device, shared with the server (wealthflow-diag-scrub.js); the server applies it again
+        try { var S = window.WFDiagScrub && window.WFDiagScrub.scrubDiagnostics(d); if (S) d = S; } catch (_) {}
         return d;
     }
 
