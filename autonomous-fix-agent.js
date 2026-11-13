@@ -565,6 +565,7 @@ async function main() {
                     `**Stopped at:** \`${result.stage}\`\n` +
                     `**Why:** ${result.reason}\n` +
                     (result.file ? `**File considered:** \`${result.file}\`\n` : '') +
+                    (result.secondAuthor ? `**Second author:** first change by \`${result.secondAuthor.first}\` was refused at \`${result.secondAuthor.stage}\`; ${result.secondAuthor.second ? `\`${result.secondAuthor.second}\` was asked and ` : ''}${String(result.secondAuthor.outcome || 'no change').slice(0, 160)}\n` : '') +
                     (shot.note ? `**Screenshot:** ${shot.note}\n` : '') +
                     (result.review?.findings?.length ? `\n**Reviewer findings:**\n${result.review.findings.map((f) => `- ${f}`).join('\n')}\n` : '') +
                     proofEvidence(result) +

@@ -272,6 +272,33 @@ export function authorPrompt(issue, filename, content) {
     ].join('\n');
 }
 
+/** The stages at which a refused change is asked for again, once, of another provider. Later stages judge a change that
+ *  already passed the gates; they have their own repair loops. */
+export const SECOND_AUTHOR_STAGES = ['structure', 'syntax', 'security'];
+export const MAX_SECOND_AUTHORS = 1;
+
+/**
+ * What the second author is told. The reason a change was refused comes from a program (structure, syntax) or from the
+ * independent reviewer (security); the reviewer's words are model text, so they are fenced as untrusted like the issue.
+ * The second author is asked for a different change, not for an argument with the veto.
+ */
+export function secondAuthorFeedback(stop) {
+    const s = stop || {};
+    const lines = [
+        '',
+        '',
+        'A COLLEAGUE ALREADY TRIED THIS FILE AND THE CHANGE WAS REFUSED. Write a different change that does not repeat the problem.',
+        `Refused at: ${s.stage || 'a gate'}.`,
+    ];
+    const findings = Array.isArray(s.review?.findings) ? s.review.findings.map((f) => (typeof f === 'string' ? f : JSON.stringify(f))).slice(0, 5) : [];
+    const why = [s.reason, ...findings].filter(Boolean).join('\n');
+    if (why) lines.push(fenceUntrusted('refusal', why, 900));
+    if (s.stage === 'security') lines.push('Do not write to innerHTML, outerHTML, document.write, eval or new Function with anything that is not a literal; use textContent or DOM nodes.');
+    if (s.stage === 'syntax') lines.push('Return the COMPLETE file as valid JavaScript; check every bracket and string is closed.');
+    if (s.stage === 'structure') lines.push('Keep every existing top-level function and export; change only what the issue needs.');
+    return lines.join('\n');
+}
+
 // ── proving that the proving test proves anything ───────────────────────────
 /*
  * THE DEFECT THIS SECTION EXISTS TO KILL
@@ -725,18 +752,15 @@ export async function runSwarm({
     }
 
     // ── stage 2: author the fix (whole file when small, SEARCH/REPLACE blocks when large) ─
-    let file = null, before = '', code = '', authored = null;
-    const tried = [];
-    for (const candidate of order) {
-        const full = path.join(repoDir, candidate);
-        const src = fs.readFileSync(full, 'utf8');
-        log(`[swarm] trying ${candidate} (${Math.round(src.length / 1024)} KB, ${src.length <= MAX_AUTHORABLE_BYTES ? 'whole-file' : 'patch'} mode, via ${picked.provider})`);
-
+    // One attempt at one file, written as a function because a SECOND author (below) asks for the same file again, from another
+    // provider, with the reason the first change was refused.
+    const authorOnce = async (candidate, src, { exclude = [], feedback: extra = '' } = {}) => {
+        const avoid = exclude.length ? { exclude } : {};
         let out = null, why = '';
         if (src.length <= MAX_AUTHORABLE_BYTES) {
             const a = await chat({
-                system: withCard(role.system, candidate), prompt: authorPrompt(issueText, candidate, src),
-                prefer: role.prefer, maxTokens: 16_000, temperature: 0.1, env,
+                system: withCard(role.system, candidate), prompt: authorPrompt(issueText, candidate, src) + extra,
+                prefer: role.prefer, maxTokens: 16_000, temperature: extra ? 0.3 : 0.1, env, ...avoid,
             });
             providers.author = a.provider;
             if (/^CANNOT_FIX_SAFELY/i.test(a.text.trim())) why = a.text.trim().slice(0, 300);
@@ -748,20 +772,29 @@ export async function runSwarm({
         } else {
             const ex = excerptFor(src, keywordsFrom(issueText), { pin: symbolsFrom(issueText) });
             const totalLines = src.split('\n').length;
-            let feedback = '';
+            let feedback = extra;
             for (let attempt = 0; attempt < 2 && !out && !why; attempt++) {
                 const a = await chat({
                     system: withCard(role.system, candidate), prompt: patchPrompt(issueText, candidate, ex.text, totalLines) + feedback,
-                    prefer: role.prefer, maxTokens: 6_000, temperature: attempt ? 0.2 : 0.1, env,
+                    prefer: role.prefer, maxTokens: 6_000, temperature: attempt || extra ? 0.2 : 0.1, env, ...avoid,
                 });
                 providers.author = a.provider;
                 if (/^CANNOT_FIX_SAFELY/i.test(a.text.trim())) { why = a.text.trim().slice(0, 300); break; }
                 const res = applyPatchBlocks(src, parsePatchBlocks(a.text));
                 if (res.ok) out = { code: res.code, authored: a, patched: res.applied };
-                else feedback = '\n\nYOUR PREVIOUS REPLY WAS REJECTED: ' + res.problems.join('; ') + '. Copy SEARCH text exactly from the excerpts.';
+                else feedback = extra + '\n\nYOUR PREVIOUS REPLY WAS REJECTED: ' + res.problems.join('; ') + '. Copy SEARCH text exactly from the excerpts.';
                 if (!res.ok && attempt === 1) why = 'patch could not be applied: ' + res.problems.join('; ').slice(0, 240);
             }
         }
+        return { out, why };
+    };
+    let file = null, before = '', code = '', authored = null;
+    const tried = [];
+    for (const candidate of order) {
+        const full = path.join(repoDir, candidate);
+        const src = fs.readFileSync(full, 'utf8');
+        log(`[swarm] trying ${candidate} (${Math.round(src.length / 1024)} KB, ${src.length <= MAX_AUTHORABLE_BYTES ? 'whole-file' : 'patch'} mode, via ${picked.provider})`);
+        const { out, why } = await authorOnce(candidate, src);
         if (out) { file = candidate; before = src; code = out.code; authored = out.authored; log(`[swarm] target file: ${file} (via ${authored.provider})`); break; }
         tried.push(`${candidate}: ${why || 'no change'}`);
         log(`[swarm] ${candidate} did not work out (${why || 'no change'}) — trying the next best match`);
@@ -770,17 +803,8 @@ export async function runSwarm({
         return { ok: false, stage: 'author', reason: tried.join(' | ').slice(0, 400), file: order[order.length - 1], providers, tried };
     }
 
-    // ── stage 3: mechanical gates (free, instant, no CI minutes) ────────────
-    const struct = structuralCheck(before, code);
-    if (!struct.ok) {
-        return { ok: false, stage: 'structure', reason: struct.problems.join('; '), file, providers };
-    }
-    if (!isValidJs(code)) {
-        return { ok: false, stage: 'syntax', reason: 'output is not parseable JavaScript', file, providers };
-    }
-    log(`[swarm] mechanical gates passed (via ${authored.provider})`);
-
-    // ── stage 4: Agent 5 security veto — on a DIFFERENT provider ───────────
+    // ── stage 4 is defined first because stage 3 and the second author both use it ─────────────────────────────
+    // Agent 5 security veto — on a DIFFERENT provider.
     // A verdict on a prefix of the change is not a verdict on the change. If the diff is
     // longer than the reviewer is shown, refuse it (fail closed) instead of accepting a PASS.
     // Absence is not approval: a missing independent opinion fails the run.
@@ -820,11 +844,41 @@ export async function runSwarm({
         log(`[swarm] Agent 5 verdict: PASS (via ${r.provider})`);
         return { reviewed: r, review: v };
     };
-    {
-        const g = await securityGate(code);
-        if (g.stop) return g.stop;
-        ({ reviewed, review } = g);
+    // ── stage 3: mechanical gates (free, instant, no CI minutes), then stage 4 ─────────────────────────────────
+    const gates = async (candidate) => {
+        const struct = structuralCheck(before, candidate);
+        if (!struct.ok) return { stop: { ok: false, stage: 'structure', reason: struct.problems.join('; '), file, providers } };
+        if (!isValidJs(candidate)) return { stop: { ok: false, stage: 'syntax', reason: 'output is not parseable JavaScript', file, providers } };
+        log(`[swarm] mechanical gates passed (via ${authored.provider})`);
+        return securityGate(candidate);
+    };
+    // A SECOND AUTHOR. Run 2026-11-12 (#607): the first author's change was unparseable, the next one hit the security veto, and
+    // each ended the attempt although the model that wrote it was the limit, not the issue. Now a refused change (it did not pass the
+    // mechanical gates, or the independent reviewer vetoed it) is asked for again, once, of a DIFFERENT provider, who is shown the
+    // reason. The new change goes through exactly the same gates; nothing is skipped and the reviewer is still never the author.
+    let g = await gates(code);
+    let second = null;
+    if (g.stop && SECOND_AUTHOR_STAGES.includes(g.stop.stage)) {
+        const firstProvider = authored.provider;
+        log(`[swarm] the first author's change was refused at ${g.stop.stage}; a second author (not ${firstProvider}) is asked`);
+        let again = null;
+        try {
+            again = await authorOnce(file, before, { exclude: [firstProvider], feedback: secondAuthorFeedback(g.stop) });
+        } catch (e) { again = { out: null, why: `no second author was available (${String(e?.message || e).slice(0, 120)})` }; }
+        second = { first: firstProvider, stage: g.stop.stage, reason: String(g.stop.reason || '').slice(0, 240) };
+        if (again.out && again.out.authored.provider !== firstProvider) {
+            authored = again.out.authored; code = again.out.code;
+            second.second = authored.provider;
+            const g2 = await gates(code);
+            if (g2.stop) g2.stop.secondAuthor = { ...second, outcome: `refused again at ${g2.stop.stage}` };
+            g = g2;
+        } else {
+            second.outcome = again.out ? 'the only provider left was the first one' : (again.why || 'no change');
+            g.stop.secondAuthor = second;
+        }
     }
+    if (g.stop) return g.stop;
+    ({ reviewed, review } = g);
 
     // ── the change, and what it does, made VISIBLE ──────────────────────────
     // Run 41695559384 passed every gate and then failed at the proof, and the log could not say whether the
