@@ -1,5 +1,19 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.95 — 2026-11-13
+
+**What changed for you**
+
+- App AI board: a request still out after 5 seconds is asked of a second model too, and the first answer wins (#618)
+- Statement reader: a card statement's payments do not add up to its p (#617)
+- App AI board: the model set aside is the one whose request was out when the deadline fell (#615)
+
+**Under the hood**
+
+- Update system: a change the gates or the reviewer refused is asked for again, once, of a different provider (#621)
+- Update system: a late scheduled run that finds its slot already served stops at once (#620)
+- Research doc: the board after the hedged request, measured (4 and 5 of 11) (#619)
+
 ## v7.69.94 — 2026-11-13
 
 **What changed for you**
