@@ -180,9 +180,9 @@ describe('named, and none of it in reach: said at once, nothing asked, nothing c
 
 describe('a module with exports is tested by importing it', () => {
     it('tells an ES module from a browser script', () => {
-        expect(moduleShape('export function a() {}\nexport const b = 1;\nexport { c, d as e };\nexport default { a };')).toEqual({ esm: true, exports: ['a', 'b', 'c', 'e'] });
+        expect(moduleShape('export function a() {}\nexport const b = 1;\nexport { c, d as e };\nexport default { a };')).toEqual({ esm: true, exports: ['a', 'b', 'c', 'e'], hasDefault: true });
         expect(moduleShape("import x from './y.mjs';\nconst z = 1;").esm).toBe(true);
-        expect(moduleShape('(function () { window.wfThing = { go() {} }; })();')).toEqual({ esm: false, exports: [] });
+        expect(moduleShape('(function () { window.wfThing = { go() {} }; })();')).toEqual({ esm: false, exports: [], hasDefault: false });
         expect(moduleShape('// export function inComment() {}\n(function () {})();').esm).toBe(false);
     });
     it('the real modules are read for what they are', () => {
@@ -207,6 +207,13 @@ describe('a module with exports is tested by importing it', () => {
     });
     it('the guide still helps when the exports cannot be read', () => {
         expect(esmTestGuide('x.mjs', { esm: true, exports: [] }).join('\n')).toContain('Read its exports from the code below');
+    });
+    it('a module with only a default export is imported as a default, never as a made-up name', () => {
+        const shape = moduleShape('const api = { go() {} };\nexport default api;\n');
+        expect(shape).toEqual({ esm: true, exports: [], hasDefault: true });
+        const guide = esmTestGuide('x.mjs', shape).join('\n');
+        expect(guide).toContain('import theModule from "../x.mjs";');
+        expect(guide).not.toContain('{ theFunction }');
     });
 });
 
