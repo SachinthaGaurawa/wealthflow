@@ -22,7 +22,7 @@
     var READ_SIDE = 1568;             // the long side a vision model reads well
     var READ_CAP = 1000000;           // characters per reading picture (the server accepts up to 1,100,000)
     var MAX_TILES = 3;
-    var THUMB_LADDER = [[900, 0.7], [900, 0.5], [900, 0.38], [720, 0.45], [560, 0.42], [440, 0.4], [360, 0.35]];
+    var THUMB_LADDER = [[900, 0.7], [900, 0.5], [900, 0.38], [720, 0.45], [560, 0.42], [440, 0.4], [360, 0.35], [300, 0.3], [240, 0.28], [180, 0.25]];
     var READ_QUALITIES = [0.85, 0.74, 0.62, 0.5, 0.4];
 
     /**
@@ -31,13 +31,14 @@
      * up to MAX_TILES parts that overlap by 8%, so a line of text cut at an edge is whole in a neighbour.
      * @returns {{ sx:number, sy:number, sw:number, sh:number }[]}
      */
-    function planTiles(w, h) {
+    function planTiles(w, h, maxTiles) {
         w = Math.max(1, Math.floor(w)); h = Math.max(1, Math.floor(h));
+        var cap = Math.max(1, Math.min(MAX_TILES, Math.floor(maxTiles) || MAX_TILES));
         var tall = h > 2.6 * w, wide = w > 3 * h;
-        if (!tall && !wide) return [{ sx: 0, sy: 0, sw: w, sh: h }];
+        if ((!tall && !wide) || cap === 1) return [{ sx: 0, sy: 0, sw: w, sh: h }];
         var long = tall ? h : w, short = tall ? w : h;
-        // aim for parts about 1.5 x as long as they are wide, never more than MAX_TILES
-        var n = Math.min(MAX_TILES, Math.max(2, Math.ceil(long / (short * 1.5))));
+        // aim for parts about 1.5 x as long as they are wide, never more than the cap (3, or fewer when several files share the request)
+        var n = Math.min(cap, Math.max(2, Math.ceil(long / (short * 1.5))));
         var overlap = Math.round(long * 0.08 / n);
         var step = long / n, out = [];
         for (var i = 0; i < n; i++) {
@@ -94,24 +95,40 @@
     }
 
     /**
+     * Make the pictures for one DECODED source (an ImageBitmap, an Image or a canvas, for example a rendered PDF page).
+     * @param {{ width:number, height:number }} bmp
+     * @param {{ thumbCap?:number, readCap?:number, readShare?:number, maxTiles?:number }} [opts]  smaller caps when several files share one request
+     * @returns {{ ok:boolean, thumb:string, reading:string[], width:number, height:number, tiles:number }}
+     */
+    function prepareSource(bmp, opts) {
+        opts = opts || {};
+        var w = bmp.width, h = bmp.height;
+        var thumb = render(bmp, { sx: 0, sy: 0, sw: w, sh: h }, THUMB_LADDER, opts.thumbCap || THUMB_CAP);
+        var rungs = readingRungs(), reading = [];
+        var tiles = planTiles(w, h, opts.maxTiles), cap = opts.readCap || READ_CAP;
+        // `readShare`: the characters this one source may use in all; its parts divide it (never below 60,000 each)
+        if (opts.readShare) cap = Math.min(cap, Math.max(60000, Math.floor(opts.readShare / tiles.length)));
+        tiles.forEach(function (rect) {
+            var one = render(bmp, rect, rungs, cap);
+            if (one) reading.push(one);
+        });
+        return { ok: !!(thumb || reading.length), thumb: thumb, reading: reading, width: w, height: h, tiles: reading.length };
+    }
+
+    /**
      * @param {File|Blob} file anything the browser can decode, of any size
+     * @param {{ thumbCap?:number, readCap?:number, readShare?:number, maxTiles?:number }} [opts]
      * @returns {Promise<{ ok:boolean, thumb:string, reading:string[], width:number, height:number, tiles:number, reason?:string }>}
      */
-    function prepare(file) {
+    function prepare(file, opts) {
         return decode(file).then(function (bmp) {
-            var w = bmp.width, h = bmp.height;
-            var thumb = render(bmp, { sx: 0, sy: 0, sw: w, sh: h }, THUMB_LADDER, THUMB_CAP);
-            var rungs = readingRungs(), reading = [];
-            planTiles(w, h).forEach(function (rect) {
-                var one = render(bmp, rect, rungs, READ_CAP);
-                if (one) reading.push(one);
-            });
+            var out = prepareSource(bmp, opts);
             if (bmp.close) { try { bmp.close(); } catch (_) { /* nothing to free */ } }
-            return { ok: !!(thumb || reading.length), thumb: thumb, reading: reading, width: w, height: h, tiles: reading.length };
+            return out;
         }).catch(function (e) {
             return { ok: false, thumb: '', reading: [], width: 0, height: 0, tiles: 0, reason: String((e && e.message) || e).slice(0, 120) };
         });
     }
 
-    root.WFImagePrep = { prepare: prepare, planTiles: planTiles, scaledSize: scaledSize, THUMB_CAP: THUMB_CAP, READ_CAP: READ_CAP, READ_SIDE: READ_SIDE, MAX_TILES: MAX_TILES };
+    root.WFImagePrep = { prepare: prepare, prepareSource: prepareSource, planTiles: planTiles, scaledSize: scaledSize, THUMB_CAP: THUMB_CAP, READ_CAP: READ_CAP, READ_SIDE: READ_SIDE, MAX_TILES: MAX_TILES };
 })(typeof window !== 'undefined' ? window : globalThis);

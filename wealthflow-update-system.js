@@ -128,8 +128,6 @@
     // swallowed — see _checkFeedbackCompletions().
     let _feedbackStatusDown = null;
     let _swWaiting = null;    // a waiting service worker, if any
-    let _fbImageData = null;  // attached screenshot (downscaled data-URL) for feedback
-    let _fbImageReading = null; // the same screenshot at reading quality (<=3 parts); goes to triage only, never to storage
 
     // ───────────────────────────────────────────────────────────────────────
     //  DETECTION
@@ -1462,11 +1460,7 @@
                     '<option value="bug">@alert@ Bug report</option><option value="idea">@sparkles@ Feature idea</option><option value="other">@message@ Other</option>' +
                 '</select>' +
                 '<textarea id="wfFbText" rows="5" placeholder="Tell us what happened or what you\'d like…" style="padding:12px;background:var(--bg,#060a14);border:1px solid var(--border2,#1f2638);border-radius:9px;color:var(--text,#e6e7eb);font-size:14px;resize:vertical;"></textarea>' +
-                '<div>' +
-                    '<input type="file" id="wfFbImg" accept="image/*" style="display:none;" />' +
-                    '<button type="button" id="wfFbImgBtn" style="width:100%;padding:11px;background:var(--bg,#060a14);border:1px dashed var(--border2,#1f2638);border-radius:9px;color:var(--text3,#8b95a8);font-size:13px;cursor:pointer;">@link@ Attach a screenshot (optional)</button>' +
-                    '<div id="wfFbImgPreview" style="display:none;margin-top:8px;position:relative;"></div>' +
-                '</div>' +
+                '<div id="wfFbAttach"></div>' +
                 '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text3,#8b95a8);line-height:1.5;"><input type="checkbox" id="wfFbDiag" checked style="margin-top:2px;flex-shrink:0;"> <span>Send system diagnosis \u2014 attaches the recorded errors, stack traces, health snapshot and device details so the cause can be found automatically. <strong style="color:var(--text2,#a8b2c4);">Never includes any financial data.</strong></span></label>' +
             '</div>',
             '<div style="display:flex;gap:8px;">' +
@@ -1477,50 +1471,8 @@
         document.body.appendChild(ov);
         requestAnimationFrame(() => ov.style.opacity = '1');
         ov.querySelector('#wfFbSend').onclick = _submitFeedback;
-        // image attach: read as a downscaled data-URL so it's small enough to store
-        const imgBtn = ov.querySelector('#wfFbImgBtn'), imgInput = ov.querySelector('#wfFbImg'), prev = ov.querySelector('#wfFbImgPreview');
-        if (imgBtn && imgInput) {
-            imgBtn.onclick = () => imgInput.click();
-            const showPrev = () => {
-                if (prev) { prev.style.display = 'block'; prev.innerHTML = '<img src="' + (_fbImageData || (_fbImageReading && _fbImageReading[0]) || '') + '" style="max-width:100%;border-radius:8px;border:1px solid var(--border,#1f2638);"/><button type="button" onclick="this.parentNode.style.display=\'none\';this.parentNode.innerHTML=\'\';window.wfUpdate&&(window.wfUpdate._clearFbImg&&window.wfUpdate._clearFbImg());" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;">×</button>'; }
-                if (imgBtn) imgBtn.textContent = '@link@ Screenshot attached — tap to change';
-            };
-            imgInput.onchange = () => {
-                const f = imgInput.files && imgInput.files[0];
-                if (!f) return;
-                // Any size: wealthflow-image-prep.js makes an issue-sized thumbnail AND up to three reading-quality parts.
-                if (typeof window !== "undefined" && window.WFImagePrep) {
-                    window.WFImagePrep.prepare(f).then((r) => {
-                        if (!r.ok) { _notify('That picture could not be read. Please try another one.', 'warn'); return; }
-                        _fbImageData = r.thumb || null; _fbImageReading = r.reading.length ? r.reading : null;
-                        showPrev();
-                    });
-                    return;
-                }
-                const reader = new FileReader();
-                reader.onload = () => {
-                    // downscale to max 900px to keep the payload small
-                    const img = new Image();
-                    img.onload = () => {
-                        // Smaller until it fits the room an issue can hold (44,000 characters): quality first, then size. A
-                        // 900px/0.7 shot of a 1440px window was ~52,000 and was dropped, so the agent never saw it (issue #514).
-                        const cv = document.createElement('canvas'), cx = cv.getContext('2d');
-                        _fbImageData = '';
-                        [[900, .7], [900, .5], [900, .38], [720, .45], [560, .42], [440, .4]].some(([max, q]) => {
-                            const scale = Math.min(1, max / Math.max(img.width, img.height));
-                            cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
-                            cx.drawImage(img, 0, 0, cv.width, cv.height);
-                            _fbImageData = cv.toDataURL('image/jpeg', q);
-                            return _fbImageData.length <= 43500;
-                        });
-                        cv.width = cv.height = 0;
-                        showPrev();
-                    };
-                    img.src = reader.result;
-                };
-                reader.readAsDataURL(f);
-            };
-        }
+        // Up to five pictures, PDFs and text files: wealthflow-feedback-attach.js owns the control and prepares them when Send is tapped.
+        if (window.WFFeedbackAttach) window.WFFeedbackAttach.mount(ov.querySelector('#wfFbAttach'), { notify: _notify });
     }
 
     /*  Collect the REAL diagnostics the "send system diagnosis" tick promises.
@@ -1687,13 +1639,16 @@
         const diag = !!(document.getElementById('wfFbDiag') || {}).checked;
         if (text.length < 4) { _notify('Please type a little more so we can help.', 'warn'); return; }
         const diagnostics = diag ? _collectDiagnostics() : null;
-        const readingImgs = _fbImageReading;
+        // up to five pictures / PDFs / text files, prepared now for the real count (wealthflow-feedback-attach.js); never throws
+        const att = window.WFFeedbackAttach ? await window.WFFeedbackAttach.collect() : { attachments: [], stored: [], image: null };
         const payload = {
             type, text,
             version: _installedVersion() || CURRENT_VERSION,
             createdAt: new Date().toISOString(),
             uid: (window.currentUser && window.currentUser.uid) || null,
-            image: _fbImageData || null,
+            image: att.image || null,
+            // kind and thumbnail only: what is kept in Firestore and on the device (the reading pictures and text go to triage alone)
+            attachments: att.stored,
             // kept as top-level fields for backwards compatibility with the email
             // backup, which formats them individually
             ua: diag ? navigator.userAgent : null,
@@ -1757,15 +1712,10 @@
                     version: payload.version,
                     createdAt: payload.createdAt,
                     diagnostics: diagnostics,
-                    // The screenshot has to come WITH the report. feedback-triage.js
-                    // renders `body.image` into the issue so the fix agent can look at
-                    // what the user was looking at — but this call never sent the
-                    // field, so that renderer received '' on every real submission and
-                    // the picture went only to Firestore. Machinery present, signal
-                    // absent, for the second time in the same feature.
+                    // The pictures have to come WITH the report (the first thumbnail also as `image`, for an older server)
                     image: payload.image || null,
-                    // reading-quality parts of the same screenshot: read by the server when the report is filed (never stored)
-                    imageReading: readingImgs
+                    // every attached file at reading quality, read by the server when the report is filed (never stored)
+                    attachments: att.attachments
                 })
                 // Generous, because this endpoint classifies the report and calls
                 // the GitHub API before answering — but finite, so a stalled
@@ -1804,7 +1754,7 @@
                 { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 10000);
             if (rf && rf.ok) stored = true;
         } catch (_) {}
-        _fbImageData = null; _fbImageReading = null;
+        try { if (window.WFFeedbackAttach) window.WFFeedbackAttach.clear(); } catch (_) {}
         _close('wfFeedback');
 
         // Tell the user what will actually happen, not just "thanks".
@@ -2322,7 +2272,7 @@
         later: later, skip: skipVersion, whenIdle: whenIdle, undoChoice: undoChoice, setWifiOnly: setWifiOnly, setEarly: setEarly,
         history: showHistory, features: showFeatures, setFeature: setFeature, featureOn: featureOn,
         setFollow: setFollow, _followState, _autoFollow, _reportToAccount, _refreshForAccount, _policyState, _announce, _autoApplyIfChosen, _history, _record, _loadManifest,
-        _clearFbImg: () => { _fbImageData = null; _fbImageReading = null; },
+        _clearFbImg: () => { try { if (window.WFFeedbackAttach) window.WFFeedbackAttach.clear(); } catch (_) {} },
         refresh: () => { _refreshDashboardPill(); _injectSettingsCard(); _renderSettingsCard(); },
         // Feedback completion reporting — exposed so the Settings screen and the
         // "Your Feedback" list can refresh statuses on demand.

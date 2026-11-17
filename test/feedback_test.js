@@ -272,7 +272,7 @@ describe('feedback: an attached screenshot reaches the agent', () => {
         // call left the test passing. A test that cannot fail is worse than no
         // test, because it reports safety that is not there.
         expect(src, 'imageSection is defined but never called from the issue body')
-            .toMatch(/^\s*imageSection\(image, imageRoom\(restLength\)\),\s*$/m);
+            .toMatch(/^\s*imageSection\((?:image|firstThumb), imageRoom\(restLength\)\),\s*$/m);
 
         // And it must sit inside the issue-body array, next to the section it
         // belongs beside — not merely somewhere in the file.
@@ -290,7 +290,8 @@ describe('feedback: an attached screenshot reaches the agent', () => {
         const body = src.slice(start, src.indexOf('.filter(Boolean)', start));
         expect(head).toMatch(/diagnosticsSection\(diagnostics\)/);
         expect(body).toMatch(/\.\.\.head/);
-        expect(body).toMatch(/imageSection\(image, imageRoom\(restLength\)\)/);
+        expect(body).toMatch(/imageSection\((?:image|firstThumb), imageRoom\(restLength\)\)/);
+        expect(body).toMatch(/extraImagesSection\(/);   // attachments 2..5
     });
 });
 

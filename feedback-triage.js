@@ -31,6 +31,7 @@ import { resolveRepo, resolveToken, isValidRepo } from './github-repo.js';
 
 import { fetchWithTimeout } from './fetch-timeout.mjs';
 import { scrubDiagnostics } from './wealthflow-diag-scrub.js';
+import { normalizeAttachments, readAllAttachments, extraImagesSection } from './wf-feedback-attachments.mjs';
 
 // The GitHub API calls in this file keep the 10s library default. Only the LLM
 // classification call gets a longer budget: a model round-trip is slow by nature,
@@ -524,24 +525,24 @@ export default async function handler(req, res) {
     // is bounded here — the same defect class as the label, found while
     // auditing the rest of this payload rather than after it bit.
     const title = clampTitle('[' + String(cls.severity || 'low').toUpperCase() + '] ' + (cls.summary || text.slice(0, 60)));
-    // The client also sends the screenshot at reading quality (up to three tiles, ~1568 px, up to ~1 MB each). The issue can only
-    // hold a ~44 KB thumbnail, so it is READ here, now, and the words go into the issue; the fix agent then works from what the
-    // picture shows instead of a postage stamp of it. Never fatal: a report without a reading is still filed.
+    // The client sends up to five attachments (pictures, the first pages of a PDF drawn as pictures, text files), each at reading
+    // quality. The issue can only hold ~44 KB of thumbnails, so they are READ here, now, and the words go into the issue; the fix agent
+    // then works from what they show instead of a postage stamp. Never fatal: a report without a reading is still filed.
     let readingSection = '';
     out.imageRead = 'none';
-    if (Array.isArray(body.imageReading) && body.imageReading.length) {
+    const attachments = normalizeAttachments(body);
+    out.attachments = attachments.length;
+    if (attachments.length) {
         try {
-            const { readAttachments } = await import('./wf-screenshot-reader.mjs');
-            let timer;
-            const rr = await Promise.race([
-                readAttachments({ images: body.imageReading, title, text }),
-                new Promise((resolve) => { timer = setTimeout(() => resolve({ status: 'unreadable', section: '' }), 35000); if (timer.unref) timer.unref(); }),
-            ]);
-            clearTimeout(timer);
+            const rr = await readAllAttachments({ attachments, title, text });
             readingSection = rr.section || '';
             out.imageRead = rr.status || 'unreadable';
+            out.attachmentsRead = rr.read;
         } catch (_) { out.imageRead = 'unreadable'; }
     }
+    // the first thumbnail keeps the single-screenshot block the agent already knows; the others follow under their own marker
+    const withThumb = attachments.filter((a) => a.thumb);
+    const firstThumb = (withThumb[0] && withThumb[0].thumb) || image;
     // Everything except the screenshot is written first so the picture can use whatever room is really left.
     const footer = '_Filed automatically by the feedback triage agent. The autonomous pipeline picks this up ' +
         'on the `issues: opened` trigger, so work starts within minutes._';
@@ -573,7 +574,8 @@ export default async function handler(req, res) {
         // A screenshot shows what the user was actually looking at, which is
         // often the whole report. It goes after the diagnosis so the readable
         // parts come first and the base64 is last.
-        imageSection(image, imageRoom(restLength)),
+        imageSection(firstThumb, imageRoom(restLength)),
+        extraImagesSection(withThumb.slice(1).map((a) => ({ n: a.n, thumb: a.thumb })), imageRoom(restLength) - String(firstThumb || '').length),
         footer,
     ].filter(Boolean).join('\n');
 

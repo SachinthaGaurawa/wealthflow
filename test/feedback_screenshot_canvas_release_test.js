@@ -1,132 +1,85 @@
 /* =============================================================================
  * test/feedback_screenshot_canvas_release_test.js
  * -----------------------------------------------------------------------------
- * Part of the broader memory-safety audit that followed the mobile-only "A
- * problem repeatedly occurred" crashes. openFeedback()'s screenshot-attach
- * handler in wealthflow-update-system.js downscales the chosen image onto a
- * canvas (capped at 900px, so the leak here is small) and read its encoded
- * result into _fbImageData — but never released the canvas's own backing
- * store afterwards, unlike every other canvas-using path in this codebase.
- * Low risk on its own, but the exact same pattern already caused real
- * crashes elsewhere in this app, so it is fixed and tested for consistency
- * rather than left as the one canvas nobody zeroes.
+ * Part of the memory-safety audit that followed the mobile-only "A problem repeatedly occurred" crashes: a canvas that
+ * is not zeroed after it is encoded keeps its backing store until the GC gets round to it.
  *
- * This test runs the REAL openFeedback() (extracted from source, not
- * reimplemented) against a real linkedom DOM plus fake Image/FileReader/
- * canvas doubles, and drives the actual <input type="file"> onchange handler
- * exactly as the browser would.
+ * Feedback attachments (up to five) are drawn by wealthflow-image-prep.js (pictures) and wealthflow-feedback-attach.js
+ * (PDF pages). Every canvas either of them creates must be zeroed once its data URL has been taken. This test runs the
+ * REAL modules against recording canvas doubles, so five pictures in a row cannot pile canvases up on a phone.
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseHTML } from 'linkedom';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const SRC = fs.readFileSync(path.join(ROOT, 'wealthflow-update-system.js'), 'utf8');
 
-/** Brace-counted body of a top-level (possibly async) named function. */
-function extractFn(src, name) {
-    const at = src.search(new RegExp(`\\n[ \\t]*(?:async\\s+)?function ${name}\\s*\\(`));
-    if (at < 0) return '';
-    const braceStart = src.indexOf('{', at);
-    let depth = 0;
-    for (let j = braceStart; j < src.length; j += 1) {
-        if (src[j] === '{') depth += 1;
-        else if (src[j] === '}') { depth -= 1; if (depth === 0) return src.slice(at, j + 1); }
-    }
-    return '';
-}
-
-const BODY = extractFn(SRC, 'openFeedback');
-
-describe('the function this file depends on is still where it expects', () => {
-    it('openFeedback was found and is non-trivial', () => {
-        expect(BODY, 'openFeedback not found — retarget this test').toBeTruthy();
-        expect(BODY.length).toBeGreaterThan(30);
-    });
-});
-
-function makeImageCtor({ width = 1800, height = 1200 } = {}) {
-    function FakeImage() {
-        this._src = '';
-        this.onload = null;
-        this.onerror = null;
-        this.width = width;
-        this.height = height;
-    }
-    Object.defineProperty(FakeImage.prototype, 'src', {
-        get() { return this._src; },
-        set(v) { this._src = v; if (v && this.onload) this.onload(); },
-    });
-    return FakeImage;
-}
-
-function makeFileReaderCtor() {
-    return function FakeFileReader() {
-        this.onload = null;
-        this.readAsDataURL = function () {
-            this.result = 'data:image/jpeg;base64,cmVhZA==';
-            if (this.onload) this.onload();
-        };
-    };
-}
-
-function loadModule(doc) {
-    const body = [
-        'var _fbImageData = null;',
-        'function _closeOverlay() {}',
-        'function _overlayCss() { return ""; }',
-        // The real _sheet() wraps title/subtitle chrome around its html args;
-        // all the ids openFeedback() needs live inside those html args, so
-        // concatenating everything past the first two params reproduces the
-        // exact markup this test needs without pulling _sheet() in too.
-        'function _sheet() { return Array.prototype.slice.call(arguments, 2).join(""); }',
-        'function _submitFeedback() {}',
-        BODY,
-        'return { openFeedback: openFeedback, getFbImageData: function () { return _fbImageData; } };',
-    ].join('\n');
-    const fn = new Function('document', 'requestAnimationFrame', 'Image', 'FileReader', body);
-    return fn(doc, (f) => f(), makeImageCtor(), makeFileReaderCtor());
-}
-
-describe('openFeedback() releases the screenshot-attach canvas after encoding it', () => {
-    it('zeroes the canvas right after toDataURL, not just leaving it to the GC', async () => {
-        const { document } = parseHTML('<!doctype html><html><body></body></html>');
-        const created = [];
-        const realCreateElement = document.createElement.bind(document);
-        document.createElement = (tag) => {
-            if (tag !== 'canvas') return realCreateElement(tag);
-            const rec = { widthLog: [], heightLog: [] };
+function recordingDocument() {
+    const created = [];
+    const document = {
+        createElement(tag) {
+            if (tag !== 'canvas') return {};
             const c = {
                 _w: 0, _h: 0,
-                get width() { return c._w; },
-                set width(v) { c._w = v; rec.widthLog.push(v); },
-                get height() { return c._h; },
-                set height(v) { c._h = v; rec.heightLog.push(v); },
-                getContext: () => ({ drawImage() {} }),
-                toDataURL: () => 'data:image/jpeg;base64,ZW5jb2RlZA==',
-                _rec: rec,
+                get width() { return c._w; }, set width(v) { c._w = v; },
+                get height() { return c._h; }, set height(v) { c._h = v; },
+                getContext: () => ({ fillRect() {}, drawImage() {}, set fillStyle(_v) {} }),
+                toDataURL: (_t, q) => 'data:image/jpeg;base64,' + 'A'.repeat(Math.max(8, Math.round(c._w * c._h * q * 0.05))),
             };
             created.push(c);
             return c;
-        };
+        },
+    };
+    return { document, created };
+}
 
-        const mod = loadModule(document);
-        mod.openFeedback();
-        const ov = document.getElementById('wfFeedback');
-        expect(ov, 'openFeedback() did not create the #wfFeedback overlay').toBeTruthy();
+function loadImagePrep(document) {
+    const sb = { document };
+    sb.window = sb; sb.globalThis = sb;
+    new Function('window', 'globalThis', 'document', fs.readFileSync(path.join(ROOT, 'wealthflow-image-prep.js'), 'utf8'))(sb, sb, document);
+    return sb.WFImagePrep;
+}
 
-        const imgInput = ov.querySelector('#wfFbImg');
-        expect(imgInput, 'openFeedback() markup is missing #wfFbImg').toBeTruthy();
-        imgInput.files = [{ name: 'screenshot.png', type: 'image/png' }];
+describe('attachment canvases are released after encoding', () => {
+    it('image-prep zeroes every canvas it made, for one picture and for a tall one cut into parts', () => {
+        const { document, created } = recordingDocument();
+        const P = loadImagePrep(document);
+        for (const [w, h] of [[1440, 900], [1170, 9000]]) {
+            const out = P.prepareSource({ width: w, height: h }, {});
+            expect(out.ok).toBe(true);
+        }
+        expect(created.length).toBeGreaterThan(0);
+        created.forEach((c, i) => {
+            expect(c.width, `canvas ${i} leaked its width`).toBe(0);
+            expect(c.height, `canvas ${i} leaked its height`).toBe(0);
+        });
+    });
 
-        expect(typeof imgInput.onchange).toBe('function');
-        imgInput.onchange();
+    it('five pictures in a row leave no canvas holding pixels', () => {
+        const { document, created } = recordingDocument();
+        const P = loadImagePrep(document);
+        for (let i = 0; i < 5; i++) P.prepareSource({ width: 1600, height: 1000 }, { thumbCap: 8000, readCap: 200000, maxTiles: 1 });
+        expect(created.length).toBeGreaterThanOrEqual(5);
+        expect(created.every((c) => c.width === 0 && c.height === 0)).toBe(true);
+    });
 
-        expect(created.length, 'no canvas was ever created for the downscale').toBe(1);
-        expect(mod.getFbImageData()).toBe('data:image/jpeg;base64,ZW5jb2RlZA==');
-        expect(created[0].width, 'screenshot canvas leaked — never zeroed after encoding').toBe(0);
-        expect(created[0].height).toBe(0);
+    it('the PDF page renderer zeroes its canvas too (source check: every canvas it creates is released)', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'wealthflow-feedback-attach.js'), 'utf8');
+        const creates = (src.match(/createElement\('canvas'\)/g) || []).length;
+        const zeroes = (src.match(/\.width\s*=\s*(?:[a-z.]+\.height\s*=\s*)?0\b/g) || []).length;
+        expect(creates).toBeGreaterThan(0);
+        expect(zeroes).toBeGreaterThanOrEqual(creates);
+    });
+
+    it('the old single-file handler is gone from the sheet: no FileReader/canvas path is left in openFeedback', () => {
+        const us = fs.readFileSync(path.join(ROOT, 'wealthflow-update-system.js'), 'utf8');
+        const at = us.search(/function openFeedback\s*\(/);
+        expect(at).toBeGreaterThan(-1);
+        const end = us.indexOf('\n    }\n', at);
+        const body = us.slice(at, end > at ? end : at + 6000);
+        expect(body).not.toMatch(/createElement\('canvas'\)/);
+        expect(body).not.toMatch(/new FileReader/);
+        expect(body).toMatch(/WFFeedbackAttach\.mount\(/);
     });
 });

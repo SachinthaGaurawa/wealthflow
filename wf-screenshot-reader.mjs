@@ -39,6 +39,9 @@ export const MAX_READING_CHARS = 1_100_000;
 
 const MARKER_BLOCK = new RegExp(
     '<!--\\s*' + IMAGE_MARKER + '\\s*-->\\s*<details>[\\s\\S]*?</details>', 'i');
+/** The first picture plus every further attachment's thumbnail (feedback-triage.js writes those under an `-extra` marker). */
+const ALL_MARKER_BLOCKS = new RegExp(
+    '<!--\\s*' + IMAGE_MARKER + '(?:-extra[^>]*?)?\\s*-->\\s*<details>[\\s\\S]*?</details>', 'gi');
 const DATA_URL = /data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/]+={0,2}/;
 
 const VISION_TIMEOUT_MS = 45_000;
@@ -67,7 +70,12 @@ export function extractScreenshot(body) {
 
 /** The issue text with the base64 block removed (it is not text and floods prompts). */
 export function withoutScreenshot(body) {
-    return String(body || '').replace(MARKER_BLOCK, '_(Screenshot data removed from this text; see "What the screenshot shows" below.)_');
+    let first = true;
+    return String(body || '').replace(ALL_MARKER_BLOCKS, () => {
+        if (!first) return '';
+        first = false;
+        return '_(Screenshot data removed from this text; see "What the screenshot shows" below.)_';
+    });
 }
 
 export function visionPrompt({ title = '', text = '', viewport = '' } = {}) {
@@ -282,28 +290,39 @@ export function validReadingImages(list) {
 }
 
 /**
+ * Read the reading pictures the parts of one attachment in parallel, and say which were read. The note put in front of each
+ * part is the caller's (a tall screenshot cut in parts says so; the pages of a PDF are separate pages).
+ * @returns {Promise<{ status:'none'|'read'|'unreadable', list:string[], read:{p:object,i:number}[], who:string, provider?:string, tried:string[] }>}
+ */
+export async function readParts({ images, title = '', text = '', partNote = null, env = process.env, fetchImpl = globalThis.fetch, describeImpl = describeScreenshot, log = () => {} } = {}) {
+    const list = validReadingImages(images);
+    if (!list.length) return { status: 'none', list, read: [], who: '', tried: [] };
+    const note = partNote || ((i, n) => (n > 1 ? `[This is part ${i + 1} of ${n} of ONE tall or wide screenshot, cut top to bottom (or left to right) with a small overlap.] ` : ''));
+    const parts = await Promise.all(list.map((dataUrl, i) => describeImpl({
+        dataUrl, title, env, fetchImpl, log, verify: false,
+        text: note(i, list.length) + String(text).slice(0, 1000),
+    }).catch((e) => ({ ok: false, tried: [String((e && e.message) || e).slice(0, 80)] }))));
+    const read = parts.map((p, i) => ({ p, i })).filter((x) => x.p && x.p.ok);
+    const tried = [...new Set(parts.flatMap((p) => (p && p.tried) || []))].slice(0, 4);
+    if (!read.length) return { status: 'unreadable', list, read: [], who: '', tried };
+    return { status: 'read', list, read, who: [...new Set(read.map((x) => `${x.p.provider}/${x.p.model}`))].join(', '), provider: read[0].p.provider, tried };
+}
+
+/**
  * Read every reading image (a tall screenshot arrives as up to three tiles) and write one section for the issue.
  * WHY HERE AND NOT ONLY IN THE AGENT: the issue body holds ~44 KB of image, so the agent only ever saw a thumbnail.
  * The server receives the full-quality rendition when the report is filed, reads that, and puts WORDS in the issue.
  * @returns {Promise<{ status:'none'|'read'|'unreadable', section:string, provider?:string }>}
  */
 export async function readAttachments({ images, title = '', text = '', env = process.env, fetchImpl = globalThis.fetch, describeImpl = describeScreenshot, log = () => {} } = {}) {
-    const list = validReadingImages(images);
-    if (!list.length) return { status: 'none', section: '' };
-    const parts = await Promise.all(list.map((dataUrl, i) => describeImpl({
-        dataUrl, title, env, fetchImpl, log, verify: false,
-        text: (list.length > 1 ? `[This is part ${i + 1} of ${list.length} of ONE tall or wide screenshot, cut top to bottom (or left to right) with a small overlap.] ` : '') + String(text).slice(0, 1000),
-    }).catch((e) => ({ ok: false, tried: [String((e && e.message) || e).slice(0, 80)] }))));
-    const read = parts.map((p, i) => ({ p, i })).filter((x) => x.p && x.p.ok);
-    if (!read.length) {
-        const tried = [...new Set(parts.flatMap((p) => (p && p.tried) || []))].slice(0, 4);
-        return { status: 'unreadable', section: '' , tried };
-    }
-    const who = [...new Set(read.map((x) => `${x.p.provider}/${x.p.model}`))].join(', ');
+    const r = await readParts({ images, title, text, env, fetchImpl, describeImpl, log });
+    if (r.status === 'none') return { status: 'none', section: '' };
+    if (r.status === 'unreadable') return { status: 'unreadable', section: '', tried: r.tried };
+    const { list, read, who } = r;
     const body = read.map(({ p, i }) => (list.length > 1 ? `**Part ${i + 1} of ${list.length}**\n` : '') + p.text).join('\n\n');
     const missing = list.length - read.length;
     return {
-        status: 'read', provider: read[0].p.provider,
+        status: 'read', provider: r.provider,
         section: [
             '### What the AI saw in the screenshot', '',
             `<!-- ${READING_MARKER} -->`,
@@ -403,6 +422,13 @@ export async function screenshotContext({ issue, env = process.env, fetchImpl, r
         const reading = readingInBody(stripped);
         let extra = '';
         let note = 'The screenshot was already read when the report was filed (see "What the AI saw in the screenshot").';
+        // Several attachments were read, and only the first thumbnail is here to check against: checking the whole reading against
+        // one picture would "correct" the others. The reading stands, and the note says it was not cross-checked.
+        const multi = Number((String(body).match(/<!--\s*wf-attachments:(\d+)\s*-->/) || [])[1] || 1) > 1;
+        if (multi) {
+            note = 'The attachments were already read when the report was filed (see "What the AI saw in the screenshot"). There are several, so the reading was not cross-checked against the first thumbnail.';
+            return { body: stripped + ground(reading), status: 'read', provider: 'filing', note };
+        }
         try {
             const v = await readWithProviders({ dataUrl, prompt: verifyPrompt({ reading, title: issue && issue.title, text: stripped.slice(0, 500) }), order: VISION_ORDER, env, fetchImpl: fetchImpl || globalThis.fetch, log });
             if (v.ok) {
