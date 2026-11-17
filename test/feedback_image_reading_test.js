@@ -151,19 +151,23 @@ describe('the fix agent does not read the thumbnail again', () => {
 describe('wiring', () => {
     it('the server reads the parts and puts the words in the issue head', () => {
         const src = fs.readFileSync('feedback-triage.js', 'utf8');
-        expect(src).toMatch(/body\.imageReading/);
-        expect(src).toMatch(/readAttachments\(\{ images: body\.imageReading/);
+        // every attachment (up to five, and an older app's single `image`/`imageReading`) goes through normalizeAttachments -> readAllAttachments
+        expect(src).toMatch(/normalizeAttachments\(body\)/);
+        expect(src).toMatch(/readAllAttachments\(\{ attachments/);
         expect(src).toMatch(/readingSection,\s*\n\s*diagnosticsSection\(diagnostics\)/);
         expect(src).toMatch(/out\.imageRead/);
     });
-    it('the page loads the module and the picker uses it; the reading parts are never stored', () => {
+    it('the page loads the modules and the picker uses them; the reading parts are never stored', () => {
         const html = fs.readFileSync('index.html', 'utf8');
         expect(html.split('src="wealthflow-image-prep.js"').length - 1).toBe(1);
+        expect(html.split('src="wealthflow-feedback-attach.js"').length - 1).toBe(1);
+        // the picker (up to five files) prepares each picture through the image-prep module
+        expect(fs.readFileSync('wealthflow-feedback-attach.js', 'utf8')).toMatch(/WFImagePrep\.prepare\(/);
         const us = fs.readFileSync('wealthflow-update-system.js', 'utf8');
-        expect(us).toMatch(/window\.WFImagePrep\.prepare\(f\)/);
-        expect(us).toMatch(/imageReading: readingImgs/);
-        // the Firestore/local copy is `payload`; the reading parts must not be a field of it
-        const payload = us.slice(us.indexOf('const payload = {'), us.indexOf('const payload = {') + 900);
-        expect(payload).not.toMatch(/imageReading/);
+        expect(us).toMatch(/attachments: att\.attachments/);
+        // the Firestore/local copy is `payload`; the reading parts and the text of a file must not be fields of it
+        const payload = us.slice(us.indexOf('const payload = {'), us.indexOf('const payload = {') + 1200);
+        expect(payload).toMatch(/attachments: att\.stored/);
+        expect(payload).not.toMatch(/att\.attachments|imageReading/);
     });
 });

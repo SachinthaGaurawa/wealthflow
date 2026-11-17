@@ -285,3 +285,21 @@ Whether the board then holds its floor on every call is not known until producti
 **Honest limit.** The rule works from shape. A merchant written in lower case and not quoted inside an error message ("failed for keells nugegoda") cannot be told from an ordinary word. The structured fields never carry such text, and the capitals rule covers how statements write it; a message that quotes lower-case record text unquoted would still pass.
 
 **Proof.** `test/diag_scrub_test.js` (31 cases) with property tests for idempotence and no-throw; the issue body stays under 60,000 characters with every section full; the device function runs against the real module in a DOM. Not proven live: the first diagnosis sent after the deploy.
+
+### 8.13 Up to five attachments on one feedback, read and understood (2026-11-17)
+
+**What the owner saw.** "Send feedback" took one picture or one document. The sheet held one `_fbImageData`, one `<input type="file">` without `multiple`, and the server read one picture.
+
+**What it does now.** `wealthflow-feedback-attach.js` (the picker) lets the person choose up to five files in total, in one or several picks: pictures, PDF documents and text files (`.txt .csv .tsv .json .log .md`). A chip per file with a remove button; a file already held is not taken twice; an over-limit or unusable file is named with the reason. Word and Excel files cannot be opened in the browser, so they are refused in words (save as PDF or paste the text).
+
+**How each kind is read.**
+- Picture: `wealthflow-image-prep.js` makes a small thumbnail and up to three reading parts (a tall capture is cut top to bottom with overlap). Pictures of any size are accepted.
+- PDF: the first two pages are drawn with the app's own PDF.js and read as pictures. A password-protected PDF is said so, not silently dropped.
+- Text file: the first 12,000 characters.
+- Budget: the request body limit is about 4.5 MB, so every picture or PDF gets an equal share of 3.2 million characters, and a tall page divides its share over its parts. One picture keeps today's quality; five tall pictures still get their parts.
+
+**On the server.** `wf-feedback-attachments.mjs` checks every attachment again (only real raster data URLs, bounded sizes, at most five, an older app's single `image`/`imageReading` still works), has a vision model read each picture on its own deadline (one slow provider does not cost the others) and writes one section for the issue: "Attachment k of n" with the kind. The first thumbnail goes in the issue as before, the others under their own marker, only as many as fit under the 65,536-character issue limit. The fix agent strips them all before it reads the issue, and when there is more than one attachment it keeps the filing-time reading and says it was not cross-checked.
+
+**Privacy (the issue is public).** A screenshot of the app is described as it is. What is read from a PDF page and the start of a text file go through the one diagnosis rule (`wealthflow-diag-scrub.js`): amounts, long numbers, e-mail addresses, quoted record text and capitalised merchant names are masked. File names are never written (a name can be an account number). The local copy and Firestore keep only thumbnails, never the reading parts or file text.
+
+**Honest limits.** Office files are not supported. A PDF is read for its first two pages. A text file is read to its first 12,000 characters. HEIC may not decode in every browser; the file is then named as skipped. A masked document means the agent sees the layout and kind, not the figures. Vision reading depends on provider keys and quota. **Proof:** `test/feedback_attachments_test.js`, `test/feedback_image_reading_test.js` and `test/feedback_screenshot_canvas_release_test.js`, plus one run in real Chromium with three pictures (one 1170x9000), a three-page PDF and a text file, a Word file and a sixth file refused: the five were prepared in 0.5 s, three parts for the tall page, two pages of the PDF, 1.78 M of 3.2 M reading characters and 32.8 K of 43.5 K thumbnail characters. Not proven live: the first real report with several attachments after the deploy.
