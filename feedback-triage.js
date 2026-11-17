@@ -30,6 +30,7 @@ import { createHash } from 'node:crypto';
 import { resolveRepo, resolveToken, isValidRepo } from './github-repo.js';
 
 import { fetchWithTimeout } from './fetch-timeout.mjs';
+import { scrubDiagnostics } from './wealthflow-diag-scrub.js';
 
 // The GitHub API calls in this file keep the 10s library default. Only the LLM
 // classification call gets a longer budget: a model round-trip is slow by nature,
@@ -772,9 +773,14 @@ export function imageSection(image, budget = IMAGE_BUDGET) {
  * Everything is length-capped: an issue body over 65,536 characters is rejected
  * by GitHub, which would silently lose the whole report.
  */
-export function diagnosticsSection(d) {
+export function diagnosticsSection(raw) {
+    if (!raw || typeof raw !== 'object') return '';
+    // The tick promises "Never includes any financial data" and this goes into a PUBLIC issue. The device scrubs before it sends,
+    // and this scrubs again (a stale cached app or any other client must not get past it): one rule, wealthflow-diag-scrub.js.
+    const d = scrubDiagnostics(raw);
     if (!d || typeof d !== 'object') return '';
     const L = ['### System diagnosis', ''];
+    const cell1 = (x, n) => String(x == null ? '' : x).replace(/[\r\n|`]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 
     const facts = [
         ['App page', d.activePage],
@@ -782,7 +788,8 @@ export function diagnosticsSection(d) {
         ['Device', d.ua], ['Screen', d.screen],
         ['Viewport', d.viewport], ['DPR', d.dpr], ['Language', d.lang],
         ['Timezone', d.tz], ['Installed as app', d.standalone], ['Online', d.online],
-        ['DOM nodes', d.domNodes],
+        ['DOM nodes', d.domNodes], ['Build', d.build], ['Connection', d.connection],
+        ['Masked script errors (cross-origin, no detail)', d.maskedScriptErrors],
     ].filter(([, v]) => v !== undefined && v !== null && v !== '');
     if (facts.length) {
         L.push('| | |', '|---|---|');
@@ -823,13 +830,61 @@ export function diagnosticsSection(d) {
         }
     }
 
-    if (d.errors && d.errors.length) {
-        L.push('<details><summary>Recent errors with stack traces</summary>', '');
-        for (const e of d.errors.slice(0, 6)) {
+    if (Array.isArray(d.errors) && d.errors.length) {
+        L.push('<details><summary>Recent errors with stack traces (repeats grouped)</summary>', '');
+        for (const e of d.errors.slice(0, 8)) {
+            if (!e || typeof e !== 'object') continue;
             L.push('```', String(e.msg || '').slice(0, 300), String(e.stack || '').slice(0, 800), '```');
-            L.push('_page: ' + (e.page || '?') + ' · build: ' + (e.ver || '?') + '_', '');
+            const bits = ['page: ' + (e.page || '?'), 'build: ' + (e.ver || '?')];
+            if (e.count > 1) bits.push('seen ' + Number(e.count) + ' times' + (e.first && e.last ? ' (' + cell1(e.first, 30) + ' to ' + cell1(e.last, 30) + ')' : ''));
+            if (e.src) bits.push('source: ' + cell1(e.src, 120));
+            if (e.where) bits.push('where: ' + cell1(e.where, 160));
+            if (e.mem != null && e.mem !== '') bits.push('memory: ' + cell1(e.mem, 40));
+            if (typeof e.dom === 'number') bits.push('DOM nodes: ' + e.dom);
+            L.push('_' + bits.join(' · ') + '_', '');
         }
         L.push('</details>', '');
+    }
+
+    // Statements the app could not settle, and why (the reason codes and bank names the review list already shows on screen; a
+    // file name is reduced to its extension by the scrub). Before this the device collected all of it and the issue dropped it.
+    if (d.statementReview && typeof d.statementReview === 'object') {
+        const r = d.statementReview;
+        L.push('**Statements needing review:** ' + (Number(r.total) || 0) + ' (' + (Number(r.wholeStatement) || 0) + ' whole statement(s), ' + (Number(r.perRow) || 0) + ' single row(s)).', '');
+        if (r.byReason && typeof r.byReason === 'object') {
+            const rows = Object.entries(r.byReason).slice(0, 20);
+            if (rows.length) { L.push('| Reason | Count |', '|---|---|'); for (const [k, v] of rows) L.push('| ' + cell1(k, 80) + ' | ' + (Number(v) || 0) + ' |'); L.push(''); }
+        }
+        if (Array.isArray(r.wholeStatements) && r.wholeStatements.length) {
+            L.push('| Bank | File | Reason | Problems found inside |', '|---|---|---|---|');
+            for (const w of r.wholeStatements.slice(0, 20)) {
+                if (!w || typeof w !== 'object') continue;
+                L.push('| ' + cell1(w.bank, 40) + ' | ' + cell1(w.filename, 20) + ' | ' + cell1(w.reason, 80) + ' | ' + cell1(Array.isArray(w.embedded) ? w.embedded.slice(0, 6).join('; ') : '', 240) + ' |');
+            }
+            L.push('');
+        }
+        if (r.coverage && typeof r.coverage === 'object') {
+            let c = ''; try { c = JSON.stringify(r.coverage).slice(0, 900); } catch (_) { c = ''; }
+            if (c) L.push('<details><summary>Mailbox coverage</summary>', '', '```json', c, '```', '</details>', '');
+        }
+    }
+    if (Array.isArray(d.statementRetrying) && d.statementRetrying.length) {
+        L.push('**Statements waiting to be tried again:**', '');
+        L.push('| Bank | File | Tries | Last reason |', '|---|---|---|---|');
+        for (const w of d.statementRetrying.slice(0, 10)) {
+            if (!w || typeof w !== 'object') continue;
+            L.push('| ' + cell1(w.bank, 40) + ' | ' + cell1(w.filename, 20) + ' | ' + (Number(w.retryCount) || 0) + ' | ' + cell1(w.lastRetryReason, 160) + ' |');
+        }
+        L.push('');
+    }
+    if (Array.isArray(d.layoutTeachAttempts) && d.layoutTeachAttempts.length) {
+        L.push('<details><summary>Layout reader attempts on this device (newest first)</summary>', '');
+        for (const a of d.layoutTeachAttempts.slice(0, 10)) {
+            if (!a || typeof a !== 'object') continue;
+            let x = ''; try { x = JSON.stringify({ bank: a.bank, outcome: a.outcome, diag: a.diag, server: a.server }).slice(0, 500); } catch (_) { x = ''; }
+            L.push('- `' + cell1(x, 520) + '`');
+        }
+        L.push('', '</details>', '');
     }
 
     if (d.health) {
