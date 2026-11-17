@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.96 — 2026-11-17
+
+**What changed for you**
+
+- System diagnosis: one scrub rule on device and server, repeated errors grouped, statement review data rendered (#623)
+
+**Under the hood**
+
+- Update system: a superseded release wait ends green, and skipped runs no longer enter a lock (red crosses on main) (#622)
+
 ## v7.69.95 — 2026-11-13
 
 **What changed for you**
