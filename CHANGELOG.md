@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.97 — 2026-11-18
+
+**What changed for you**
+
+- Send feedback: up to five attachments (pictures, PDF, text files), read when filed (#627)
+
 ## v7.69.96 — 2026-11-17
 
 **What changed for you**
