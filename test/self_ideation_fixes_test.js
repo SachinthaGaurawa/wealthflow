@@ -238,3 +238,24 @@ describe('8. the test writer is told how to test a NEW page module (third dry ru
         expect(buildTestNote(plan)).not.toMatch(/has these ids/);
     });
 });
+
+describe('9. the test writer is shown the API the module really has (fourth dry run on #635: it invented showDetail)', () => {
+    it('apiSurface lists what a module attaches, measured by loading it, and gives nothing when it cannot', async () => {
+        const { apiSurface, buildTestNote } = await import('../autonomy/build-lane.mjs');
+        const plan = { name: 'wealthflow-x-y.js', api: 'WFXY' };
+        const code = "(function (root) { 'use strict'; function open(r) { return r; } root.WFXY = { open: open, version: 1 }; })(typeof window !== 'undefined' ? window : globalThis);";
+        const list = await apiSurface(plan, code, process.cwd());
+        expect(list).toEqual(['open()', 'version']);
+        expect(await apiSurface(plan, 'syntax error here (', process.cwd())).toEqual([]);
+        expect(await apiSurface(plan, code, '/nonexistent-dir')).toEqual([]);
+        const note = buildTestNote(plan, '', list);
+        expect(note).toContain('window.WFXY = { open(), version }');
+        expect(note).toContain('Call ONLY these');
+        expect(buildTestNote(plan, '', [])).not.toContain('Call ONLY these');
+    });
+    it('names the ids the module creates itself, never an invented one', async () => {
+        const { buildTestNote } = await import('../autonomy/build-lane.mjs');
+        const note = buildTestNote({ name: 'wealthflow-a-b.js', api: 'WFAB' }, '', [], "var s = document.createElement('div'); s.id = 'wf-ab-sheet'; s2.setAttribute('id', 'wf-ab-close');");
+        expect(note).toContain('wf-ab-sheet, wf-ab-close');
+    });
+});
