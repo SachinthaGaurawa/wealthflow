@@ -48,7 +48,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { describeAvailability } from './autonomy/llm-router.mjs';
+import { describeAvailability, primeRouter } from './autonomy/llm-router.mjs';
 import { runSwarm, swarmMayEdit } from './autonomy/agent-swarm.mjs';
 import { symptomHome, homeFacts, reachabilityGap } from './autonomy/symptom-home.mjs';
 import { layoutLaneFor, runLayoutLane } from './autonomy/css-lane.mjs';
@@ -298,6 +298,8 @@ async function main() {
             '`GEMINI_API_KEY`) is what silently disabled the autonomous update system.'
         );
     }
+    // Learn which providers can answer right now (credit, key, model) before any work is dealt to one.
+    await primeRouter();
     if (!Q.tokenFrom()) fail('No GITHUB_TOKEN / GH_PAT — the agent cannot read its work queue.');
     if (!Q.repoFrom()) fail('No GITHUB_REPOSITORY — cannot tell which repo to work on.');
 

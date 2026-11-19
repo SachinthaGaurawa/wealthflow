@@ -7,7 +7,7 @@
  * real ones from that log.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { chat, isRetiredModelError, pickReplacement, healedModels, _resetHealedModels, describeAvailability, replacementUnusable, statedSize, MAX_HEALS } from '../autonomy/llm-router.mjs';
+import { chat, isRetiredModelError, pickReplacement, healedModels, _resetHealedModels, _resetBench, describeAvailability, replacementUnusable, statedSize, MAX_HEALS } from '../autonomy/llm-router.mjs';
 
 describe('isRetiredModelError — only "this model is gone" counts', () => {
     const gone = [
@@ -59,7 +59,7 @@ describe('chat() replaces a retired model once, from the provider\'s own list', 
     const env = { GROQ_API_KEY: 'test-key-not-real' };
     const ask = () => chat({ prompt: 'hi', only: ['groq'], env, maxTokens: 8 });
 
-    beforeEach(() => { _resetHealedModels(); calls = []; vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+    beforeEach(() => { _resetHealedModels(); _resetBench(); calls = []; vi.spyOn(console, 'warn').mockImplementation(() => {}); });
     afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
     const stub = (handler) => vi.stubGlobal('fetch', async (url, init) => { calls.push({ url: String(url), method: (init && init.method) || 'GET', init }); return handler(String(url), init); });
@@ -161,7 +161,7 @@ describe('a replacement that cannot be called is followed by the next (NVIDIA, 2
     const EOL = reply(410, { title: 'Gone', status: 410, detail: "The model 'qwen/qwen2.5-coder-32b-instruct' has reached its end of life and is no longer available." });
     const NO_FUNCTION = reply(404, { status: 404, title: 'Not Found', detail: "Function 'invented-function-id': Not found for account 'invented-account'" });
     const LIST = { data: [{ id: 'deepseek-ai/deepseek-coder-6.7b-instruct' }, { id: 'nvidia/nv-embed-v1' }, { id: 'qwen/qwen3-coder-480b-a35b-instruct' }, { id: 'meta/llama-3.3-70b-instruct' }] };
-    beforeEach(() => { _resetHealedModels(); calls = []; vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+    beforeEach(() => { _resetHealedModels(); _resetBench(); calls = []; vi.spyOn(console, 'warn').mockImplementation(() => {}); });
     afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
     const stub = (handler) => vi.stubGlobal('fetch', async (url, init) => { calls.push({ url: String(url), method: (init && init.method) || 'GET', init }); return handler(String(url), init); });
     const model = (init) => JSON.parse(init.body).model;
