@@ -12,6 +12,7 @@
  *                         are merged into the caller's own document the way the page's upload would have, and the sweep runs at once (sms-flush.mjs)
  *        body { action:'owner-otp-send', phone }          -> text a verification code to the number being added to "Alerts to my own number"
  *        body { action:'owner-otp-verify', phone, code }  -> check it; the number becomes the account's verified number (sms-owner-otp.mjs)
+ *        body { action:'gateway-test' }                   -> text ONE test message to the account's VERIFIED own number (sms-gateway-test.mjs); no number or wording is taken from the body
  *   GET  /api/sms-notify   (same auth)       -> { ok, allowed, configured }
  *   GET  /api/sms-notify?check=1  (no auth)  -> { ok, configured, tokenAccepted }   two booleans: is a token set, does the gateway accept it
  *   GET  /api/sms-notify?check=1  (allowed account) -> the same plus { reachable, lowCredit, senderId, balanceReadable, balanceFields, failure }
@@ -41,6 +42,7 @@ import { sweepUser, ROOT } from './sms-engine.mjs';
 import { hasSmsRecords } from './sms-events.mjs';
 import { sendOwnerCode, verifyOwnerCode } from './sms-owner-otp.mjs';
 import { cleanFlush, applyFlush } from './sms-flush.mjs';
+import { sendGatewayTest } from './sms-gateway-test.mjs';
 
 /** Two kicks closer together than this are one kick: the page may call twice on a save. */
 export const MIN_KICK_GAP_MS = 6000;
@@ -115,6 +117,19 @@ async function handleOwnerOtp({ res, body, db, uid, client, deps, now }) {
     }
 }
 
+/** "Check the SMS gateway" with proof: one real text, to the verified own number only. */
+async function handleGatewayTest({ res, db, uid, client, now }) {
+    try {
+        const out = await sendGatewayTest({ db, uid, client, now });
+        if (out.ok) return j(res, 200, out);
+        const { status, ...rest } = out;
+        return j(res, status || 400, { ...rest, error: out.reason });
+    } catch (e) {
+        console.error('[WF-SMS] gateway test failed:', String((e && e.message) || e).slice(0, 200));
+        return j(res, 500, { ok: false, error: 'failed', message: 'The test could not be made just now. Try again in a moment.' });
+    }
+}
+
 /**
  * The page is closing (or has just changed something) and cannot wait for its own upload: merge what it sends, then look. What the body may carry is
  * the books a text is derived from and nothing else; who is texted, how much and in what words are still read from the stored document afterwards.
@@ -165,6 +180,7 @@ export async function handleNotify(req, res, deps) {
     const now = deps.now();
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     if (body.action === 'owner-otp-send' || body.action === 'owner-otp-verify') return handleOwnerOtp({ res, body, db, uid: who.uid, client, deps, now });
+    if (body.action === 'gateway-test') return handleGatewayTest({ res, db, uid: who.uid, client, now });
     if (body.action === 'flush') return handleFlush({ res, body, db, who, client, deps, now });
     const rootRef = db.collection(ROOT).doc(who.uid);
     try {
