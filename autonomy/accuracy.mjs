@@ -39,6 +39,9 @@ import * as Q from './work-queue.mjs';
 /** Marker recording WHICH detector filed an issue. */
 export const DETECTOR_TAG = 'wf-detector';
 
+/** Label on an issue the scanner closed itself because the finding vanished. No human judged it, so it is graded as nothing. */
+export const CLEARED_LABEL = 'scanner-cleared';
+
 /** Detectors that are never auto-quarantined, however they are judged. */
 export const NEVER_QUARANTINE = new Set(['dep-vuln']);
 
@@ -72,6 +75,7 @@ export function detectorOf(issue) {
 export function judge(issue) {
     if (!issue || issue.state !== 'closed') return 'open';
     const labels = (issue.labels || []).map((l) => String(l?.name || l).toLowerCase());
+    if (labels.includes(CLEARED_LABEL)) return 'open';   // closed by the scanner itself: not a human's verdict either way
     if (labels.includes('wontfix') || labels.includes('invalid')) return 'rejected';
     const reason = String(issue.state_reason || '').toLowerCase();
     if (reason === 'not_planned') return 'rejected';

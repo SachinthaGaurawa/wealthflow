@@ -50,7 +50,8 @@ async function gh(pathname, { method = 'GET', env = process.env } = {}) {
     const r = await fetch(`https://api.github.com/repos/${repo}${pathname}`, { method, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'wealthflow-slot-guard' } });
     const raw = await r.text();
     if (!r.ok) throw new Error(`GitHub ${method} ${pathname} -> ${r.status}: ${raw.slice(0, 160)}`);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { throw new Error(`GitHub ${method} ${pathname} -> ${r.status}: the answer is not JSON (${raw.length} characters)`); }
 }
 
 /** The CLI's whole decision, with the network injected for the tests. Returns { guarded, served, text }. */

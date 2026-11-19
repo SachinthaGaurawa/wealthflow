@@ -104,10 +104,11 @@
     function judgeFeedback(ev) {
         var items = Array.isArray(ev.feedback) ? ev.feedback : [];
         if (!items.length) return link('feedback', 'ok', 'No report of yours is waiting.');
-        var now = ev.now, unsent = [], idle = [], stuck = [], done = 0, working = 0;
+        var now = ev.now, unsent = [], idle = [], stuck = [], done = 0, working = 0, gone = 0;
         items.forEach(function (f) {
             var age = (f.at != null) ? now - f.at : null;
             if (!f.issue) { if (age != null && age > LIMITS.unsentFeedbackMs && ev.online !== false) unsent.push(f); return; }
+            if (f.status === 'gone') { gone++; return; }   // the work item was deleted on GitHub: nothing is waiting on it
             if (f.status === 'completed' || f.status === 'declined') { done++; return; }
             if (f.status === 'needs-attention') { stuck.push(f); return; }
             if (f.status === 'in-progress') { working++; return; }
@@ -118,7 +119,7 @@
         if (unsent.length) return link('feedback', 'warn', unsent.length + ' report(s) saved here for over ' + ago(LIMITS.unsentFeedbackMs) + ' were never filed as work items.', 'Open Settings > Software Update > Send Feedback, or check /api/feedback-triage (GITHUB token / issues enabled).');
         if (ev.feedbackStatusDown) return link('feedback', 'warn', 'Your reports are filed, but completion cannot be checked: ' + ev.feedbackStatusDown + '.', 'Set GITHUB_REPO and a GitHub token (GH_PAT) in Vercel so /api/feedback-status can answer.');
         if (idle.length) return link('feedback', 'warn', nums(idle) + ' filed for over ' + ago(LIMITS.idleFeedbackMs) + ' with no AI work started.', 'Run the "Autonomous fix agent" workflow for that issue and read its log.');
-        return link('feedback', 'ok', items.length + ' report(s): ' + done + ' done, ' + working + ' in progress, ' + (items.length - done - working) + ' queued.');
+        return link('feedback', 'ok', items.length + ' report(s): ' + done + ' done, ' + working + ' in progress, ' + (items.length - done - working - gone) + ' queued' + (gone ? ', ' + gone + ' deleted on GitHub (nothing waits on it)' : '') + '.');
     }
 
     function judgeAgent(ev) {

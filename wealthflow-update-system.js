@@ -8,7 +8,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.69.97';
+    const CURRENT_VERSION = '7.69.98';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -630,6 +630,28 @@
             '<button class="btn btn-secondary btn-sm" onclick="wfUpdate.features()">View</button></div>';
     }
 
+    // One line saying what the waiting update changes: the first sentence of THIS version's own release note, or '' when it has none (the card
+    // then looks as it always did). Text only, escaped where it is drawn; counted in whole characters so Sinhala and Tamil are never cut mid-letter.
+    function _changeLine(v) {
+        try {
+            const n = v ? _notesFor(v) : null;
+            if (!n) return '';
+            let t = '';
+            const secs = Array.isArray(n.sections) ? n.sections : [];
+            for (let i = 0; i < secs.length && !t; i++) {
+                const items = secs[i] && Array.isArray(secs[i].items) ? secs[i].items : [];
+                for (let j = 0; j < items.length && !t; j++) if (typeof items[j] === 'string') t = items[j];
+            }
+            if (!t && typeof n.headline === 'string' && n.headline !== "What's New") t = n.headline;
+            t = t.replace(/\s+/g, ' ').trim();
+            if (!t) return '';
+            const m = t.match(/^(.+?[.!?\u0DF4])(\s|$)/);
+            if (m) t = m[1];
+            const chars = Array.from(t);
+            return chars.length > 140 ? chars.slice(0, 137).join('').replace(/\s+\S*$/, '') + '\u2026' : t;
+        } catch (_) { return ''; }
+    }
+
     function _renderSettingsCard() {
         const card = document.getElementById('wfUpdateCard');
         if (!card) return;
@@ -652,6 +674,7 @@
             '</div>' +
             (avail
                 ? '<div style="margin-top:6px;">' +
+                    (_changeLine(latest) ? '<div style="margin-bottom:10px;font-size:12.5px;line-height:1.45;color:var(--text2,#c7cdd9);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + _esc(_changeLine(latest)) + '</div>' : '') +
                     (mand ? '<div style="margin-bottom:10px;padding:9px 12px;border-radius:9px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#f87171;font-size:12.5px;font-weight:700;">Required security update. You can keep using WealthFlow, but this device stays exposed until you install it.</div>' : '') +
                     _rolloutNote(st) +
                     '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
@@ -1912,6 +1935,13 @@
             if (!x || !x.issue) return x;
             const st = byNumber[x.issue];
             if (!st) return x;
+            // GitHub no longer has this work item (the issue was deleted). It can never be completed, so it is not "waiting for the AI":
+            // stop asking about it, and let the diagnosis leave it out instead of reporting "no AI work started" for ever.
+            if (st.gone) {
+                if (x._status === 'gone' && x._completedSeen) return x;
+                changed = true;
+                return Object.assign({}, x, { _status: 'gone', _completedSeen: true, _shippedVersion: null });
+            }
             // `wontFix` was computed by the server and read by nobody. An issue
             // closed as "not planned" comes back completed:false, wontFix:true,
             // and this mapping fell through to 'open' — so feedback that was

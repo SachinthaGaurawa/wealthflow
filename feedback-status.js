@@ -147,6 +147,11 @@ async function findIssueByText(repo, token, q) {
 }
 
 async function gh(repo, token, path, absolute) {
+    return (await ghCall(repo, token, path, absolute)).body;
+}
+
+/** Like gh(), but also says what GitHub answered, so "deleted" can be told apart from "could not look". Never throws. */
+async function ghCall(repo, token, path, absolute) {
     const r = await fetchWithTimeout(absolute || `https://api.github.com/repos/${repo}${path}`, {
         headers: {
             Authorization: `Bearer ${token}`,
@@ -155,8 +160,16 @@ async function gh(repo, token, path, absolute) {
             'User-Agent': 'wealthflow-feedback-status',
         },
     });
-    if (!r.ok) return null;
-    return r.json().catch(() => null);
+    if (!r.ok) return { code: r.status, body: null };
+    return { code: r.status, body: await r.json().catch(() => null) };
+}
+
+/**
+ * What the app is told about an issue GitHub no longer has. 410 is GitHub's own word for "this issue was deleted". A 404 can also mean
+ * "this token cannot see the repository", so it counts as gone only when another issue in the same request WAS readable.
+ */
+export function goneItem(n) {
+    return { number: n, state: 'gone', status: 'gone', gone: true, completed: false, wontFix: false, needsHuman: false, inProgress: false };
 }
 
 export default async function handler(req, res) {
@@ -204,7 +217,12 @@ export default async function handler(req, res) {
     }
 
     const issues = [];
-    for (const n of wanted.slice(0, MAX_ISSUES)) issues.push({ n, issue: await gh(repo, token, `/issues/${n}`) });
+    for (const n of wanted.slice(0, MAX_ISSUES)) {
+        const got = await ghCall(repo, token, `/issues/${n}`);
+        issues.push({ n, issue: got.body, code: got.code });
+    }
+    // A repository that answers for at least one issue is readable, so a 404 on another one means that issue is not there.
+    const readable = issues.some((x) => x.issue && Number.isInteger(x.issue.number));
     // The repository publishes versions as commits named "release: vX.Y.Z" that touch version.json (it has no GitHub Releases), so the
     // releases are read from there: one request for everything since the oldest closing.
     const closedTimes = issues.map((x) => Date.parse(x.issue?.closed_at || '')).filter(Number.isFinite);
@@ -215,7 +233,8 @@ export default async function handler(req, res) {
         if (Array.isArray(commits)) releases = releasesFromCommits(commits);
     }
     const items = [];
-    for (const { n, issue } of issues) {
+    for (const { n, issue, code } of issues) {
+        if (!issue && (code === 410 || (code === 404 && readable))) { items.push(goneItem(n)); continue; }
         if (!issue) { items.push({ number: n, state: 'unknown', completed: false, status: 'unknown' }); continue; }
         let comments = [];
         if (issue.state === 'closed' && issue.comments > 0 && !Array.isArray(releases)) {
@@ -230,6 +249,7 @@ export default async function handler(req, res) {
         items,
         completedCount: items.filter((i) => i.completed).length,
         fixedCount: items.filter((i) => i.status === 'fixed').length,
+        goneCount: items.filter((i) => i.gone).length,
         checkedAt: new Date().toISOString(),
     });
 }
