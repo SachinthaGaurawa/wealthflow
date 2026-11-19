@@ -45,6 +45,7 @@ import {
 import { observeModule, describeObservation, observedNoChange, groundFacts, safeEnv } from './proof-probe.mjs';
 import { mutationCheck, weakTestReason } from './mutation-check.mjs';
 import { MJS_REACH, namedFiles, ownerFiles, reachOf, outOfReachReason, moduleShape, esmTestGuide } from './reach.mjs';
+import { isCosmeticChange } from './symptom-home.mjs';
 
 // ── the mechanical safety gate (mirrors CODEOWNERS + rego + risk-gate) ───────
 const SENSITIVE = [
@@ -129,6 +130,9 @@ export const MAX_PATCHABLE_BYTES = 400_000;
 // filed about them (#559, #609).
 const editable = (f) => reachOf(f, { isSensitive, opened: MJS_REACH }).ok;
 const sizeOf = (f, repoDir) => { try { return fs.statSync(path.join(repoDir, f)).size; } catch { return Infinity; } };
+
+/** May the one-file swarm open this file at all? (index.html never: the screens are drawn there, see autonomy/symptom-home.mjs.) */
+export const swarmMayEdit = (f, repoDir = process.cwd()) => editable(f) && sizeOf(f, repoDir) <= MAX_PATCHABLE_BYTES;
 
 /** Files the swarm may edit: root-level, non-sensitive, and small enough to rewrite whole. */
 export function candidateFiles(allFiles, { repoDir = process.cwd(), maxBytes = MAX_AUTHORABLE_BYTES } = {}) {
@@ -583,6 +587,7 @@ export function structuralCheck(before, after) {
     const problems = [];
     const b = String(before || ''), a = String(after || '');
     if (!a.trim()) problems.push('empty output');
+    if (a.trim() && b.trim() && isCosmeticChange(b, a)) problems.push('only comments or whitespace changed: nothing a person could see is different');
     if (a.length < b.length * 0.5) problems.push(`output lost ${Math.round((1 - a.length / b.length) * 100)}% of the file — likely truncated`);
     if (a.length > b.length * 3) problems.push('output is >3x the original — likely hallucinated bulk');
     if (/^```/m.test(a)) problems.push('markdown fence survived into the code');
@@ -683,6 +688,7 @@ export async function runSwarm({
     writeTest = true,
     verifyTest = true,           // execute Agent 4's test red→green before accepting it
     runTest = null,              // unit tests only: stands in for Vitest; ignored when CI is set
+    triedFiles = [],             // files earlier tries on this report already stopped on: tried LAST, so a repeat of the same mistake needs every other match to fail first
     analyse = null,              // async ({ issueText, file, before, code, changeText, depth, authorProvider }) => analysis | null: the independent analysis pass (autonomy/analysis-pass.mjs). Injected so a unit test needs no extra model call.
     log = console.log,
 } = {}) {
@@ -746,7 +752,10 @@ export async function runSwarm({
         };
     }
     // The model's pick first, then the next best matches: a wrong first guess no longer ends the run.
-    const order = [...new Set([choice, ...pool].filter(Boolean))].slice(0, 3);
+    const skip = new Set(triedFiles);
+    const ordered = [...new Set([choice, ...pool].filter(Boolean))];
+    const order = [...ordered.filter((f) => !skip.has(f)), ...ordered.filter((f) => skip.has(f))].slice(0, 3);
+    if (skip.size && order.some((f) => skip.has(f))) log(`[swarm] earlier tries stopped on ${[...skip].join(', ')}: ${order.filter((f) => !skip.has(f)).length} other file(s) go first`);
     if (!order.length) {
         return { ok: false, stage: 'select', providers, oversized, ranked, reason: `no safe editable file matches this issue (model said: ${String(picked.text).trim().slice(0, 80)}).` };
     }
@@ -767,6 +776,7 @@ export async function runSwarm({
             else {
                 const c = stripFences(a.text);
                 if (!c || c.trim() === src.trim()) why = 'model returned no change';
+                else if (isCosmeticChange(src, c)) why = 'the change only touches comments or whitespace, so it fixes nothing a person could see';
                 else out = { code: c, authored: a };
             }
         } else {
@@ -781,6 +791,7 @@ export async function runSwarm({
                 providers.author = a.provider;
                 if (/^CANNOT_FIX_SAFELY/i.test(a.text.trim())) { why = a.text.trim().slice(0, 300); break; }
                 const res = applyPatchBlocks(src, parsePatchBlocks(a.text));
+                if (res.ok && isCosmeticChange(src, res.code)) { why = 'the change only touches comments or whitespace, so it fixes nothing a person could see'; break; }
                 if (res.ok) out = { code: res.code, authored: a, patched: res.applied };
                 else feedback = extra + '\n\nYOUR PREVIOUS REPLY WAS REJECTED: ' + res.problems.join('; ') + '. Copy SEARCH text exactly from the excerpts.';
                 if (!res.ok && attempt === 1) why = 'patch could not be applied: ' + res.problems.join('; ').slice(0, 240);

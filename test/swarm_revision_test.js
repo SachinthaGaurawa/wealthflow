@@ -52,8 +52,9 @@ const MODULE = [
 const ISSUE = 'Show the build id next to the version in the card so I can see which build I run.';
 const PASS = '{"verdict":"PASS","severity":"none","findings":[],"reason":"display only"}';
 const patch = (replace) => ['<<<<<<< SEARCH', "            el.textContent = 'Version ' + '1.0';", '=======', replace, '>>>>>>> REPLACE'].join('\n');
-/** the "author" returns the whole file, changed in a way no person could see */
-const invisible = (tag) => MODULE.replace("var el = document.getElementById('wfCard');", `var el = document.getElementById('wfCard'); /* ${tag} */`);
+/** the "author" returns the whole file, changed in a way no person could see. (A change that touches ONLY a comment is refused earlier, before any
+ *  measurement: autonomy/symptom-home.mjs isCosmeticChange. This one changes code that draws nothing.) */
+const invisible = (tag) => MODULE.replace("var el = document.getElementById('wfCard');", `var el = document.getElementById('wfCard'); var note = '${tag}';`);
 
 describe('observedNoChange', () => {
     const ok = (text) => ({ ok: true, text });
@@ -129,8 +130,8 @@ describe('runSwarm — a change with no visible effect goes back to its author',
         expect(MAX_REVISIONS).toBe(2);
         script.replies = [
             FILE, invisible('first try'), PASS,
-            patch("            el.textContent = 'Version ' + '1.0'; /* second */"), PASS,
-            patch("            el.textContent = 'Version ' + '1.0'; /* third */"), PASS,
+            patch("            el.textContent = 'Version ' + '1.0'; var second = 2;"), PASS,
+            patch("            el.textContent = 'Version ' + '1.0'; var third = 3;"), PASS,
         ];
         const r = await run();
         expect(r.ok).toBe(true);
