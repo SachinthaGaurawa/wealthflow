@@ -411,3 +411,48 @@ describe('img-missing-alt: identity, not position', () => {
         expect(findImagesMissingAlt(html)).toEqual([]);
     });
 });
+
+// ── retiring findings that no longer exist (2026-11-19: five of seven ai-stuck reports were stale) ──────────────────
+import { staleFindingIssues, isScannerCleared, MAX_SWEEP_PER_RUN, SWEEP_KINDS } from '../autonomy/discover.mjs';
+import { stampDetector, judge, CLEARED_LABEL } from '../autonomy/accuracy.mjs';
+
+describe('discover: the scanner retires a finding that is gone', () => {
+    const filed = (n, kind, key, extra = {}) => ({ number: n, state: 'open', labels: [{ name: 'autonomous' }], title: 't' + n,
+        body: stampDetector(stampBody('body', fingerprint(kind, key)), kind), ...extra });
+    const live = (kind, key) => ({ kind, key, fingerprint: fingerprint(kind, key) });
+
+    it('lists an open issue whose finding the new scan does not produce, and keeps one it still produces', () => {
+        const issues = [filed(1, 'dep-vuln', 'picomatch'), filed(2, 'dep-vuln', 'nodemailer')];
+        const stale = staleFindingIssues(issues, [live('dep-vuln', 'nodemailer')]);
+        expect(stale.map((x) => x.number)).toEqual([1]);
+    });
+
+    it('never touches a closed issue, a pull request, a human-filed issue, or a browser-sweep kind', () => {
+        const issues = [
+            filed(1, 'dep-vuln', 'a', { state: 'closed' }),
+            filed(2, 'dep-vuln', 'b', { pull_request: {} }),
+            { number: 3, state: 'open', labels: [], body: 'a human wrote this' },
+            filed(4, 'large-dom', 'dom'),
+        ];
+        expect(staleFindingIssues(issues, [])).toEqual([]);
+        expect(SWEEP_KINDS.has('large-dom')).toBe(false);
+    });
+
+    it('keeps dependency issues open when npm audit did not finish, and JSON.parse issues when no code was read', () => {
+        const issues = [filed(1, 'dep-vuln', 'a'), filed(2, 'unguarded-json-parse', 'x.mjs:3')];
+        expect(staleFindingIssues(issues, [], { auditCompleted: false }).map((x) => x.number)).toEqual([2]);
+        expect(staleFindingIssues(issues, [], { hasCode: false }).map((x) => x.number)).toEqual([1]);
+    });
+
+    it('retires at most a handful per run, so a broken scan cannot close the whole queue', () => {
+        const issues = Array.from({ length: 20 }, (_, i) => filed(i + 1, 'dep-vuln', 'p' + i));
+        expect(staleFindingIssues(issues, [])).toHaveLength(MAX_SWEEP_PER_RUN);
+    });
+
+    it('a cleared issue is not a human verdict: the ledger ignores it and a returning finding is filed again', () => {
+        const cleared = filed(9, 'dep-vuln', 'a', { state: 'closed', state_reason: 'completed', labels: [{ name: CLEARED_LABEL }] });
+        expect(isScannerCleared(cleared)).toBe(true);
+        expect(judge(cleared)).toBe('open');
+        expect(isScannerCleared({ ...cleared, state: 'open' })).toBe(false);
+    });
+});

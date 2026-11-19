@@ -43,7 +43,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 import * as Q from './work-queue.mjs';
-import { loadLedger, quarantinedKinds, stampDetector, formatLedger } from './accuracy.mjs';
+import { loadLedger, quarantinedKinds, stampDetector, formatLedger, detectorOf, CLEARED_LABEL } from './accuracy.mjs';
 
 /** Cap per run. A scanner that opens 40 issues at once is a denial-of-service
  *  on your own attention, and the queue is ranked anyway. */
@@ -685,7 +685,8 @@ export async function fileFindings(findings, { env = process.env, max = MAX_PER_
     // thing that makes you stop trusting the system.
     let known;
     try {
-        known = fingerprintsIn(await Q.allIssues({ env }));
+        // An issue the scanner itself cleared (the finding vanished) is not a human decision: if the same finding comes back it is filed again.
+        known = fingerprintsIn((await Q.allIssues({ env })).filter((i) => !isScannerCleared(i)));
     } catch (e) {
         return { filed: [], skipped: findings.length, error: `dedup lookup failed: ${e.message}` };
     }
@@ -722,6 +723,60 @@ export async function fileFindings(findings, { env = process.env, max = MAX_PER_
         quarantined,
         ledger,
     };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Retiring findings that no longer exist
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-11-19: seven open reports were marked `ai-stuck` and kept the diagnosis at "degraded". Five of them described a finding the
+// scanner itself no longer reports: three dependency advisories (`npm audit` is clean again), and two unguarded-JSON.parse hits for
+// code that is guarded. The fix agent cannot close such an issue (there is nothing to change), it only burns three attempts and stops.
+// So the scanner that filed an issue also retires it when the finding is gone: it closes it with a comment and a label, and the
+// label tells the dedup (and the accuracy ledger) that no human judged it, so a finding that returns is filed afresh.
+/** Detector kinds a re-scan can answer completely (static, deterministic). The browser sweep's kinds are never retired this way. */
+export const SWEEP_KINDS = new Set(['dep-vuln', 'unguarded-json-parse', 'broken-asset', 'img-missing-alt']);
+/** At most this many are retired per run: a broken scan must not be able to close the whole queue in one go. */
+export const MAX_SWEEP_PER_RUN = 6;
+
+export function isScannerCleared(issue) {
+    return issue?.state === 'closed' && (issue.labels || []).some((l) => String(l?.name || l) === CLEARED_LABEL);
+}
+
+/**
+ * Open scanner-filed issues whose fingerprint the current scan no longer produces. Pure.
+ * `auditCompleted` false (npm audit did not finish) keeps every dependency issue open: silence there means "could not look".
+ */
+export function staleFindingIssues(issues, findings, { auditCompleted = true, hasIndex = true, hasCode = true } = {}) {
+    const live = new Set((findings || []).map((f) => f.fingerprint).filter(Boolean));
+    const out = [];
+    for (const i of issues || []) {
+        if (!i || i.pull_request || i.state !== 'open') continue;
+        const kind = detectorOf(i);
+        if (!kind || !SWEEP_KINDS.has(kind)) continue;
+        if (kind === 'dep-vuln' && !auditCompleted) continue;
+        if (kind === 'unguarded-json-parse' && !hasCode) continue;   // `git ls-files` returned nothing: the scan did not read the code
+        if ((kind === 'broken-asset' || kind === 'img-missing-alt') && !hasIndex) continue;
+        const [fp] = [...fingerprintsIn([i])];
+        if (fp && !live.has(fp)) out.push({ number: i.number, kind, fingerprint: fp, title: i.title });
+    }
+    return out.slice(0, MAX_SWEEP_PER_RUN);
+}
+
+export async function sweepStale(findings, { env = process.env, auditCompleted = true, hasIndex = true, hasCode = true, issues } = {}) {
+    let all = issues;
+    try { all = all || await Q.allIssues({ env }); } catch (e) { return { cleared: [], error: `sweep lookup failed: ${e.message}` }; }
+    const stale = staleFindingIssues(all, findings, { auditCompleted, hasIndex, hasCode });
+    const cleared = [];
+    for (const x of stale) {
+        try {
+            await Q.ensureLabel(CLEARED_LABEL, 'cfd3d7', 'Closed by the scanner because the finding no longer exists', { env }).catch(() => {});
+            await Q.comment(x.number, `### [OK] The scanner no longer finds this\n\nA full re-scan (${x.kind}) does not report this finding any more, so there is nothing left to change. Closing it as cleared; no person judged it. If the same finding comes back, a new issue is filed.${FOOTER}`, { env });
+            await Q.addLabels(x.number, [CLEARED_LABEL], { env });
+            await Q.closeIssue(x.number, { env, reason: 'completed' });
+            cleared.push(x);
+        } catch (e) { /* one issue failing to close must not stop the others */ }
+    }
+    return { cleared };
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
@@ -819,6 +874,9 @@ if (invokedDirectly) {
         for (const x of res.filed) console.log(`   filed #${x.number}: ${x.title}`);
         console.log(`\n   ${res.filed.length} filed, ${res.skipped} skipped (already known or over the per-run cap).`);
         if (res.quarantined) console.log(`   ${res.quarantined} withheld from quarantined detector(s).`);
+        const sw = await sweepStale(findings, { auditCompleted: getAuditStatus().completed, hasIndex: fs.existsSync(path.join(process.cwd(), 'index.html')), hasCode: trackedCode(process.cwd()).length > 50 });
+        for (const x of sw.cleared) console.log(`   cleared #${x.number} (${x.kind}): the scanner no longer finds it`);
+        if (sw.error) console.log(`   sweep skipped: ${sw.error}`);
         console.log(`\n[INFO] Detector accuracy\n${formatLedger(res.ledger || [])}`);
     }
 

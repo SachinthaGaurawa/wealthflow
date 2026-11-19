@@ -316,7 +316,8 @@
     }
     // The cluster's overall state from the work items behind it: fixed only when every one of them is; else the most active open one.
     function _fixOf(c, statuses) {
-        var nums = _issuesOf(c), list = nums.map(function (n) { return statuses[n]; }).filter(Boolean);
+        // A work item GitHub no longer has says nothing about the report: leave it out rather than show "Filed for the AI" for ever.
+        var nums = _issuesOf(c), list = nums.map(function (n) { return statuses[n]; }).filter(function (x) { return x && x.status !== 'gone'; });
         if (!list.length) return null;
         var open = list.filter(function (x) { return x.status !== 'fixed' && x.status !== 'declined'; });
         if (open.length) {
