@@ -785,7 +785,7 @@ export async function probeProviders({ env = process.env, timeoutMs = 20_000, tt
         const t0 = Date.now();
         const base = { id: p.id, label: p.label, model: modelOf(p) };
         try {
-            await callProvider(p, { prompt: 'Reply with the single word OK.', maxTokens: 24, temperature: 0, timeoutMs, env });
+            await callProvider(p, { prompt: 'Reply with the single word OK.', maxTokens: 256, temperature: 0, timeoutMs, env });   // a reasoning model spends its first tokens thinking: 24 gave "empty completion"
             return { ...base, model: modelOf(p), status: 'ok', ms: Date.now() - t0, detail: '' };
         } catch (e) {
             const status = e && e.status;
@@ -796,7 +796,7 @@ export async function probeProviders({ env = process.env, timeoutMs = 20_000, tt
         }
     }));
     applyHealth(rows);
-    try { fs.writeFileSync(file, JSON.stringify({ at: Date.now(), rows })); } catch { /* a read-only temp dir only costs the next process one probe */ }
+    try { fs.writeFileSync(file, JSON.stringify({ at: Date.now(), rows }), { mode: 0o600 }); } catch { /* a read-only temp dir only costs the next process one probe */ }
     return rows;
 }
 
