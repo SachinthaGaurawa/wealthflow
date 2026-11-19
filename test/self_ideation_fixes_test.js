@@ -199,6 +199,14 @@ describe('7. a module the builder makes always carries the NEW tag (nothing aske
         const calc = '(function(r){ r.WFX = { f: function (a) { return a + 1; } }; })(window);';
         expect(ensureNewTag(calc, today)).toBe(calc);
     });
+    it('a tag whose date is a variable is rewritten with the date itself (seen on #635: setAttribute("data-wf-new", NEW_DATE))', () => {
+        const v = ui("c.setAttribute('data-wf-new', NEW_DATE);");
+        expect(newTagProblems(v, today)).toHaveLength(1);
+        const out = ensureNewTag(v, today);
+        expect(out).toContain(`c.setAttribute('data-wf-new', '${today}');`);
+        expect(newTagProblems(out, today)).toEqual([]);
+        expect(ensureNewTag(ui('c.dataset.wfNew = D;'), today)).toContain(`c.dataset.wfNew = '${today}';`);
+    });
     it('with no place to anchor it, the code is left as it is and the refusal stands', () => {
         const noId = ui('');
         expect(ensureNewTag(noId, today)).toBe(noId);
