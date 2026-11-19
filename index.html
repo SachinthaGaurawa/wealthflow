@@ -25853,6 +25853,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                             + (!smsOn ? ' Texts are switched off for ' + who + ', so no text is sent.'
                                 : !String(d.phone || '').trim() ? ' ' + who + ' has no phone number saved, so no text can be sent.'
                                 : ' ' + who + ' is texted the repayment, then a separate text saying the loan is fully settled and closed' + (counted ? '.' : ', once it is confirmed.'));
+                        // Reported 2026-11-19: "Settle full ... the text did not go". The words were here but read as small grey print; when no text will go now, the box says so loudly.
+                        const quiet = !counted || !smsOn;   // no text goes now: the switch is off, or the money is not counted yet
+                        hintEl.style.background = quiet ? 'rgba(245,158,11,.12)' : '';
+                        hintEl.style.border = quiet ? '1px solid rgba(245,158,11,.45)' : '';
+                        hintEl.style.borderRadius = quiet ? '8px' : '';
+                        hintEl.style.padding = quiet ? '8px 10px' : '';
+                        hintEl.style.color = quiet ? 'var(--text)' : '';
                     };
                     nowEl.addEventListener('change', refresh);
                     refresh();

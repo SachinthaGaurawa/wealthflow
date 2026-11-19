@@ -66,6 +66,24 @@ describe('smsDiagnosis', () => {
         expect(JSON.stringify(d)).not.toContain('d1');
     });
 
+    it('says why a settled or repaid debtor can be silent on purpose, as counts only', () => {
+        const rows = [{ id: 'z', status: 'sent', sentAt: 1, occurredAt: 1 }];
+        const waiting = { debtors: [
+            { id: 'd1', name: 'Secret Name', phone: '+94711234567', sms_notifications_enabled: true, sms_enabled_at: NOW - 86400e3, events: [
+                { id: 'e1', kind: 'lent', amount: 5000, date: '2026-11-01', at: NOW - 3 * 86400e3 },
+                { id: 'e2', kind: 'repayment', amount: 5000, date: '2026-11-19', confirmed: false } ] },
+            { id: 'd2', name: 'Other Name', sms_notifications_enabled: false, events: [] },
+        ], income: [], settings: {} };
+        const d = smsDiagnosis({ ...base, user: waiting, rows });
+        expect(d.debtors).toEqual({ total: 2, switchOn: 1, switchOff: 1, unconfirmedEntries: 1, entriesOlderThanSwitch: 1 });
+        expect(d.verdict).toMatch(/not confirmed yet, and a text is sent only for confirmed money/);
+        expect(d.verdict).toMatch(/1 of 2 debtors has the SMS switch off/);
+        expect(d.verdict).toMatch(/dated before the switch was turned on/);
+        expect(JSON.stringify(d)).not.toMatch(/Secret Name|Other Name|94711234567|e2/);
+        // nothing silent: the plain verdict stays plain
+        expect(smsDiagnosis({ ...base, rows }).verdict).toBe('nothing wrong found');
+    });
+
     it('never throws on junk', () => {
         expect(() => smsDiagnosis({ rows: null, status: 5, notifier: 'x', gateway: [], user: null })).not.toThrow();
         expect(() => smsDiagnosis()).not.toThrow();
@@ -84,7 +102,7 @@ describe('the gateway words', () => {
 describe('the panel', () => {
     it('has a button that checks the gateway and shows the last answer', () => {
         const html = panelHtml({ gateway: { at: NOW, configured: true, reachable: true, tokenAccepted: true }, now: NOW });
-        expect(html).toContain('WFSms.checkGateway()');
+        expect(html).toContain('WFSms.testGateway()');
         expect(html).toContain('Text.lk answered and accepted the token.');
         expect(panelHtml({ gateway: { at: NOW, error: 'no answer in 20 s' } })).toContain('The check could not be made: no answer in 20 s.');
         expect(panelHtml({})).toContain('Check the SMS gateway');
