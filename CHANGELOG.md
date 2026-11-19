@@ -1,5 +1,12 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.99 — 2026-11-19
+
+**What changed for you**
+
+- The gateway button sends one test text; the diagnosis says why an entry is silent on purpose (#634)
+- Unstick feedback status: deleted work items, stale scanner issues, update card change line (#633)
+
 ## v7.69.98 — 2026-11-19
 
 **What changed for you**
