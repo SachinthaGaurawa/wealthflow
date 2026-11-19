@@ -228,6 +228,24 @@ export function parsePlan(text, { existing = [], repoDir = process.cwd() } = {})
     return { ok: true, plan: { name, api, summary: String(j.summary || '').slice(0, 300) } };
 }
 
+/**
+ * WHAT THE TEST WRITER IS TOLD ABOUT A NEW MODULE   (third dry run on #635: the module passed the checks and the reviewer, then three proving tests failed against it)
+ * A new browser module reads the books from window.DB and draws into elements the page already has, and a Node test has neither unless it builds them. The shared loader
+ * can: it takes the page markup and the globals. Said once here, with the screen's real ids when they are known, so the test builds the page the module expects.
+ */
+export function buildTestNote(plan, facts = '') {
+    const ids = [...new Set(String(facts || '').match(/#[A-Za-z][\w-]{2,}|\bid=["'][\w-]+["']/g) || [])].slice(0, 8).join(', ');
+    return [
+        `The module is NEW: before the change the file does not exist, so the test must fail then. It attaches window.${plan.api}.`,
+        'HOW TO TEST A NEW PAGE MODULE: load it with the shared loader and give it the page it expects.',
+        `  · loadBrowserModule(${JSON.stringify(plan.name)}, { html: '<the elements the module draws into or listens on>', globals: { DB: { get: (key) => (fixtures[key] || []) } } })`,
+        '    where fixtures is a plain object of invented records keyed by the book name the module reads (read the module for its DB.get keys). The module may read window.DB only.',
+        ...(ids ? [`  · the page this module attaches to has these ids/selectors: ${ids}. Put exactly the ones the module touches into html.`] : []),
+        '  · Prefer asserting through the PURE function the module exposes on its API (record in, lines out), with 2 or 3 concrete records, and keep any DOM assertion to one simple check of text a person reads.',
+        '  · Do not use timers, requestAnimationFrame or real events you cannot dispatch with document.createEvent / new window.Event; call the API function the module exposes to open the sheet if it has one.',
+    ].join('\n');
+}
+
 /** Every check the author's file must pass, in one place so a revised file is held to exactly the same rules as the first. */
 function moduleProblems(c, plan, today) {
     return !c ? ['no code came back'] : [
@@ -313,7 +331,7 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
         for (let round = 1; round <= TEST_ROUNDS; round++) {
             const t = await chat({
                 system: withCard(ROLES.qa.system),
-                prompt: testPrompt(issueText, plan.name, '', code, `The module is NEW: before the change the file does not exist, so the test must fail then. It attaches window.${plan.api}.`)
+                prompt: testPrompt(issueText, plan.name, '', code, buildTestNote(plan, facts))
                     + (previous ? `\n\nYOUR PREVIOUS TEST WAS REJECTED: ${previous.reason}\n${String(previous.output || '').slice(-1200)}` : ''),
                 prefer: ROLES.qa.prefer, exclude: [authored.provider, r.provider], maxTokens: 4000, temperature: round === 1 ? 0.1 : 0.2, env,
             }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
@@ -328,6 +346,7 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
             if (proof.ok) { test = candidate; break; }
             rounds.push({ round, reason: proof.reason }); previous = proof;
             log(`[build] test round ${round}/${TEST_ROUNDS}: ${proof.reason}`);
+            if (proof.output) log(`[build] (test output tail: ${String(proof.output).replace(/\s+/g, ' ').slice(-500)})`);
         }
     } finally {
         if (!existed) { try { fs.unlinkSync(target); } catch { /* it was never left behind */ } }

@@ -225,3 +225,16 @@ describe('7. a module the builder makes always carries the NEW tag (nothing aske
         expect(B.daysLeft(firstLook, firstLook + 7 * 86400000)).toBe(0);
     });
 });
+
+describe('8. the test writer is told how to test a NEW page module (third dry run on #635: three proving tests failed against a module that passed review)', () => {
+    it('says to use the loader with the page and a fake DB, and names the screen ids when known', async () => {
+        const { buildTestNote } = await import('../autonomy/build-lane.mjs');
+        const plan = { name: 'wealthflow-x-y.js', api: 'WFXY' };
+        const withIds = buildTestNote(plan, 'renderCCI draws into #cciBody and #cciStats');
+        expect(withIds).toContain('loadBrowserModule("wealthflow-x-y.js"');
+        expect(withIds).toContain('globals: { DB:');
+        expect(withIds).toContain('#cciBody');
+        expect(withIds).toContain('window.WFXY');
+        expect(buildTestNote(plan)).not.toMatch(/has these ids/);
+    });
+});
