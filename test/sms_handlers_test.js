@@ -97,6 +97,24 @@ describe('who may use /api/sms-notify', () => {
         expect(wfDocs(w.fs)).toHaveLength(0);
     });
 
+    it('every look leaves one counts-only line in the log, even when nothing was owed (2026-11-19: "is it the app, the books or the gateway" had no answer)', async () => {
+        const lines = [];
+        const spy = vi.spyOn(console, 'info').mockImplementation((m) => { lines.push(String(m)); });
+        try {
+            const w = world();
+            await putUser(w.fs, OWNER.uid, books());
+            const r = res(); await handleNotify(req({ body: { force: true } }), r, w.deps);
+            expect(r.statusCode).toBe(200);
+            const look = lines.find((l) => l.startsWith('[WF-SMS] look via=notify'));
+            expect(look).toMatch(/derived=\d+ enqueued=\d+ sent=\d+ held=\d+ retry=\d+ failed=\d+ cancelled=\d+ remaining=\d+ configured=yes/);
+            expect(look).not.toMatch(/Nimal|077|9477|853400937V/);
+            lines.length = 0;
+            const idle = world(); await putUser(idle.fs, OWNER.uid, { settings: { currency: 'LKR' }, debtors: [] });
+            await handleNotify(req({ body: { force: true } }), res(), idle.deps);
+            expect(lines.some((l) => /look via=notify idle/.test(l))).toBe(true);
+        } finally { spy.mockRestore(); }
+    });
+
     it('a signed-in stranger cannot spend the balance: 403, nothing sent, nothing written, nothing said about the gateway', async () => {
         const w = world({ tokens: { 'good-token': { ...STRANGER, email_verified: true } } });
         await putUser(w.fs, STRANGER.uid, books());                         // their own books, switched on, with a phone number of their choosing

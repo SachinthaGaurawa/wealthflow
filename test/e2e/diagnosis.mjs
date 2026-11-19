@@ -103,6 +103,10 @@ try {
     note('7. the copy finishes at once even if the server never answers', slow.ms < 1500 && !!parse(slow), slow.ms + ' ms');
     hangVersion = false;
 
+    // ── 8. text messages: the report names the first thing that would explain silence (this page is not signed in, so it says there is nothing to report)
+    j = parse(await copy());
+    note('8. the report carries a text-message verdict, and no number or name from the books', typeof j.smsVerdict === 'string' && j.smsVerdict.length > 0 && 'sms' in j && !/\+94\d{9}/.test(JSON.stringify(j.sms)), j.smsVerdict);
+
     note('no uncaught page errors', dev.errors.length === 0, dev.errors.join(' | ').slice(0, 300));
 } catch (e) {
     note('the run reached the end without an exception', false, String((e && e.stack) || e).slice(0, 500));

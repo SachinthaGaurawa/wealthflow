@@ -9641,6 +9641,9 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 let _stRetrying = [];
                 try { _stRetrying = (window.WFStatementCloud && window.WFStatementCloud.retryAttemptsSummary) ? window.WFStatementCloud.retryAttemptsSummary() : []; } catch (_) { _stRetrying = []; }
                 const _layoutAttempts = Array.isArray(window._wfLayoutAttempts) ? window._wfLayoutAttempts.slice(0, 10) : [];
+                // Text messages: counts, kinds of trouble, ages and the last gateway check; never a number, a name or a message. Asked again for the NEXT copy.
+                let _sms = null;
+                try { if (window.WFSms && window.WFSms.diagnose) { _sms = window.WFSms.diagnose(); if (window.WFSms.checkGateway) window.WFSms.checkGateway(); } } catch (_) { _sms = null; }
                 payload = JSON.stringify({
                     build: _WF_BUILD,
                     when: new Date().toISOString(),
@@ -9656,6 +9659,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     dom: (function () { try { return document.getElementsByTagName('*').length; } catch (_) { return -1; } })(),
                     summary: _summary,
                     health: _health,
+                    smsVerdict: _sms && _sms.verdict ? _sms.verdict : 'unavailable',
+                    sms: _sms,
                     statementReview: _stReview,
                     statementRetrying: _stRetrying,
                     layoutTeachAttempts: _layoutAttempts,

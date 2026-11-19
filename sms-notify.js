@@ -91,6 +91,15 @@ async function healthFor(req, client, deps, now) {
     return base;
 }
 
+/** One line per look, counts only, so a look that found nothing owed is as visible in the logs as one that sent: "is it the app, the books or the gateway" was unanswerable from a log that said nothing. */
+function noteLook(via, summary) {
+    try {
+        const m = summary && typeof summary === 'object' ? summary : {};
+        const n = (k) => (Number.isFinite(Number(m[k])) ? Number(m[k]) : 0);
+        console.info(`[WF-SMS] look via=${via} derived=${n('derived')} enqueued=${n('enqueued')} sent=${n('sent')} held=${n('held')} retry=${n('retry')} failed=${n('failed')} cancelled=${n('cancelled')} remaining=${n('remaining')} configured=${m.configured === false ? 'no' : 'yes'}`);
+    } catch (_) { /* a log line must never break a look */ }
+}
+
 /** The two steps of adding a number to "Alerts to my own number". The caller's identity and allow-list were checked; the number is the only thing taken from the body. */
 async function handleOwnerOtp({ res, body, db, uid, client, deps, now }) {
     try {
@@ -117,14 +126,16 @@ async function handleFlush({ res, body, db, who, client, deps, now }) {
     try {
         const applied = await withDeadline(applyFlush({ db, uid: who.uid, clean, now }), 12000, 'wf-flush');
         // no account document yet (a flush that raced the first upload): nothing was merged and nothing looked at, so the page must not count this as handled
+        if (!applied.exists) { console.info('[WF-SMS] look via=flush deferred (no account document yet)'); }
         if (!applied.exists) return j(res, 200, { ok: true, deferred: true, flushed: applied.changed, summary: { derived: 0, configured: client.configured, empty: true } });
         const root = await withDeadline(rootRef.get(), 8000, 'wf-sms');
         const state = (root.exists && root.data()) || {};
         const has = hasSmsRecords(applied.user);
         await rootRef.set({ lastKickAt: now }, { merge: true });
-        if (!has && !state.hadRecords) return j(res, 200, { ok: true, flushed: applied.changed, summary: { derived: 0, configured: client.configured, idle: true } });
+        if (!has && !state.hadRecords) { console.info('[WF-SMS] look via=flush idle (no record has the switch on)'); return j(res, 200, { ok: true, flushed: applied.changed, summary: { derived: 0, configured: client.configured, idle: true } }); }
         await rootRef.set({ active: true, email: who.email, registeredAt: state.registeredAt || now, hadRecords: has }, { merge: true });
         const summary = await sweepUser({ db, uid: who.uid, user: applied.user, client, now, env: deps.env, deps: deps.engine || {} });
+        noteLook('flush', summary);
         return j(res, 200, { ok: true, flushed: applied.changed, summary });
     } catch (e) {
         console.error('[WF-SMS] flush failed:', String((e && e.message) || e).slice(0, 200));
@@ -166,11 +177,12 @@ export async function handleNotify(req, res, deps) {
         if (!snap.exists) return j(res, 200, { ok: true, summary: { derived: 0, configured: client.configured, empty: true } });
         const user = snap.data() || {};
         const has = hasSmsRecords(user);
-        if (!has && !state.hadRecords) return j(res, 200, { ok: true, summary: { derived: 0, configured: client.configured, idle: true } });
+        if (!has && !state.hadRecords) { console.info('[WF-SMS] look via=notify idle (no record has the switch on)'); return j(res, 200, { ok: true, summary: { derived: 0, configured: client.configured, idle: true } }); }
         // registering is what puts this account on the cron's list; an account whose records have all been switched off stays on it,
         // so what is still queued is cancelled or delivered. An account that never used SMS never gets on it.
         await rootRef.set({ active: true, email: who.email, registeredAt: state.registeredAt || now, hadRecords: has }, { merge: true });
         const summary = await sweepUser({ db, uid: who.uid, user, client, now, env: deps.env, deps: deps.engine || {} });
+        noteLook('notify', summary);
         return j(res, 200, { ok: true, summary });
     } catch (e) {
         console.error('[WF-SMS] notify failed:', String((e && e.message) || e).slice(0, 200));

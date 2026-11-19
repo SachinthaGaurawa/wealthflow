@@ -597,6 +597,75 @@ export function createNotifier(deps) {
     };
 }
 
+/* ── what the diagnosis says about texts ──────────────────────────────────── */
+
+/** What the gateway check (GET /api/sms-notify?check=1 with the owner's sign-in) means, in words an owner can act on. */
+export function gatewayWords(g) {
+    if (!g || typeof g !== 'object' || g.error) return '';
+    if (g.configured === false) return 'The Text.lk token is not set on the server (TEXTLK_API_TOKEN).';
+    if (g.failure === 'auth') return 'Text.lk refused the token on the server. Make a new API token on the Text.lk dashboard and put it in TEXTLK_API_TOKEN.';
+    if (g.failure === 'credit' || g.lowCredit === true) return 'The Text.lk account is out of credit or nearly. Top it up and the held texts go out by themselves.';
+    if (g.failure === 'sender') return 'Text.lk does not accept the sender ID. Check that it is approved on the Text.lk dashboard.';
+    if (g.reachable === false) return 'The server could not reach Text.lk just now (' + s(g.failure || 'network') + '). Held texts are tried again by themselves.';
+    if (g.failure) return 'Text.lk answered with ' + s(g.failure) + '.';
+    if (g.reachable === true && g.tokenAccepted !== false) return 'Text.lk answered and accepted the token.';
+    return '';
+}
+
+/**
+ * The texts, summarised for the diagnosis the owner pastes: counts, kinds of trouble and ages, never a number, a name or a message body.
+ * `rows` are the raw log documents (live.rows), `status` the `_status` row, `gateway` the last answer of the gateway check, `notifier` its state.
+ */
+export function smsDiagnosis({ rows = [], status = null, notifier = null, gateway = null, user = null, owes = false, signedIn = true, now = Date.now() } = {}) {
+    const age = (ms) => (num(ms) > 0 ? Math.max(0, Math.round((now - num(ms)) / 1000)) : null);
+    const list = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id && r.id !== '_status');
+    const byStatus = {}; const trouble = {}; const byKind = {};
+    let newestSent = 0, newestQueued = 0, oldestWaiting = 0;
+    for (const r of list) {
+        byStatus[s(r.status)] = (byStatus[s(r.status)] || 0) + 1;
+        byKind[s(r.kind)] = (byKind[s(r.kind)] || 0) + 1;
+        if (r.status === 'sent') newestSent = Math.max(newestSent, num(r.sentAt) || num(r.occurredAt));
+        if (r.status === 'queued' || r.status === 'failed') {
+            const why = (r.error && r.error.kind) || (r.status === 'queued' ? (num(r.nextAttemptAt) > now ? 'scheduled-for-later' : 'due-now') : 'failed');
+            trouble[r.status + ':' + s(why)] = (trouble[r.status + ':' + s(why)] || 0) + 1;
+            if (r.status === 'queued') { newestQueued = Math.max(newestQueued, num(r.occurredAt)); if (!oldestWaiting || num(r.occurredAt) < oldestWaiting) oldestWaiting = num(r.occurredAt); }
+        }
+    }
+    const sm = (notifier && notifier.lastSummary) || null;
+    const st = status && typeof status === 'object' ? status : null;
+    const out = {
+        signedIn: !!signedIn,
+        recordsWithSwitchOn: countOn(user),
+        ownNumberAlerts: !!(user && user.settings && user.settings.owner_sms && user.settings.owner_sms.enabled === true),
+        notifier: notifier ? {
+            disabled: !!notifier.disabled, busy: !!notifier.busy, lastLookAgoSec: age(notifier.lastKickAt), lastError: notifier.lastError ? s(notifier.lastError).slice(0, 120) : null,
+            changeNotYetAcknowledged: !!owes,
+            lastAnswer: sm ? Object.fromEntries(['derived', 'enqueued', 'sent', 'held', 'retry', 'failed', 'cancelled', 'remaining', 'paused'].filter((k) => sm[k] !== undefined).map((k) => [k, num(sm[k])])) : null,
+            lastAnswerFlags: sm ? Object.fromEntries(['configured', 'idle', 'empty'].filter((k) => sm[k] !== undefined).map((k) => [k, !!sm[k]])) : null,
+        } : null,
+        log: { rows: list.length, byStatus, byKind, troubleBy: trouble, newestSentAgoSec: age(newestSent), newestWaitingAgoSec: age(newestQueued), oldestWaitingAgoSec: age(oldestWaiting) },
+        status: st ? {
+            configured: st.configured, units: st.units === undefined ? null : st.units, unitsReadAgoSec: age(st.unitsAt), lowCredit: !!st.lowCredit, creditPaused: !!st.creditPaused, reserve: num(st.reserve),
+            dailySweepAgoSec: age(st.autoRunAt), issues: (Array.isArray(st.issues) ? st.issues : []).slice(0, 8).map((i) => s(i && (i.reason || i.kind))),
+        } : null,
+        gateway: gateway && typeof gateway === 'object' ? { ...gateway, checkedAgoSec: age(gateway.at), meaning: gatewayWords(gateway) } : null,
+    };
+    // the first thing that explains silence, in the order a person would look for it
+    let verdict = 'nothing wrong found';
+    if (!out.signedIn) verdict = 'not signed in';
+    else if (out.notifier && out.notifier.disabled) verdict = 'this account is not on the SMS allow-list (the server answered 403)';
+    else if (out.gateway && gatewayWords(gateway) && /not set|refused the token|out of credit|does not accept the sender|could not reach/.test(gatewayWords(gateway))) verdict = gatewayWords(gateway);
+    else if (st && st.configured === false) verdict = 'the Text.lk token is not set on the server';
+    else if (out.recordsWithSwitchOn === 0 && !out.ownNumberAlerts) verdict = 'no debtor or investment has "Send SMS notifications" switched on, and alerts to your own number are off, so nothing is owed';
+    else if (trouble['queued:credit'] || trouble['failed:credit']) verdict = 'texts are waiting for Text.lk credit';
+    else if (trouble['queued:cap'] || trouble['queued:rate-limit']) verdict = 'texts are held by the daily limit or the gateway rate limit';
+    else if (out.notifier && out.notifier.lastError) verdict = 'the last look at the server failed: ' + out.notifier.lastError;
+    else if (out.notifier && out.notifier.changeNotYetAcknowledged) verdict = 'a change has not yet reached the server (it is sent again by itself)';
+    else if (!list.length) verdict = 'the server has not put any text in the log yet';
+    out.verdict = verdict;
+    return out;
+}
+
 /* ── 3. the alert ─────────────────────────────────────────────────────────── */
 
 export const ALERT_TITLE = 'Admin Alert: SMS Delivered Successfully to Tenant';
@@ -883,7 +952,7 @@ export function categoriesHtml(settings, owner = {}) {
         + '<div style="margin-top:10px;"><button class="btn btn-secondary btn-sm" onclick="if (window.WFSms) WFSms.openPanel()">Open Text messages</button></div></div>';
 }
 
-export function panelHtml({ rows = [], status = null, disabled = false, lastError = '', nameOf = null, fmtWhen = null, now = Date.now(), owner = null, showOwner = false } = {}) {
+export function panelHtml({ rows = [], status = null, disabled = false, lastError = '', nameOf = null, fmtWhen = null, now = Date.now(), owner = null, showOwner = false, gateway = null } = {}) {
     const when = (ms) => { if (!ms) return ''; try { return fmtWhen ? fmtWhen(ms) : new Date(ms).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
     const colour = { sent: 'var(--green,#30a46c)', failed: 'var(--red,#e5484d)', queued: 'var(--amber,#f5a623)', sending: 'var(--amber,#f5a623)' };
     const lines = [];
@@ -917,7 +986,14 @@ export function panelHtml({ rows = [], status = null, disabled = false, lastErro
     const credit = known
         ? '<div id="_wf_sms_credit" style="font-size:12.5px;margin-bottom:10px;">SMS credit left: <b>' + num(status.units) + (num(status.units) === 1 ? ' unit' : ' units') + '</b>' + (asOf ? '<span style="color:var(--text3);">' + esc(asOf) + '</span>' : '') + '</div>'
         : (status && status.configured !== false && num(status.unitsAt) ? '<div id="_wf_sms_credit" style="font-size:12.5px;margin-bottom:10px;color:var(--text3);">SMS credit left: the gateway did not report a figure (read ' + esc(when(num(status.unitsAt))) + ').</div>' : '');
-    return (showOwner ? ownerAlertsHtml(owner) : '') + credit + notes + body;
+    // The gateway, asked for on request (free, sends nothing): whether Text.lk answers, accepts the token and has credit. It is what separates "the gateway is the problem" from "the app is".
+    const g = gateway && typeof gateway === 'object' ? gateway : null;
+    const gWords = g ? (g.error ? 'The check could not be made: ' + s(g.error) + '.' : gatewayWords(g)) : '';
+    const gate = '<div id="_wf_sms_gate" style="font-size:12.5px;margin-bottom:10px;line-height:1.55;">'
+        + '<button class="btn btn-secondary btn-sm" type="button" onclick="if (window.WFSms) WFSms.checkGateway()">Check the SMS gateway</button>'
+        + (g ? '<div style="margin-top:6px;">' + esc(gWords || 'Checked.') + (num(g.at) ? '<span style="color:var(--text3);"> (checked ' + esc(when(num(g.at))) + ')</span>' : '') + '</div>' : '')
+        + '</div>';
+    return (showOwner ? ownerAlertsHtml(owner) : '') + credit + gate + notes + body;
 }
 
 /* ── the browser glue ─────────────────────────────────────────────────────── */
@@ -969,7 +1045,7 @@ export async function ownerCodeCall(deps, body) {
 /** Wire the notifier and the listener to the running app. Safe to call more than once; never throws. */
 export function boot(win) {
     const now = () => Date.now();
-    const live = { uid: null, unsub: null, tokOff: null, token: '', tokenExp: 0, notifier: null, rows: [], status: null, timer: null, bound: false, told: false, verifiedLocal: '', tick: null };
+    const live = { uid: null, unsub: null, tokOff: null, token: '', tokenExp: 0, notifier: null, rows: [], status: null, timer: null, bound: false, told: false, verifiedLocal: '', tick: null, gateway: null, gatewayBusy: false };
     const decoy = () => win._isDecoyMode === true;
     const storage = (() => { try { return win.localStorage; } catch (_) { return null; } })();
     const toast = (t) => { try { if (typeof win.notify === 'function') win.notify(t.text + (t.detail ? ' (' + t.detail + ')' : ''), t.tone === 'error' ? 'error' : (t.tone === 'info' ? 'info' : 'success')); } catch (_) { /* a toast is a courtesy */ } };
@@ -985,7 +1061,7 @@ export function boot(win) {
     const setForm = (patch) => { form.value = { ...(form.value || {}), ...patch }; };
     const verifiedNow = () => s((live.status && live.status.ownerVerified) || live.verifiedLocal || '');
     const ownerNow = () => { try { const o = win.appData && win.appData.settings && win.appData.settings.owner_sms; return { enabled: !!(o && o.enabled === true), phone: o && typeof o === 'object' ? s(o.phone) : '', verified: verifiedNow(), form: form.value }; } catch (_) { return { enabled: false, phone: '', verified: verifiedNow(), form: form.value }; } };
-    const model = () => ({ rows: rowsOf(live.rows, now()), status: live.status, disabled: !!(live.notifier && live.notifier.state.disabled), lastError: (live.notifier && live.notifier.state.lastError) || '', nameOf, owner: ownerNow(), showOwner: !decoy() });
+    const model = () => ({ rows: rowsOf(live.rows, now()), status: live.status, disabled: !!(live.notifier && live.notifier.state.disabled), lastError: (live.notifier && live.notifier.state.lastError) || '', nameOf, owner: ownerNow(), showOwner: !decoy(), gateway: live.gateway });
     const redraw = () => { try { if (win.__wfSmsRedraw) win.__wfSmsRedraw(); } catch (_) { /* a stale host is not an error */ } };
     /**
      * Save the owner's switch and number into the settings the sync carries, then ask the server to look. Returns { ok, error? }.
@@ -1138,6 +1214,8 @@ export function boot(win) {
             });
         } catch (_) { live.unsub = null; }
         live.notifier.onOpen('open');
+        // one free look at the gateway a few seconds after sign-in, so the diagnosis and the panel already know whether Text.lk answers
+        try { win.setTimeout(() => { if (live.uid === uid) api.checkGateway(); }, 8000); } catch (_) { /* a courtesy */ }
         /* A token to hand the closing page: kept from the moment it is issued, because the page cannot ask for one while it is being closed. */
         try {
             const keep = (u) => { if (u && typeof u.getIdToken === 'function') u.getIdToken().then((t) => { live.token = t; live.tokenExp = tokenExpiry(t); }, () => { /* the next change asks again */ }); };
@@ -1184,6 +1262,31 @@ export function boot(win) {
         onLocalChange() { try { if (!live.notifier) start(); if (live.notifier) live.notifier.onLocalChange(); } catch (_) { /* the upload and the cron still carry it */ } },
         /** The page is going away: see createNotifier().leave. */
         leave(reason) { try { return live.notifier ? live.notifier.leave(reason) : false; } catch (_) { return false; } },
+        /** Ask the server (with the owner's sign-in) whether Text.lk answers, accepts the token and has credit. Free, sends nothing. Never throws. */
+        async checkGateway() {
+            if (live.gatewayBusy || decoy() || !win.currentUser) return live.gateway;
+            live.gatewayBusy = true;
+            try {
+                const token = await win.currentUser.getIdToken();
+                const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+                const timer = ctl ? setTimeout(() => ctl.abort(), 20000) : null;
+                try {
+                    const r = await win.fetch(CLIENT.ENDPOINT + '?check=1', { headers: { Authorization: 'Bearer ' + token }, ...(ctl ? { signal: ctl.signal } : {}) });
+                    let j = null; try { j = await r.json(); } catch (_) { j = null; }
+                    live.gateway = r.status === 200 && j && j.ok
+                        ? { at: now(), configured: j.configured, tokenAccepted: j.tokenAccepted, reachable: j.reachable, lowCredit: j.lowCredit, senderId: j.senderId, failure: j.failure, balanceReadable: j.balanceReadable, allowedAccount: j.reachable !== undefined }
+                        : { at: now(), error: 'the server answered ' + r.status };
+                } finally { if (timer) clearTimeout(timer); }
+            } catch (e) { live.gateway = { at: now(), error: e && e.name === 'AbortError' ? 'no answer in 20 s' : 'could not reach the server' }; } finally { live.gatewayBusy = false; }
+            try { if (win.__wfSmsRedraw) win.__wfSmsRedraw(); } catch (_) { /* a stale host is not an error */ }
+            return live.gateway;
+        },
+        /** The texts as the diagnosis the owner pastes shows them (counts and kinds only). Synchronous; the gateway answer in it is the last one asked for. */
+        diagnose() {
+            try {
+                return smsDiagnosis({ rows: live.rows, status: live.status, notifier: live.notifier ? { ...live.notifier.state } : null, gateway: live.gateway, user: win.appData, owes: live.notifier ? live.notifier.owes() : false, signedIn: !!(win.currentUser && win.currentUser.uid), now: now() });
+            } catch (e) { return { error: s(e && e.message).slice(0, 100) }; }
+        },
         kickNow() { if (live.notifier) return live.notifier.run({ force: true, reason: 'manual' }); return Promise.resolve({ skipped: 'not-started' }); },
         /** The log, drawn into an element the page owns (the people screens carry it as a tab). Returns the function that stops redrawing it. */
         panelInto(host) {
@@ -1192,6 +1295,7 @@ export function boot(win) {
             const draw = () => { try { if (host.querySelector) { const act = win.document.activeElement; if (act && (act === host.querySelector('#_wf_own_phone') || act === host.querySelector('#_wf_own_code'))) return; } host.innerHTML = panelHtml(model()); bindOwner(host); } catch (_) { /* a stale host is not an error */ } };
             win.__wfSmsRedraw = draw;
             draw();
+            try { if (!live.gateway || now() - num(live.gateway.at) > 300000) api.checkGateway(); } catch (_) { /* a courtesy */ }
             return () => { if (win.__wfSmsRedraw === draw) win.__wfSmsRedraw = null; };
         },
         /** The log in its own overlay, or in the people screens when the page has them. */
@@ -1210,4 +1314,4 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
     try { window.WFSms = boot(window); } catch (e) { console.warn('[WF-SMS] page side did not start:', e && e.message); }
 }
 
-export default { ownerCodeCall, SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, pendingFlush, tokenExpiry, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, ownerAlertsHtml, categoriesHtml, describeIssue };
+export default { smsDiagnosis, gatewayWords, ownerCodeCall, SMS_FIELDS, CLIENT, BALANCE, CLOSED_END_WAS, balanceWaitMs, requestBalance, applyToggle, closeInvestment, reopenInvestment, carry, blockHtml, readBlock, signatureOf, countOn, pendingFlush, tokenExpiry, createNotifier, toastFor, announce, heldAlerts, HELD_NOTICE, watchSmsLog, rowsOf, panelHtml, ownerAlertsHtml, categoriesHtml, describeIssue };
