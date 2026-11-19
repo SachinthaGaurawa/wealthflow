@@ -104,12 +104,13 @@ export function buildLaneFor(issue) {
     return { applies: false, why: '' };
 }
 
-export function planPrompt(issueText, existing) {
+export function planPrompt(issueText, existing, facts = '') {
     return [
         'WealthFlow is a vanilla-JS personal-finance PWA (no build step). A report asks for something NEW.',
         'Decide the one new browser module that provides it.',
         '',
         'REPORT:', fenceUntrusted('report', issueText, 1800), '',
+        ...(facts ? ['WHERE THE SCREEN IS DRAWN (read from the code by a program):', fenceUntrusted('screen code', facts, 900), ''] : []),
         'Modules that already exist (do not reuse a name):', existing.slice(0, 120).join(', '), '',
         'Reply with ONE JSON object and nothing else:',
         '{"name":"wealthflow-<2-5 lowercase words joined by ->.js","api":"WF<PascalCase>","summary":"one sentence","feasible":true|false,"why_not":"only when feasible is false"}',
@@ -117,11 +118,16 @@ export function planPrompt(issueText, existing) {
     ].join('\n');
 }
 
-export function authorPrompt(issueText, plan, today = new Date().toISOString().slice(0, 10)) {
+export function authorPrompt(issueText, plan, today = new Date().toISOString().slice(0, 10), facts = '') {
     return [
         `Write the COMPLETE file ${plan.name} for WealthFlow, a vanilla-JS personal-finance PWA. Reply with the file contents only, no fences.`,
         '',
         'REPORT:', fenceUntrusted('report', issueText, 2000), '',
+        ...(facts ? [
+            'THE SCREEN THE REPORT IS ABOUT (the real code that draws it, read by a program; use its ids, classes and tags exactly, never invent a selector):',
+            fenceUntrusted('screen code', facts, 7600),
+            'Attach to that screen from OUTSIDE: one delegated listener on the element the code fills (not on each row), find the record the person tapped from the text the code prints, and show it from root.DB.get(...) as a read-only sheet. Keep the pure part (record in, lines to show out) separate from the part that touches the page, and expose the pure part on the API so a test needs no browser.', '',
+        ] : []),
         `PURPOSE: ${plan.summary}`, '',
         'RULES (a machine checks the first group; a reviewer checks the rest):',
         `  · One IIFE: (function (root) { 'use strict'; ... })(typeof window !== 'undefined' ? window : globalThis);`,
@@ -198,7 +204,7 @@ export function parsePlan(text, { existing = [], repoDir = process.cwd() } = {})
     return { ok: true, plan: { name, api, summary: String(j.summary || '').slice(0, 300) } };
 }
 
-export async function runBuildLane({ issue, repoDir = process.cwd(), env = process.env, log = console.log, runTest = null, verifyTest = true } = {}) {
+export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(), env = process.env, log = console.log, runTest = null, verifyTest = true } = {}) {
     const issueText = `${issue?.title || ''}\n\n${issue?.body || ''}`.trim();
     if (!issueText) return { ok: false, stage: 'input', reason: 'empty issue' };
     const providers = {};
@@ -208,7 +214,7 @@ export async function runBuildLane({ issue, repoDir = process.cwd(), env = proce
     const existing = fs.readdirSync(repoDir).filter((f) => /^wealthflow-.*\.js$/.test(f));
 
     // 1. plan
-    const p = await chat({ system: withCard(role.system), prompt: planPrompt(issueText, existing), prefer: role.prefer, maxTokens: 400, temperature: 0, env });
+    const p = await chat({ system: withCard(role.system), prompt: planPrompt(issueText, existing, facts), prefer: role.prefer, maxTokens: 400, temperature: 0, env });
     providers.plan = p.provider;
     const parsed = parsePlan(p.text, { existing, repoDir });
     if (!parsed.ok) return { ok: false, stage: 'plan', providers, reason: parsed.reason };
@@ -219,7 +225,7 @@ export async function runBuildLane({ issue, repoDir = process.cwd(), env = proce
     let code = '', authored = null, why = '';
     for (let attempt = 0; attempt < 2 && !code; attempt++) {
         const today = new Date().toISOString().slice(0, 10);
-        const a = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today) + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
+        const a = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts) + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
         providers.author = a.provider;
         const c = stripFences(a.text || '');
         const bad = !c ? ['no code came back'] : [

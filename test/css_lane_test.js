@@ -241,7 +241,7 @@ describe('css lane: wired into the agent and its workflow', () => {
         expect(agent).toMatch(/if \(lane\.applies\) \{\s*result = await runLayoutLane\(/);
         // 2026-11-12 (#559): a lane an earlier try already measured clean is not taken again, and a defect report with a layout word continues as code
         expect(agent).toMatch(/laneRuledOut\(trail, 'layout'\)/);
-        expect(agent).toMatch(/nothingToMeasure\(result\) && !lane\.marked && kind !== 'ui'/);
+        expect(agent).toMatch(/nothingToMeasure\(result\) && !lane\.marked && \(kind !== 'ui' \|\| lockedScreen\)/);
     });
     it('the workflow installs Chromium and does not run node --check on a CSS file', () => {
         expect(wf).toMatch(/npx playwright install chromium/);

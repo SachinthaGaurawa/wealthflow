@@ -49,7 +49,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { describeAvailability } from './autonomy/llm-router.mjs';
-import { runSwarm } from './autonomy/agent-swarm.mjs';
+import { runSwarm, swarmMayEdit } from './autonomy/agent-swarm.mjs';
+import { symptomHome, homeFacts, reachabilityGap } from './autonomy/symptom-home.mjs';
 import { layoutLaneFor, runLayoutLane } from './autonomy/css-lane.mjs';
 import { buildLaneFor, runBuildLane, wireModule } from './autonomy/build-lane.mjs';
 import { conceptBoardFor, runConceptBoard, renderComment as boardComment, briefFor, parseStoredBoard, BOARD_MARKER } from './autonomy/concept-board.mjs';
@@ -496,23 +497,51 @@ async function main() {
             rulesShown = lessonsFor(`${issue.title}\n${String(shot.body).slice(0, 6000)}${retryBrief}`).map((l) => l.id);
             if (standing) log(`#${number} standing rules shown: ${rulesShown.join(', ')}`);
             laneBody += standing;
-            const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, repoDir: REPO_DIR, log });
+            // WHERE IS THE SCREEN DRAWN? (autonomy/symptom-home.mjs; issue #635, 2026-11-19.) The owner's report was about a page drawn by
+            // renderCCI() inside index.html, a file no lane may edit. The agent never asked, ranked modules by shared words, took a statement
+            // parser that draws nothing, and was refused twice for a comment-only change. When the words on the screen are drawn by a file
+            // no lane may edit and the report says something cannot be seen, opened or tapped, the answer is a NEW read-only module that
+            // attaches to the page, with the real code of the page shown to the author: not a third try on a decoy.
+            let home = { found: false };
+            try { home = symptomHome(`${issue.title}\n${shot.body}`, { repoDir: REPO_DIR, mayEdit: (f) => swarmMayEdit(f, REPO_DIR) }); } catch (e) { log(`#${number} screen lookup failed (${e.message})`); }
+            if (home.found) log(`#${number} ${home.why}${home.mayEdit ? '' : ' — a file no lane may edit'}`);
+            const reportText = `${issue.title}\n${shot.body}`;
+            const lockedScreen = home.found && !home.mayEdit && (kind === 'bug' || kind === 'ui') && reachabilityGap(reportText);
+            const triedFiles = [...new Set(trail.filter((t) => t.file && t.stage !== 'drafted').map((t) => t.file))];
+            const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, facts: home.found && !home.mayEdit ? homeFacts(home) : '', repoDir: REPO_DIR, log });
             const asCode = () => runSwarm({
                 issue: { number, title: issue.title, body: laneBody, kind },
-                repoDir: REPO_DIR, log,
+                repoDir: REPO_DIR, log, triedFiles,
                 // an independent second mind on the cause, the alternatives and the ways it could fail (part 9, 14 of the owner's prompt)
                 analyse: (ctx) => runAnalysis({ ...ctx, log }),
             });
+            // Code first, the new-module lane when the one-file lane cannot place the change (or must not even be tried).
+            const codeOrBuild = async () => {
+                if (lockedScreen) {
+                    log(`#${number} the screen is drawn by ${home.fn}() in ${home.file}, which no lane may edit, and the report is about something that cannot be seen or opened — building it as a new read-only module`);
+                    const built = await buildIt();
+                    if (built.ok) { laneName = 'build'; return built; }
+                    return { ...built, reason: `${built.reason} | the screen is drawn by ${home.fn}() in ${home.file}, which no lane may edit, so the one-file lane was not tried on unrelated modules` };
+                }
+                const r = await asCode();
+                if (!r.ok && (kind === 'feature' || reachabilityGap(reportText)) && ['select', 'author', 'structure', 'security'].includes(r.stage)) {
+                    log(`#${number} the one-file lane could not place it (${r.stage}) — trying the build lane`);
+                    const built = await buildIt();
+                    if (built.ok) { laneName = 'build'; return built; }
+                    return { ...r, reason: `${r.reason} | build lane: ${built.reason}` };
+                }
+                return r;
+            };
             if (lane.applies) {
                 result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body + retryBrief + triedBrief + standing }, repoDir: REPO_DIR, log });
                 // The words sounded like a layout complaint, the pages were measured, and nothing is wrong with the layout.
                 // If the report reads as a defect or a request ("on my phone the total is wrong"), the layout word was
                 // incidental: work it as code in this same try instead of spending the next two on the same measurement.
-                if (nothingToMeasure(result) && !lane.marked && kind !== 'ui') {
+                if (nothingToMeasure(result) && !lane.marked && (kind !== 'ui' || lockedScreen)) {
                     log(`#${number} the pages show no layout problem and the report reads as "${kind}" — working it as code in this same try`);
                     const measured = result.reason;
                     laneName = 'swarm';
-                    result = await asCode();
+                    result = await codeOrBuild();
                     if (!result.ok) result = { ...result, reason: `${result.reason} | layout lane first: ${String(measured).slice(0, 160)}` };
                 }
             } else if (build.applies) {
@@ -520,13 +549,7 @@ async function main() {
                 log(`#${number} goes to the build lane (${build.why})`);
                 result = await buildIt();
             } else {
-                result = await asCode();
-                if (!result.ok && kind === 'feature' && (result.stage === 'select' || result.stage === 'author')) {
-                    log(`#${number} no existing module could take it (${result.stage}) — trying the build lane`);
-                    const built = await buildIt();
-                    if (built.ok) laneName = 'build';
-                    result = built.ok ? built : { ...result, reason: `${result.reason} | build lane: ${built.reason}` };
-                }
+                result = await codeOrBuild();
             }
         } catch (e) {
             // A provider outage is not the agent's fault, but it must be visible.

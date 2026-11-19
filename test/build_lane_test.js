@@ -178,7 +178,8 @@ describe('wiring into the agent and the workflow', () => {
     const wf = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'autonomous-fix.yml'), 'utf8');
     it('the agent routes new things to the lane and falls back to it for features nothing could take', () => {
         expect(agent).toMatch(/buildLaneFor\(/); expect(agent).toMatch(/runBuildLane\(/);
-        expect(agent).toMatch(/kind === 'feature' && \(result\.stage === 'select' \|\| result\.stage === 'author'\)/);
+        // 2026-11-19 (#635): the fall-back is one function, and it also takes a report about something that cannot be seen or opened
+        expect(agent).toMatch(/\(kind === 'feature' \|\| reachabilityGap\(reportText\)\) && \['select', 'author', 'structure', 'security'\]\.includes\(r\.stage\)/);
     });
     it('the agent wires a built module mechanically and lists the extra files', () => {
         expect(agent).toMatch(/wireModule\(\{ repoDir: REPO_DIR/); expect(agent).toMatch(/extraFiles,/);
