@@ -292,3 +292,20 @@ describe('failureEssence: what a failed test run really says', async () => {
         expect(failureEssence('Error: ' + 'x'.repeat(5000), 300).length).toBeLessThanOrEqual(300);
     });
 });
+
+describe('the author leaves a TEST RECIPE and the test writer is told to follow it (#635, run 44635494000)', async () => {
+    const { authorPrompt, buildTestNote } = await import('../autonomy/build-lane.mjs');
+    const plan = { name: 'wealthflow-x.js', api: 'WFX', summary: 'x' };
+    it('the author prompt asks for the recipe: books key and record, page markup, call order, expected element', () => {
+        const p = authorPrompt('report', plan, '2026-11-19', '');
+        expect(p).toMatch(/TEST RECIPE/);
+        expect(p).toMatch(/books:/);
+        expect(p).toMatch(/steps:/);
+        expect(p).toMatch(/expect:/);
+    });
+    it('the test note says follow the recipe only when the module has one, and always says to import vi', () => {
+        expect(buildTestNote(plan, '', [], '/* TEST RECIPE\n books: {} */')).toMatch(/build the test from it exactly/);
+        expect(buildTestNote(plan, '', [], '(function(){})()')).not.toMatch(/build the test from it exactly/);
+        expect(buildTestNote(plan, '', [], '')).toMatch(/import \{ describe, it, expect, vi \} from "vitest"/);
+    });
+});

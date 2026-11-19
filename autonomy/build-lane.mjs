@@ -165,6 +165,13 @@ export function authorPrompt(issueText, plan, today = new Date().toISOString().s
         `  · THE NEW TAG (a machine checks it): the ONE container you mount carries container.setAttribute('data-wf-new', '${today}') with exactly that date. The app then shows a NEW label for 7 days from the day the person first sees it, and removes it by itself.`,
         '  · Money: LKR, two decimals, toLocaleString("en-LK"). Do arithmetic in whole cents.',
         '  · Expose pure functions on the API (for example compute(input)) so they can be tested without a DOM.',
+        '  · END THE FILE with one comment block, because a different person writes the test and cannot guess how your module is driven (run 44635494000, #635: three tests failed because the sheet drew nothing for the data they invented):',
+        '    /* TEST RECIPE',
+        '       books: {"<the exact DB.get key>": [ ONE complete example record with the real field names and values ]}',
+        '       page: <the exact markup the module needs on the page before it runs, one line>',
+        '       steps: <the exact calls, in order, that make the sheet show that record, for example: WFName.mount(); WFName.open("<id>")>',
+        '       expect: <the id of the element that then holds text, and two words of that text>',
+        '    */',
     ].join('\n');
 }
 
@@ -264,6 +271,8 @@ export function buildTestNote(plan, facts = '', surface = [], code = '') {
         `The module is NEW: before the change the file does not exist, so the test must fail then. It attaches window.${plan.api}.`,
         ...(surface.length ? [`THE PUBLIC API THIS MODULE REALLY HAS (measured by loading it): window.${plan.api} = { ${surface.join(', ')} }. Call ONLY these. A function not in this list does not exist (the last two tries wrote window.${plan.api}.showDetail, which the module never had, and every test failed on it).`] : []),
         ...(made.length ? [`The ids the module itself creates (use exactly these, never an invented id): ${made.join(', ')}.`] : []),
+        ...(/TEST RECIPE/.test(String(code || '')) ? ['THE MODULE ENDS WITH A "TEST RECIPE" comment written by its author: build the test from it exactly (its books key and example record, its page markup, its call order, the element it says holds the text). Do not invent other records, keys or calls.'] : []),
+        'ALWAYS: import { describe, it, expect, vi } from "vitest" (a test that uses vi without importing it fails with "vi is not defined", as run 44635494000 did).',
         'HOW TO TEST A NEW PAGE MODULE: load it with the shared loader and give it the page it expects.',
         `  · loadBrowserModule(${JSON.stringify(plan.name)}, { html: '<the elements the module draws into or listens on>', globals: { DB: { get: (key) => (fixtures[key] || []) } } })`,
         '    where fixtures is a plain object of invented records keyed by the book name the module reads (read the module for its DB.get keys). The module may read window.DB only.',
