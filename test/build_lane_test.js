@@ -160,6 +160,20 @@ describe('the lane end to end', () => {
         script.replies = [{ text: PLAN }, { text: GOOD, provider: 'a' }, { text: JSON.stringify({ verdict: 'FAIL', severity: 'high', findings: ['x'], reason: 'leaks' }), provider: 'b' }];
         const r = await run(); expect(r.ok).toBe(false); expect(r.stage).toBe('security');
     });
+    it('a medium finding goes back to the author once; the revised file is reviewed again and can pass (seen on #635: "swallowed error")', async () => {
+        const med = JSON.stringify({ verdict: 'FAIL', severity: 'medium', findings: ['an empty catch swallows an error'], reason: 'Swallowed error hides failures' });
+        script.replies = [{ text: PLAN }, { text: GOOD, provider: 'a' }, { text: med, provider: 'b' }, { text: GOOD + '\n// handled', provider: 'a2' }, { text: PASS, provider: 'b2' }, { text: GOOD_TEST, provider: 'c' }];
+        const r = await run();
+        expect(r.ok).toBe(true); expect(r.stage).toBe('ready');
+    });
+    it('a second refusal, or a high finding, still ends the try; a revision that breaks a rule is not used', async () => {
+        const med = JSON.stringify({ verdict: 'FAIL', severity: 'medium', findings: ['x'], reason: 'sloppy' });
+        script.replies = [{ text: PLAN }, { text: GOOD, provider: 'a' }, { text: med, provider: 'b' }, { text: GOOD + '\n// again', provider: 'a2' }, { text: med, provider: 'b2' }];
+        let r = await run(); expect(r.ok).toBe(false); expect(r.stage).toBe('security');
+        const bad = GOOD.replace('return isFinite', 'root.DB.set("expenses", []); return isFinite');
+        script.replies = [{ text: PLAN }, { text: GOOD, provider: 'a' }, { text: med, provider: 'b' }, { text: bad, provider: 'a2' }];
+        r = await run(); expect(r.ok).toBe(false); expect(r.stage).toBe('security');
+    });
     it('fails when the test never goes red to green', async () => {
         script.replies = [{ text: PLAN }, { text: GOOD, provider: 'a' }, { text: PASS, provider: 'b' }, { text: GOOD_TEST }, { text: GOOD_TEST }, { text: GOOD_TEST }];
         const r = await run({ runTest: () => ({ passed: true, output: '' }) });

@@ -93,6 +93,9 @@ export function ensureNewTag(code, today) {
     if (!/\bcreateElement\s*\(/.test(src) || !/^\d{4}-\d{2}-\d{2}$/.test(String(today || ''))) return src;
     const found = NEW_TAG_RE.exec(src) || NEW_TAG_DATASET_RE.exec(src);
     if (found) return found[1] === today ? src : src.replace(found[0], found[0].replace(found[1], today));
+    // the tag is there but its date is a variable (seen on #635: setAttribute('data-wf-new', NEW_DATE)): a machine cannot check a name, so write the date itself
+    const viaName = /(\.setAttribute\(\s*['"]data-wf-new['"]\s*,\s*)([A-Za-z_$][\w$.]*)(\s*\))/.exec(src) || /(\.dataset\.wfNew\s*=\s*)([A-Za-z_$][\w$.]*)(\s*;)/.exec(src);
+    if (viaName) return src.replace(viaName[0], `${viaName[1]}'${today}'${viaName[3]}`);
     // anchor: the line that gives the mounted container its id
     const anchor = /^([ \t]*)(\w+)\.id\s*=\s*['"][\w-]+['"]\s*;[ \t]*$/m.exec(src)
         || /^([ \t]*)(\w+)\.setAttribute\(\s*['"]id['"]\s*,\s*['"][\w-]+['"]\s*\)\s*;[ \t]*$/m.exec(src);
@@ -225,6 +228,18 @@ export function parsePlan(text, { existing = [], repoDir = process.cwd() } = {})
     return { ok: true, plan: { name, api, summary: String(j.summary || '').slice(0, 300) } };
 }
 
+/** Every check the author's file must pass, in one place so a revised file is held to exactly the same rules as the first. */
+function moduleProblems(c, plan, today) {
+    return !c ? ['no code came back'] : [
+        ...(c.length > MAX_MODULE_CHARS ? [`longer than ${MAX_MODULE_CHARS} characters`] : []),
+        ...(c.includes(`root.${plan.api}`) || c.includes(`window.${plan.api}`) || c.includes(`.${plan.api} =`) ? [] : [`does not attach ${plan.api}`]),
+        ...structuralCheck('', c).problems.filter((x) => !/original/.test(x)),
+        ...forbiddenIn(c),
+        ...newTagProblems(c, today),
+        ...(isValidJs(c) ? [] : ['not parseable JavaScript']),
+    ];
+}
+
 export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(), env = process.env, log = console.log, runTest = null, verifyTest = true } = {}) {
     const issueText = `${issue?.title || ''}\n\n${issue?.body || ''}`.trim();
     if (!issueText) return { ok: false, stage: 'input', reason: 'empty issue' };
@@ -249,28 +264,40 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
         const a = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts) + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
         providers.author = a.provider;
         const c = ensureNewTag(stripFences(a.text || ''), today);
-        const bad = !c ? ['no code came back'] : [
-            ...(c.length > MAX_MODULE_CHARS ? [`longer than ${MAX_MODULE_CHARS} characters`] : []),
-            ...(c.includes(`root.${plan.api}`) || c.includes(`window.${plan.api}`) || c.includes(`.${plan.api} =`) ? [] : [`does not attach ${plan.api}`]),
-            ...structuralCheck('', c).problems.filter((x) => !/original/.test(x)),
-            ...forbiddenIn(c),
-            ...newTagProblems(c, today),
-            ...(isValidJs(c) ? [] : ['not parseable JavaScript']),
-        ];
+        const bad = moduleProblems(c, plan, today);
         if (bad.length) { why = bad.join('; ').slice(0, 300); log(`[build] attempt ${attempt + 1} refused: ${why}`); if (/NEW tag/.test(why)) log(`[build] (tag lines seen: ${(c.match(/^.*(?:wf-new|wfNew|\\.id\\s*=|createElement).*$/gm) || []).slice(0, 4).map((x) => x.trim().slice(0, 90)).join(' | ')})`); continue; }
         code = c; authored = a;
     }
     if (!code) return { ok: false, stage: 'author', file: plan.name, providers, reason: `no acceptable module after 2 tries: ${why}` };
     log(`[build] module written (${code.length} chars, via ${authored.provider})`);
 
-    // 3. independent review of the WHOLE new file, on a different provider
-    if (!reviewSeesWholeChange('', code)) return { ok: false, stage: 'review_too_large', file: plan.name, providers, reason: 'the module is larger than the independent review can read in full' };
-    const r = await chat({ system: withCard(ROLES.security.system), prompt: reviewPrompt(issueText, plan.name, '', code), prefer: ROLES.security.prefer, exclude: [authored.provider], maxTokens: 1500, temperature: 0, env })
-        .catch((e) => ({ text: '', provider: 'none', _error: e.message }));
-    providers.security = r.provider;
-    if (!r.text) return { ok: false, stage: 'security_unavailable', file: plan.name, providers, reason: 'no independent security reviewer was available' };
-    const review = parseVerdict(r.text);
-    if (review.verdict === 'FAIL') return { ok: false, stage: 'security', file: plan.name, providers, review, reason: `Agent 5 veto (${review.severity}): ${review.reason}` };
+    // 3. independent review of the WHOLE new file, on a different provider.
+    // A reviewer's low or medium finding (for example "an empty catch swallows an error", seen on #635) is a thing the author can fix: the author gets the
+    // finding once and the fixed file is reviewed again, on a provider that did not write it. High and critical findings, and a second refusal, end the try as before.
+    let r = null, review = null;
+    for (let round = 1; round <= 2; round++) {
+        if (!reviewSeesWholeChange('', code)) return { ok: false, stage: 'review_too_large', file: plan.name, providers, reason: 'the module is larger than the independent review can read in full' };
+        r = await chat({ system: withCard(ROLES.security.system), prompt: reviewPrompt(issueText, plan.name, '', code), prefer: ROLES.security.prefer, exclude: [authored.provider], maxTokens: 1500, temperature: 0, env })
+            .catch((e) => ({ text: '', provider: 'none', _error: e.message }));
+        providers.security = r.provider;
+        if (!r.text) return { ok: false, stage: 'security_unavailable', file: plan.name, providers, reason: 'no independent security reviewer was available' };
+        review = parseVerdict(r.text);
+        if (review.verdict !== 'FAIL') break;
+        const fixable = review.severity === 'low' || review.severity === 'medium';
+        const veto = { ok: false, stage: 'security', file: plan.name, providers, review, reason: `Agent 5 veto (${review.severity}): ${review.reason}` };
+        if (!fixable || round === 2) return veto;
+        const today = new Date().toISOString().slice(0, 10);
+        const note = [review.reason, ...(Array.isArray(review.findings) ? review.findings : [])].filter(Boolean).join('; ').slice(0, 600);
+        log(`[build] reviewer refused (${review.severity}): ${note.slice(0, 200)} — the author gets one revision`);
+        const rev = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts)
+            + `\n\nTHE FIRST VERSION OF THE FILE (an independent reviewer refused it):\n-----\n${code}\n-----\nREVIEWER: ${note}\nReturn the COMPLETE corrected file, changing only what the reviewer named. Every rule above still holds.`,
+            prefer: role.prefer, maxTokens: 9_000, temperature: 0.1, env }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
+        const c2 = ensureNewTag(stripFences(rev.text || ''), today);
+        const bad2 = moduleProblems(c2, plan, today);
+        if (bad2.length) { log(`[build] the revision was refused: ${bad2.join('; ').slice(0, 200)}`); return veto; }
+        code = c2; authored = rev; providers.author = rev.provider;
+        log(`[build] revised module (${code.length} chars, via ${rev.provider})`);
+    }
     log(`[build] Agent 5 verdict: PASS (via ${r.provider})`);
 
     // 4. the proving test, red (module absent) then green
