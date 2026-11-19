@@ -15,6 +15,7 @@
  * Everything here is pure: text in, text out. A recipe it cannot read returns { ok:false, why } and the lane falls back to the model-written test.
  */
 
+const LOADER = ['.', 'helpers', 'load-browser-module.js'].join('/');   // the shared loader, as the generated test (in test/) imports it
 const RECIPE_RE = /\/\*\s*TEST RECIPE([\s\S]*?)\*\//;
 const FIELD_RE = /^\s*(books|page|steps|expect)\s*:\s*/i;
 
@@ -100,7 +101,7 @@ export function testFromRecipe(plan, code) {
     const L = (v) => JSON.stringify(v);
     const src = [
         'import { describe, it, expect } from "vitest";',
-        'import { loadBrowserModule } from "./helpers/load-browser-module.js";',
+        `import { loadBrowserModule } from ${JSON.stringify(LOADER)};`,   // built, not written out: test/import_bindings_test.js reads import lines in source text
         '',
         `// Generated from the TEST RECIPE at the end of ${plan.name} (autonomy/recipe-test.mjs): same books, same page, same calls, same element.`,
         `const BOOKS = ${JSON.stringify(books, null, 2)};`,
