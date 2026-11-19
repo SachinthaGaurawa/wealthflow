@@ -25,6 +25,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { chat, stripFences, extractJson } from './llm-router.mjs';
 import { taskCard, cardPrompt } from './task-card.mjs';
 import { fenceUntrusted } from './untrusted-text.mjs';
@@ -233,10 +234,13 @@ export function parsePlan(text, { existing = [], repoDir = process.cwd() } = {})
  * A new browser module reads the books from window.DB and draws into elements the page already has, and a Node test has neither unless it builds them. The shared loader
  * can: it takes the page markup and the globals. Said once here, with the screen's real ids when they are known, so the test builds the page the module expects.
  */
-export function buildTestNote(plan, facts = '') {
+export function buildTestNote(plan, facts = '', surface = [], code = '') {
+    const made = [...new Set([...String(code || '').matchAll(/\.id\s*=\s*['"]([\w-]+)['"]|setAttribute\(\s*['"]id['"]\s*,\s*['"]([\w-]+)['"]/g)].map((m) => m[1] || m[2]))].slice(0, 6);
     const ids = [...new Set(String(facts || '').match(/#[A-Za-z][\w-]{2,}|\bid=["'][\w-]+["']/g) || [])].slice(0, 8).join(', ');
     return [
         `The module is NEW: before the change the file does not exist, so the test must fail then. It attaches window.${plan.api}.`,
+        ...(surface.length ? [`THE PUBLIC API THIS MODULE REALLY HAS (measured by loading it): window.${plan.api} = { ${surface.join(', ')} }. Call ONLY these. A function not in this list does not exist (the last two tries wrote window.${plan.api}.showDetail, which the module never had, and every test failed on it).`] : []),
+        ...(made.length ? [`The ids the module itself creates (use exactly these, never an invented id): ${made.join(', ')}.`] : []),
         'HOW TO TEST A NEW PAGE MODULE: load it with the shared loader and give it the page it expects.',
         `  · loadBrowserModule(${JSON.stringify(plan.name)}, { html: '<the elements the module draws into or listens on>', globals: { DB: { get: (key) => (fixtures[key] || []) } } })`,
         '    where fixtures is a plain object of invented records keyed by the book name the module reads (read the module for its DB.get keys). The module may read window.DB only.',
@@ -244,6 +248,23 @@ export function buildTestNote(plan, facts = '') {
         '  · Prefer asserting through the PURE function the module exposes on its API (record in, lines out), with 2 or 3 concrete records, and keep any DOM assertion to one simple check of text a person reads.',
         '  · Do not use timers, requestAnimationFrame or real events you cannot dispatch with document.createEvent / new window.Event; call the API function the module exposes to open the sheet if it has one.',
     ].join('\n');
+}
+
+/**
+ * THE API THE MODULE REALLY EXPOSES, measured by running it   (fourth dry run on #635, test output now logged: "window.WFCCInstalmentDetail.showDetail is not a function")
+ * The test is written by a different model than the module, from the module's text, and it invented a function. Loading the module once in the shared loader
+ * (a real DOM, a books stub that returns nothing) and listing what it attached removes the guess. Anything that goes wrong here means no list, never a failed build.
+ */
+export async function apiSurface(plan, code, repoDir = process.cwd()) {
+    try {
+        const loaderPath = path.join(repoDir, 'test', 'helpers', 'load-browser-module.js');
+        if (!fs.existsSync(loaderPath)) return [];
+        const { loadBrowserModule } = await import(pathToFileURL(loaderPath).href);
+        const { window } = loadBrowserModule(plan.name, { source: code, timeoutMs: 3000, globals: { DB: { get: () => [] } } });
+        const api = window[plan.api];
+        if (!api || (typeof api !== 'object' && typeof api !== 'function')) return [];
+        return Object.keys(api).slice(0, 24).map((k) => (typeof api[k] === 'function' ? `${k}()` : k));
+    } catch { return []; }
 }
 
 /** Every check the author's file must pass, in one place so a revised file is held to exactly the same rules as the first. */
@@ -327,11 +348,13 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
     const runner = (runTest && !env.CI) ? runTest : undefined;
     let test = null, proof = null, candidate = '', previous = null;
     const rounds = [];
+    const surface = await apiSurface(plan, code, repoDir);
+    if (surface.length) log(`[build] the module exposes: ${surface.join(', ')}`);
     try {
         for (let round = 1; round <= TEST_ROUNDS; round++) {
             const t = await chat({
                 system: withCard(ROLES.qa.system),
-                prompt: testPrompt(issueText, plan.name, '', code, buildTestNote(plan, facts))
+                prompt: testPrompt(issueText, plan.name, '', code, buildTestNote(plan, facts, surface, code))
                     + (previous ? `\n\nYOUR PREVIOUS TEST WAS REJECTED: ${previous.reason}\n${String(previous.output || '').slice(-1200)}` : ''),
                 prefer: ROLES.qa.prefer, exclude: [authored.provider, r.provider], maxTokens: 4000, temperature: round === 1 ? 0.1 : 0.2, env,
             }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
