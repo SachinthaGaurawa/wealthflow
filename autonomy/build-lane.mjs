@@ -79,9 +79,30 @@ export function forbiddenIn(code) {
  * container. The date must be today's: an older date could predate the person's first day and an invented later one would hide the label.
  */
 export const NEW_TAG_RE = /['"]data-wf-new['"]\s*,\s*['"](\d{4}-\d{2}-\d{2})['"]/;
+// the same attribute written through the DOM property: el.dataset.wfNew = '2026-11-19' (the browser makes it data-wf-new)
+const NEW_TAG_DATASET_RE = /\.dataset\.wfNew\s*=\s*['"](\d{4}-\d{2}-\d{2})['"]/;
+/**
+ * THE TAG IS WRITTEN BY THE PROGRAM WHEN THE MODEL LEAVES IT OUT   (measured 2026-11-19, dry run on #635)
+ * Both author tries wrote a working module and were refused only for the missing tag, with the exact line to add quoted back to the model both times.
+ * A free-tier model that ignores a quoted instruction twice should not cost the owner the whole report. The tag is one attribute on the container the
+ * module mounts, and the module names that container itself (the prompt requires a stable id), so the program can add the line next to it. Only when
+ * no such place is found does the refusal stand. A wrong date is corrected the same way (an older date could predate the person's first look).
+ */
+export function ensureNewTag(code, today) {
+    const src = String(code || '');
+    if (!/\bcreateElement\s*\(/.test(src) || !/^\d{4}-\d{2}-\d{2}$/.test(String(today || ''))) return src;
+    const found = NEW_TAG_RE.exec(src) || NEW_TAG_DATASET_RE.exec(src);
+    if (found) return found[1] === today ? src : src.replace(found[0], found[0].replace(found[1], today));
+    // anchor: the line that gives the mounted container its id
+    const anchor = /^([ \t]*)(\w+)\.id\s*=\s*['"][\w-]+['"]\s*;[ \t]*$/m.exec(src)
+        || /^([ \t]*)(\w+)\.setAttribute\(\s*['"]id['"]\s*,\s*['"][\w-]+['"]\s*\)\s*;[ \t]*$/m.exec(src);
+    if (!anchor) return src;
+    const end = anchor.index + anchor[0].length;
+    return `${src.slice(0, end)}\n${anchor[1]}${anchor[2]}.setAttribute('data-wf-new', '${today}');${src.slice(end)}`;
+}
 export function newTagProblems(code, today) {
     if (!/\bcreateElement\s*\(/.test(String(code || ''))) return [];       // a module that shows nothing has nothing to label
-    const m = NEW_TAG_RE.exec(code);
+    const m = NEW_TAG_RE.exec(code) || NEW_TAG_DATASET_RE.exec(code);
     if (!m) return [`the container it shows does not carry the NEW tag: add container.setAttribute('data-wf-new', '${today}')`];
     if (m[1] !== today) return [`the NEW tag date must be today, ${today}; it says ${m[1]}`];
     return [];
@@ -227,7 +248,7 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
         const today = new Date().toISOString().slice(0, 10);
         const a = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts) + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
         providers.author = a.provider;
-        const c = stripFences(a.text || '');
+        const c = ensureNewTag(stripFences(a.text || ''), today);
         const bad = !c ? ['no code came back'] : [
             ...(c.length > MAX_MODULE_CHARS ? [`longer than ${MAX_MODULE_CHARS} characters`] : []),
             ...(c.includes(`root.${plan.api}`) || c.includes(`window.${plan.api}`) || c.includes(`.${plan.api} =`) ? [] : [`does not attach ${plan.api}`]),
@@ -236,7 +257,7 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
             ...newTagProblems(c, today),
             ...(isValidJs(c) ? [] : ['not parseable JavaScript']),
         ];
-        if (bad.length) { why = bad.join('; ').slice(0, 300); log(`[build] attempt ${attempt + 1} refused: ${why}`); continue; }
+        if (bad.length) { why = bad.join('; ').slice(0, 300); log(`[build] attempt ${attempt + 1} refused: ${why}`); if (/NEW tag/.test(why)) log(`[build] (tag lines seen: ${(c.match(/^.*(?:wf-new|wfNew|\\.id\\s*=|createElement).*$/gm) || []).slice(0, 4).map((x) => x.trim().slice(0, 90)).join(' | ')})`); continue; }
         code = c; authored = a;
     }
     if (!code) return { ok: false, stage: 'author', file: plan.name, providers, reason: `no acceptable module after 2 tries: ${why}` };

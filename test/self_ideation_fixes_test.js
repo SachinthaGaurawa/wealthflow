@@ -10,7 +10,7 @@ import path from 'node:path';
 import * as I from '../autonomy/ideas.mjs';
 import * as A from '../autonomy/app-map.mjs';
 import { buildPrompt, proposeOnce, renderProposal } from '../autonomy/propose.mjs';
-import { buildLaneFor, newTagProblems, authorPrompt } from '../autonomy/build-lane.mjs';
+import { buildLaneFor, newTagProblems, ensureNewTag, authorPrompt } from '../autonomy/build-lane.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const lab = (...n) => n.map((name) => ({ name }));
@@ -177,6 +177,32 @@ describe('7. a module the builder makes always carries the NEW tag (nothing aske
     });
     it('a pure calculator with no element has nothing to label', () => {
         expect(newTagProblems('(function(r){ r.WFX = { f: function (a) { return a + 1; } }; })(window);', today)).toEqual([]);
+    });
+    it('the program adds the tag next to the container id when the model left it out (seen on #635: refused twice for this alone)', () => {
+        const src = "(function (root) {\n  var sheet = document.createElement('div');\n  sheet.id = 'wf-cci-detail';\n  document.body.appendChild(sheet);\n})(window);";
+        const out = ensureNewTag(src, today);
+        expect(out).toContain(`sheet.setAttribute('data-wf-new', '${today}');`);
+        expect(out.indexOf("data-wf-new")).toBeGreaterThan(out.indexOf("sheet.id"));
+        expect(out.indexOf("data-wf-new")).toBeLessThan(out.indexOf("appendChild"));
+        expect(newTagProblems(out, today)).toEqual([]);
+        expect(() => new Function(out)).not.toThrow();
+    });
+    it('also anchors on setAttribute("id", ...), corrects a wrong date, accepts dataset.wfNew, and leaves tagged or tag-free code alone', () => {
+        const a = "var c = document.createElement('div');\nc.setAttribute('id', 'x-1');\ndocument.body.appendChild(c);";
+        expect(newTagProblems(ensureNewTag(a, today), today)).toEqual([]);
+        const wrong = ui("c.setAttribute('data-wf-new', '2026-01-01');");
+        expect(ensureNewTag(wrong, today)).toContain(`'data-wf-new', '${today}'`);
+        expect(newTagProblems(ensureNewTag(wrong, today), today)).toEqual([]);
+        expect(newTagProblems(ui(`c.dataset.wfNew = '${today}';`), today)).toEqual([]);
+        const good = ui(`c.setAttribute('data-wf-new', '${today}');`);
+        expect(ensureNewTag(good, today)).toBe(good);
+        const calc = '(function(r){ r.WFX = { f: function (a) { return a + 1; } }; })(window);';
+        expect(ensureNewTag(calc, today)).toBe(calc);
+    });
+    it('with no place to anchor it, the code is left as it is and the refusal stands', () => {
+        const noId = ui('');
+        expect(ensureNewTag(noId, today)).toBe(noId);
+        expect(newTagProblems(noId, today)).toHaveLength(1);
     });
     it('the author is told, with the date', () => {
         expect(authorPrompt('report', { name: 'wealthflow-x.js', api: 'WFX', summary: 's' }, today)).toContain(`'data-wf-new', '${today}'`);
