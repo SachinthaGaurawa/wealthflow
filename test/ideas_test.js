@@ -274,7 +274,7 @@ describe('the words are not the only guard', () => {
 // =============================================================================
 describe('every AI proposes, a program chooses', () => {
     const good = idea();
-    const other = idea({ title: 'Remember the last filter on the expenses list', proposal: 'When the person returns to the expenses list, show it with the same filter and sort they last used on this device.', scores: { ease: 4, value: 3, small: 4, risk: 1 } });
+    const other = idea({ title: 'Remember the last filter on the expenses list', proposal: 'When the person returns to the expenses list, show it with the same filter and sort they last used on this device.', scores: { ease: 4, value: 4, small: 4, risk: 1 } });
     const risky = idea({ title: 'Predict next month spending with a model', scores: { ease: 4, value: 4, small: 3, risk: 4 } });
     const unsafe = idea({ title: 'Faster passcode entry on the lock screen', proposal: 'Let the passcode screen remember the last digits so signing in is quicker for the person each morning.' });
 
@@ -286,10 +286,10 @@ describe('every AI proposes, a program chooses', () => {
         expect(r.refused.find((x) => x.by === 'nvidia').why).toMatch(/sign-in or security/);
     });
     it('two AIs proposing the same thing independently lifts it above a lone idea, and it is one idea, not two', () => {
-        const same = idea({ title: 'One-tap undo after marking a bill as paid', scores: { ease: 4, value: 3, small: 3, risk: 2 } });   // scores itself LOWER than `other`
+        const same = idea({ title: 'One-tap undo after marking a bill as paid', scores: { ease: 4, value: 4, small: 3, risk: 2 } });   // scores itself LOWER than `other`
         const alone = I.rankCandidates([{ idea: same, by: 'groq' }, { idea: other, by: 'mistral' }], { signals, outcomes: [] });
         expect(alone.passed[0].by).toBe('mistral');
-        const agreed = I.rankCandidates([{ idea: same, by: 'groq' }, { idea: other, by: 'mistral' }, { idea: idea({ scores: { ease: 4, value: 3, small: 3, risk: 2 } }), by: 'deepseek' }], { signals, outcomes: [] });
+        const agreed = I.rankCandidates([{ idea: same, by: 'groq' }, { idea: other, by: 'mistral' }, { idea: idea({ scores: { ease: 4, value: 4, small: 3, risk: 2 } }), by: 'deepseek' }], { signals, outcomes: [] });
         expect(agreed.passed).toHaveLength(2);                                            // the two undo ideas are one
         expect(likenessOf(agreed.passed[0].idea.title)).toBe(true);
         expect(agreed.passed[0].agree).toHaveLength(1);
@@ -321,7 +321,7 @@ describe('proposeOnce with several AIs proposing (models and GitHub faked)', () 
     const budget = { LANES: { BACKGROUND: 'b' }, RESERVE_FOR_CRITICAL: 2, loadLedger: () => ({}), availableFor: () => ['groq', 'mistral', 'deepseek'], record: (l) => l, saveLedger: () => {} };
     const reply = (provider, over) => ({ provider, text: JSON.stringify({ worthProposing: true, ...idea(over) }) });
     const riskyR = (p) => reply(p, { title: 'Predict next month spending with a model', scores: { ease: 4, value: 4, small: 3, risk: 4 } });
-    const otherR = (p) => reply(p, { title: 'Remember the last filter on the expenses list', proposal: 'When the person returns to the expenses list, show it with the same filter and sort they last used on this device.', scores: { ease: 4, value: 3, small: 4, risk: 1 } });
+    const otherR = (p) => reply(p, { title: 'Remember the last filter on the expenses list', proposal: 'When the person returns to the expenses list, show it with the same filter and sort they last used on this device.', scores: { ease: 4, value: 4, small: 4, risk: 1 } });
     const rig = (issues = []) => {
         const filed = [], closed = [], asked = [];
         const queue = { allIssues: async () => issues, createIssue: async (x) => { filed.push(x); return { number: 200 + filed.length }; }, ensureLabel: async () => true, comment: async () => {}, closeIssue: async (n, o) => { closed.push([n, o.reason]); }, mergedPrTitles: async () => [] };

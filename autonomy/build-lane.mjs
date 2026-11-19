@@ -71,8 +71,30 @@ export function forbiddenIn(code) {
     return out;
 }
 
+/**
+ * THE NEW TAG IS NOT OPTIONAL FOR A NEW MODULE   (owner, 2026-11-19: "the system must show a NEW label for about a week from the person's first look")
+ * MEASURED: nothing in the builder ever asked for it. The idea issue said "a new option shows a NEW tag", the build lane's author prompt did not mention it,
+ * and no check looked for it, so a module that DID ship would have appeared with no label at all (the live app carries exactly one tagged element, from 2026-11-07).
+ * wealthflow-new-badge.js starts the week when a person first sees an element marked data-wf-new="YYYY-MM-DD"; this makes the builder mark the module's
+ * container. The date must be today's: an older date could predate the person's first day and an invented later one would hide the label.
+ */
+export const NEW_TAG_RE = /['"]data-wf-new['"]\s*,\s*['"](\d{4}-\d{2}-\d{2})['"]/;
+export function newTagProblems(code, today) {
+    if (!/\bcreateElement\s*\(/.test(String(code || ''))) return [];       // a module that shows nothing has nothing to label
+    const m = NEW_TAG_RE.exec(code);
+    if (!m) return [`the container it shows does not carry the NEW tag: add container.setAttribute('data-wf-new', '${today}')`];
+    if (m[1] !== today) return [`the NEW tag date must be today, ${today}; it says ${m[1]}`];
+    return [];
+}
+
 /** Does this report ask for something NEW, which no existing module can be edited to provide? */
 export function buildLaneFor(issue) {
+    // An idea the system thought of itself says in its own "Likely scope" whether it is a NEW module (autonomy/propose.mjs asks it to). That is a statement of
+    // what to build, not a report of a fault, so the defect words below (an idea's "risks" section often says "error") must not turn it away.
+    const raw = String(issue?.body || '');
+    if (/<!--\s*wf-proposal\s*-->/.test(raw) && /###\s*Likely scope[\s\S]{0,500}?\bnew\b[^.\n]{0,40}\b(?:module|file)\b/i.test(raw)) {
+        return { applies: true, why: 'the idea names a new module as its scope' };
+    }
     const t = `${issue?.title || ''}\n${issue?.body || ''}`.toLowerCase();
     // a defect that happens to mention "new page" is a defect, not a request for something new
     if (/\b(crash\w*|freez\w*|white screen|blank screen|overlap\w*|wrong (?:total|amount|number|value)|not working|doesn'?t work|broken|error|bug)\b/.test(t)) return { applies: false, why: '' };
@@ -95,7 +117,7 @@ export function planPrompt(issueText, existing) {
     ].join('\n');
 }
 
-export function authorPrompt(issueText, plan) {
+export function authorPrompt(issueText, plan, today = new Date().toISOString().slice(0, 10)) {
     return [
         `Write the COMPLETE file ${plan.name} for WealthFlow, a vanilla-JS personal-finance PWA. Reply with the file contents only, no fences.`,
         '',
@@ -109,6 +131,7 @@ export function authorPrompt(issueText, plan) {
         '  · Build the screen with createElement and textContent only. NEVER assign innerHTML, outerHTML or insertAdjacentHTML (a machine refuses it).\n  · A module may READ the books (root.DB.get) or use the network (fetch to a public https API), NEVER both (a machine refuses it): a calculator shows the numbers the owner recorded and has no network; an integration shows public data and cannot see what the owner recorded.',
         '  · Everything is guarded: no DOM, no DB, empty lists, NaN, negative and huge numbers must not throw.',
         '  · If it shows UI, mount ONE container with a stable id the first time the page is ready (DOMContentLoaded or immediately), inside document.body, and never replace existing elements. Respect prefers-reduced-motion. Hit targets at least 44px.',
+        `  · THE NEW TAG (a machine checks it): the ONE container you mount carries container.setAttribute('data-wf-new', '${today}') with exactly that date. The app then shows a NEW label for 7 days from the day the person first sees it, and removes it by itself.`,
         '  · Money: LKR, two decimals, toLocaleString("en-LK"). Do arithmetic in whole cents.',
         '  · Expose pure functions on the API (for example compute(input)) so they can be tested without a DOM.',
     ].join('\n');
@@ -195,7 +218,8 @@ export async function runBuildLane({ issue, repoDir = process.cwd(), env = proce
     // 2. author the whole module
     let code = '', authored = null, why = '';
     for (let attempt = 0; attempt < 2 && !code; attempt++) {
-        const a = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan) + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
+        const today = new Date().toISOString().slice(0, 10);
+        const a = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today) + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
         providers.author = a.provider;
         const c = stripFences(a.text || '');
         const bad = !c ? ['no code came back'] : [
@@ -203,6 +227,7 @@ export async function runBuildLane({ issue, repoDir = process.cwd(), env = proce
             ...(c.includes(`root.${plan.api}`) || c.includes(`window.${plan.api}`) || c.includes(`.${plan.api} =`) ? [] : [`does not attach ${plan.api}`]),
             ...structuralCheck('', c).problems.filter((x) => !/original/.test(x)),
             ...forbiddenIn(c),
+            ...newTagProblems(c, today),
             ...(isValidJs(c) ? [] : ['not parseable JavaScript']),
         ];
         if (bad.length) { why = bad.join('; ').slice(0, 300); log(`[build] attempt ${attempt + 1} refused: ${why}`); continue; }

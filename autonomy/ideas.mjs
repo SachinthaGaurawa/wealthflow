@@ -82,7 +82,8 @@ export function readResearch(repoDir = process.cwd()) {
 const hasLabel = (issue, name) => (issue?.labels || []).some((l) => String(l?.name || l).toLowerCase() === name);
 
 /**
- * What became of the ideas filed so far. built = closed as completed, declined = closed otherwise, building = open and approved, waiting = open, not approved.
+ * What became of the ideas filed so far. built = closed as completed, declined = closed otherwise, building = open and approved, waiting = open, not approved,
+ * stuck = open and the builder stood down on it (`ai-stuck`): it no longer holds a place in the pipeline, and the model is told the builder could not do it.
  * Pure: takes the issue list, returns the facts the model is shown and the count that limits new ideas.
  */
 export function outcomesOf(issues) {
@@ -91,9 +92,13 @@ export function outcomesOf(issues) {
         if (i.pull_request || !hasLabel(i, 'feature-proposal')) continue;
         const title = clip(String(i.title || '').replace(/^\[PROPOSAL\]\s*/i, ''), 140);
         let state;
+        const stuck = hasLabel(i, 'ai-stuck');
         if (i.state === 'closed') state = i.state_reason === 'completed' ? 'built' : 'declined';
+        // MEASURED 2026-11-19: the builder gave up on both approved ideas after 3 tries (label `ai-stuck`), yet each kept counting as "being built"
+        // for 14 days, so the cap of 2 held the engine shut from 14 November: five daily runs said "2 ideas already in the pipeline" and thought of nothing.
+        else if (stuck) state = 'stuck';
         else state = hasLabel(i, 'approved-feature') ? 'building' : 'waiting';
-        out.push({ number: i.number, title, state, created: i.created_at || null });
+        out.push({ number: i.number, title, state, stuck, created: i.created_at || null });
     }
     return out;
 }
@@ -113,15 +118,18 @@ export function inFlight(outcomes, now = Date.now()) {
 // ── one numbered list of evidence the model must cite ──────────────────────────────────────────
 
 /** Every signal gets an id the model must quote back. Order is stable so a test can name them. */
-export function signalList({ roadmap = [], gaps = [], feedback = [], outcomes = [], shipped = [], app = {} } = {}) {
+export function signalList({ roadmap = [], gaps = [], feedback = [], outcomes = [], shipped = [], app = {}, capabilities = [] } = {}) {
     const sig = [];
     roadmap.filter((r) => !r.done && !r.ownerOnly).slice(0, 8).forEach((r, i) => sig.push({ id: `R${i + 1}`, kind: 'roadmap', text: `rank ${r.rank}: ${r.idea} — if/then: ${r.ifThen} — check first: ${r.checkFirst}` }));
     gaps.slice(0, 4).forEach((g, i) => sig.push({ id: `G${i + 1}`, kind: g.kind, text: g.text }));
     feedback.slice(0, 6).forEach((f, i) => sig.push({ id: `F${i + 1}`, kind: 'owner feedback', text: `#${f.number} [${f.state}] ${f.title}` }));
-    outcomes.slice(0, 14).forEach((o, i) => sig.push({ id: `H${i + 1}`, kind: `earlier idea, ${o.state}`, text: `#${o.number} ${o.title}` }));
-    shipped.slice(0, 12).forEach((t, i) => sig.push({ id: `P${i + 1}`, kind: 'already shipped', text: clip(t, 140) }));
+    outcomes.slice(0, 14).forEach((o, i) => sig.push({ id: `H${i + 1}`, kind: `earlier idea, ${o.state === 'stuck' ? 'the builder could not build it in 3 tries' : o.state}`, text: `#${o.number} ${o.title}` }));
+    capabilities.slice(0, 6).forEach((c, i) => sig.push({ id: `B${i + 1}`, kind: 'looked for in the code and not found (a word search: check first, it may exist under other words)', text: c.label }));
+    shipped.slice(0, 30).forEach((t, i) => sig.push({ id: `P${i + 1}`, kind: 'already shipped', text: clip(t, 120) }));
     if (app.sections && app.sections.length) sig.push({ id: 'A1', kind: 'screens that exist', text: app.sections.join(', ') });
-    if (app.modules && app.modules.length) sig.push({ id: 'A2', kind: 'modules that exist', text: app.modules.join(', ') });
+    // What each module IS, in its own words (autonomy/app-map.mjs). A list of bare names let #607 propose a build ID that had shipped weeks earlier.
+    if (app.moduleText) sig.push({ id: 'A2', kind: 'what each module already does', text: app.moduleText });
+    else if (app.modules && app.modules.length) sig.push({ id: 'A2', kind: 'modules that exist', text: app.modules.join(', ') });
     return sig;
 }
 
@@ -142,6 +150,13 @@ export function likeness(a, b) {
     const inter = A.filter((w) => B.includes(w)).length;
     return Math.max(inter / new Set([...A, ...B]).size, inter / Math.min(A.length, B.length) * (Math.min(A.length, B.length) >= 3 ? 1 : 0.6));
 }
+/** A near-copy of something that already shipped (a merged pull request's title). Returns that title or null. Lower bar than for ideas: titles of pull requests are long and wordy. */
+export function isShippedAlready(title, shipped, threshold = 0.5) {
+    let best = null, top = 0;
+    for (const t of shipped || []) { const s = likeness(title, String(t || '').replace(/^[^:]{1,30}:\s*/, '')); if (s >= threshold && s > top) { best = t; top = s; } }
+    return best;
+}
+
 /** A near-copy of any earlier idea, open or closed. Returns that earlier idea or null. */
 export function isRepeat(title, outcomes, threshold = 0.6) {
     let best = null, top = 0;
@@ -210,15 +225,27 @@ export function groundScope(scope, files) {
     const all = [...new Set(files || [])];
     const named = [...new Set(text.match(FILE_TOKEN) || [])];
     if (!text || !all.length || !named.length) return { text, real: [], missing: [], closest: [], changed: false };
-    const real = [], missing = [];
+    const real = [], missing = [], create = [];
+    // The idea engine now asks for features built as a NEW module (the builder's build lane, autonomy/build-lane.mjs). A file named as new is not "imagined":
+    // telling the builder "do not look for it" would turn the one shape it can build into a refusal.
+    const makesNew = /\bnew\b[^.\n]{0,40}\b(module|file)\b|\bto be (created|added)\b|\bcreate[sd]?\b/i.test(text);
     for (const n of named) {
         const clean = n.replace(/^\.?\//, '');
         if (all.includes(clean)) { real.push(clean); continue; }
         const base = clean.split('/').pop();
         const same = all.filter((f) => f.split('/').pop() === base && !NOT_APP.test(f));
-        if (same.length === 1) real.push(same[0]); else missing.push(n);
+        if (same.length === 1) real.push(same[0]);
+        else if (makesNew && /^wealthflow-[a-z0-9]+(?:-[a-z0-9]+){0,4}\.js$/.test(clean)) create.push(clean);
+        else missing.push(n);
     }
     const uniq = (xs) => [...new Set(xs)];
+    if (create.length && !missing.length) {
+        const tick0 = (xs) => xs.map((f) => `\`${f}\``).join(', ');
+        const lines0 = [];
+        if (real.length) lines0.push(`Files that exist: ${tick0(uniq(real))}.`);
+        lines0.push(`A NEW file to be created by the builder (it does not exist yet, on purpose): ${tick0(uniq(create))}.`);
+        return { text: lines0.join('\n'), real: uniq(real), missing, create: uniq(create), closest: [], changed: true };
+    }
     const closest = uniq(missing.flatMap((m) => closestFiles(m, all))).filter((f) => !real.includes(f)).slice(0, 4);
     if (!missing.length) return { text, real: uniq(real), missing, closest: [], changed: false };
     const tick = (xs) => xs.map((f) => `\`${f}\``).join(', ');
@@ -251,12 +278,12 @@ export function readEvidence(j) {
 
 /**
  * User-friendliness comes first (owner): an idea that is not easy to use is refused however valuable it claims to be.
- * Thresholds: ease >= 4, value >= 3, small >= 3, risk <= 2. Priority orders ideas that all pass.
+ * Thresholds: ease >= 4, value >= 4 (raised from 3 on 2026-11-19: both ideas ever approved scored value 3 and were cosmetic), small >= 3, risk <= 2. Priority orders ideas that all pass.
  */
 export function scoresOk(s) {
     if (!s || [s.ease, s.value, s.small, s.risk].some((v) => v == null)) return { ok: false, why: 'the idea did not score itself' };
     if (s.ease < 4) return { ok: false, why: `not easy enough to use (ease ${s.ease}/5)` };
-    if (s.value < 3) return { ok: false, why: `not valuable enough (value ${s.value}/5)` };
+    if (s.value < 4) return { ok: false, why: `not valuable enough (value ${s.value}/5: it must be something used most weeks, not a tweak)` };
     if (s.small < 3) return { ok: false, why: `too big for one focused change (smallness ${s.small}/5)` };
     if (s.risk > 2) return { ok: false, why: `too risky (risk ${s.risk}/5)` };
     return { ok: true, why: '', priority: s.ease * 3 + s.value * 2 + s.small - s.risk * 2 };
@@ -271,7 +298,11 @@ export function groundedIn(evidence, signals) {
 // ── the board's judgement of a self-made idea ───────────────────────────────────────────────────
 
 /** The text the board reads. It says plainly that no owner asked for this, so ASK_OWNER means "do not build it on your own". */
-export function boardTextFor(p, owner = 'the owner') {
+export function boardTextFor(p, owner = 'the owner', existing = []) {
+    const dup = (existing || []).length
+        ? ['', 'A PROGRAM FOUND THESE EXISTING PARTS OF THE APP THAT SHARE WORDS WITH THIS IDEA. If one of them already does what is proposed, answer ASK_OWNER and say which:',
+            ...existing.map((m) => `- ${m.name}: ${m.summary} (shared words: ${m.shared.join(', ')})`)]
+        : [];
     return [
         `SYSTEM-GENERATED IDEA. Nobody asked for this: WealthFlow's own AI system thought of it. ${owner} is not in the loop, so you decide whether it is built.`,
         'Answer ASK_OWNER if you are not confident the owner would want it, or if it carries ANY real risk to money, data, security or speed, or if it is not easy to use. One ASK_OWNER from any member stops it.',
@@ -283,6 +314,7 @@ export function boardTextFor(p, owner = 'the owner') {
         `Proposal: ${p.proposal}`,
         `Scope: ${p.scope}`,
         `Risks named by the author: ${p.risks}`,
+        ...dup,
     ].join('\n');
 }
 
@@ -298,9 +330,11 @@ export function boardAllows(board) {
 }
 
 /** The whole decision, in one place so a test can walk every branch. */
-export function decide({ idea, signals, outcomes, board }) {
+export function decide({ idea, signals, outcomes, board, shipped = [] }) {
     const repeat = isRepeat(idea.title, outcomes);
     if (repeat) return { act: 'skip', why: `a near-copy of #${repeat.number} (${repeat.state}): ${repeat.title}` };
+    const had = isShippedAlready(idea.title, shipped);
+    if (had) return { act: 'skip', why: `it looks like something that already shipped: ${clip(had, 100)}` };
     if (!groundedIn(idea.evidence, signals).length) return { act: 'decline', why: 'it cites none of the evidence it was given (not grounded)' };
     if (!idea.ifThen || idea.ifThen.length < 2) return { act: 'decline', why: 'it gave no if/then reasoning' };
     const g = guardIdea(idea);
@@ -337,8 +371,8 @@ export const AGREEMENT_BONUS = 3;
  * @param {{idea:object, by:string}[]} candidates
  * @returns {{ passed: {idea, by, priority, agree:string[]}[], refused: {idea, by, act, why}[] }}
  */
-export function rankCandidates(candidates, { signals, outcomes }) {
-    const judged = (candidates || []).filter((c) => c && c.idea).map((c) => ({ ...c, verdict: decide({ idea: c.idea, signals, outcomes, board: null }) }));
+export function rankCandidates(candidates, { signals, outcomes, shipped = [] }) {
+    const judged = (candidates || []).filter((c) => c && c.idea).map((c) => ({ ...c, verdict: decide({ idea: c.idea, signals, outcomes, shipped, board: null }) }));
     const passed = [];
     for (const j of judged.filter((x) => x.verdict.act === 'ask-board')) {
         const agree = [...new Set(judged.filter((o) => o !== j && o.by !== j.by && likeness(o.idea.title, j.idea.title) >= 0.6).map((o) => o.by))];

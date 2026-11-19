@@ -49,6 +49,7 @@ import * as Budget from './provider-budget.mjs';
 import * as Ideas from './ideas.mjs';
 import { runConceptBoard, renderComment as boardComment, synthesize } from './concept-board.mjs';
 import { chatMany } from './llm-router.mjs';
+import * as AppMap from './app-map.mjs';
 
 /** Label marking an issue as a machine-authored idea awaiting judgement. */
 export const PROPOSAL_LABEL = 'feature-proposal';
@@ -64,6 +65,7 @@ export const MAX_OPEN_PROPOSALS = Ideas.MAX_IN_FLIGHT;
 
 /** Read the app's real shape so ideas are about THIS app. */
 export function appContext(repoDir = process.cwd()) {
+    const mods = AppMap.readModules(repoDir);
     let modules = [];
     try {
         modules = execFileSync('git', ['ls-files'], { cwd: repoDir, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
@@ -85,7 +87,7 @@ export function appContext(repoDir = process.cwd()) {
             .slice(0, 30);
     } catch { /* no shell to read */ }
 
-    return { modules, sections };
+    return { modules, sections, moduleSummaries: mods, moduleText: AppMap.renderModules(mods) };
 }
 
 /** Every tracked file of the checkout: what an idea's "scope" is checked against (Ideas.groundScope). Empty outside git. */
@@ -127,6 +129,9 @@ const SYSTEM = [
     '  • Fit the app that EXISTS. Use only the modules and screens listed. A new option shows a NEW tag (data-wf-new="YYYY-MM-DD" on the element) and can be undone.',
     '  • NO new paid services, third-party dependencies or hosting. NOTHING touching sign-in, encryption, money arithmetic, or sending the owner\'s data anywhere new. No destructive actions.',
     '  • Small enough that one focused change delivers it. "Rebuild the dashboard" is a project, not an idea.',
+    '  • A REAL CAPABILITY, NOT A TWEAK. Propose something the owner would notice and use most weeks in managing money: a new view, a new check, a new helper for a decision. Do NOT propose a wording change, a label, a build or version detail, an extra line on the update screen, or anything about the update system itself: those are not ideas.',
+    '  • IT MUST NOT ALREADY EXIST. Read "what each module already does" (A2) and "already shipped" (P) before you write. If a part of the app already does it, do not propose it. A program checks this and the board is shown the closest existing parts.',
+    '  • IT MUST BE BUILDABLE BY THE AUTOMATIC BUILDER, which can only (a) add ONE new self-contained module file wealthflow-<name>.js that READS the books and shows something, plus one script line in index.html, or (b) change ONE existing plain module. It cannot edit index.html markup, write to the books, or touch a file that needs a person. Say in "scope" which of the two it is: for (a) begin the scope with the words "a new module wealthflow-<name>.js" (that wording is what sends it to the builder that can make one); for (b) name the one existing file. Earlier ideas the builder could not build in 3 tries are listed as "earlier idea, the builder could not build it": do not propose their like again.',
     '  • If nothing is genuinely worth building, say so: {"worthProposing": false} is a correct answer. Filler is worse than silence.',
     '',
     'Reply with ONE JSON object and nothing else:',
@@ -232,7 +237,7 @@ export function renderProposal(p, outcome = null) {
 }
 
 /** The titles of recently merged pull requests, so the engine knows what already exists. Never throws. */
-export async function recentlyShipped({ env = process.env, limit = 12, queue = Q } = {}) {
+export async function recentlyShipped({ env = process.env, limit = 40, queue = Q } = {}) {
     try { return await queue.mergedPrTitles({ env, limit }); } catch { return []; }
 }
 
@@ -270,12 +275,13 @@ export async function proposeOnce({
     if (recent) return { filed: null, reason: `already thought of an idea in the last ${Ideas.THINK_AGAIN_HOURS} hours (#${recent.number}: ${recent.title})` };
 
     // ── STUDY THE APP: the measured roadmap, the measured gaps, real feedback, what became of earlier ideas, what already shipped ──
-    const { modules, sections } = appContext(repoDir);
+    const { modules, sections, moduleSummaries, moduleText } = appContext(repoDir);
+    const gaps = AppMap.capabilityGaps(AppMap.readCapabilityText(repoDir));
     const files = repoFiles(repoDir);
     const feedback = await recentFeedback({ env, queue });
     const research = Ideas.readResearch(repoDir);
     const shipped = await recentlyShipped({ env, queue });
-    const signals = Ideas.signalList({ roadmap: research.roadmap, gaps: research.gaps, feedback, outcomes, shipped, app: { modules, sections } });
+    const signals = Ideas.signalList({ roadmap: research.roadmap, gaps: research.gaps, feedback, outcomes, shipped, capabilities: gaps, app: { modules, sections, moduleText } });
 
     // ── BACKGROUND LANE ─────────────────────────────────────────────────────
     // Drafting a feature idea is the least important thing this pipeline does, and
@@ -327,7 +333,7 @@ export async function proposeOnce({
     if (!candidates.length) { budget.saveLedger(ledger); return { filed: null, reason: 'the model declined to propose anything, or returned nothing usable' }; }
 
     // ── A PROGRAM CHOOSES: rules first (free). If every idea broke a rule, the AIs are told why and asked once more. ──
-    let weighed = Ideas.rankCandidates(candidates, { signals, outcomes });
+    let weighed = Ideas.rankCandidates(candidates, { signals, outcomes, shipped });
     let rounds = 1;
     if (!weighed.passed.length && weighed.refused.some((r) => r.act === 'decline')) {
         rounds = 2;
@@ -335,7 +341,7 @@ export async function proposeOnce({
             const again = candidatesFrom(await askAll({ ...question, prompt: question.prompt + Ideas.refusalBrief(weighed.refused), temperature: 0.6 }));
             if (again.length) {
                 candidates = [...candidates, ...again];
-                weighed = Ideas.rankCandidates(candidates, { signals, outcomes });
+                weighed = Ideas.rankCandidates(candidates, { signals, outcomes, shipped });
             }
         } catch { /* the first round's answer stands */ }
     }
@@ -361,9 +367,9 @@ export async function proposeOnce({
         for (const cand of weighed.passed.slice(0, Ideas.MAX_BOARDS)) {
             // The board must never take the run down: a throw is "no AI could be reached", which `decide` turns into retry, never into approval.
             let b;
-            try { b = await (boardImpl || runConceptBoard)({ issueText: Ideas.boardTextFor(cand.idea), env, ask }); }
+            try { b = await (boardImpl || runConceptBoard)({ issueText: Ideas.boardTextFor(cand.idea, 'the owner', AppMap.closestExisting(cand.idea, moduleSummaries)), env, ask }); }
             catch { b = { voters: 0, votes: [] }; }
-            const v = Ideas.decide({ idea: cand.idea, signals, outcomes, board: b });
+            const v = Ideas.decide({ idea: cand.idea, signals, outcomes, shipped, board: b });
             // The first idea the board was asked about is the one reported, unless a later one is approved.
             if (!p || v.act === 'approve') { p = cand.idea; by = cand.by; verdict = v; board = b; }
             if (v.act === 'approve' || v.act === 'retry') break;
