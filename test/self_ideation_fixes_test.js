@@ -265,3 +265,30 @@ describe('9. the test writer is shown the API the module really has (fourth dry 
         expect(Date.now() - t0).toBeLessThan(8000);
     }, 15000);
 });
+
+describe('failureEssence: what a failed test run really says', async () => {
+    const { failureEssence } = await import('../autonomy/build-lane.mjs');
+    const out = [
+        ' FAIL  test/auto-x.test.js > shows the lines',
+        '\x1b[31mAssertionError\x1b[39m: expected { title: \'A\', rows: [ 1 ] } to deeply equal { lines: [ 1 ] }',
+        '- Expected',
+        '+ Received',
+        '- "lines": [',
+        '+ "rows": [',
+        '  215|   const result = api.compute(rec);',
+        '  216|   expect(result.subtitle).toBe("x");',
+        ' Test Files  1 failed (1)',
+        '      Tests  1 failed (1)',
+    ].join('\n');
+    it('keeps the error and the expected/received diff, drops colour codes and the summary lines', () => {
+        const e = failureEssence(out);
+        expect(e).toMatch(/AssertionError: expected \{ title/);
+        expect(e).toMatch(/\+ "rows"/);
+        expect(e).not.toMatch(/\x1b/);
+        expect(e).not.toMatch(/Test Files/);
+    });
+    it('falls back to the end of the output when nothing looks like an error, and respects the size limit', () => {
+        expect(failureEssence('plain words only')).toBe('plain words only');
+        expect(failureEssence('Error: ' + 'x'.repeat(5000), 300).length).toBeLessThanOrEqual(300);
+    });
+});
