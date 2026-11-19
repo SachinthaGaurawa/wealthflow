@@ -64,6 +64,17 @@ describe('judge: each way the chain has really broken', () => {
         expect(link(D.judge(healthy({ feedback: [{ issue: 7, status: 'completed', at: NOW - 600 * H }] })), 'feedback').state).toBe('ok');
     });
 
+    it('a work item GitHub deleted is not "filed with no AI work started" for ever (#513)', () => {
+        const r = D.judge(healthy({ feedback: [{ issue: 513, status: 'gone', at: NOW - 60 * H }] }));
+        expect(link(r, 'feedback').state).toBe('ok');
+        expect(link(r, 'feedback').detail).toMatch(/1 deleted on GitHub/);
+        // a real waiting report next to it is still reported
+        const mixed = D.judge(healthy({ feedback: [{ issue: 513, status: 'gone', at: NOW - 60 * H }, { issue: 7, status: 'open', at: NOW - 60 * H }] }));
+        expect(link(mixed, 'feedback').state).toBe('warn');
+        expect(link(mixed, 'feedback').detail).toMatch(/#7\b/);
+        expect(link(mixed, 'feedback').detail).not.toMatch(/#513/);
+    });
+
     it('a status endpoint that is not configured is reported, not read as "nothing finished"', () => {
         const r = D.judge(healthy({ feedback: [{ issue: 7, status: 'open', at: NOW - H }], feedbackStatusDown: 'not_configured' }));
         expect(link(r, 'feedback').state).toBe('warn');
