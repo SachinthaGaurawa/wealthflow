@@ -258,4 +258,10 @@ describe('9. the test writer is shown the API the module really has (fourth dry 
         const note = buildTestNote({ name: 'wealthflow-a-b.js', api: 'WFAB' }, '', [], "var s = document.createElement('div'); s.id = 'wf-ab-sheet'; s2.setAttribute('id', 'wf-ab-close');");
         expect(note).toContain('wf-ab-sheet, wf-ab-close');
     });
+    it('a module that loops forever at load gives no list instead of hanging the lane', async () => {
+        const { apiSurface } = await import('../autonomy/build-lane.mjs');
+        const t0 = Date.now();
+        expect(await apiSurface({ name: 'wealthflow-loop.js', api: 'WFL' }, '(function(){ while (true) {} })();', process.cwd())).toEqual([]);
+        expect(Date.now() - t0).toBeLessThan(8000);
+    }, 15000);
 });

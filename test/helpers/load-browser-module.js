@@ -50,13 +50,14 @@ function memoryStorage(seed = {}) {
  * @param {string} [opts.url]         page URL (default https://wf.app/)
  * @param {boolean} [opts.logs]       keep console output (default: silent)
  * @param {string} [opts.source]      run THIS code instead of reading `file` (a candidate change that is not on disk)
+ * @param {number} [opts.timeoutMs]   stop the module's top-level code after this long (a loop at load must not hang the caller); default: no limit
  * @returns {{ window: object, document: object, localStorage: object, sessionStorage: object, sources: string[], attached: string[] }}
  *          `attached` names what the module itself put on the window (for example ['wfUpdate'])
  */
 export function loadBrowserModule(file, opts = {}) {
     const {
         html = '', fetchImpl = null, localStorage: seed = {}, globals = {},
-        url = 'https://wf.app/', logs = false, source = null,
+        url = 'https://wf.app/', logs = false, source = null, timeoutMs = 0,
     } = opts;
     const src = typeof source === 'string' ? source : fs.readFileSync(path.join(ROOT, file), 'utf8');
     const dom = parseHTML(`<!doctype html><html><head></head><body>${html}</body></html>`);
@@ -96,7 +97,7 @@ export function loadBrowserModule(file, opts = {}) {
     context.globalThis = context;
     vm.createContext(context);
     const base = new Set(Object.keys(context));
-    vm.runInContext(src, context, { filename: file });
+    vm.runInContext(src, context, { filename: file, ...(timeoutMs > 0 ? { timeout: timeoutMs } : {}) });
     const attached = Object.keys(context).filter((k) => !base.has(k));
     return { window: context, document, localStorage, sessionStorage, sources: [file], attached };
 }

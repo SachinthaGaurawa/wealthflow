@@ -260,7 +260,7 @@ export async function apiSurface(plan, code, repoDir = process.cwd()) {
         const loaderPath = path.join(repoDir, 'test', 'helpers', 'load-browser-module.js');
         if (!fs.existsSync(loaderPath)) return [];
         const { loadBrowserModule } = await import(pathToFileURL(loaderPath).href);
-        const { window } = loadBrowserModule(plan.name, { source: code, globals: { DB: { get: () => [] } } });
+        const { window } = loadBrowserModule(plan.name, { source: code, timeoutMs: 3000, globals: { DB: { get: () => [] } } });
         const api = window[plan.api];
         if (!api || (typeof api !== 'object' && typeof api !== 'function')) return [];
         return Object.keys(api).slice(0, 24).map((k) => (typeof api[k] === 'function' ? `${k}()` : k));
