@@ -382,6 +382,7 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
     const rounds = [];
     const surface = await apiSurface(plan, code, repoDir);
     if (surface.length) log(`[build] the module exposes: ${surface.join(', ')}`);
+    log(`[build] test recipe in the module: ${/TEST RECIPE/.test(code) ? 'yes' : 'NO (the author left none)'}`);
     try {
         for (let round = 1; round <= TEST_ROUNDS; round++) {
             const t = await chat({
@@ -408,6 +409,9 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
     }
     if (!test) {
         const last = rounds[rounds.length - 1] || {};
+        // The system must be able to explain its own failure: the module and the last test go into the log, in a fold-away group.
+        log(`::group::[build] evidence: the module that was tested (${code.length} chars)`); log(code); log('::endgroup::');
+        if (candidate) { log(`::group::[build] evidence: the last test (${candidate.length} chars)`); log(candidate); log('::endgroup::'); }
         return { ok: false, stage: 'proof', file: plan.name, code, providers, review, testRounds: rounds, reason: `the proving test did not prove anything after ${TEST_ROUNDS} tries — ${last.reason || 'no usable test'}` };
     }
     log(`[build] test verified red→green (via ${providers.qa})`);
