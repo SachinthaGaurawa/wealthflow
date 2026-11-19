@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.98 — 2026-11-19
+
+**What changed for you**
+
+- The diagnosis says why texts are silent, a free gateway check, one log line per look (#632)
+
 ## v7.69.97 — 2026-11-18
 
 **What changed for you**
