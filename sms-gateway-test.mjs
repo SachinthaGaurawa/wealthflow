@@ -48,7 +48,7 @@ const fail = (status, reason, message, extra = {}) => ({ ok: false, status, reas
 export async function sendGatewayTest({ db, uid, client, now = Date.now() }) {
     if (!client || !client.configured) return fail(503, 'not-configured', WORDS.config);
     const ref = db.collection('wf-sms').doc(uid);
-    let before = null; let phone = '';
+    let phone = '';
     const reserved = await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
         const root = (snap.exists && snap.data()) || {};
@@ -58,7 +58,6 @@ export async function sendGatewayTest({ db, uid, client, now = Date.now() }) {
         const last = log.length ? Math.max(...log) : 0;
         if (last && now - last < TEST_GAP_MS) return { wait: TEST_GAP_MS - (now - last) };
         if (log.length >= MAX_TESTS_PER_DAY) return { limit: true };
-        before = log;
         tx.set(ref, { gatewayTestLog: [...log, now] }, { merge: true });
         return { reserved: true };
     });
@@ -69,7 +68,18 @@ export async function sendGatewayTest({ db, uid, client, now = Date.now() }) {
     const sent = await client.send({ to: phone, message: testMessage() });
     if (!sent || !sent.ok) {
         const maybe = !!(sent && sent.possiblySent);
-        if (!maybe) { try { await ref.set({ gatewayTestLog: before }, { merge: true }); } catch (_) { /* the next test is only rate limited for 30 s */ } }
+        if (!maybe) {
+            // give back only this test's own slot, so a test reserved meanwhile keeps its place in the log
+            try {
+                await db.runTransaction(async (tx) => {
+                    const snap = await tx.get(ref);
+                    const root = (snap.exists && snap.data()) || {};
+                    const log = (Array.isArray(root.gatewayTestLog) ? root.gatewayTestLog : []).map(Number);
+                    const i = log.indexOf(now);
+                    if (i >= 0) { log.splice(i, 1); tx.set(ref, { gatewayTestLog: log }, { merge: true }); }
+                });
+            } catch (_) { /* the next test is only rate limited for 30 s */ }
+        }
         console.warn(`[WF-SMS] gateway test not sent kind=${s(sent && sent.kind).slice(0, 30)} maybeDelivered=${maybe}`);
         return fail(502, maybe ? 'not-confirmed' : 'send-failed', maybe
             ? 'Text.lk did not confirm the test text. If it arrives, the gateway works; if not, try again in a minute.'
