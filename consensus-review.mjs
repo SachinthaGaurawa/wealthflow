@@ -35,7 +35,7 @@
 
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
-import { chat, extractJson, describeAvailability, assignProviders, orderFor } from './autonomy/llm-router.mjs';
+import { chat, extractJson, describeAvailability, assignProviders, orderFor, primeRouter } from './autonomy/llm-router.mjs';
 import * as Budget from './autonomy/provider-budget.mjs';
 /* THE BOARD PUBLISHES WHAT THE REVIEWERS SAY, AND REVIEWERS QUOTE THE DIFF.
  * A pull request that DELETES a committed credential carries that credential
@@ -1185,6 +1185,9 @@ async function main() {
         );
         process.exit(1);
     }
+
+    // Providers without credit or with a refused key are found out first, so no reviewer is dealt to one.
+    await primeRouter();
 
     const { text: raw, mergeBase, headSha } = getDiff();
 

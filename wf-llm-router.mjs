@@ -28,6 +28,9 @@
  * ZERO dependencies — global fetch only (Node 18+; this project pins Node 24).
  * ===========================================================================*/
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { DEFAULT_MODEL as DEFAULT_GEMINI_MODEL, geminiGenerate } from './gemini-client.mjs';
 import { fitCharter, tierForProvider, learnProviderTier, lowerTier, isSizeError, isTightFit } from './wf-charter.mjs';
 
@@ -171,6 +174,18 @@ export const PROVIDERS = [
         strengths: ['general'],
     },
     {
+        // Ollama Cloud: the same account the app's vision reader already uses (OLLAMA_API_KEY is forwarded to the workflows),
+        // asked here for text through its OpenAI-compatible endpoint. A model name that Ollama retires is replaced from its own
+        // list like any other provider's (`/v1/models`).
+        id: 'ollama',
+        label: 'Ollama Cloud',
+        keys: ['OLLAMA_API_KEY'],
+        url: 'https://ollama.com/v1/chat/completions',
+        model: () => process.env.OLLAMA_MODEL || 'gpt-oss:120b',
+        kind: 'openai',
+        strengths: ['general', 'reasoning'],
+    },
+    {
         // Last by default: this is the one metered key, so free providers get
         // first refusal on every request. Still available as the final fallback
         // and preferred explicitly by the roles that need the strongest model.
@@ -221,7 +236,11 @@ export function orderFor({ prefer = [], exclude = [], only = [], env = process.e
     if (exclude.length) list = list.filter((p) => !exclude.includes(p.id));
     if (!prefer.length) return list;
     const score = (p) => p.strengths.reduce((s, t) => s + (prefer.includes(t) ? 1 : 0), 0);
-    return [...list].sort((a, b) => score(b) - score(a));
+    // Providers that fit the role equally well share the work: the one asked least in this process goes first, so one provider's
+    // minute does not carry every call while the others sit unused. Registry order still decides a tie of use, and
+    // WF_ROUTER_SPREAD=0 restores plain registry order.
+    const spread = String(env.WF_ROUTER_SPREAD ?? '1') !== '0';
+    return [...list].sort((a, b) => (score(b) - score(a)) || (spread ? (usedCount(a.id) - usedCount(b.id)) : 0));
 }
 
 /**
@@ -263,6 +282,8 @@ export function assignProviders(roles, { env = process.env, unavailable = [] } =
     // architecture reviewer on sambanova. The caller owns the ledger; this module
     // only needs the answer.
     const skip = new Set((unavailable || []).filter(Boolean));
+    // A provider this process has already seen refuse for good (no credit, refused key) is never dealt to a reviewer either.
+    for (const b of benchedProviders()) skip.add(b.provider);
     const avail = availableProviders(env).filter((p) => !skip.has(p.id));
     const taken = [];
     const primaries = new Array(list.length).fill(null);
@@ -640,6 +661,8 @@ async function healModel(provider, opts) {
 // is used again without a deploy, and a long-lived server process never keeps a provider off for hours.
 
 const BENCH_MS = 10 * 60_000;
+const _used = new Map();          // provider id → answers given in this process (only for sharing the work, never a quota)
+function usedCount(id) { return _used.get(id) || 0; }
 const _benched = new Map();       // provider id → { reason, until }
 
 /** Why a provider should be skipped for now, or null. Expired entries are dropped. */
@@ -650,13 +673,28 @@ function benchedReason(id, now = Date.now()) {
     return b.reason;
 }
 
-/** The reason an error is permanent for this process, or null. */
+/**
+ * The reason an error is permanent for this process, or null. "No credit" arrives in several wordings and status codes: 402
+ * (most), 400 (Anthropic: "credit balance is too low"), 429 with a quota word (OpenAI-style "insufficient_quota", Cohere's
+ * trial cap, "monthly limit"). A plain per-minute rate limit never counts.
+ */
 export function permanentReason(status, text) {
     const s = String(text || '');
     if (status === 402) return 'it asks for payment (HTTP 402)';
     if (status === 401 || status === 403) return `it refused the key (HTTP ${status})`;
+    if (status === 400 && /credit balance|insufficient (credit|fund|balance)|out of credit|no credit|billing/i.test(s)) return 'its account has no credit (HTTP 400)';
+    if (status === 429 && /insufficient_quota|exceeded your current quota|out of credit|no credit|credits? (are |is )?(exhausted|depleted|used)|monthly (limit|quota|cap)|trial key|billing/i.test(s)) return 'its quota or credit is used up (HTTP 429)';
     if (status === 404 && /unavailable for free|not available for free|no free (version|model|tier)/i.test(s)) return 'its model has no free version';
     return null;
+}
+
+/** What kind of failure a reason names: `credit`, `key`, `model`, or `other`. */
+export function failureKind(reason) {
+    const r = String(reason || '');
+    if (/payment|credit|quota/i.test(r)) return 'credit';
+    if (/refused the key/i.test(r)) return 'key';
+    if (/no free version/i.test(r)) return 'model';
+    return 'other';
 }
 
 function benchProvider(id, reason) {
@@ -673,7 +711,7 @@ export function benchedProviders() {
 }
 
 /** Tests only. */
-export function _resetBench() { _benched.clear(); }
+export function _resetBench() { _benched.clear(); _used.clear(); _health.clear(); }
 
 /**
  * One provider. If its model has been retired, a replacement from its own list is tried, and if that replacement cannot be
@@ -696,6 +734,104 @@ async function callProvider(provider, opts) {
     }
     benchProvider(provider.id, permanentReason(last && last.status, last && last.message));
     throw last;
+}
+
+
+// ── roll call: which providers can answer RIGHT NOW (credit, key, model), learned instead of asked ──────────────────
+// Owner 2026-11-19: "learn which providers have credit and use those and the free ones; do not keep asking me about credits".
+// Failures were already learned one call at a time (the bench above). The roll call learns them all at once, at the start of a
+// job: one tiny request to every provider that has a key, in parallel. A provider that has no credit or refuses its key is set
+// aside before any real work is dealt to it (a reviewer is never assigned to it), the others keep working, and the answer is
+// kept for 20 minutes in a temp file so the other processes of the same job do not ask again.
+
+const _health = new Map();        // provider id → { status, ms, detail, model }
+
+function healthFile(env = process.env) {
+    return env.WF_PROVIDER_HEALTH_FILE || path.join(os.tmpdir(), 'wf-provider-health.json');
+}
+
+/** What the last roll call found, for logs and the status endpoint. */
+export function providerHealth() {
+    return [..._health.entries()].map(([id, h]) => ({ id, ...h }));
+}
+
+function applyHealth(rows) {
+    for (const r of rows) {
+        _health.set(r.id, { status: r.status, ms: r.ms, detail: r.detail, model: r.model, label: r.label });
+        if (r.status === 'credit' || r.status === 'key' || r.status === 'model') benchProvider(r.id, r.detail);
+    }
+}
+
+/**
+ * One tiny request to every provider that has a key. Status per provider: `ok`, `credit` (no credit or quota used up), `key`
+ * (refused), `model` (no free version / gone), `rate` (answered 429 for a minute-level limit), `down` (anything else).
+ * Never throws. A fresh cache from an earlier process of this job is used instead of asking again.
+ */
+export async function probeProviders({ env = process.env, timeoutMs = 20_000, ttlMs = 20 * 60_000, force = false } = {}) {
+    const file = healthFile(env);
+    const list = availableProviders(env);
+    if (!force) {
+        try {
+            const c = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (c && Date.now() - c.at < ttlMs && Array.isArray(c.rows)
+                && list.every((p) => c.rows.some((r) => r.id === p.id))) {
+                const rows = c.rows.filter((r) => list.some((p) => p.id === r.id));
+                applyHealth(rows);
+                return rows.map((r) => ({ ...r, cached: true }));
+            }
+        } catch { /* no cache, or an unreadable one: ask */ }
+    }
+    const rows = await Promise.all(list.map(async (p) => {
+        const t0 = Date.now();
+        const base = { id: p.id, label: p.label, model: modelOf(p) };
+        try {
+            await callProvider(p, { prompt: 'Reply with the single word OK.', maxTokens: 24, temperature: 0, timeoutMs, env });
+            return { ...base, model: modelOf(p), status: 'ok', ms: Date.now() - t0, detail: '' };
+        } catch (e) {
+            const status = e && e.status;
+            const reason = permanentReason(status, e && e.message);
+            const kind = reason ? failureKind(reason) : (status === 429 ? 'rate' : 'down');
+            return { ...base, model: modelOf(p), status: kind === 'other' ? 'down' : kind, ms: Date.now() - t0,
+                detail: reason || String((e && e.message) || e).slice(0, 140) };
+        }
+    }));
+    applyHealth(rows);
+    try { fs.writeFileSync(file, JSON.stringify({ at: Date.now(), rows })); } catch { /* a read-only temp dir only costs the next process one probe */ }
+    return rows;
+}
+
+/** A markdown table of a roll call plus the owner-only actions it implies (named by the exact env key). */
+export function rollCallMarkdown(rows, { env = process.env } = {}) {
+    const word = { ok: 'answers', credit: 'no credit', key: 'key refused', model: 'model gone', rate: 'rate limited now', down: 'not reachable' };
+    const lines = ['### AI providers: who can answer right now', '', '| Provider | Model | State | Time |', '|---|---|---|---|'];
+    for (const r of rows) lines.push(`| ${r.label || r.id} | \`${r.model || ''}\` | ${word[r.status] || r.status}${r.detail && r.status !== 'ok' ? ` (${String(r.detail).replace(/\|/g, '/')})` : ''} | ${r.ms} ms |`);
+    const ok = rows.filter((r) => r.status === 'ok').length;
+    lines.push('', `${ok} of ${rows.length} answer. Providers without credit or with a refused key are set aside automatically and used again when their account works.`);
+    const owner = rows.filter((r) => r.status === 'credit' || r.status === 'key').map((r) => {
+        const p = PROVIDERS.find((x) => x.id === r.id);
+        return `${p ? p.keys[0] : r.id} (${r.status === 'credit' ? 'add credit' : 'replace key'})`;
+    });
+    if (owner.length) lines.push('', `Only the account owner can fix: ${owner.join(', ')}.`);
+    return lines.join('\n');
+}
+
+/**
+ * Entry-point helper: roll call, one log line per provider, the table into the job summary. Never throws, never blocks the
+ * work for longer than the probe deadline, and does nothing when WF_ROLLCALL=0 or fewer than two providers have a key.
+ */
+export async function primeRouter({ env = process.env } = {}) {
+    try {
+        if (String(env.WF_ROLLCALL ?? '1') === '0' || availableProviders(env).length < 2) return [];
+        const rows = await probeProviders({ env });
+        for (const r of rows) console.log(`[providers] ${r.id.padEnd(12)} ${r.status.padEnd(7)} ${r.ms} ms ${r.model || ''}${r.detail && r.status !== 'ok' ? ` — ${r.detail}` : ''}${r.cached ? ' (from this job\'s earlier check)' : ''}`);
+        if (env.GITHUB_STEP_SUMMARY && !rows.every((r) => r.cached)) {
+            try { fs.appendFileSync(env.GITHUB_STEP_SUMMARY, rollCallMarkdown(rows, { env }) + '\n\n'); } catch { /* summary is best-effort */ }
+        }
+        return rows;
+    } catch (e) {
+        console.warn(`[providers] roll call failed: ${e && e.message}`);
+        return [];
+    }
 }
 
 /**
@@ -760,6 +896,7 @@ export async function chat(o) {
                     learnProviderTier(provider.id, tier);
                 }
             }
+            _used.set(provider.id, usedCount(provider.id) + 1);
             report({ provider: provider.id, outcome: 'ok', retryAfterSec: 0 });
             return { ...res, attempts, charterTier: tier };
         } catch (e) {

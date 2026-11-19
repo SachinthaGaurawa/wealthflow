@@ -230,6 +230,29 @@ export function parsePlan(text, { existing = [], repoDir = process.cwd() } = {})
 }
 
 /**
+ * What a failed Vitest run actually says, in about 1400 characters. The END of the output is the code frame around the
+ * failing line; the words that tell a test writer what went wrong ("expected X to deeply equal Y", the received object, the
+ * TypeError) come before it. Run 44634091283 (#635): the writer was shown only the code frames, wrote `result.lines` three times
+ * and never learned that the module returned something else. Colour codes are removed, then the lines that state the error and
+ * the expected/received diff are kept, the first failure first.
+ */
+export function failureEssence(output, max = 1400) {
+    const text = String(output || '').replace(/\x1b\[[0-9;]*m/g, '');
+    const lines = text.split(/\r?\n/).map((l) => l.trimEnd());
+    const key = /(AssertionError|TypeError|ReferenceError|SyntaxError|Error:|expected|Expected|Received|received|is not a function|is not defined|Cannot read|FAIL |❯ .*:\d+:\d+|^\s*[-+] )/;
+    const kept = [];
+    let size = 0;
+    for (const l of lines) {
+        if (!l.trim() || !key.test(l)) continue;
+        if (/^\s*(Test Files|Tests|Duration|Start at)/.test(l)) continue;
+        const t = l.trim().slice(0, 220);
+        if (size + t.length > max) break;
+        kept.push(t); size += t.length + 1;
+    }
+    return kept.join('\n') || text.replace(/\s+/g, ' ').slice(-max);
+}
+
+/**
  * WHAT THE TEST WRITER IS TOLD ABOUT A NEW MODULE   (third dry run on #635: the module passed the checks and the reviewer, then three proving tests failed against it)
  * A new browser module reads the books from window.DB and draws into elements the page already has, and a Node test has neither unless it builds them. The shared loader
  * can: it takes the page markup and the globals. Said once here, with the screen's real ids when they are known, so the test builds the page the module expects.
@@ -355,7 +378,7 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
             const t = await chat({
                 system: withCard(ROLES.qa.system),
                 prompt: testPrompt(issueText, plan.name, '', code, buildTestNote(plan, facts, surface, code))
-                    + (previous ? `\n\nYOUR PREVIOUS TEST WAS REJECTED: ${previous.reason}\n${String(previous.output || '').slice(-1200)}` : ''),
+                    + (previous ? `\n\nYOUR PREVIOUS TEST WAS REJECTED: ${previous.reason}\n${failureEssence(previous.output)}${previous.source ? `\n\nYOUR PREVIOUS TEST (change only what the output above shows is wrong; keep the rest):\n${String(previous.source).slice(0, 3500)}` : ''}` : ''),
                 prefer: ROLES.qa.prefer, exclude: [authored.provider, r.provider], maxTokens: 4000, temperature: round === 1 ? 0.1 : 0.2, env,
             }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
             providers.qa = t.provider;
@@ -367,9 +390,9 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
                 ? verifyTestProves({ repoDir, targetFile: plan.name, before: '', after: code, testFile: tf, testSource: candidate, log, ...(runner ? { run: runner } : {}) })
                 : { ok: true, skipped: true };
             if (proof.ok) { test = candidate; break; }
-            rounds.push({ round, reason: proof.reason }); previous = proof;
+            rounds.push({ round, reason: proof.reason }); previous = { ...proof, source: candidate };
             log(`[build] test round ${round}/${TEST_ROUNDS}: ${proof.reason}`);
-            if (proof.output) log(`[build] (test output tail: ${String(proof.output).replace(/\s+/g, ' ').slice(-500)})`);
+            if (proof.output) log(`[build] (what the test run said: ${failureEssence(proof.output, 700).replace(/\s+/g, ' ')})`);
         }
     } finally {
         if (!existed) { try { fs.unlinkSync(target); } catch { /* it was never left behind */ } }
