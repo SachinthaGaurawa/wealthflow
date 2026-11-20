@@ -96,5 +96,5 @@ describe('wired into the agent', () => {
         expect(agent).toMatch(/boardComment\(board\)/); expect(agent).toMatch(/laneBody = shot\.body \+ briefFor\(board\)/);
         expect(agent).toMatch(/body: laneBody, kind/);
     });
-    it('does not send a layout report through the board', () => { expect(agent).toMatch(/!lane\.applies && conceptBoardFor/); });
+    it('does not send a layout report through the board', () => { expect(agent).toMatch(/!lane\.applies && (?:!reviseNote && )?conceptBoardFor/); });
 });
