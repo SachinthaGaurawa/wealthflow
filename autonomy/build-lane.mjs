@@ -29,6 +29,7 @@ import { pathToFileURL } from 'node:url';
 import { chat, stripFences, extractJson } from './llm-router.mjs';
 import { taskCard, cardPrompt } from './task-card.mjs';
 import { fenceUntrusted } from './untrusted-text.mjs';
+import { testFromRecipe } from './recipe-test.mjs';
 import {
     isSensitive, structuralCheck, isValidJs, reviewPrompt, parseVerdict, reviewSeesWholeChange,
     testPrompt, verifyTestProves, verificationPlan, TEST_ROUNDS, ROLES,
@@ -384,7 +385,35 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
     if (surface.length) log(`[build] the module exposes: ${surface.join(', ')}`);
     log(`[build] test recipe in the module: ${/TEST RECIPE/.test(code) ? 'yes' : 'NO (the author left none)'}`);
     try {
-        for (let round = 1; round <= TEST_ROUNDS; round++) {
+        // 4a. THE TEST FROM THE MODULE'S OWN RECIPE (autonomy/recipe-test.mjs). A program writes it, so it cannot ignore the recipe the way the model-written
+        // test did on #635 three runs running. If the module does not draw what its author said it would, the author sees the failure and revises once.
+        const runProof = (src, mod) => (planV.verify
+            ? verifyTestProves({ repoDir, targetFile: plan.name, before: '', after: mod, testFile: tf, testSource: src, log, ...(runner ? { run: runner } : {}) })
+            : { ok: true, skipped: true });
+        for (let pass = 1; pass <= 2 && !test; pass++) {
+            const mech = testFromRecipe(plan, code);
+            if (!mech.ok) { log(`[build] no test from the recipe: ${mech.why}`); break; }
+            const pr = runProof(mech.source, code);
+            if (pr.ok) { test = mech.source; proof = pr; candidate = mech.source; providers.qa = 'recipe'; log('[build] the test was written from the module\'s own recipe and proved red→green'); break; }
+            const said = failureEssence(pr.output, 900).replace(/\s+/g, ' ');
+            log(`[build] the recipe test failed against the module: ${pr.reason}${said ? ` (${said.slice(0, 500)})` : ''}`);
+            candidate = mech.source; previous = { ...pr, source: mech.source }; rounds.push({ round: `recipe${pass}`, reason: pr.reason });
+            if (pass === 2) break;
+            const today = new Date().toISOString().slice(0, 10);
+            const rev = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts)
+                + `\n\nYOUR FILE, AND THE TEST BUILT FROM ITS OWN TEST RECIPE (the module does not draw what the recipe says it draws):\n-----\n${code}\n-----\nTEST THAT WAS RUN:\n${mech.source.slice(0, 2500)}\nWHAT IT SAID: ${said}\nReturn the COMPLETE corrected file. Either make the module draw what the recipe says, or correct the recipe so it matches what the module draws (same books, page, calls, element). Every rule above still holds.`,
+                prefer: role.prefer, maxTokens: 9_000, temperature: 0.1, env }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
+            const c2 = ensureNewTag(stripFences(rev.text || ''), today);
+            const bad2 = moduleProblems(c2, plan, today);
+            if (bad2.length) { log(`[build] the revision after the recipe test was refused: ${bad2.join('; ').slice(0, 200)}`); break; }
+            const r2 = await chat({ system: withCard(ROLES.security.system), prompt: reviewPrompt(issueText, plan.name, '', c2), prefer: ROLES.security.prefer, exclude: [rev.provider], maxTokens: 1500, temperature: 0, env })
+                .catch((e) => ({ text: '', provider: 'none', _error: e.message }));
+            const v2 = r2.text ? parseVerdict(r2.text) : null;
+            if (!v2 || v2.verdict === 'FAIL') { log(`[build] the revised module was not passed by the reviewer: ${v2 ? v2.reason : 'no reviewer'}`); break; }
+            code = c2; authored = rev; providers.author = rev.provider; providers.security = r2.provider; review = v2;
+            log(`[build] revised module after the recipe test (${code.length} chars, via ${rev.provider}), reviewed again: PASS`);
+        }
+        for (let round = 1; round <= TEST_ROUNDS && !test; round++) {
             const t = await chat({
                 system: withCard(ROLES.qa.system),
                 prompt: testPrompt(issueText, plan.name, '', code, buildTestNote(plan, facts, surface, code))
