@@ -31,6 +31,8 @@ on:
       - manifest.json
       - test/e2e/dashboard-seed.mjs
       - test/e2e/harness.mjs
+      - autonomy/acceptance.mjs
+      - test/e2e/acceptance.mjs
       - test/e2e/firebase-stub.mjs
       - .github/workflows/ui-shell.yml
   workflow_dispatch:
@@ -89,6 +91,10 @@ jobs:
         run: node test/e2e/statement-review-overlay.mjs
         env:
           WF_REVIEW_ARTIFACTS: shell-artifacts
+      - name: Verify the acceptance run (a change is run on a phone screen, a dead tap is measured, an invented quote is thrown away)
+        run: node test/e2e/acceptance.mjs
+        env:
+          WF_ACCEPT_ARTIFACTS: shell-artifacts/acceptance
       - name: Preserve screenshots
         if: always()
         uses: actions/upload-artifact@v7

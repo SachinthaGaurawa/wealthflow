@@ -187,6 +187,70 @@ describe('the lane end to end', () => {
     });
 });
 
+describe('the lane runs the change on a phone and revises on what it finds (#635, 2026-11-20)', () => {
+    beforeEach(() => { script.replies = []; });
+    const run = (extra = {}) => L.runBuildLane({
+        issue: { number: 9, title: 'Add a new loan affordability calculator', body: 'x' }, repoDir: repo(), log: () => {},
+        runTest: (() => { let n = 0; return () => ({ passed: ++n % 2 === 0, output: 'stub' }); })(),
+        env: { NODE_ENV: 'test' }, ...extra,
+    });
+    const problem = (extra = {}) => ({ kind: 'contradiction', severity: 'high', quote: 'Paid 0 of 12', why: 'the table says 3 of 12', fix: '', blocking: true, agreed: true, source: 'both judges', ...extra });
+    const result = (status, blocking = []) => ({ status, blocking, findings: blocking, notes: [], judges: ['x', 'y'], criteria: [], shots: [] });
+
+    it('hands the problems to the author, runs the revised file again, and reports a pass', async () => {
+        script.replies = [{ text: PLAN }, { text: GOOD, provider: 'a' }, { text: GOOD + '\n// fixed the count', provider: 'a2' }, { text: PASS, provider: 'b' }, { text: GOOD_TEST, provider: 'c' }];
+        const seen = [];
+        const accept = async (o) => { seen.push(o.module.code); return seen.length === 1 ? result('problems', [problem()]) : result('passed'); };
+        const r = await run({ accept });
+        expect(r.ok).toBe(true);
+        expect(seen).toHaveLength(2); expect(seen[1]).toMatch(/fixed the count/);
+        expect(r.code).toMatch(/fixed the count/);
+        expect(r.acceptance.status).toBe('passed'); expect(r.acceptance.rounds).toHaveLength(1);
+        expect(r.acceptance.summary).toMatch(/PASSED/);
+    });
+    it('after two revisions the remaining problems go into the result as known issues, not hidden', async () => {
+        script.replies = [{ text: PLAN }, { text: GOOD, provider: 'a' }, { text: GOOD + '\n// r1', provider: 'a' }, { text: GOOD + '\n// r2', provider: 'a' }, { text: PASS, provider: 'b' }, { text: GOOD_TEST, provider: 'c' }];
+        const r = await run({ accept: async () => result('problems', [problem()]) });
+        expect(r.ok).toBe(true); expect(r.acceptance.status).toBe('problems'); expect(r.acceptance.rounds).toHaveLength(3);
+        expect(r.acceptance.summary).toMatch(/Known issues/); expect(r.acceptance.summary).toMatch(/Paid 0 of 12/);
+    });
+    it('a tap that still changes nothing ends the try', async () => {
+        script.replies = [{ text: PLAN }, { text: GOOD, provider: 'a' }, { text: GOOD + '\n// r1', provider: 'a' }, { text: GOOD + '\n// r2', provider: 'a' }];
+        const dead = problem({ measure: 'dead_tap', source: 'measured', kind: 'wrong', why: 'Tapping #row changed nothing' });
+        const r = await run({ accept: async () => result('problems', [dead]) });
+        expect(r.ok).toBe(false); expect(r.stage).toBe('acceptance'); expect(r.reason).toMatch(/changes nothing/);
+    });
+    it('a run that could not start never blocks and never claims a pass', async () => {
+        script.replies = [{ text: PLAN }, { text: GOOD, provider: 'a' }, { text: PASS, provider: 'b' }, { text: GOOD_TEST, provider: 'c' }];
+        const r = await run({ accept: async () => ({ status: 'skipped', reason: 'no browser', findings: [], blocking: [], notes: [], judges: [] }) });
+        expect(r.ok).toBe(true); expect(r.acceptance.status).toBe('skipped'); expect(r.acceptance.summary).toMatch(/not run/);
+    });
+    it('without accept nothing changes: no acceptance in the result', async () => {
+        script.replies = [{ text: PLAN }, { text: GOOD, provider: 'a' }, { text: PASS, provider: 'b' }, { text: GOOD_TEST, provider: 'c' }];
+        const r = await run(); expect(r.ok).toBe(true); expect(r.acceptance).toBe(null);
+    });
+    it('revision mode: no plan is asked for, the author sees the shipped file and the findings, the module is not wired again, the file is put back', async () => {
+        const d = repo(); fs.writeFileSync(path.join(d, 'wealthflow-loan-check.js'), GOOD);
+        const prompts = [];
+        script.replies = [{ text: GOOD + '\n// revised', provider: 'a' }, { text: PASS, provider: 'b' }, { text: GOOD_TEST, provider: 'c' }];
+        const llm = await import('../autonomy/llm-router.mjs');
+        const r = await L.runBuildLane({
+            issue: { number: 9, title: 'Add a new loan affordability calculator', body: 'x' }, repoDir: d, log: () => {}, env: { NODE_ENV: 'test' },
+            runTest: (() => { let n = 0; return () => ({ passed: ++n % 2 === 0, output: 'stub' }); })(),
+            revise: { file: 'wealthflow-loan-check.js', code: GOOD, findings: '1. [contradiction] Paid 0 of 12 - on screen: "Paid so far 3/12"' },
+        });
+        for (const call of llm.chat.mock.calls.slice(-3)) prompts.push(String(call[0].prompt));
+        expect(r.ok).toBe(true); expect(r.revision).toBe(true); expect(r.wire).toBe(null); expect(r.providers.plan).toBe('revision');
+        expect(prompts[0]).toMatch(/THE FILE AS IT SHIPPED/); expect(prompts[0]).toMatch(/Paid so far 3\/12/);
+        expect(r.code).toMatch(/revised/);
+        expect(fs.readFileSync(path.join(d, 'wealthflow-loan-check.js'), 'utf8')).toBe(GOOD);   // the proof run leaves the tree as it found it
+    });
+    it('a revision of something that has no module name or API is refused, not guessed', async () => {
+        const r = await run({ revise: { file: '../x.js', code: 'x', findings: '1. y' } });
+        expect(r.ok).toBe(false); expect(r.stage).toBe('plan');
+    });
+});
+
 describe('wiring into the agent and the workflow', () => {
     const agent = fs.readFileSync(path.join(ROOT, 'autonomous-fix-agent.js'), 'utf8');
     const wf = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'autonomous-fix.yml'), 'utf8');

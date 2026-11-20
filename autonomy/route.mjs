@@ -78,6 +78,17 @@ export function fromStranger(c) {
     return String((c && c.user && c.user.login) || '') !== AGENT_LOGIN;
 }
 const RESET = /<!--\s*wf-agent-reset\s*-->/;
+const ACCEPT_RESET = /<!--\s*wf-acceptance-reset\s*-->/;
+/**
+ * Does this comment start the attempt budget again? A maintainer's `wf-agent-reset` does. So does the agent's OWN acceptance check
+ * (autonomy/acceptance-flow.mjs) when it reopens a shipped feature with the problems it found by running it: that is new work, not a
+ * fourth try at the old one. The marker only counts from the agent's own login, so a stranger cannot use it.
+ */
+export function isReset(c) {
+    const body = String((c && c.body) || '');
+    if (RESET.test(body) && TRUSTED.test(String((c && c.author_association) || ''))) return true;
+    return ACCEPT_RESET.test(body) && String((c && c.user && c.user.login) || '') === AGENT_LOGIN;
+}
 const field = (body, name) => ((body.match(new RegExp('\\*\\*' + name + ':\\*\\*\\s*`?([^`\\n]+?)`?\\s*(?:\\n|$)')) || [])[1] || '').trim();
 
 /**
@@ -89,7 +100,7 @@ export function attemptTrail(comments) {
     let trail = [];
     for (const c of comments || []) {
         const body = String((c && c.body) || '');
-        if (RESET.test(body) && TRUSTED.test(String((c && c.author_association) || ''))) { trail = []; continue; }
+        if (isReset(c)) { trail = []; continue; }
         if (!ATTEMPT.test(body) || fromStranger(c)) continue;
         const stage = field(body, 'Stopped at');
         const drafted = /Fix drafted/.test(body);

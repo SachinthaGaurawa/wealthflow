@@ -60,7 +60,7 @@ export async function launchChromium(opts = {}) {
     try {
         for (const d of fs.readdirSync(root)) {
             if (!/^chromium/.test(d)) continue;
-            for (const rel of ['chrome-linux/chrome', 'chrome-linux/headless_shell', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
+            for (const rel of ['chrome-linux/chrome', 'chrome-linux64/chrome', 'chrome-linux/headless_shell', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
                 const p = path.join(root, d, rel);
                 if (fs.existsSync(p)) attempts.push(p);
             }
@@ -84,10 +84,17 @@ const MIME = {
 };
 
 /** A local static server for the repo. Returns { url, close }. */
-export async function serveRepo(repoDir = process.cwd(), { headers = null } = {}) {
+export async function serveRepo(repoDir = process.cwd(), { headers = null, overlay = null, htmlTransform = null } = {}) {
     const server = http.createServer((req, res) => {
         let p = decodeURIComponent((req.url || '/').split('?')[0]);
         if (p === '/') p = '/index.html';
+        // `overlay` ({ 'name.js': 'code' }) answers a path from memory, so a change that is not on disk yet can be run
+        // (the acceptance run in autonomy/acceptance.mjs); nothing is written to the repo.
+        const mem = overlay && Object.prototype.hasOwnProperty.call(overlay, p.replace(/^\/+/, '')) ? overlay[p.replace(/^\/+/, '')] : null;
+        if (mem !== null) {
+            res.writeHead(200, { 'Content-Type': MIME[path.extname(p)] || 'text/plain', ...((headers && headers(p)) || {}) });
+            return res.end(String(mem));
+        }
         // Never serve outside the repo, even if the app requests `../`.
         const f = path.resolve(repoDir, p.replace(/^\/+/, ''));
         if (!f.startsWith(path.resolve(repoDir))) { res.writeHead(403); return res.end('forbidden'); }
@@ -101,7 +108,9 @@ export async function serveRepo(repoDir = process.cwd(), { headers = null } = {}
             // against the real CDN bytes by test/security_headers_test.js (WF_SRI_VERIFY=1) and by the
             // live canary, so the served copy drops them.
             if (path.extname(f) === '.html') {
-                res.end(buf.toString('utf8').replace(/\s+integrity="sha(?:256|384|512)-[^"]*"/g, ''));
+                let html = buf.toString('utf8').replace(/\s+integrity="sha(?:256|384|512)-[^"]*"/g, '');
+                if (htmlTransform && p === '/index.html') html = htmlTransform(html);
+                res.end(html);
                 return;
             }
             res.end(buf);
@@ -259,10 +268,10 @@ export async function installChartJs(page, file = 'node_modules/chart.js/dist/ch
     return true;
 }
 
-export async function bootApp({ repoDir = process.cwd(), pin = '123456', headless = true, userAgent = '', initScript = null, headers = null } = {}) {
-    const server = await serveRepo(repoDir, { headers });
+export async function bootApp({ repoDir = process.cwd(), pin = '123456', headless = true, userAgent = '', initScript = null, headers = null, overlay = null, htmlTransform = null, viewport = null, mobile = false } = {}) {
+    const server = await serveRepo(repoDir, { headers, overlay, htmlTransform });
     const browser = await launchChromium({ headless });
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, ...(userAgent ? { userAgent } : {}) });
+    const page = await browser.newPage({ viewport: viewport || { width: 1280, height: 900 }, ...(mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}), ...(userAgent ? { userAgent } : {}) });
     if (initScript) await page.addInitScript(initScript);       // runs before the page's own scripts: lets a test pre-set storage
 
     const pageErrors = [];

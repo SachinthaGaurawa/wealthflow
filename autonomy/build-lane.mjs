@@ -36,6 +36,7 @@ import {
     testPrompt, verifyTestProves, verificationPlan, TEST_ROUNDS, ROLES,
 } from './agent-swarm.mjs';
 import { measure, BUDGETS } from './perf-budget.mjs';
+import { findingsBrief, acceptanceSummary } from './acceptance.mjs';
 
 export const NAME_RE = /^wealthflow-[a-z0-9]+(?:-[a-z0-9]+){0,4}\.js$/;
 export const API_RE = /^WF[A-Z][A-Za-z0-9]{2,30}$/;
@@ -324,7 +325,16 @@ async function settle(code, plan, today, repoDir) {
     return { code: c, bad: placed.problems, moved: placed.moved };
 }
 
-export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(), env = process.env, log = console.log, runTest = null, verifyTest = true } = {}) {
+/** How many times the author may revise after an acceptance run found problems (each revision is run again). */
+export const MAX_ACCEPT_REVISIONS = 2;
+
+/**
+ * @param {object} o
+ * @param {Function|null} [o.accept]  runAcceptance (autonomy/acceptance.mjs): run the module on a phone and judge it against the report. null = not run.
+ * @param {{file:string, code:string, findings:string}|null} [o.revise]  a module that already shipped, reopened with the problems a later acceptance run found:
+ *        no plan is asked for, the author gets the file and the findings, and the result replaces the file (it is not wired again).
+ */
+export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(), env = process.env, log = console.log, runTest = null, verifyTest = true, accept = null, revise = null } = {}) {
     const issueText = `${issue?.title || ''}\n\n${issue?.body || ''}`.trim();
     if (!issueText) return { ok: false, stage: 'input', reason: 'empty issue' };
     const providers = {};
@@ -333,19 +343,30 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
     const withCard = (system) => `${system}\n\n${cardText}`;
     const existing = fs.readdirSync(repoDir).filter((f) => /^wealthflow-.*\.js$/.test(f));
 
-    // 1. plan
-    const p = await chat({ system: withCard(role.system), prompt: planPrompt(issueText, existing, facts), prefer: role.prefer, maxTokens: 400, temperature: 0, env });
-    providers.plan = p.provider;
-    const parsed = parsePlan(p.text, { existing, repoDir });
-    if (!parsed.ok) return { ok: false, stage: 'plan', providers, reason: parsed.reason };
-    const { plan } = parsed;
-    log(`[build] plan: ${plan.name} (${plan.api}) — ${plan.summary}`);
+    // 1. plan (a revision of a module that already shipped has none: the file and its name are given)
+    let plan;
+    if (revise) {
+        const api = (/root\.(WF[A-Za-z0-9]{2,30})\s*=/.exec(revise.code || '') || /window\.(WF[A-Za-z0-9]{2,30})\s*=/.exec(revise.code || '') || [])[1];
+        if (!NAME_RE.test(revise.file || '') || !api) return { ok: false, stage: 'plan', providers, reason: 'the module to revise has no valid name or API' };
+        plan = { name: revise.file, api, summary: `revision of ${revise.file} after a run on a phone found problems` };
+        providers.plan = 'revision';
+        log(`[build] revising ${plan.name} (${plan.api})`);
+    } else {
+        const p = await chat({ system: withCard(role.system), prompt: planPrompt(issueText, existing, facts), prefer: role.prefer, maxTokens: 400, temperature: 0, env });
+        providers.plan = p.provider;
+        const parsed = parsePlan(p.text, { existing, repoDir });
+        if (!parsed.ok) return { ok: false, stage: 'plan', providers, reason: parsed.reason };
+        plan = parsed.plan;
+        log(`[build] plan: ${plan.name} (${plan.api}) — ${plan.summary}`);
+    }
 
     // 2. author the whole module
     let code = '', authored = null, why = '';
     for (let attempt = 0; attempt < 2 && !code; attempt++) {
         const today = new Date().toISOString().slice(0, 10);
-        const a = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts) + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
+        const a = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts)
+            + (revise ? `\n\nTHE FILE AS IT SHIPPED (it was run on a phone and judged against the owner's report):\n-----\n${String(revise.code).slice(0, 20_000)}\n-----\nPROBLEMS FOUND BY THAT RUN (each quotes what was on the screen):\n${revise.findings}\nReturn the COMPLETE corrected file. Fix exactly these problems and keep what already works. Every rule above still holds.` : '')
+            + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
         providers.author = a.provider;
         const { code: c, bad, moved } = await settle(stripFences(a.text || ''), plan, today, repoDir);
         if (moved) log(`[build] ${moved}`);
@@ -354,6 +375,42 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
     }
     if (!code) return { ok: false, stage: 'author', file: plan.name, providers, reason: `no acceptable module after 2 tries: ${why}` };
     log(`[build] module written (${code.length} chars, via ${authored.provider})`);
+
+    // 2b. RUN IT LIKE THE OWNER WOULD (autonomy/acceptance.mjs; #635, 2026-11-20). The change is run on a phone-size browser, a script follows the owner's own words,
+    // and two judges on different providers read what appeared next to the report. Problems go back to the author, up to twice, and the run is repeated; whatever is
+    // left after that is written into the pull request as known issues. A tap that changes nothing is the one finding that ends the try.
+    let acceptance = null, acceptedCode = '';
+    const acceptRun = async () => {
+        if (typeof accept !== 'function') return null;
+        try {
+            const surfaceNow = await apiSurface(plan, code, repoDir);
+            const r = await accept({ issue: { title: issue?.title, body: issue?.body }, module: { name: plan.name, api: plan.api, code }, facts, surface: surfaceNow, repoDir, env, log: (m) => log(m) });
+            acceptedCode = code;
+            log(`[build] acceptance run: ${r.status}${r.blocking && r.blocking.length ? ` (${r.blocking.length} blocking)` : ''}${r.reason ? ` — ${r.reason}` : ''}`);
+            return r;
+        } catch (e) { log(`[build] the acceptance run could not start: ${String(e && e.message || e).slice(0, 160)}`); return null; }
+    };
+    const acceptanceRounds = [];
+    if (typeof accept === 'function') {
+        for (let round = 0; ; round++) {
+            acceptance = await acceptRun();
+            if (!acceptance || acceptance.status !== 'problems') break;
+            acceptanceRounds.push({ round: round + 1, blocking: acceptance.blocking.length, kinds: [...new Set(acceptance.blocking.map((f) => f.kind))] });
+            if (round >= MAX_ACCEPT_REVISIONS) break;
+            const today = new Date().toISOString().slice(0, 10);
+            log(`[build] the run found ${acceptance.blocking.length} problem(s) — the author gets them (revision ${round + 1}/${MAX_ACCEPT_REVISIONS})`);
+            const rev = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts)
+                + `\n\nTHE FILE AS WRITTEN (it was run on a phone and judged against the owner's report):\n-----\n${code}\n-----\nPROBLEMS FOUND BY THAT RUN (each quotes what was on the screen):\n${findingsBrief(acceptance.findings)}\nReturn the COMPLETE corrected file. Fix exactly these problems and keep what already works. Every rule above still holds.`,
+                prefer: role.prefer, maxTokens: 9_000, temperature: 0.1, env }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
+            const { code: c2, bad: bad2 } = await settle(stripFences(rev.text || ''), plan, today, repoDir);
+            if (bad2.length) { log(`[build] the revision after the run was refused: ${bad2.join('; ').slice(0, 200)}`); break; }
+            code = c2; authored = rev; providers.author = rev.provider;
+            log(`[build] revised after the run (${code.length} chars, via ${rev.provider})`);
+        }
+        if (acceptance && acceptance.status === 'problems' && acceptance.blocking.some((f) => f.measure === 'dead_tap')) {
+            return { ok: false, stage: 'acceptance', file: plan.name, code, providers, acceptance, reason: `a tap on the thing the owner asked for still changes nothing on a phone screen after ${acceptanceRounds.length} run(s): ${findingsBrief(acceptance.findings).slice(0, 400)}` };
+        }
+    }
 
     // 3. independent review of the WHOLE new file, on a different provider.
     // A reviewer's low or medium finding (for example "an empty catch swallows an error", seen on #635) is a thing the author can fix: the author gets the
@@ -387,6 +444,7 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
     const tf = path.join('test', `auto-${plan.name.replace(/\.js$/, '')}-${issue?.number || 'x'}.test.js`);
     const target = path.join(repoDir, plan.name);
     const existed = fs.existsSync(target);
+    const original = existed ? fs.readFileSync(target, 'utf8') : '';
     const planV = verificationPlan({ verifyTest, ci: Boolean(env.CI) });
     if (!planV.allowed) return { ok: false, stage: 'proof', file: plan.name, providers, review, reason: planV.reason };
     const runner = (runTest && !env.CI) ? runTest : undefined;
@@ -445,6 +503,7 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
         }
     } finally {
         if (!existed) { try { fs.unlinkSync(target); } catch { /* it was never left behind */ } }
+        else { try { fs.writeFileSync(target, original); } catch { /* the caller writes the new file next */ } }
     }
     if (!test) {
         const last = rounds[rounds.length - 1] || {};
@@ -454,10 +513,14 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
         return { ok: false, stage: 'proof', file: plan.name, code, providers, review, testRounds: rounds, reason: `the proving test did not prove anything after ${TEST_ROUNDS} tries — ${last.reason || 'no usable test'}` };
     }
     log(`[build] test verified red→green (via ${providers.qa})`);
+    // the recipe test, the reviewer or a revision may have changed the file since the last run: one final look at the file that will ship (no more revising)
+    if (typeof accept === 'function' && acceptance && acceptedCode !== code) acceptance = await acceptRun() || acceptance;
 
     return {
         ok: true, stage: 'ready', lane: 'build', role: 'feature', file: plan.name, code, test, testFile: tf, testProof: proof,
-        verified: Boolean(proof && proof.ok && !proof.skipped), review, providers, wire: { name: plan.name },
-        change: `new module ${plan.name} (${code.length} chars): ${plan.summary}`, observation: '',
+        verified: Boolean(proof && proof.ok && !proof.skipped), review, providers,
+        change: `${revise ? 'revised' : 'new'} module ${plan.name} (${code.length} chars): ${plan.summary}`, observation: '',
+        revision: Boolean(revise), wire: revise ? null : { name: plan.name },
+        acceptance: acceptance ? { ...acceptance, rounds: acceptanceRounds, summary: acceptanceSummary(acceptance) } : null,
     };
 }
