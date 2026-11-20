@@ -3,7 +3,7 @@
 
   var NEW_DATE = '2026-11-20';
   var CONTAINER_ID = 'wfCciDetailHost';
-  var OVERLAY_ID = 'wfCciDetailOverlay';
+  var SHEET_ID = 'wfCciDetailSheet';
   var BOOK_KEY = 'ccinstall';
 
   /* ---------- pure helpers ---------- */
@@ -42,9 +42,27 @@
     return m < 0 ? 0 : m;
   }
 
+  /* The page's own rule for "done": completed flag, or the last month has passed.
+     Mirrors _cciDone in renderCCI so the sheet and the table never disagree. */
+  function endOf(rec) {
+    var start = parseDate(rec && rec.date);
+    var dur = (rec && typeof rec.duration === 'number' && isFinite(rec.duration) && rec.duration > 0) ? Math.floor(rec.duration) : 0;
+    if (!start || !dur) return null;
+    return new Date(start.getFullYear(), start.getMonth() + dur, start.getDate());
+  }
+
+  function isDone(rec, now) {
+    if (!rec) return false;
+    if (rec.completed) return true;
+    var end = endOf(rec);
+    if (!end) return false;
+    var nowD = now instanceof Date && !isNaN(now.getTime()) ? now : new Date();
+    return end <= nowD;
+  }
+
   /* Build the read-only lines for one plan record. Pure: no DOM, no DB. */
   function compute(rec, now) {
-    var out = { title: 'Instalment plan', lines: [], schedule: [], ok: false };
+    var out = { title: 'Instalment plan', lines: [], schedule: [], ok: false, status: 'Active' };
     if (!rec || typeof rec !== 'object') return out;
     out.ok = true;
 
@@ -58,7 +76,9 @@
     var nowD = now instanceof Date && !isNaN(now.getTime()) ? now : new Date();
 
     var skipped = Array.isArray(rec.skipped) ? rec.skipped.length : 0;
-    var finished = rec.completed ? true : false;
+    var finished = isDone(rec, nowD);
+    out.status = finished ? 'Done' : 'Active';
+
     var elapsed = start ? monthsBetween(start, nowD) : 0;
     if (elapsed > duration) elapsed = duration;
     var paidMonths = elapsed - skipped;
@@ -97,7 +117,7 @@
       out.lines.push({ label: 'Bank says owed', value: fmtMoney(toCents(rec.outstanding)) });
     }
     if (rec.notes) out.lines.push({ label: 'Notes', value: safeStr(rec.notes) });
-    out.lines.push({ label: 'Status', value: finished ? 'Done' : 'Active' });
+    out.lines.push({ label: 'Status', value: out.status });
 
     /* schedule: one row per month from start */
     if (start && duration > 0) {
@@ -132,13 +152,18 @@
     return n;
   }
 
+  function prefersReducedMotion() {
+    try {
+      return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) { return false; }
+  }
+
   function ensureContainer() {
     if (typeof document === 'undefined' || !document.body) return null;
     var existing = document.getElementById(CONTAINER_ID);
     if (existing) return existing;
     var host = el('div');
     host.id = CONTAINER_ID;
-    host.setAttribute('data-wf-new', '2026-11-20');
     host.style.position = 'fixed';
     host.style.inset = '0';
     host.style.zIndex = '9999';
@@ -146,6 +171,8 @@
     host.style.background = 'rgba(0,0,0,0.55)';
     host.style.overflowY = 'auto';
     host.style.webkitOverflowScrolling = 'touch';
+    host.style.padding = '12px';
+    host.style.boxSizing = 'border-box';
     document.body.appendChild(host);
     return host;
   }
@@ -163,16 +190,29 @@
     var data = compute(rec, new Date());
 
     var sheet = el('div');
-    sheet.id = OVERLAY_ID;
+    sheet.id = SHEET_ID;
+    sheet.setAttribute('data-wf-new', '2026-11-20');
+    sheet.setAttribute('role', 'dialog');
+    sheet.setAttribute('aria-modal', 'true');
+    sheet.setAttribute('aria-label', 'Instalment plan details');
     sheet.style.background = 'var(--bg, #fff)';
     sheet.style.color = 'var(--text, #111)';
-    sheet.style.margin = '12px auto';
+    sheet.style.margin = '0 auto';
     sheet.style.maxWidth = '560px';
-    sheet.style.width = 'calc(100% - 24px)';
+    sheet.style.width = '100%';
     sheet.style.borderRadius = '12px';
     sheet.style.padding = '16px';
     sheet.style.boxSizing = 'border-box';
     sheet.style.boxShadow = '0 8px 24px rgba(0,0,0,0.25)';
+    /* the sheet itself never clips: the host scrolls, and the schedule
+       gets its own bounded scroll box so the last rows stay reachable */
+    sheet.style.maxHeight = 'calc(100vh - 24px)';
+    sheet.style.display = 'flex';
+    sheet.style.flexDirection = 'column';
+    sheet.style.overflow = 'hidden';
+    if (!prefersReducedMotion()) {
+      sheet.style.transition = 'opacity 120ms ease-out';
+    }
 
     var head = el('div');
     head.style.display = 'flex';
@@ -180,6 +220,7 @@
     head.style.justifyContent = 'space-between';
     head.style.gap = '8px';
     head.style.marginBottom = '12px';
+    head.style.flex = '0 0 auto';
 
     var title = el('div', null, data.title);
     title.id = 'wfCciDetailTitle';
@@ -192,6 +233,7 @@
 
     var closeBtn = el('button', null, 'Close');
     closeBtn.type = 'button';
+    closeBtn.id = 'wfCciDetailClose';
     closeBtn.setAttribute('aria-label', 'Close detail');
     closeBtn.style.minWidth = '44px';
     closeBtn.style.minHeight = '44px';
@@ -201,9 +243,22 @@
     closeBtn.style.color = 'inherit';
     closeBtn.style.borderRadius = '8px';
     closeBtn.style.cursor = 'pointer';
+    closeBtn.style.flex = '0 0 auto';
     closeBtn.addEventListener('click', closeSheet);
     head.appendChild(closeBtn);
     sheet.appendChild(head);
+
+    /* scrollable body: everything below the header lives here */
+    var body = el('div');
+    body.id = 'wfCciDetailBody';
+    body.style.flex = '1 1 auto';
+    body.style.minHeight = '0';
+    body.style.overflowY = 'auto';
+    body.style.webkitOverflowScrolling = 'touch';
+    body.style.paddingRight = '2px';
+    /* bottom padding so the last schedule row is never flush against the
+       sheet edge (and never under anything the app floats there) */
+    body.style.paddingBottom = '24px';
 
     var list = el('div');
     list.id = 'wfCciDetailLines';
@@ -225,7 +280,7 @@
       row.appendChild(val);
       list.appendChild(row);
     }
-    sheet.appendChild(list);
+    body.appendChild(list);
 
     if (data.schedule.length) {
       var schedHead = el('div', null, 'Schedule');
@@ -233,10 +288,21 @@
       schedHead.style.marginBottom = '6px';
       schedHead.style.fontWeight = '700';
       schedHead.style.fontSize = '14px';
-      sheet.appendChild(schedHead);
+      body.appendChild(schedHead);
 
+      /* bounded scroll box with a visible edge so the person can tell
+         there are more rows below */
       var sched = el('div');
       sched.id = 'wfCciDetailSchedule';
+      sched.style.maxHeight = '40vh';
+      sched.style.overflowY = 'auto';
+      sched.style.webkitOverflowScrolling = 'touch';
+      sched.style.border = '1px solid var(--border, #eee)';
+      sched.style.borderRadius = '8px';
+      sched.style.padding = '4px 8px';
+      sched.style.boxSizing = 'border-box';
+      sched.setAttribute('tabindex', '0');
+      sched.setAttribute('aria-label', 'Payment schedule, scrollable');
       for (var j = 0; j < data.schedule.length; j++) {
         var s = data.schedule[j];
         var srow = el('div');
@@ -252,9 +318,10 @@
         srow.appendChild(sa);
         sched.appendChild(srow);
       }
-      sheet.appendChild(sched);
+      body.appendChild(sched);
     }
 
+    sheet.appendChild(body);
     host.appendChild(sheet);
     host.style.display = 'block';
   }
@@ -345,6 +412,7 @@
     open: open,
     close: closeSheet,
     compute: compute,
+    isDone: isDone,
     _fmtMoney: fmtMoney,
     _toCents: toCents
   };
