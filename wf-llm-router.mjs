@@ -186,6 +186,21 @@ export const PROVIDERS = [
         strengths: ['general', 'reasoning'],
     },
     {
+        // Cloudflare Workers AI: a free daily allowance of Neurons, asked through its OpenAI-compatible endpoint. It needs TWO values: an API token
+        // (permission "Workers AI") and the account id, because the account id is part of the address. Without both it is simply not on the board.
+        id: 'cloudflare',
+        label: 'Cloudflare Workers AI',
+        keys: ['CLOUDFLARE_AI_API_TOKEN'],
+        needs: ['CLOUDFLARE_ACCOUNT_ID'],
+        get url() {
+            const id = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+            return id ? `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(id)}/ai/v1/chat/completions` : '';
+        },
+        model: () => process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+        kind: 'openai',
+        strengths: ['general', 'fallback'],
+    },
+    {
         // Last by default: this is the one metered key, so free providers get
         // first refusal on every request. Still available as the final fallback
         // and preferred explicitly by the roles that need the strongest model.
@@ -201,6 +216,7 @@ export const PROVIDERS = [
 
 /** The first configured env var name for a provider, or null. */
 export function keyFor(provider, env = process.env) {
+    for (const name of provider.needs || []) { if (!(env[name] && String(env[name]).trim())) return null; }   // a second value the provider cannot be reached without (Cloudflare's account id)
     for (const name of provider.keys) {
         const v = env[name];
         if (v && String(v).trim()) return { name, value: String(v).trim() };

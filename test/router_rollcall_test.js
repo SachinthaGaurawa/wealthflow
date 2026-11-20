@@ -101,4 +101,15 @@ describe('equal providers share the work', () => {
         expect(p.keys).toEqual(['OLLAMA_API_KEY']);
         expect(orderFor({ env: { OLLAMA_API_KEY: 'x' } }).map((q) => q.id)).toEqual(['ollama']);
     });
+    it('Cloudflare Workers AI needs the token AND the account id, and the address carries the id', () => {
+        const p = PROVIDERS.find((x) => x.id === 'cloudflare');
+        expect(p.keys).toEqual(['CLOUDFLARE_AI_API_TOKEN']);
+        expect(orderFor({ env: { CLOUDFLARE_AI_API_TOKEN: 't' } })).toEqual([]);
+        expect(orderFor({ env: { CLOUDFLARE_ACCOUNT_ID: 'abc123' } })).toEqual([]);
+        expect(orderFor({ env: { CLOUDFLARE_AI_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc123' } }).map((q) => q.id)).toEqual(['cloudflare']);
+        const before = process.env.CLOUDFLARE_ACCOUNT_ID;
+        process.env.CLOUDFLARE_ACCOUNT_ID = 'abc123';
+        try { expect(p.url).toBe('https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1/chat/completions'); }
+        finally { if (before === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID; else process.env.CLOUDFLARE_ACCOUNT_ID = before; }
+    });
 });
