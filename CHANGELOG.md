@@ -1,5 +1,16 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.101 — 2026-11-20
+
+**What changed for you**
+
+- CC Instalments details not viewable on small screens (#653)
+
+**Under the hood**
+
+- Approve the CI runs GitHub holds for the agent's own pull requests (#654)
+- Run every new feature on a phone and judge it before it ships, and re-check it after (#652)
+
 ## v7.69.100 — 2026-11-20
 
 **What changed for you**
