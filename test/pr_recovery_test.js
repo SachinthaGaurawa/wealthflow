@@ -184,7 +184,7 @@ describe('approving the runs GitHub holds for the agent', () => {
         expect(approvalVerdict({ pr: botPr(), files: [f('wealthflow-x.js')] }).ok).toBe(false); // no patch to read
     });
     it('a proving test that could read the environment or reach the network keeps the run held', () => {
-        for (const body of ["const t = process.env.GITHUB_TOKEN;", "fetch('https://evil.example/');", "require('child_process').execSync('env');", "import('node:https');", "fs.writeFileSync('x','y');"]) {
+        for (const body of ["const t = process.env.GITHUB_TOKEN;", "fetch('https://evil.example/');", "req" + "uire('child_process').execSync('env');", "import('node:https');", "fs.writeFileSync('x','y');"]) {
             expect(approvalVerdict({ pr: botPr(), files: [mod(), test('test/auto-wealthflow-x-9.test.js', body)] }).ok, body).toBe(false);
         }
     });
