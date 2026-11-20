@@ -29,7 +29,8 @@ import { pathToFileURL } from 'node:url';
 import { chat, stripFences, extractJson } from './llm-router.mjs';
 import { taskCard, cardPrompt } from './task-card.mjs';
 import { fenceUntrusted } from './untrusted-text.mjs';
-import { testFromRecipe } from './recipe-test.mjs';
+import { testFromRecipe, readRecipe } from './recipe-test.mjs';
+import { placeTag } from './tag-placement.mjs';
 import {
     isSensitive, structuralCheck, isValidJs, reviewPrompt, parseVerdict, reviewSeesWholeChange,
     testPrompt, verifyTestProves, verificationPlan, TEST_ROUNDS, ROLES,
@@ -163,7 +164,7 @@ export function authorPrompt(issueText, plan, today = new Date().toISOString().s
         '  · Build the screen with createElement and textContent only. NEVER assign innerHTML, outerHTML or insertAdjacentHTML (a machine refuses it).\n  · A module may READ the books (root.DB.get) or use the network (fetch to a public https API), NEVER both (a machine refuses it): a calculator shows the numbers the owner recorded and has no network; an integration shows public data and cannot see what the owner recorded.',
         '  · Everything is guarded: no DOM, no DB, empty lists, NaN, negative and huge numbers must not throw.',
         '  · If it shows UI, mount ONE container with a stable id the first time the page is ready (DOMContentLoaded or immediately), inside document.body, and never replace existing elements. Respect prefers-reduced-motion. Hit targets at least 44px.',
-        `  · THE NEW TAG (a machine checks it): the ONE container you mount carries container.setAttribute('data-wf-new', '${today}') with exactly that date. The app then shows a NEW label for 7 days from the day the person first sees it, and removes it by itself.`,
+        `  · THE NEW TAG (a machine checks it): the ONE element the person SEES carries el.setAttribute('data-wf-new', '${today}') with exactly that date. The app then shows a NEW label for 7 days from the day the person first sees it, and removes it by itself. If the module draws a sheet or panel that stays hidden (display:none) until the person opens it, the tag goes on THAT sheet, never on a plain wrapper you append to the page: a wrapper shows nothing, so the label would hang on an empty box on every page (PR 647 on #635 was refused for exactly that).`,
         '  · Money: LKR, two decimals, toLocaleString("en-LK"). Do arithmetic in whole cents.',
         '  · Expose pure functions on the API (for example compute(input)) so they can be tested without a DOM.',
         '  · END THE FILE with one comment block, because a different person writes the test and cannot guess how your module is driven (run 44635494000, #635: three tests failed because the sheet drew nothing for the data they invented):',
@@ -312,6 +313,17 @@ function moduleProblems(c, plan, today) {
     ];
 }
 
+/** The module as the lane will use it: the NEW tag date written, the checks passed, and the tag moved off an empty wrapper onto what the person sees (autonomy/tag-placement.mjs). */
+async function settle(code, plan, today, repoDir) {
+    let c = ensureNewTag(code, today);
+    const bad = moduleProblems(c, plan, today);
+    if (bad.length) return { code: c, bad };
+    const rec = readRecipe(c);
+    const placed = await placeTag({ file: plan.name, api: plan.api, code: c, page: String((rec && rec.page) || '').replace(/^["'`]|["'`]$/g, ''), today, repoDir });
+    if (placed.moved) { c = placed.code; const again = moduleProblems(c, plan, today); if (again.length) return { code, bad: again }; }
+    return { code: c, bad: placed.problems, moved: placed.moved };
+}
+
 export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(), env = process.env, log = console.log, runTest = null, verifyTest = true } = {}) {
     const issueText = `${issue?.title || ''}\n\n${issue?.body || ''}`.trim();
     if (!issueText) return { ok: false, stage: 'input', reason: 'empty issue' };
@@ -335,8 +347,8 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
         const today = new Date().toISOString().slice(0, 10);
         const a = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts) + (why ? `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: ${why}. Fix exactly that.` : ''), prefer: role.prefer, maxTokens: 9_000, temperature: attempt ? 0.2 : 0.1, env });
         providers.author = a.provider;
-        const c = ensureNewTag(stripFences(a.text || ''), today);
-        const bad = moduleProblems(c, plan, today);
+        const { code: c, bad, moved } = await settle(stripFences(a.text || ''), plan, today, repoDir);
+        if (moved) log(`[build] ${moved}`);
         if (bad.length) { why = bad.join('; ').slice(0, 300); log(`[build] attempt ${attempt + 1} refused: ${why}`); if (/NEW tag/.test(why)) log(`[build] (tag lines seen: ${(c.match(/^.*(?:wf-new|wfNew|\\.id\\s*=|createElement).*$/gm) || []).slice(0, 4).map((x) => x.trim().slice(0, 90)).join(' | ')})`); continue; }
         code = c; authored = a;
     }
@@ -364,8 +376,7 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
         const rev = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts)
             + `\n\nTHE FIRST VERSION OF THE FILE (an independent reviewer refused it):\n-----\n${code}\n-----\nREVIEWER: ${note}\nReturn the COMPLETE corrected file, changing only what the reviewer named. Every rule above still holds.`,
             prefer: role.prefer, maxTokens: 9_000, temperature: 0.1, env }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
-        const c2 = ensureNewTag(stripFences(rev.text || ''), today);
-        const bad2 = moduleProblems(c2, plan, today);
+        const { code: c2, bad: bad2 } = await settle(stripFences(rev.text || ''), plan, today, repoDir);
         if (bad2.length) { log(`[build] the revision was refused: ${bad2.join('; ').slice(0, 200)}`); return veto; }
         code = c2; authored = rev; providers.author = rev.provider;
         log(`[build] revised module (${code.length} chars, via ${rev.provider})`);
@@ -403,8 +414,7 @@ export async function runBuildLane({ issue, facts = '', repoDir = process.cwd(),
             const rev = await chat({ system: withCard(role.system), prompt: authorPrompt(issueText, plan, today, facts)
                 + `\n\nYOUR FILE, AND THE TEST BUILT FROM ITS OWN TEST RECIPE (the module does not draw what the recipe says it draws):\n-----\n${code}\n-----\nTEST THAT WAS RUN:\n${mech.source.slice(0, 2500)}\nWHAT IT SAID: ${said}\nReturn the COMPLETE corrected file. Either make the module draw what the recipe says, or correct the recipe so it matches what the module draws (same books, page, calls, element). Every rule above still holds.`,
                 prefer: role.prefer, maxTokens: 9_000, temperature: 0.1, env }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
-            const c2 = ensureNewTag(stripFences(rev.text || ''), today);
-            const bad2 = moduleProblems(c2, plan, today);
+            const { code: c2, bad: bad2 } = await settle(stripFences(rev.text || ''), plan, today, repoDir);
             if (bad2.length) { log(`[build] the revision after the recipe test was refused: ${bad2.join('; ').slice(0, 200)}`); break; }
             const r2 = await chat({ system: withCard(ROLES.security.system), prompt: reviewPrompt(issueText, plan.name, '', c2), prefer: ROLES.security.prefer, exclude: [rev.provider], maxTokens: 1500, temperature: 0, env })
                 .catch((e) => ({ text: '', provider: 'none', _error: e.message }));
