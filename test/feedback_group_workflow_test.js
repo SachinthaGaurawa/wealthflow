@@ -17,7 +17,7 @@ describe('autonomous-fix workflow: one update for a day of feedback', () => {
     it('the fix job needs the wait, takes the push lock itself, and only starts when the wait finished', () => {
         const f = job('fix');
         expect(f).toMatch(/needs: gather/);
-        expect(f).toMatch(/group: wealthflow-main-push/);
+        expect(f).toMatch(/AUTONOMY_LEVEL == 'direct' && 'wealthflow-main-push' \|\| 'wealthflow-autonomous-fix'/);   // the shared push lock only where the agent really pushes to main
         expect(f).toMatch(/needs\.gather\.result == 'success'/);
         expect(yml.split('\nconcurrency:\n').length).toBe(1);          // no workflow-level lock any more
     });

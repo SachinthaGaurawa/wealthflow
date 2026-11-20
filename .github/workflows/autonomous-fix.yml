@@ -99,8 +99,11 @@ jobs:
     needs: gather
     runs-on: ubuntu-latest
     timeout-minutes: 50          # several reports of one day are worked in one run (AGENT_GROUP_BUDGET_MS caps the extra time)
+    # The fix agent pushes to main only on the direct ship path. In pull-request mode it pushes its own branch, so holding the shared push lock for the
+    # whole run (minutes) let a second agent run displace a waiting `release` job from the lock queue (GitHub keeps one waiting job per group):
+    # main commit bcabc6a, 2026-11-20, a red cross and a delayed release. Pull-request mode now has a lock of its own.
     concurrency:
-      group: wealthflow-main-push
+      group: ${{ vars.AUTONOMY_LEVEL == 'direct' && 'wealthflow-main-push' || 'wealthflow-autonomous-fix' }}
       cancel-in-progress: false
     # Skip issues the pipeline files for humans, and skip its own noise. `gather` is skipped or cancelled when a newer report
     # took over the wait, and then this run must not start.
