@@ -29,6 +29,8 @@
  * Everything here is pure except `run()`, so the decision is tested without a network.
  * ===========================================================================*/
 
+import { forbiddenIn } from './build-lane.mjs';
+
 export const RECOVERY_MARKER = '<!-- wf-pr-recovery -->';
 
 /** Checks whose "failure" means a person must act, not that the code is wrong. */
@@ -136,7 +138,19 @@ export function recoveryBrief(comments) {
 const MODULE_FILE = /^wealthflow-[a-z0-9]+(?:-[a-z0-9]+){0,4}\.js$/;
 const PROVING_TEST = /^test\/auto-wealthflow-[a-z0-9]+(?:-[a-z0-9]+){0,4}-\d+\.test\.js$/;
 const STATE_FILE = /^autonomy\/state\/issue-\d+\.json$/;
-const SCRIPT_LINE = /^<script src="wealthflow-[a-z0-9]+(?:-[a-z0-9]+){0,4}\.js(?:\?[\w=.-]*)?"(?: defer)?><\/script>$/;
+const SCRIPT_LINE = /^<script src="wealthflow-[a-z0-9]+(?:-[a-z0-9]+){0,4}\.js" defer><\/script>$/;
+/** A state file holds counters and signatures: every changed line is a bracket, a key, and a short number or token. Nothing else. */
+const STATE_LINE = /^[[\]{},]*(?:"[A-Za-z0-9_-]{1,40}":\s*)?(?:\d{1,6}|"[A-Za-z0-9 _.:-]{0,64}"|true|false|null|\[|\{)?[[\]{},]*$/;
+/** What a model-written proving test may never do: it runs in CI, where a pull request's code must have no way out and no way to read the environment. */
+const TEST_FORBIDDEN = [
+    [/\bprocess\s*\.\s*(?:env|binding|dlopen|kill|exit)\b|\bprocess\s*\[/, 'reads the environment or the process'],
+    [/child_process|\bworker_threads\b|\bcluster\b|\bvm\b\s*[.(]|\brequire\s*\(\s*['"](?:node:)?(?:https?|http2|net|dns|tls|dgram|os|vm)['"]|from\s+['"](?:node:)?(?:https?|http2|net|dns|tls|dgram|os|vm)['"]/, 'loads a network, process or system module'],
+    [/\bfetch\s*\(|XMLHttpRequest|WebSocket|sendBeacon|\bEventSource\b/, 'uses the network'],
+    [/\beval\s*\(|\bnew\s+Function\s*\(|\bimport\s*\(/, 'runs text as code'],
+    [/\bfs\s*\.\s*(?:write|append|unlink|rm|rename|copy|mkdir|chmod|symlink)\w*\s*\(|\bwriteFile\w*\s*\(/, 'writes files'],
+];
+const addedLines = (patch) => String(patch).split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1));
+const changedLines = (patch) => String(patch).split('\n').filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l)).map((l) => l.slice(1).trim()).filter(Boolean);
 const BUDGET_LINE = /^[A-Za-z0-9_]+:\s*[\d_.]+,\s*(?:\/\/.*)?$/;
 const STAMP_COMMENT = /^<!--\s*[^<>]*added by the build lane[^<>]*-->$/;
 /** Files whose content is only ever read as data by the board and the policy gate, or runs in the browser tests with no secrets. */
@@ -157,12 +171,33 @@ export function approvalVerdict({ pr, files } = {}) {
     if (files.length > AUTO_APPROVE_MAX_FILES) return no(`${files.length} files: more than the build lane ever changes`);
     for (const f of files) {
         const name = String((f && f.filename) || '');
-        if (MODULE_FILE.test(name) || PROVING_TEST.test(name) || STATE_FILE.test(name)) continue;
+        const patch = typeof f.patch === 'string' ? f.patch : '';
+        const needPatch = () => (patch ? null : no(`${name}: GitHub gave no patch to read, so its content cannot be checked`));
+        if (MODULE_FILE.test(name)) {
+            // Content, not just the name: the same machine check the build lane applies to a new module (no DB writes, no Firebase, no eval, no
+            // script injection, no secrets, no network together with the books) is applied to every line the PR adds.
+            const miss = needPatch(); if (miss) return miss;
+            const bad = forbiddenIn(addedLines(patch).join('\n'));
+            if (bad.length) return no(`${name}: ${bad[0]}`);
+            continue;
+        }
+        if (PROVING_TEST.test(name)) {
+            const miss = needPatch(); if (miss) return miss;
+            const code = addedLines(patch).join('\n');
+            const bad = TEST_FORBIDDEN.find(([re]) => re.test(code));
+            if (bad) return no(`${name}: a proving test ${bad[1]}`);
+            continue;
+        }
+        if (STATE_FILE.test(name)) {
+            const miss = needPatch(); if (miss) return miss;
+            const bad = changedLines(patch).find((l) => l && !STATE_LINE.test(l));
+            if (bad) return no(`${name}: a changed line is not a counter or a signature (${bad.slice(0, 60)})`);
+            continue;
+        }
         if (name === 'index.html' || name === 'autonomy/perf-budget.mjs') {
-            if (typeof f.patch !== 'string' || !f.patch) return no(`${name}: GitHub gave no patch to read`);
-            const lines = f.patch.split('\n').filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l));
+            const miss = needPatch(); if (miss) return miss;
             const re = name === 'index.html' ? [SCRIPT_LINE, STAMP_COMMENT] : [BUDGET_LINE];
-            const bad = lines.find((l) => !re.some((r) => r.test(l.slice(1).trim())));
+            const bad = changedLines(patch).find((l) => !re.some((r) => r.test(l)));
             if (bad) return no(`${name}: a changed line is not what the build lane writes (${bad.slice(0, 80)})`);
             continue;
         }
