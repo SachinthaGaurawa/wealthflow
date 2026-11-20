@@ -1,5 +1,27 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.100 — 2026-11-20
+
+**What changed for you**
+
+- CC Instalments details not viewable on small screens (#649)
+
+**Under the hood**
+
+- Fix agent: take the shared push lock only on the direct ship path (#650)
+- Build lane: put the NEW tag on what the person sees, not on an empty wrapper (#648)
+- Add Cloudflare Workers AI as a free provider (#646)
+- Build lane: write the proving test from the module's own test recipe (#645)
+- Build lane: log the module and the last test when the proof fails (#644)
+- Build lane: the author leaves a test recipe; roll call asks enough tokens (#643)
+- Learn which AI providers have credit and use the rest (#642)
+- Build lane: show the test writer the API the module really exposes (#641)
+- Build lane: tell the test writer how to test a new page module (#640)
+- Build lane: send a medium reviewer finding back to the author once (#639)
+- Build lane: write the NEW tag when the model leaves it out (#638)
+- Fix agent: find where a screen is drawn, refuse comment-only changes, build what no lane may edit (#637)
+- Self-ideation: stuck ideas free the cap, engine knows what exists, builder must write the NEW tag (#636)
+
 ## v7.69.99 — 2026-11-19
 
 **What changed for you**

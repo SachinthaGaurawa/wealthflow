@@ -1,6 +1,6 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.69.99",
+  "latest": "7.69.100",
   "mandatory": [
     "7.16.0",
     "7.16.1"
@@ -1697,6 +1697,36 @@
           "items": [
             "The gateway button sends one test text; the diagnosis says why an entry is silent on purpose (#634)",
             "Unstick feedback status: deleted work items, stale scanner issues, update card change line (#633)"
+          ]
+        }
+      ]
+    },
+    "7.69.100": {
+      "headline": "What's New",
+      "date": "2026-11-20",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "CC Instalments details not viewable on small screens (#649)"
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "Fix agent: take the shared push lock only on the direct ship path (#650)",
+            "Build lane: put the NEW tag on what the person sees, not on an empty wrapper (#648)",
+            "Add Cloudflare Workers AI as a free provider (#646)",
+            "Build lane: write the proving test from the module's own test recipe (#645)",
+            "Build lane: log the module and the last test when the proof fails (#644)",
+            "Build lane: the author leaves a test recipe; roll call asks enough tokens (#643)",
+            "Learn which AI providers have credit and use the rest (#642)",
+            "Build lane: show the test writer the API the module really exposes (#641)",
+            "Build lane: tell the test writer how to test a new page module (#640)",
+            "Build lane: send a medium reviewer finding back to the author once (#639)",
+            "Build lane: write the NEW tag when the model leaves it out (#638)",
+            "Fix agent: find where a screen is drawn, refuse comment-only changes, build what no lane may edit (#637)",
+            "Self-ideation: stuck ideas free the cap, engine knows what exists, builder must write the NEW tag (#636)"
           ]
         }
       ]
