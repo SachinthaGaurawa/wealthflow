@@ -1,0 +1,85 @@
+name: Acceptance check (run a shipped feature on a phone)
+
+# =============================================================================
+# WHY (owner, 2026-11-20, after #635): a feature that passed every gate still contradicted the table beside it and never said which products. Nothing had RUN it
+# the way the owner uses it. When a feedback issue closes, this job runs the module the build lane added for it in real Chromium at the owner's phone size,
+# with his own words as the script, and has two models on different providers judge what appeared (autonomy/acceptance.mjs; every finding quotes the screen,
+# and a finding whose quote is not on the screen is thrown away by a program).
+#   passed   → one comment saying what was checked
+#   problems → one comment quoting the screen, the issue is reopened, the fix agent starts in revision mode
+#   round 2  → ai-stuck and the owner is asked (never a third automatic try)
+# It changes no code and ships nothing: a revision goes through the same pull request, tests, board and release gates as any other change.
+# =============================================================================
+
+on:
+  issues:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'Issue number to check'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    concurrency:
+      group: wealthflow-acceptance-${{ github.event.issue.number || inputs.issue }}
+      cancel-in-progress: false
+    # only reports that came from a person through the feedback form
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.issue.labels.*.name, 'user-feedback') &&
+       !contains(github.event.issue.labels.*.name, 'ai-stuck') &&
+       !contains(github.event.issue.labels.*.name, 'auto-rollback'))
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Install deps
+        run: npm ci || npm install
+      - name: Install Chromium
+        run: npx playwright install chromium || echo "::warning::Chromium could not be installed; the run is skipped and says so"
+      - name: Run the shipped feature on a phone and judge it
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WF_ACCEPTANCE_DIR: ${{ runner.temp }}/acceptance
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          WealthFlow_API_Key: ${{ secrets.WealthFlow_API_Key }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        run: node autonomy/acceptance-cli.mjs --issue "$ISSUE"
+      - name: Keep the phone screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: acceptance-check-screenshots
+          path: ${{ runner.temp }}/acceptance
+          if-no-files-found: ignore
+          retention-days: 14

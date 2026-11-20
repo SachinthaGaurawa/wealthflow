@@ -23,7 +23,7 @@
  *   GITHUB_REPOSITORY  e.g. "SachinthaGaurawa/wealthflow"  (set by Actions)
  * ===========================================================================*/
 
-import { systemRole, fromStranger } from './route.mjs';
+import { systemRole, fromStranger, isReset } from './route.mjs';
 
 const API = 'https://api.github.com';
 
@@ -153,7 +153,7 @@ export async function fetchOpenWork({ env = process.env, limit = 30 } = {}) {
 
 /** Did a maintainer reset the attempt budget? (same trust rule as attemptsFrom) */
 export function hasReset(comments) {
-    return (comments || []).some((c) => /<!--\s*wf-agent-reset\s*-->/.test(String((c && c.body) || '')) && /^(OWNER|MEMBER|COLLABORATOR)$/.test(String((c && c.author_association) || '')));
+    return (comments || []).some((c) => isReset(c));
 }
 
 /** Attempt count, read from the agent's own trail of comments. */
@@ -165,7 +165,7 @@ export function attemptsFrom(comments) {
         // ran BEFORE the layout lane was hardened (the third was a real try that the reviewer rightly vetoed), so
         // they say nothing about whether the improved lane can do it. Only OWNER/MEMBER/COLLABORATOR comments count,
         // so a stranger cannot reopen the budget on a public issue.
-        if (/<!--\s*wf-agent-reset\s*-->/.test(body) && /^(OWNER|MEMBER|COLLABORATOR)$/.test(String((c && c.author_association) || ''))) { n = 0; continue; }
+        if (isReset(c)) { n = 0; continue; }
         // A stranger who types the agent's marker on a public issue must not spend the agent's three tries.
         if (/<!--\s*wf-agent-attempt\s*-->/.test(body) && !fromStranger(c)) n++;
     }
@@ -283,6 +283,23 @@ export async function removeLabel(number, label, { env = process.env } = {}) {
 
 export async function closeIssue(number, { env = process.env, reason = 'completed' } = {}) {
     return gh(`/issues/${number}`, { method: 'PATCH', body: { state: 'closed', state_reason: reason }, env });
+}
+
+export async function getIssue(number, { env = process.env } = {}) {
+    return gh(`/issues/${number}`, { env });
+}
+
+/** Reopen a closed issue. */
+export async function reopenIssue(number, { env = process.env } = {}) {
+    return gh(`/issues/${number}`, { method: 'PATCH', body: { state: 'open' }, env });
+}
+
+/**
+ * Start a workflow by hand. A change made with the workflow's own token does not start other workflows by itself (a reopened issue would sit until the
+ * next schedule), but a dispatch is allowed, so the follow-up work begins at once.
+ */
+export async function dispatchWorkflow(file, inputs = {}, { ref = 'main', env = process.env } = {}) {
+    return gh(`/actions/workflows/${encodeURIComponent(file)}/dispatches`, { method: 'POST', body: { ref, inputs }, env });
 }
 
 export async function createIssue({ title, body, labels = [], env = process.env }) {

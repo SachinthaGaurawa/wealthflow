@@ -150,6 +150,7 @@ jobs:
           AGENT_DRY_RUN: ${{ inputs.dry_run }}
           AGENT_MAX_ATTEMPTS: ${{ vars.AGENT_MAX_ATTEMPTS || '3' }}
           AGENT_GROUP: ${{ vars.AUTONOMY_LEVEL == 'direct' && '0' || '1' }}   # same-day feedback in one update; the direct ship step commits one fix at a time
+          WF_ACCEPTANCE_DIR: ${{ runner.temp }}/acceptance                    # screenshots of the run on a phone (autonomy/acceptance.mjs)
           # ── every model provider; ANY ONE is enough ──
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -185,6 +186,15 @@ jobs:
                echo "::error::The autonomous agent is MISCONFIGURED or broken (exit $RC). See the job summary."
                exit "$RC" ;;
           esac
+
+      - name: Keep the phone screenshots of the acceptance run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: acceptance-run-screenshots
+          path: ${{ runner.temp }}/acceptance
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Confirm the agent really changed something
         id: check

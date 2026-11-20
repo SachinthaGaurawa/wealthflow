@@ -53,6 +53,8 @@ import { runSwarm, swarmMayEdit } from './autonomy/agent-swarm.mjs';
 import { symptomHome, homeFacts, reachabilityGap } from './autonomy/symptom-home.mjs';
 import { layoutLaneFor, runLayoutLane } from './autonomy/css-lane.mjs';
 import { buildLaneFor, runBuildLane, wireModule } from './autonomy/build-lane.mjs';
+import { runAcceptance } from './autonomy/acceptance.mjs';
+import { pendingRevision } from './autonomy/acceptance-flow.mjs';
 import { conceptBoardFor, runConceptBoard, renderComment as boardComment, briefFor, parseStoredBoard, BOARD_MARKER } from './autonomy/concept-board.mjs';
 import { screenshotContext } from './autonomy/screenshot-reader.mjs';
 import { withTranslation } from './autonomy/feedback-language.mjs';
@@ -451,11 +453,17 @@ async function main() {
         // What the earlier tries on this report did and where each stopped (autonomy/route.mjs). #559 was tried three times
         // in the same lane with the same result, because the second try was never told what the first had ruled out.
         let trail = [];
+        // A feature that shipped and was then run on a phone and found wanting (autonomy/acceptance-cli.mjs) comes back with the problems quoted from the screen:
+        // the build lane revises that module instead of starting again from the report.
+        let reviseNote = null;
         try {
             const comments = await Q.issueComments(number);
             retryBrief = recoveryBrief(comments);
             trail = attemptTrail(comments);
+            reviseNote = pendingRevision(comments);
+            if (reviseNote && !fs.existsSync(path.join(REPO_DIR, reviseNote.file))) reviseNote = null;
         } catch (_) { /* no trail, no brief */ }
+        if (reviseNote) log(`#${number} reopened by the acceptance check: revising ${reviseNote.file} (round ${reviseNote.round})`);
         if (retryBrief) log(`#${number} an earlier fix failed in CI — the author is shown why`);
         const triedBrief = attemptBrief(trail);
         if (triedBrief) log(`#${number} ${trail.length} earlier ${trail.length === 1 ? 'try is' : 'tries are'} shown to the author so this one differs`);
@@ -467,6 +475,7 @@ async function main() {
             // A report about how a screen LOOKS (overlap, cut-off, a phone width) has no JavaScript to fix or to
             // test, so it goes to the layout lane: CSS only, measured in a real browser before and after.
             const lane = layoutLaneFor({ title: issue.title, body: shot.body, labels: issue.labels });
+            if (reviseNote) lane.applies = false;
             // A measurement that found nothing is evidence. If an earlier try already measured the pages and found no layout
             // problem, the layout lane cannot end differently this time, so the report is worked as code instead
             // (a finding the system measured itself keeps its lane: its marker names the screen).
@@ -478,7 +487,7 @@ async function main() {
             // A NEW idea is talked through by several AIs first (user-friendliness first); their brief joins the request, and
             // the discussion is posted once on the issue. It never blocks: the owner's request is the decision.
             let laneBody = shot.body;
-            if (!lane.applies && conceptBoardFor({ title: issue.title, body: shot.body }, kind)) {
+            if (!lane.applies && !reviseNote && conceptBoardFor({ title: issue.title, body: shot.body }, kind)) {
                 try {
                     const prior = (await Q.issueComments(number).catch(() => [])).find((c) => String(c.body || '').includes(BOARD_MARKER));
                     let board = prior ? parseStoredBoard(prior.body) : null;
@@ -510,7 +519,10 @@ async function main() {
             const reportText = `${issue.title}\n${shot.body}`;
             const lockedScreen = home.found && !home.mayEdit && (kind === 'bug' || kind === 'ui') && reachabilityGap(reportText);
             const triedFiles = [...new Set(trail.filter((t) => t.file && t.stage !== 'drafted').map((t) => t.file))];
-            const buildIt = () => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, facts: home.found && !home.mayEdit ? homeFacts(home) : '', repoDir: REPO_DIR, log });
+            // RUN IT LIKE THE OWNER WOULD (autonomy/acceptance.mjs): the new module is run on a phone-size browser and judged against the report before a PR exists.
+            // WF_ACCEPTANCE=0 turns it off.
+            const accept = process.env.WF_ACCEPTANCE === '0' ? null : (o) => runAcceptance({ ...o, outDir: process.env.WF_ACCEPTANCE_DIR ? path.join(process.env.WF_ACCEPTANCE_DIR, `issue-${number}`) : '' });
+            const buildIt = (extra = {}) => runBuildLane({ issue: { number, title: issue.title, body: laneBody }, facts: home.found && !home.mayEdit ? homeFacts(home) : '', repoDir: REPO_DIR, log, accept, ...extra });
             const asCode = () => runSwarm({
                 issue: { number, title: issue.title, body: laneBody, kind },
                 repoDir: REPO_DIR, log, triedFiles,
@@ -534,7 +546,10 @@ async function main() {
                 }
                 return r;
             };
-            if (lane.applies) {
+            if (reviseNote) {
+                laneName = 'build';
+                result = await buildIt({ revise: { file: reviseNote.file, code: fs.readFileSync(path.join(REPO_DIR, reviseNote.file), 'utf8'), findings: reviseNote.findings } });
+            } else if (lane.applies) {
                 result = await runLayoutLane({ issue: { number, title: issue.title, body: shot.body + retryBrief + triedBrief + standing }, repoDir: REPO_DIR, log });
                 // The words sounded like a layout complaint, the pages were measured, and nothing is wrong with the layout.
                 // If the report reads as a defect or a request ("on my phone the total is wrong"), the layout word was
@@ -651,7 +666,7 @@ async function main() {
             issue: number,
             role: result.role,
             providers: provs,
-            body: prBody({ issue, number, result, testWritten, ledger: ledgerFor({ result, laneName, kind, issue, shot, translation, testWritten, rulesShown }) }) + (wiringNote ? `\n\n### Wiring\n${wiringNote}\n` : ''),
+            body: prBody({ issue, number, result, testWritten, ledger: ledgerFor({ result, laneName, kind, issue, shot, translation, testWritten, rulesShown }) }) + (wiringNote ? `\n\n### Wiring\n${wiringNote}\n` : '') + (result.acceptance && result.acceptance.summary ? `\n\n### Acceptance run\n${result.acceptance.summary}\n` : ''),
         };
         fs.writeFileSync(OUTPUT, JSON.stringify(pr, null, 2) + '\n');
 
