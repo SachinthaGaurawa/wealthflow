@@ -137,8 +137,8 @@ describe('the whole pass, with the API injected', () => {
 // ---------------------------------------------------------------------------------------------------------------
 describe('approving the runs GitHub holds for the agent', () => {
     const botPr = (over = {}) => ({ number: 653, user: { login: 'github-actions[bot]' }, head: { ref: 'ai-fix/issue-635-1795191383', sha: 'abc', repo: { full_name: 'o/r' } }, base: { repo: { full_name: 'o/r' } }, ...over });
-    const f = (filename, patch) => ({ filename, status: 'modified', ...(patch === undefined ? {} : { patch }) });
-    const mod = (name = 'wealthflow-x.js', body = "root.WFX = { show: function () { return root.DB.get('expenses'); } };") => f(name, `@@ -0,0 +1,3 @@\n+(function (root) {\n+${body}\n+})(window);`);
+    const f = (filename, patch, status = 'modified') => ({ filename, status, ...(patch === undefined ? {} : { patch }) });
+    const mod = (name = 'wealthflow-x.js', body = "root.WFX = { show: function () { return root.DB.get('expenses'); } };", status = 'modified') => f(name, `@@ -0,0 +1,3 @@\n+(function (root) {\n+${body}\n+})(window);`, status);
     const state = (name = 'autonomy/state/issue-635.json') => f(name, '@@ -1,4 +1,4 @@\n {\n-  "attempts": 1,\n+  "attempts": 2,\n   "signatures": [\n-    "cfbfd5459aa6b765"\n+    "0123456789abcdef"\n   ]');
     const test = (name = 'test/auto-wealthflow-x-y-9.test.js', body = "expect(1).toBe(1);") => f(name, `@@ -0,0 +1,2 @@\n+import { it, expect } from 'vitest';\n+it('a', () => { ${body} });`);
     it('the real #653 change (a module and the agent\'s state file) is approved', () => {
@@ -148,8 +148,12 @@ describe('approving the runs GitHub holds for the agent', () => {
     it('a new module with its wiring (one script tag, one stamp comment, numeric ceilings) and its proving test is approved', () => {
         const html = '@@ -1,1 +1,3 @@\n+<!-- 2026-11-20: wealthflow-x-y.js, added by the build lane for #9 -->\n+    <script src="wealthflow-x-y.js" defer></script>\n x';
         const budget = '@@ -1 +1 @@\n-    totalJsBytes: 3_101_000, // old\n+    totalJsBytes: 3_121_500, // 2026-11-20: raised for wealthflow-x-y.js; measured 3113260';
-        const v = approvalVerdict({ pr: botPr(), files: [mod('wealthflow-x-y.js'), test(), f('index.html', html), f('autonomy/perf-budget.mjs', budget)] });
+        const v = approvalVerdict({ pr: botPr(), files: [mod('wealthflow-x-y.js', undefined, 'added'), test(), f('index.html', html), f('autonomy/perf-budget.mjs', budget)] });
         expect(v.ok).toBe(true);
+        // the same tag for a module this PR does not add (one already live) is not approved
+        const loose = approvalVerdict({ pr: botPr(), files: [mod('wealthflow-other.js'), f('index.html', html)] });
+        expect(loose.ok).toBe(false);
+        expect(loose.why).toMatch(/does not add/);
     });
     it('a workflow, an autonomy script, a package file or any other file keeps the run held for a person', () => {
         for (const bad of ['.github/workflows/wealthflow-ci.yml', 'autonomy/route.mjs', 'package.json', 'api/ai.js', 'firestore.rules', 'vitest.config.js']) {

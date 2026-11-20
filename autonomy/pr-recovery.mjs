@@ -199,6 +199,12 @@ export function approvalVerdict({ pr, files } = {}) {
             const re = name === 'index.html' ? [SCRIPT_LINE, STAMP_COMMENT] : [BUDGET_LINE];
             const bad = changedLines(patch).find((l) => !re.some((r) => r.test(l)));
             if (bad) return no(`${name}: a changed line is not what the build lane writes (${bad.slice(0, 80)})`);
+            if (name === 'index.html') {
+                // A script tag may only load a module this same PR adds (and whose content was read above), never one that is already live.
+                const added = new Set(files.filter((x) => x && x.status === 'added' && MODULE_FILE.test(String(x.filename))).map((x) => x.filename));
+                const loose = addedLines(patch).map((l) => l.trim()).filter((l) => SCRIPT_LINE.test(l)).map((l) => l.match(/src="([^"]+)"/)[1]).find((src) => !added.has(src));
+                if (loose) return no(`${name}: loads ${loose}, which this pull request does not add`);
+            }
             continue;
         }
         return no(`${name}: not a file the build lane changes`);
