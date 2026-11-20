@@ -17,11 +17,19 @@
  *              evidence, and the fix agent is started again. The agent reads that comment (recoveryBrief) as part of
  *              the problem, so the next try is told why the last one failed. The attempt that opened the PR already
  *              counted against the issue's 3, so this can never loop: after 3 the issue is `ai-stuck`.
+ *   approve  (added 2026-11-20, owner: "the system must do this by itself") GitHub holds every run from the agent's own bot login
+ *              as `action_required` until someone with write access approves it, so no check ever ran on a bot PR. A program reads the
+ *              PR's file list and approves the runs ONLY when the change is the kind of change the build lane makes (see
+ *              `approvalVerdict`: leaf browser modules, their `test/auto-*` proving test, the agent's own state file, one script line
+ *              in index.html, numeric perf-budget ceilings). Anything else stays held for a person, because a pull request's own
+ *              workflows and scripts run with the repository's secrets. `WF_AUTO_APPROVE=0` turns it off.
  *   Failures that are not code failures never count: the Risk gate waiting for `human-approved`, cancelled runs
  *   (a newer push superseded them), skipped jobs, and checks that only exist to comment or label.
  *
  * Everything here is pure except `run()`, so the decision is tested without a network.
  * ===========================================================================*/
+
+import { forbiddenIn } from './build-lane.mjs';
 
 export const RECOVERY_MARKER = '<!-- wf-pr-recovery -->';
 
@@ -125,6 +133,91 @@ export function recoveryBrief(comments) {
 }
 
 // ----------------------------------------------------------------------------------------------------------------
+// Approving the runs GitHub holds for the agent's bot login
+// ----------------------------------------------------------------------------------------------------------------
+const MODULE_FILE = /^wealthflow-[a-z0-9]+(?:-[a-z0-9]+){0,4}\.js$/;
+const PROVING_TEST = /^test\/auto-wealthflow-[a-z0-9]+(?:-[a-z0-9]+){0,4}-\d+\.test\.js$/;
+const STATE_FILE = /^autonomy\/state\/issue-\d+\.json$/;
+const SCRIPT_LINE = /^<script src="wealthflow-[a-z0-9]+(?:-[a-z0-9]+){0,4}\.js" defer><\/script>$/;
+/** A state file holds counters and signatures: every changed line is a bracket, a key, and a short number or token. Nothing else. */
+const STATE_LINE = /^[[\]{},]*(?:"[A-Za-z0-9_-]{1,40}":\s*)?(?:\d{1,6}|"[A-Za-z0-9 _.:-]{0,64}"|true|false|null|\[|\{)?[[\]{},]*$/;
+/** What a model-written proving test may never do: it runs in CI, where a pull request's code must have no way out and no way to read the environment. */
+const TEST_FORBIDDEN = [
+    [/\bprocess\s*\.\s*(?:env|binding|dlopen|kill|exit)\b|\bprocess\s*\[/, 'reads the environment or the process'],
+    [/child_process|\bworker_threads\b|\bcluster\b|\bvm\b\s*[.(]|\brequire\s*\(\s*['"](?:node:)?(?:https?|http2|net|dns|tls|dgram|os|vm)['"]|from\s+['"](?:node:)?(?:https?|http2|net|dns|tls|dgram|os|vm)['"]/, 'loads a network, process or system module'],
+    [/\bfetch\s*\(|XMLHttpRequest|WebSocket|sendBeacon|\bEventSource\b/, 'uses the network'],
+    [/\beval\s*\(|\bnew\s+Function\s*\(|\bimport\s*\(/, 'runs text as code'],
+    [/\bfs\s*\.\s*(?:write|append|unlink|rm|rename|copy|mkdir|chmod|symlink)\w*\s*\(|\bwriteFile\w*\s*\(/, 'writes files'],
+];
+const addedLines = (patch) => String(patch).split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1));
+const changedLines = (patch) => String(patch).split('\n').filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l)).map((l) => l.slice(1).trim()).filter(Boolean);
+const BUDGET_LINE = /^[A-Za-z0-9_]+:\s*[\d_.]+,\s*(?:\/\/.*)?$/;
+const STAMP_COMMENT = /^<!--\s*[^<>]*added by the build lane[^<>]*-->$/;
+/** Files whose content is only ever read as data by the board and the policy gate, or runs in the browser tests with no secrets. */
+export const AUTO_APPROVE_MAX_FILES = 8;
+
+/**
+ * May the held runs of this agent PR be approved without a person? Pure.
+ * @param {{ pr:{ user?:{login?:string}, head:{ ref:string, repo?:{ full_name?:string } }, base?:{ repo?:{ full_name?:string } } }, files:{ filename:string, status?:string, patch?:string }[] }} input
+ * @returns {{ ok:boolean, why:string }}
+ */
+export function approvalVerdict({ pr, files } = {}) {
+    const no = (why) => ({ ok: false, why });
+    if (!pr || issueOfBranch(pr.head && pr.head.ref) === null) return no('not an agent pull request');
+    if (String((pr.user && pr.user.login) || '') !== 'github-actions[bot]') return no('not opened by the agent login');
+    const headRepo = pr.head && pr.head.repo && pr.head.repo.full_name, baseRepo = pr.base && pr.base.repo && pr.base.repo.full_name;
+    if (!headRepo || !baseRepo || headRepo !== baseRepo) return no('the branch is not in this repository');
+    if (!Array.isArray(files) || !files.length) return no('no file list to check');
+    if (files.length > AUTO_APPROVE_MAX_FILES) return no(`${files.length} files: more than the build lane ever changes`);
+    for (const f of files) {
+        const name = String((f && f.filename) || '');
+        const patch = typeof f.patch === 'string' ? f.patch : '';
+        const needPatch = () => (patch ? null : no(`${name}: GitHub gave no patch to read, so its content cannot be checked`));
+        if (MODULE_FILE.test(name)) {
+            // Content, not just the name: the same machine check the build lane applies to a new module (no DB writes, no Firebase, no eval, no
+            // script injection, no secrets, no network together with the books) is applied to every line the PR adds.
+            const miss = needPatch(); if (miss) return miss;
+            const bad = forbiddenIn(addedLines(patch).join('\n'));
+            if (bad.length) return no(`${name}: ${bad[0]}`);
+            continue;
+        }
+        if (PROVING_TEST.test(name)) {
+            const miss = needPatch(); if (miss) return miss;
+            const code = addedLines(patch).join('\n');
+            const bad = TEST_FORBIDDEN.find(([re]) => re.test(code));
+            if (bad) return no(`${name}: a proving test ${bad[1]}`);
+            continue;
+        }
+        if (STATE_FILE.test(name)) {
+            const miss = needPatch(); if (miss) return miss;
+            const bad = changedLines(patch).find((l) => l && !STATE_LINE.test(l));
+            if (bad) return no(`${name}: a changed line is not a counter or a signature (${bad.slice(0, 60)})`);
+            continue;
+        }
+        if (name === 'index.html' || name === 'autonomy/perf-budget.mjs') {
+            const miss = needPatch(); if (miss) return miss;
+            const re = name === 'index.html' ? [SCRIPT_LINE, STAMP_COMMENT] : [BUDGET_LINE];
+            const bad = changedLines(patch).find((l) => !re.some((r) => r.test(l)));
+            if (bad) return no(`${name}: a changed line is not what the build lane writes (${bad.slice(0, 80)})`);
+            if (name === 'index.html') {
+                // A script tag may only load a module this same PR adds (and whose content was read above), never one that is already live.
+                const added = new Set(files.filter((x) => x && x.status === 'added' && MODULE_FILE.test(String(x.filename))).map((x) => x.filename));
+                const loose = addedLines(patch).map((l) => l.trim()).filter((l) => SCRIPT_LINE.test(l)).map((l) => l.match(/src="([^"]+)"/)[1]).find((src) => !added.has(src));
+                if (loose) return no(`${name}: loads ${loose}, which this pull request does not add`);
+            }
+            continue;
+        }
+        return no(`${name}: not a file the build lane changes`);
+    }
+    return { ok: true, why: `${files.length} file(s), all of the kind the build lane writes` };
+}
+
+/** The runs of a head commit that GitHub is holding for approval. With `sha`, only runs of exactly that commit count. */
+export function heldRuns(runs, sha) {
+    return (runs || []).filter((r) => r && r.status === 'completed' && r.conclusion === 'action_required' && (!sha || r.head_sha === sha)).map((r) => r.id).filter(Boolean);
+}
+
+// ----------------------------------------------------------------------------------------------------------------
 // The runner (network). Reads the API as data; never checks out or runs a pull request's code.
 // ----------------------------------------------------------------------------------------------------------------
 async function api(path, { method = 'GET', body, env = process.env, fetchImpl = globalThis.fetch } = {}) {
@@ -150,6 +243,28 @@ export async function run({ env = process.env, fetchImpl = globalThis.fetch, log
     for (const pr of prs) {
         const issue = issueOfBranch(pr.head && pr.head.ref);
         if (issue === null) continue;
+        // Runs GitHub holds for the agent's bot login: approve them when (and only when) the diff is what the build lane writes.
+        if (env.WF_AUTO_APPROVE !== '0') {
+            const held = heldRuns(((await call(`/actions/runs?head_sha=${pr.head.sha}&per_page=100`).catch(() => null)) || {}).workflow_runs, pr.head.sha);
+            if (held.length) {
+                const files = (await call(`/pulls/${pr.number}/files?per_page=100`).catch(() => null)) || [];
+                const v = approvalVerdict({ pr, files });
+                if (!v.ok) log(`#${pr.number}: ${held.length} run(s) wait for a person — ${v.why}`);
+                else if (dryRun) log(`#${pr.number}: would approve ${held.length} held run(s) — ${v.why}`);
+                else if (((await call(`/pulls/${pr.number}`).catch(() => null)) || {}).head?.sha !== pr.head.sha) {
+                    // The branch moved between reading the file list and approving: what was read is no longer what would run.
+                    log(`#${pr.number}: the branch moved while it was being checked; nothing approved, the next pass reads it again`);
+                } else {
+                    let ok = 0;
+                    for (const id of held) {
+                        try { await call(`/actions/runs/${id}/approve`, { method: 'POST' }); ok++; }
+                        catch (e) { log(`#${pr.number}: GitHub refused to approve run ${id} (${e.message}). It keeps these for a person: Settings > Actions > General > Fork pull request workflows.`); }
+                    }
+                    log(`#${pr.number}: approved ${ok}/${held.length} held run(s) — ${v.why}`);
+                    done.push({ pr: pr.number, issue, action: 'approve', reason: `${ok}/${held.length} runs approved`, failed: [] });
+                }
+            }
+        }
         const cr = await call(`/commits/${pr.head.sha}/check-runs?per_page=100`).catch((e) => { log(`#${pr.number}: could not read checks (${e.message})`); return null; });
         if (!cr) continue;
         const checkRuns = cr.check_runs || [];
