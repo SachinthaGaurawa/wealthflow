@@ -82,6 +82,14 @@
     var elapsed = start ? monthsBetween(start, nowD) : 0;
     if (elapsed > duration) elapsed = duration;
     var paidMonths = elapsed - skipped;
+    /* The table beside this sheet counts paid months with the page's own cciProgress (payments the owner or a statement marked,
+       or the calendar). When it is there its number is the one shown here too, so a row and its sheet can never disagree. */
+    try {
+      if (start && duration > 0 && typeof root.cciProgress === 'function') {
+        var pp = root.cciProgress(rec);
+        if (pp && isFinite(pp.paid)) paidMonths = Math.floor(pp.paid);
+      }
+    } catch (e) { /* the sheet's own count stands */ }
     if (paidMonths < 0) paidMonths = 0;
     if (paidMonths > duration) paidMonths = duration;
     var remaining = duration - paidMonths;
@@ -123,7 +131,6 @@
     if (start && duration > 0) {
       var cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
       for (var i = 0; i < duration; i++) {
-        var isPast = cursor <= nowD;
         var isSkipped = false;
         if (Array.isArray(rec.skipped)) {
           for (var k = 0; k < rec.skipped.length; k++) {
@@ -135,7 +142,7 @@
         out.schedule.push({
           month: label,
           amount: fmtMoney(monthlyC),
-          state: isSkipped ? 'skipped' : (isPast ? 'paid' : 'due')
+          state: isSkipped ? 'skipped' : (i < paidMonths ? 'paid' : 'due')
         });
         cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, cursor.getDate());
       }
@@ -204,9 +211,10 @@
     sheet.style.padding = '16px';
     sheet.style.boxSizing = 'border-box';
     sheet.style.boxShadow = '0 8px 24px rgba(0,0,0,0.25)';
-    /* the sheet itself never clips: the host scrolls, and the schedule
-       gets its own bounded scroll box so the last rows stay reachable */
+    /* the sheet never grows past the screen and its body is the one thing that scrolls, so the last schedule row is always reachable.
+       dvh follows a phone's browser bars (vh does not, and put the bottom of the sheet under them); a browser without dvh keeps the vh line */
     sheet.style.maxHeight = 'calc(100vh - 24px)';
+    sheet.style.maxHeight = 'calc(100dvh - 24px)';
     sheet.style.display = 'flex';
     sheet.style.flexDirection = 'column';
     sheet.style.overflow = 'hidden';
@@ -258,7 +266,7 @@
     body.style.paddingRight = '2px';
     /* bottom padding so the last schedule row is never flush against the
        sheet edge (and never under anything the app floats there) */
-    body.style.paddingBottom = '24px';
+    body.style.paddingBottom = 'max(24px, env(safe-area-inset-bottom))';
 
     var list = el('div');
     list.id = 'wfCciDetailLines';
@@ -290,19 +298,15 @@
       schedHead.style.fontSize = '14px';
       body.appendChild(schedHead);
 
-      /* bounded scroll box with a visible edge so the person can tell
+      /* one scroll only (the sheet body); a bordered list so the rows read as a group, no second scroll box inside it. Edge kept visible so the person can tell
          there are more rows below */
       var sched = el('div');
       sched.id = 'wfCciDetailSchedule';
-      sched.style.maxHeight = '40vh';
-      sched.style.overflowY = 'auto';
-      sched.style.webkitOverflowScrolling = 'touch';
       sched.style.border = '1px solid var(--border, #eee)';
       sched.style.borderRadius = '8px';
       sched.style.padding = '4px 8px';
       sched.style.boxSizing = 'border-box';
-      sched.setAttribute('tabindex', '0');
-      sched.setAttribute('aria-label', 'Payment schedule, scrollable');
+      sched.setAttribute('aria-label', 'Payment schedule');
       for (var j = 0; j < data.schedule.length; j++) {
         var s = data.schedule[j];
         var srow = el('div');
