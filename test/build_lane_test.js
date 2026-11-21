@@ -272,8 +272,8 @@ describe('wiring into the agent and the workflow', () => {
 describe('the fix workflow stages only what the build lane may touch', () => {
     const yml = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'autonomous-fix.yml'), 'utf8');
     it('sees an untracked new module as a change', () => { expect(yml).toMatch(/git status --porcelain -- "\$FILE"/); });
-    it('stages index.html and the budget only when the PR file lists them', () => {
-        expect(yml.match(/for EXTRA in index\.html autonomy\/perf-budget\.mjs/g)).toHaveLength(2);
+    it('stages index.html, wf-ui.css (the edit lane) and the budget only when the PR file lists them', () => {
+        expect(yml.match(/for EXTRA in index\.html wf-ui\.css autonomy\/perf-budget\.mjs/g)).toHaveLength(2);
         expect(yml).toMatch(/extraFiles \|\| \[\]\)\.includes\(process\.argv\[1\]\)/);
     });
 });
