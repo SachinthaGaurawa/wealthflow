@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { loadBrowserModule } from './helpers/load-browser-module.js';
 import { normalizeAttachments, readAllAttachments, MAX_READING_TOTAL, READING_MARKER, COUNT_MARKER, VIDEO_MARKER } from '../wf-feedback-attachments.mjs';
 import { screenshotContext } from '../wf-screenshot-reader.mjs';
-import { validVideoFrames, cleanMotion, motionSummary, framePrompt, storyPrompt, checkPrompt, readVideo, videoBlock, MAX_VIDEO_FRAMES } from '../wf-video-reader.mjs';
+import { validVideoFrames, cleanMotion, motionSummary, framePrompt, storyPrompt, checkPrompt, readVideo, videoBlock, maskIdentifiers, MAX_VIDEO_FRAMES } from '../wf-video-reader.mjs';
 
 const jpeg = (n, tag = 'A') => 'data:image/jpeg;base64,' + tag.repeat(n);
 const frame = (t, why = 'even', n = 60) => ({ t, why, image: jpeg(n) });
@@ -304,5 +304,29 @@ describe('the agent does not check a recording reading against its contact-sheet
         const r = await readAllAttachments({ attachments: atts, describeImpl: describe, chatImpl: async () => null });
         expect(r.section).not.toContain(VIDEO_MARKER);
         expect(r.section).toMatch(/frames could not be read/);
+    });
+});
+
+describe('whatever a model wrote, e-mail addresses and long numbers never reach the issue (enforced, not asked)', () => {
+    it('masks e-mails, card-like and phone-like numbers, keeps words and amounts', () => {
+        const t = maskIdentifiers('Mail from kasun.p@example.lk, card 4532 1234 5678 9012, call +94 77 123 4567, ref 20261121003, paid 4,820.50 and 1200');
+        expect(t).not.toMatch(/example\.lk|4532|9012|123 4567|20261121003/);
+        expect(t).toContain('[e-mail]');
+        expect(t).toContain('[number]');
+        expect(t).toContain('4,820.50');
+        expect(t).toContain('1200');
+        expect(maskIdentifiers(t)).toBe(t);
+        expect(maskIdentifiers(null)).toBe('');
+    });
+    it('frame readings, the story and the checker corrections are all masked before anything is kept', async () => {
+        const describe = async () => ({ ok: true, text: 'Another app shows 5555 4444 3333 2222 and a@b.co', provider: 'p', model: 'm', tried: [] });
+        let n = 0;
+        const chat = async () => (++n === 1 ? { text: 'The card 1234567890123456 is shown.', provider: 'a' } : { text: 'CORRECTIONS: it is zed@mail.com', provider: 'b' });
+        const r = await readVideo({ frames: FRAMES, describeImpl: describe, chatImpl: chat });
+        const all = JSON.stringify(r);
+        expect(all).not.toMatch(/5555|3333|a@b\.co|1234567890123456|zed@mail/);
+        expect(r.rows[0].text).toContain('[number]');
+        expect(r.story).toContain('[number]');
+        expect(r.story).toContain('[e-mail]');
     });
 });
