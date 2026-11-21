@@ -1658,12 +1658,20 @@
 
     async function _doSubmitFeedback() {
         const type = (document.getElementById('wfFbType') || {}).value || 'other';
-        const text = ((document.getElementById('wfFbText') || {}).value || '').trim();
+        let text = ((document.getElementById('wfFbText') || {}).value || '').trim();
         const diag = !!(document.getElementById('wfFbDiag') || {}).checked;
-        if (text.length < 4) { _notify('Please type a little more so we can help.', 'warn'); return; }
+        // A screen recording can be the whole report: the person films the problem and does not want to type it. Then the report
+        // says so in words, and it is only sent if the recording could really be read (checked below).
+        const videoOnly = text.length < 4 && !!(window.WFFeedbackAttach && window.WFFeedbackAttach.hasVideo && window.WFFeedbackAttach.hasVideo());
+        if (text.length < 4 && !videoOnly) { _notify('Please type a little more so we can help.', 'warn'); return; }
+        if (videoOnly) text = 'Screen recording attached, no written description. Watch the recording frame by frame, find what goes wrong on the screen and fix it.';
         const diagnostics = diag ? _collectDiagnostics() : null;
-        // up to five pictures / PDFs / text files, prepared now for the real count (wealthflow-feedback-attach.js); never throws
+        // up to five pictures / PDFs / text files / one screen recording, prepared now for the real count (wealthflow-feedback-attach.js); never throws
         const att = window.WFFeedbackAttach ? await window.WFFeedbackAttach.collect() : { attachments: [], stored: [], image: null };
+        if (videoOnly && !att.attachments.some((a) => a && a.kind === 'video')) {
+            _notify('The recording could not be read, so nothing was sent. Type a few words about the problem and send again.', 'warn');
+            return;
+        }
         const payload = {
             type, text,
             version: _installedVersion() || CURRENT_VERSION,
