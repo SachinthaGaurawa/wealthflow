@@ -98,3 +98,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px; }
+
+/* lane-block: 658 scope=#page-ccinstall — [HIGH] Layout overlap on phones: CC Instalments */
+#page-ccinstall .wf-ctab-amt { white-space: normal;
+  line-height: 1.4; }
