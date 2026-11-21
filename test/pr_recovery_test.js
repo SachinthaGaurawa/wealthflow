@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     issueOfBranch, latestPerCheck, runIdOf, decideRecovery, failureDigest, handbackComment, recoveryBrief, run, RECOVERY_MARKER, MIN_AGE_MS,
-    approvalVerdict, heldRuns, laneCssVerdict, repairPlan, mergeLaneCss, mergeVerdict,
+    approvalVerdict, heldRuns, runUntilSettled, laneCssVerdict, repairPlan, mergeLaneCss, mergeVerdict,
 } from '../autonomy/pr-recovery.mjs';
 import { attemptsFrom } from '../autonomy/work-queue.mjs';
 
@@ -254,6 +254,14 @@ describe('approving the runs GitHub holds for the agent', () => {
         await run({ env, fetchImpl: b.fetchImpl, log: () => {}, now: NOW, dryRun: true });
         expect(b.calls.some((c) => c.includes('/approve'))).toBe(false);
     });
+    it('run(): with approving switched off by the variable, the log says which variable and what to do', async () => {
+        const { calls, fetchImpl } = fake({ files: [mod()], runs: held });
+        const lines = [];
+        const out = await run({ env: { ...env, WF_AUTO_APPROVE: '0' }, fetchImpl, log: (m) => lines.push(m), now: NOW });
+        expect(calls.some((c) => c.includes('/approve'))).toBe(false);
+        expect(lines.some((l) => /WF_AUTO_APPROVE is 0/.test(l) && /Variables/.test(l))).toBe(true);
+        expect(out.some((d) => d.action === 'wait' && /WF_AUTO_APPROVE=0/.test(d.reason))).toBe(true);
+    });
     it('run(): a refusal from GitHub is logged with where the setting is, and does not stop the pass', async () => {
         const { fetchImpl } = fake({ files: [mod()], runs: held });
         const refuse = async (url, o) => (String(url).includes('/approve') ? { ok: false, status: 403, text: async () => 'forbidden' } : fetchImpl(url, o));
@@ -470,5 +478,35 @@ describe('the layout lane carries its own pull request to the end', () => {
             expect(lines.some((l) => /refused the merge/.test(l))).toBe(true);
             expect(Array.isArray(out)).toBe(true);
         });
+    });
+});
+
+describe('runUntilSettled: the job that approves a PR also waits for its checks', () => {
+    const waitRound = [{ pr: 660, issue: 659, action: 'wait', reason: 'checks are still running', failed: [] }];
+    const mergeRound = [{ pr: 660, issue: 659, action: 'merge', reason: 'ok', failed: [] }];
+    it('looks again while checks run, and stops once the PR is merged', async () => {
+        const rounds = [waitRound, waitRound, mergeRound];
+        let calls = 0, slept = 0, t = 0;
+        const out = await runUntilSettled({ runOnce: async () => rounds[calls++], sleep: async (ms) => { slept++; t += ms; }, clock: () => t, log: () => {}, pollMs: 1000, budgetMs: 60000 });
+        expect(calls).toBe(3);
+        expect(slept).toBe(2);
+        expect(out.some((d) => d.action === 'merge')).toBe(true);
+    });
+    it('does not loop when nothing waits on running checks', async () => {
+        let calls = 0;
+        await runUntilSettled({ runOnce: async () => { calls++; return [{ pr: 1, action: 'wait', reason: 'a person must approve', failed: [] }]; }, sleep: async () => {}, log: () => {} });
+        expect(calls).toBe(1);
+    });
+    it('gives up when the time budget is spent and says so', async () => {
+        let calls = 0, t = 0;
+        const lines = [];
+        await runUntilSettled({ runOnce: async () => { calls++; return waitRound; }, sleep: async (ms) => { t += ms; }, clock: () => t, log: (m) => lines.push(m), pollMs: 1000, budgetMs: 3500 });
+        expect(calls).toBe(4);
+        expect(lines.some((l) => /next scheduled run looks again/.test(l))).toBe(true);
+    });
+    it('a dry run is one pass', async () => {
+        let calls = 0;
+        await runUntilSettled({ runOnce: async () => { calls++; return waitRound; }, sleep: async () => {}, log: () => {}, dryRun: true });
+        expect(calls).toBe(1);
     });
 });

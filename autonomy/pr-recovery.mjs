@@ -421,7 +421,14 @@ export async function run({ env = process.env, fetchImpl = globalThis.fetch, log
             }
         }
         // Runs GitHub holds for the agent's bot login: approve them when (and only when) the diff is what the agent's lanes write.
-        if (env.WF_AUTO_APPROVE !== '0') {
+        if (env.WF_AUTO_APPROVE === '0') {
+            // Switched off by the repository variable. Say so: a silent skip left two PRs waiting with no line in the log saying why (2026-11-21).
+            const held = heldRuns(((await call(`/actions/runs?head_sha=${pr.head.sha}&per_page=100`).catch(() => null)) || {}).workflow_runs, pr.head.sha);
+            if (held.length) {
+                log(`#${pr.number}: ${held.length} held run(s) are NOT approved because the repository variable WF_AUTO_APPROVE is 0. Delete it (or set it to 1) under Settings > Secrets and variables > Actions > Variables and the next pass approves them.`);
+                done.push({ pr: pr.number, issue, action: 'wait', reason: 'held runs; approving is switched off by WF_AUTO_APPROVE=0', failed: [] });
+            }
+        } else {
             const held = heldRuns(((await call(`/actions/runs?head_sha=${pr.head.sha}&per_page=100`).catch(() => null)) || {}).workflow_runs, pr.head.sha);
             if (held.length) {
                 const files = await filesOf();
@@ -492,6 +499,27 @@ export async function run({ env = process.env, fetchImpl = globalThis.fetch, log
     return done;
 }
 
+/**
+ * Keep looking while checks this job just released are still running (2026-11-21).
+ * The agent's PRs are opened with the workflow token, so GitHub does not wake `workflow_run` when their CI ends: only the hourly timer
+ * would have found the green checks, and a green layout PR sat up to an hour before it was merged. One pass approves the held runs; this
+ * waits for those checks (about three minutes) and looks again, so the same job run that approved a PR also merges it.
+ * Stops when nothing is waiting on running checks, or when the time budget is spent (the hourly timer picks up the rest).
+ */
+export async function runUntilSettled({ runOnce = run, budgetMs = 10 * 60 * 1000, pollMs = 45 * 1000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), clock = Date.now, log = console.log, ...opts } = {}) {
+    const started = clock();
+    const all = [];
+    for (let pass = 1; ; pass++) {
+        const done = await runOnce({ ...opts, sleep, log });
+        all.push(...done);
+        const waiting = done.some((d) => d.action === 'wait' && /still running/.test(String(d.reason)));
+        if (!waiting || opts.dryRun) return all;
+        if (clock() - started + pollMs > budgetMs) { log(`checks are still running after ${pass} pass(es); the next scheduled run looks again`); return all; }
+        log(`checks are still running; looking again in ${Math.round(pollMs / 1000)} s (pass ${pass})`);
+        await sleep(pollMs);
+    }
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-    run({ dryRun: process.env.RECOVERY_DRY_RUN === 'true' }).then((d) => { console.log(JSON.stringify(d)); }).catch((e) => { console.error(e.message); process.exit(1); });
+    runUntilSettled({ dryRun: process.env.RECOVERY_DRY_RUN === 'true' }).then((d) => { console.log(JSON.stringify(d)); }).catch((e) => { console.error(e.message); process.exit(1); });
 }
